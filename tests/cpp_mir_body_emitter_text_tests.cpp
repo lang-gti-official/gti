@@ -8075,6 +8075,153 @@ int main() { return bound(false, 1) + viewed(true, 1) - 4; }
          "the bound outer join should end its storage at the binding");
 }
 
+// A cleanup-free conditional's constructor arm may hand a by-value class
+// argument to its constructor: that prepared argument's transfer is the arm's
+// only lifecycle event, as it is for a call arm. A class that holds a text
+// view is cleanup-free too, since the view is a passive descriptor. Both joins
+// publish their arms into representation-only storage, and the joined value
+// moves into its field-read slot. Forged transfers and a borrowed-state text
+// arm stay out.
+void testCleanupFreeJoinTransferAndTextArms() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-cleanup-free-join-transfer-text.gti", R"(
+class point_t {
+public:
+  int32_t x;
+  point_t(int32_t x) : x(x) {}
+};
+class segment_t {
+public:
+  point_t low;
+  segment_t(point_t low) : low(low) {}
+};
+class word_t {
+public:
+  std::string_view text;
+  int32_t kind;
+  word_t(std::string_view text, int32_t kind) : text(text), kind(kind) {}
+};
+int32_t transferred(bool left) {
+  return (left ? segment_t(point_t(1)) : segment_t(point_t(2))).low.x;
+}
+int32_t texted(bool left) {
+  return (left ? word_t("left", 1) : word_t("right", 2)).kind;
+}
+int main() { return transferred(true) + texted(false) - 3; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the transfer and text join fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const std::string retire = ".destroy(); // end moved join representation\n";
+  const auto count = [](const std::string &text, const std::string &needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos;
+         at = text.find(needle, at + needle.size()))
+      ++occurrences;
+    return occurrences;
+  };
+  std::size_t transferBodies = 0;
+  std::size_t textBodies = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    // The two arms are the constructions published into one join storage.
+    std::vector<const lang::MirInstruction *> arms;
+    bool transfer = false;
+    bool text = false;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Construct ||
+            !instruction.result)
+          continue;
+        const auto uses = function.body.usesOf(*instruction.result);
+        const lang::MirInstruction *initialize = nullptr;
+        for (const auto &candidateBlock : function.body.blocks)
+          for (const auto &candidate : candidateBlock.instructions)
+            if (uses.size() == 1 && candidate.id == uses.front().instruction)
+              initialize = &candidate;
+        const auto *storage =
+            initialize != nullptr &&
+                    initialize->kind == lang::MirInstructionKind::Initialize &&
+                    initialize->destination
+                ? function.body.findPlace(*initialize->destination)
+                : nullptr;
+        if (storage == nullptr ||
+            storage->root != lang::MirPlaceRootKind::Temporary)
+          continue;
+        arms.push_back(&instruction);
+        for (const auto &parameter : instruction.parameterTypes) {
+          transfer |= parameter.kind == lang::SemanticType::Class;
+          text |= parameter.kind == lang::SemanticType::StringView;
+        }
+      }
+    if (arms.size() != 2 || transfer == text)
+      continue;
+    transferBodies += transfer;
+    textBodies += text;
+    const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                       function.id};
+    const bool supported =
+        supportsSelectedBodyText(frontend.mir, map, function.id);
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    const std::string body =
+        !supported ? std::string()
+        : function.mayRaiseDefinedFailure
+            ? emitter.emitFailureBodyText(address, "join-arms", 1).text
+            : emitter.emitBodyText(address, "join-arms", 1).text;
+    const std::size_t retired = body.find(retire);
+    const std::size_t joinStart = retired == std::string::npos
+                                      ? std::string::npos
+                                      : body.rfind("__gti_mir_p_", retired);
+    const std::string join = joinStart == std::string::npos
+                                 ? std::string()
+                                 : body.substr(joinStart, retired - joinStart);
+    expect(supported && !join.empty() && count(body, retire) == 1 &&
+               count(body, join + ".mark_constructed()") == 2 &&
+               body.rfind(".construct(std::move(" + join + ".get()));",
+                          retired) != std::string::npos &&
+               count(body, ".take()") == (transfer ? 2u : 0u),
+           std::string(transfer ? "by-value argument" : "text view") +
+               " arms should publish into one join storage, which the "
+               "joined value's move empties and retires");
+
+    for (int mutation = 0; mutation != (transfer ? 3 : 1); ++mutation) {
+      auto malformed = frontend.mir;
+      auto *mutable_body = lang::findMirBody(malformed, address);
+      for (auto &block : mutable_body->blocks)
+        for (auto &instruction : block.instructions) {
+          if (instruction.id != arms.front()->id)
+            continue;
+          if (!transfer) {
+            // The arm value holds borrowed state the class does not.
+            instruction.info.traits.containsBorrowedState = true;
+            for (auto &value : mutable_body->values)
+              if (value.id == *instruction.result)
+                value.info.traits.containsBorrowedState = true;
+          } else if (!instruction.lifecycle.empty()) {
+            const auto transferOut = instruction.lifecycle.front();
+            if (mutation == 0)
+              instruction.lifecycle.push_back(transferOut);
+            else if (mutation == 1)
+              instruction.lifecycle.front().conditional = true;
+            else
+              instruction.lifecycle.front().kind =
+                  lang::MirLifecycleEventKind::Initialize;
+          }
+        }
+      expect(!supportsSelectedBodyText(malformed, map, function.id),
+             std::string(transfer ? "a forged arm transfer "
+                                  : "a borrowed-state text arm ") +
+                 std::to_string(mutation) +
+                 " should keep the join out of representation-only storage");
+    }
+  }
+  expect(transferBodies == 1 && textBodies == 1,
+         "the fixture should have one by-value argument join and one text "
+         "join");
+}
+
 // Each arm of a cleanup-free conditional may evaluate its inputs before the
 // call producing its result: an overflow-checked argument, a call that can
 // fail, or a `?` operand. The branch then targets the start of that region,
@@ -9063,6 +9210,8 @@ constexpr NamedTest kTests[] = {
      testClassConditionalJoinBorrowedInputs},
     {"testCheckedConditionalArmInputs", testCheckedConditionalArmInputs},
     {"testNestedCleanupFreeJoinMove", testNestedCleanupFreeJoinMove},
+    {"testCleanupFreeJoinTransferAndTextArms",
+     testCleanupFreeJoinTransferAndTextArms},
     {"testShortCircuitOwnedFieldView", testShortCircuitOwnedFieldView},
     {"testOwningConditionalJoinConsumers", testOwningConditionalJoinConsumers},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
