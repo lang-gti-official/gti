@@ -1103,6 +1103,11 @@ add_test(NAME moved_passive_constructor_field_runtime
                  "${PROJECT_SOURCE_DIR}/tests/moved_passive_constructor_field_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(moved_passive_constructor_field_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME deferred_bound_field_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/deferred_bound_field_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(deferred_bound_field_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME view_fields_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/view_fields_runtime_test.py"
