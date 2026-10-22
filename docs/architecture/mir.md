@@ -379,6 +379,19 @@ Value-annotation and return-contract checks share the same producer/storage
 dataflow reconstruction. These facts neither establish nor replace ordinary
 loan, access, escape, movement or cleanup proofs.
 
+A by-value conditional carrier formal, such as a payload enum with a reference
+alternative, names no single stored reference. When such a function's complete
+result contract is independently proved, the per-function return summary
+admits that formal as its argument origin, as it does for a complete reference
+result. When the function returns the formal whole, its `Return` loan must be
+the one `Borrow` of the formal's guarded entry group, taken from the formal's
+typed entry contract, with the same source, access, guards and paths. The
+group's designated fields are then the source paths that the returned-field
+contract of a class result is compared against. Relaying another function's
+result for such a formal, as in `return relay(std::move(slot));`, is not yet
+admitted: call lowering publishes the referent place while the call-result
+check expects the argument's own place.
+
 The shared context-free result-domain utility combines alternative suppliers
 for one exact result field/guard/access as an OR. It preserves every available
 supplier and treats an unresolved supplier as unknown even when another is
