@@ -306,7 +306,15 @@
       "suite": "text"
     },
     {
+      "name": "testMovedBorrowedPayloadAfterFallibleSibling",
+      "suite": "text"
+    },
+    {
       "name": "testMovedViewAfterFormalRead",
+      "suite": "text"
+    },
+    {
+      "name": "testPassiveTextViewClassAfterFallibleSibling",
       "suite": "text"
     },
     {

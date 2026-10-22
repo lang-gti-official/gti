@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.459.1 — Reading fields of assignment results
+## 0.459.2 — Reading fields of assignment results
 
 - A field of a class assignment's result can now be read. For a struct
   `Point`, `return (p = q).x;` and a constructor initializer such as
@@ -22,6 +22,22 @@ for what minor and patch releases mean.
 - Using the whole result of a class assignment, as in `Point r = (p = q);`,
   and reading a field of a move-only class's assignment result still report
   `error[GTI-B0001]`.
+
+## 0.459.1 — Moving classes that hold text views
+
+- A class with a `std::string_view` field can now be moved into another
+  class's field after an initializer that can fail, when it has no destructor
+  and its other fields are text views, C strings, scalars, enums, pointers,
+  fixed arrays or classes of the same kind. For `class Name { public:
+  std::string_view text; ... }`, `shelf(Name name) :
+  v(std::vector<int32_t>()), name(std::move(name))` used to report
+  `error[GTI-B0001]` (an internal compiler error); it now works. If a later
+  initializer or the constructor body fails, each field already built is
+  dropped exactly once.
+- Such a class can also now be chosen by a conditional, as in `Name chosen =
+  pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
+  can be assigned into a field, as in `holder.name = other;`. Each used to
+  report `error[GTI-B0001]`.
 
 ## 0.459.0 — Reference bindings from payload enums inside loops
 
