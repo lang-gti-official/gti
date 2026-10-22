@@ -1844,6 +1844,13 @@ and may hold dynamic text. Static text storage counts as ownerless because
 semantics admits only ownerless initializers and stores into it; MIR checks
 assignments to it but does not yet re-verify global initializers.
 
+An external C declaration returning an untracked `c_string` is also an exact
+text producer. Its pointer validity and retention obligations belong to the
+native boundary; the verifier does not require a source body for that call.
+This admission requires C linkage, no source definition, and no result loan or
+borrow contract on the target or call. It does not apply to GTI-owned strings'
+dependent C-string observers or erase an annotated native result's dependency.
+
 A call's result holds what its callee's returns hold, mapped through the
 call's arguments and receiver. `TextContracts` summarizes each source
 function's returns once, from bodies alone and never from a declared

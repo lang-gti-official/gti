@@ -498,6 +498,10 @@
       "suite": "text"
     },
     {
+      "name": "testClassConditionalJoinBorrowedInputs",
+      "suite": "text"
+    },
+    {
       "name": "testCheckedConditionalArmInputs",
       "suite": "text"
     },
