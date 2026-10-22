@@ -27,6 +27,19 @@ for what minor and patch releases mean.
   user-defined deferred helper. The first profile is statement-only, with
   branch/expression bodies and no local binders, loops or callback conversion.
 
+## 0.458.3 — Nested field reads of temporaries
+
+- A field can now be read through a nested chain of a temporary whose class
+  has no destructor. With an `Outer` class that holds a `Token token`,
+  `int k = Outer(Token("literal", 1)).token.kind;` and
+  `std::string_view v = Outer(Token("literal", 2)).token.text;` used to
+  report `error[GTI-B0001]` (an internal compiler error); they now work.
+- The same holds for a nested read of a call or lambda result
+  (`make_outer(1).token.kind`) and of a moved value
+  (`std::move(outer).token.kind`), for `.size()` or a read-only method on the
+  nested field, and for a conditional such as
+  `(left ? Segment(1) : Segment(2)).start.x`.
+
 ## 0.458.2 — Recursive functions that return text
 
 - A recursive function returning `std::string_view` or `c_string`, such as
