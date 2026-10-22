@@ -1227,7 +1227,8 @@ auto SemanticVisitor::Impl::textDependentValueInfo(SemanticType type,
 
 auto SemanticVisitor::Impl::isTextDependentValue(
     const ExpressionInfo &info) const -> bool {
-  return info.type.kind == SemanticType::Class &&
+  return (info.type.kind == SemanticType::Class ||
+          info.type.kind == SemanticType::Enum) &&
          info.traits.containsBorrowedState &&
          !typeTraits(info.type).containsBorrowedState;
 }
@@ -1249,6 +1250,14 @@ auto SemanticVisitor::Impl::textDependentFields(const Expr &expression) const
                     mapping.resultFields.end());
     return fields;
   }
+  if (const auto *call = exprAs<Call>(&expression))
+    if (const auto *payload = semanticModel.findPayloadConstruction(*call);
+        payload != nullptr && payload->dependentTextPublication) {
+      for (const auto &mapping : payload->borrowFields)
+        fields.insert(fields.end(), mapping.resultFields.begin(),
+                      mapping.resultFields.end());
+      return fields;
+    }
   const auto *variable = exprAs<Variable>(&expression);
   const Symbol *symbol =
       variable == nullptr ? nullptr : resolvedBorrowVariable(*variable);
@@ -1273,6 +1282,41 @@ auto SemanticVisitor::Impl::noteTextDependentValue(const Expr &expression)
                        .location = expressionToken(expression)});
   if (inserted)
     requestSession.textDependentValueOrder.push_back(&expression);
+}
+
+auto SemanticVisitor::Impl::dependentTextPayloadLoan(
+    SemanticLoanId subject, const ResolvedPayloadPatternInfo &pattern,
+    const PayloadBindingInfo &payload) const -> const SemanticLoanInfo * {
+  const SemanticLoanInfo *loan =
+      subject == 0 ? nullptr : semanticModel.findLoan(subject);
+  if (loan == nullptr || loan->kind != SemanticLoanKind::StoredValue ||
+      loan->entry || !loan->conditions.empty() ||
+      !loan->additionalDependencies.empty() ||
+      loan->designatedFields.size() != 1)
+    return nullptr;
+  const EnumTypeInfo *enumeration =
+      pattern.type.kind == SemanticType::Enum
+          ? semanticModel.findEnumType(pattern.type.enumId)
+          : nullptr;
+  if (enumeration == nullptr)
+    return nullptr;
+  const auto variant = std::find_if(
+      enumeration->enumerators.begin(), enumeration->enumerators.end(),
+      [&](const EnumeratorInfo &candidate) {
+        return candidate.variantIndex == pattern.variantIndex;
+      });
+  if (variant == enumeration->enumerators.end() ||
+      payload.payloadIndex >= variant->payloadSymbols.size() ||
+      payload.payloadIndex >= variant->payloadTypes.size())
+    return nullptr;
+  const auto &type = variant->payloadTypes[payload.payloadIndex];
+  if (type.kind != SemanticType::StringView &&
+      type.kind != SemanticType::CString)
+    return nullptr;
+  return loan->designatedFields.front() ==
+                 variant->payloadSymbols[payload.payloadIndex]
+             ? loan
+             : nullptr;
 }
 
 auto SemanticVisitor::Impl::consumeTextDependentValue(const ExprPtr &expression)
@@ -5477,6 +5521,26 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
     }
     return dependencies;
   }
+  // A published payload designates its argument's sole owner. A dependent
+  // enum value cannot be reassigned, so its alternative is fixed for the
+  // dependency's lifetime and the payload symbol alone names it.
+  if (const auto *call = exprAs<Call>(expression.get()))
+    if (const auto *payload = semanticModel.findPayloadConstruction(*call);
+        payload != nullptr && payload->dependentTextPublication) {
+      std::vector<SemanticLoanDependency> dependencies;
+      for (const auto &mapping : payload->borrowFields) {
+        if (mapping.parameter >= call->arguments().size())
+          return {};
+        auto sources =
+            storedBorrowDependencies(call->arguments()[mapping.parameter]);
+        if (sources.size() != 1 || !sources.front().designatedFields.empty())
+          return {};
+        sources.front().designatedFields = mapping.resultFields;
+        sources.front().access = AccessMode::ReadOnly;
+        dependencies.push_back(std::move(sources.front()));
+      }
+      return dependencies;
+    }
   if (const ResolvedConstructionInfo *construction =
           semanticModel.findConstruction(*expression);
       construction != nullptr &&

@@ -6677,13 +6677,17 @@ private:
       const auto *call = exprAs<Call>(raw);
       const auto *payload =
           call ? model.findPayloadConstruction(*call) : nullptr;
-      if (payload &&
-          std::any_of(
-              payload->parameterTypes.begin(), payload->parameterTypes.end(),
-              [&](const SemanticType &field) {
-                return field.kind == SemanticType::Reference ||
-                       instanceProvider->traitsFor(field).containsBorrowedState;
-              })) {
+      // A published dynamic text payload (L-OWN-02) is borrowed state of this
+      // call, so it takes the same ordered input protection.
+      if (payload && (payload->dependentTextPublication ||
+                      std::any_of(payload->parameterTypes.begin(),
+                                  payload->parameterTypes.end(),
+                                  [&](const SemanticType &field) {
+                                    return field.kind ==
+                                               SemanticType::Reference ||
+                                           instanceProvider->traitsFor(field)
+                                               .containsBorrowedState;
+                                  }))) {
         // Borrowed aggregate fields require ordinary ordered argument
         // protection across later field evaluation. The sealed variant owns
         // this signature; neither a backend nor an aggregate spelling may
@@ -6695,6 +6699,16 @@ private:
                                        .arguments = std::move(*planned)};
         else
           lifecycleValid = false;
+      }
+      // A published text payload's owner is this call's fact (L-OWN-02),
+      // as a constructor call's published text field is.
+      if (payload && payload->dependentTextPublication &&
+          !payload->borrowFields.empty()) {
+        value.borrowOrigin = BorrowOriginKind::Argument;
+        value.borrowArgument = payload->borrowFields.front().parameter;
+        value.borrowAccess = AccessMode::ReadOnly;
+        value.borrowFields = payload->borrowFields;
+        value.dependentTextPublication = true;
       }
     }
     if ((value.intrinsic == IntrinsicKind::TextViewFromAddress ||

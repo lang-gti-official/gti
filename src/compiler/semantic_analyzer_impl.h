@@ -2020,6 +2020,12 @@ private:
   textDependentFields(const Expr &expression) const;
   void noteTextDependentValue(const Expr &expression);
   void consumeTextDependentValue(const ExprPtr &expression);
+  // The owner dependency of a switch subject when it designates exactly this
+  // binding's text payload (L-OWN-02).
+  [[nodiscard]] const SemanticLoanInfo *
+  dependentTextPayloadLoan(SemanticLoanId subject,
+                           const ResolvedPayloadPatternInfo &pattern,
+                           const PayloadBindingInfo &payload) const;
   void finalizeTextDependentValues();
 
   // Whether a construction of `type` may publish dynamic text into a direct

@@ -2506,7 +2506,7 @@
       }
     },
     "170-view-fields.gti": {
-      "declarations": 1431,
+      "declarations": 1432,
       "bodies": 147,
       "generated_items": 101,
       "generated_kinds": {
@@ -2522,7 +2522,7 @@
     }
   },
   "totals": {
-    "declarations": 174200,
+    "declarations": 174201,
     "bodies": 23074,
     "generated_items": 14533
   }

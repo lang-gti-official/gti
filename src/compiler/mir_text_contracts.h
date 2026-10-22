@@ -15,6 +15,12 @@ verifyOwnerlessTextContracts(const MirProgram &program);
 // Stored loan designating the field (L-OWN-02).
 [[nodiscard]] bool directTextField(const MirProgram &program,
                                    const SemanticType &type, SymbolId field);
+// A text payload of a payload enum whose type has no borrowed state. A value
+// of that enum may carry the payload's read-only text owner dependency in a
+// Stored loan designating the payload (L-OWN-02).
+[[nodiscard]] bool directTextPayload(const MirProgram &program,
+                                     const SemanticType &type,
+                                     SymbolId payload);
 // The formal that alone initializes the direct text field `field` of the
 // constructor's class, when that formal reaches no other text initializer.
 [[nodiscard]] std::optional<std::size_t>
