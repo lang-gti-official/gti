@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.459.2 — Returning borrowed enum parameters
+## 0.459.3 — Returning borrowed enum parameters
 
 - A function can return a borrowed payload enum that it takes by value. For
   `enum Slot { ready(int32_t& value), empty }`,
@@ -22,6 +22,19 @@ for what minor and patch releases mean.
   assigning to the owner while the result is live reports `error[GTI-S2017]`.
 - Returning another relay's result, `return relay(std::move(slot));`, still
   reports `error[GTI-B0001]`.
+
+## 0.459.2 — Native C-string ownership and conditional call results
+
+- An untracked `c_string` returned by an external C function can again be
+  retained in an ordinary native-resource wrapper. MIR recognizes the exact
+  native producer instead of reporting `GTI-B0001`; GTI owner-dependent strings
+  retain their existing lifetime checks and native pointer validity remains
+  the binding's obligation.
+- A conditional can bind a class result returned by either of two fallible
+  calls with borrowed text inputs. The backend preserves each arm's input-loan
+  ending after result publication, including cleanup-free records without a
+  default constructor. This repairs the editor's conditional stdout/stderr
+  logging path.
 
 ## 0.459.1 — Moving classes that hold text views
 
