@@ -112,13 +112,24 @@ def main() -> int:
         nested_slot_constructions = slot_constructions(
             "phrase_t|sentence_t|anchored_t"
         )
+        # Twelve nested reads of fresh temporaries, and two of joins whose
+        # arms pass a class by value.
         if (
-            len(nested_field_reads) != 12
+            len(nested_field_reads) != 14
             or owned_nested_reads
             or len(nested_slot_constructions) != 7
         ):
             sys.stderr.write(
                 "generated C++ lost the value slots of nested field reads\n"
+            )
+            return 1
+        # Each viewed cleanup-free join moves its object into the read's slot
+        # and ends the emptied join storage: the tier join, both by-value
+        # argument joins and the three text joins. A method call on a join
+        # borrows the join storage instead.
+        if generated.count("// end moved join representation") != 6:
+            sys.stderr.write(
+                "generated C++ lost the representation-only join storage\n"
             )
             return 1
         # A temporary whose class has a destructor is read through MIR's own

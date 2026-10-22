@@ -398,6 +398,53 @@ int32_t nested_immovable_loop() {
   return total == 3 ? 1 : 0;
 }
 
+// A cleanup-free conditional join may take arms that pass a class by value to
+// their constructor, or that build a class holding a text view. Its one Move
+// still stages the joined object for its read.
+int32_t join_transfer_position() {
+  bool left = true;
+  return (left ? phrase_t(word_t("one", 1)) : phrase_t(word_t("two", 2)))
+      .word.kind;
+}
+
+int32_t join_text_position() {
+  bool left = false;
+  return (left ? word_t("left", 2) : word_t("right", 1)).kind;
+}
+
+int32_t join_text_view_position() {
+  bool left = true;
+  std::string_view text = (left ? word_t("view", 1) : word_t("other", 2)).text;
+  return text.size() == 4 ? 1 : 0;
+}
+
+int32_t join_text_observer_position() {
+  bool left = false;
+  return (left ? word_t("a", 1) : word_t("abc", 2)).text.size() == 3 ? 1 : 0;
+}
+
+int32_t join_text_method_position() {
+  bool left = true;
+  return (left ? word_t("m", 3) : word_t("n", 4)).twice() == 6 ? 1 : 0;
+}
+
+int32_t join_transfer_loop() {
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 4; index += 1) {
+    // Each iteration reuses the join storage and the value slot.
+    total += (index % 2 == 0 ? phrase_t(word_t("even", index))
+                             : phrase_t(word_t("odd", index)))
+                 .word.kind;
+  }
+  return total == 6 ? 1 : 0;
+}
+
+int32_t join_observations() {
+  return join_transfer_position() + join_text_position() +
+         join_text_view_position() + join_text_observer_position() +
+         join_text_method_position() + join_transfer_loop();
+}
+
 int32_t nested_observations() {
   return nested_initializer_position() + nested_text_position() +
          nested_observer_position() + nested_member_position() +
@@ -421,6 +468,9 @@ int32_t main() {
   }
   if (nested_observations() != 12 || nested_constructions != 28) {
     return 3;
+  }
+  if (join_observations() != 6 || nested_constructions != 42) {
+    return 4;
   }
   return total - 67;
 }

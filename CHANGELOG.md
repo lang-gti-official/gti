@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.459.7 — Borrowed carriers stored after other fields
+## 0.459.8 — Borrowed carriers stored after other fields
 
 - A constructor can store a class that holds references (such as
   `class Cursor { int32_t& current; ... }`) in a field that follows other
@@ -23,6 +23,14 @@ for what minor and patch releases mean.
   fail, or print.
 - Generic classes holding such a carrier after another field, and carriers
   that also own resources, still report `error[GTI-B0001]`.
+
+## 0.459.7 — Field reads of conditionals whose arms take a class by value
+
+- A field of a conditional temporary can now be read when its arms pass a
+  class by value to their constructor, as in
+  `(left ? Segment(Point(1)) : Segment(Point(2))).flat`, including nested
+  reads such as `.low.x` and reads inside loops. It used to report
+  `error[GTI-B0001]` (an internal compiler error).
 
 ## 0.459.6 — Consuming a borrowed wrapper on only some paths
 

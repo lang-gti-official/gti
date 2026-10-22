@@ -514,6 +514,10 @@
       "suite": "text"
     },
     {
+      "name": "testCleanupFreeJoinTransferAndTextArms",
+      "suite": "text"
+    },
+    {
       "name": "testShortCircuitOwnedFieldView",
       "suite": "text"
     },
