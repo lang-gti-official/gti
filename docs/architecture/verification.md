@@ -13,11 +13,11 @@ eight such retirements. `borrow_origin_runtime` runs the fixture in all eight
 native modes, and `tryable_propagation_runtime` runs example 165, which now
 consumes a wrapper under `||`.
 
-An emitted-C++ differential compared main's compiler with the candidate over
-1,950 corpus programs at `-O0` and `-O3`. Only example 165 and the new fixture
-changed, both from `GTI-B0001` to accepted; every other program, accepted or
-rejected, produced the same output. The MIR and lowered-program censuses are
-unchanged.
+An emitted-C++ differential compared the compiler at main 6b587a959 with the
+candidate built on it over 1,950 corpus programs at `-O0` and `-O3`. Only
+example 165 and the new fixture changed, both from `GTI-B0001` to accepted;
+every other program, accepted or rejected, produced the same output. The MIR
+and lowered-program censuses are unchanged.
 
 ## Classes holding text views (0.459.1)
 
