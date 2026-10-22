@@ -12,20 +12,24 @@ namespace lang {
 namespace {
 
 std::optional<ConstantValue> dataConstantInType(const ConstantValue &value,
-                                               const SemanticType &type) {
-  if (std::holds_alternative<NullConstant>(value) && type.acceptsNullInitialization())
+                                                const SemanticType &type) {
+  if (std::holds_alternative<NullConstant>(value) &&
+      type.acceptsNullInitialization())
     return value;
   if (std::holds_alternative<std::string>(value) &&
-      (type.kind == SemanticType::StringView || type.kind == SemanticType::CString))
+      (type.kind == SemanticType::StringView ||
+       type.kind == SemanticType::CString))
     return value;
   const auto converted = convertConstantToType(value, type);
   return converted.value;
 }
 
 std::optional<ConstantValue> dataLiteralInType(const Literal &literal,
-                                             const SemanticType &type) {
-  const auto evaluated = evaluateConstantLiteral(literal, constantIntegerDomain(type));
-  return evaluated.value ? dataConstantInType(*evaluated.value, type) : std::nullopt;
+                                               const SemanticType &type) {
+  const auto evaluated =
+      evaluateConstantLiteral(literal, constantIntegerDomain(type));
+  return evaluated.value ? dataConstantInType(*evaluated.value, type)
+                         : std::nullopt;
 }
 
 bool exactDataInitializer(const MirThreadLocalStorage &storage) {
@@ -74,8 +78,10 @@ bool exactDataInitializer(const MirThreadLocalStorage &storage) {
     if (instruction.operation == MirOperation::Literal) {
       if (!instruction.literal)
         return false;
-      auto actual = dataLiteralInType(*instruction.literal, instruction.info.type);
-      for (auto it = conversions.rbegin(); actual && it != conversions.rend(); ++it) {
+      auto actual =
+          dataLiteralInType(*instruction.literal, instruction.info.type);
+      for (auto it = conversions.rbegin(); actual && it != conversions.rend();
+           ++it) {
         if ((*it)->operation == MirOperation::Identity &&
             (*it)->operands.front().type != (*it)->info.type)
           return false;
@@ -86,7 +92,8 @@ bool exactDataInitializer(const MirThreadLocalStorage &storage) {
       // by the typed destination, not necessarily a separate Compute node.
       if (actual)
         actual = dataConstantInType(*actual, storage.type);
-      const auto expected = dataLiteralInType(*storage.dataInitializer, storage.type);
+      const auto expected =
+          dataLiteralInType(*storage.dataInitializer, storage.type);
       return actual && expected && *actual == *expected;
     }
     if (instruction.operands.size() != 1 ||
@@ -156,21 +163,25 @@ MirVerificationResult verifyMirThreadLocalStorage(const MirProgram &program) {
     const MirBody *body = findMirBody(program, address);
     if (!body)
       continue;
-    const bool usesStorage = std::any_of(body->places.begin(), body->places.end(),
-                                         [&](const MirPlace &place) {
-      return place.root == MirPlaceRootKind::Symbol && place.capture == 0 &&
-             inventory.contains(place.symbol);
-    });
-    const bool hasProtocol = std::any_of(body->blocks.begin(), body->blocks.end(),
-                                        [](const MirBlock &block) {
-      return std::any_of(block.instructions.begin(), block.instructions.end(),
-                         [](const MirInstruction &instruction) {
-        return !instruction.tombstone &&
-               (instruction.kind == MirInstructionKind::EnsureThreadLocal ||
-                instruction.kind == MirInstructionKind::BeginThreadLocals ||
-                instruction.kind == MirInstructionKind::DrainThreadLocals);
-      });
-    });
+    const bool usesStorage = std::any_of(
+        body->places.begin(), body->places.end(), [&](const MirPlace &place) {
+          return place.root == MirPlaceRootKind::Symbol && place.capture == 0 &&
+                 inventory.contains(place.symbol);
+        });
+    const bool hasProtocol = std::any_of(
+        body->blocks.begin(), body->blocks.end(), [](const MirBlock &block) {
+          return std::any_of(
+              block.instructions.begin(), block.instructions.end(),
+              [](const MirInstruction &instruction) {
+                return !instruction.tombstone &&
+                       (instruction.kind ==
+                            MirInstructionKind::EnsureThreadLocal ||
+                        instruction.kind ==
+                            MirInstructionKind::BeginThreadLocals ||
+                        instruction.kind ==
+                            MirInstructionKind::DrainThreadLocals);
+              });
+        });
     // No TLS place or protocol means there is no proof obligation here. In
     // particular ordinary programs must not rebuild every body's dominators
     // merely because the verifier supports an unused language facility.
@@ -275,7 +286,8 @@ MirVerificationResult verifyMirThreadLocalStorage(const MirProgram &program) {
             instruction.borrowOrigin != BorrowOriginKind::Global ||
             !instruction.borrowPlace)
           continue;
-        const auto *callee = program.findFunctionInstance(*instruction.functionTarget);
+        const auto *callee =
+            program.findFunctionInstance(*instruction.functionTarget);
         const auto *loan = body->findLoan(*instruction.loan);
         const auto *source = loan ? body->findPlace(loan->source) : nullptr;
         if (!callee || callee->definitionKind != MirDefinitionKind::Source ||
@@ -289,10 +301,12 @@ MirVerificationResult verifyMirThreadLocalStorage(const MirProgram &program) {
             source->symbol != instruction.borrowPlace->root ||
             !inventory.contains(source->symbol))
           continue;
-        const bool invoked = block.terminator.kind == MirTerminatorKind::Invoke &&
-                             block.terminator.invokeInstruction == instruction.id;
-        if (callee->mayRaiseDefinedFailure ? !invoked
-                                         : !instruction.definedFailure.empty())
+        const bool invoked =
+            block.terminator.kind == MirTerminatorKind::Invoke &&
+            block.terminator.invokeInstruction == instruction.id;
+        if (callee->mayRaiseDefinedFailure
+                ? !invoked
+                : !instruction.definedFailure.empty())
           continue;
         guards[source->symbol].push_back(
             {.block = invoked ? block.terminator.target : block.id,

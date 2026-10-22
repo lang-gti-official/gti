@@ -631,7 +631,8 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
   // initializer body. Its exact semantic source anchor still needs a site,
   // including when no naming expression ever evaluates that declaration.
   for (const HirThreadLocalStorage &storage : hir.threadLocalStorage())
-    for (const DefinedFailureOrigin &origin : storage.ensureFailure.localOrigins)
+    for (const DefinedFailureOrigin &origin :
+         storage.ensureFailure.localOrigins)
       collectOrigin(origin);
   if (const std::optional<HirHostedProgramEntryPlan> &hosted =
           hir.hostedProgramEntryPlan()) {
