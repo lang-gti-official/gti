@@ -912,6 +912,13 @@ target_link_libraries("gti_mir_shared_failure_cleanup_tests" PRIVATE gti_compile
 add_test(NAME mir_shared_failure_cleanup
          COMMAND gti_mir_shared_failure_cleanup_tests)
 
+add_executable(gti_mir_thread_local_tests mir_thread_local_tests.cpp)
+target_link_libraries(gti_mir_thread_local_tests PRIVATE gti_compiler)
+add_test(NAME mir_thread_local COMMAND gti_mir_thread_local_tests)
+add_executable(gti_mir_persistent_storage_tests mir_persistent_storage_tests.cpp)
+target_link_libraries(gti_mir_persistent_storage_tests PRIVATE gti_compiler)
+add_test(NAME mir_persistent_storage COMMAND gti_mir_persistent_storage_tests)
+
 add_executable("gti_mir_program_initialization_tests"
                "${PROJECT_SOURCE_DIR}/tests/mir_program_initialization_tests.cpp")
 target_link_libraries("gti_mir_program_initialization_tests"
@@ -4544,6 +4551,11 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>"
     )
     set_tests_properties(managed_thread_end_to_end PROPERTIES TIMEOUT 300)
+    add_test(NAME thread_local_end_to_end
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/thread_local_runtime_test.py"
+        "$<TARGET_FILE:gti>")
+    set_tests_properties(thread_local_end_to_end PROPERTIES TIMEOUT 900)
     add_test(
       NAME managed_thread_tsan
       COMMAND "${Python3_EXECUTABLE}"

@@ -54,6 +54,73 @@ not turn a race into a defined nondeterministic result.
 transfer-capable, or share-capable. Safe shared mutation requires an approved
 interior-synchronization type.
 
+## Thread-Local Storage
+
+`thread_local` gives a declaration one distinct object per attached GTI thread.
+It is available in both execution profiles and does not require its type to be
+share-capable. For example:
+
+```gti
+thread_local mut int visits = 0;
+class Registry {
+public:
+  static thread_local mut Registry* current = nullptr;
+};
+int visit() {
+  thread_local mut int calls = 0;
+  calls += 1;
+  return calls;
+}
+```
+
+Namespace variables, non-generic static data members and ordinary function-local
+variables are supported. `static thread_local` and `thread_local static` mean the
+same storage duration; `static` retains its ordinary linkage/member meaning.
+Block scope controls name visibility, not the lifetime of the per-thread object.
+A block-local object can therefore be borrowed after its declaring function
+returns, subject to the ordinary checked origin and access rules.
+
+Initialization is lazy at the first evaluated use on each thread. A block
+declaration also performs that first-use check when execution reaches it.
+Initializers use ordinary GTI construction and rollback. Passive literal/zero
+initialization has no user code, cleanup registration, heap allocation or dynamic
+guard. Other initializers use an explicit per-thread state transition; recursive
+initialization is defined failure `GTI-R0013`, not an implicit C++ rule.
+
+Successful cleanup-owning initializations register exactly once. Cleanup runs on
+the same thread in reverse successful-initialization order, after automatic task
+state is retired and before a worker outcome is published. The initial thread
+drains at hosted exit; GTI-created manual C threads drain before leaving their
+attached entry. Ordinary cleanup failure retains its record and remaining
+cleanup; a secondary failure uses the existing bounded two-record emergency and
+abandons remaining lifetimes. New initialization or resurrection during/after
+thread-exit cleanup is `GTI-R0013`. Access to another initialized, not-yet-retired
+slot remains permitted during cleanup.
+
+A TLS reference is not a process-lifetime promise or an alias exemption. Direct
+accesses and hidden accesses through GTI helpers, constructors, operators,
+initializers and destructors must respect live shared/exclusive loans. First-use
+effects include the initializer; a live checked loan to the exact local slot
+proves that slot already initialized, including through nested helpers. Open
+GTI call targets require a structural ambient-effects proof when a persistent
+borrow remains live. Native calls and raw pointers retain their existing unsafe
+obligations; the compiler does not infer arbitrary native pointer retention.
+
+Checked scoped/joined borrowing can lend a TLS referent while its owning thread
+and loan remain alive and the referent permits the selected access. This is not
+a blanket ban on cross-thread references. An independently created worker's
+direct lookup names its own slot, not the captured parent-thread object. Owned
+tasks and results still cannot silently retain borrowed state past its owner.
+
+Current structural boundaries: no non-static TLS fields, TLS parameters or
+functions, `constexpr` TLS, native TLS declarations, generic-instance TLS, or
+lambda-local TLS declarations. A local initializer cannot depend on an automatic
+binding, parameter or instance receiver; guarded lexical/per-instance
+initialization is a separate goal. A source diagnostic identifies these shapes.
+`thread_local` does not add thread-specific-storage keys, detach, arbitrary
+foreign-thread entry or async suspension. Runnable example:
+[`171-thread-local-storage.gti`](../../examples/171-thread-local-storage.gti).
+
 ## C-Style Scheduling Hint
 
 `<std/cthread>` currently implements `void std::thrd_yield()`. It offers the
@@ -729,7 +796,7 @@ has no safe scoped condition-variable wrapper, safe public manual-unlock API,
 or safe recursive/read-write mutex family. The unsafe `<std/cthread>` surface
 does provide manual unlock, recursive mutexes, and manual condition variables.
 Across both surfaces, detach, C-style thread exit,
-thread-specific storage, read/write mutexes, and arbitrary
+C-style thread-specific-storage keys, read/write mutexes, and arbitrary
 foreign-created-thread entry are not implemented.
 Persistent worker pools, dependency scheduling and asynchronous suspension are
 also separate facilities; synchronous scoped invocation does not provide them.

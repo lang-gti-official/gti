@@ -42,6 +42,7 @@ struct CanonicalPlace {
   MirPlaceRootKind root = MirPlaceRootKind::Value;
   HirBindingId binding = 0;
   SymbolId symbol = 0;
+  std::size_t capture = 0;
   MirTemporaryId temporary = 0;
   MirValueId value = 0;
   std::vector<MirPlaceProjection> projections;

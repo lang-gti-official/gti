@@ -1951,6 +1951,13 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
                      .owner = mir.hostedStartupPlan()->entry},
          .spelling = "::main"});
   }
+  for (const auto &storage : mir.threadLocalStorage()) {
+    builder.rows.bodies.push_back(
+        {.address = {.kind = MirBodyKind::ThreadLocalInitializer,
+                     .owner = storage.symbol},
+         .spelling = "::__gti_program::__gti_tls_init_" +
+                     std::to_string(storage.symbol)});
+  }
 
   // The executable module body carries its own name row like every other
   // executable body; it is never a call target.
@@ -2490,8 +2497,8 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
 
   for (const auto &storage : mir.threadLocalStorage()) {
     builder.addType(storage.type);
-    const std::string spelling =
-        "::__gti_program::__gti_tls_value_" + std::to_string(storage.symbol) + "()";
+    const std::string spelling = "::__gti_program::__gti_tls_value_" +
+                                 std::to_string(storage.symbol) + "()";
     bool found = false;
     for (auto &row : builder.rows.symbols) {
       if (row.kind == CppMirSymbolRepresentationKind::Storage &&

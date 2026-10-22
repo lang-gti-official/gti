@@ -896,7 +896,9 @@ public:
   [[nodiscard]] const HirBody &module() const { return moduleBody; }
 
   [[nodiscard]] const std::vector<HirThreadLocalStorage> &
-  threadLocalStorage() const { return threadLocalStorage_; }
+  threadLocalStorage() const {
+    return threadLocalStorage_;
+  }
 
   [[nodiscard]] const HirProgramInitializationPlan &
   programInitializationPlan() const {

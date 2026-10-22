@@ -477,6 +477,15 @@ generic classes are rejected by current semantics and have no accepted
 program-wide initialization contract; excluding them from this plan is not
 evidence of usable per-instance static storage.
 
+Thread-local declarations instead retain the semantic
+`threadLocalInitializationPlan` as a separate exact `HirThreadLocalStorage`
+inventory. Each declaration owns a typed initializer body and per-thread cleanup
+recipe; it is never lifted into eager `Module/0` initialization or an automatic
+lexical drop. HIR verifies the source declaration, storage identity and
+initializer facts against semantics, including function-local declaration
+identity. Evaluated uses preserve first-use requirements for MIR rather than
+asking the backend to discover them from generated variable names.
+
 An exact frontend-computed program constant becomes a
 `programConstantSubstitution` value carrying the same `ConstantValue`,
 `ExpressionInfo`, source expression, and type. This is the downstream proof

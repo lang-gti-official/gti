@@ -339,14 +339,18 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
                               .owner = storage.symbol};
     graph.items.push_back({.identity = identity, .sourceBody = body});
     rootBody(body, identity);
-    for (const auto address : enumerateMirBodyAddresses(program)) {
-      const auto *user = findMirBody(program, address);
-      for (const auto &block : user->blocks)
-        for (const auto &instruction : block.instructions)
-          if (instruction.kind == MirInstructionKind::EnsureThreadLocal &&
-              instruction.threadLocalStorage == storage.symbol)
-            rootBody(address, identity);
-    }
+  }
+  for (const auto address : enumerateMirBodyAddresses(program)) {
+    const auto *user = findMirBody(program, address);
+    if (user == nullptr)
+      continue;
+    for (const auto &block : user->blocks)
+      for (const auto &instruction : block.instructions)
+        if (!instruction.tombstone &&
+            instruction.kind == MirInstructionKind::EnsureThreadLocal)
+          rootBody(address,
+                   {.kind = LoweredGeneratedItemKind::ThreadLocalStorage,
+                    .owner = instruction.threadLocalStorage});
   }
 
   std::optional<LoweredGeneratedItemIdentity> initialization;

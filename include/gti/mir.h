@@ -598,6 +598,7 @@ enum class MirInstructionKind {
   ParkRangeCursor,
   RestoreRangeCursor,
   EnsureThreadLocal,
+  DrainThreadLocals,
   Count,
 };
 
@@ -1705,6 +1706,7 @@ enum class MirHostedStartupOperationKind {
   TerminateCleanupFailure,
   BeginCThreadRuntime,
   EndCThreadRuntime,
+  DrainThreadLocals,
   Count,
 };
 
@@ -1826,14 +1828,14 @@ struct MirThreadLocalStorage {
 class MirProgram {
 public:
   [[nodiscard]] const std::vector<MirThreadLocalStorage> &
-  threadLocalStorage() const { return threadLocalStorage_; }
+  threadLocalStorage() const {
+    return threadLocalStorage_;
+  }
   [[nodiscard]] const MirThreadLocalStorage *
   findThreadLocalStorage(SymbolId symbol) const {
-    const auto found = std::find_if(threadLocalStorage_.begin(),
-                                  threadLocalStorage_.end(),
-                                  [symbol](const auto &storage) {
-                                    return storage.symbol == symbol;
-                                  });
+    const auto found = std::find_if(
+        threadLocalStorage_.begin(), threadLocalStorage_.end(),
+        [symbol](const auto &storage) { return storage.symbol == symbol; });
     return found == threadLocalStorage_.end() ? nullptr : &*found;
   }
   [[nodiscard]] const std::vector<ForeignStorageInfo> &

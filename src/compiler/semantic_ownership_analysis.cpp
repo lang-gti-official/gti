@@ -1131,14 +1131,16 @@ auto SemanticVisitor::Impl::reportOwnershipErasureCapabilityAmplification(
   return true;
 }
 
-auto SemanticVisitor::Impl::isThreadLocalStorage(SymbolId symbol) const -> bool {
+auto SemanticVisitor::Impl::isThreadLocalStorage(SymbolId symbol) const
+    -> bool {
   const SymbolRecord *record = semanticModel.database().findSymbol(symbol);
   if (record == nullptr && instanceBaseModel != nullptr)
     record = instanceBaseModel->database().findSymbol(symbol);
   return record != nullptr && record->threadLocal;
 }
 
-auto SemanticVisitor::Impl::isPersistentStorageSymbol(SymbolId symbol) const -> bool {
+auto SemanticVisitor::Impl::isPersistentStorageSymbol(SymbolId symbol) const
+    -> bool {
   const SymbolRecord *record = semanticModel.database().findSymbol(symbol);
   if (record == nullptr && instanceBaseModel != nullptr)
     record = instanceBaseModel->database().findSymbol(symbol);
@@ -1152,7 +1154,8 @@ auto SemanticVisitor::Impl::isThreadLocalDataOnly(
   if (!(isNumeric(type) || type == SemanticType::Bool ||
         type.kind == SemanticType::RawPointer ||
         type.kind == SemanticType::NativeFunction ||
-        type.kind == SemanticType::StringView || type.kind == SemanticType::CString) ||
+        type.kind == SemanticType::StringView ||
+        type.kind == SemanticType::CString) ||
       requiresActiveCleanupFor(type))
     return false;
   const Expr *initializer = declaration.initializer().get();
@@ -1162,14 +1165,15 @@ auto SemanticVisitor::Impl::isThreadLocalDataOnly(
 }
 
 auto SemanticVisitor::Impl::threadLocalEnsureFailure(SymbolId symbol,
-                                                    const Token &site) const
+                                                     const Token &site) const
     -> DefinedFailureOperation {
   const VariableDecl *declaration = nullptr;
   const auto found = requestSession.threadLocalDeclarations.find(symbol);
   if (found != requestSession.threadLocalDeclarations.end())
     declaration = found->second;
   if (declaration == nullptr) {
-    const auto *step = semanticModel.threadLocalInitializationPlan().findStepForSymbol(symbol);
+    const auto *step =
+        semanticModel.threadLocalInitializationPlan().findStepForSymbol(symbol);
     declaration = step == nullptr ? nullptr : step->declaration;
   }
   const auto *record = semanticModel.database().findSymbol(symbol);
@@ -1177,13 +1181,17 @@ auto SemanticVisitor::Impl::threadLocalEnsureFailure(SymbolId symbol,
       isThreadLocalDataOnly(*declaration, record->type))
     return {};
   const SourceSpan span = tokenSpan(site);
-  return {.localOrigins = {{.outcomes = {
-                               {DefinedFailureCode::HostedRuntimeContractFailure,
-                                DefinedFailureDetail::RecursiveThreadLocalInitialization},
-                               {DefinedFailureCode::HostedRuntimeContractFailure,
-                                DefinedFailureDetail::ThreadLocalInitializationDuringShutdown}},
-                           .sourceUnit = sourceUnitFor(site),
-                           .start = span.start, .end = span.end, .line = span.line}},
+  return {.localOrigins =
+              {{.outcomes =
+                    {{DefinedFailureCode::HostedRuntimeContractFailure,
+                      DefinedFailureDetail::RecursiveThreadLocalInitialization},
+                     {DefinedFailureCode::HostedRuntimeContractFailure,
+                      DefinedFailureDetail::
+                          ThreadLocalInitializationDuringShutdown}},
+                .sourceUnit = sourceUnitFor(site),
+                .start = span.start,
+                .end = span.end,
+                .line = span.line}},
           .propagation = FailurePropagationKind::BodyCall};
 }
 
@@ -1192,23 +1200,30 @@ auto SemanticVisitor::Impl::validateThreadLocalDeclaration(
   const Token &keyword = *declaration.threadLocalKeyword();
   std::string reason;
   if (declaration.linkage() != LanguageLinkage::Gti)
-    reason = "A thread-local declaration must define GTI-owned storage; native thread-local bindings are not supported.";
+    reason = "A thread-local declaration must define GTI-owned storage; native "
+             "thread-local bindings are not supported.";
   else if (currentClass && functionDepth == 0 && !declaration.isStatic())
     reason = "A thread-local class field must also be declared 'static'.";
   else if (declaration.isConstexpr())
-    reason = "Thread-local storage is initialized at runtime and cannot be declared 'constexpr'.";
+    reason = "Thread-local storage is initialized at runtime and cannot be "
+             "declared 'constexpr'.";
   else if (lambdaDepth != 0)
-    reason = "Thread-local declarations inside lambda bodies require a concrete per-instance storage identity.";
+    reason = "Thread-local declarations inside lambda bodies require a "
+             "concrete per-instance storage identity.";
+  else if (currentClass && !classInfo(*currentClass).genericParameters.empty())
+    reason = "Thread-local declarations inside generic classes require a "
+             "concrete per-instance storage identity.";
   else if (functionDepth > 0) {
     const FunctionInfo *function = currentFunctionInfo();
     if ((function != nullptr && !function->genericParameters.empty()) ||
         (currentClass && !classInfo(*currentClass).genericParameters.empty()))
-      reason = "Thread-local declarations inside generic bodies require a concrete per-instance storage identity.";
+      reason = "Thread-local declarations inside generic bodies require a "
+               "concrete per-instance storage identity.";
   }
   if (reason.empty())
     return true;
-  Diagnostic diagnostic = makeDiagnostic("GTI-S2124", DiagnosticPhase::Semantics,
-                                         keyword, std::move(reason));
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2124", DiagnosticPhase::Semantics, keyword, std::move(reason));
   diagnostic.related.push_back({tokenSpan(declaration.name()),
                                 "The thread-local storage is declared here."});
   diagnostics.emplace_back(std::move(diagnostic));
@@ -1234,12 +1249,14 @@ auto SemanticVisitor::Impl::recordThreadLocalDeclaration(
   }
   if (updated.type.kind == SemanticType::Reference ||
       updated.traits.containsBorrowedState) {
-    if (std::none_of(diagnostics.begin(), diagnostics.end(), [&](const auto &item) {
-          return item.code == "GTI-S2045" &&
-                 item.primary == tokenSpan(declaration.name());
-        }))
+    if (std::none_of(diagnostics.begin(), diagnostics.end(),
+                     [&](const auto &item) {
+                       return item.code == "GTI-S2045" &&
+                              item.primary == tokenSpan(declaration.name());
+                     }))
       report(declaration.name(),
-             "Thread-local storage cannot retain a checked reference or another value's borrowed state through thread shutdown.",
+             "Thread-local storage cannot retain a checked reference or "
+             "another value's borrowed state through thread shutdown.",
              "GTI-S2045");
   }
   if (functionDepth == 0)
@@ -1253,16 +1270,28 @@ auto SemanticVisitor::Impl::recordThreadLocalDeclaration(
   requestSession.threadLocalSteps.push_back(
       {.sourceUnit = sourceUnitFor(declaration.name()),
        .kind = ProgramStorageKind::FunctionLocal,
-       .role = declaration.initializer() && !isThreadLocalDataOnly(declaration, updated.type)
-                   ? ProgramInitializationStepRole::Initializer
-                   : ProgramInitializationStepRole::DataOnly,
+       .role = isThreadLocalDataOnly(declaration, updated.type)
+                   ? ProgramInitializationStepRole::DataOnly
+                   : ProgramInitializationStepRole::Initializer,
        .declaration = &declaration,
        .symbol = updated.symbol,
        .requiresActiveCleanup = requiresActiveCleanupFor(updated.type),
        .threadLocal = true,
        .ownerFunction = function == nullptr ? 0 : function->id,
-       .ensureFailure = threadLocalEnsureFailure(updated.symbol, declaration.name()),
+       .ensureFailure =
+           threadLocalEnsureFailure(updated.symbol, declaration.name()),
        .declarationSpan = tokenSpan(declaration.name())});
+  if (currentProgramEffectOwner.valid() &&
+      !isThreadLocalDataOnly(declaration, updated.type)) {
+    auto check = captureProgramStorageBorrows(tokenSpan(declaration.name()));
+    const auto owner = currentProgramEffectOwner;
+    const auto edges = programEffects[owner].edges.size();
+    const auto unknown = programEffects[owner].unknown.size();
+    addProgramEffectEdge(
+        {.kind = ProgramEffectOwnerKind::Initializer, .id = updated.symbol},
+        tokenSpan(declaration.name()));
+    publishProgramStorageBorrowCheck(std::move(check), owner, edges, unknown);
+  }
 }
 
 auto SemanticVisitor::Impl::reportConcurrentGlobalPolicyFailure(
@@ -3144,7 +3173,8 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
         if (const auto *global =
                 semanticModel.database().findSymbol(dependency.place.root);
             global != nullptr &&
-            (global->threadLocal || global->kind == SymbolKind::GlobalVariable ||
+            (global->threadLocal ||
+             global->kind == SymbolKind::GlobalVariable ||
              (global->kind == SymbolKind::Field && global->staticMember))) {
           normalized.origin = BorrowOriginKind::Global;
           normalized.globalRoot = dependency.place.root;
@@ -10240,6 +10270,8 @@ auto SemanticVisitor::Impl::recordProvenLoanEndpoint(
 }
 
 auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
+  recordProgramScopeBorrowCleanup();
+  loanFlow.finalized = true;
   if (loanFlow.deferredGenericFlow) {
     // Unselected arms can add uses and conflicts. Publishing endpoints from
     // this incomplete primary would assert liveness that was never proved.
@@ -10381,6 +10413,20 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
             conflict.order <= found->second.lastUseOrder))) {
         liveLoans.push_back(id);
       }
+    }
+    if (conflict.programStorageCheck) {
+      // Hidden-call effects close after all source bodies are known, but their
+      // loans must obey precisely the same structured endpoints as an ordinary
+      // direct place conflict. Do not freeze provisional lexical liveness.
+      auto &checks = requestSession.programStorageBorrowChecks;
+      if (*conflict.programStorageCheck < checks.size())
+        std::erase_if(checks[*conflict.programStorageCheck].protections,
+                      [&](const auto &protection) {
+                        return protection.loan != 0 &&
+                               std::find(liveLoans.begin(), liveLoans.end(),
+                                         protection.loan) == liveLoans.end();
+                      });
+      continue;
     }
     if (!liveLoans.empty()) {
       bool laterUse = false;

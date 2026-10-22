@@ -4591,6 +4591,11 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
            "GTI-S2021");
     return;
   }
+  const auto temporaryEffectOwner = currentProgramEffectOwner;
+  const auto temporaryEdgeStart =
+      programEffects[temporaryEffectOwner].edges.size();
+  const auto temporaryUnknownStart =
+      programEffects[temporaryEffectOwner].unknown.size();
   if (currentReturnType == SemanticType::Void) {
     if (stmt.value()) {
       const SemanticType valueType = analyze(stmt.value());
@@ -4663,6 +4668,8 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       semanticModel.recordBorrowDependencySet(
           *stmt.value(), {.dependencies = std::move(dependencies)});
     }
+    recordReturnedStorageBorrowCleanup(stmt, temporaryEdgeStart,
+                                       temporaryUnknownStart);
     recordRawResult(stmt.value());
     requireInitializedReceiver(stmt.keyword());
     return;
@@ -4710,6 +4717,8 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       }
     }
   }
+  recordReturnedStorageBorrowCleanup(stmt, temporaryEdgeStart,
+                                     temporaryUnknownStart);
   requireInitializedReceiver(stmt.keyword());
 }
 
@@ -10523,7 +10532,8 @@ auto SemanticVisitor::Impl::visitThisExpr(const This &expr) -> void {
   if (currentProgramEffectOwner.kind == ProgramEffectOwnerKind::Initializer &&
       isThreadLocalStorage(currentProgramEffectOwner.id)) {
     report(expr.keyword(),
-           "A thread-local initializer cannot depend on an automatic receiver; its initializer has independent storage duration.",
+           "A thread-local initializer cannot depend on an automatic receiver; "
+           "its initializer has independent storage duration.",
            "GTI-S2124");
     currentType = SemanticType::Unknown;
     return;
@@ -11099,11 +11109,13 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
        symbol->bindingKind == SemanticBindingKind::Field) &&
       (symbol->variableDeclaration == nullptr ||
        !symbol->variableDeclaration->isThreadLocal())) {
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2124", DiagnosticPhase::Semantics, expr.name(),
-        "A thread-local initializer cannot depend on an automatic binding, parameter or instance field.");
-    diagnostic.related.push_back({tokenSpan(symbol->declaration),
-                                  "This automatic dependency is declared here."});
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2124", DiagnosticPhase::Semantics, expr.name(),
+                       "A thread-local initializer cannot depend on an "
+                       "automatic binding, parameter or instance field.");
+    diagnostic.related.push_back(
+        {tokenSpan(symbol->declaration),
+         "This automatic dependency is declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
   }
   if (!isCompilerTrustedRequester(expr.name()) && symbol->compilerPrivate) {

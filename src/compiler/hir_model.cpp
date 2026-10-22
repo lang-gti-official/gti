@@ -1949,6 +1949,47 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       semantics.foreignStorageDeclarations())
     result.errors.emplace_back(
         "HIR foreign storage differs from semantic declarations");
+  const auto &semanticTls = semantics.threadLocalInitializationPlan().steps;
+  const auto &hirTls = program.threadLocalStorage();
+  if (semanticTls.size() != hirTls.size())
+    result.errors.emplace_back(
+        "HIR thread-local inventory differs from semantic declarations");
+  std::unordered_set<SymbolId> tlsSymbols;
+  for (std::size_t index = 0;
+       index < std::min(semanticTls.size(), hirTls.size()); ++index) {
+    const auto &semantic = semanticTls[index];
+    const auto &storage = hirTls[index];
+    const auto *binding = semantic.declaration
+                              ? semantics.findBinding(*semantic.declaration)
+                              : nullptr;
+    bool exact =
+        binding && binding->threadLocal && storage.symbol != 0 &&
+        tlsSymbols.insert(storage.symbol).second &&
+        storage.symbol == semantic.symbol &&
+        storage.sourceUnit == semantic.sourceUnit &&
+        storage.source == semantic.declaration &&
+        storage.type == binding->type && storage.traits == binding->traits &&
+        storage.access == binding->access &&
+        storage.requiresActiveCleanup == semantic.requiresActiveCleanup &&
+        storage.ensureFailure == semantic.ensureFailure &&
+        storage.dataInitializer.has_value() ==
+            (semantic.role == ProgramInitializationStepRole::DataOnly) &&
+        storage.initializer.roots.size() == 1;
+    const auto *returned = storage.initializer.roots.size() == 1
+                               ? storage.initializer.findStatement(
+                                     storage.initializer.roots.front())
+                               : nullptr;
+    exact = exact && returned && returned->kind == HirStatementKind::Return &&
+            returned->source == storage.source && returned->value.has_value();
+    if (exact && storage.source->initializer()) {
+      const auto *value = storage.initializer.initializerValueForSource(
+          *storage.source->initializer());
+      exact = value && *returned->value == value->id;
+    }
+    if (!exact)
+      result.errors.emplace_back("HIR thread-local initializer loses its exact "
+                                 "semantic storage proof");
+  }
   const ProgramInitializationPlan &semanticInitialization =
       semantics.programInitializationPlan();
   const HirProgramInitializationPlan &initialization =

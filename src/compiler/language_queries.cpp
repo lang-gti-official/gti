@@ -982,6 +982,8 @@ public:
         result.notes.emplace_back(
             "Foreign storage: reads and writes require unsafe; address "
             "formation does not certify lifetime or initialization.");
+      } else if (occurrence->threadLocal) {
+        result.signature = signatures.binding(*occurrence);
       } else {
         result.signature = types.print(occurrence->type);
       }

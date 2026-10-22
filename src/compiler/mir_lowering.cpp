@@ -606,12 +606,13 @@ MirLowerer::lowerProgram(const HirProgram &source,
                                   .type = storage.type,
                                   .traits = storage.traits,
                                   .access = storage.access,
-                                  .requiresActiveCleanup = storage.requiresActiveCleanup,
+                                  .requiresActiveCleanup =
+                                      storage.requiresActiveCleanup,
                                   .dataInitializer = storage.dataInitializer};
-    lowered.initializer = lowerBody(
-        source, failureMetadata, storage.initializer,
-        MirBodyKind::ThreadLocalInitializer, storage.type, {},
-        definedFailureEffects, valid, result.errors, storage.symbol);
+    lowered.initializer =
+        lowerBody(source, failureMetadata, storage.initializer,
+                  MirBodyKind::ThreadLocalInitializer, storage.type, {},
+                  definedFailureEffects, valid, result.errors, storage.symbol);
     const auto cleanup = mirUniqueCleanupType(result.program, storage.type);
     if (!cleanup && storage.requiresActiveCleanup) {
       valid = false;

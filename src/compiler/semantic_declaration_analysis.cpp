@@ -7150,8 +7150,8 @@ auto SemanticVisitor::Impl::publishFunctionBorrowSummary(
 }
 
 auto SemanticVisitor::Impl::collectBorrowReturnExpressions(
-    const Stmt *statement, std::vector<const ExprPtr *> &returns) const
-    -> void {
+    const Stmt *statement, std::vector<const ExprPtr *> &returns,
+    std::vector<const VariableDecl *> *locals) const -> void {
   if (statement == nullptr) {
     return;
   }
@@ -7159,58 +7159,63 @@ auto SemanticVisitor::Impl::collectBorrowReturnExpressions(
     returns.push_back(&returned->value());
     return;
   }
+  if (const auto *variable = stmtAs<VariableDecl>(statement)) {
+    if (locals)
+      locals->push_back(variable);
+    return;
+  }
   if (const auto *block = stmtAs<BlockStmt>(statement)) {
     for (const StmtPtr &nested : block->statements()) {
-      collectBorrowReturnExpressions(nested.get(), returns);
+      collectBorrowReturnExpressions(nested.get(), returns, locals);
     }
     return;
   }
   if (const auto *conditional = stmtAs<ConditionalStmt>(statement)) {
     if (const StmtList *branch = conditional->activeBranch(target)) {
       for (const StmtPtr &nested : *branch) {
-        collectBorrowReturnExpressions(nested.get(), returns);
+        collectBorrowReturnExpressions(nested.get(), returns, locals);
       }
     }
     return;
   }
   if (const auto *branch = stmtAs<IfStmt>(statement)) {
-    collectBorrowReturnExpressions(branch->thenBranch().get(), returns);
-    collectBorrowReturnExpressions(branch->elseBranch().get(), returns);
+    collectBorrowReturnExpressions(branch->thenBranch().get(), returns, locals);
+    collectBorrowReturnExpressions(branch->elseBranch().get(), returns, locals);
     return;
   }
   if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
     for (const SwitchArm &arm : selection->arms()) {
       for (const StmtPtr &nested : arm.statements) {
-        collectBorrowReturnExpressions(nested.get(), returns);
+        collectBorrowReturnExpressions(nested.get(), returns, locals);
       }
     }
     return;
   }
   if (const auto *loop = stmtAs<ForStmt>(statement)) {
-    collectBorrowReturnExpressions(loop->body().get(), returns);
+    collectBorrowReturnExpressions(loop->body().get(), returns, locals);
     return;
   }
   if (const auto *loop = stmtAs<RangeForStmt>(statement)) {
-    collectBorrowReturnExpressions(loop->lowered().get(), returns);
+    collectBorrowReturnExpressions(loop->lowered().get(), returns, locals);
     return;
   }
   if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
     if (const ConstexprForExpansion *expansion =
             semanticModel.findConstexprForExpansion(*loop)) {
       for (const ConstexprForIteration &iteration : expansion->iterations) {
-        collectBorrowReturnExpressions(iteration.block.get(), returns);
+        collectBorrowReturnExpressions(iteration.block.get(), returns, locals);
       }
     } else {
-      collectBorrowReturnExpressions(loop->body().get(), returns);
+      collectBorrowReturnExpressions(loop->body().get(), returns, locals);
     }
     return;
   }
   if (const auto *loop = stmtAs<DoWhileStmt>(statement)) {
-    collectBorrowReturnExpressions(loop->body().get(), returns);
+    collectBorrowReturnExpressions(loop->body().get(), returns, locals);
     return;
   }
   if (const auto *loop = stmtAs<WhileStmt>(statement)) {
-    collectBorrowReturnExpressions(loop->body().get(), returns);
+    collectBorrowReturnExpressions(loop->body().get(), returns, locals);
   }
 }
 
@@ -7711,8 +7716,9 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
   }
 
   std::vector<const ExprPtr *> returns;
+  std::vector<const VariableDecl *> locals;
   collectBorrowReturnExpressions(function.bodyDeclaration()->body().get(),
-                                 returns);
+                                 returns, &locals);
   if (returns.empty()) {
     return std::nullopt;
   }
@@ -7726,6 +7732,48 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
                      ? std::nullopt
                      : std::optional<ClassId>{function.ownerClass};
 
+  // Function-local thread storage has a persistent declaration identity even
+  // before its body is demanded. Publish only a prospective origin here; the
+  // resolved return check must still prove the exact symbol/path at every
+  // executable return, so a shadowing automatic local can never escape.
+  const auto localThreadPlace =
+      [&](const auto &self,
+          const ExprPtr &value) -> std::optional<BorrowOriginPlace> {
+    if (!value)
+      return std::nullopt;
+    if (const auto *group = exprAs<Grouping>(value.get()))
+      return self(self, group->expression());
+    if (const auto *unary = exprAs<Unary>(value.get());
+        unary && unary->oper().kind == TokenKind::STAR) {
+      auto place = self(self, unary->right());
+      if (place)
+        place->projections.push_back(
+            {.kind = PlaceProjectionKind::Dereference});
+      return place;
+    }
+    const auto *variable = exprAs<Variable>(value.get());
+    if (!variable)
+      return std::nullopt;
+    const VariableDecl *declaration = nullptr;
+    for (const auto *local : locals)
+      if (local->name().lexeme == variable->name().lexeme) {
+        if (declaration)
+          return std::nullopt;
+        declaration = local;
+      }
+    if (!declaration || !declaration->isThreadLocal())
+      return std::nullopt;
+    const SemanticType type =
+        declaration->type().name.last().kind == TokenKind::AUTO
+            ? SemanticType::Unknown
+            : typeOf(declaration->type());
+    const auto symbol = recordBindingOccurrence(
+        declaration->name(), type, declaration->isMutable(),
+        SemanticBindingKind::LocalVariable, false, false, false, true);
+    requestSession.threadLocalDeclarations[symbol] = declaration;
+    return BorrowOriginPlace{.root = symbol};
+  };
+
   std::optional<BorrowOriginPlace> result;
   bool valid = true;
   for (const ExprPtr *returned : returns) {
@@ -7734,15 +7782,16 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
       break;
     }
     SemanticPlace place = semanticPlace(*returned);
-    std::optional<BorrowOriginPlace> candidate;
-    if (place.root != nullptr && !place.receiver &&
+    std::optional<BorrowOriginPlace> candidate =
+        localThreadPlace(localThreadPlace, *returned);
+    if (!candidate && place.root != nullptr && !place.receiver &&
         (place.root->bindingKind == SemanticBindingKind::GlobalVariable ||
          place.root->bindingKind == SemanticBindingKind::StaticField)) {
       candidate = BorrowOriginPlace{.root = place.rootIdentity == 0
                                                 ? toolingSymbolFor(*place.root)
                                                 : place.rootIdentity,
                                     .projections = place.projections};
-    } else {
+    } else if (!candidate) {
       candidate = predeclaredGlobalBorrowPlace(*returned);
     }
     if (!candidate) {

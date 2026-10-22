@@ -2416,6 +2416,24 @@ IDs are body-local and start at one.
 
 ## Lowering And Verification
 
+Thread-local objects have a separate `MirThreadLocalStorage` inventory and
+`ThreadLocalInitializer` bodies. `EnsureThreadLocal` names the exact declaration
+and initializer; independent verification checks inventory, passive data
+provenance, cleanup recipes and dominating first-use guards. `DrainThreadLocals`
+is an explicit hosted-exit operation, not an emitter-added source call. Passive
+data storage uses native per-thread scalar data without dynamic guard or
+registration; owning storage uses a byte slot and explicit object lifetime so
+emergency abandonment cannot accidentally run a native destructor.
+
+Ambient persistent-storage effects are independently derived from executable
+MIR, not trusted frontend summary claims. `mir_storage_effects.cpp` reuses the
+existing canonical-place/CFG loan verifier to collect direct typed storage
+accesses, closes exact helper/constructor/destructor edges, and replays hidden
+accesses at each invocation's live-loan state. Initializer edges retain their
+readiness condition through nested helpers. Captured referents have a distinct
+canonical capture domain from same-thread TLS lookup. Native/raw-pointer
+obligations remain the unsafe boundary; this is not a pointer-provenance solver.
+
 Every type-owned static function retains an exact owner but no instance receiver:
 it cannot carry virtual/pure/override flags, virtual roots, mutable/consuming
 receiver access or a `This`-root place. This is a structural invariant for all

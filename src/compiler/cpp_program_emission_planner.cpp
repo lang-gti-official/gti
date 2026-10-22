@@ -7789,13 +7789,13 @@ public:
       const std::string id = std::to_string(storage.symbol);
       const std::string type =
           cppNativeTypeSpelling(loweredProgram, standard, storage.type);
-      const MirBodyAddress address{
-          .kind = MirBodyKind::ThreadLocalInitializer,
-          .owner = storage.symbol};
+      const MirBodyAddress address{.kind = MirBodyKind::ThreadLocalInitializer,
+                                   .owner = storage.symbol};
       const auto body = generalMirBodyEmitter().emitFailureBodyText(
           address, "thread-local-initializer-v1", indentation + 1);
       if (!body.emitted())
-        throw std::logic_error("thread-local initializer lost verified MIR text");
+        throw std::logic_error(
+            "thread-local initializer lost verified MIR text");
       writeIndent();
       output << "bool __gti_tls_init_" << id << "(" << type
              << " *__gti_mir_out_result, "
@@ -7812,8 +7812,9 @@ public:
         output << type << " &__gti_tls_value_" << id
                << "() { return __gti_tls_data_" << id << "; }\n";
         writeIndent();
-        output << "bool __gti_tls_ensure_" << id
-               << "(::gti_failure_record_v2 *, std::uint32_t) { return true; }\n";
+        output
+            << "bool __gti_tls_ensure_" << id
+            << "(::gti_failure_record_v2 *, std::uint32_t) { return true; }\n";
         continue;
       }
       writeIndent();
@@ -7824,31 +7825,55 @@ public:
              << "  " << type << " *address() { return std::launder("
              << "reinterpret_cast<" << type << " *>(bytes)); }\n};\n";
       writeIndent();
-      output << "thread_local __gti_tls_slot_type_" << id
-             << " __gti_tls_slot_" << id << ";\n";
+      output << "thread_local __gti_tls_slot_type_" << id << " __gti_tls_slot_"
+             << id << ";\n";
       writeIndent();
       output << type << " &__gti_tls_value_" << id
              << "() { return *__gti_tls_slot_" << id << ".address(); }\n";
       writeIndent();
-      output << "bool __gti_tls_cleanup_" << id
-             << "(void *raw, ::gti_failure_record_v2 *record, bool unwinding) {\n"
-             << "  auto &slot = *static_cast<__gti_tls_slot_type_" << id
-             << " *>(raw);\n  slot.state = 3;\n  return "
-             << cppMirCleanupValueExpression(mir, storage.cleanup,
-                                             "*slot.address()", "record",
-                                             "unwinding")
-             << ";\n}\n";
+      output
+          << "bool __gti_tls_cleanup_" << id
+          << "(void *raw, ::gti_failure_record_v2 *record, "
+             "const ::gti_failure_record_v2 *primary, "
+             "const ::gti_failure_artifact_descriptor_v1 *primary_artifact) {\n"
+          << "  auto &slot = *static_cast<__gti_tls_slot_type_" << id
+          << " *>(raw);\n  slot.state = 3;\n"
+             "  const bool unwinding = primary != nullptr;\n";
+      if (storage.requiresActiveCleanup) {
+        output
+            << "  ::gti_internal::backend::mir_failure_cleanup_scope_v1 "
+               "context;\n"
+               "  if (unwinding) {\n"
+               "    context.activate(primary, primary_artifact);\n"
+               "  }\n"
+               "  const bool success = "
+            << cppMirCleanupValueExpression(mir, storage.cleanup,
+                                            "*slot.address()", "record",
+                                            "unwinding")
+            << ";\n"
+               "  if (success || !unwinding) std::destroy_at(slot.address());\n"
+               "  return success;\n}\n";
+      } else {
+        output << "  (void)record; (void)unwinding; (void)primary_artifact;\n"
+                  "  std::destroy_at(slot.address());\n"
+                  "  return true;\n}\n";
+      }
       writeIndent();
       output << "bool __gti_tls_ensure_" << id
              << "(::gti_failure_record_v2 *record, std::uint32_t site) {\n"
-             << "  auto &slot = __gti_tls_slot_" << id << ";\n"
+             << "  auto &slot = __gti_tls_slot_" << id
+             << ";\n"
                 "  if (slot.state == 2) return true;\n"
                 "  if (slot.state == 1 || slot.state == 3 ||\n"
                 "      ::gti_runtime_detail::thread_local_cleanup_active()) {\n"
-                "    *record = ::gti_failure_record_v2{GTI_FAILURE_ABI_VERSION_V2,\n"
+                "    *record = "
+                "::gti_failure_record_v2{GTI_FAILURE_ABI_VERSION_V2,\n"
                 "      GTI_FAILURE_CODE_HOSTED_RUNTIME_CONTRACT_FAILURE_V1,\n"
-                "      slot.state == 1 ? GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1\n"
-                "        : GTI_FAILURE_DETAIL_THREAD_LOCAL_INITIALIZATION_DURING_SHUTDOWN_V2,\n"
+                "      slot.state == 1 ? "
+                "GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1\n"
+                "        : "
+                "GTI_FAILURE_DETAIL_THREAD_LOCAL_INITIALIZATION_DURING_"
+                "SHUTDOWN_V2,\n"
                 "      site, 0, {";
       const auto &identity = mir.failureMetadata().artifactIdentity().bytes;
       for (std::size_t index = 0; index < identity.size(); ++index) {
@@ -7863,10 +7888,13 @@ public:
                 "    slot.state = 0;\n    return false;\n  }\n"
                 "  slot.state = 2;\n"
                 "  slot.entry.storage = &slot;\n"
-             << "  slot.entry.cleanup = &__gti_tls_cleanup_" << id << ";\n"
+             << "  slot.entry.cleanup = &__gti_tls_cleanup_" << id
+             << ";\n"
                 "  slot.entry.artifact = &::gti_internal::backend::"
                 "__gti_failure_artifact_descriptor_v1;\n"
-                "  ::gti_runtime_detail::register_thread_local_cleanup(&slot.entry);\n"
+                "  "
+                "::gti_runtime_detail::register_thread_local_cleanup(&slot."
+                "entry);\n"
                 "  return true;\n}\n";
     }
   }
@@ -9374,6 +9402,10 @@ public:
         emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration, true);
         output << "(&__gti_result, &__gti_failure_record)) {\n";
         ++indentation;
+        if (!mir.threadLocalStorage().empty()) {
+          writeIndent();
+          output << "::gti_runtime_detail::drain_thread_local_cleanup();\n";
+        }
         emitCThreadBoundary(false);
         emitEntryStatus();
         --indentation;
@@ -9405,6 +9437,10 @@ public:
         output << "const auto __gti_result = ";
         emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
         output << "();\n";
+        if (!mir.threadLocalStorage().empty()) {
+          writeIndent();
+          output << "::gti_runtime_detail::drain_thread_local_cleanup();\n";
+        }
         emitEntryStatus();
         --indentation;
         output << "}\n";
@@ -9436,6 +9472,10 @@ public:
       output << "const auto __gti_result = ";
       emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
       output << "();\n";
+      if (!mir.threadLocalStorage().empty()) {
+        writeIndent();
+        output << "::gti_runtime_detail::drain_thread_local_cleanup();\n";
+      }
       emitCThreadBoundary(false);
       emitEntryStatus();
       --indentation;
@@ -9637,6 +9677,10 @@ public:
       output << "(__gti_stabilized_argc, std::move(__gti_arguments), "
                 "&__gti_result, &__gti_failure_record)) {\n";
       ++indentation;
+      if (!mir.threadLocalStorage().empty()) {
+        writeIndent();
+        output << "::gti_runtime_detail::drain_thread_local_cleanup();\n";
+      }
       emitCThreadBoundary(false);
       emitEntryStatus();
       --indentation;
@@ -9656,6 +9700,10 @@ public:
       output << "const auto __gti_result = ";
       emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
       output << "(__gti_stabilized_argc, std::move(__gti_arguments));\n";
+      if (!mir.threadLocalStorage().empty()) {
+        writeIndent();
+        output << "::gti_runtime_detail::drain_thread_local_cleanup();\n";
+      }
       emitCThreadBoundary(false);
       emitEntryStatus();
     }

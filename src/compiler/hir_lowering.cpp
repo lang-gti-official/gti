@@ -1295,13 +1295,14 @@ private:
                                     .traits = binding->traits,
                                     .access = binding->access,
                                     .source = declaration,
-                                    .requiresActiveCleanup = step.requiresActiveCleanup,
+                                    .requiresActiveCleanup =
+                                        step.requiresActiveCleanup,
                                     .ensureFailure = step.ensureFailure};
       seedConcreteDeclarationType(storage.type);
       std::optional<HirValueId> initializer;
       if (declaration->initializer()) {
-        initializer = lowerExpression(declaration->initializer(),
-                                      *baseModel, {}, {}, storage.initializer);
+        initializer = lowerExpression(declaration->initializer(), *baseModel,
+                                      {}, {}, storage.initializer);
       } else {
         Literal zero{std::uint64_t{0}};
         if (storage.type.kind == SemanticType::Bool)
@@ -1790,6 +1791,7 @@ private:
                 model->findBinding(*field.declaration)) {
           info.symbol = recorded->symbol;
           info.constant = recorded->constant;
+          info.threadLocal = recorded->threadLocal;
           info.type = recorded->type;
           info.traits = recorded->traits;
           type = recorded->type;
@@ -1848,7 +1850,9 @@ private:
         }
       }
       LoweredProgramStorage lowered;
-      if (field.declaration != nullptr) {
+      info.threadLocal =
+          field.declaration != nullptr && field.declaration->isThreadLocal();
+      if (field.declaration != nullptr && !info.threadLocal) {
         const auto found = loweredProgramStorage.find(field.declaration);
         if (found == loweredProgramStorage.end()) {
           // Generic class statics are intentionally outside the whole-program
@@ -3305,7 +3309,7 @@ private:
           continue;
         }
         if (binding.info.type.kind == SemanticType::Reference ||
-            binding.info.staticStorage ||
+            binding.info.threadLocal || binding.info.staticStorage ||
             binding.info.traits.drop != DropKind::Lexical) {
           continue;
         }
