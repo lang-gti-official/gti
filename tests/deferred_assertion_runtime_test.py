@@ -31,6 +31,7 @@ def main():
     modes = [(f"cpp{standard}-O{level}", f"c++{standard}", f"-O{level}", [])
              for standard in (20, 23) for level in (0, 1, 3)]
     modes += [("no-elide", "c++23", "-O0", ["-fno-elide-constructors"]),
+              ("native-NDEBUG", "c++23", "-O3", ["-DNDEBUG"]),
               ("sanitized", "c++23", "-O1", ["-fsanitize=address,undefined",
                                                "-fno-omit-frame-pointer"])]
     if args.quick:
