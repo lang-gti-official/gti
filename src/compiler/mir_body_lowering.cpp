@@ -3486,14 +3486,17 @@ private:
           PlaceKey{.domain = output.placeDomain, .root = binding->info.symbol};
     }
     const MirPlaceId place =
-        appendPlace({.root = MirPlaceRootKind::Binding,
-                     .binding = id,
+        appendPlace({.root = binding->info.threadLocal
+                                ? MirPlaceRootKind::Symbol
+                                : MirPlaceRootKind::Binding,
+                     .binding = binding->info.threadLocal ? 0 : id,
                      .symbol = binding->info.symbol,
                      .type = binding->info.type,
                      .access = binding->info.access,
                      .traits = binding->info.traits,
                      .key = std::move(key),
-                     .initiallyAvailable = binding->parameter != nullptr});
+                     .initiallyAvailable = binding->parameter != nullptr ||
+                                           binding->info.threadLocal});
     bindingPlaces.emplace(id, place);
     return place;
   }
@@ -4044,6 +4047,30 @@ private:
   }
 
   [[nodiscard]] MirPlaceId placeForValue(HirValueId id) {
+    const auto *threadValue = findValue(id);
+    if (threadValue != nullptr && threadValue->symbol != 0 &&
+        ensuredThreadLocalValues.insert(id).second) {
+      const auto storage = std::find_if(
+          program.threadLocalStorage().begin(),
+          program.threadLocalStorage().end(), [&](const auto &candidate) {
+            return candidate.symbol == threadValue->symbol;
+          });
+      if (storage != program.threadLocalStorage().end()) {
+        auto failure = threadValue->definedFailure;
+        failure.propagation = storage->dataInitializer
+                                  ? FailurePropagationKind::None
+                                  : FailurePropagationKind::BodyCall;
+        (void)appendInstruction(
+            {.kind = MirInstructionKind::EnsureThreadLocal,
+             .threadLocalStorage = storage->symbol,
+             .hirValue = id,
+             .definedFailure = std::move(failure),
+             .bodyTarget = MirBodyAddress{
+                 .kind = MirBodyKind::ThreadLocalInitializer,
+                 .owner = storage->symbol}},
+            false);
+      }
+    }
     if (const auto found = valuePlaces.find(id); found != valuePlaces.end()) {
       return found->second;
     }
@@ -10088,6 +10115,13 @@ private:
         .nativeCallbackAdapter = value->nativeCallbackAdapter,
         .lambdaTarget = value->lambdaTarget,
         .info = value->info};
+    if (std::any_of(program.threadLocalStorage().begin(),
+                    program.threadLocalStorage().end(),
+                    [&](const auto &storage) {
+                      return value->symbol != 0 &&
+                             value->symbol == storage.symbol;
+                    }))
+      instruction.definedFailure = {};
     if (instruction.operation == MirOperation::Literal) {
       instruction.literalProvenance.kind = MirLiteralProvenanceKind::Source;
     }
@@ -11964,6 +11998,30 @@ private:
   [[nodiscard]] MirInstructionId lowerVariable(const HirStatement &statement) {
     if (!statement.binding) {
       return 0;
+    }
+    if (const auto *binding = findBinding(*statement.binding);
+        binding != nullptr && binding->info.threadLocal) {
+      const auto storage = std::find_if(
+          program.threadLocalStorage().begin(),
+          program.threadLocalStorage().end(), [&](const auto &candidate) {
+            return candidate.symbol == binding->info.symbol;
+          });
+      auto failure = storage == program.threadLocalStorage().end()
+                         ? DefinedFailureOperation{}
+                         : storage->ensureFailure;
+      failure.propagation =
+          storage != program.threadLocalStorage().end() && storage->dataInitializer
+              ? FailurePropagationKind::None
+              : FailurePropagationKind::BodyCall;
+      return appendInstruction(
+          {.kind = MirInstructionKind::EnsureThreadLocal,
+           .threadLocalStorage = binding->info.symbol,
+           .hirStatement = statement.id,
+           .definedFailure = std::move(failure),
+           .bodyTarget = MirBodyAddress{
+               .kind = MirBodyKind::ThreadLocalInitializer,
+               .owner = binding->info.symbol}},
+          false);
     }
     if (statement.value) {
       const auto *initializer = findValue(*statement.value);
@@ -14231,6 +14289,7 @@ private:
   std::unordered_map<SymbolId, HirBindingId> localSymbols;
   std::unordered_map<SymbolId, std::size_t> lambdaCaptures;
   std::unordered_map<HirBindingId, MirPlaceId> bindingPlaces;
+  std::unordered_set<HirValueId> ensuredThreadLocalValues;
   std::unordered_map<HirDropObligationId, MirDropObligationId> dropObligations;
   std::unordered_map<HirFullExpressionId, HirFullExpressionId>
       fullExpressionIds;

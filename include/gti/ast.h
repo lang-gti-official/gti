@@ -2762,14 +2762,16 @@ public:
       std::optional<Token> mutKeyword = std::nullopt,
       bool rangeElementOwner = false,
       LanguageLinkage linkage = LanguageLinkage::Gti,
-      std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt)
+      std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
+      std::optional<Token> threadLocalKeyword = std::nullopt)
       : mutability_(mutability), type_(std::move(type)), name_(std::move(name)),
         initializer_(std::move(initializer)),
         staticKeyword_(std::move(staticKeyword)), rangeBinding_(rangeBinding),
         constexprKeyword_(std::move(constexprKeyword)), rangeOwner_(rangeOwner),
         rangeIterator_(rangeIterator), mutKeyword_(std::move(mutKeyword)),
         rangeElementOwner_(rangeElementOwner), linkage_(linkage),
-        nativeLinkName_(std::move(nativeLinkName)) {}
+        nativeLinkName_(std::move(nativeLinkName)),
+        threadLocalKeyword_(std::move(threadLocalKeyword)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitVariableDecl(*this);
@@ -2783,6 +2785,12 @@ public:
   [[nodiscard]] const Token &name() const { return name_; }
   [[nodiscard]] const ExprPtr &initializer() const { return initializer_; }
   [[nodiscard]] bool isStatic() const { return staticKeyword_.has_value(); }
+  [[nodiscard]] bool isThreadLocal() const {
+    return threadLocalKeyword_.has_value();
+  }
+  [[nodiscard]] const std::optional<Token> &threadLocalKeyword() const {
+    return threadLocalKeyword_;
+  }
   [[nodiscard]] const std::optional<Token> &staticKeyword() const {
     return staticKeyword_;
   }
@@ -2827,6 +2835,7 @@ private:
   LanguageLinkage linkage_ = LanguageLinkage::Gti;
   std::optional<NativeLinkNameAttribute> nativeLinkName_;
   std::vector<DeclarationAttribute> declarationAttributes_;
+  std::optional<Token> threadLocalKeyword_;
 };
 
 class StructuredBindingDecl final

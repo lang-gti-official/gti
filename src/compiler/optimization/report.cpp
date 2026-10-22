@@ -31,6 +31,8 @@ namespace {
     return "lambda";
   case MirBodyKind::HostedStartup:
     return "hosted-startup";
+  case MirBodyKind::ThreadLocalInitializer:
+    return "thread-local-initializer";
   }
   return "invalid";
 }

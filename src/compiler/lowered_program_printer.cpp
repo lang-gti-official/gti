@@ -29,6 +29,8 @@ namespace {
     return "lambda";
   case MirBodyKind::HostedStartup:
     return "hosted-startup";
+  case MirBodyKind::ThreadLocalInitializer:
+    return "thread-local-initializer";
   }
   return "invalid";
 }
@@ -108,6 +110,8 @@ generatedItemKindName(LoweredGeneratedItemKind kind) {
   switch (kind) {
   case LoweredGeneratedItemKind::ProgramInitialization:
     return "program-initialization";
+  case LoweredGeneratedItemKind::ThreadLocalStorage:
+    return "thread-local-storage";
   case LoweredGeneratedItemKind::HostedEntry:
     return "hosted-entry";
   case LoweredGeneratedItemKind::StructuralOperatorAdapter:

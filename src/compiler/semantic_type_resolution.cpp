@@ -2993,6 +2993,9 @@ auto SemanticVisitor::Impl::genericValueParameterCount(
 
 auto SemanticVisitor::Impl::constantFor(const Symbol &symbol) const
     -> const ConstantValue * {
+  if (symbol.variableDeclaration != nullptr &&
+      symbol.variableDeclaration->isThreadLocal())
+    return nullptr;
   if (symbol.variableDeclaration != nullptr) {
     const BindingInfo *binding =
         semanticModel.findBinding(*symbol.variableDeclaration);

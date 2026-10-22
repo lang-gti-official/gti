@@ -51,7 +51,7 @@ int main() {
   }
   const auto serialized = lang::MirPrinter().print(frontend.mir);
   expect(serialized.find('\0') == std::string::npos &&
-             serialized.starts_with("mir-v112"),
+             serialized.starts_with("mir-v113"),
          "relocation and conditional thread policies serialize as textual "
          "integers, not bytes");
   const lang::MirClassInstance *particle = nullptr;

@@ -124,6 +124,7 @@ enum class TokenKind : std::uint8_t {
   RETURN,
   STATIC,
   STATIC_ASSERT,
+  THREAD_LOCAL,
   STRUCT,
   SIZEOF,
   SWITCH,
@@ -313,7 +314,6 @@ inline constexpr std::string_view cppReservedIdentifiers[]{
     "signed",
     "static_cast",
     "template",
-    "thread_local",
     "throw",
     "try",
     "typedef",
@@ -532,6 +532,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "STATIC";
   case TokenKind::STATIC_ASSERT:
     return "STATIC_ASSERT";
+  case TokenKind::THREAD_LOCAL:
+    return "THREAD_LOCAL";
   case TokenKind::STRUCT:
     return "STRUCT";
   case TokenKind::SIZEOF:

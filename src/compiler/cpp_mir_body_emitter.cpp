@@ -22446,6 +22446,7 @@ private:
     case MirBodyKind::Module:
     case MirBodyKind::Lambda:
     case MirBodyKind::HostedStartup:
+    case MirBodyKind::ThreadLocalInitializer:
       return std::nullopt;
     }
     return std::nullopt;
@@ -22477,6 +22478,7 @@ private:
     case MirBodyKind::Module:
     case MirBodyKind::Lambda:
     case MirBodyKind::HostedStartup:
+    case MirBodyKind::ThreadLocalInitializer:
       return std::nullopt;
     }
     return std::nullopt;
@@ -22768,6 +22770,15 @@ private:
                         &lambda->captureTypes[index], index + 1);
         }
       }
+      return;
+    }
+    case MirBodyKind::ThreadLocalInitializer: {
+      const auto *storage = program.findThreadLocalStorage(result.body.owner);
+      if (storage == nullptr)
+        add(CppMirBodyEmissionIssueKind::MissingBodyRepresentation, 0, 0,
+            "thread-local initializer lost its exact storage declaration");
+      else
+        requireType(storage->type);
       return;
     }
     case MirBodyKind::HostedStartup: {
@@ -23300,6 +23311,7 @@ private:
       requireType(instruction.info.type, block.id, instruction.id);
       break;
     case MirInstructionKind::CallBody:
+    case MirInstructionKind::EnsureThreadLocal:
       requireType(instruction.info.type, block.id, instruction.id);
       break;
     case MirInstructionKind::Count:
@@ -23774,6 +23786,7 @@ CppMirEmissionEncoding classifyCppMirInstructionKind(MirInstructionKind kind) {
   case MirInstructionKind::Drop:
   case MirInstructionKind::EndBorrow:
   case MirInstructionKind::CallBody:
+  case MirInstructionKind::EnsureThreadLocal:
   case MirInstructionKind::AllocateObject:
   case MirInstructionKind::InitializeBase:
   case MirInstructionKind::CleanupBeforeAssign:
@@ -23924,6 +23937,7 @@ CppMirEmissionEncoding classifyCppMirBodyKind(MirBodyKind kind) {
   case MirBodyKind::Destructor:
   case MirBodyKind::Lambda:
   case MirBodyKind::HostedStartup:
+  case MirBodyKind::ThreadLocalInitializer:
     return CppMirEmissionEncoding::NeedsCopiedRepresentation;
   }
   return CppMirEmissionEncoding::Invalid;
@@ -29590,6 +29604,19 @@ public:
         familyLabel);
   }
 
+  [[nodiscard]] std::string emitThreadLocal(
+      const MirThreadLocalStorage &storage, std::string_view familyLabel) {
+    return emit(
+        ScalarBodyFacts{.body = storage.initializer,
+                        .kind = MirBodyKind::ThreadLocalInitializer,
+                        .id = storage.symbol,
+                        .instanceLabel = "thread-local-initializer",
+                        .owner = std::nullopt,
+                        .parameterBindings = emptyParameterBindings(),
+                        .receiverMutability = ReceiverMutability::ReadOnly},
+        familyLabel);
+  }
+
   [[nodiscard]] std::string emitModule(std::string_view familyLabel) {
     return emit(
         ScalarBodyFacts{.body = program.module(),
@@ -30847,6 +30874,12 @@ public:
       output << loanTypeSpelling(*loanedType) << " *__gti_mir_loan_" << loan.id
              << "{};\n";
     }
+    for (const auto &block : facts.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::EnsureThreadLocal) {
+          writeIndent();
+          output << "bool __gti_mir_tls_success_" << instruction.id << "{};\n";
+        }
     if (!failureForm) {
       for (const auto &block : facts.body.blocks)
         for (const auto &instruction : block.instructions)
@@ -35912,6 +35945,18 @@ private:
     if (instruction.tombstone) {
       return;
     }
+    if (instruction.kind == MirInstructionKind::EnsureThreadLocal) {
+      writeIndent();
+      output << "__gti_mir_tls_success_" << instruction.id
+             << " = ::__gti_program::__gti_tls_ensure_"
+             << instruction.threadLocalStorage
+             << '(' << (failureForm ? "__gti_mir_failure_record" : "nullptr")
+             << ", UINT32_C("
+             << (instruction.localFailureSites.empty()
+                     ? 0 : instruction.localFailureSites.front())
+             << "));\n";
+      return;
+    }
     if (failureForm && block.activeFailure != 0 &&
         instruction.kind == MirInstructionKind::Drop &&
         failureDestructorTarget(program, facts.body, instruction) != nullptr) {
@@ -40624,6 +40669,12 @@ private:
       if (producer != nullptr &&
           producer->kind == MirInstructionKind::CleanupBeforeAssign) {
         emitConditionalEdgeTransfer("__gti_mir_replacement_success_" +
+                                    std::to_string(producer->id));
+        return;
+      }
+      if (producer != nullptr &&
+          producer->kind == MirInstructionKind::EnsureThreadLocal) {
+        emitConditionalEdgeTransfer("__gti_mir_tls_success_" +
                                     std::to_string(producer->id));
         return;
       }
@@ -56881,6 +56932,11 @@ CppMirBodyEmissionPlan CppMirBodyEmitter::buildPlanFromAnalysis(
                                  cppMirBodyEmissionIndentationPlaceholder,
                                  deducedCallable, debugBodies_);
     switch (address.kind) {
+    case MirBodyKind::ThreadLocalInitializer:
+      if (const auto *storage = program_.findThreadLocalStorage(address.owner))
+        return writer.emitThreadLocal(*storage,
+                                      cppMirBodyEmissionFamilyPlaceholder);
+      break;
     case MirBodyKind::Module:
       if (address.owner == 0) {
         return writer.emitModule(cppMirBodyEmissionFamilyPlaceholder);
@@ -57221,6 +57277,7 @@ CppMirBodyEmitter::analyzeProgramImpl(bool includeTextVocabulary) const {
         break;
       }
       case MirBodyKind::Lambda:
+      case MirBodyKind::ThreadLocalInitializer:
         textSupported =
             supportsFailureBodyText(address) || supportsBodyText(address);
         break;

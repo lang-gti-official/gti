@@ -256,7 +256,8 @@ private:
           return std::nullopt;
         }
       } else if (kind == TokenKind::UNSAFE || kind == TokenKind::VIRTUAL ||
-                 kind == TokenKind::STATIC || kind == TokenKind::CONSTEXPR ||
+                 kind == TokenKind::STATIC || kind == TokenKind::THREAD_LOCAL ||
+                 kind == TokenKind::CONSTEXPR ||
                  kind == TokenKind::MUT) {
         ++offset;
       } else {
@@ -1256,18 +1257,24 @@ private:
       virtualKeyword = previous();
     }
     std::optional<Token> staticKeyword;
-    if (match({TokenKind::STATIC})) {
-      staticKeyword = previous();
-      if (!allowStatic) {
-        throw error(
-            *staticKeyword,
-            "Block-scope static declarations are not supported yet; declare "
-            "static storage at namespace or class scope.");
-      }
-      if (runtimeBinding) {
-        throw error(*staticKeyword,
-                    "Runtime-bound functions cannot be declared static.");
-      }
+    std::optional<Token> threadLocalKeyword;
+    while (match({TokenKind::STATIC, TokenKind::THREAD_LOCAL})) {
+      auto &keyword = previous().kind == TokenKind::STATIC
+                          ? staticKeyword
+                          : threadLocalKeyword;
+      if (keyword)
+        throw error(previous(), "A storage specifier cannot be repeated.");
+      keyword = previous();
+    }
+    if (staticKeyword && !allowStatic && !threadLocalKeyword) {
+      throw error(
+          *staticKeyword,
+          "Block-scope static declarations are not supported yet; declare "
+          "static storage at namespace or class scope.");
+    }
+    if (staticKeyword && runtimeBinding) {
+      throw error(*staticKeyword,
+                  "Runtime-bound functions cannot be declared static.");
     }
     std::optional<Token> constexprKeyword;
     if (match({TokenKind::CONSTEXPR})) {
@@ -1321,6 +1328,9 @@ private:
     }
 
     if (match({TokenKind::LEFT_PAREN})) {
+      if (threadLocalKeyword)
+        throw error(*threadLocalKeyword,
+                    "'thread_local' can only modify a variable declaration.");
       if (!allowFunction) {
         throw error(previous(),
                     "Parenthesized declarations are not supported in block "
@@ -1391,7 +1401,7 @@ private:
     return variableDeclaration(
         mutability, std::move(type), name, std::move(staticKeyword),
         std::move(constexprKeyword), std::move(mutKeyword), linkage,
-        std::move(nativeLinkName));
+        std::move(nativeLinkName), std::move(threadLocalKeyword));
   }
 
   StmtPtr functionDeclaration(
@@ -2077,7 +2087,8 @@ private:
       std::optional<Token> constexprKeyword = std::nullopt,
       std::optional<Token> mutKeyword = std::nullopt,
       LanguageLinkage linkage = LanguageLinkage::Gti,
-      std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt) {
+      std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
+      std::optional<Token> threadLocalKeyword = std::nullopt) {
     const bool hadCompletion = consumedCompletion;
     ExprPtr initializer;
     if (linkage == LanguageLinkage::C &&
@@ -2100,7 +2111,7 @@ private:
         mutability, std::move(type), name, std::move(initializer),
         std::move(staticKeyword), false, std::move(constexprKeyword), false,
         false, std::move(mutKeyword), false, linkage,
-        std::move(nativeLinkName));
+        std::move(nativeLinkName), std::move(threadLocalKeyword));
   }
 
   StmtPtr mutableFieldGroupDeclaration(Token keyword) {
@@ -2176,10 +2187,10 @@ private:
                   "Fields inside a 'mut { ... }' group are already mutable; "
                   "remove the redundant 'mut'.");
     }
-    if (match({TokenKind::STATIC})) {
+    if (match({TokenKind::STATIC, TokenKind::THREAD_LOCAL})) {
       throw error(previous(),
                   "A mutable field group can contain only direct instance "
-                  "fields; move this static field outside the group.");
+                  "fields; move this storage declaration outside the group.");
     }
     if (match({TokenKind::CONSTEXPR})) {
       throw error(previous(),
@@ -3047,6 +3058,7 @@ private:
     }
 
     if (isTypedDeclaration() && !check(TokenKind::STATIC) &&
+        !check(TokenKind::THREAD_LOCAL) &&
         !check(TokenKind::CONSTEXPR) && !check(TokenKind::VIRTUAL)) {
       const std::size_t declarationStart = current;
       const Mutability mutability =
@@ -3845,7 +3857,8 @@ private:
     if (peekAt(offset).kind == TokenKind::VIRTUAL) {
       ++offset;
     }
-    if (peekAt(offset).kind == TokenKind::STATIC) {
+    while (peekAt(offset).kind == TokenKind::STATIC ||
+           peekAt(offset).kind == TokenKind::THREAD_LOCAL) {
       ++offset;
     }
     if (peekAt(offset).kind == TokenKind::CONSTEXPR) {

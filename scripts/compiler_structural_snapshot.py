@@ -55,6 +55,7 @@ TRACE_PHASE_PATTERN = re.compile(
 PUBLIC_EXAMPLE_EXECUTION_PROFILES = {
     "066-managed-threads.gti": "concurrent",
     "076-scalar-atomics.gti": "concurrent",
+    "171-thread-local-storage.gti": "concurrent",
 }
 
 

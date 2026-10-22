@@ -14,6 +14,7 @@ struct CppSupportPreambleFeatures {
   bool storage = true;
   bool managedThreads = false;
   bool cThreads = false;
+  bool threadLocalStorage = false;
   // A lowered capability class declaration lets any emitted declaration,
   // including an uninstantiated generic definition, name the class template
   // that represents it. These forward-declare those templates and add no

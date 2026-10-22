@@ -37,6 +37,7 @@ const std::unordered_map<std::string_view, TokenKind> keywords{
     {"return", TokenKind::RETURN},
     {"static", TokenKind::STATIC},
     {"static_assert", TokenKind::STATIC_ASSERT},
+    {"thread_local", TokenKind::THREAD_LOCAL},
     {"struct", TokenKind::STRUCT},
     {"sizeof", TokenKind::SIZEOF},
     {"switch", TokenKind::SWITCH},

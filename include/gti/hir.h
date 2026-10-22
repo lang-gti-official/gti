@@ -475,6 +475,22 @@ struct HirBody {
   }
 };
 
+// One declaration with independent storage and initialization in each attached
+// thread. The initializer is executable HIR, separate from eager program
+// initialization, and returns the exact stored value into its lifetime slot.
+struct HirThreadLocalStorage {
+  SymbolId symbol = 0;
+  SourceUnitId sourceUnit = 0;
+  SemanticType type = SemanticType::Unknown;
+  SemanticTypeTraits traits;
+  AccessMode access = AccessMode::ReadOnly;
+  const VariableDecl *source = nullptr;
+  bool requiresActiveCleanup = false;
+  std::optional<Literal> dataInitializer;
+  DefinedFailureOperation ensureFailure;
+  HirBody initializer;
+};
+
 struct HirLambda {
   HirLambdaId id = 0;
   LambdaId declaration = 0;
@@ -879,6 +895,9 @@ public:
 
   [[nodiscard]] const HirBody &module() const { return moduleBody; }
 
+  [[nodiscard]] const std::vector<HirThreadLocalStorage> &
+  threadLocalStorage() const { return threadLocalStorage_; }
+
   [[nodiscard]] const HirProgramInitializationPlan &
   programInitializationPlan() const {
     return programInitialization;
@@ -952,6 +971,7 @@ private:
   std::optional<HirHostedProgramEntryPlan> hostedProgramEntry;
   std::optional<HirEmbeddingPlan> embeddingPlan_;
   HirBody moduleBody;
+  std::vector<HirThreadLocalStorage> threadLocalStorage_;
   std::unordered_map<const Expr *, std::vector<HirValueId>> sourceValueIds;
 };
 

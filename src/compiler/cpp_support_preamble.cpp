@@ -488,7 +488,7 @@ void writeCppSupportPreamble(std::ostream &output,
   const bool usesManagedThreads = features.managedThreads;
   const bool usesAtomics = features.atomics;
   const bool usesMutexes = features.mutexes;
-  if (usesManagedThreads) {
+  if (usesManagedThreads || features.threadLocalStorage) {
     output << "#include <tuple>\n";
   }
   if (usesAtomics || features.cThreads) {
@@ -503,10 +503,10 @@ void writeCppSupportPreamble(std::ostream &output,
     output << "#include <gti/runtime.hpp>\n";
   }
   output << "#include <gti/runtime_failure.h>\n";
-  if (features.cThreads) {
+  if (features.cThreads || features.threadLocalStorage) {
     output << "#include <gti/cthread.h>\n";
   }
-  if (usesManagedThreads) {
+  if (usesManagedThreads || features.threadLocalStorage) {
     output << "#include <gti/runtime_thread.hpp>\n";
   }
   const bool usesCAbiTextView = features.cAbiTextView;

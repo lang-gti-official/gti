@@ -334,6 +334,9 @@ enumerateMirBodyAddresses(const MirProgram &program) {
                  program.lambdaInstances().size() +
                  (program.hostedStartup() == nullptr ? 0 : 1));
   result.push_back({.kind = MirBodyKind::Module});
+  for (const auto &storage : program.threadLocalStorage())
+    result.push_back({.kind = MirBodyKind::ThreadLocalInitializer,
+                      .owner = storage.symbol});
   for (const MirClassInstance &instance : program.classInstances()) {
     result.push_back(
         {.kind = MirBodyKind::FieldInitializers, .owner = instance.id});
@@ -364,6 +367,10 @@ enumerateMirBodyAddresses(const MirProgram &program) {
 
 const MirBody *findMirBody(const MirProgram &program, MirBodyAddress address) {
   switch (address.kind) {
+  case MirBodyKind::ThreadLocalInitializer:
+    if (const auto *storage = program.findThreadLocalStorage(address.owner))
+      return &storage->initializer;
+    return nullptr;
   case MirBodyKind::Module:
     return address.owner == 0 ? &program.module() : nullptr;
   case MirBodyKind::FieldInitializers:
@@ -7065,7 +7072,8 @@ validFailureInstructionShape(const MirInstruction &instruction) {
              instruction.synchronization.kind ==
                  SynchronizationOperationKind::ThreadScope));
   case FailurePropagationKind::BodyCall:
-    return instruction.kind == MirInstructionKind::CallBody &&
+    return (instruction.kind == MirInstructionKind::CallBody ||
+            instruction.kind == MirInstructionKind::EnsureThreadLocal) &&
            instruction.bodyTarget.has_value();
   case FailurePropagationKind::Destructor:
     return instruction.kind == MirInstructionKind::Drop ||
@@ -7185,7 +7193,8 @@ bool supportsMirFailureControlFlow(MirBodyKind kind) {
          kind == MirBodyKind::Constructor ||
          kind == MirBodyKind::FieldInitializers ||
          kind == MirBodyKind::Destructor || kind == MirBodyKind::Lambda ||
-         kind == MirBodyKind::HostedStartup;
+         kind == MirBodyKind::HostedStartup ||
+         kind == MirBodyKind::ThreadLocalInitializer;
 }
 
 bool mirBodyRoutesFailureEdges(const MirBody &body) {
@@ -10015,7 +10024,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           (instruction.operation != MirOperation::Literal &&
            instruction.operation != MirOperation::EnumConstant &&
            instruction.operation != MirOperation::Negate))) ||
+        (instruction.kind != MirInstructionKind::EnsureThreadLocal &&
+         instruction.threadLocalStorage != 0) ||
         (instruction.kind != MirInstructionKind::CallBody &&
+         instruction.kind != MirInstructionKind::EnsureThreadLocal &&
          instruction.bodyTarget.has_value()) ||
         (instruction.sourceLocation.has_value() != sourceLocationIntrinsic) ||
         (sourceLocationIntrinsic &&
@@ -11040,6 +11052,21 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              !instruction.functionTarget && !instruction.constructorTarget &&
              instruction.bodyTarget.has_value() && !instruction.lambdaTarget &&
              instruction.info.type == SemanticType::Void;
+    case MirInstructionKind::EnsureThreadLocal:
+      return noOperation && !hasResult && !instruction.destination &&
+             !instruction.receiver && instruction.operands.empty() &&
+             instruction.parameterTypes.empty() && !instruction.loan &&
+             !instruction.functionTarget && !instruction.constructorTarget &&
+             !instruction.lambdaTarget && instruction.threadLocalStorage != 0 &&
+             instruction.bodyTarget ==
+                 std::optional<MirBodyAddress>{{
+                     .kind = MirBodyKind::ThreadLocalInitializer,
+                     .owner = instruction.threadLocalStorage}} &&
+             instruction.info.type == SemanticType::Void &&
+             instruction.lifecycle.empty() &&
+             (instruction.definedFailure.propagation ==
+                  FailurePropagationKind::BodyCall ||
+              instruction.definedFailure.empty());
     case MirInstructionKind::AllocateObject: {
       const MirDropObligation *allocation =
           body.findDropObligation(instruction.objectAllocation);

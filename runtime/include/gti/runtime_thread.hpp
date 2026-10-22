@@ -15,6 +15,29 @@ class worker_failure_handoff final {};
 
 [[nodiscard]] bool managed_worker_active() noexcept;
 
+// Compiler-generated per-thread owners embed this intrusive registration.
+// The callback executes the exact verified MIR cleanup recipe and reports one
+// ordinary failure through `failure`. A cleanup emergency may use the existing
+// private worker handoff; it never escapes the runtime thread boundary.
+struct thread_local_cleanup_entry {
+  thread_local_cleanup_entry *previous = nullptr;
+  void *storage = nullptr;
+  bool (*cleanup)(void *, gti_failure_record_v2 *, bool unwinding) = nullptr;
+  const gti_failure_artifact_descriptor_v1 *artifact = nullptr;
+  bool registered = false;
+};
+
+void register_thread_local_cleanup(thread_local_cleanup_entry *entry) noexcept;
+// Includes the completed shutdown state: new initialization is forbidden once
+// thread exit starts, while an already-live slot may still be observed.
+[[nodiscard]] bool thread_local_cleanup_active() noexcept;
+void drain_thread_local_cleanup(
+    const gti_failure_record_v2 *primary = nullptr,
+    const gti_failure_artifact_descriptor_v1 *primaryArtifact = nullptr) noexcept;
+void drain_thread_local_cleanup_legacy(
+    const gti_failure_record_v1 *primary,
+    const gti_failure_artifact_descriptor_v1 *primaryArtifact) noexcept;
+
 // This is not a pending-failure query. It is true only between an explicit
 // cleanup-emergency handoff and its adapter catch on the same managed worker.
 // Representation destructors must not execute abandoned GTI cleanup while

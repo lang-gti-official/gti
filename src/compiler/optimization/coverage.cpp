@@ -381,6 +381,7 @@ MirOptimizationCoverage optimizationCoverage(MirBodyKind kind) {
     return supported(
         "body inventory, analysis cache, editor and source replay");
   case MirBodyKind::HostedStartup:
+  case MirBodyKind::ThreadLocalInitializer:
     return barrier("body inventory/replay; generated startup effects retained");
   }
   return {};

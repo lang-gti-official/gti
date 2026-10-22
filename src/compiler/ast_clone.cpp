@@ -343,7 +343,7 @@ private:
         expr(node.initializer()), node.staticKeyword(), node.isRangeBinding(),
         tok(node.constexprKeyword()), node.isRangeOwner(),
         node.isRangeIterator(), node.mutKeyword(), node.isRangeElementOwner(),
-        node.linkage(), node.nativeLinkName());
+        node.linkage(), node.nativeLinkName(), tok(node.threadLocalKeyword()));
     if (node.extent()) {
       copy->setExtent(*node.extent());
     }

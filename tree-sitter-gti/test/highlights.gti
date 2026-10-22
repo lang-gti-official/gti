@@ -352,3 +352,8 @@ expected<int, int> source_result_highlight() {
   return unexpected(7);
 }
 [[unsatisfied("A gauge reads.")]] concept explained_highlight<T> = std::integral<T>;
+
+thread_local mut int thread_counter_highlight = 0;
+class ThreadRegistryHighlight {
+  static thread_local mut int current = 0;
+};
