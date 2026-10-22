@@ -56,7 +56,8 @@ template <typename Enum>
       identity.kind == CppMirThunkKind::CallableAdapter ||
       identity.kind == CppMirThunkKind::LifecycleCleanup ||
       identity.kind == CppMirThunkKind::NativeInteropAdapter ||
-      identity.kind == CppMirThunkKind::ThreadTaskAdapter) {
+      identity.kind == CppMirThunkKind::ThreadTaskAdapter ||
+      identity.kind == CppMirThunkKind::ThreadLocalStorage) {
     return identity.owner != 0 && identity.ordinal == 0;
   }
   return identity.owner != 0;
@@ -184,6 +185,7 @@ threadTaskRequirements(const MirBody &body) {
 [[nodiscard]] bool isContractedThunkKind(CppMirThunkKind kind) {
   return kind == CppMirThunkKind::HostedEntry ||
          kind == CppMirThunkKind::ProgramInitialization ||
+         kind == CppMirThunkKind::ThreadLocalStorage ||
          kind == CppMirThunkKind::StructuralOperatorAdapter ||
          kind == CppMirThunkKind::CallableAdapter ||
          kind == CppMirThunkKind::LifecycleCleanup ||

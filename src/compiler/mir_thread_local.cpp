@@ -91,6 +91,7 @@ MirVerificationResult verifyMirThreadLocalStorage(const MirProgram &program) {
       borrowedRepresentation = true;
     if (!storage.symbol ||
         !inventory.emplace(storage.symbol, &storage).second ||
+        program.findForeignStorage(storage.symbol) != nullptr ||
         storage.type == SemanticType::Unknown ||
         storage.type == SemanticType::Void ||
         storage.type.kind == SemanticType::Reference ||
@@ -123,6 +124,24 @@ MirVerificationResult verifyMirThreadLocalStorage(const MirProgram &program) {
     const auto dominance = computeMirDominance(*body);
     if (!dominance)
       continue; // Structural verification reports the unusable CFG.
+    for (const auto &place : body->places) {
+      if (place.root != MirPlaceRootKind::Symbol || place.capture != 0)
+        continue;
+      const auto found = inventory.find(place.symbol);
+      if (found == inventory.end())
+        continue;
+      const auto &storage = *found->second;
+      if (place.binding != 0 || place.temporary != 0 || place.value != 0 ||
+          place.loan != 0 || place.foreignStorage ||
+          (place.key && place.key->root != storage.symbol) ||
+          (place.projections.empty() &&
+           (place.type != storage.type || place.traits != storage.traits ||
+            (storage.access == AccessMode::ReadOnly &&
+             place.access == AccessMode::Mutable))))
+        add(address, 0, 0,
+            "thread-local place diverges from its exact storage identity or "
+            "type");
+    }
     struct Guard {
       MirBlockId block = 0;
       std::size_t position = 0;
@@ -172,6 +191,8 @@ MirVerificationResult verifyMirThreadLocalStorage(const MirProgram &program) {
           };
           if (!admits(
                   DefinedFailureDetail::RecursiveThreadLocalInitialization) ||
+              !admits(
+                  DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime) ||
               !admits(DefinedFailureDetail::
                           ThreadLocalInitializationDuringShutdown))
             add(address, block.id, instruction.id,
@@ -218,7 +239,8 @@ MirVerificationResult verifyMirThreadLocalStorage(const MirProgram &program) {
         const auto &instruction = block.instructions[index];
         if (instruction.tombstone)
           continue;
-        if (instruction.kind == MirInstructionKind::DrainThreadLocals &&
+        if ((instruction.kind == MirInstructionKind::DrainThreadLocals ||
+             instruction.kind == MirInstructionKind::BeginThreadLocals) &&
             (address.kind != MirBodyKind::HostedStartup || inventory.empty()))
           add(address, block.id, instruction.id,
               "thread-local drain is outside its exact hosted shutdown "

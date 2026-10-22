@@ -1181,18 +1181,21 @@ auto SemanticVisitor::Impl::threadLocalEnsureFailure(SymbolId symbol,
       isThreadLocalDataOnly(*declaration, record->type))
     return {};
   const SourceSpan span = tokenSpan(site);
-  return {.localOrigins =
-              {{.outcomes =
-                    {{DefinedFailureCode::HostedRuntimeContractFailure,
-                      DefinedFailureDetail::RecursiveThreadLocalInitialization},
-                     {DefinedFailureCode::HostedRuntimeContractFailure,
-                      DefinedFailureDetail::
-                          ThreadLocalInitializationDuringShutdown}},
-                .sourceUnit = sourceUnitFor(site),
-                .start = span.start,
-                .end = span.end,
-                .line = span.line}},
-          .propagation = FailurePropagationKind::BodyCall};
+  return {
+      .localOrigins =
+          {{.outcomes =
+                {{DefinedFailureCode::HostedRuntimeContractFailure,
+                  DefinedFailureDetail::RecursiveThreadLocalInitialization},
+                 {DefinedFailureCode::HostedRuntimeContractFailure,
+                  DefinedFailureDetail::
+                      ThreadLocalInitializationDuringShutdown},
+                 {DefinedFailureCode::HostedRuntimeContractFailure,
+                  DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime}},
+            .sourceUnit = sourceUnitFor(site),
+            .start = span.start,
+            .end = span.end,
+            .line = span.line}},
+      .propagation = FailurePropagationKind::BodyCall};
 }
 
 auto SemanticVisitor::Impl::validateThreadLocalDeclaration(

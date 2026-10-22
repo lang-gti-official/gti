@@ -23313,6 +23313,7 @@ private:
     case MirInstructionKind::CallBody:
     case MirInstructionKind::EnsureThreadLocal:
     case MirInstructionKind::DrainThreadLocals:
+    case MirInstructionKind::BeginThreadLocals:
       requireType(instruction.info.type, block.id, instruction.id);
       break;
     case MirInstructionKind::Count:
@@ -23789,6 +23790,7 @@ CppMirEmissionEncoding classifyCppMirInstructionKind(MirInstructionKind kind) {
   case MirInstructionKind::CallBody:
   case MirInstructionKind::EnsureThreadLocal:
   case MirInstructionKind::DrainThreadLocals:
+  case MirInstructionKind::BeginThreadLocals:
   case MirInstructionKind::AllocateObject:
   case MirInstructionKind::InitializeBase:
   case MirInstructionKind::CleanupBeforeAssign:
@@ -48548,6 +48550,19 @@ hostedMarshallingSchedule(const MirProgram &program) {
   }
   MirHostedStartupPlan plan = *program.hostedStartupPlan();
   using Kind = MirHostedStartupOperationKind;
+  const auto attachment = std::find_if(
+      plan.operations.begin(), plan.operations.end(),
+      [](const auto &op) { return op.kind == Kind::BeginThreadLocals; });
+  if (!program.threadLocalStorage().empty()) {
+    if (attachment != plan.operations.begin() ||
+        attachment == plan.operations.end() || attachment->block != 1 ||
+        attachment->terminator || attachment->instruction == 0 ||
+        attachment->failureBehavior != MirHostedStartupFailureBehavior::None)
+      return std::nullopt;
+    plan.operations.erase(attachment);
+  } else if (attachment != plan.operations.end()) {
+    return std::nullopt;
+  }
   const auto drain = std::find_if(
       plan.operations.begin(), plan.operations.end(),
       [](const auto &op) { return op.kind == Kind::DrainThreadLocals; });

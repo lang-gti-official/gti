@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
 
 namespace {
 void expect(bool condition, const char *message) {
@@ -65,6 +66,8 @@ bool cleanup(void *storage, gti_failure_record_v2 *failure,
 
 void entry(void *opaque) {
   auto &context = *static_cast<Context *>(opaque);
+  expect(gti_runtime_detail::thread_local_storage_lifetime_active(),
+         "managed entry owns the entire per-thread storage lifetime");
   thread_local std::array<Node, 3> owners{};
   for (int index = 0; index != 3; ++index) {
     auto &node = owners[index];
@@ -148,9 +151,25 @@ void pendingResultFailure() {
           context.order[context.count - 1] == 99,
       "TLS failure retires an unpublished result once on its producing thread");
 }
+
+void explicitAttachmentBoundary() {
+  std::thread native([] {
+    expect(!gti_runtime_detail::thread_local_storage_lifetime_active(),
+           "an arbitrary native thread has no GTI lifetime attachment");
+    gti_runtime_detail::begin_thread_local_storage_lifetime();
+    expect(gti_runtime_detail::thread_local_storage_lifetime_active(),
+           "explicit entry attaches before any construction");
+    gti_runtime_detail::drain_thread_local_cleanup();
+    expect(!gti_runtime_detail::thread_local_storage_lifetime_active() &&
+               gti_runtime_detail::thread_local_cleanup_active(),
+           "thread exit detaches and permanently closes initialization");
+  });
+  native.join();
+}
 } // namespace
 
 int main() {
+  explicitAttachmentBoundary();
   ordinaryAndFailureExit();
   pendingResultFailure();
 }

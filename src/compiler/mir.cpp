@@ -11169,6 +11169,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              (instruction.definedFailure.propagation ==
                   FailurePropagationKind::BodyCall ||
               instruction.definedFailure.empty());
+    case MirInstructionKind::BeginThreadLocals:
     case MirInstructionKind::DrainThreadLocals:
       return body.kind == MirBodyKind::HostedStartup && noOperation &&
              !hasResult && !instruction.destination && !instruction.receiver &&

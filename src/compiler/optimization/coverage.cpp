@@ -65,6 +65,7 @@ MirOptimizationCoverage optimizationCoverage(MirInstructionKind kind) {
   case MirInstructionKind::InitializeBase:
   case MirInstructionKind::EnsureThreadLocal:
   case MirInstructionKind::DrainThreadLocals:
+  case MirInstructionKind::BeginThreadLocals:
     return barrier("exact body effects; no contextual range transfer");
   case MirInstructionKind::AllocateObject:
     return barrier("allocation, failure and rollback effects");
@@ -486,6 +487,7 @@ MirOptimizationCoverage optimizationCoverage(DefinedFailureDetail detail) {
   case DefinedFailureDetail::NegativeArgumentCount:
   case DefinedFailureDetail::RecursiveThreadLocalInitialization:
   case DefinedFailureDetail::ThreadLocalInitializationDuringShutdown:
+  case DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime:
   case DefinedFailureDetail::MutexLock:
   case DefinedFailureDetail::KeyLookup:
   case DefinedFailureDetail::ContainerArgument:

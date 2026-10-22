@@ -266,6 +266,8 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
     return "end-cthread-runtime";
   case MirHostedStartupOperationKind::DrainThreadLocals:
     return "drain-thread-locals";
+  case MirHostedStartupOperationKind::BeginThreadLocals:
+    return "begin-thread-locals";
   }
   return "invalid";
 }

@@ -1010,11 +1010,17 @@ after join.
 
 Program-wide initialization completes before initial entry and every managed
 spawn. With no detach in the first model, all managed tasks finish before
-program-wide destruction begins. Future thread-local values are initialized on
-first use in their owning attached thread and destroyed there in reverse
-initialization order. Recursive thread-local initialization raises `GTI-R0013`
-while the detected state is still safe to clean; references to thread-local
-storage cannot cross to another thread.
+program-wide destruction begins. `thread_local` values initialize on first
+evaluated use in their owning attached thread and are destroyed there in reverse
+successful-initialization order, before the thread's outcome is published.
+Hosted entry explicitly establishes the lifetime scope; managed and dedicated
+manual GTI entry establish their corresponding scopes. Recursive initialization,
+new initialization after shutdown begins, and dynamic initialization on an
+unattached thread raise `GTI-R0013` before exposing invalid storage. Passive
+literal data needs no registration. Checked scoped lending is permitted when
+the owning thread, referent capability, loan and structured join prove the
+borrow; owned tasks/results cannot retain a TLS dependency beyond that boundary.
+See [thread-local storage](concurrency.md#thread-local-storage).
 
 A worker checked failure cleans task-owned state to the generated task-entry
 boundary and stores the original section 4.10 record without independently
@@ -1204,7 +1210,7 @@ backend prose. Panic reports print the captured message while retaining
 | `invalid_storage_state` | `duplicate_construction`, `uninitialized_access`, `relocation_capacity`, `invalid_relocation_source`, `occupied_relocation_destination` |
 | `allocation_failure` | `unique_owner`, `shared_owner`, `private_storage`, `element_construction`, `hosted_arguments` |
 | `infallible_host_operation_failed` | `stdout_write`, `automatic_join`, `mutex_lock` |
-| `hosted_runtime_contract_failure` | `negative_argument_count`, `recursive_thread_local_initialization` |
+| `hosted_runtime_contract_failure` | `negative_argument_count`, `recursive_thread_local_initialization`, `thread_local_initialization_during_shutdown`, `thread_local_outside_attached_lifetime` |
 | `key_not_found` | `key_lookup` |
 | `invalid_container_argument` | `container_argument` |
 | `panic` | `explicit_panic` |

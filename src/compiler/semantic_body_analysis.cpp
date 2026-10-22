@@ -2544,7 +2544,13 @@ auto SemanticVisitor::Impl::visitExternCDecl(const ExternCDecl &stmt) -> void {
 auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
     -> void {
   semanticModel.recordFullExpression(stmt, stmt.expression());
+  const auto owner = currentProgramEffectOwner;
+  const auto cleanupStart = programEffects[owner].edges.size();
+  const auto unknownCleanupStart = programEffects[owner].unknown.size();
   const SemanticType resultType = analyze(stmt.expression());
+  recordFullExpressionStorageBorrowCleanup(
+      tokenSpan(expressionToken(stmt.expression())), cleanupStart,
+      unknownCleanupStart);
   consumeTextDependentValue(stmt.expression());
   const Call *call = directCall(stmt.expression());
 

@@ -71,6 +71,7 @@ enum class DefinedFailureDetail : std::uint8_t {
   SharedOwner,
   ExplicitPanic,
   ThreadLocalInitializationDuringShutdown,
+  ThreadLocalOutsideAttachedLifetime,
   Count,
 };
 
@@ -221,7 +222,9 @@ validDefinedFailureOutcome(DefinedFailureOutcome outcome) {
            outcome.detail ==
                DefinedFailureDetail::RecursiveThreadLocalInitialization ||
            outcome.detail ==
-               DefinedFailureDetail::ThreadLocalInitializationDuringShutdown;
+               DefinedFailureDetail::ThreadLocalInitializationDuringShutdown ||
+           outcome.detail ==
+               DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime;
   case DefinedFailureCode::KeyNotFound:
     return outcome.detail == DefinedFailureDetail::KeyLookup;
   case DefinedFailureCode::InvalidContainerArgument:
@@ -356,6 +359,8 @@ definedFailureDetailName(DefinedFailureDetail detail) {
     return "recursive_thread_local_initialization";
   case DefinedFailureDetail::ThreadLocalInitializationDuringShutdown:
     return "thread_local_initialization_during_shutdown";
+  case DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime:
+    return "thread_local_outside_attached_lifetime";
   case DefinedFailureDetail::None:
   case DefinedFailureDetail::Count:
     return "none";

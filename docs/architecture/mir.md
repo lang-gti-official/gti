@@ -329,8 +329,8 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v112`/`mir-body-v91`,
-with `lowered-program-v22` declaration metadata. Declaration-bound computed
+The combined deterministic serialization is currently `mir-v113`/`mir-body-v92`,
+with `lowered-program-v24` declaration metadata. Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains
 complete borrowed-dependency-set proofs alongside foreign-storage inventories
@@ -2421,7 +2421,7 @@ Thread-local objects have a separate `MirThreadLocalStorage` inventory and
 and initializer; independent verification checks inventory, passive data
 provenance, cleanup recipes and dominating first-use guards. `DrainThreadLocals`
 is an explicit hosted-exit operation, not an emitter-added source call. Passive
-data storage uses native per-thread scalar data without dynamic guard or
+data storage uses native per-thread literal-initialized data without dynamic guard or
 registration; owning storage uses a byte slot and explicit object lifetime so
 emergency abandonment cannot accidentally run a native destructor.
 

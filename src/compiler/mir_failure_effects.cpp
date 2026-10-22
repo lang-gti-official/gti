@@ -1308,6 +1308,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
           break;
         }
         case MirInstructionKind::DrainThreadLocals:
+        case MirInstructionKind::BeginThreadLocals:
         case MirInstructionKind::Borrow:
         case MirInstructionKind::ActivateBorrow:
         case MirInstructionKind::Construct:
@@ -1945,6 +1946,7 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
         break;
       }
       case MirInstructionKind::DrainThreadLocals:
+      case MirInstructionKind::BeginThreadLocals:
       case MirInstructionKind::Modify:
       case MirInstructionKind::Borrow:
       case MirInstructionKind::ActivateBorrow:

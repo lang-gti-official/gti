@@ -62,6 +62,63 @@ int main() {
 }
 """
 
+IMMOVABLE = """\
+class Resource {
+public:
+  Resource() = default;
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = delete;
+  int32_t read() { return 7; }
+  ~Resource() { std::println("immovable retired"); }
+};
+thread_local mut Resource resource{};
+int main() { return resource.read() - 7; }
+"""
+
+SCALARS = """\
+enum Mode { First, Second };
+thread_local mut Mode mode = Mode::First;
+thread_local mut int32_t values[2] = {3, 4};
+thread_local mut int32_t* address = nullptr;
+int main() {
+  if (mode != Mode::First || values[0] != 3 || values[1] != 4 ||
+      address != nullptr) return 1;
+  mode = Mode::Second;
+  values[1] += 1;
+  unsafe {
+    address = &values[0];
+    if (*address != 3) return 2;
+  }
+  return mode == Mode::Second && values[1] == 5 ? 0 : 3;
+}
+"""
+
+MANUAL = "#include <std/cthread>\n" + STATE + """\
+int32_t worker(void* context) {
+  return first.read() + 41;
+}
+int main() {
+  mut std::thrd_t handle = 0;
+  mut int32_t result = 0;
+  unsafe {
+    if (std::thrd_create(handle, worker, nullptr) != std::thrd_success) return 1;
+    if (std::thrd_join(handle, result) != std::thrd_success) return 2;
+  }
+  std::println("manual joined");
+  return result == 42 ? 0 : 3;
+}
+"""
+
+UNATTACHED = STATE + """\
+using Callback = () -> int32_t;
+extern "C" { void gti_tls_call_unattached(Callback callback); }
+int32_t read_state() { return first.read(); }
+int main() {
+  unsafe { gti_tls_call_unattached(read_state); }
+  return 0;
+}
+"""
+
 BODY_FAILURE = "#include <std/thread>\n" + STATE + """\
 int main() {
   auto started = std::thread::start([]() -> void {
@@ -99,6 +156,33 @@ int main() {
   return 0;
 }
 """
+
+RESULT_CLASS = """\
+[[unsafe_transfer]] class Result {
+public:
+  Result() = default;
+  Result(Result& other) = delete;
+  Result(Result&& other) = default;
+  ~Result() { std::println("result retired"); }
+};
+"""
+
+RESULT_CLEANUP_FAILURE = CLEANUP_FAILURE[:CLEANUP_FAILURE.index("int main()")] + RESULT_CLASS + """\
+int main() {
+  mut std::thread_result<Result> worker{};
+  auto started = worker.start([]() -> Result {
+    int32_t used = failing.read();
+    return Result();
+  });
+  if (!started) return 1;
+  auto joined = worker.join();
+  return 0;
+}
+"""
+
+RESULT_CLEANUP_EMERGENCY = RESULT_CLEANUP_FAILURE.replace(
+    "thread_local mut Fail failing{};", "thread_local mut Fail failing{};\nthread_local mut Fail second_failure{};").replace(
+    "int32_t used = failing.read();", "int32_t used = failing.read();\nint32_t second = second_failure.read();")
 
 RECURSION = """\
 thread_local mut int32_t value = seed();
@@ -138,12 +222,22 @@ def main() -> None:
         ("worker", SUCCESS, "concurrent", 0,
          "init 2\ninit 1\nworker 2 1 1 1\ndrop 1\ndrop 2\njoined\n"
          "init 1\ninit 2\ndrop 2\ndrop 1\n", None),
+        ("manual", MANUAL, "concurrent", 0,
+         "init 1\ndrop 1\nmanual joined\n", None),
+        ("immovable", IMMOVABLE, "single-threaded", 0,
+         "immovable retired\n", None),
+        ("scalars", SCALARS, "single-threaded", 0, "", None),
         ("body_failure", BODY_FAILURE, "concurrent", 70,
          "init 1\ndrop 1\n", "GTI-R0002"),
         ("cleanup_failure", CLEANUP_FAILURE, "concurrent", 70,
          "cleanup failed\n", "GTI-R0002"),
+        ("result_cleanup_failure", RESULT_CLEANUP_FAILURE, "concurrent", 70,
+         "cleanup failed\nresult retired\n", "GTI-R0002"),
+        ("result_cleanup_emergency", RESULT_CLEANUP_EMERGENCY, "concurrent", 70,
+         "cleanup failed\ncleanup failed\n", "GTI-R0014"),
         ("recursive", RECURSION, "single-threaded", 70, "", "GTI-R0013"),
         ("shutdown", SHUTDOWN_INITIALIZATION, "single-threaded", 70, "", "GTI-R0013"),
+        ("unattached", UNATTACHED, "single-threaded", 70, "", "GTI-R0013"),
     ]
     modes = [(standard, opt, []) for standard in ("c++20", "c++23")
              for opt in ("-O0", "-O1", "-O3")]
@@ -158,8 +252,12 @@ def main() -> None:
                 command = [str(compiler), str(path), "--progress=never",
                            "--execution-profile", profile, "--std", standard,
                            opt, "--keep-cpp", "-o", str(binary)]
-                if native:
-                    command.extend(["--", *native])
+                extra = list(native)
+                if name == "unattached":
+                    extra.append(str(pathlib.Path(__file__).resolve().parent /
+                                     "fixtures" / "thread_local_unattached.cpp"))
+                if extra:
+                    command.extend(["--", *extra])
                 run(command)
                 result = run([str(binary)], status)
                 if result.stdout != output or (failure is None and result.stderr) or (
