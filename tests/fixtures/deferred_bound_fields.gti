@@ -1,0 +1,181 @@
+// A class carrying references (a borrowed carrier) has no empty native
+// value: its references must be bound when it is constructed. When such a
+// field follows other initialization work, the C++ backend declares it in
+// deferred storage, an anonymous union whose inert member is active until a
+// constructor publishes the field. Each constructor below then publishes the
+// carrier at its verified MIR point, after earlier fields that can fail:
+// moved or copied from a formal, or built by a carrier constructor that
+// checks its input or prints. A failure before the publication drops the
+// owning field built first exactly once and never runs the carrier's
+// constructor; a failure after it still drops that field once. These all
+// stopped with GTI-B0001 before deferred storage.
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+mut int stage = 0;
+
+int32_t divisor_for(int at) { return stage == at ? 0 : 1; }
+
+class Ledger {
+public:
+  int32_t id;
+  Ledger(int32_t id, int32_t divisor) : id(id + 60 / divisor) {}
+  ~Ledger() { std::println("close ledger"); }
+};
+
+class Cursor {
+public:
+  int32_t& current;
+  Cursor(int32_t& value) : current(value) {}
+};
+
+// A carrier whose constructor checks its input, and one that prints.
+class Checked {
+public:
+  int32_t& current;
+  int32_t step;
+  Checked(int32_t& value, int32_t divisor) : current(value), step(60 / divisor) {}
+};
+
+class Loud {
+public:
+  int32_t& current;
+  Loud(int32_t& value) : current(value) { std::println("loud cursor"); }
+};
+
+// An exclusive carrier cannot be copied, only moved.
+class Writer {
+public:
+  mut int32_t& target;
+  Writer(mut int32_t& target) : target(target) {}
+};
+
+class Window {
+public:
+  int32_t& base;
+  int32_t step;
+  Window(int32_t& base, int32_t step) : base(base), step(step) {}
+};
+
+int32_t peek(mut Cursor& cursor) { return cursor.current + 1; }
+
+// A ledger that can fail precedes the moved carrier.
+class Moved {
+public:
+  Ledger ledger;
+  Cursor cursor;
+  Moved(Cursor cursor) : ledger(Ledger(1, divisor_for(1))), cursor(std::move(cursor)) {}
+};
+
+// A copy of a formal nothing changes publishes natively.
+class Copied {
+public:
+  Ledger ledger;
+  Cursor cursor;
+  Copied(Cursor cursor) : ledger(Ledger(2, divisor_for(2))), cursor(cursor) {}
+};
+
+// The carrier's own constructor can fail after the ledger is built.
+class Built {
+public:
+  Ledger ledger;
+  Checked cursor;
+  Built(int32_t& value, int32_t divisor)
+      : ledger(Ledger(3, divisor_for(3))), cursor(Checked(value, divisor)) {}
+};
+
+// The carrier's constructor prints, so it must not run before the ledger.
+class Announced {
+public:
+  Ledger ledger;
+  Loud cursor;
+  Announced(int32_t& value) : ledger(Ledger(5, divisor_for(5))), cursor(Loud(value)) {}
+};
+
+// A ledger after the published carrier can fail too.
+class Trailing {
+public:
+  Ledger first;
+  Cursor cursor;
+  Ledger second;
+  Trailing(Cursor cursor)
+      : first(Ledger(6, 1)), cursor(std::move(cursor)),
+        second(Ledger(7, divisor_for(6))) {}
+};
+
+// Two carriers, the first one first, around an owning vector.
+class Pair {
+public:
+  Cursor first;
+  std::vector<int32_t> values;
+  Cursor second;
+  Pair(Cursor first, Cursor second)
+      : first(std::move(first)), values(std::vector<int32_t>()),
+        second(std::move(second)) {}
+};
+
+class Exclusive {
+public:
+  std::vector<int32_t> values;
+  Writer writer;
+  Exclusive(Writer writer) : values(std::vector<int32_t>()), writer(std::move(writer)) {}
+};
+
+// The formal is mutably borrowed before its copy, so the copy stays in MIR
+// order after the call.
+class Peeked {
+public:
+  std::vector<int32_t> values;
+  int32_t seen;
+  Cursor cursor;
+  Peeked(mut Cursor cursor)
+      : values(std::vector<int32_t>()), seen(peek(cursor)), cursor(cursor) {}
+};
+
+// A copyable holder: copying and moving it carries the published carrier.
+class Viewed {
+public:
+  int32_t quotient;
+  Window window;
+  Viewed(Window window, int32_t divisor)
+      : quotient(60 / divisor), window(std::move(window)) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  int32_t x = 3;
+  int32_t y = 4;
+
+  Moved moved = Moved(Cursor(x));
+  std::println(moved.cursor.current + moved.ledger.id);
+
+  Copied copied = Copied(Cursor(y));
+  std::println(copied.cursor.current + copied.ledger.id);
+
+  Built built = Built(x, divisor_for(4));
+  std::println(built.cursor.current + built.cursor.step + built.ledger.id);
+
+  Announced announced = Announced(y);
+  std::println(announced.cursor.current + announced.ledger.id);
+
+  Trailing trailing = Trailing(Cursor(x));
+  std::println(trailing.first.id + trailing.cursor.current + trailing.second.id);
+
+  Pair pair = Pair(Cursor(x), Cursor(y));
+  std::println(pair.first.current * 10 + pair.second.current);
+
+  mut int32_t z = 5;
+  Exclusive exclusive = Exclusive(Writer(z));
+  std::println(exclusive.writer.target);
+
+  Peeked peeked = Peeked(Cursor(y));
+  std::println(peeked.seen * 10 + peeked.cursor.current);
+
+  Viewed viewed = Viewed(Window(x, 2), divisor_for(7));
+  Viewed copy = viewed;
+  Viewed moved_view = std::move(viewed);
+  std::println(copy.window.base + copy.window.step + moved_view.quotient +
+               moved_view.window.base);
+  return 0;
+}

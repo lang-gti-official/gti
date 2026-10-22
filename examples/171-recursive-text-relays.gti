@@ -1,0 +1,81 @@
+// A recursive function can return a view of its caller's text without copying
+// it, exactly as a non-recursive one does: the relay is inferred from every
+// return, including the recursive calls, so the result views whatever the
+// caller passed. The caller's owner stays borrowed read-only while the result
+// is live.
+#include <std/string>
+
+// A word with its offset into a line; it views the line and owns no text.
+struct Word {
+  std::string_view text;
+  int offset;
+};
+
+class Cursor {
+public:
+  std::string_view rest;
+  int depth;
+  Cursor(std::string_view rest, int depth) : rest(rest), depth(depth) {}
+  // A recursive method relays the receiver's text field.
+  std::string_view unwind(int steps) {
+    if (steps == 0) {
+      return this.rest;
+    }
+    return this.unwind(steps - 1);
+  }
+};
+
+// Every depth returns `line` itself, so the result relays `line`.
+std::string_view settle(std::string_view line, int rounds) {
+  if (rounds == 0) {
+    return line;
+  }
+  return settle(line, rounds - 1);
+}
+
+// Mutually recursive functions relay it as well.
+std::string_view ping(std::string_view line, int rounds) {
+  if (rounds == 0) {
+    return line;
+  }
+  return pong(line, rounds - 1);
+}
+std::string_view pong(std::string_view line, int rounds) {
+  return ping(line, rounds);
+}
+
+// A recursion over a value relays that value's text field.
+std::string_view spell(Word word, int rounds) {
+  if (rounds == 0) {
+    return word.text;
+  }
+  return spell(word, rounds - 1);
+}
+
+// A recursion that may return either of two views, such as one that swaps
+// `a` and `b` on each call, relays neither: returning `a` there reports
+// GTI-S2045. Returning only literal or ownerless text keeps the result
+// ownerless, as in a non-recursive function.
+
+int main() {
+  std::string line{"count = 42"};
+  Word word{.text = line.view(), .offset = 0};
+  Cursor cursor = Cursor(line.view(), 0);
+
+  // Each result is a view of `line`, so no text is copied.
+  std::string_view a = settle(line.view(), 3);
+  std::string_view b = ping(line.view(), 4);
+  std::string_view c = spell(word, 2);
+  std::string_view d = cursor.unwind(2);
+  std::println(a);
+  std::println(b.size() + c.size() + d.size());
+
+  // While any of these views is live, `line` cannot be mutated, moved or
+  // destroyed; for example `line.append("!")` here is rejected.
+  std::println(c);
+
+  // A literal argument gives an ownerless result, which can be stored.
+  std::string_view keyword = settle("let", 2);
+  std::println(keyword);
+  return a.size() == 10 && d.size() == 10 ? 0 : 1;
+}

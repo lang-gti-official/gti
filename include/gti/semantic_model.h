@@ -829,13 +829,27 @@ struct RawBorrowContract {
 // A text field of a formal or of the receiver whose text a function lets
 // outlive the call, so every argument must hold ownerless text there
 // (L-OWN-02). A text formal's own requirement is ownerlessTextParameters.
+// With `payload`, the requirement is on that text payload of the field's
+// payload enum.
 struct OwnerlessTextField {
   bool receiver = false;
   std::size_t parameter = 0;
   SymbolId field = 0;
+  SymbolId payload = 0;
 
   friend auto operator<=>(const OwnerlessTextField &,
                           const OwnerlessTextField &) = default;
+};
+
+// A by-value text formal that a function returns in a direct text field of a
+// fresh result (L-OWN-02): a call's result holds that argument's text there,
+// so a dynamic argument publishes its owner at the field.
+struct PublishedTextField {
+  std::size_t parameter = 0;
+  SymbolId field = 0;
+
+  friend auto operator<=>(const PublishedTextField &,
+                          const PublishedTextField &) = default;
 };
 
 struct FunctionInfo {
@@ -883,6 +897,12 @@ struct FunctionInfo {
   std::vector<std::size_t> ownerlessTextParameters;
   // Sorted and unique; inferred like ownerlessTextParameters.
   std::vector<OwnerlessTextField> ownerlessTextFields;
+  // Sorted and unique: formals a returned construction or call relays
+  // instead of requiring them ownerless.
+  std::vector<PublishedTextField> publishedTextFields;
+  // The receiver's direct text field that every returned reference to text
+  // designates (L-OWN-02): reading the result reads that field.
+  std::optional<OwnerlessTextField> returnedTextReference;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -1380,7 +1400,16 @@ struct ResolvedCallInfo {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
+  // The callee returns a dynamic argument in a text field of its fresh result
+  // (its publishedTextFields), so the result carries that argument's owner
+  // there (L-OWN-02). Its borrow facts describe this call only.
+  bool dependentTextPublication = false;
+  // The callee's body was still being analyzed (recursion), so its relays
+  // were not final: every text argument of this call must be ownerless.
+  bool provisionalTextRelays = false;
   std::optional<BorrowOriginPlace> borrowPlace;
+  // The callee's returnedTextReference.
+  std::optional<OwnerlessTextField> returnedTextReference;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   CallReceiverMode receiverMode = CallReceiverMode::None;
@@ -1585,6 +1614,9 @@ struct ResolvedOperatorInfo {
   // assignment receivers have no standalone AST occurrence, so downstream
   // lowering must not reconstruct these facts from a declaration symbol.
   ExpressionInfo receiverInfo;
+  // The receiver text field or payload that the operator's returned
+  // reference designates for this receiver's class (L-OWN-02).
+  std::optional<OwnerlessTextField> returnedTextReference;
 };
 
 // The receiver of the conversion operator an explicit conversion selected:
@@ -2075,6 +2107,9 @@ public:
   [[nodiscard]] const std::vector<OwnerlessTextField> &requiredFields() const {
     return requiredFields_;
   }
+  [[nodiscard]] const std::vector<PublishedTextField> &published() const {
+    return published_;
+  }
   [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
 
 private:
@@ -2084,12 +2119,14 @@ private:
       : source_(function.bodyDeclaration()), function_(function.id),
         parameters_(function.parameterTypes),
         required_(function.ownerlessTextParameters),
-        requiredFields_(function.ownerlessTextFields), snapshot_(snapshot) {}
+        requiredFields_(function.ownerlessTextFields),
+        published_(function.publishedTextFields), snapshot_(snapshot) {}
   const FunctionDecl *source_;
   FunctionId function_;
   std::vector<SemanticType> parameters_;
   std::vector<std::size_t> required_;
   std::vector<OwnerlessTextField> requiredFields_;
+  std::vector<PublishedTextField> published_;
   std::uint64_t snapshot_;
 };
 

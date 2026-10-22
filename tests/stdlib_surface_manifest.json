@@ -2935,7 +2935,7 @@
         "tests/deferred_assertion_tests.cpp",
         "tests/deferred_assertion_runtime_test.py",
         "tests/deferred_assertion_lsp_test.py",
-        "examples/171-deferred-assertions.gti",
+        "examples/172-deferred-assertions.gti",
         "stdlib/std/assert.gti"
       ]
     },

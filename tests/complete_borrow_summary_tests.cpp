@@ -11,6 +11,7 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <utility>
 
 namespace lang {
 struct MirProgramTestAccess {
@@ -1992,6 +1993,304 @@ int main() { return 0; }
                      [](const auto &d) { return d.code == "GTI-B0001"; }),
              "reference relay rejects expired owner or mutable overlap in "
              "semantics");
+    }
+  }
+  {
+    // A field moved or copied from a by-value formal publishes that formal's
+    // guarded entry group. The constructor proof derives the group from the
+    // formal's typed entry contract, so a forged producer, group, guard or
+    // retirement is rejected; semantics still rejects an escaping owner.
+    std::ifstream fixture(root /
+                          "tests/fixtures/borrowed_enum_formal_fields.gti");
+    const std::string source((std::istreambuf_iterator<char>(fixture)), {});
+    expect(!source.empty(), "formal borrowed enum fixture exists");
+    const auto result = analyze(source);
+    const auto ctorProofFailed =
+        [](const lang::MirVerificationResult &checked) {
+          return std::any_of(
+              checked.errors.begin(), checked.errors.end(),
+              [](const auto &error) {
+                return error.message.find(
+                           "complete constructor dependency summary lacks") !=
+                       std::string::npos;
+              });
+        };
+    expect(result.canGenerateCode() &&
+               lang::verifyMirProgram(result.mir).valid(),
+           "moved and copied formal enum fields verify independently");
+    std::size_t moved = 0;
+    std::size_t copied = 0;
+    for (const auto &constructor : result.mir.constructorInstances()) {
+      if (!constructor.completeBorrow ||
+          constructor.completeBorrow->dependencies.empty())
+        continue;
+      const auto &body = constructor.body;
+      const lang::MirInstruction *transfer = nullptr;
+      for (const auto &block : body.blocks)
+        for (const auto &stage : block.instructions) {
+          if (stage.kind != lang::MirInstructionKind::Initialize ||
+              stage.constructorInitializer == 0 || stage.operands.size() != 1)
+            continue;
+          const auto *producer = lang::mir_detail::definitionFor(
+              body, stage.operands.front().value);
+          const auto *formal =
+              producer && producer->operands.size() == 1
+                  ? body.findPlace(producer->operands.front().place)
+                  : nullptr;
+          if (formal && formal->root == lang::MirPlaceRootKind::Binding &&
+              formal->projections.empty() &&
+              formal->type.kind == lang::SemanticType::Enum &&
+              (producer->kind == lang::MirInstructionKind::Move ||
+               producer->kind == lang::MirInstructionKind::Load))
+            transfer = producer;
+        }
+      if (!transfer)
+        continue;
+      ++(transfer->kind == lang::MirInstructionKind::Move ? moved : copied);
+      for (int mutation = 0; mutation < 6; ++mutation) {
+        auto malformed = result.mir;
+        auto &changed = lang::MirProgramTestAccess::constructors(
+            malformed)[constructor.id - 1];
+        auto group = std::find_if(
+            changed.body.loans.begin(), changed.body.loans.end(),
+            [](const auto &loan) {
+              return loan.entry && loan.kind == lang::MirLoanKind::Stored;
+            });
+        auto published = std::find_if(
+            changed.body.loans.begin(), changed.body.loans.end(),
+            [](const auto &loan) { return loan.escapes && loan.storedField; });
+        expect(group != changed.body.loans.end() &&
+                   published != changed.body.loans.end(),
+               "formal field publication names its entry group");
+        if (group == changed.body.loans.end() ||
+            published == changed.body.loans.end())
+          break;
+        for (auto &block : changed.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (instruction.id == transfer->id && mutation == 0)
+              // A value from another place is not the formal's group.
+              instruction.operands.front().place = published->source + 1;
+            if (instruction.kind == lang::MirInstructionKind::Borrow &&
+                instruction.loan == published->id && mutation == 1)
+              instruction.operands.front().loan = published->id;
+            if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                instruction.loan == group->id && mutation == 2)
+              instruction.tombstone = true;
+          }
+        if (mutation == 3)
+          group->conditions.clear();
+        if (mutation == 4)
+          published->designatedFields.clear();
+        if (mutation == 5)
+          group->entry = false;
+        const auto checked = lang::verifyMirProgram(malformed);
+        expect(!checked.valid() && (mutation == 2 || ctorProofFailed(checked)),
+               "formal field publication rejects a forged producer, group, "
+               "guard, path or retirement " +
+                   std::to_string(mutation));
+      }
+    }
+    expect(moved >= 4 && copied >= 2,
+           "fixture moves and copies formal borrowed enums into fields");
+    const std::pair<std::string, std::string> rejectedCases[] = {
+        {"Shelf dangling() { int local = 3; return Shelf(Slot::ready(local)); "
+         "}",
+         "GTI-S2045"},
+        {"Copier dangling_copy() { int local = 3; Slot slot = "
+         "Slot::ready(local); return Copier(slot); }",
+         "GTI-S2045"},
+        {"int overlap() { mut int value = 3; Shelf shelf = "
+         "Shelf(Slot::ready(value)); value = 4; return shelf.get(); }",
+         "GTI-S2017"},
+        {"int exclusive() { mut int value = 3; mut Writer writer = "
+         "Writer(Cursor::at(value)); int seen = value; writer.write(5); "
+         "return seen; }",
+         "GTI-S2017"},
+        {"class Duplicate { mut Cursor cursor; public: Duplicate(Cursor "
+         "cursor) : cursor(cursor) {} };",
+         "GTI-S2003"}};
+    for (const auto &rejectedCase : rejectedCases) {
+      const auto &[extra, code] = rejectedCase;
+      const auto rejected = lang::Frontend().analyze(
+          root / "tests/formal-borrowed-enum-rejection.gti",
+          source + "\n" + extra, {root / "stdlib/prelude.gti"}, {},
+          {root / "stdlib"});
+      expect(!rejected.canGenerateCode() &&
+                 std::any_of(rejected.diagnostics.begin(),
+                             rejected.diagnostics.end(),
+                             [&](const auto &d) {
+                               return d.code == rejectedCase.second;
+                             }) &&
+                 std::none_of(
+                     rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                     [](const auto &d) { return d.code == "GTI-B0001"; }),
+             "formal borrowed enum fields reject an escaping owner, an "
+             "overlapping access or a duplicated exclusive capability in "
+             "semantics with " +
+                 code + ": " + extra);
+    }
+  }
+  {
+    // A borrowed field takes its carrier from a by-value parameter or builds
+    // it in place. Copying the carrier out of a reference parameter is a
+    // semantic error at that initializer argument, never a MIR failure.
+    const std::string prefix = "#include <std/utility>\n"
+                               "enum Slot { ready(int& value), empty };\n"
+                               "enum MaybeRef<T> { some(T value), none };\n";
+    const std::string fragment =
+        "cannot copy its carrier out of a reference parameter";
+    const auto copiedThroughReference = [&](const std::string &body,
+                                            const std::string &marker) {
+      const std::string source = prefix + body + "\nint main() { return 0; }\n";
+      const auto result = lang::Frontend().analyze(
+          root / "tests/borrowed-field-reference-copy.gti", source,
+          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+      const auto at = source.find(marker);
+      const auto diagnostic =
+          std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
+                       [&](const auto &d) {
+                         return d.code == "GTI-S2045" &&
+                                d.message.find(fragment) != std::string::npos;
+                       });
+      return !result.canGenerateCode() &&
+             diagnostic != result.diagnostics.end() &&
+             at != std::string::npos && diagnostic->primary.start == at &&
+             diagnostic->primary.end == at + std::string("slot").size() &&
+             std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                          [](const auto &d) { return d.code == "GTI-B0001"; });
+    };
+    expect(copiedThroughReference(
+               "class Shelf { Slot slot; public: Shelf(Slot& slot) : "
+               "slot(slot) {} };",
+               "slot) {}"),
+           "copying a borrowed enum out of a reference parameter is GTI-S2045 "
+           "at the argument");
+    expect(copiedThroughReference(
+               "class Shelf { Slot slot; public: Shelf(Slot& slot) : "
+               "slot(std::move(slot)) {} };",
+               "slot)) {}"),
+           "moving a borrowed enum through a reference parameter is GTI-S2045 "
+           "at the argument");
+    expect(
+        copiedThroughReference("class Holder<T> { MaybeRef<T&> state; public: "
+                               "Holder(MaybeRef<T&>& slot) : state(slot) {} };",
+                               "slot) {}"),
+        "a generic carrier copied out of a reference parameter is GTI-S2045");
+    for (const std::string accepted :
+         {"class Shelf { Slot slot; public: Shelf(int& x) : "
+          "slot(Slot::ready(x)) {} };",
+          "class Shelf { Slot slot; public: Shelf(Slot slot) : slot(slot) {} "
+          "};",
+          "class Shelf { Slot slot; public: Shelf(Slot slot) : "
+          "slot(std::move(slot)) {} };"}) {
+      const auto result = lang::Frontend().analyze(
+          root / "tests/borrowed-field-by-value.gti",
+          prefix + accepted + "\nint main() { return 0; }\n",
+          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+      expect(
+          std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                       [&](const auto &d) {
+                         return d.message.find(fragment) != std::string::npos;
+                       }),
+          "in-place and by-value borrowed fields stay accepted: " + accepted);
+    }
+  }
+  {
+    // A function returning a by-value borrowed carrier formal whole publishes
+    // that formal's guarded entry group through its Return loan. The complete
+    // result proof, not a single stored reference, identifies the group, so a
+    // forged transfer, guard, path, retirement or entry is rejected.
+    std::ifstream fixture(root /
+                          "tests/fixtures/borrowed_enum_relay_returns.gti");
+    const std::string source((std::istreambuf_iterator<char>(fixture)), {});
+    expect(!source.empty(), "borrowed relay fixture exists");
+    const auto result = analyze(source);
+    expect(result.canGenerateCode() &&
+               lang::verifyMirProgram(result.mir).valid(),
+           "by-value borrowed carrier relays verify independently");
+    std::size_t relays = 0;
+    for (const auto &function : result.mir.functionInstances()) {
+      if (!function.completeReturnBorrow)
+        continue;
+      const auto &body = function.body;
+      const lang::MirInstruction *transfer = nullptr;
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions) {
+          const auto *published =
+              instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+          const auto *group =
+              instruction.operands.size() == 1 &&
+                      instruction.operands.front().kind ==
+                          lang::MirOperandKind::Loan
+                  ? body.findLoan(instruction.operands.front().loan)
+                  : nullptr;
+          if (instruction.kind == lang::MirInstructionKind::Borrow &&
+              published && published->kind == lang::MirLoanKind::Return &&
+              group && group->entry && group->kind == lang::MirLoanKind::Stored)
+            transfer = &instruction;
+        }
+      if (!transfer)
+        continue;
+      ++relays;
+      const auto returnLoan = *transfer->loan;
+      const auto groupLoan = transfer->operands.front().loan;
+      for (int mutation = 0; mutation < 6; ++mutation) {
+        auto malformed = result.mir;
+        auto &changed =
+            lang::MirProgramTestAccess::functions(malformed)[function.id - 1]
+                .body;
+        auto &published = changed.loans[returnLoan - 1];
+        auto &group = changed.loans[groupLoan - 1];
+        for (auto &block : changed.blocks)
+          for (auto &instruction : block.instructions) {
+            if (instruction.id == transfer->id && mutation == 0)
+              instruction.operands.front().loan = returnLoan;
+            if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                instruction.loan == groupLoan && mutation == 1)
+              instruction.tombstone = true;
+          }
+        if (mutation == 2)
+          group.conditions.clear();
+        if (mutation == 3)
+          published.designatedFields.clear();
+        if (mutation == 4)
+          group.entry = false;
+        if (mutation == 5)
+          published.source = published.source + 1;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "borrowed relay rejects a forged transfer, retirement, guard, "
+               "path, entry or source " +
+                   std::to_string(mutation));
+      }
+    }
+    expect(relays >= 6, "fixture relays enum, class and generic formals whole");
+    const std::pair<std::string, std::string> rejectedCases[] = {
+        {"Slot dangling() { int local = 3; return relay(Slot::ready(local)); "
+         "}",
+         "GTI-S2045"},
+        {"Slot dangling_copy() { int local = 3; return "
+         "copy_relay(Slot::ready(local)); }",
+         "GTI-S2045"},
+        {"int overlap() { mut int value = 3; Slot slot = "
+         "relay(Slot::ready(value)); value = 4; return peek(slot); }",
+         "GTI-S2017"}};
+    for (const auto &rejectedCase : rejectedCases) {
+      const auto &[extra, code] = rejectedCase;
+      const auto rejected = lang::Frontend().analyze(
+          root / "tests/borrowed-relay-rejection.gti", source + "\n" + extra,
+          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+      expect(!rejected.canGenerateCode() &&
+                 std::any_of(rejected.diagnostics.begin(),
+                             rejected.diagnostics.end(),
+                             [&](const auto &d) {
+                               return d.code == rejectedCase.second;
+                             }) &&
+                 std::none_of(
+                     rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                     [](const auto &d) { return d.code == "GTI-B0001"; }),
+             "borrowed relays reject an escaping owner or an overlapping "
+             "write in semantics with " +
+                 code + ": " + extra);
     }
   }
   return failures ? 1 : 0;

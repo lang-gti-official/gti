@@ -223,6 +223,17 @@ then commits one write. Built-in prefix and postfix increment/decrement form
 and read their target once before performing the checked update; postfix
 retains the prior value as its result and prefix retains the updated value.
 
+The result of a built-in assignment is a value, not its target place: the
+target's value right after the commit, held as temporary storage of the
+enclosing full-expression. A later write of the target, including one by a
+later operand of the same full-expression, does not change that result, and a
+reference derived from it cannot outlive the full-expression. For a class the
+result is a copy of the target, so `(p = q).x` reads `q`'s field, and in
+`combine((p = q).x, (p = r).x)` the first argument is still `q.x`. Reading
+fields of a copyable class assignment's result is implemented. Reading fields
+of a move-only class's assignment result, and using a class assignment's whole
+result, are not yet implemented.
+
 When a plain subscript or dereference assignment forms its target through a
 source-defined operator returning `mut T&`, the selected target call runs
 before the right operand and may fail before any part of that operand runs. A

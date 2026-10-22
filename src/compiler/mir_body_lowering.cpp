@@ -4121,14 +4121,18 @@ private:
         // A class-valued temporary is an SSA value, not a pre-existing place.
         // Project from that value after emitPlaceDependencies() materializes
         // it. Rooting this place at the member result would make the following
-        // Load read its own result before definition.
+        // Load read its own result before definition. An assignment's value
+        // is the copy of its destination placed after the Assign.
         if (place == 0) {
           const HirValue *receiver = findValue(value->operands.front());
           if (receiver != nullptr &&
               receiver->info.category == ValueCategory::Value &&
               receiver->info.type.kind == SemanticType::Class) {
+            const auto copy = assignmentSnapshots.find(receiver->id);
             place = appendPlace({.root = MirPlaceRootKind::Value,
-                                 .value = mirValueFor(*receiver),
+                                 .value = copy == assignmentSnapshots.end()
+                                              ? mirValueFor(*receiver)
+                                              : copy->second,
                                  .type = value->info.type,
                                  .access = value->info.access,
                                  .traits = value->info.traits,
@@ -4615,6 +4619,88 @@ private:
     return value.kind == HirValueKind::Call || value.functionTarget;
   }
 
+  // Built-in stores, including a plain store through a selected accessor.
+  // Each lowers to one MIR Assign, whose own result is expression
+  // bookkeeping rather than an object.
+  [[nodiscard]] static bool isAssignmentExpression(HirValueKind kind) {
+    switch (kind) {
+    case HirValueKind::Assignment:
+    case HirValueKind::MemberSet:
+    case HirValueKind::IndexSet:
+    case HirValueKind::DereferenceSet:
+    case HirValueKind::PlaceSet:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  // Semantic analysis gives a built-in class assignment a fresh value with
+  // temporary-storage lifetime: a copy of the committed destination, not the
+  // destination place. Reading the destination later would observe a write
+  // made by a later operand of the same full-expression. MIR therefore states
+  // that copy as one Load placed directly after the Assign, before any later
+  // operand runs and before a selected accessor's store loan ends. Only a
+  // copyable class without borrowed state or active cleanup has such a copy.
+  [[nodiscard]] MirValueId assignmentResultSnapshot(const HirValue &value) {
+    if (const auto found = assignmentSnapshots.find(value.id);
+        found != assignmentSnapshots.end())
+      return found->second;
+    const auto owner = std::find_if(program.classInstances().begin(),
+                                    program.classInstances().end(),
+                                    [&](const HirClassInstance &candidate) {
+                                      return candidate.type == value.info.type;
+                                    });
+    if (value.info.type.kind != SemanticType::Class ||
+        !value.info.traits.copyable ||
+        value.info.traits.containsBorrowedState ||
+        owner == program.classInstances().end() ||
+        owner->requiresActiveCleanup) {
+      reject(value.id, "assignment result has no copy of its destination");
+      return 0;
+    }
+    if (emittedValues.contains(value.id)) {
+      // The destination may have changed since the commit.
+      reject(value.id, "assignment result was requested after its commit");
+      return 0;
+    }
+    assignmentSnapshotRequests.insert(value.id);
+    emitValue(value.id);
+    assignmentSnapshotRequests.erase(value.id);
+    const auto found = assignmentSnapshots.find(value.id);
+    if (found == assignmentSnapshots.end()) {
+      if (!terminated())
+        reject(value.id, "assignment result copy was not materialized");
+      return 0;
+    }
+    return found->second;
+  }
+
+  // The Load that assignmentResultSnapshot() requests. Projections of the
+  // assignment result are rooted at its value, as for any class temporary.
+  void emitAssignmentResultCopy(const HirValue &value, MirPlaceId destination) {
+    if (destination == 0 || terminated()) {
+      return;
+    }
+    ExpressionInfo info = value.info;
+    info.category = ValueCategory::Value;
+    info.access = AccessMode::ReadOnly;
+    const MirValueId snapshot = appendValue(value.id, info);
+    // The copy reads the committed destination; the assignment's own
+    // reinitialization event stays on the Assign. A store through a raw
+    // pointer is read back through that same raw place.
+    (void)appendInstruction({.kind = MirInstructionKind::Load,
+                             .hirValue = value.id,
+                             .unsafeOperation = value.unsafeOperation,
+                             .result = snapshot,
+                             .operands = {{.kind = MirOperandKind::Copy,
+                                           .place = destination,
+                                           .type = value.info.type}},
+                             .info = info},
+                            false);
+    assignmentSnapshots.emplace(value.id, snapshot);
+  }
+
   // A projected array used as another index's base must finish its checked
   // place formation before that outer index starts. Checking only at the
   // eventual load/store/address would run later side effects after failure.
@@ -4665,6 +4751,13 @@ private:
       if (terminated()) {
         return;
       }
+    }
+    // An assignment, including a store through a selected accessor, is
+    // evaluated here as the projected object; the projection then reads its
+    // result copy rather than the destination.
+    if (isAssignmentExpression(value->kind)) {
+      (void)assignmentResultSnapshot(*value);
+      return;
     }
     // A direct-initialized class temporary is a fresh SSA value like a call
     // result: materialize it before a projection roots a place at it. So is
@@ -5494,6 +5587,18 @@ private:
                                leftProjection.selection ==
                                    rightProjection.selection;
                       });
+  }
+
+  // A direct text field of the receiver holds the caller's text: ownerless,
+  // or relayed under the method's field contract (L-OWN-02). A reference to
+  // it needs no stored dependency in this body.
+  [[nodiscard]] bool receiverTextFieldPlace(MirPlaceId id) const {
+    const MirPlace *place = output.findPlace(id);
+    return place != nullptr && place->root == MirPlaceRootKind::This &&
+           (place->type.kind == SemanticType::StringView ||
+            place->type.kind == SemanticType::CString) &&
+           place->projections.size() == 1 &&
+           place->projections.front().kind == MirProjectionKind::Field;
   }
 
   [[nodiscard]] MirLoanId storedDependencyForPlace(MirPlaceId id) const {
@@ -7100,6 +7205,7 @@ private:
     call.borrowArguments = value.borrowArguments;
     call.borrowFields = value.borrowFields;
     call.dependentTextPublication = value.dependentTextPublication;
+    call.provisionalTextRelays = value.provisionalTextRelays;
     call.borrowPlace = value.borrowPlace;
     call.restoresReferenceResult = value.restoresReferenceResult;
     call.restoredBorrowFields = value.restoredBorrowFields;
@@ -8386,11 +8492,19 @@ private:
                         .sourceValue = value.id});
   }
 
-  void endAddedLoans(const std::vector<Scope> &baseline) {
-    if (baseline.size() != scopes.size()) {
+  void endAddedLoans(const std::vector<Scope> &incoming) {
+    if (incoming.size() != scopes.size()) {
       valid = false;
       return;
     }
+    // A consuming call in this branch may already have retired an incoming
+    // group; joinConsumedBranches retires it on the other branches.
+    std::vector<Scope> baseline = incoming;
+    for (Scope &scope : baseline)
+      std::erase_if(scope.loans, [&](MirLoanId loan) {
+        return !loanIsActive(scopes, loan) &&
+               callTransferredLoanEndpoints.contains(loan);
+      });
     const auto retained = temporaryCarrierLoans();
     for (std::size_t depth = scopes.size(); depth > 0; --depth) {
       const std::vector<MirLoanId> &before = baseline[depth - 1].loans;
@@ -8931,6 +9045,53 @@ private:
     return left;
   }
 
+  // A consuming call in one branch retires its carrier's stored group there,
+  // and the carrier is then moved on some path, so nothing after the join can
+  // use it. Branches that still hold the group retire it before the join so
+  // every edge agrees. Only a cleanup-free group qualifies; a lifecycle-bound
+  // group is still needed by its carrier's drop.
+  struct OpenBranch {
+    MirBlockId end = 0;
+    std::vector<Scope> scopes;
+    std::unordered_map<MirLoanId, HirStatementId> transfers;
+  };
+
+  [[nodiscard]] std::unordered_map<MirLoanId, HirStatementId>
+  joinConsumedBranches(
+      std::vector<OpenBranch *> branches, const std::vector<Scope> &incoming,
+      const std::unordered_map<MirLoanId, HirStatementId> &incomingTransfers,
+      MirBlockId merge) {
+    std::unordered_map<MirLoanId, HirStatementId> consumed;
+    for (const OpenBranch *branch : branches)
+      for (const Scope &scope : incoming)
+        for (const MirLoanId loan : scope.loans) {
+          const auto transfer = branch->transfers.find(loan);
+          if (!loanIsActive(branch->scopes, loan) &&
+              transfer != branch->transfers.end() &&
+              !incomingTransfers.contains(loan))
+            consumed.emplace(loan, transfer->second);
+        }
+    for (OpenBranch *branch : branches) {
+      current = branch->end;
+      scopes = branch->scopes;
+      for (const auto &[loan, endpoint] : consumed) {
+        if (!loanIsActive(scopes, loan))
+          continue;
+        if (output.loans[loan - 1].lifecycleBound) {
+          valid = false;
+          continue;
+        }
+        (void)appendInstruction(
+            {.kind = MirInstructionKind::EndBorrow, .loan = loan});
+        removeLoanFromState(loan, scopes, bindingLoans);
+        branch->transfers.insert_or_assign(loan, endpoint);
+      }
+      branch->scopes = scopes;
+      terminate({.kind = MirTerminatorKind::Goto, .target = merge});
+    }
+    return consumed;
+  }
+
   void emitLogical(const HirValue &value) {
     if (value.operands.size() != 2 || !value.operation ||
         (*value.operation != TokenKind::AND &&
@@ -8968,7 +9129,9 @@ private:
                                 .category = ValueCategory::Place,
                                 .access = AccessMode::Mutable,
                                 .traits = value.info.traits}});
-    terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
+    OpenBranch shortCircuit{.end = current,
+                            .scopes = scopes,
+                            .transfers = incomingTransferEndpoints};
     const std::vector<TemporaryDrop> shortCircuitTemporaryDrops =
         temporaryDrops;
 
@@ -8987,14 +9150,21 @@ private:
                                 .access = AccessMode::Mutable,
                                 .traits = value.info.traits}});
     endAddedLoans(incomingScopes);
-    terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
+    OpenBranch rightBranch{.end = current,
+                           .scopes = scopes,
+                           .transfers = callTransferredLoanEndpoints};
     const std::vector<TemporaryDrop> rightTemporaryDrops = temporaryDrops;
-    const auto rightScopes = scopes;
+    const auto consumed =
+        joinConsumedBranches({&shortCircuit, &rightBranch}, incomingScopes,
+                             incomingTransferEndpoints, mergeBlock);
+    const auto rightScopes = rightBranch.scopes;
 
     current = mergeBlock;
     callTransferredLoanEndpoints = intersectTransferredLoanEndpoints(
-        incomingTransferEndpoints, callTransferredLoanEndpoints);
+        shortCircuit.transfers, rightBranch.transfers);
     scopes = incomingScopes;
+    for (const auto &[loan, endpoint] : consumed)
+      removeLoanFromState(loan, scopes, bindingLoans);
     temporaryDrops =
         mergeTemporaryDrops(shortCircuitTemporaryDrops, rightTemporaryDrops);
     retainBranchCarrierLoans(rightScopes);
@@ -9069,8 +9239,10 @@ private:
             : 0;
     std::vector<TemporaryDrop> thenTemporaryDrops;
     std::vector<TemporaryDrop> elseTemporaryDrops;
+    OpenBranch thenOpen;
+    OpenBranch elseOpen;
     const auto emitArm = [&](MirBlockId block, HirValueId arm,
-                             bool &completesNormally) {
+                             bool &completesNormally, OpenBranch &open) {
       current = block;
       scopes = incomingScopes;
       temporaryDrops = incomingTemporaryDrops;
@@ -9130,21 +9302,34 @@ private:
       }
       if (!borrowedResult)
         endAddedLoans(incomingScopes);
-      terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
+      open = {.end = current,
+              .scopes = scopes,
+              .transfers = callTransferredLoanEndpoints};
       return temporaryDrops;
     };
 
     bool thenCompletes = false;
     bool elseCompletes = false;
-    thenTemporaryDrops = emitArm(thenBlock, value.operands[1], thenCompletes);
-    const auto thenScopes = scopes;
-    const auto thenTransferEndpoints = callTransferredLoanEndpoints;
-    elseTemporaryDrops = emitArm(elseBlock, value.operands[2], elseCompletes);
-    const auto elseScopes = scopes;
-    const auto elseTransferEndpoints = callTransferredLoanEndpoints;
+    thenTemporaryDrops =
+        emitArm(thenBlock, value.operands[1], thenCompletes, thenOpen);
+    elseTemporaryDrops =
+        emitArm(elseBlock, value.operands[2], elseCompletes, elseOpen);
+    std::vector<OpenBranch *> completing;
+    if (thenCompletes)
+      completing.push_back(&thenOpen);
+    if (elseCompletes)
+      completing.push_back(&elseOpen);
+    const auto consumed = joinConsumedBranches(
+        completing, incomingScopes, incomingTransferEndpoints, mergeBlock);
+    const auto thenScopes = thenOpen.scopes;
+    const auto thenTransferEndpoints = thenOpen.transfers;
+    const auto elseScopes = elseOpen.scopes;
+    const auto elseTransferEndpoints = elseOpen.transfers;
 
     current = mergeBlock;
     scopes = incomingScopes;
+    for (const auto &[loan, endpoint] : consumed)
+      removeLoanFromState(loan, scopes, bindingLoans);
     if (!thenCompletes && !elseCompletes) {
       callTransferredLoanEndpoints = incomingTransferEndpoints;
       temporaryDrops = incomingTemporaryDrops;
@@ -9989,9 +10174,17 @@ private:
             if (instruction.id == preparation)
               instruction.replacementPair = assignment;
       }
+      if (assignmentSnapshotRequests.contains(id)) {
+        emitAssignmentResultCopy(*value, destination);
+      }
       emittedValues.insert(id);
       if (overloadedBorrowStore) {
         endConsumedCallResultLoans({value->id}, *value);
+      }
+      // Projections of the result read its copy, never the store's accessor
+      // place, whose loan has now ended.
+      if (assignmentSnapshots.contains(id)) {
+        valuePlaces.erase(id);
       }
       return;
     }
@@ -10828,7 +11021,8 @@ private:
     if (shellReference) {
       output.loans[loan - 1].storedDependency =
           storedDependencyForPlace(sourcePlace);
-      if (output.loans[loan - 1].storedDependency == 0)
+      if (output.loans[loan - 1].storedDependency == 0 &&
+          !receiverTextFieldPlace(sourcePlace))
         valid = false;
     }
     (void)appendInstruction(
@@ -12589,14 +12783,12 @@ private:
     endSemanticLoans(statement.thenEntryEndedLoans, statement.id);
     lowerScopedStatement(statement.body);
     const bool thenFallsThrough = !terminated();
-    const std::vector<Scope> thenScopes = scopes;
+    OpenBranch thenOpen{.end = current,
+                        .scopes = scopes,
+                        .transfers = callTransferredLoanEndpoints};
     const std::vector<TemporaryDrop> thenTemporaryDrops = temporaryDrops;
-    const std::unordered_map<HirBindingId, MirLoanId> thenBindingLoans =
+    std::unordered_map<HirBindingId, MirLoanId> thenBindingLoans =
         projectOuterBindingLoans(incomingBindingLoans, bindingLoans);
-    const auto thenTransferEndpoints = callTransferredLoanEndpoints;
-    if (thenFallsThrough) {
-      terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
-    }
 
     current = elseBlock;
     scopes = incomingScopes;
@@ -12606,14 +12798,30 @@ private:
     endSemanticLoans(statement.elseEntryEndedLoans, statement.id);
     lowerScopedStatement(statement.elseBranch);
     const bool elseFallsThrough = !terminated();
-    const std::vector<Scope> elseScopes = scopes;
+    OpenBranch elseOpen{.end = current,
+                        .scopes = scopes,
+                        .transfers = callTransferredLoanEndpoints};
     const std::vector<TemporaryDrop> elseTemporaryDrops = temporaryDrops;
-    const std::unordered_map<HirBindingId, MirLoanId> elseBindingLoans =
+    std::unordered_map<HirBindingId, MirLoanId> elseBindingLoans =
         projectOuterBindingLoans(incomingBindingLoans, bindingLoans);
-    const auto elseTransferEndpoints = callTransferredLoanEndpoints;
-    if (elseFallsThrough) {
-      terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
+
+    std::vector<OpenBranch *> completing;
+    if (thenFallsThrough)
+      completing.push_back(&thenOpen);
+    if (elseFallsThrough)
+      completing.push_back(&elseOpen);
+    const auto consumed = joinConsumedBranches(
+        completing, incomingScopes, incomingTransferEndpoints, mergeBlock);
+    for (const auto &[loan, endpoint] : consumed) {
+      std::erase_if(thenBindingLoans,
+                    [&](const auto &entry) { return entry.second == loan; });
+      std::erase_if(elseBindingLoans,
+                    [&](const auto &entry) { return entry.second == loan; });
     }
+    const std::vector<Scope> thenScopes = thenOpen.scopes;
+    const auto thenTransferEndpoints = thenOpen.transfers;
+    const std::vector<Scope> elseScopes = elseOpen.scopes;
+    const auto elseTransferEndpoints = elseOpen.transfers;
 
     current = mergeBlock;
     if (thenFallsThrough && elseFallsThrough) {
@@ -14241,6 +14449,10 @@ private:
   std::unordered_map<HirValueId, MirValueId> loweredValues;
   std::unordered_map<HirValueId, MirValueId> materializedValues;
   std::unordered_map<HirValueId, MirPlaceId> valuePlaces;
+  // Class assignments whose result is consumed, and the explicit copy of the
+  // committed destination that represents that result.
+  std::unordered_set<HirValueId> assignmentSnapshotRequests;
+  std::unordered_map<HirValueId, MirValueId> assignmentSnapshots;
   // Every extraction observes the same subject representation that selected
   // its arm, including mixed copied/borrowed bindings of passive enums.
   std::unordered_map<HirValueId, MirOperand> payloadSwitchSubjects;
