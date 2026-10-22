@@ -22,6 +22,15 @@ for what minor and patch releases mean.
   `uint64_t width(Token& t) { return t.ref().size(); }`, now accepts such a
   value. Storing the text, as in `kept = token.ref();`, or passing the value
   to a function that stores it, still reports `error[GTI-S2045]`.
+- The methods of a generic class can now be called on such a value too. For
+  `class Box<T>` with a `T value` field, `Box<std::string_view> box =
+  Box<std::string_view>(input.view());` could not call any method: even
+  `int kind()`, as well as `T name() { return this.value; }` and
+  `T& get() { return this.value; }`, reported `error[GTI-S2045]`. A method
+  that does not read the field now works, and `box.name()` and `box.get()`
+  are views of `input`. A method that stores the field, such as
+  `void save(mut T& out) { out = this.value; }`, reports `error[GTI-S2045]`
+  for such a value and is unaffected for `Box<int>`.
 
 ## 0.458.5 — Reading text through returned references
 

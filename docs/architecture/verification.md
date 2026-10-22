@@ -18,6 +18,24 @@
   copied from a field read: removing the copy from the carriers of
   `std::string_view v = t.text;` also verifies. That gap predates relays.
 
+`view_fields` covers generic class methods in `testGenericClassContracts`.
+- On a `Box<std::string_view>` over a local owner, a method that reads no
+  type-parameter field, `T name()`, and `T& get()` verify. `name()` and
+  `get()` relay the field for the instance's concrete class.
+- `save(mut T& out)` stores the field: its `Box<int>` instance requires
+  nothing, its `std::string_view` instance requires the receiver's field, and
+  MIR rejects that instance with the requirement cleared.
+- `Cell<T>::take(Cell<T>& other) mut`, which stores a formal's type-parameter
+  field, verifies over ownerless values. A dependent argument is `GTI-S2045`.
+  Without the formal requirement, MIR's derived requirement for the text
+  instance was an omitted-contract `GTI-B0001`.
+- `kept = box.name()`, `kept = box.get()` and `box.save(out)` on the
+  dependent value are `GTI-S2045`. Appending to the owner while a view from
+  `box.name()` lives is `GTI-S2017`.
+- `borrow_origin` now counts `Box<std::string_view>::get()` in
+  `borrow_stored_view_return.gti` as a field relay rather than an ownerless
+  return, and checks its three stored-view mutations.
+
 ## Text read through returned references (0.458.5)
 
 `ownerless_text_contracts` covers the accessors in
