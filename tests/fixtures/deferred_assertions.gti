@@ -75,10 +75,10 @@ int main() {
   application::remember(true);
   uint32_t next_line = std::source_location::current().line();
   if (Observations::source_line + uint32_t(1) != next_line) { return 8; }
-  Record inspected(std::string("read, not copied or moved"));
+  Record inspected{std::string("read, not copied or moved")};
   application::inspect(true, inspected);
   if (inspected.text.view() != "read, not copied or moved") { return 6; }
-  Record selected(std::string("consumed once"));
+  Record selected{std::string("consumed once")};
   application::choose(std::debug_assertions_enabled,
                       std::move(selected), std::move(selected));
   std::string owner{"retained"};

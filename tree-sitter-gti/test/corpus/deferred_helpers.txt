@@ -13,8 +13,9 @@ Confined deferred statement helpers
     (type)
     (identifier)
     (parameter_clause
-      (parameter_declaration
-        (type)
+      (parameter
+        (type
+          (primitive_type))
         (identifier)))
     (block))
   (function_declaration
@@ -22,7 +23,8 @@ Confined deferred statement helpers
     (type)
     (identifier)
     (parameter_clause
-      (parameter_declaration
-        (type)
+      (parameter
+        (type
+          (primitive_type))
         (identifier)))
     (block)))

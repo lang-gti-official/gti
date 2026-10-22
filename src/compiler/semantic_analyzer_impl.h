@@ -1857,8 +1857,8 @@ private:
                         const SemanticType &type,
                         bool initializerSemanticallyValid);
 
-  [[nodiscard]] static std::optional<bool>
-  constantBoolean(const ExprPtr &expression);
+  [[nodiscard]] std::optional<bool>
+  constantBoolean(const ExprPtr &expression) const;
 
   [[nodiscard]] bool expressionNeverReturns(const Expr *expression) const;
 
@@ -4835,6 +4835,10 @@ private:
   [[nodiscard]] const DeferredLookupContext *
   deferredContext(const Token &token) const;
   [[nodiscard]] bool analyzeDeferredStatement(const ExpressionStmt &statement);
+  [[nodiscard]] bool
+  analyzeDeferredSelection(const Call &call, const CallableCandidate &selected,
+                           const std::vector<SemanticType> &typeArguments,
+                           const std::vector<CompileTimeValue> &valueArguments);
   [[nodiscard]] bool validDeferredBody(const Stmt &statement) const;
   static constexpr std::size_t kConstexprForElementLimit = 1024;
   static constexpr std::size_t kConstexprForBodyLimit = 4096;
