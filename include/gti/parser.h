@@ -5,12 +5,24 @@
 #include "gti/token.h"
 
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <vector>
 
 namespace lang {
 
 using ParseDiagnostic = Diagnostic;
+
+// Editor-only syntax facts. These do not resolve names or change the AST;
+// the real parser records a marker only at a declaration/statement boundary.
+enum class SyntaxCompletionKind { Declaration, ClassMember, Statement };
+
+struct SyntaxCompletionContext {
+  SyntaxCompletionKind kind = SyntaxCompletionKind::Declaration;
+  Token token;
+  std::optional<Token> owner;
+  std::optional<ClassKind> ownerKind;
+};
 
 class Parser {
 public:
@@ -29,6 +41,8 @@ public:
   ExprPtr parseExpression();
   [[nodiscard]] bool hadError() const;
   [[nodiscard]] const std::vector<ParseDiagnostic> &errors() const;
+  [[nodiscard]] const std::optional<SyntaxCompletionContext> &
+  completionContext() const;
 
 private:
   class Impl;

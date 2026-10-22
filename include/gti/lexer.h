@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace lang {
@@ -64,6 +65,9 @@ private:
   std::string sourceName;
   std::vector<Token> tokens;
   std::vector<LexDiagnostic> diagnostics;
+  // Half-open editor exclusion ranges, including unterminated trivia/literals.
+  std::vector<std::pair<std::size_t, std::size_t>> completionExclusions;
+  bool collectCompletionExclusions = false;
   std::size_t start = 0;
   std::size_t current = 0;
   int line = 1;
