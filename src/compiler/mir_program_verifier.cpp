@@ -209,9 +209,8 @@ dependentTextPublication(const MirProgram &program,
           mapping.resultFields.size() == 2) &&
          mapping.access == AccessMode::ReadOnly &&
          mapping.resultConditions.empty() && mapping.sourceConditions.empty() &&
-         mir_detail::dependentTextFieldFormal(program, constructor,
-                                              mapping.resultFields) ==
-             mapping.parameter;
+         mir_detail::dependentTextFieldFormal(
+             program, constructor, mapping.resultFields) == mapping.parameter;
 }
 
 // A call whose target returns one by-value text formal in a direct text field

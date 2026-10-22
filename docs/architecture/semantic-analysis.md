@@ -2643,6 +2643,44 @@ set is recorded for it.
   arm binding's text payload; a by-value binding then carries that loan, and
   an `auto&` binding is `GTI-S2045`.
 
+Phase 2b publishes through payload-enum fields at a path `[field, payload]`:
+- `ownerlessTextConstructorInputs` also recognizes, from declarations, an
+  initializer `field(E::v(formal))` or `field(E<T>::v(std::move(formal)))`
+  whose enum, resolved in the class's namespace, is the field's type. Each
+  text payload a formal fills is a `ConstructorTextInput` with its payload
+  symbol. While the constructor analyzes that initializer,
+  `constructorTextPayloadArguments` names the formal's argument: the payload
+  construction neither publishes nor rejects it and records an empty complete
+  dependency set. At a call, `textFieldInitializerDependencies` designates the
+  argument's owner at the path.
+- `textDependentPaths` gives a dependent value's designated paths;
+  `textDependentFields` keeps the direct ones. A read of an enum field
+  through which a path goes is itself a dependent value, which a `switch`
+  observes: `dependentTextPayloadLoan` matches the subject's field prefix
+  before the payload. Copying the field out of its value is `GTI-S2045`, and
+  so is any relay of a path into a callee.
+- `OwnerlessTextField::payload` names a payload requirement. In a
+  field-contract scope, a `switch` binding a text payload of a contract
+  formal's or the read-only receiver's enum field requires it
+  (`contractPayloadBinding`); in a generic class, a type-parameter payload
+  requires it conditionally. A whole use requires every text payload too
+  (`textPayloadFields`), and `contractTextPath` filters open requirements for
+  an instance. A relay is decided against each designated path.
+- `payloadReferenceRelayArm` recognizes a reference relay of a payload: an
+  arm of `switch (this.field)` that is exactly `return binding;` for a
+  read-only `auto&` binding. That binding requires nothing.
+  `composedTextReference` lets a method that returns a unique zero-argument
+  read-only accessor of `this` relay what the accessor relays, and
+  `noteReturnedFormalReference` then notes no whole use.
+- An overloaded operator records its receiver's and operands' relays like a
+  call (`recordTextFieldOperator`). Its `ResolvedOperatorInfo` carries the
+  concrete `returnedTextReference`, and a dereference classifies its result as
+  a relayed call does (`operatorTextReferenceRelay`).
+- A generic class method's type-parameter formal is opaque to its open
+  analysis. An instance requires every text field and payload of a
+  publishable argument type there, and a call relays and forwards nothing
+  into it, so a container cannot store a dependent value.
+
 A temporary needs no further model. Its construction publishes as above, and
 its expression is a dependent value that a field read, a relay or a receiver
 consumes, so `fieldSourcedTextResult` classifies a relay of it as it does a

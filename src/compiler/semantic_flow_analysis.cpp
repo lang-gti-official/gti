@@ -1656,6 +1656,26 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
             semanticModel.findOperator(expr)) {
       if (resolved->returnType.kind == SemanticType::Reference &&
           resolved->returnType.arguments.size() == 1) {
+        // A dereference's reference relay designates the operand's text field
+        // or payload, as a call's does (L-OWN-02).
+        if (const auto *unary = exprAs<Unary>(&expr))
+          if (const auto field = operatorTextReferenceRelay(*unary);
+              field && borrowedTextType(type)) {
+            const ExpressionInfo *sourceInfo =
+                semanticModel.findExpression(**field->origin);
+            std::vector<std::vector<SymbolId>> held;
+            if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
+              held = textDependentPaths(**field->origin);
+            const auto designated =
+                field->payload == 0
+                    ? std::vector<SymbolId>{field->field}
+                    : std::vector<SymbolId>{field->field, field->payload};
+            if (fieldSourcedTextFormal(*field) ||
+                std::find(held.begin(), held.end(), designated) != held.end())
+              return ownerDependentTextInfo(
+                  std::move(type), ValueCategory::Place,
+                  resolved->returnType.referenceAccess);
+          }
         return expressionInfo(std::move(type), ValueCategory::Place,
                               resolved->returnType.referenceAccess);
       }
@@ -1815,11 +1835,15 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
             field->origin == nullptr
                 ? nullptr
                 : semanticModel.findExpression(**field->origin);
-        std::vector<SymbolId> held;
+        std::vector<std::vector<SymbolId>> held;
         if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
-          held = textDependentFields(**field->origin);
+          held = textDependentPaths(**field->origin);
+        const auto designated =
+            field->payload == 0
+                ? std::vector<SymbolId>{field->field}
+                : std::vector<SymbolId>{field->field, field->payload};
         if (fieldSourcedTextFormal(*field) ||
-            std::find(held.begin(), held.end(), field->field) != held.end())
+            std::find(held.begin(), held.end(), designated) != held.end())
           return ownerDependentTextInfo(std::move(type), ValueCategory::Place,
                                         resolved->returnType.referenceAccess);
       }

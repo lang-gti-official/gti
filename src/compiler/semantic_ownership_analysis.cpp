@@ -1317,8 +1317,7 @@ auto SemanticVisitor::Impl::dependentTextPayloadLoan(
       loan->entry || !loan->conditions.empty() ||
       !loan->additionalDependencies.empty() ||
       loan->designatedFields.size() != prefix.size() + 1 ||
-      !std::equal(prefix.begin(), prefix.end(),
-                  loan->designatedFields.begin()))
+      !std::equal(prefix.begin(), prefix.end(), loan->designatedFields.begin()))
     return nullptr;
   const EnumTypeInfo *enumeration =
       pattern.type.kind == SemanticType::Enum
@@ -1372,19 +1371,22 @@ auto SemanticVisitor::Impl::finalizeTextDependentValues() -> void {
     found->second.relayed = false;
     const FunctionInfo *callee = semanticModel.findFunction(relay.callee);
     if (found->second.consumed || found->second.diagnosed ||
-        callee == nullptr || relay.fields.empty() ||
+        callee == nullptr || relay.paths.empty() ||
         !semanticModel.hasAnalyzedFunctionBody(*callee->bodyDeclaration()))
       continue;
     const auto required = std::find_if(
-        relay.fields.begin(), relay.fields.end(), [&](SymbolId field) {
-          return std::binary_search(
-              callee->ownerlessTextFields.begin(),
-              callee->ownerlessTextFields.end(),
-              OwnerlessTextField{.receiver = relay.calleeFormal.receiver,
-                                 .parameter = relay.calleeFormal.parameter,
-                                 .field = field});
+        relay.paths.begin(), relay.paths.end(), [&](const auto &path) {
+          return path.empty() || path.size() > 2 ||
+                 std::binary_search(
+                     callee->ownerlessTextFields.begin(),
+                     callee->ownerlessTextFields.end(),
+                     OwnerlessTextField{
+                         .receiver = relay.calleeFormal.receiver,
+                         .parameter = relay.calleeFormal.parameter,
+                         .field = path.front(),
+                         .payload = path.size() == 2 ? path.back() : 0});
         });
-    if (required == relay.fields.end()) {
+    if (required == relay.paths.end()) {
       found->second.consumed = true;
       continue;
     }
@@ -1546,6 +1548,10 @@ auto SemanticVisitor::Impl::ownerlessTextForwardingField(
       return std::nullopt;
     return formal;
   }
+  // A dereference operator's reference relay reads the same field.
+  if (const auto *unary = exprAs<Unary>(current))
+    if (const auto relayed = operatorTextReferenceRelay(*unary))
+      return fieldSourcedTextFormal(*relayed);
   // A call that returns a formal's or the receiver's text field, applied to
   // a contract formal here, reads that formal's field. So does a reference
   // relay applied to a contract receiver.
@@ -1602,7 +1608,9 @@ auto SemanticVisitor::Impl::textReferenceRelay(
       resolved.returnType.kind != SemanticType::Reference)
     return std::nullopt;
   FieldSourcedTextResult result{.receiver = true,
-                                .field = resolved.returnedTextReference->field};
+                                .field = resolved.returnedTextReference->field,
+                                .payload =
+                                    resolved.returnedTextReference->payload};
   if (const auto *member = exprAs<Get>(call.callee().get())) {
     if (member->access().kind == TokenKind::ARROW || !member->object())
       return std::nullopt;
@@ -1616,8 +1624,10 @@ auto SemanticVisitor::Impl::fieldSourcedTextFormal(
     -> std::optional<OwnerlessTextField> {
   if (result.origin != nullptr) {
     auto formal = textFieldContractFormal(**result.origin);
-    if (formal)
+    if (formal) {
       formal->field = result.field;
+      formal->payload = result.payload;
+    }
     return formal;
   }
   // An implicit receiver call relays this method's own receiver.
@@ -1627,7 +1637,8 @@ auto SemanticVisitor::Impl::fieldSourcedTextFormal(
           ReceiverMutability::ReadOnly ||
       !textPublicationOwner(openClassType(scope->ownerClass)))
     return std::nullopt;
-  return OwnerlessTextField{.receiver = true, .field = result.field};
+  return OwnerlessTextField{
+      .receiver = true, .field = result.field, .payload = result.payload};
 }
 
 auto SemanticVisitor::Impl::implicitReceiverTextField(
@@ -1772,6 +1783,77 @@ auto SemanticVisitor::Impl::conditionalRelayReturns(
   return entry->second;
 }
 
+auto SemanticVisitor::Impl::contractPayloadBinding(
+    const ExprPtr &subject, const ResolvedPayloadPatternInfo &pattern,
+    const PayloadBindingInfo &payload) const
+    -> std::optional<OwnerlessTextField> {
+  const FunctionInfo *scope = textFieldContractScope();
+  if (scope == nullptr || payload.name == nullptr || !subject)
+    return std::nullopt;
+  const Expr *current = subject.get();
+  while (const auto *group = exprAs<Grouping>(current))
+    current = group->expression() ? group->expression().get() : nullptr;
+  std::optional<OwnerlessTextField> formal;
+  SemanticType owner = SemanticType::Unknown;
+  const Token *name = nullptr;
+  if (const auto *get = exprAs<Get>(current);
+      get != nullptr && get->access().kind != TokenKind::ARROW &&
+      get->object()) {
+    formal = textFieldContractFormal(*get->object());
+    if (formal && formal->receiver)
+      owner = openClassType(scope->ownerClass);
+    else if (formal && formal->parameter < scope->parameterTypes.size())
+      owner = scope->parameterTypes[formal->parameter];
+    name = &get->name();
+  } else if (const auto *variable = exprAs<Variable>(current)) {
+    // An implicit receiver field, like `this.field`.
+    const Symbol *symbol = resolve(variable->name());
+    if (symbol != nullptr && scope->ownerClass != 0 &&
+        symbol->ownerClass == scope->ownerClass && !symbol->staticMember &&
+        symbol->parameterDeclaration == nullptr && !scope->staticMember &&
+        scope->bodyDeclaration()->receiverMutability() ==
+            ReceiverMutability::ReadOnly &&
+        textPublicationOwner(openClassType(scope->ownerClass))) {
+      formal = OwnerlessTextField{.receiver = true};
+      owner = openClassType(scope->ownerClass);
+      name = &variable->name();
+    }
+  }
+  if (owner.kind == SemanticType::Reference && owner.arguments.size() == 1)
+    owner = SemanticType(owner.arguments.front());
+  const ClassInfo *info = formal ? classInfo(owner) : nullptr;
+  const auto member = info == nullptr ? decltype(info->members.end()){}
+                                      : info->members.find(name->lexeme);
+  if (info == nullptr || member == info->members.end() ||
+      member->second.symbol.staticMember ||
+      member->second.symbol.bindingKind != SemanticBindingKind::Field)
+    return std::nullopt;
+  const auto enumeration = enumTypeFor(pattern.type);
+  const auto variant = enumeration
+                           ? std::find_if(enumeration->enumerators.begin(),
+                                          enumeration->enumerators.end(),
+                                          [&](const auto &candidate) {
+                                            return candidate.variantIndex ==
+                                                   pattern.variantIndex;
+                                          })
+                           : decltype(enumeration->enumerators.begin()){};
+  if (!enumeration || variant == enumeration->enumerators.end() ||
+      payload.payloadIndex >= variant->payloadSymbols.size() ||
+      payload.payloadIndex >= variant->payloadTypes.size())
+    return std::nullopt;
+  const auto type = substituteType(variant->payloadTypes[payload.payloadIndex],
+                                   enumSubstitution(pattern.type));
+  const bool conditional =
+      type.kind == SemanticType::TypeParameter && scope->ownerClass != 0 &&
+      !classInfo(scope->ownerClass).genericParameters.empty();
+  if (type.kind != SemanticType::StringView &&
+      type.kind != SemanticType::CString && !conditional)
+    return std::nullopt;
+  formal->field = symbolForDeclaration(member->second.symbol.declaration);
+  formal->payload = variant->payloadSymbols[payload.payloadIndex];
+  return formal;
+}
+
 auto SemanticVisitor::Impl::noteConditionalTextFieldRead(const Expr &expression)
     -> void {
   const auto field = conditionalTextField(expression);
@@ -1814,6 +1896,15 @@ auto SemanticVisitor::Impl::noteReturnedFormalReference(const Expr &returned)
     if (argument != nullptr && *argument)
       formal = textFieldContractFormal(**argument);
   }
+  // A method that returns its receiver accessor's relay composes that relay:
+  // the reference designates the relayed field or payload, not the whole
+  // receiver.
+  const FunctionInfo *scope =
+      formal && formal->receiver ? textFieldContractScope() : nullptr;
+  if (scope != nullptr && scope->returnedTextReference &&
+      resolved->returnedTextReference &&
+      *resolved->returnedTextReference == *scope->returnedTextReference)
+    return;
   if (formal)
     noteTextFieldFormalUse(*current, *formal);
 }
@@ -1855,6 +1946,25 @@ auto SemanticVisitor::Impl::requireOwnerlessTextField(
 auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
                                                 const CallableCandidate &target)
     -> void {
+  const ExprPtr *receiver = nullptr;
+  if (const auto *member = exprAs<Get>(call.callee().get());
+      member != nullptr && member->access().kind != TokenKind::ARROW)
+    receiver = &member->object();
+  recordTextFieldUses(receiver,
+                      exprAs<Variable>(call.callee().get()) != nullptr,
+                      call.arguments(), target);
+}
+
+auto SemanticVisitor::Impl::recordTextFieldOperator(
+    const ExprPtr &receiver, std::span<const ExprPtr> arguments,
+    const CallableCandidate &target) -> void {
+  recordTextFieldUses(&receiver, false, arguments, target);
+}
+
+auto SemanticVisitor::Impl::recordTextFieldUses(
+    const ExprPtr *receiver, bool implicitReceiver,
+    std::span<const ExprPtr> arguments, const CallableCandidate &target)
+    -> void {
   // An instance analysis records no relay or forward: its formals carry no
   // contract, and a relay from a generic body is decided by the body's open
   // analysis, or not at all.
@@ -1893,7 +2003,7 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
           {.argument = argument.get(),
            .callee = target.id,
            .calleeFormal = formal,
-           .fields = textDependentFields(*argument)});
+           .paths = textDependentPaths(*argument)});
       return;
     }
     // A formal passed on as the callee's formal or receiver of the same class
@@ -1915,20 +2025,18 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
       target.declaration->receiverMutability() ==
           ReceiverMutability::ReadOnly) {
     const SemanticType owner = openClassType(target.ownerClass);
-    if (const auto *member = exprAs<Get>(call.callee().get());
-        member != nullptr && member->access().kind != TokenKind::ARROW) {
+    if (receiver != nullptr) {
       // A generic class's receiver is an instance of the open owner.
       const SemanticType *object =
-          member->object() ? semanticModel.findType(*member->object())
-                           : nullptr;
+          *receiver ? semanticModel.findType(**receiver) : nullptr;
       const bool instance = object != nullptr &&
                             object->kind == SemanticType::Class &&
                             object->classId == target.ownerClass;
-      record(member->object(), {.receiver = true}, instance ? *object : owner);
+      record(*receiver, {.receiver = true}, instance ? *object : owner);
     } else if (const FunctionInfo *scope = textFieldContractScope();
-               exprAs<Variable>(call.callee().get()) != nullptr &&
-               scope != nullptr && scope->ownerClass == target.ownerClass &&
-               !scope->staticMember && textPublicationOwner(owner)) {
+               implicitReceiver && scope != nullptr &&
+               scope->ownerClass == target.ownerClass && !scope->staticMember &&
+               textPublicationOwner(owner)) {
       // An implicit receiver call forwards this method's receiver.
       requestSession.textFieldForwardUses.push_back(
           {.caller = currentFunctionDeclaration,
@@ -1937,9 +2045,25 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
            .calleeFormal = {.receiver = true}});
     }
   }
+  // A generic class method's type-parameter formal requires every text
+  // field and payload of its argument in each instance: nothing relays or
+  // forwards there.
+  const FunctionInfo *open = nullptr;
+  if (target.ownerClass != 0 &&
+      !classInfo(target.ownerClass).genericParameters.empty()) {
+    const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+    open = semanticModel.findFunction(target.id);
+    if (open == nullptr && instanceBaseModel != nullptr)
+      open = instanceBaseModel->findFunction(target.id);
+  }
   for (std::size_t index = 0;
-       index < call.arguments().size() && index < target.parameterTypes.size();
+       index < arguments.size() && index < target.parameterTypes.size();
        ++index) {
+    if (open == nullptr && target.ownerClass != 0 &&
+        !classInfo(target.ownerClass).genericParameters.empty())
+      continue;
+    if (open != nullptr && typeParameterFormal(*open, index))
+      continue;
     SemanticType formalType = target.parameterTypes[index];
     if (formalType.kind == SemanticType::Reference &&
         formalType.arguments.size() == 1)
@@ -1948,8 +2072,22 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
         !readOnlyTextFieldFormal(*target.declaration, target.parameterTypes,
                                  index))
       continue;
-    record(call.arguments()[index], {.parameter = index}, formalType);
+    record(arguments[index], {.parameter = index}, formalType);
   }
+}
+
+auto SemanticVisitor::Impl::operatorTextReferenceRelay(const Unary &unary) const
+    -> std::optional<FieldSourcedTextResult> {
+  const ResolvedOperatorInfo *resolved = semanticModel.findOperator(unary);
+  if (resolved == nullptr || unary.oper().kind != TokenKind::STAR ||
+      !resolved->returnedTextReference ||
+      resolved->returnType.kind != SemanticType::Reference || !unary.right())
+    return std::nullopt;
+  return FieldSourcedTextResult{.origin = &unary.right(),
+                                .receiver = true,
+                                .field = resolved->returnedTextReference->field,
+                                .payload =
+                                    resolved->returnedTextReference->payload};
 }
 
 auto SemanticVisitor::Impl::finalizeTextFieldContracts() -> void {
@@ -1979,6 +2117,8 @@ auto SemanticVisitor::Impl::finalizeTextFieldContracts() -> void {
                                       {.receiver = use.formal.receiver,
                                        .parameter = use.formal.parameter,
                                        .field = field});
+    for (const auto &payload : textPayloadFields(type, use.formal))
+      (void)requireOwnerlessTextField(use.function, payload);
   }
   // Finite monotone closure over exact (formal, field) pairs.
   bool changed = true;
@@ -1995,7 +2135,8 @@ auto SemanticVisitor::Impl::finalizeTextFieldContracts() -> void {
           changed = requireOwnerlessTextField(
                         use.caller, {.receiver = use.callerFormal.receiver,
                                      .parameter = use.callerFormal.parameter,
-                                     .field = field.field}) ||
+                                     .field = field.field,
+                                     .payload = field.payload}) ||
                     changed;
     }
   }
@@ -2158,6 +2299,68 @@ auto SemanticVisitor::Impl::directTextPayload(const SemanticType &type,
                payloadType.kind == SemanticType::CString;
       }
   return false;
+}
+
+auto SemanticVisitor::Impl::typeParameterFormal(const FunctionInfo &function,
+                                                std::size_t index) -> bool {
+  if (index >= function.parameterTypes.size())
+    return false;
+  const SemanticType &type = function.parameterTypes[index];
+  return type.kind == SemanticType::TypeParameter ||
+         (type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
+          type.arguments.front().kind == SemanticType::TypeParameter);
+}
+
+auto SemanticVisitor::Impl::contractTextPath(
+    const SemanticType &type, const OwnerlessTextField &entry) const -> bool {
+  if (entry.payload == 0)
+    return directTextField(type, entry.field);
+  const ClassInfo *owner = classInfo(type);
+  if (owner == nullptr || typeTraits(type).containsBorrowedState)
+    return false;
+  for (const FieldInfo &field : owner->fields) {
+    const auto member =
+        field.declaration == nullptr
+            ? owner->members.end()
+            : owner->members.find(field.declaration->name().lexeme);
+    if (member != owner->members.end() &&
+        symbolForDeclaration(member->second.symbol.declaration) == entry.field)
+      return directTextPayload(
+          substituteType(member->second.symbol.type, classSubstitution(type)),
+          entry.payload);
+  }
+  return false;
+}
+
+auto SemanticVisitor::Impl::textPayloadFields(const SemanticType &type,
+                                              OwnerlessTextField formal) const
+    -> std::vector<OwnerlessTextField> {
+  std::vector<OwnerlessTextField> result;
+  const ClassInfo *owner = classInfo(type);
+  if (owner == nullptr || typeTraits(type).containsBorrowedState)
+    return result;
+  for (const FieldInfo &field : owner->fields) {
+    const auto member =
+        field.declaration == nullptr
+            ? owner->members.end()
+            : owner->members.find(field.declaration->name().lexeme);
+    if (member == owner->members.end())
+      continue;
+    const auto fieldType =
+        substituteType(member->second.symbol.type, classSubstitution(type));
+    const auto enumeration = enumTypeFor(fieldType);
+    if (!enumeration || !enumeration->payload)
+      continue;
+    for (const auto &variant : enumeration->enumerators)
+      for (const SymbolId payload : variant.payloadSymbols)
+        if (directTextPayload(fieldType, payload))
+          result.push_back(
+              {.receiver = formal.receiver,
+               .parameter = formal.parameter,
+               .field = symbolForDeclaration(member->second.symbol.declaration),
+               .payload = payload});
+  }
+  return result;
 }
 
 auto SemanticVisitor::Impl::textFieldOwnerDependency(const ExprPtr &argument,
