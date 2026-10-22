@@ -443,10 +443,10 @@ all managed threads finish before program-wide destruction begins.
 
 ### Thread-Local State
 
-General source `thread_local` storage is being implemented on the
-`codex/thread-local-storage` branch. It is not yet released. The proposed
-contract uses C++'s keyword spelling for namespace variables, static fields and
-block variables, independently of application or library type names:
+The general source `thread_local` slice implements C++'s keyword spelling for
+namespace variables, non-generic static fields and ordinary function-local
+variables, independently of application or library type names. The current
+contract is specified in [Concurrency](../language/concurrency.md#thread-local-storage):
 
 - each attached thread owns a distinct instance;
 - initialization occurs on first use in that thread, is sequenced before the
@@ -476,16 +476,22 @@ crossing threads: a joined borrow with a proven endpoint is safe and does not
 require a separate transfer-effect restriction. This also matches Rust's
 `thread_local!` access composed with `std::thread::scope`.
 
-The implementation must distinguish executable TLS initialization from eager
+The implementation distinguishes executable TLS initialization from eager
 program initialization in semantic plans, HIR, verified MIR and lowered
-declarations. Constant passive storage should require neither heap registration
-nor a dynamic cleanup guard. Dynamic and owning storage may pay cold first-use
+declarations. Eligible literal/zero primitive storage requires neither heap
+registration nor a dynamic guard. Dynamic and owning storage pay cold first-use
 and per-thread intrusive cleanup-registration costs. The acceptance gates include
 initialization recursion, reverse cleanup and cleanup failure before worker
 result publication, malformed-MIR rejection, alias/escape/scoped-worker tests,
 editor behavior and native performance against equivalent C++ TLS. A TLS lookup
 during shutdown may observe an initialized live slot, but cannot initialize a
 new slot or resurrect one already retired.
+
+Further goals are concrete-instance descriptor identities for generic local and
+class-static TLS, lambda-local inventory, lexical initialization that can consume
+automatic inputs, and a public native embedding enter/leave ABI. Each needs the
+same exact initialization, loan, exit and representation proofs; none is silently
+implemented by sharing a source declaration's slot between concrete instances.
 
 ## Atomics And Synchronization
 
@@ -878,7 +884,8 @@ the runtime capability.
 This proposal does not add or promise:
 
 - dedicated language keywords for thread creation, atomics or memory orders;
-  the delivered public APIs are source-defined, while TLS remains future work;
+  those public APIs are source-defined, while `thread_local` is the general
+  storage-duration facility specified above;
 - safe owner-tied condition variables, recursive/read-write guard mutexes,
   stop tokens, typed thread-entry argument packs or detach in
   the shipped safe profile; unsafe manual mutex/unlock and condition-variable

@@ -24,6 +24,8 @@ for what minor and patch releases mean.
   calls, reentrant callbacks, scoped workers and destructor effects. They
   cannot escape their owning thread through an owned task/result. Primitive
   literal-initialized TLS needs no dynamic GTI guard or cleanup registration.
+- Transitive storage-effect checking also protects checked borrows of ordinary
+  process globals from hidden conflicting accesses through helpers or callbacks.
 - See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
   and [runnable example 171](examples/171-thread-local-storage.gti).
 
