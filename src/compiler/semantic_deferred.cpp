@@ -171,7 +171,8 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
   // but their speculative moves, loans and writes never affect caller flow.
   Impl probe(target, sourceGraph, toolingOccurrences, nullptr, sources,
              rawPointerAudit, requireFunctionDefinitions, trustedBodies);
-  probe.requestSession = requestSession;
+  static_cast<RequestSessionContext &>(probe.requestSession) = requestSession;
+  probe.semanticModel.beginSpeculativeDelta(semanticModel);
   probe.semanticModel.setFunctionDemandSink(nullptr);
   probe.semanticModel.setCallJournal(nullptr);
   probe.diagnostics.clear();
