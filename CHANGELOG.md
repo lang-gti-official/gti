@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.458.5 — Field reads of more conditional temporaries
+
+- A field of a conditional temporary can now be read when its arms pass a
+  class by value to their constructor, as in
+  `(left ? Segment(Point(1)) : Segment(Point(2))).flat`, or build a class
+  that holds a `std::string_view`, as in
+  `(left ? Token("left", 1) : Token("right", 2)).kind`. Both used to report
+  `error[GTI-B0001]` (an internal compiler error); they now work, including
+  nested reads such as `.low.x`, `.text` and `.text.size()`.
+
 ## 0.458.4 — Borrowed enum parameters stored in fields
 
 - A constructor can store a borrowed payload enum that it takes by value.

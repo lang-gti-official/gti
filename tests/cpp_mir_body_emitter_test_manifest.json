@@ -306,6 +306,10 @@
       "suite": "text"
     },
     {
+      "name": "testMovedBorrowedPayloadAfterFallibleSibling",
+      "suite": "text"
+    },
+    {
       "name": "testMovedViewAfterFormalRead",
       "suite": "text"
     },
@@ -495,6 +499,10 @@
     },
     {
       "name": "testNestedCleanupFreeJoinMove",
+      "suite": "text"
+    },
+    {
+      "name": "testCleanupFreeJoinTransferAndTextArms",
       "suite": "text"
     },
     {

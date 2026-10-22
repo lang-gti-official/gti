@@ -8924,9 +8924,12 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
     return {};
   }
   if (representationOnly) {
-    // A call's prepared input transfers were proved above.
+    // A call's prepared input transfers were proved above. A construction
+    // may likewise hand its by-value arguments to the constructor; those
+    // exact transfers are its only lifecycle events.
     if (value->info.traits != passive->traits || valueDrop != nullptr ||
-        (!sourceCall && !callableCall && !construct->lifecycle.empty())) {
+        (!sourceCall && !callableCall && !construct->lifecycle.empty() &&
+         !onlyPreparedInputTransfers(body, *construct))) {
       return {};
     }
   } else {
@@ -16035,10 +16038,14 @@ passiveGeneratedClass(const MirProgram &program, const SemanticType &type,
         }
         return self(self, fieldType) != nullptr;
       }
+      // A text view is a borrowed descriptor, like a `c_string` pointer:
+      // destroying or copying it is trivial and observes nothing. MIR loans,
+      // not class passivity, carry any owner it depends on.
       const auto representation = expectedTypeRepresentation(fieldType);
       return representation &&
              (*representation == CppMirTypeRepresentationKind::Scalar ||
               *representation == CppMirTypeRepresentationKind::Enum ||
+              *representation == CppMirTypeRepresentationKind::StringView ||
               *representation == CppMirTypeRepresentationKind::RawPointer ||
               *representation == CppMirTypeRepresentationKind::NullPointer);
     };
