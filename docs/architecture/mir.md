@@ -1945,7 +1945,26 @@ dependency the caller's value holds in that field:
   own loan names the owner.
 - A dependent temporary may be the receiver of a text field result. The
   temporary-receiver check admits that target over a publishing construction
-  in place of an ephemeral-borrow result.
+  or call in place of an ephemeral-borrow result.
+
+A function's `publishedTextFields` (phase 2a) are formals its returned fresh
+value holds in a direct text field. `TextContracts` derives them
+independently, in the same fixpoint as requirements, and the derived set must
+equal the declared one:
+- A Construct of the function's return type whose result a Return yields
+  relays the formal that `exactTextFormal` finds at a published constructor
+  input: a call stage over an exact load or move of the formal's binding. It
+  derives no requirement for that input.
+- A Call whose callee relays an input publishes a dynamic argument under its
+  own read-only `Stored` loan designating the field (`publishesCallText`). A
+  returned call relays this function's exact formal, and any other text there
+  needs an ownerless proof.
+- A call semantics marks `provisionalTextRelays` (recursion) requires every
+  text argument ownerless and relays nothing.
+The verifier admits a publishing call's borrow facts against its target's
+`publishedTextFields` (`dependentTextCallPublication`), as it admits a
+publishing construction against its constructor.
+
 `isOwnerlessTextFieldProjection` excludes a direct text-field
 place whose object carries a `Stored` loan designating the field: a carrier
 binding of that loan, or the construction's own result value. A write into

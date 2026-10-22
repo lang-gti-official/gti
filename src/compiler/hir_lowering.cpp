@@ -636,6 +636,7 @@ private:
          .parameterTypes = std::move(parameterTypes),
          .ownerlessTextParameters = declaration.ownerlessTextParameters,
          .ownerlessTextFields = declaration.ownerlessTextFields,
+         .publishedTextFields = declaration.publishedTextFields,
          .entryKind = declaration.entryKind,
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
          .explicitReturnBorrowOrigin = declaration.explicitReturnBorrowOrigin,
@@ -2135,6 +2136,8 @@ private:
           concrete->ownerlessTextParameters;
       output.program.functions[index].ownerlessTextFields =
           concrete->ownerlessTextFields;
+      output.program.functions[index].publishedTextFields =
+          concrete->publishedTextFields;
       output.program.functions[index].ownerlessTextContractProof =
           model->ownerlessTextContractProof(*concrete->declaration);
       output.program.functions[index].returnBorrowOrigin =
@@ -6052,6 +6055,10 @@ private:
         value.borrowArgument = resolved->borrowArgument;
         value.borrowArguments = resolved->borrowArguments;
         value.borrowFields = resolved->borrowFields;
+        // The callee's published text field holds this call's dynamic
+        // argument (L-OWN-02); like a constructor's, the fact is the call's.
+        value.dependentTextPublication = resolved->dependentTextPublication;
+        value.provisionalTextRelays = resolved->provisionalTextRelays;
         value.restoresReferenceResult = resolved->restoresReferenceResult;
         value.restoredBorrowFields = resolved->restoredBorrowFields;
         value.borrowAccess = resolved->borrowAccess;

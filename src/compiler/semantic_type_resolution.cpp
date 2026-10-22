@@ -2383,9 +2383,15 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   recordDefaultArgumentDependencies(defaultArguments);
   std::vector<BorrowedFieldOrigin> textOrigins;
   if (selected.constructor != nullptr) {
-    for (const auto &[index, initializer] : ownerlessTextConstructorInputs(
-             constructedType, selected.constructor->declaration,
-             selected.parameterTypes)) {
+    const auto textInputs = ownerlessTextConstructorInputs(
+        constructedType, selected.constructor->declaration,
+        selected.parameterTypes);
+    for (const auto &[index, initializer] : textInputs) {
+      // A relay names the one text field its formal stores.
+      const bool soleField = std::count_if(textInputs.begin(), textInputs.end(),
+                                           [index = index](const auto &input) {
+                                             return input.first == index;
+                                           }) == 1;
       const ExprPtr *argument = nullptr;
       bool potentialPackView = false;
       if (index < arguments.size()) {
@@ -2409,6 +2415,20 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       if (!conditionalText && !potentialPackView &&
           !isOwnerDependentTextExpression(*argument))
         continue;
+      // A fresh value this function returns relays a formal stored in its
+      // text field: each call publishes its own argument's owner there.
+      if (!potentialPackView && soleField && index < arguments.size() &&
+          initializer->target.name.segments.size() == 1)
+        if (const ClassInfo *owner = classInfo(constructedType)) {
+          const auto member =
+              owner->members.find(initializer->target.name.last().lexeme);
+          if (member != owner->members.end() && construction != nullptr &&
+              relayReturnedTextFormal(*construction, constructedType,
+                                      selected.constructor->declaration,
+                                      *argument,
+                                      toolingSymbolFor(member->second.symbol)))
+            continue;
+        }
       if (!potentialPackView && requireOwnerlessTextParameter(*argument))
         continue;
       // An open non-forwarding expression is checked when its exact text
