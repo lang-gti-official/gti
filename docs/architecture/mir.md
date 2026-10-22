@@ -415,7 +415,13 @@ borrowed field, verification requires the exact `Initialize` destination and
 operand, its independently reconstructed complete value fact, and a distinct
 escaping Stored field group published after initialization. Publication must
 preserve every origin, access, path and guard before retiring the producer's
-group. The published field group remains active at every normal constructor
+group. That group is either the fresh loan of the producer that constructs the
+value, or, when the value is a whole-value `Move` or copy `Load` of a by-value
+formal, the formal's guarded entry group. The verifier takes that entry group
+and its complete contents from the formal's typed entry contract, never from
+the value annotation, and requires the transferred value to still hold exactly
+that set, so a formal written before its transfer is not accepted. The
+published field group remains active at every normal constructor
 exit. Known-empty alternatives require positive typed evidence and publish no
 manufactured loan. The current source constructor slice uses an empty body
 and one common nominal field prefix; unrelated sibling obligations cannot be

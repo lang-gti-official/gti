@@ -15,7 +15,8 @@ if __name__ == "__main__":
              "a59-map-at-then-element-ref", "borrow_projected_parameter_return",
              "borrow_direct_projected_return", "borrow_static_return_alternative",
              "borrowed_enum_fields", "borrowed_enum_generic_fields",
-             "borrowed_enum_local_selection", "borrow_stored_view_return")
+             "borrowed_enum_formal_fields", "borrowed_enum_local_selection",
+             "borrow_stored_view_return")
     # The original map is deliberately empty: compilation must succeed, but
     # its checked at() call must retain the defined missing-key failure. The
     # reproducer only reads the row, so it selects the read-only at().
@@ -26,6 +27,14 @@ if __name__ == "__main__":
                         if "gti_internal::require_key" in map_lines[index])
     cases = {name: [((), (0, "2\n", ""))] for name in names[1:3]}
     cases["borrow_stored_view_return"] = [((), (0, "x\n", ""))]
+    # An extra argument fails the ledger before the slot moves into its field.
+    formal_lines = (root / "fixtures/borrowed_enum_formal_fields.gti").read_text().splitlines()
+    ledger_line = next(index + 1 for index, line in enumerate(formal_lines)
+                       if "60 / divisor" in line)
+    cases["borrowed_enum_formal_fields"] = [
+        ((), (0, "", "")),
+        (("fail",), (70, "", f"borrowed_enum_formal_fields.gti:{ledger_line}: "
+                     "runtime error[GTI-R0002]: division_by_zero in integer_division\n"))]
     cases["a59-map-at-then-element-ref"] = [((), (70, "",
         f"<std/map>:{missing_line}: runtime error[GTI-R0015]: "
         "key_not_found in key_lookup\n"))]
