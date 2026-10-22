@@ -1942,6 +1942,223 @@ int main() {
          "only the failure form is defined for the reading constructor");
 }
 
+void testPassiveTextViewClassAfterFallibleSibling() {
+  // A user-defined class whose only field is a text view is a passive
+  // generated class: the view copies bitwise and destroying it runs no
+  // source cleanup. A by-value text field holds ownerless text, so MIR
+  // records no loan for the class formal and, as for a class of scalar
+  // fields, neither a value nor a rollback obligation for its move. Moved
+  // after a fallible field, it publishes from the field's empty state in the
+  // verified failure-form body; copied, through the native parameter copy.
+  const auto program = [](std::string_view initializer) {
+    return std::string(R"(
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+class Name {
+public:
+  std::string_view text;
+  Name(std::string_view text) : text(text) {}
+};
+
+class shelf {
+  std::vector<int32_t> v;
+  Name name;
+public:
+  shelf(Name name) : v(std::vector<int32_t>()), )") +
+           std::string(initializer) + R"( {}
+  int32_t get() { return name.text.size() == 3 ? 7 : 1; }
+};
+
+int main() {
+  shelf s = shelf(Name("abc"));
+  return s.get();
+}
+)";
+  };
+  const auto named = [](const lang::FrontendResult &frontend,
+                        const lang::SemanticType &type, std::string_view name) {
+    const auto *info = type.kind == lang::SemanticType::Class
+                           ? frontend.semantics.findClassType(type.classId)
+                           : nullptr;
+    return info != nullptr && info->declaration != nullptr &&
+           info->declaration->name().lexeme == name;
+  };
+  const auto shelfConstructor = [&](const lang::FrontendResult &frontend) {
+    const lang::MirConstructorInstance *found = nullptr;
+    for (const lang::MirConstructorInstance &constructor :
+         frontend.mir.constructorInstances()) {
+      const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+      if (owner != nullptr && named(frontend, owner->type, "shelf") &&
+          constructor.parameterTypes.size() == 1) {
+        found = &constructor;
+      }
+    }
+    return found;
+  };
+  // A copy of the program whose Name instance is forged.
+  const auto forgedName = [&](const lang::FrontendResult &frontend,
+                              const auto &forge) {
+    lang::MirProgram mutated = frontend.mir;
+    auto &instances = const_cast<std::vector<lang::MirClassInstance> &>(
+        mutated.classInstances());
+    bool forged = false;
+    for (lang::MirClassInstance &instance : instances) {
+      if (named(frontend, instance.type, "Name") &&
+          instance.declaredFields.size() == 1) {
+        forge(instance);
+        forged = true;
+      }
+    }
+    return std::pair{std::move(mutated), forged};
+  };
+  const auto failureBody = [](const std::string &text) {
+    const std::size_t start = text.find("shelf::shelf(::gti_internal::backend::"
+                                        "mir_failure_constructor_tag_v1<");
+    const std::size_t end =
+        start == std::string::npos ? start : text.find("\n  }\n", start);
+    return end == std::string::npos ? std::string()
+                                    : text.substr(start, end - start);
+  };
+  const auto count = [](const std::string &body, std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = body.find(needle); at != std::string::npos;
+         at = body.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+
+  const lang::FrontendResult moved =
+      analyzeWithStandardLibrary("cpp-mir-passive-text-view-class-move.gti",
+                                 program("name(std::move(name))"));
+  expect(moved.canGenerateCode(),
+         "the moved text-view class fixture should pass the frontend");
+  if (!moved.canGenerateCode()) {
+    return;
+  }
+  const lang::MirConstructorInstance *move = shelfConstructor(moved);
+  expect(move != nullptr && move->mayRaiseDefinedFailure &&
+             !move->body.failureRecords.empty() &&
+             !lang::cppMirOwnedParameterFieldBindings(moved.mir, *move),
+         "a class move recorded after fallible work is not a native "
+         "publication");
+  if (move == nullptr) {
+    return;
+  }
+  const lang::SemanticType &nameType = move->parameterTypes.front();
+  const bool passiveRecords =
+      move->body.loans.empty() &&
+      std::none_of(
+          move->body.dropObligations.begin(), move->body.dropObligations.end(),
+          [&](const lang::MirDropObligation &drop) {
+            return drop.dropType.type == nameType &&
+                   (drop.kind != lang::MirDropObligationKind::Binding ||
+                    drop.dropType.requiresActiveCleanup);
+          });
+  bool lifecycleFree = true;
+  for (const lang::MirBlock &block : move->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if ((instruction.kind == lang::MirInstructionKind::Move ||
+           instruction.kind == lang::MirInstructionKind::Initialize) &&
+          instruction.info.type == nameType) {
+        lifecycleFree = lifecycleFree && instruction.lifecycle.empty();
+      }
+    }
+  }
+  expect(passiveRecords && lifecycleFree,
+         "MIR records no loan, value or rollback obligation and no lifecycle "
+         "event for the moved text-view class, only its inert formal drop");
+
+  const lang::CppMirBodyEmissionMap movedMap(buildRows(moved, moved.mir));
+  const lang::MirBodyAddress moveAddress{.kind = lang::MirBodyKind::Constructor,
+                                         .owner = move->id};
+  expect(lang::CppMirBodyEmitter(moved.mir, movedMap)
+             .supportsFailureBodyText(moveAddress),
+         "the failure form keeps the passive class move in its verified body");
+  std::string movedText;
+  try {
+    movedText = gti_test::emitCpp(moved).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("a text-view class moved after a fallible "
+                              "sibling should emit: ") +
+                      error.what());
+    return;
+  }
+  const std::string moveBody = failureBody(movedText);
+  const std::size_t vector = moveBody.find(
+      "vector<std::int32_t>(::gti_internal::backend::mir_failure_constructor_"
+      "tag_v1<");
+  const std::size_t publication = moveBody.find(" = std::move(__gti_mir_v_");
+  expect(count(moveBody, "name(::gti_internal::backend::mir_empty_state_v1<"
+                         "std::remove_cv_t<decltype(name)>>())") == 1 &&
+             count(moveBody, " = std::move(__gti_mir_v_") == 1 &&
+             vector != std::string::npos && publication != std::string::npos &&
+             vector < publication,
+         "the moved class field starts empty and is published once, after "
+         "the fallible vector");
+
+  // Borrowed state and active cleanup each leave the passive route.
+  const auto refuses = [&](const auto &forge) {
+    auto [mutated, forged] = forgedName(moved, forge);
+    return forged && !lang::CppMirBodyEmitter(mutated, movedMap)
+                          .supportsFailureBodyText(moveAddress);
+  };
+  expect(refuses([](lang::MirClassInstance &instance) {
+           instance.traits.containsBorrowedState = true;
+         }),
+         "a class carrying borrowed state is not moved by the passive route");
+  expect(refuses([](lang::MirClassInstance &instance) {
+           instance.declaredFields.front().requiresActiveCleanup = true;
+         }),
+         "a field with active cleanup makes the class non-passive");
+
+  const lang::FrontendResult copied = analyzeWithStandardLibrary(
+      "cpp-mir-passive-text-view-class-copy.gti", program("name(name)"));
+  expect(copied.canGenerateCode(),
+         "the copied text-view class fixture should pass the frontend");
+  if (!copied.canGenerateCode()) {
+    return;
+  }
+  const lang::MirConstructorInstance *copy = shelfConstructor(copied);
+  const auto copiesName = [&](const lang::MirProgram &mir) {
+    const auto bindings = lang::cppMirCopyParameterFieldBindings(mir, *copy);
+    return bindings &&
+           std::any_of(
+               bindings->begin(), bindings->end(),
+               [](const lang::CppMirCopyParameterFieldBinding &binding) {
+                 return binding.initializer == 1;
+               });
+  };
+  expect(copy != nullptr && copy->mayRaiseDefinedFailure &&
+             copiesName(copied.mir),
+         "the passive text-view class copy is an exact parameter copy");
+  if (copy == nullptr) {
+    return;
+  }
+  std::string copiedText;
+  try {
+    copiedText = gti_test::emitCpp(copied).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("a text-view class copied after a fallible "
+                              "sibling should emit: ") +
+                      error.what());
+    return;
+  }
+  const std::string copyBody = failureBody(copiedText);
+  expect(count(copyBody, "name(__gti_mir_arg_0)") == 1 &&
+             copyBody.find("mir_lifetime_slot<::__gti_program::Name>") ==
+                 std::string::npos,
+         "the copied class field publishes through the native parameter copy");
+  auto [uncopyable, forged] =
+      forgedName(copied, [](lang::MirClassInstance &instance) {
+        instance.declaredFields.front().requiresActiveCleanup = true;
+      });
+  expect(forged && !copiesName(uncopyable),
+         "a class with an actively cleaned field is not a passive copy");
+}
+
 void testMovedChainReturnConstruction() {
   // A failure-free body returns a class constructed from a moved scalar. The
   // Move and its call input stage into the construction and never
@@ -8701,6 +8918,8 @@ constexpr NamedTest kTests[] = {
     {"testMovedBorrowedPayloadAfterFallibleSibling",
      testMovedBorrowedPayloadAfterFallibleSibling},
     {"testMovedViewAfterFormalRead", testMovedViewAfterFormalRead},
+    {"testPassiveTextViewClassAfterFallibleSibling",
+     testPassiveTextViewClassAfterFallibleSibling},
     {"testMovedChainReturnConstruction", testMovedChainReturnConstruction},
     {"testMovedPassiveFieldInPlainConstructor",
      testMovedPassiveFieldInPlainConstructor},
