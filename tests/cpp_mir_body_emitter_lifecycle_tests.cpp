@@ -15441,9 +15441,9 @@ int main() { return pick(Tracked(1), Tracked(5)) - 5; }
 }
 
 // A nested field read of a cleanup-free class value also records the
-// unreferenced intermediate place (`build(1).inner` for `build(1).inner.id`).
-// That record spells nothing, so the read still uses the value's FieldRead
-// slot, for call, callable, moved and conditional producers alike.
+// unreferenced intermediate places (`build(1).inner` for `build(1).inner.id`).
+// Those records spell nothing, so the read still uses the value's FieldRead
+// slot, for call, callable, moved, conditional and construction producers.
 void testNestedClassResultFieldView() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-nested-class-result-field-view.gti", R"(
@@ -15457,6 +15457,10 @@ struct Outer {
   int32_t tag;
   Outer(int32_t raw) : inner(Inner(raw)), tag(raw) {}
 };
+struct Wrap {
+  Outer outer;
+  Wrap(Outer outer) : outer(outer) {}
+};
 Outer build(int32_t raw) { return Outer(raw); }
 int32_t called(int32_t raw) { return build(raw).inner.id; }
 int32_t invoked(int32_t raw) {
@@ -15465,9 +15469,15 @@ int32_t invoked(int32_t raw) {
 }
 int32_t moved(mut Outer o) { return std::move(o).inner.id; }
 int32_t chosen(bool flag, Outer a, Outer b) { return (flag ? a : b).inner.id; }
+int32_t wrapped(int32_t raw) { return Wrap(build(raw)).outer.inner.id; }
+int32_t wrapped_invoked(int32_t raw) {
+  auto make = [](int32_t value) -> Outer { return Outer(value); };
+  return Wrap(make(raw)).outer.inner.id;
+}
 int main() {
   return called(1) + invoked(2) + moved(Outer(3)) +
-         chosen(false, Outer(4), Outer(5)) - 11;
+         chosen(false, Outer(4), Outer(5)) + wrapped(6) + wrapped_invoked(7) -
+         24;
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -15480,19 +15490,23 @@ int main() {
         return function.id;
     return lang::HirFunctionInstanceId{0};
   };
-  const std::vector<std::string> names{"called", "invoked", "moved", "chosen"};
+  // Each reader and the field chain its read spells.
+  const std::vector<std::pair<std::string, std::string>> readers{
+      {"called", ".inner.id"},        {"invoked", ".inner.id"},
+      {"moved", ".inner.id"},         {"chosen", ".inner.id"},
+      {"wrapped", ".outer.inner.id"}, {"wrapped_invoked", ".outer.inner.id"}};
   const bool lowered =
-      std::all_of(names.begin(), names.end(),
-                  [&](const std::string &name) { return idOf(name) != 0; });
+      std::all_of(readers.begin(), readers.end(),
+                  [&](const auto &reader) { return idOf(reader.first) != 0; });
   expect(lowered, "the fixture should lower every nested reader");
   if (!lowered)
     return;
 
-  // MIR: the read's place projects two fields from the value, and the one
-  // other place rooted at the value is the unreferenced first projection.
+  // MIR: the read's place projects a field chain from the value, and every
+  // other place rooted at the value is an unreferenced prefix of that chain.
   struct NestedRead {
     const lang::MirPlace *read = nullptr;
-    const lang::MirPlace *intermediate = nullptr;
+    std::vector<const lang::MirPlace *> intermediates;
   };
   const auto nestedRead = [](const lang::MirBody &body) {
     NestedRead found;
@@ -15504,16 +15518,17 @@ int main() {
                 ? body.findPlace(instruction.operands.front().place)
                 : nullptr;
         if (place != nullptr && place->root == lang::MirPlaceRootKind::Value &&
-            place->projections.size() == 2)
+            place->projections.size() >= 2)
           found.read = place;
       }
     if (found.read != nullptr)
       for (const lang::MirPlace &place : body.places)
         if (place.root == lang::MirPlaceRootKind::Value &&
             place.value == found.read->value && place.id != found.read->id &&
-            place.projections.size() == 1 &&
-            place.projections.front() == found.read->projections.front())
-          found.intermediate = &place;
+            place.projections.size() < found.read->projections.size() &&
+            std::equal(place.projections.begin(), place.projections.end(),
+                       found.read->projections.begin()))
+          found.intermediates.push_back(&place);
     return found;
   };
   const lang::CppMirBodyEmissionMap map(
@@ -15547,21 +15562,25 @@ int main() {
     }
     return false;
   };
-  // Emission reads both fields from the value's slot and spells nothing for
-  // the intermediate place.
-  for (const std::string &name : names) {
+  // Emission reads the whole chain from the value's slot and spells nothing
+  // for an intermediate place.
+  for (const auto &[name, chain] : readers) {
     const lang::MirFunctionInstance *function =
         frontend.mir.findFunctionInstance(idOf(name));
     const NestedRead found =
         function == nullptr ? NestedRead{} : nestedRead(function->body);
     const std::string text = bodyText(frontend.mir, name);
-    expect(found.read != nullptr && found.intermediate != nullptr &&
-               text.find("__gti_mir_v_" + std::to_string(found.read->value) +
-                         ".get().inner.id;") != std::string::npos &&
-               !mentions(text, "__gti_mir_p_" +
-                                   std::to_string(found.intermediate->id)),
-           name + " should read the nested field from its value's slot "
-                  "without storage for the intermediate place");
+    expect(
+        found.read != nullptr && !found.intermediates.empty() &&
+            text.find("__gti_mir_v_" + std::to_string(found.read->value) +
+                      ".get()" + chain + ";") != std::string::npos &&
+            std::none_of(found.intermediates.begin(), found.intermediates.end(),
+                         [&](const lang::MirPlace *place) {
+                           return mentions(text, "__gti_mir_p_" +
+                                                     std::to_string(place->id));
+                         }),
+        name + " should read the nested field from its value's slot "
+               "without storage for an intermediate place");
   }
 
   // An intermediate place that does not prefix the read is not a record of
@@ -15574,11 +15593,11 @@ int main() {
     if (function.id != idOf("called"))
       continue;
     const NestedRead found = nestedRead(function.body);
-    if (found.read == nullptr || found.intermediate == nullptr)
+    if (found.read == nullptr || found.intermediates.size() != 1)
       continue;
     const lang::SymbolId readField = found.read->projections.back().field;
     for (lang::MirPlace &place : function.body.places)
-      if (place.id == found.intermediate->id) {
+      if (place.id == found.intermediates.front()->id) {
         place.projections.front().field = readField;
         changed = true;
       }
