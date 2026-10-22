@@ -2,7 +2,8 @@
 // local may come from a call result or a direct construction, may be a field
 // of a class value, and may be generic. The carrier's dependency names the
 // caller's owner only as provenance: the selected reference is read from the
-// payload itself, and a write through it reaches that owner.
+// payload itself, and a write through it reaches that owner. A loop that
+// cannot write the carrier selects from it on every iteration.
 enum Slot { item(int& value), empty };
 
 Slot borrow_slot(int& owner, bool present) {
@@ -56,6 +57,32 @@ enum Pair { both(int& first, int& second), none };
 
 Pair pair_of(int& first, int& second) { return Pair::both(first, second); }
 
+// A loop that cannot write its carrier selects from it on every iteration.
+int sum_selected(int& owner, int count) {
+  auto slot = borrow_slot(owner, true);
+  mut int total = 0;
+  for (mut int index = 0; index < count; index += 1) {
+    switch (slot) {
+    case Slot::item(auto& value): total += value; break;
+    case Slot::empty: return -1;
+    }
+  }
+  return total;
+}
+
+int sum_parameter(Slot& slot, int count) {
+  mut int total = 0;
+  mut int index = 0;
+  while (index < count) {
+    index += 1;
+    switch (slot) {
+    case Slot::item(auto& value): total += value; break;
+    case Slot::empty: continue;
+    }
+  }
+  return total;
+}
+
 int main() {
   int local = 19;
   auto called = borrow_slot(local, true);
@@ -108,6 +135,28 @@ int main() {
   case Pair::both(auto& first, second): if (first + second != 42) { return 15; } break;
   case Pair::none: return 16;
   }
+
+  if (sum_selected(local, 3) != 57) { return 19; }
+  if (sum_parameter(called, 2) != 38 || sum_parameter(missing, 2) != 0) {
+    return 20;
+  }
+  // A class field and a generic carrier select inside nested loops.
+  mut int nested = 0;
+  mut int outer = 0;
+  do {
+    for (mut int inner = 0; inner < 2; inner += 1) {
+      switch (holder.slot) {
+      case Slot::item(auto& value): nested += value; break;
+      case Slot::empty: return 21;
+      }
+      switch (found) {
+      case MaybeRef<int&>::some(auto& value): nested += value; break;
+      case MaybeRef<int&>::none: return 22;
+      }
+    }
+    outer += 1;
+  } while (outer < 2);
+  if (nested != 152) { return 23; }
   // A second switch selects again from the same carrier.
   switch (called) {
   case Slot::item(auto& again): return again == 19 ? 0 : 17;

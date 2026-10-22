@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.459.0 — Recursive functions that return their caller's text
+## 0.460.0 — Recursive functions that return their caller's text
 
 - A recursive function can now return a view of its caller's text without
   copying it. `std::string_view first(std::string_view s, int n) { if (n == 0)
@@ -34,6 +34,24 @@ for what minor and patch releases mean.
   }`, and relaying a field through a call with a computed argument, as in
   `return first(t, n - 1);`.
 - New example: [171: recursive text relays](examples/171-recursive-text-relays.gti).
+## 0.459.0 — Reference bindings from payload enums inside loops
+
+- A `switch` inside a loop can now bind `auto&` to a reference payload of an
+  enum the loop cannot change. With `auto slot = borrow_slot(local, true);`
+  declared before a `for`, `while` or `do` loop, `case Slot::item(auto&
+  value):` inside the loop used to report `error[GTI-S2067]`; it now works.
+  The same holds for a read-only reference parameter such as `Slot& slot`, an
+  enum field of such a local, and generic enums.
+- An enum declared `mut` is still not carried into a loop. Its
+  `error[GTI-S2067]` now says that the subject's dependency set is missing,
+  rather than mentioning a "consuming handoff", and a hint suggests a binding
+  without `mut` or selecting before the loop.
+- `case Edit::item(mut auto& value):` over an enum that is not mutable, where
+  `Edit` holds a `mut int&`, used to report `error[GTI-B0001]` (an internal
+  compiler error) for a local declared without `mut`. It now reports
+  `error[GTI-S2067]` ("A mutable payload pattern requires a mutable enum
+  receiver"), as other mutable payload bindings do.
+
 ## 0.458.4 — Borrowed enum parameters stored in fields
 
 - A constructor can store a borrowed payload enum that it takes by value.
