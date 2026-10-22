@@ -4906,9 +4906,16 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
   if (member != nullptr && receiverMode == CallReceiverMode::Value) {
     const ExpressionInfo *receiver =
         semanticModel.findExpression(*member->object());
+    // A reference to a temporary's text has no result loan to carry it yet.
+    const bool textReference =
+        function.returnType.kind == SemanticType::Reference &&
+        function.returnType.arguments.size() == 1 &&
+        (function.returnType.arguments.front().kind ==
+             SemanticType::StringView ||
+         function.returnType.arguments.front().kind == SemanticType::CString);
     if (receiver != nullptr && receiver->category == ValueCategory::Value &&
         receiver->type.kind == SemanticType::Class &&
-        receiver->traits.containsBorrowedState) {
+        (receiver->traits.containsBorrowedState || textReference)) {
       reportMutableReceiverFailure(member->object(), paren, function, "Method");
       return false;
     }
@@ -6978,6 +6985,23 @@ auto SemanticVisitor::Impl::resolveOperator(
       .site = token};
   applyRawOperatorInvocation(site, rawInvocation, contextual,
                              projection || kind == OverloadedOperator::Arrow);
+  // The operator's reference relay for this receiver's class, and its
+  // receiver's and operands' relays (L-OWN-02).
+  if (selected.returnType.kind == SemanticType::Reference) {
+    const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+    const FunctionInfo *declaration = semanticModel.findFunction(selected.id);
+    if (declaration == nullptr && instanceBaseModel != nullptr)
+      declaration = instanceBaseModel->findFunction(selected.id);
+    if (declaration != nullptr) {
+      FunctionInfo concrete = *declaration;
+      concrete.returnType = selected.returnType;
+      concrete.parameterTypes = selected.parameterTypes;
+      resolved.returnedTextReference =
+          textReferenceReturnSummary(concrete, receiverType);
+    }
+  }
+  if (!receiverState && receiver)
+    recordTextFieldOperator(receiver, arguments, selected);
   if (contextual) {
     // The site's own analysis recorded the effects of computing its value;
     // the conversion applied to that value is a further call.
@@ -7478,6 +7502,15 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   // the contract with the same concrete types used to check this selected call;
   // instance analysis independently checks the body against that contract.
   std::optional<FunctionInfo> concreteDeclaration;
+  // The receiver's concrete class, which decides a generic class method's
+  // text relays.
+  SemanticType textRelayOwner = function.dispatchOwner;
+  if (const auto *member = exprAs<Get>(call.callee().get());
+      member != nullptr && member->object() && function.ownerClass != 0)
+    if (const SemanticType *object = semanticModel.findType(*member->object());
+        object != nullptr && object->kind == SemanticType::Class &&
+        object->classId == function.ownerClass)
+      textRelayOwner = *object;
   if (declarationInfo != nullptr &&
       (declarationInfo->returnType != function.returnType ||
        declarationInfo->parameterTypes != function.parameterTypes ||
@@ -7495,7 +7528,21 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       concreteDeclaration->returnBorrowFields = fields->fields;
       concreteDeclaration->returnBorrowPlace = fields->place;
       declarationInfo = &*concreteDeclaration;
+    } else if (const auto text = dynamicTextReturnBorrowSummary(
+                   *concreteDeclaration, textRelayOwner);
+               text && !text->fields.empty()) {
+      // A generic class method relays a receiver field that this call's
+      // types make text (L-OWN-02).
+      concreteDeclaration->returnBorrowOrigin = text->origin;
+      concreteDeclaration->returnBorrowParameter = text->parameter;
+      concreteDeclaration->returnBorrowAccess = text->access;
+      concreteDeclaration->returnBorrowParameters = text->parameters;
+      concreteDeclaration->returnBorrowFields = text->fields;
+      concreteDeclaration->returnBorrowPlace = text->place;
+      declarationInfo = &*concreteDeclaration;
     }
+    concreteDeclaration->returnedTextReference =
+        textReferenceReturnSummary(*concreteDeclaration, textRelayOwner);
   }
   // Whether the callee returns a moved parameter is a body-derived fact; ask
   // for the body first so the answer is the same whatever the source order.
@@ -7637,6 +7684,9 @@ auto SemanticVisitor::Impl::recordResolvedCall(
                       : candidateOwnsBorrow ? function.returnBorrowFields
                                             : concreteBorrow.fields,
       .borrowPlace = returnBorrowPlace,
+      .returnedTextReference = concreteDeclaration
+                                   ? concreteDeclaration->returnedTextReference
+                                   : function.returnedTextReference,
       .dispatch =
           function.virtualMethod ? CallDispatch::Virtual : CallDispatch::Static,
       .dispatchOwner = function.dispatchOwner,
@@ -7645,6 +7695,11 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       .callableArguments = std::move(callableArguments),
       .argumentReceiver = argumentReceiver};
   semanticModel.record(call, resolved);
+  // A callee that returns an argument in a text field of its fresh result
+  // publishes that argument's owner at this call (L-OWN-02). Its relays are
+  // body facts, read after the body demand above.
+  if (restoreDeclaration != nullptr && !function.virtualMethod)
+    publishTextCallResult(call, resolved, *restoreDeclaration);
   // Complete dependency facts are body-derived, not overload properties.
   // Read the exact declaration after the order-independent body demand above;
   // never reuse an open primary's facts for a different concrete instance.

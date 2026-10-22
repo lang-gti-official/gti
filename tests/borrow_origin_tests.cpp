@@ -202,7 +202,9 @@ void checkStoredViewReturns() {
       }
     }
   }
-  expect(ownerless >= 5 && relayed >= 4 && alternatives >= 1 && dependent >= 1,
+  // A generic class's stored view relays its receiver's field in a text
+  // instance, as a non-generic one does.
+  expect(ownerless >= 4 && relayed >= 5 && alternatives >= 1 && dependent >= 1,
          "field, element, nested, parameter and generic stored views are "
          "exercised beside a dependent relay");
 

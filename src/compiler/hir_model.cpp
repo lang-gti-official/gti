@@ -307,7 +307,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                              type.kind == SemanticType::CString;
                     });
     if (!textSignature && function.ownerlessTextParameters.empty() &&
-        function.ownerlessTextFields.empty())
+        function.ownerlessTextFields.empty() &&
+        function.publishedTextFields.empty())
       continue;
     const auto &proof = function.ownerlessTextContractProof;
     // HIR publishes a concrete instance's parameters with packs expanded, so
@@ -325,6 +326,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         proofParameters != function.parameterTypes ||
         proof->required() != function.ownerlessTextParameters ||
         proof->requiredFields() != function.ownerlessTextFields ||
+        proof->published() != function.publishedTextFields ||
         proof->snapshot() != program.analysisSeal().programSnapshot)
       result.errors.emplace_back("HIR ownerless text contract differs from its "
                                  "exact semantic signature and proof");
