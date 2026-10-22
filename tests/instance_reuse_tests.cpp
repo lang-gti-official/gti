@@ -485,6 +485,42 @@ int main() {
 }
 )";
 
+// Relays and field-level text contracts (L-OWN-02) are decided when the
+// request finalizes. An instance analysis's own finalization must not look up
+// the functions they name: a user function it consulted would make every
+// later library instance unreusable.
+const char *const kViewRelayUser = R"(#include <std/string>
+#include <std/vector>
+#include <std/format>
+
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  uint64_t width() { return this.text.size(); }
+};
+
+mut std::string_view kept = "";
+uint64_t measure(Token token) { return token.text.size(); }
+uint64_t total(Token token) { return measure(token) + token.width(); }
+void keep(Token token) {
+  Token copy = token;
+  kept = copy.text;
+}
+
+int main() {
+  std::string input{"token text"};
+  Token token = Token(input.view(), 3);
+  mut std::vector<uint64_t> sizes{};
+  sizes.push_back(measure(token));
+  sizes.push_back(total(token));
+  keep(Token("literal", 1));
+  auto text = std::format("{} {}", sizes.size(), kept.size());
+  return text.size() > std::size_t(0) ? 0 : 1;
+}
+)";
+
 std::string replaceOnce(std::string text, const std::string &from,
                         const std::string &to) {
   const auto found = text.find(from);
@@ -581,6 +617,35 @@ void checkFixtures(const std::filesystem::path &root,
          "complete analysis neither reuses nor stores instances");
 }
 
+void checkViewRelays(const std::filesystem::path &root,
+                     const std::filesystem::path &directory) {
+  const auto entry = write(directory / "view-relays.gti", kViewRelayUser);
+  for (const Mode mode : {Mode::Editor, Mode::Artifact}) {
+    const std::string label =
+        std::string("view relays ") +
+        (mode == Mode::Editor ? "editor snapshot" : "reachable artifact");
+    const Analysis fresh = analyze(root, entry, mode);
+    expect(fresh.result.diagnostics.empty() && fresh.result.hirValid,
+           label + ": the fixture is valid");
+    Caches caches;
+    const Analysis cold = analyze(root, entry, mode, &caches);
+    expect(cold.metrics.semanticInstanceReuseStores > 0 &&
+               cold.metrics.semanticInstanceReuseStores ==
+                   cold.metrics.semanticInstanceReuseMisses,
+           label + ": every eligible instance analysis is stored (" +
+               std::to_string(cold.metrics.semanticInstanceReuseStores) +
+               " of " +
+               std::to_string(cold.metrics.semanticInstanceReuseMisses) + ")");
+    const Analysis warm = analyze(root, entry, mode, &caches);
+    compare(label + " (unchanged snapshot)", outcome(fresh.result),
+            outcome(warm.result));
+    expect(warm.metrics.semanticInstanceReuseHits ==
+                   cold.metrics.semanticInstanceReuseStores &&
+               warm.metrics.semanticInstanceReuseMisses == 0,
+           label + ": an unchanged snapshot reuses every stored instance");
+  }
+}
+
 std::size_t corpusHits = 0;
 
 void checkCorpusEntry(const std::filesystem::path &root,
@@ -611,6 +676,7 @@ int main(int argc, char *argv[]) {
   std::filesystem::create_directories(scratch);
   checkContainer(root, scratch);
   checkFixtures(root, scratch);
+  checkViewRelays(root, scratch);
   std::filesystem::remove_all(scratch);
 
   std::vector<std::filesystem::path> entries;

@@ -1845,6 +1845,22 @@ ownerless text. Inside such a constructor, `TextContracts` reads a
 publishable field back through `this` as that formal's text. A read in
 another initializer makes the formal non-exclusive, and a read reaching
 ownerless storage from the body fails the publication.
+
+In a function that can carry a field-level contract (`fieldContractFunction`),
+`TextContracts` independently derives `ownerlessTextFields`:
+- a formal's or the receiver's text-field projection is a field source, not
+  ownerless text;
+- field sources that reach ownerless storage or a `None`-summary text return
+  become requirements;
+- each other use of the whole formal or receiver requires all of its text
+  fields, except a `CallInput` that a call consumes as a same-class formal or
+  receiver of an in-scope callee, which inherits that callee's requirements;
+- a fixpoint shared with the text-formal requirements closes forwarding.
+
+The derived set must be contained in the declared contract. A declared
+requirement MIR does not derive only rejects more relays. A `CallInput` whose
+operand is a dependent carrier must feed an in-scope callee that requires
+none of its designated fields.
 `isOwnerlessTextFieldProjection` excludes a direct text-field
 place whose object carries a `Stored` loan designating the field: a carrier
 binding of that loan, or the construction's own result value. A write into

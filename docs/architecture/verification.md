@@ -1,5 +1,44 @@
 # Compiler Verification
 
+## Relayed view fields and field-level contracts (0.455.0)
+
+`view_fields` covers relays and contracts.
+- `testRelays` relays a dependent value by value, by reference, through a
+  helper and as a receiver. It checks that storing and relaying functions
+  carry field contracts and reading functions carry none.
+- Two MIR mutations are rejected independently: an omitted field
+  requirement on a storing function, and a forged requirement on a reader
+  that a dependent value is relayed into.
+- `testConfinement` rejects relays into functions that store, forward, or
+  return the field.
+- `view_fields_runtime` runs the relays in every mode.
+- `instance_reuse` analyzes a program with a relay, a receiver relay, a
+  forwarding function and a whole-formal use. Every eligible library
+  instance must be stored, and an unchanged snapshot must reuse them all.
+
+A prototype of the dependent-read rule changed 2 of 1,342 corpus programs
+against the same `main`, and no emitted C++. A differential `--emit-cpp`
+run against `8fdefdec`, over the same corpus, then found 72 programs that
+MIR's relay check rejected: a reference carrier's Stored loan also designates
+a field. The check now counts only a direct text field of the operand's
+class. The differential also found PR #170's stored-view alternative beside
+a receiver relay. A formal's or the receiver's stored field return now
+records the field requirement and stays ownerless, whatever the summary.
+The final run, against a fresh build of `main` at `8ab82f81`, changes no
+program's status, and 1,338 of 1,343 programs emit byte-identical C++.
+Example 170 and the `view_fields` fixture gained relays; three
+source-location fixtures differ only in the embedded checkout path.
+
+The first recorded full suite failed `instance_reuse`: an unchanged editor
+snapshot reused 317 of 318 library instances. Both text finalizers also run
+at the end of every instance analysis, and the new contract and relay passes
+looked up the functions their records name. Each lookup counted as a
+function the instance consulted, and demanded its body. The warm run then
+analyzed bodies in another order, and one stored journal no longer matched.
+With relays in user code, 80 of 155 library instances were not stored at
+all. Instance analyses now record no field use, forward or relay, and decide
+none. The corpus again reuses 18,495 instances, as `main` does.
+
 ## Constructor bodies and published view fields (0.454.2)
 
 A 0.454.0 constructor body could read a published field through `this` as

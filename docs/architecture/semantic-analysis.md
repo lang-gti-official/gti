@@ -2543,6 +2543,32 @@ ownerless text. `readsConstructedObject` must also find no read of the object
 in another initializer or field default; the language rejects such reads
 today, and any expression form the check does not inspect counts as a read.
 
+A function in a field-contract scope (`textFieldContractScope`) carries a
+field-level contract, `FunctionInfo::ownerlessTextFields`, beside
+`ownerlessTextParameters`. Such a scope is a non-generic, non-virtual GTI
+function or method body, outside lambdas, constructors and destructors.
+Inside it:
+- A text-field read through a formal, `this` or an implicit member of a
+  publishable class is an owner-dependent view.
+- A sink that already requires ownerless text records (formal or receiver,
+  field) through `requireOwnerlessTextParameter`. So does a `None`-summary
+  return, which then re-records the read as ownerless.
+- Each other use of such a formal is noted like a dependent value. A field
+  read consumes it. `recordTextFieldCall` forwards a formal that is passed to
+  an in-scope callee's formal or receiver of the same class.
+- `finalizeTextFieldContracts` turns each unconsumed use into requirements on
+  every text field, then closes forwarding to a fixpoint.
+
+A dependent argument or receiver records a `TextDependentRelay` with its
+designated fields, while its scope is live. The request's own finalization
+decides it, once every body that feeds the contracts is analyzed: it consumes
+the relay when the analyzed callee requires none of those fields, and
+otherwise reports `GTI-S2045` related to the callee. An instance analysis
+records no field use, forward or relay. Its finalization leaves relays pending
+and skips the contract pass, because looking up the functions a contract names
+would record them as functions the instance consulted, and demand their
+bodies.
+
 For a bounded exclusive reborrow, semantics records a distinct child loan and
 its mutable parent. The accepted source place has one stable symbol or receiver
 root and named-field, fixed-array index, or checked-dereference projections.

@@ -635,6 +635,7 @@ private:
          .returnType = std::move(returnType),
          .parameterTypes = std::move(parameterTypes),
          .ownerlessTextParameters = declaration.ownerlessTextParameters,
+         .ownerlessTextFields = declaration.ownerlessTextFields,
          .entryKind = declaration.entryKind,
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
          .explicitReturnBorrowOrigin = declaration.explicitReturnBorrowOrigin,
@@ -2132,6 +2133,8 @@ private:
     if (concrete != nullptr) {
       output.program.functions[index].ownerlessTextParameters =
           concrete->ownerlessTextParameters;
+      output.program.functions[index].ownerlessTextFields =
+          concrete->ownerlessTextFields;
       output.program.functions[index].ownerlessTextContractProof =
           model->ownerlessTextContractProof(*concrete->declaration);
       output.program.functions[index].returnBorrowOrigin =
