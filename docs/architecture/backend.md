@@ -1559,7 +1559,14 @@ one scalar `Load` uses the same uninitialized lifetime-slot representation.
 An admitted GTI call or ordinary `Construct` publishes once into the slot, as
 does a failure-free `Move` of a whole object out of a place, as in
 `std::move(a).x`, which constructs the slot from its source, and the load
-spells through its verified field chain. The constructor form also
+spells through its verified field chain. The copy `Load` that MIR uses for a
+class assignment's result, as in `(p = q).x`, copy-constructs the slot from the
+committed destination the same way; it requires a copyable class with a
+generated destructor and no active drop state or borrowed state, takes no
+other consumer, and keeps every other copy-load route unchanged. A nested
+field chain such as `build(1).inner.id` is one projection: the unreferenced
+intermediate places MIR records while forming it (`build(1).inner`) spell
+nothing and declare no storage. The constructor form also
 requires exact target, owner, result, parameter, and operand metadata; one
 single-field projection; a trivial scalar copy load; and no active cleanup,
 lifecycle, borrowed-state, or drop obligation. A text view field
@@ -1570,8 +1577,8 @@ verified `Stored` loan, so it too may take this one field read, though no
 transfer consumer. A text size or emptiness observer whose borrowed receiver is
 the projected view is the read itself, as a copying `Load` is; the slot retires
 right after it. The owned-result field view below admits the same observer.
-Additional consumers, nested or
-non-field projections, cleanup-owning temporaries, and incoherent type rows
+Additional consumers, non-field projections, intermediates that do not
+prefix the read, cleanup-owning temporaries, and incoherent type rows
 reject this route rather than falling back to native temporary behavior.
 A cleanup-owning class result keeps MIR's value-rooted slot and its
 full-expression Drop, and may instead be read through field views of that

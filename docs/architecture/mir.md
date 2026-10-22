@@ -2210,7 +2210,15 @@ A `MirBody` owns:
   or a `Move` out of a place. `std::move(a).x` therefore moves `a` into a
   temporary (leaving `a` moved-from) and reads the field of that temporary;
   an owning class arms the temporary's full-expression obligation with the
-  Move's lifecycle event;
+  Move's lifecycle event. A built-in class assignment is the producer of its
+  own value: an explicit copy `Load` of the committed destination placed
+  directly after the `Assign`, before any later operand runs and before a
+  selected accessor's store loan ends, while the `Assign`'s own result stays
+  expression bookkeeping. `(p = q).x` therefore reads that copy, which a later
+  write of `p` in the same full-expression cannot change. Only a copyable
+  class without borrowed state or active cleanup has such a copy; lowering
+  refuses a projection of any other assignment result rather than aliasing the
+  destination;
 - explicit initialize, assign, modify, move, borrow, call, construct, drop, and
   end-borrow instructions, plus carried read/move/reinitialize ownership events;
 - for the bounded ordinary-invocation slices, one non-removable,

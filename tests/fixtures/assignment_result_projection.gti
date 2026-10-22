@@ -4,7 +4,7 @@
 // function bodies and constructor initializers alike. The destination still
 // holds the assigned value afterwards, and a later operand that assigns the
 // same destination again leaves an earlier read unchanged. Producers that
-// are not assignments share the nested field-read rule.
+// are not assignments share the nested field-read rule (issues #195, #196).
 #include <std/string>
 #include <std/vector>
 
@@ -118,6 +118,12 @@ int32_t produced(bool flag, Segment a, Segment b, mut Segment moved) {
          (flag ? a : b).start.x * 10 + std::move(moved).start.y;
 }
 
+// Nested reads of a construction whose argument is a class call result.
+int32_t constructed(int32_t raw) {
+  auto make = [](int32_t x) -> Point { return Point(x, x + 3); };
+  return Segment(at(raw), 9).start.y * 10 + Segment(make(raw), 8).start.y;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   std::println(pick(Point(1, 2), Point(5, 4)));
   Line line = Line(Point(1, 2), Point(5, 4));
@@ -137,6 +143,7 @@ int main(int argc, std::vector<std::string> argv) {
   std::println(loop_digits(3));
   std::println(produced(false, Segment(Point(1, 2), 0), Segment(Point(8, 9), 0),
                         Segment(Point(4, 7), 0)));
+  std::println(constructed(2));
   std::println(checked(Point(1, 2), Point(5, 4), argc > 1 ? 2147483647 : 1));
   return 0;
 }
