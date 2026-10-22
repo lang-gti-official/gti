@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Recursive text returns (0.458.1)
+## Recursive text returns (0.458.2)
 
 `ownerless_text_contracts` covers recursion in four tests.
 - `testRecursiveOwnerlessReturns` verifies a `std::string_view` and a

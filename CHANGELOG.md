@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.458.1 — Recursive functions that return text
+## 0.458.2 — Recursive functions that return text
 
 - A recursive function returning `std::string_view` or `c_string`, such as
   `std::string_view loop(std::string_view s, int n) { if (n == 0) { return
@@ -28,6 +28,19 @@ for what minor and patch releases mean.
   exponential in the depth of the call chain. A chain of 20 such functions
   whose two returns each call the next took about 16 seconds and now takes a
   fraction of a second.
+
+## 0.458.1 — Reference bindings from a local payload enum
+
+- A `switch` can now bind `auto&` to a reference payload of an enum held in a
+  local variable. For `enum Slot { item(int& value), empty };`,
+  `auto slot = borrow_slot(local, true);` followed by
+  `case Slot::item(auto& value):` used to report `error[GTI-B0001]` (an
+  internal compiler error); it now works. The same holds when the local is
+  built directly, as in `auto slot = Slot::item(local);`, for a generic enum
+  such as `MaybeRef<int&>`, and for an enum field of a local class value, as
+  in `switch (holder.slot)`.
+- `mut auto&` writes through such a binding reach the referenced owner,
+  including an owner that is itself a `mut int&` parameter.
 
 ## 0.458.0 — Reading text fields of temporaries
 
