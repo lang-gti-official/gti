@@ -1882,8 +1882,9 @@ publishable field back through `this` as that formal's text. A read in
 another initializer makes the formal non-exclusive, and a read reaching
 ownerless storage from the body fails the publication.
 
-In a function that can carry a field-level contract (`fieldContractFunction`),
-`TextContracts` independently derives `ownerlessTextFields`:
+In a function that can carry a field-level contract (`fieldContractFunction`:
+a non-generic source function or method, or a method of a generic class's
+instance), `TextContracts` independently derives `ownerlessTextFields`:
 - a formal's or the receiver's text-field projection is a field source, not
   ownerless text;
 - field sources that reach ownerless storage or a `None`-summary text return

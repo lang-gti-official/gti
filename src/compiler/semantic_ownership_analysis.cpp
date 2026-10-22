@@ -1419,7 +1419,10 @@ auto SemanticVisitor::Impl::textFieldContractFunction(
       dynamicDispatch || declaration->linkage() != LanguageLinkage::Gti ||
       !declaration->genericParameters().empty())
     return false;
-  return ownerClass == 0 || classInfo(ownerClass).genericParameters.empty();
+  // A method of a generic class carries its open contract to every instance;
+  // a type-parameter field's requirements bind only its text instances.
+  (void)ownerClass;
+  return true;
 }
 
 auto SemanticVisitor::Impl::textFieldContractScope() const
@@ -1662,6 +1665,102 @@ auto SemanticVisitor::Impl::noteTextFieldFormalUse(const Expr &expression,
     requestSession.textFieldFormalOrder.push_back(&expression);
 }
 
+auto SemanticVisitor::Impl::conditionalTextField(const Expr &expression) const
+    -> std::optional<OwnerlessTextField> {
+  const FunctionInfo *scope = textFieldContractScope();
+  if (scope == nullptr || scope->ownerClass == 0 ||
+      classInfo(scope->ownerClass).genericParameters.empty())
+    return std::nullopt;
+  const bool readOnlyReceiver =
+      !scope->staticMember && scope->bodyDeclaration()->receiverMutability() ==
+                                  ReceiverMutability::ReadOnly;
+  std::optional<OwnerlessTextField> formal;
+  SemanticType owner = SemanticType::Unknown;
+  const Token *name = nullptr;
+  if (const auto *get = exprAs<Get>(&expression)) {
+    const Expr *object = get->object() ? get->object().get() : nullptr;
+    while (const auto *group = exprAs<Grouping>(object))
+      object = group->expression() ? group->expression().get() : nullptr;
+    if (get->access().kind == TokenKind::ARROW || object == nullptr)
+      return std::nullopt;
+    if (exprAs<This>(object) != nullptr) {
+      if (!readOnlyReceiver)
+        return std::nullopt;
+      formal = OwnerlessTextField{.receiver = true};
+      owner = openClassType(scope->ownerClass);
+    } else if (exprAs<Variable>(object) != nullptr) {
+      formal = textFieldContractFormal(*object);
+      if (!formal || formal->receiver ||
+          formal->parameter >= scope->parameterTypes.size())
+        return std::nullopt;
+      owner = scope->parameterTypes[formal->parameter];
+      if (owner.kind == SemanticType::Reference && owner.arguments.size() == 1)
+        owner = SemanticType(owner.arguments.front());
+    } else {
+      return std::nullopt;
+    }
+    name = &get->name();
+  } else if (const auto *variable = exprAs<Variable>(&expression)) {
+    const Symbol *symbol = resolve(variable->name());
+    if (!readOnlyReceiver || symbol == nullptr ||
+        symbol->ownerClass != scope->ownerClass || symbol->staticMember ||
+        symbol->parameterDeclaration != nullptr)
+      return std::nullopt;
+    formal = OwnerlessTextField{.receiver = true};
+    owner = openClassType(scope->ownerClass);
+    name = &variable->name();
+  } else {
+    return std::nullopt;
+  }
+  const ClassInfo *info = classInfo(owner);
+  if (info == nullptr)
+    return std::nullopt;
+  const auto member = info->members.find(name->lexeme);
+  if (member == info->members.end() || member->second.symbol.staticMember ||
+      member->second.symbol.bindingKind != SemanticBindingKind::Field ||
+      substituteType(member->second.symbol.type, classSubstitution(owner))
+              .kind != SemanticType::TypeParameter)
+    return std::nullopt;
+  formal->field = symbolForDeclaration(member->second.symbol.declaration);
+  return formal;
+}
+
+auto SemanticVisitor::Impl::conditionalRelayReturns(
+    const FunctionInfo &function) -> const std::unordered_set<const Expr *> & {
+  const auto [entry, inserted] =
+      requestSession.conditionalRelayReturns.try_emplace(
+          function.bodyDeclaration());
+  if (!inserted || function.bodyDeclaration()->body() == nullptr)
+    return entry->second;
+  std::vector<const ExprPtr *> returns;
+  collectBorrowReturnExpressions(function.bodyDeclaration()->body().get(),
+                                 returns);
+  std::optional<SymbolId> relayed;
+  std::unordered_set<const Expr *> found;
+  for (const ExprPtr *returned : returns) {
+    const Expr *current = returned != nullptr ? returned->get() : nullptr;
+    while (const auto *group = exprAs<Grouping>(current))
+      current = group->expression() ? group->expression().get() : nullptr;
+    const auto field =
+        current != nullptr ? conditionalTextField(*current) : std::nullopt;
+    if (!field || !field->receiver || (relayed && *relayed != field->field))
+      return entry->second;
+    relayed = field->field;
+    found.insert(current);
+  }
+  entry->second = std::move(found);
+  return entry->second;
+}
+
+auto SemanticVisitor::Impl::noteConditionalTextFieldRead(const Expr &expression)
+    -> void {
+  const auto field = conditionalTextField(expression);
+  const FunctionInfo *scope = field ? textFieldContractScope() : nullptr;
+  if (scope == nullptr || conditionalRelayReturns(*scope).contains(&expression))
+    return;
+  (void)requireOwnerlessTextField(scope->declaration, *field);
+}
+
 auto SemanticVisitor::Impl::noteReturnedFormalReference(const Expr &returned)
     -> void {
   const Expr *current = &returned;
@@ -1798,7 +1897,14 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
     const SemanticType owner = openClassType(target.ownerClass);
     if (const auto *member = exprAs<Get>(call.callee().get());
         member != nullptr && member->access().kind != TokenKind::ARROW) {
-      record(member->object(), {.receiver = true}, owner);
+      // A generic class's receiver is an instance of the open owner.
+      const SemanticType *object =
+          member->object() ? semanticModel.findType(*member->object())
+                           : nullptr;
+      const bool instance = object != nullptr &&
+                            object->kind == SemanticType::Class &&
+                            object->classId == target.ownerClass;
+      record(member->object(), {.receiver = true}, instance ? *object : owner);
     } else if (const FunctionInfo *scope = textFieldContractScope();
                exprAs<Variable>(call.callee().get()) != nullptr &&
                scope != nullptr && scope->ownerClass == target.ownerClass &&
