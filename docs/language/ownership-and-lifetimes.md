@@ -2509,7 +2509,8 @@ that, still requires ownerless text. So does a recursive call whose result
 has a text field, even when it is returned.
 
 A dependent value still cannot be passed to a constructor, a lambda, a
-virtual method or a generic function, nor returned itself, captured, bound by
+virtual method or a generic function (a method of a generic class is not one,
+see below), nor returned itself, captured, bound by
 a reference, assigned into existing storage, or stored in a global, a field,
 an array or a container. Each of these is `GTI-S2045`. For the same reason a
 class with a destructor, a base or virtual methods keeps the ownerless field
@@ -2517,6 +2518,58 @@ rule. So does a constructor with a non-empty body, which could read the
 published field back through `this` as ownerless text. A value holds dynamic
 text from at most one owner, and that owner must be a named place: a view of a
 temporary owner is rejected as before.
+
+A method or function that returns a reference to text, such as
+`std::string_view& ref() { return this.text; }`, `T& get()` over a text field,
+or `expected::error()`, gives the text that the reference designates. A value
+that holds ownerless text may store what it reads through the reference. A
+temporary cannot yet be the receiver of such an accessor (`GTI-S2081`).
+
+A method of a non-generic class whose returns all designate one text field of
+its read-only receiver relays that field. On a dependent value, reading
+through its result gives a view of the owner, as reading the field does. A
+view copied from it keeps the owner borrowed and, unlike a field read, the
+value as well, because the reference that produced it borrows the value. A
+function that only reads through such an accessor may take a dependent
+value; one that stores what it reads may not:
+
+```gti
+Token literal = Token("literal", 1);
+kept = literal.ref();                     // valid: ownerless
+Token token = Token(input.view(), 2);
+std::println(token.ref());                // valid: views input
+std::string_view copy = token.ref();      // keeps input and token borrowed
+kept = token.ref();                       // GTI-S2045
+```
+
+A dependent value still cannot call any other reference accessor or be
+passed to a function that calls one on it, `GTI-S2045`. This covers an
+accessor through a payload, and one that returns another call's reference.
+
+The methods of a generic class follow the same rules in each instance whose
+fields are text. A method whose returns all yield one type-parameter field of
+its read-only receiver, by value or by reference, relays that field. Any
+other read of such a field requires it to hold ownerless text, so a value
+over a local owner cannot call that method, while an instance whose field is
+not text is unaffected:
+
+```gti
+class Box<T> {
+public:
+  T value;
+  Box(T value) : value(value) {}
+  T name() { return this.value; }
+  T& get() { return this.value; }
+  void save(mut T& out) { out = this.value; }
+};
+
+Box<std::string_view> box = Box<std::string_view>(input.view());
+std::println(box.name());                 // valid: views input
+std::string_view got = box.get();         // keeps input borrowed
+box.save(out);                            // GTI-S2045
+Box<int> number = Box<int>(5);
+number.save(count);                       // valid
+```
 
 An adapter that needs to retain dynamic input can instead declare a checked
 `std::string_view&` or `c_string&` field and accept the same reference type in its

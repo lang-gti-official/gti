@@ -1793,6 +1793,22 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     if (resolved != nullptr &&
         resolved->returnType.kind == SemanticType::Reference &&
         resolved->returnType.arguments.size() == 1) {
+      // A reference relay designates its receiver's text field, which holds a
+      // relayed owner's text, or a contract formal's field here (L-OWN-02).
+      if (const auto field = textReferenceRelay(call, *resolved);
+          field && borrowedTextType(type)) {
+        const ExpressionInfo *sourceInfo =
+            field->origin == nullptr
+                ? nullptr
+                : semanticModel.findExpression(**field->origin);
+        std::vector<SymbolId> held;
+        if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
+          held = textDependentFields(**field->origin);
+        if (fieldSourcedTextFormal(*field) ||
+            std::find(held.begin(), held.end(), field->field) != held.end())
+          return ownerDependentTextInfo(std::move(type), ValueCategory::Place,
+                                        resolved->returnType.referenceAccess);
+      }
       return expressionInfo(std::move(type), ValueCategory::Place,
                             resolved->returnType.referenceAccess);
     }
@@ -2546,6 +2562,11 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   if (exprAs<Variable>(&expr) != nullptr || exprAs<This>(&expr) != nullptr)
     if (const auto formal = textFieldContractFormal(expr))
       noteTextFieldFormalUse(expr, *formal);
+  // A generic class method's type-parameter field may hold a relayed owner's
+  // text in a text instance: any read but the method's relayed return
+  // requires it ownerless there.
+  if (exprAs<Variable>(&expr) != nullptr || exprAs<Get>(&expr) != nullptr)
+    noteConditionalTextFieldRead(expr);
   if (const auto *get = exprAs<Get>(&expr);
       get != nullptr && result != SemanticType::Function) {
     consumeTextDependentValue(get->object());
@@ -6789,14 +6810,21 @@ auto SemanticVisitor::Impl::freshTemporaryMethodSupported(
   // as a non-virtual one does.
   // A nonescaping read observation keeps the fresh owner alive through the
   // full expression. The ordinary borrow-origin checks still reject storing
-  // or returning a view/reference whose temporary owner would expire.
+  // or returning a view/reference whose temporary owner would expire. A
+  // reference to the temporary's text has no result loan to carry it yet.
+  const bool textReference =
+      function.returnType.kind == SemanticType::Reference &&
+      function.returnType.arguments.size() == 1 &&
+      (function.returnType.arguments.front().kind == SemanticType::StringView ||
+       function.returnType.arguments.front().kind == SemanticType::CString);
   const bool readObservation =
       function.receiverMutability == ReceiverMutability::ReadOnly &&
       function.returnBorrowOrigin == BorrowOriginKind::Receiver &&
       function.returnBorrowAccess == AccessMode::ReadOnly &&
       (function.returnType.kind == SemanticType::StringView ||
        (function.returnType.kind == SemanticType::Reference &&
-        function.returnType.referenceAccess == AccessMode::ReadOnly));
+        function.returnType.referenceAccess == AccessMode::ReadOnly &&
+        !textReference));
   return readObservation ||
          (function.returnType.kind != SemanticType::Reference &&
           function.returnBorrowOrigin == BorrowOriginKind::None &&

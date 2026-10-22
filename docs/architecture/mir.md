@@ -1888,6 +1888,24 @@ completes them all; a summary that read an unfinished one stays provisional
 until then. A recursive text result is therefore ownerless exactly when its
 other returns are.
 
+Text read through a reference that a source call returned is summarized the
+same way: the callee's Return loans name the referent, and its sources are
+mapped through the call. A place rooted at a value, which is how a reference
+pattern binds a payload, holds that value's text, so a payload accessor such
+as `expected::error()` reads the extracted payload. A method that returns a
+reference to its receiver's direct text field lowers it as a plain borrow of
+that field. The text is the caller's, ownerless or under the method's field
+contract, so the borrow needs no stored dependency in the body. Over a
+receiver that carries a `Stored` loan designating that field, a view copied
+through the reference carries the call's result loan, whose stored
+dependency is that owner loan. Which bindings carry it is a semantic
+decision here, as for a view copied from a field read: MIR checks the loan's
+shape, not its carriers. A method that returns another call's text reference
+publishes a `Return` loan that reborrows the call's result loan.
+`TextContracts` follows that reborrow to the call, and the verifier's carrier
+shell rule takes the expected stored dependency exactly from the forwarded
+result loan, which is none when the callee's receiver holds ownerless text.
+
 A construction may instead publish dynamic text (`L-OWN-02`, phase 1). Its
 `dependentTextPublication` flag marks borrow facts that belong to the call: the
 target constructor's own summary stays empty, because its other call sites
@@ -1903,8 +1921,9 @@ publishable field back through `this` as that formal's text. A read in
 another initializer makes the formal non-exclusive, and a read reaching
 ownerless storage from the body fails the publication.
 
-In a function that can carry a field-level contract (`fieldContractFunction`),
-`TextContracts` independently derives `ownerlessTextFields`:
+In a function that can carry a field-level contract (`fieldContractFunction`:
+a non-generic source function or method, or a method of a generic class's
+instance), `TextContracts` independently derives `ownerlessTextFields`:
 - a formal's or the receiver's text-field projection is a field source, not
   ownerless text;
 - field sources that reach ownerless storage or a `None`-summary text return

@@ -7182,6 +7182,7 @@ auto SemanticVisitor::Impl::publishFunctionBorrowSummary(
       declaration->returnBorrowParameters = function.returnBorrowParameters;
       declaration->returnBorrowFields = function.returnBorrowFields;
       declaration->returnBorrowPlace = function.returnBorrowPlace;
+      declaration->returnedTextReference = function.returnedTextReference;
     }
   }
   const auto found = candidateIndex.find(function.id);
@@ -7198,6 +7199,7 @@ auto SemanticVisitor::Impl::publishFunctionBorrowSummary(
     candidate->returnBorrowParameters = function.returnBorrowParameters;
     candidate->returnBorrowFields = function.returnBorrowFields;
     candidate->returnBorrowPlace = function.returnBorrowPlace;
+    candidate->returnedTextReference = function.returnedTextReference;
   }
 }
 
@@ -7343,7 +7345,8 @@ auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
 }
 
 auto SemanticVisitor::Impl::predeclaredTextFieldSource(
-    const ExprPtr &expression, const FunctionInfo &function, SymbolId given)
+    const ExprPtr &expression, const FunctionInfo &function, SymbolId given,
+    const SemanticType &ownerType, bool conditional)
     -> std::optional<PredeclaredTextBorrowSource> {
   if (!expression || !textFieldContractFunction(
                          function.declaration, function.bodyDeclaration(),
@@ -7379,7 +7382,10 @@ auto SemanticVisitor::Impl::predeclaredTextFieldSource(
     return Origin{.source = {.known = true,
                              .ownerDependent = true,
                              .origin = BorrowOriginKind::Receiver},
-                  .type = openClassType(function.ownerClass)};
+                  .type = ownerType.kind == SemanticType::Class &&
+                                  ownerType.classId == function.ownerClass
+                              ? ownerType
+                              : openClassType(function.ownerClass)};
   };
   const auto origin = [&](const Expr *object) -> std::optional<Origin> {
     object = unwrap(object);
@@ -7414,7 +7420,7 @@ auto SemanticVisitor::Impl::predeclaredTextFieldSource(
         return std::nullopt;
       field = symbolForDeclaration(member->symbol.declaration);
     }
-    if (field == 0 || !directTextField(found->type, field))
+    if (field == 0 || !directTextField(found->type, field, conditional))
       return std::nullopt;
     found->source.field = field;
     return found->source;
@@ -7443,7 +7449,8 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   // A contract formal's text field may hold the caller's dynamic text
   // (L-OWN-02), so reading it relays that field's dependency. Any other
   // stored view holds ownerless text.
-  if (auto field = predeclaredTextFieldSource(expression, function))
+  if (auto field =
+          predeclaredTextFieldSource(expression, function, 0, ownerType))
     return *field;
   if (storedTextViewRead(expression, function, ownerType)) {
     return {.known = true};
@@ -7872,6 +7879,56 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
     provisionalTextBorrowGrew = false;
   }
   return result;
+}
+
+auto SemanticVisitor::Impl::textReferenceReturnSummary(
+    const FunctionInfo &function, const SemanticType &ownerType)
+    -> std::optional<OwnerlessTextField> {
+  // An open referent type relays conditionally: a call reads the relay only
+  // where its result is a reference to text.
+  const SemanticType &type = function.returnType;
+  const bool conditional =
+      type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
+      type.arguments.front().kind == SemanticType::TypeParameter;
+  if (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
+      (type.arguments.front().kind != SemanticType::StringView &&
+       type.arguments.front().kind != SemanticType::CString && !conditional) ||
+      function.intrinsic != IntrinsicKind::None ||
+      function.declaration == nullptr ||
+      function.bodyDeclaration()->body() == nullptr)
+    return std::nullopt;
+  std::vector<const ExprPtr *> returns;
+  collectBorrowReturnExpressions(function.bodyDeclaration()->body().get(),
+                                 returns);
+  if (returns.empty())
+    return std::nullopt;
+  const std::vector<std::string> enclosingNamespace = currentNamespace;
+  const SourceUnitId enclosingSourceUnit = currentSourceUnit;
+  const std::optional<ClassId> enclosingClass = currentClass;
+  currentNamespace = function.namespaceScope;
+  currentSourceUnit = sourceUnitFor(function.bodyDeclaration()->name());
+  currentClass = function.ownerClass == 0
+                     ? std::nullopt
+                     : std::optional<ClassId>{function.ownerClass};
+  std::optional<OwnerlessTextField> result;
+  bool valid = true;
+  for (const ExprPtr *returned : returns) {
+    const auto source =
+        returned == nullptr
+            ? std::nullopt
+            : predeclaredTextFieldSource(*returned, function, 0, ownerType,
+                                         conditional);
+    if (!source || source->origin != BorrowOriginKind::Receiver ||
+        (result && result->field != source->field)) {
+      valid = false;
+      break;
+    }
+    result = OwnerlessTextField{.receiver = true, .field = source->field};
+  }
+  currentNamespace = enclosingNamespace;
+  currentSourceUnit = enclosingSourceUnit;
+  currentClass = enclosingClass;
+  return valid ? result : std::nullopt;
 }
 
 auto SemanticVisitor::Impl::globalReturnBorrowPlace(
@@ -8594,6 +8651,7 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     }
     if (const auto fields = storedFieldReturnBorrowSummary(updated))
       summary = *fields;
+    updated.returnedTextReference = textReferenceReturnSummary(updated);
     if (isBorrowReturningType(updated.returnType) &&
         updated.intrinsic == IntrinsicKind::None) {
       if (std::optional<BorrowOriginPlace> place =
@@ -9465,6 +9523,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .processMemoryOperation = declaration.processMemoryOperation,
       .requiresCThreadRuntime =
           requiresCThreadConcurrency(declaration.cThreadOperation),
+      .returnedTextReference = declaration.returnedTextReference,
       .linkage = declaration.linkage,
       .externalSymbol = declaration.externalSymbol,
       .cArrayCountParameter = declaration.cArrayCountParameter,
@@ -9532,6 +9591,7 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
   declaration->returnBorrowFields = candidateOwnsBorrow
                                         ? candidate.returnBorrowFields
                                         : concreteBorrow.fields;
+  declaration->returnedTextReference = candidate.returnedTextReference;
   declaration->virtualRoots = candidate.virtualRoots;
   declaration->compilerPrivate = candidate.compilerPrivate;
   const SourceUnit *unit = sourceGraph == nullptr

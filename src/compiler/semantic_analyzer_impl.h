@@ -769,6 +769,7 @@ private:
     std::vector<std::size_t> returnBorrowParameters;
     std::vector<BorrowedFieldOrigin> returnBorrowFields;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
+    std::optional<OwnerlessTextField> returnedTextReference;
     std::vector<FunctionId> virtualRoots;
     bool compilerPrivate = false;
   };
@@ -798,6 +799,7 @@ private:
     std::vector<std::size_t> returnBorrowParameters;
     std::vector<BorrowedFieldOrigin> returnBorrowFields;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
+    std::optional<OwnerlessTextField> returnedTextReference;
     std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
     bool compilerPrivate = false;
@@ -2083,6 +2085,10 @@ private:
   [[nodiscard]] std::optional<FieldSourcedTextResult>
   fieldSourcedTextResult(const Call &call,
                          const ResolvedCallInfo &resolved) const;
+  // A call whose callee returns a reference to one direct text field of its
+  // receiver: reading the result reads that field of the receiver.
+  [[nodiscard]] std::optional<FieldSourcedTextResult>
+  textReferenceRelay(const Call &call, const ResolvedCallInfo &resolved) const;
   // The contract formal or receiver of the current scope that such a
   // result's origin names, with its field: the result reads that field.
   [[nodiscard]] std::optional<OwnerlessTextField>
@@ -2094,6 +2100,20 @@ private:
                          bool conditional = false) const;
   void noteTextFieldFormalUse(const Expr &expression,
                               OwnerlessTextField formal);
+  // A returned reference that a call borrowed from a contract formal or the
+  // receiver lets that whole formal escape: a whole use (L-OWN-02).
+  void noteReturnedFormalReference(const Expr &returned);
+  // A read, in a generic class method, of a type-parameter field of the
+  // read-only receiver or of a contract formal: the field may hold a relayed
+  // owner's text in a text instance.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  conditionalTextField(const Expr &expression) const;
+  // The returns of `function` that each yield the same type-parameter field
+  // of the receiver, which the method relays; empty when it relays none.
+  [[nodiscard]] const std::unordered_set<const Expr *> &
+  conditionalRelayReturns(const FunctionInfo &function);
+  // Records the requirement a conditional field read implies (L-OWN-02).
+  void noteConditionalTextFieldRead(const Expr &expression);
   void consumeTextFieldFormalUse(const ExprPtr &expression);
   void recordTextFieldCall(const Call &call, const CallableCandidate &target);
   bool requireOwnerlessTextField(const FunctionDecl *function,
@@ -4359,9 +4379,14 @@ private:
   // `expression` reads, when `function` can carry field-level text contracts.
   // With `field`, `expression` names the formal or receiver and the field is
   // given: a helper returns that field of it.
+  // A generic class method's receiver is `ownerType` when that names an
+  // instance of its class, and otherwise the open class, whose type-parameter
+  // fields count with `conditional`.
   [[nodiscard]] std::optional<PredeclaredTextBorrowSource>
-  predeclaredTextFieldSource(const ExprPtr &expression,
-                             const FunctionInfo &function, SymbolId field = 0);
+  predeclaredTextFieldSource(
+      const ExprPtr &expression, const FunctionInfo &function,
+      SymbolId field = 0, const SemanticType &ownerType = SemanticType::Unknown,
+      bool conditional = false);
 
   [[nodiscard]] bool storedTextViewRead(const ExprPtr &expression,
                                         const FunctionInfo &function,
@@ -4414,6 +4439,12 @@ private:
 
   [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
   dynamicTextReturnBorrowSummary(
+      const FunctionInfo &function,
+      const SemanticType &ownerType = SemanticType::Unknown);
+
+  // The receiver's direct text field that every returned reference to text
+  // designates, in a field-contract method.
+  [[nodiscard]] std::optional<OwnerlessTextField> textReferenceReturnSummary(
       const FunctionInfo &function,
       const SemanticType &ownerType = SemanticType::Unknown);
 
@@ -5987,6 +6018,10 @@ private:
     std::unordered_map<const Expr *, TextFieldFormalUse> textFieldFormalUses;
     std::vector<TextFieldForwardUse> textFieldForwardUses;
     std::vector<TextDependentRelay> textDependentRelays;
+    // Per generic class method: the returns that relay its receiver's
+    // type-parameter field (conditionalRelayReturns).
+    std::unordered_map<const FunctionDecl *, std::unordered_set<const Expr *>>
+        conditionalRelayReturns;
     ValueFlowState valueFlow;
     std::unordered_set<std::string> reportedCompilerPrivateAccess;
     std::unordered_map<const Expr *, const ParameterDefault *>

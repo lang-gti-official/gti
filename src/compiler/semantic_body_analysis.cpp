@@ -463,6 +463,24 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   for (SemanticType &parameter : concreteFunction.parameterTypes) {
     parameter = substituteType(parameter, substitution);
   }
+  // A generic class method's open field requirements bind exactly the fields
+  // that are text in this instance (L-OWN-02).
+  if (function->ownerClass != 0 &&
+      !classInfo(function->ownerClass).genericParameters.empty()) {
+    const SemanticType owner =
+        substituteType(openClassType(function->ownerClass), substitution);
+    for (const OwnerlessTextField &field : function->ownerlessTextFields) {
+      SemanticType type =
+          field.receiver ? owner
+          : field.parameter < concreteFunction.parameterTypes.size()
+              ? concreteFunction.parameterTypes[field.parameter]
+              : SemanticType::Unknown;
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+        type = SemanticType(type.arguments.front());
+      if (directTextField(type, field.field))
+        concreteFunction.ownerlessTextFields.push_back(field);
+    }
+  }
   for (AppliedConceptRequirement &requirement : concreteFunction.requirements) {
     for (SemanticType &argument : requirement.arguments) {
       argument = substituteType(argument, substitution);
@@ -472,13 +490,24 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       containsOpenTypeParameter(function->returnType)) {
     resolveGenericReturnBorrowContract(*function, concreteFunction);
   }
+  // A generic class method relays its receiver's fields as this instance's
+  // types make them text (L-OWN-02).
+  const SemanticType concreteOwner =
+      concreteFunction.ownerClass == 0
+          ? SemanticType::Unknown
+          : substituteType(openClassType(concreteFunction.ownerClass),
+                           substitution);
+  concreteFunction.returnedTextReference =
+      textReferenceReturnSummary(concreteFunction, concreteOwner);
   if (!concreteFunction.explicitReturnBorrowOrigin) {
     if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
-            dynamicTextReturnBorrowSummary(concreteFunction)) {
+            dynamicTextReturnBorrowSummary(concreteFunction, concreteOwner)) {
       concreteFunction.returnBorrowOrigin = dynamicText->origin;
       concreteFunction.returnBorrowParameter = dynamicText->parameter;
       concreteFunction.returnBorrowAccess = dynamicText->access;
       concreteFunction.returnBorrowPlace = dynamicText->place;
+      if (!dynamicText->fields.empty())
+        concreteFunction.returnBorrowFields = dynamicText->fields;
     } else if (concreteFunction.returnBorrowOrigin == BorrowOriginKind::None) {
       const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
           concreteFunction.returnType, concreteFunction.parameterTypes,
@@ -4635,6 +4664,7 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     }
     forceProgramStorageBoundaryAccess(stmt.value());
     validateReferenceReturn(currentReturnType, valueType, stmt.value());
+    noteReturnedFormalReference(*stmt.value());
     if (expressionNeverReturns(stmt.value().get()))
       return;
     // Snapshot scalar-reference origins at this return point, before arm
