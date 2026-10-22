@@ -1,5 +1,39 @@
 # Compiler Verification
 
+## Returned text fields of relayed values (0.456.0)
+
+`view_fields` covers field-sourced returns.
+- `testFieldResults` returns a dependent token's field through a free
+  function, a composed function and a method. It checks that each carries
+  one field origin and no ownerless requirement.
+- Three MIR mutations are rejected independently: a field origin naming a
+  non-text field, a dropped origin on a by-value formal, and a removed result
+  loan of a dependent call.
+- `testConfinement` rejects storing a returned dependent view, and storing it
+  through a helper.
+- `view_fields_runtime` runs a published field's returned view, a method
+  accessor, and the ownerless other field of the same value.
+
+`borrow_origin` now counts PR #170's stored-view returns of publishable
+formals as field relays. Each of its corrupted loads must still fail
+verification.
+
+An `--emit-cpp` differential over all 1,343 corpus programs compares this
+build with main's compiler on the same sources.
+- Two programs change status: example 170 and the `view_fields` fixture now
+  build because they return field views.
+- 1,340 programs emit byte-identical C++.
+- The remaining difference is PR #170's fixture. `LabelText(Label&)` keeps its
+  reference formal's entry loan, as a pointer alias ended at the return, and
+  `main`'s MIR places renumber.
+
+Probes found two gaps, both fixed:
+- Lowering parented a result loan to a carrier loan that designates another
+  field (`secondOf(pair)` for a pair published at `first`). A result loan now
+  requires the origin's loan to designate the returned field.
+- A reference input was judged by its reference type. The ownerless check
+  now looks through it to the referent.
+
 ## Relayed view fields and field-level contracts (0.455.0)
 
 `view_fields` covers relays and contracts.

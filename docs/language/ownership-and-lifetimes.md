@@ -2368,19 +2368,39 @@ keep(token);        // GTI-S2045: keep lets the text outlive the call
 Each function's field contract is inferred from its body. A text field of a
 formal or of the receiver requires ownerless text at every call when the
 function:
-- stores it or returns it as independent text;
+- stores it;
 - passes it to a function that requires it;
 - lets the whole formal escape: copies, stores or returns it, captures it, or
   passes it where no such contract applies.
+
+A function that returns one text field instead relays it: the caller's
+result holds whatever the argument or receiver holds in that field.
+
+```gti
+std::string_view first(Token token) { return token.text; }
+std::string_view name() { return this.text; }    // a Token method
+
+std::string_view view = first(token);  // valid: views input, as token does
+token.name().size();                   // valid
+kept = first(token);                   // GTI-S2045: the result views input
+kept = first(Token("literal", 1));     // valid: the result is ownerless
+```
+
+The result depends on the owner exactly when the argument's dependency is at
+that field; another field of the same value stays ownerless. The relay applies
+only when every return of the function that may hold dynamic text reads the
+same field of the same formal or receiver, possibly through such a function.
+A function that returns that field beside another source, or two different
+fields, keeps the requirement above instead.
 
 Literal-backed values satisfy every contract, so existing calls are
 unaffected. Inside such a function, reading the field gives a dependent view
 of whatever the caller passed.
 
 A dependent value still cannot be passed to a constructor, a lambda, a
-virtual method or a generic function, nor returned, captured, bound by a
-reference, assigned into existing storage, or stored in a global, a field, an
-array or a container. Each of these is `GTI-S2045`. For the same reason a
+virtual method or a generic function, nor returned itself, captured, bound by
+a reference, assigned into existing storage, or stored in a global, a field,
+an array or a container. Each of these is `GTI-S2045`. For the same reason a
 class with a destructor, a base or virtual methods keeps the ownerless field
 rule. So does a constructor with a non-empty body, which could read the
 published field back through `this` as ownerless text. A value holds dynamic

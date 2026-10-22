@@ -327,7 +327,7 @@ workflow determine task scope and integration.
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
 | `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
-| `L-OWN-02` owner-tracked view fields | phases 1a and 1b-i implemented; 1b-ii next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values; 1b-i relays them into functions and methods through inferred field-level contracts. Phase 1b-ii adds projected returns, payload enums and temporaries. Later phases cover generic types, nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
+| `L-OWN-02` owner-tracked view fields | phases 1a, 1b-i and the 1b-ii returns implemented; payload enums next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values; 1b-i relays them into functions and methods through inferred field-level contracts, and a function that returns one text field relays it to its result. Phase 1b-ii continues with payload enums and temporaries. Later phases cover generic types, nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
@@ -8958,8 +8958,8 @@ prerequisite checkpoints as full acceptance.
 
 - **State/role:** owner decision 2026-10-21 (option 1 of the caller-owned text
   question in the 0.449.0 follow-ups). Phases 1a (local class and struct
-  values) and 1b-i (relays and receivers) are implemented; phase 1b-ii and
-  phases 2–4 are planned.
+  values), 1b-i (relays and receivers) and the returns of phase 1b-ii are
+  implemented; the rest of phase 1b-ii and phases 2–4 are planned.
 - **Problem and client:** no field can hold a view of caller-owned text. A
   `std::string_view` or `c_string` field, a payload-enum alternative of either
   type, and the storage of any constructor that keeps a text parameter accept
@@ -9053,8 +9053,13 @@ prerequisite checkpoints as full acceptance.
     - **Compatibility.** Every existing argument is ownerless, so every
       existing call satisfies the new requirements.
   - *Phase 1b-ii.*
-    - Returns that project the source's field dependency through
-      `FunctionBorrowDependencySummary`, instead of requiring ownerless.
+    - *Implemented in 0.456.0: field-sourced returns.* A return of one direct
+      text field of a read-only formal or the receiver publishes a field
+      origin in the shared summary (`returnBorrowFields`, as a returned `T&`
+      field does) instead of a requirement. The caller's result holds what the
+      argument holds in that field. Helpers and methods compose. MIR's
+      `TextContracts` proves each return reads the declared field and maps
+      returned field sources at every call.
     - Payload construction and switch payload bindings, including MIR's
       `PayloadExtract`, which treats a text payload as ownerless today.
     - Text-field reads of class temporaries, which today's C++ backend refuses

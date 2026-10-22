@@ -118,6 +118,7 @@ void checkStoredViewReturns() {
         });
   };
   std::size_t ownerless = 0;
+  std::size_t relayed = 0;
   std::size_t alternatives = 0;
   std::size_t dependent = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
@@ -165,7 +166,17 @@ void checkStoredViewReturns() {
         ++ownerless;
         continue;
       }
-      ++alternatives;
+      // A stored field of a read-only formal or the receiver of a
+      // publishable class relays that field's dependency (L-OWN-02). Its
+      // exact load is still the only loan-free return.
+      const bool relay =
+          function.returnBorrowFields.size() == 1 &&
+          function.returnBorrowFields.front().sourceFields.size() == 1 &&
+          function.returnBorrowFields.front().resultFields.empty();
+      if (relay)
+        ++relayed;
+      else
+        ++alternatives;
       for (unsigned mutation = 0; mutation < 3; ++mutation) {
         auto malformed = frontend.mir;
         auto *changed = const_cast<lang::MirFunctionInstance *>(
@@ -181,12 +192,17 @@ void checkStoredViewReturns() {
             if (mutation == 2)
               candidate.type = lang::SemanticType::Bool;
           }
-        expect(missingLoan(malformed),
-               "an ownerless alternative requires an exact stored-view load");
+        if (relay)
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "a field relay requires an exact stored-view load");
+        else
+          expect(missingLoan(malformed),
+                 "an ownerless alternative requires an exact stored-view "
+                 "load");
       }
     }
   }
-  expect(ownerless >= 9 && alternatives >= 1 && dependent >= 1,
+  expect(ownerless >= 5 && relayed >= 4 && alternatives >= 1 && dependent >= 1,
          "field, element, nested, parameter and generic stored views are "
          "exercised beside a dependent relay");
 
