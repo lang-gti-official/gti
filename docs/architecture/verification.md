@@ -54,6 +54,9 @@ An `--emit-cpp` differential at -O0 and -O3 over the 1,817 programs in
 - Built with both compilers, the six of these that run standalone produce
   identical exit status and output at -O0 and -O3; the three
   `user_dual_range_*` fixtures pass their `user_dual_range_lifetime` harness.
+- Main then gained #267, a conditional-join admission change. Against its
+  compiler (`d3a966bbd`), the ten changed programs, #267's fixture and
+  `conditional_carrier_consume.gti` emit exactly as above at -O0 and -O3.
 
 ## Conditional joins whose arms take a class by value (0.459.7)
 
