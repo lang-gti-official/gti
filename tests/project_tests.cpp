@@ -608,7 +608,7 @@ defines = ["DEBUG", "COMMON", "DEBUG"]
                      configuration->declaredConfigurationFlags() &&
                  configuration->declaredConfigurationFlags() ==
                      lang::ConfigurationFlags(
-                         {"BASE", "COMMON", "DEBUG", "GAME", "UNIT"}),
+                         {"BASE", "COMMON", "DEBUG", "GAME", "NDEBUG", "UNIT"}),
              "build and editor configurations must agree for each selection");
       if (configuration) {
         const auto &flags = configuration->configurationFlags();
@@ -777,7 +777,10 @@ void testDependencyConfigurationFlags() {
                  lang::ConfigurationFlags(
                      {"APP", "CLI", "COMMON", "LEAF", "LEFT", "RIGHT"}),
          "build configuration must share dependency facts and merge CLI flags");
-  expect(build.plan && build.plan->declaredConfigurationFlags() == expected,
+  expect(build.plan &&
+             build.plan->declaredConfigurationFlags() ==
+                 lang::ConfigurationFlags(
+                     {"APP", "COMMON", "LEAF", "LEFT", "NDEBUG", "RIGHT"}),
          "dependency target/profile flags must not suppress unknown-flag "
          "diagnostics in the consumer");
   const auto rootFacts =
@@ -1968,7 +1971,8 @@ dependency-warnings = false
       facts.analysisConfiguration("release", lang::TargetInfo::host(),
                                   lang::driver::RuntimeProfile::Hosted);
   expect(configuration.has_value() &&
-             configuration->configurationFlags().size() == 1 &&
+             configuration->configurationFlags() ==
+                 lang::ConfigurationFlags({"FEATURE_FAST", "NDEBUG"}) &&
              configuration->runtimeProfile() ==
                  lang::driver::RuntimeProfile::Hosted,
          "project facts should assemble an analysis configuration for a "
@@ -2012,7 +2016,9 @@ dependency-warnings = false
   expect(built.succeeded() && built.plan, "the same project should build-plan");
   if (built.plan) {
     expect(built.plan->packageSources().size() == roots.size() &&
-               built.plan->configurationFlags() == facts.configurationFlags() &&
+               configuration &&
+               built.plan->configurationFlags() ==
+                   configuration->configurationFlags() &&
                built.plan->packageWarnings().dependencyWarnings() ==
                    packageWarnings.dependencyWarnings() &&
                built.plan->packageWarnings().selectedPackage() ==

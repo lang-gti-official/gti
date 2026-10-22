@@ -2,6 +2,45 @@
 
 namespace lang {
 
+auto SemanticVisitor::Impl::analyzeDeferredSelection(
+    const Call &call, const CallableCandidate &selected,
+    const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &valueArguments) -> bool {
+  if (!selected.record().deferredEvaluation)
+    return false;
+  const bool probe = deferredProbe && deferredProbeCall == &call;
+  const bool openStatement =
+      deferredStatementCall == &call &&
+      std::any_of(selected.parameterTypes.begin(),
+                  selected.parameterTypes.end(), [&](const SemanticType &type) {
+                    return containsOpenTypeParameter(type);
+                  });
+  if (!probe && !openStatement) {
+    diagnostics.push_back(
+        makeDiagnostic(DiagnosticId::DeferredEvaluation, call.paren(),
+                       {"A deferred helper must be invoked as a complete "
+                        "expression statement."}));
+    currentType = SemanticType::Unknown;
+    return true;
+  }
+  // There is no eager parameter boundary. Both the single-candidate and
+  // overload-set paths must select the same statement-template contract.
+  ResolvedCallInfo info{.function = selected.id,
+                        .declaration = selected.declaration,
+                        .returnType = selected.returnType,
+                        .parameterTypes = selected.parameterTypes,
+                        .typeArguments = typeArguments,
+                        .valueArguments = valueArguments,
+                        .requirements = selected.requirements,
+                        .tracksCaller = selected.record().tracksCaller};
+  if (probe)
+    semanticModel.record(call, std::move(info));
+  else
+    recordSelectedCallOccurrence(call, std::move(info));
+  currentType = callExpressionType(selected.returnType);
+  return true;
+}
+
 auto SemanticVisitor::Impl::deferredContext(const Token &token) const
     -> const DeferredLookupContext * {
   const auto found = deferredLookup.find(token.expansion);
@@ -236,7 +275,7 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
     // Like a dependent compile-time branch, this statement has no primary
     // executable flow. Concrete semantic reanalysis must expand and check it;
     // do not accidentally apply ordinary eager-call moves to a generic body.
-    semanticModel.record(*call, *selection);
+    recordSelectedCallOccurrence(*call, *selection);
     semanticModel.record(*call, ExpressionInfo{.type = SemanticType::Void});
     loanFlow.deferredGenericFlow = true;
     requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
@@ -408,7 +447,7 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
   }
   ResolvedCallInfo selected = *selection;
   selected.defaultArguments.clear(); // Probe-owned syntax is not executable.
-  semanticModel.record(*call, std::move(selected));
+  recordSelectedCallOccurrence(*call, std::move(selected));
   semanticModel.record(*call, ExpressionInfo{.type = SemanticType::Void});
   // Keep written references available to editor queries even when no expanded
   // path evaluates them. Executable expression/loan facts stay in the probe.

@@ -1944,6 +1944,11 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(deferred_assertions_runtime PROPERTIES TIMEOUT 1200)
+  add_test(NAME deferred_assertions_cost
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/deferred_assertion_cost_test.py"
+      "$<TARGET_FILE:gti>")
+  set_tests_properties(deferred_assertions_cost PROPERTIES TIMEOUT 300)
   if(TARGET gti_lsp)
     add_test(NAME deferred_assertions_lsp
       COMMAND "${Python3_EXECUTABLE}"

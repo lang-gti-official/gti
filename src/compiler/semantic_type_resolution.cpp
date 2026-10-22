@@ -1155,6 +1155,20 @@ auto SemanticVisitor::Impl::functionCallArgumentMatch(
     return CallArgumentMatchKind::Mismatch;
   }
   const SemanticType &parameter = function.parameterTypes[index];
+  if (function.record().deferredEvaluation) {
+    const SemanticType &value = argument.kind == SemanticType::Reference &&
+                                        argument.arguments.size() == 1
+                                    ? argument.arguments.front()
+                                    : argument;
+    // Expression parameters are not an eager copy/move boundary. Their
+    // actual uses in the expansion perform ordinary ownership checking.
+    return parameter == value || parameter == SemanticType::Unknown ||
+                   value == SemanticType::Unknown ||
+                   (value.kind == SemanticType::TypePack &&
+                    forwardedPackArgumentMatches(parameter, value))
+               ? CallArgumentMatchKind::Exact
+               : CallArgumentMatchKind::Mismatch;
+  }
   if (contextualCallArgumentPotentiallyMatches(parameter, argument, expression,
                                                deferred)) {
     return CallArgumentMatchKind::Exact;

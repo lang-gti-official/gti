@@ -1,5 +1,6 @@
 // Build normally, then with -D NDEBUG: the disabled debug condition is not run.
 #include <std/assert>
+#include <std/panic>
 #include <std/string>
 
 struct Observations {

@@ -30,6 +30,7 @@ void positive() {
 #include <std/assert>
 #include <std/string>
 struct Value { int number = 7; };
+namespace policy { constexpr bool enabled = false; }
 namespace app {
   void sink(Value& value) { std::assert(value.number == 7); }
   [[deferred]] void conditional(bool enabled, Value value) {
@@ -40,6 +41,9 @@ int main() {
   Value value{};
   app::conditional(true, value);
   std::assert(true, "{}", std::string("unused"));
+  std::string owner{"owned"};
+  if (policy::enabled) { std::string consumed = std::move(owner); }
+  std::assert(!owner.empty());
   return 0;
 }
 )");
@@ -133,6 +137,8 @@ int main() {
            "namespace-scope void");
   negative("[[deferred]] void wrong(bool condition) { return; }", "GTI-S2099",
            "declarations, returns and loops");
+  negative("[[deferred, test]] void wrong() {}", "GTI-S2099",
+           "namespace-scope void");
   negative(R"(
 [[deferred]] void helper(bool value) {}
 int main() { return (helper(true), 0); }
@@ -158,5 +164,32 @@ int main() { execute([]() -> void {}); return 0; }
 int main() { helper(); return 0; }
 )",
            "GTI-S2124", "resource limit");
+  negative(R"(
+#include <std/string>
+void consume(std::string value) {}
+[[deferred]] void twice(std::string value) { consume(value); consume(value); }
+int main() { std::string owner{"owned"}; twice(std::move(owner)); return 0; }
+)",
+           "GTI-S2018", "moved");
+  negative(R"(
+#include <std/string>
+void consume(std::string value) {}
+[[deferred]] void choose(bool enabled, std::string value) {
+  if (enabled) { consume(value); }
+}
+int main() {
+  std::string owner{"owned"};
+  std::string_view borrowed = owner.view();
+  choose(true, std::move(owner));
+  return int(borrowed.size());
+}
+)",
+           "GTI-S2017", "borrow");
+  negative(R"(
+unsafe bool inspect() { return true; }
+[[deferred]] void ignored(bool value) {}
+int main() { ignored(inspect()); return 0; }
+)",
+           "GTI-S2055", "unsafe");
   return failures ? 1 : 0;
 }

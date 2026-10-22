@@ -3003,6 +3003,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                  stmt.hasCLinkage() || stmt.runtimeBinding() || !stmt.body() ||
                  stmt.isConstexpr() || stmt.unsafeKeyword() ||
                  stmt.operatorName() || stmt.hasFunctionAttribute("noreturn") ||
+                 stmt.hasFunctionAttribute("test") ||
+                 stmt.hasFunctionAttribute("thread_confined_callback") ||
                  std::any_of(stmt.parameters().begin(), stmt.parameters().end(),
                              [](const Parameter &parameter) {
                                return parameter.mutability ==
@@ -7482,6 +7484,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                 valid;
       }
 
+      if (valid &&
+          analyzeDeferredSelection(expr, resolved, resolvedTypeArguments,
+                                   resolvedValueArguments))
+        return;
+
       const CallReceiverMode receiverMode =
           callReceiverMode(expr.callee(), resolved);
       valid = validateSelectedFunction(resolved, expr.callee(), expr.paren(),
@@ -7731,49 +7738,17 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
-  const bool resolvingDeferredProbe =
-      deferredProbe && deferredProbeCall == &expr;
-  if (!resolvingDeferredProbe &&
-      viable.front().function.record().deferredEvaluation &&
-      (deferredStatementCall != &expr ||
-       std::none_of(viable.front().function.parameterTypes.begin(),
-                    viable.front().function.parameterTypes.end(),
-                    [&](const SemanticType &type) {
-                      return containsOpenTypeParameter(type);
-                    }))) {
-    diagnostics.push_back(
-        makeDiagnostic(DiagnosticId::DeferredEvaluation, expr.paren(),
-                       {"A deferred helper must be invoked as a complete "
-                        "expression statement."}));
-    currentType = SemanticType::Unknown;
+  if (analyzeDeferredSelection(expr, viable.front().function,
+                               viable.front().typeArguments,
+                               viable.front().valueArguments))
     return;
-  }
-  const bool deferredTarget =
-      viable.front().function.record().deferredEvaluation;
-  if (resolvingDeferredProbe && deferredTarget) {
-    const auto &selected = viable.front();
-    semanticModel.record(
-        expr, ResolvedCallInfo{
-                  .function = selected.function.id,
-                  .declaration = selected.function.declaration,
-                  .returnType = selected.function.returnType,
-                  .parameterTypes = selected.function.parameterTypes,
-                  .typeArguments = selected.typeArguments,
-                  .valueArguments = selected.valueArguments,
-                  .requirements = selected.function.requirements,
-                  .tracksCaller = selected.function.record().tracksCaller});
-    currentType = callExpressionType(selected.function.returnType);
-    return;
-  }
-  if (!(resolvingDeferredProbe && deferredTarget) &&
-      !validateSelectedFunction(viable.front().function, expr.callee(),
+  if (!validateSelectedFunction(viable.front().function, expr.callee(),
                                 expr.paren(), expr.arguments(),
                                 viable.front().receiverMode)) {
     currentType = SemanticType::Unknown;
     return;
   }
-  if (!(resolvingDeferredProbe && deferredTarget) &&
-      !validateConfinedCallableArguments(
+  if (!validateConfinedCallableArguments(
           *viable.front().source, viable.front().function,
           viable.front().argumentAnalysis.types, expr.arguments())) {
     currentType = SemanticType::Unknown;
@@ -13671,8 +13646,15 @@ auto SemanticVisitor::Impl::constexprBindingValue(
   return converted.value;
 }
 
-auto SemanticVisitor::Impl::constantBoolean(const ExprPtr &expression)
+auto SemanticVisitor::Impl::constantBoolean(const ExprPtr &expression) const
     -> std::optional<bool> {
+  // Reuse already-proved semantic constants; this does not execute source
+  // or make ordinary if branches into unchecked constexpr branches. Both
+  // arms are still checked, while only a feasible arm contributes moves.
+  if (expression)
+    if (const auto constant = semanticModel.findConstant(*expression))
+      if (const auto *value = std::get_if<bool>(&*constant))
+        return *value;
   if (const auto *literal = exprAs<LiteralExpr>(expression.get())) {
     if (const bool *value = std::get_if<bool>(&literal->value())) {
       return *value;

@@ -7271,7 +7271,11 @@ auto SemanticVisitor::Impl::callArgumentGeometry(const Call &call)
 
 auto SemanticVisitor::Impl::recordSelectedCallOccurrence(
     const Call &call, ResolvedCallInfo resolved) -> void {
-  recordRawBorrowCall(call, resolved);
+  // A statement template has a source-level selection for editor queries,
+  // not an executable call/parameter boundary. Its expanded calls own effects.
+  const FunctionInfo *target = semanticModel.findFunction(resolved.function);
+  if (target == nullptr || !target->deferredEvaluation)
+    recordRawBorrowCall(call, resolved);
   const Token token =
       resolved.nativeCalleeType && exprAs<Call>(call.callee().get()) != nullptr
           ? call.paren()
