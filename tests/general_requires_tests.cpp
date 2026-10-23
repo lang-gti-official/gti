@@ -15,6 +15,26 @@ static_assert(!lang::compilerStructuralConstraint("adds"));
 static_assert(!lang::compilerStructuralConstraint("subtracts"));
 static_assert(!lang::compilerStructuralConstraint("negates"));
 static_assert(!lang::compilerStructuralConstraint("scales_by"));
+static_assert(!lang::compilerStructuralConstraint("enum_underlying"));
+static_assert([] {
+  for (const std::string_view binding :
+       {"numeric", "signed_numeric", "integral", "signed_integral",
+        "unsigned_integral", "floating_point", "copy_constructible",
+        "move_constructible", "copyable", "movable", "relocatable",
+        "bitwise_relocatable", "transferable", "shareable",
+        "default_initializable", "integral_enum"})
+    if (lang::compilerConstraint(binding))
+      return false;
+  return true;
+}());
+static_assert(lang::compilerConstraint("equality_comparable") ==
+              lang::GenericConstraintKind::EqualityComparable);
+static_assert(lang::compilerConstraint("relationally_ordered") ==
+              lang::GenericConstraintKind::RelationallyOrdered);
+static_assert(lang::compilerConstraint("atomic_scalar") ==
+              lang::GenericConstraintKind::AtomicScalar);
+static_assert(lang::compilerConstraint("meta_reflectable") ==
+              lang::GenericConstraintKind::Reflectable);
 
 int failures = 0;
 

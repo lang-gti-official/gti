@@ -432,6 +432,10 @@ The boundary has three layers:
 
 The prelude now defines numeric, enum, lifecycle and transfer/share concepts
 through reflection rather than duplicate private concept declarations.
+Their obsolete declaration-binding labels have been removed; the underlying
+compiler fact kinds remain the authority for reflection and proof checking.
+The exact enum-underlying relation likewise uses reflection rather than a
+separate private concept binding.
 Arithmetic domain concepts use source requirements for the actual operations.
 The former `adds`, `subtracts`, `negates`, and `scales_by` compiler bindings
 and dedicated proof branches have been removed. Their generic-body operation

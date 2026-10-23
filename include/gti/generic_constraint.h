@@ -111,30 +111,16 @@ inline constexpr std::array<GenericConstraintKind, 20> genericConstraintKinds{{
     GenericConstraintKind::Reflectable,
 }};
 
-inline constexpr std::array<CompilerConstraintRecord, 20> compilerConstraints{{
-    {"numeric", GenericConstraintKind::Numeric},
-    {"signed_numeric", GenericConstraintKind::SignedNumeric},
-    {"integral", GenericConstraintKind::Integral},
-    {"signed_integral", GenericConstraintKind::SignedIntegral},
-    {"unsigned_integral", GenericConstraintKind::UnsignedIntegral},
-    {"floating_point", GenericConstraintKind::FloatingPoint},
-    {"copy_constructible", GenericConstraintKind::CopyConstructible},
-    {"move_constructible", GenericConstraintKind::MoveConstructible},
-    {"copyable", GenericConstraintKind::Copyable},
-    {"movable", GenericConstraintKind::Movable},
-    {"relocatable", GenericConstraintKind::Relocatable},
-    {"bitwise_relocatable", GenericConstraintKind::BitwiseRelocatable},
-    {"transferable", GenericConstraintKind::Transferable},
-    {"shareable", GenericConstraintKind::Shareable},
-    {"default_initializable", GenericConstraintKind::DefaultInitializable},
+// Only facts still bound by private concept declarations belong here. The
+// complete fact inventory above also serves reflection and generic proofs.
+inline constexpr std::array<CompilerConstraintRecord, 4> compilerConstraints{{
     {"equality_comparable", GenericConstraintKind::EqualityComparable},
     {"relationally_ordered", GenericConstraintKind::RelationallyOrdered},
     {"atomic_scalar", GenericConstraintKind::AtomicScalar},
-    {"integral_enum", GenericConstraintKind::IntegralEnum},
     {"meta_reflectable", GenericConstraintKind::Reflectable},
 }};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 28>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 27>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
@@ -164,14 +150,13 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 28>
         {"indirect_operation", StructuralConstraintKind::IndirectOperation, 3},
         {"range_predicate", StructuralConstraintKind::RangePredicate, 2},
         {"range_operation", StructuralConstraintKind::RangeOperation, 3},
-        {"enum_underlying", StructuralConstraintKind::EnumUnderlying, 2},
         {"object_layout", StructuralConstraintKind::ObjectLayout, 1},
         {"independent_object", StructuralConstraintKind::IndependentObject, 1},
         {"inline_polymorphic_payload",
          StructuralConstraintKind::InlinePolymorphicPayload, 2},
     }};
 
-static_assert(compilerConstraints.size() + 2 ==
+static_assert(genericConstraintKinds.size() + 2 ==
               static_cast<std::uint8_t>(GenericConstraintKind::Count));
 
 [[nodiscard]] constexpr GenericConstraintSet
