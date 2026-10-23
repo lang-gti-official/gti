@@ -77,7 +77,7 @@ class Batches:
             # T1 exact owning selections need no broad-suite reservation. T2/3
             # plans include subsystem coverage and use the normal shared slot.
             window = (self.flow.window.acquire("suite", command, worktree=str(root))
-                      if plan["tier"] != "T1" else nullcontext())
+                      if plan["tier"] != "T1" or plan.get("broader") else nullcontext())
             with window, (directory / "focused.log").open("w") as log:
                 self.execute(command, cwd=root, stdout=log, stderr=subprocess.STDOUT, check=True)
             report = json.loads(report_file.read_text())
@@ -228,7 +228,8 @@ class Batches:
             # The worker owns its host's suite window. Require the fixed full
             # runner (no regex/test-subset switches) in the supplied plan.
             rows = remote_steps.get("steps", remote_steps) if isinstance(remote_steps, dict) else remote_steps
-            candidates = [row.get("argv", row.get("command")) for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+            candidates = [row.get("argv") for row in rows if isinstance(row, dict) and
+                          row.get("kind") == "suite" and row.get("cwd") == "source"] if isinstance(rows, list) else []
             base = self.flow.fetch()
             def full_command(command):
                 if not isinstance(command, list) or command[1:3] != ["scripts/validation_checks.py", "full"]:

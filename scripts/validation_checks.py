@@ -18,7 +18,7 @@ MARKER = re.compile(r"<!-- gti-validation-component: ([^\n]+) -->")
 BATCH_DIRECTORY = ".gti-validation/batches/"
 TIERS = {"T1", "T2", "T3"}
 OPTIMIZED = {"Release", "RelWithDebInfo", "MinSizeRel"}
-NAME = re.compile(r"[A-Za-z0-9_.-]+\Z")
+NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 # This is a conservative floor, not a substitute for reviewing the invariant.
 SHARED = ("include/gti/semantic", "include/gti/hir", "include/gti/mir",

@@ -989,6 +989,10 @@ class BatchLifecycle(unittest.TestCase):
             for arguments in ([], ["--base", base, "--base", head], ["--base", head], ["--base", base, "-R", "only-one"]):
                 with self.assertRaisesRegex(Error, "Remote batch plans"):
                     batches.verify("combined", remote_steps=plan(arguments))
+            wrong_window = plan(["--base", base])
+            wrong_window[0]["kind"] = "build"
+            with self.assertRaisesRegex(Error, "Remote batch plans"):
+                batches.verify("combined", remote_steps=wrong_window)
             execute.assert_not_called()
             batches.verify("combined", remote_steps=plan(["--base", base]))
         self.assertEqual(self.flow.load("combined")["batch_verified"][sys.platform], {"head": head, "base": base})
