@@ -115,6 +115,7 @@ machines. Nothing locks ordinary editing.
 | `checkpoint <task> [--message <text> --paths <files...>]` | Commit explicitly scoped paths or publish an existing clean commit; create a draft PR on the first meaningful checkpoint. |
 | `reconcile <task>` | Merge current main into the task branch, preserve conflicts for resolution, invalidate old validation and publish. |
 | `verify <task> --checks-file <json>` | Record the attempt, release the lock, execute nonempty argv arrays without a shell inside a build-window `suite` slot, then record passing checks against the published clean head and current remote main. |
+| `verify <task> --focused --checks-file <json>` | For a checked automation-only diff, run owning checks directly and record scope `automation`; refuse compiler changes and remote use. Actual broad workloads still use the window. |
 | `finish <task> --body-file <text> [--pr-only]` | Publish the final PR description, mark ready, verify identities/protection, merge the exact head without bypasses and synchronize local main. PR-only stops ready for review. |
 | `sync <task>` | Confirm merged-head/merge-commit reachability, fast-forward primary main, preserving unrelated local edits, then push `main` and the tags to the `gitea` mirror remote and record the result. |
 | `cleanup <task>` | After confirmed merge/sync, remove a plain clean worktree with no ignored files and delete only unchanged integrated branches. |
@@ -599,6 +600,10 @@ automation-only diff uses the workflow tests plus the inexpensive gates; CMake,
 compiler tests, runtime, packaged scripts, release packaging and unknown paths
 still select full coverage. The helper does not restart CI on an unchanged
 description when retrying a pending merge.
+Automation-only local owning checks may use `verify --focused`, which checks
+the actual diff and does not reserve a broad-suite slot. Compiler changes
+cannot use that path. An active `verify` is atomically refused on duplicate
+submission; resume the recorded operation instead.
 
 After this workflow is published, activate the owner-authorized required
 `Validation gate` with `protection --configure --batch-gate`. This adds to,

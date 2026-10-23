@@ -530,6 +530,20 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(self.flow.load("task")["phase"], "blocked")
         self.assertEqual(self.flow.window.holders("suite"), [])
 
+    def test_focused_automation_checks_do_not_take_a_broad_suite_slot(self):
+        self.start()
+        self.checkpoint("workflow instructions", "AGENTS.md")
+        state = self.flow.verify("task", [self.probe("len(holders) == 0")], focused=True)
+        self.assertEqual(state["verified"]["scope"], "automation")
+        self.assertEqual(self.flow.window.holders("suite"), [])
+
+    def test_focused_helper_refuses_to_downgrade_compiler_changes(self):
+        self.start()
+        (self.worktree / "src/compiler").mkdir(parents=True)
+        self.checkpoint("compiler source", "src/compiler/change.cpp")
+        with self.assertRaisesRegex(Error, "only for local automation-only"):
+            self.flow.verify("task", [[sys.executable, "-c", "raise SystemExit(99)"]], focused=True)
+
     def test_verify_waits_for_a_live_suite_holder_and_reclaims_an_exited_one(self):
         self.start()
         self.checkpoint()

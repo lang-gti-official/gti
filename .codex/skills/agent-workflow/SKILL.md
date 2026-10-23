@@ -135,6 +135,11 @@ preserving existing requirements as authorized in `AGENTS.md`.
    for the reconciled head/base with `verify-change`. Do not automatically
    restart a full suite on every status poll, or relabel earlier results as
    current. Required/affected broad and platform gates remain mandatory.
+   For developer-automation-only changes, `verify --focused --checks-file ...`
+   runs the owning checks directly and records scope `automation`; its source
+   diff guard rejects compiler changes. Select the full/broad window normally
+   if the actual check workload is broad. This is separate from compiler
+   component admission through `batch enroll`.
 3. Write the final PR description to a temporary file, including behaviour,
    validation and limitations. Run `finish <task> --body-file <file>`.
    It marks the PR ready, checks validation and branch protection, merges through

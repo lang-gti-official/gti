@@ -108,7 +108,10 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   by every worktree and session on the machine, so concurrent agents stop
   stacking full suites on each other. Focused tests (`ctest -R '^name$'`, one
   harness fixture) and single-file compiles run directly. `verify` takes a
-  local suite slot itself; `verify --remote-steps-file <plan.json>` instead uses
+  local suite slot itself; `verify --focused` instead permits automation-only
+  owning checks directly after checking the source diff. Compiler components
+  use structured `batch enroll`, not this exception.
+  `verify --remote-steps-file <plan.json>` instead uses
   the configured remote host's window. `build_window.py --status` shows local
   holders and `remote_runner.py status` shows remote holders.
   T1 batch admission uses exact focused checks directly; T2/T3 admission uses

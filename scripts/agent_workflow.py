@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 import importlib.util
 import json
@@ -397,13 +397,14 @@ class Workflow:
         self.save(state, "active")
         return self.checkpoint(task)
 
-    def verify(self, task, checks, remote=False):
+    def verify(self, task, checks, remote=False, focused=False):
         """Record the attempt under the lock, run the checks in a build-window suite slot, then record the result.
 
         The metadata lock is held only while task records change, so a peer's
         `start`, `status`, `checkpoint` or `cleanup` never waits on validation.
-        Local checks hold one `suite` slot. Remote plans acquire their build/
-        suite slots on the configured host through remote_runner, not here.
+        Local broad checks hold one `suite` slot; checked automation-only
+        owning checks may run directly. Remote plans acquire their build/suite
+        slots on the configured host through remote_runner, not here.
         """
         with self.lock():
             state = self.load(task)
@@ -419,6 +420,11 @@ class Workflow:
                 raise WorkflowError("main advanced; reconcile before verification")
             if state.get("published_head") != head:
                 raise WorkflowError("Checkpoint the current head before verification")
+            if focused:
+                from validation_checks import ci_mode
+                paths = git(root, "diff", "--name-only", base, head).splitlines()
+                if remote or ci_mode({}, paths) != "automation":
+                    raise WorkflowError("Focused helper verification is only for local automation-only changes; compiler components use batch enroll")
             runner = load_remote_runner() if remote else None
             if remote:
                 try:
@@ -465,8 +471,9 @@ class Workflow:
                 remote_evidence = {"directory": str(destination), "id": report["id"],
                                    "snapshot_sha256": report["source"]["snapshot_sha256"]}
             else:
-                with self.window.acquire("suite", [sys.executable, __file__, "verify", task],
-                                     worktree=str(root), checks=checks):
+                window = (nullcontext() if focused else self.window.acquire(
+                    "suite", [sys.executable, __file__, "verify", task], worktree=str(root), checks=checks))
+                with window:
                     for command in checks:
                         result = subprocess.run(command, cwd=root, check=False)
                         if result.returncode:
@@ -483,6 +490,8 @@ class Workflow:
                 self.save(state, "active")
                 raise WorkflowError("Head or main changed during validation; reconcile and verify again")
             state["verified"] = {"head": head, "base": base, "checks": checks, "at": self.now()}
+            if focused:
+                state["verified"]["scope"] = "automation"
             if remote_evidence is not None:
                 state["verified"]["remote"] = remote_evidence
             self.save(state, "ready")
@@ -778,6 +787,7 @@ def main():
         sub.add_parser(name).add_argument("task")
     verify = sub.add_parser("verify")
     verify.add_argument("task")
+    verify.add_argument("--focused", action="store_true", help="run automation-only owning checks without a broad-suite reservation")
     verification = verify.add_mutually_exclusive_group(required=True)
     verification.add_argument("--checks-file")
     verification.add_argument("--remote-steps-file", help="remote_runner exact-argv plan; uses the remote build window")
@@ -813,7 +823,7 @@ def main():
         if args.command == "verify":
             # verify takes the metadata lock itself, only around record changes.
             result = workflow.verify(args.task, json.loads(Path(args.remote_steps_file or args.checks_file).read_text()),
-                                     remote=bool(args.remote_steps_file))
+                                     remote=bool(args.remote_steps_file), focused=args.focused)
             print(json.dumps(result, indent=2))
             return 0
         with workflow.lock():
