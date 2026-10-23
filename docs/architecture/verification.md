@@ -1730,6 +1730,9 @@ suite selection, exact filters/skips/listing, no-selection refusal/override,
 parallel assertions/crashes/timeouts, later-test continuation, legacy executables,
 invalid options and incomplete build-failure reports at GTI O0/O3. It checks
 inventory/start/completion identity equality and exact terminal counts externally.
+SIGINT and SIGTERM during execution must terminate/reap isolated children, emit
+incomplete summaries, and preserve interruption status. Closed standard streams
+must not alias private capture or exec-handshake descriptors.
 
 `annotated_test_suites` checks the runnable `examples/annotated-tests` project
 at O0/C++20 and O3/C++23, included test declarations, independent global state,

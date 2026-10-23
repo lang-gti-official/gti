@@ -79,8 +79,19 @@ TestRunResult runTestSuites(std::span<const TestSuiteCommand> suites,
   std::vector<Active> active;
   active.reserve(std::min(options.jobs, selected.size()));
   std::size_t next = 0;
+  int interrupted = 0;
   while (next < selected.size() || !active.empty()) {
-    while (next < selected.size() && active.size() < options.jobs) {
+    if (!interrupted && observer.interruption)
+      interrupted = observer.interruption();
+    if (interrupted) {
+      next = selected.size();
+      for (auto &child : active)
+        child.process.terminate();
+    }
+    while (!interrupted && next < selected.size() &&
+           active.size() < options.jobs) {
+      if (observer.interruption && observer.interruption())
+        break;
       const auto &item = selected[next];
       std::vector<std::string> arguments{item.suite->executable.string()};
       if (!item.legacy)
@@ -117,7 +128,13 @@ TestRunResult runTestSuites(std::span<const TestSuiteCommand> suites,
           std::chrono::duration_cast<std::chrono::milliseconds>(
               std::chrono::steady_clock::now() - active[i].began)
               .count();
-      if (process->timedOut) {
+      if (interrupted && process->signal) {
+        report.status = TestCaseStatus::RunnerError;
+        report.exitCode = 128 + interrupted;
+        report.diagnostic =
+            "test interrupted by signal " + std::to_string(interrupted);
+        ++summary.runnerErrors;
+      } else if (process->timedOut) {
         report.status = TestCaseStatus::TimedOut;
         ++summary.timedOut;
       } else if (report.diagnostic) {
@@ -140,6 +157,17 @@ TestRunResult runTestSuites(std::span<const TestSuiteCommand> suites,
     }
     if (!progress && !active.empty())
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  if (!interrupted && observer.interruption)
+    interrupted = observer.interruption();
+  if (interrupted) {
+    std::erase_if(result.cases,
+                  [](const auto &report) { return report.name.empty(); });
+    summary.exitCode = 128 + interrupted;
+    summary.diagnostic =
+        "test run interrupted by signal " + std::to_string(interrupted);
+    summary.complete = false;
+    return result;
   }
   summary.complete = summary.started == summary.selected &&
                      summary.completed == summary.selected &&

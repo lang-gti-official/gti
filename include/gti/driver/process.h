@@ -64,6 +64,9 @@ public:
   [[nodiscard]] ProcessResult wait();
   // Returns a completed result once, or nullopt while the child is running.
   [[nodiscard]] std::optional<ProcessResult> poll();
+  // Requests immediate termination of a POSIX child and its isolated group;
+  // the owner must still poll/wait to reap it and retrieve captured output.
+  void terminate();
 
 private:
   friend StartedProcess startProcess(const std::vector<std::string> &arguments,

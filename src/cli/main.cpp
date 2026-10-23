@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <csignal>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -52,6 +53,36 @@ using lang::cli::Style;
 std::optional<std::string> runtimeColorOverride;
 lang::cli::ProgressMode progressMode = lang::cli::ProgressMode::Auto;
 bool progressSelected = false;
+
+volatile std::sig_atomic_t testInterruptSignal = 0;
+void recordTestInterrupt(int signal) { testInterruptSignal = signal; }
+class TestInterruptScope {
+  using Handler = void (*)(int);
+  Handler previousInterrupt;
+  Handler previousTerminate;
+#if defined(SIGPIPE)
+  Handler previousPipe;
+#endif
+public:
+  TestInterruptScope() {
+    testInterruptSignal = 0;
+    previousInterrupt = std::signal(SIGINT, recordTestInterrupt);
+    previousTerminate = std::signal(SIGTERM, recordTestInterrupt);
+#if defined(SIGPIPE)
+    previousPipe = std::signal(SIGPIPE, recordTestInterrupt);
+#endif
+  }
+  ~TestInterruptScope() {
+    if (previousInterrupt != SIG_ERR)
+      std::signal(SIGINT, previousInterrupt);
+    if (previousTerminate != SIG_ERR)
+      std::signal(SIGTERM, previousTerminate);
+#if defined(SIGPIPE)
+    if (previousPipe != SIG_ERR)
+      std::signal(SIGPIPE, previousPipe);
+#endif
+  }
+};
 
 std::vector<std::pair<std::string, std::string>> programColorEnvironment() {
   if (runtimeColorOverride) {
@@ -3600,6 +3631,8 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
       lang::driver::writeTestFinishedJson(std::cout, report);
     };
   }
+  TestInterruptScope interrupts;
+  observer.interruption = [] { return static_cast<int>(testInterruptSignal); };
   const auto result = lang::driver::runTestSuites(suites, execution, observer);
   if (options.testJson)
     lang::driver::writeTestSummaryJson(std::cout, result.summary);

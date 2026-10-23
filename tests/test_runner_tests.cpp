@@ -122,6 +122,18 @@ int main(int argc, char **argv) {
   options.jobs = 2;
   options.timeout = 150ms;
   TestSuiteCommand timed{"suite", executable, {"a_slow", "b_fast"}};
+  bool cancel = false;
+  auto cancelledOptions = options;
+  cancelledOptions.jobs = 1;
+  auto cancelled =
+      runTestSuites(std::span(&timed, 1), cancelledOptions,
+                    {.started = [&](auto, auto) { cancel = true; },
+                     .interruption = [&] { return cancel ? SIGTERM : 0; }});
+  check(!cancelled.summary.complete && cancelled.summary.exitCode == 143 &&
+            cancelled.summary.started == 1 &&
+            cancelled.summary.completed == 1 && cancelled.cases.size() == 1,
+        "interruption must reap active children and not invent unstarted "
+        "results");
   std::vector<std::string> completed;
   result = runTestSuites(std::span(&timed, 1), options,
                          {.finished = [&](const auto &report) {

@@ -696,7 +696,11 @@ so background descendants do not escape the test lifetime. Descendants that
 explicitly detach into a new session/group are outside this boundary; process
 isolation is not an operating-system sandbox. Timeout status is 124 and forced
 termination does not promise source destructor cleanup. Normal GTI panic cleanup
-is unchanged. Launch setup/exec failure uses a close-on-exec handshake, distinct
+is unchanged. During execution the CLI records SIGINT/SIGTERM (and broken report
+pipes) in scoped signal handlers; the driver stops admission, kills/reaps active
+groups, and reports an incomplete run with status 128+signal. Unstarted selected
+cases do not receive fabricated completion records. Uncatchable parent death is
+outside this guarantee. Launch setup/exec failure uses a close-on-exec handshake, distinct
 from a program returning 127; signal status is derived from `waitpid`, not
 inferred from an integer exit value. Windows currently rejects bounded isolated
 execution explicitly; the shipped macOS and Linux platforms implement it.
