@@ -319,7 +319,7 @@ namespace app {
 )",
            "GTI-S2099", "ordinary");
   negative("#macro exact(int value) {}\nint main() { exact(true); return 0; }",
-           "GTI-S2012", "exactly matches");
+           "GTI-S2003", "parameter requires 'int32_t'");
   negative(R"(
 #macro helper(bool value) {}
 int main() { return (helper(true), 0); }
