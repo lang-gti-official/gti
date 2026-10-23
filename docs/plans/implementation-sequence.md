@@ -9242,6 +9242,38 @@ prerequisite checkpoints as full acceptance.
   `Entry& entry` (`GTI-S2045` today, even as a local). This reuses the
   composed receiver-prefix proof from the nested conditional carriers
   follow-up.
+  - *Implemented in 0.466.0 (3a): nested text values.* A constructor that
+    stores a class parameter of a nested text class whole in a field or
+    payload, or a class field of one through its accessor, nests the
+    argument's text path there, at any depth; a generic function returning
+    such a parameter whole (`unexpected`) publishes it too. Field reads and
+    reference relays (`*o`, `o.value()`, `r.error()`) give dependent places
+    with the prefix stripped. A field contract names a prefix: a payload of
+    a nested text class covers every path below it, in semantics and in
+    MIR. So `std::optional<Token>`, `expected<int, Diag>` and user classes
+    such as `Report { Diag diag; }` keep their owner's text, and
+    `expected<int, Diag> check(std::string&)` may return one over its
+    parameter. Still `GTI-S2045`: copying a nested value out, and passing a
+    value whose text sits in a class field (no class-field contracts yet).
+  - *3b (nested reference carriers), remaining.* A class holding a checked
+    reference nests in a class field or a generic class today
+    (`Holder { Conflict conflict; }`, `Wrapper<Conflict>`), but not in a
+    payload-enum alternative, which `optional<Conflict>` and
+    `expected<int, Conflict>` need. Measured on 0.466.0 (identical on main):
+    - A non-generic enum (`enum Outcome { clash(Conflict c), done(int) }`) is
+      a MIR `GTI-B0001`: the complete-value fact of the `PayloadConstruct`
+      keeps the staged carrier's own group as the dependency's parent, while
+      lowering roots it at the carrier's origin, as class constructions do.
+      Transferring the staged group in `constructedCompleteBorrowFact` makes
+      MIR verify; the C++ emitter then cannot represent the carrier payload
+      (`GTI-B0001`), which is backend work alongside the deferred field
+      storage stages (#273-#275).
+    - `std::optional<Conflict>` and `expected<int, Conflict>` are
+      `GTI-S2045`: the complete constructor borrow query cannot summarize a
+      carrier moved out through a consuming accessor
+      (`std::move(failure).error()`) into a guarded payload.
+    - `expected<int, Entry&>` built from `unexpected(entry)` copies the entry
+      (`GTI-S2003`), the reference-error profile the owner placed here.
 - **Phase 4 (retire special cases):**
   - the ownerless text contracts for fields (`ownerlessTextParameters`,
     `recordOwnerlessTextCall`, and the field writes in

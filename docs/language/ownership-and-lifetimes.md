@@ -2717,6 +2717,47 @@ method's receiver, and a temporary argument are each `GTI-S2045`, as is an
 implicit conversion inside a constructor initializer. A return that would
 need two implicit conversions is not supported.
 
+#### Nested values
+
+A value that holds a view may itself be stored in a field or payload of
+another value. A constructor that stores a class parameter whole, as
+`Report(Diag diag) : diag(diag) {}` does, nests the argument's text under
+that field, and the same holds at any depth and for payloads, so
+`std::optional<Token>` and `expected<int, Diag>` keep their owner's text:
+
+```gti
+class Report {
+public:
+  Diag diag;
+  int code;
+  Report(Diag diag, int code) : diag(diag), code(code) {}
+};
+
+Report report = Report(Diag(input.view(), 1), 2);
+std::println(report.diag.text);              // a view of input
+std::optional<Token> maybe = Token(input.view(), 3);
+if (maybe) {
+  std::println((*maybe).text);               // a view of input
+}
+
+expected<int, Diag> check(std::string& input) {
+  if (input.empty()) {
+    return 0;
+  }
+  return unexpected(Diag(input.view(), 3));  // the caller's input
+}
+```
+
+The nested value is read through fields and through accessors returning a
+reference to it, such as `*maybe`, `maybe.value()` and `result.error()`. It
+cannot be copied out of its value (`Diag d = report.diag;` and `Token t =
+*maybe;` are `GTI-S2045`), and storing its text is `GTI-S2045`. A function
+taking an optional or expected of such a class by reference may read its
+text and return a count from it. One that stores the text, or copies the
+nested value out, requires ownerless text there, as for a text payload.
+Passing a value whose text sits in a class field, like `Report`, to a
+function is `GTI-S2045` for now.
+
 An adapter that needs to retain dynamic input can instead declare a checked
 `std::string_view&` or `c_string&` field and accept the same reference type in its
 constructor. The adapter borrows the view object and retains its underlying

@@ -1,5 +1,32 @@
 # Compiler Verification
 
+## Nested dependent values (0.466.0)
+
+`view_fields` covers phase 3a in `testNestedValues`.
+- A `Report` storing a `Diag` whole, an `Outer` holding a `Report`, an
+  `std::optional<Token>` read through `*o` and `value()`, and an
+  `expected<int, Diag>` built from `unexpected(Diag(...))` and returned by
+  `check(std::string&)` verify over a local owner. Read-only callees taking
+  the optional or expected by reference accept them, and storing callees
+  accept literal values.
+- MIR rejects each nested publication with its leaf dropped from the path,
+  and each of `keepDeref`, `keepCopy` and `keepError` with its prefix
+  requirement cleared: it derives the requirement from the callee's
+  returned class reference itself.
+- Storing nested text, copying a nested value out (`Diag d = r.diag;`,
+  `Token t = *o;`), passing a value whose text sits in a class field to a
+  function, passing the optional or expected to a storing callee, and
+  appending to the owner while the value or a copied view lives are each
+  rejected at source (`GTI-S2045` or `GTI-S2017`), never with `GTI-B`.
+
+`view_field_nesting_runtime` runs the fixture in every mode. Two 2c defects
+surfaced while testing this phase. An explicit construction from a moved
+dependent value, `expected<int, std::string_view>(std::move(u))`, continued
+`u`'s loan with `u`'s path, so `kept = r.error();` compiled into a
+use-after-free (ASan). And MIR derived whole-value relays for owned classes
+that semantics never declared, a `GTI-B0001` on `owned_expected_error`. Both
+are fixed, and `testContextualConstruction` covers the first.
+
 ## Conversions, field relays and returns (0.466.0)
 
 `view_fields` covers phase 2c in four tests.

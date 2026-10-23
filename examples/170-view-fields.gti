@@ -59,6 +59,22 @@ expected<int, std::string_view> parse(std::string& input) {
   return unexpected(input.view());
 }
 
+// A diagnostic over the caller's string nests inside the result that holds
+// it: its text keeps viewing the argument.
+class Diag {
+public:
+  std::string_view text;
+  int line;
+  Diag(std::string_view text, int line) : text(text), line(line) {}
+};
+
+expected<int, Diag> check(std::string& input) {
+  if (input.empty()) {
+    return 0;
+  }
+  return unexpected(Diag(input.view(), 1));
+}
+
 int main() {
   std::string line{"count = 42"};
 
@@ -108,6 +124,10 @@ int main() {
   expected<int, std::string_view> parsed = parse(line);
   if (!parsed) {
     std::println(parsed.error().size());
+  }
+  expected<int, Diag> checked = check(line);
+  if (!checked) {
+    std::println(checked.error().text.size() + uint64_t(checked.error().line));
   }
 
   // While any of these values is live, `line` cannot be mutated, moved or

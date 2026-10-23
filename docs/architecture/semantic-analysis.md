@@ -2739,6 +2739,36 @@ returns:
   enum there is covered. Before 0.466.0, copying, borrowing or storing such
   a field let a dependent value's payload escape.
 
+Phase 3 nests dependent values in fields and payloads:
+- `ConstructorTextInput::wholeValue` records an initializer storing a
+  by-value formal of a nested text class (`nestedTextClass`: a publishable
+  class with a text path under it) whole in a field or payload of its type,
+  and `sourceField` may name a class-typed field of a formal. At a call,
+  `relayConstructorTextField` re-roots the argument's one path `P` through the
+  stored part `S` to `D + P[|S|..]`, with `sourceFields = P`.
+  `publishTextCallResult` nests a dependent class argument that a generic
+  function returns whole, as `unexpected` does, and `relayReturnedTextFormal`
+  admits such a formal.
+- A field read of a nested class, a reference relay to one, and a
+  dereference through an operator relay are dependent places with the
+  relayed prefix stripped (`nestedTextRelay`). `textReferenceReturnSummary`
+  and `payloadReferenceRelayArm` admit references to nested text classes.
+  Copying a dependent place other than a named value out is `GTI-S2045`.
+- A field contract names a prefix (`contractPrefix`): a text field exactly,
+  or a payload-enum field's payload, which covers every path below a nested
+  text class payload. A path through a nested class field has no contract,
+  so relaying it is `GTI-S2045`. Class payloads holding text take
+  requirements wherever text payloads do, and `contractTextPath` keeps them
+  in instances.
+- A contract formal's reference relay to a nested text class, and field
+  chains under it, are noted (`noteContractRelayUse`). A text read under one
+  is dynamic and forwards the prefix (`ownerlessTextForwardingField`); any
+  use but a field projection requires the prefix when contracts are
+  finalized.
+- A value initialized from a construction or call that publishes dependent
+  text is a new value: it does not continue a moved carrier's loan, and a
+  publishing direct initialization re-roots its argument.
+
 A temporary needs no further model. Its construction publishes as above, and
 its expression is a dependent value that a field read, a relay or a receiver
 consumes, so `fieldSourcedTextResult` classifies a relay of it as it does a

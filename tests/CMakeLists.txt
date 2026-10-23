@@ -1143,6 +1143,11 @@ add_test(NAME view_field_conversions_runtime
                  "${PROJECT_SOURCE_DIR}/tests/view_field_conversions_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(view_field_conversions_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME view_field_nesting_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/view_field_nesting_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(view_field_nesting_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME recursive_text_relays_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/recursive_text_relays_runtime_test.py"
