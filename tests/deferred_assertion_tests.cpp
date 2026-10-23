@@ -1,6 +1,7 @@
 #include "cpp_backend_test_support.h"
 #include "gti/ast_clone.h"
 #include "gti/lexer.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
 
 #include <filesystem>
@@ -389,6 +390,109 @@ int main() { return application::run(); }
           "macro-local ownership and control flow verify independently");
 }
 
+void feasibleLifecycleSources() {
+  const auto result = analyze(R"(
+#include <std/string>
+struct Owned {
+  std::string text;
+  Owned() : text(std::string("owned")) {}
+  bool empty() { return this.text.empty(); }
+};
+#macro own<T>(bool active, T expression) {
+  if (active) { T local = expression; }
+}
+int main() {
+  Owned owner{};
+  bool dynamic = owner.empty();
+  own(false, std::move(owner));
+  own(true, std::move(owner));
+  return dynamic ? 1 : 0;
+}
+)");
+  check(result.canGenerateCode(),
+        "literal feasibility refines a generic owning local's move source");
+  if (!result.canGenerateCode())
+    return;
+  const auto entry = std::find_if(
+      result.mir.functionInstances().begin(),
+      result.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind != lang::ProgramEntryKind::None;
+      });
+  check(entry != result.mir.functionInstances().end(),
+        "lifecycle mutation fixture has a program entry");
+  if (entry == result.mir.functionInstances().end())
+    return;
+  const auto rejects = [&](const lang::MirBody &body, std::string_view reason) {
+    const auto verification = lang::verifyMirBody(body, entry->id);
+    const bool matched =
+        std::any_of(verification.errors.begin(), verification.errors.end(),
+                    [&](const auto &error) {
+                      return error.message.find(reason) != std::string::npos;
+                    });
+    check(!verification.valid() && matched, reason);
+    if (verification.valid() || !matched)
+      for (const auto &error : verification.errors)
+        std::cerr << error.message << '\n';
+  };
+  auto changedLiteral = entry->body;
+  lang::MirValueId literal = 0;
+  std::optional<lang::MirOperand> dynamic;
+  for (auto &block : changedLiteral.blocks)
+    for (auto &instruction : block.instructions) {
+      if (!dynamic && instruction.kind == lang::MirInstructionKind::Call &&
+          instruction.info.type == lang::SemanticType::Bool &&
+          instruction.result)
+        dynamic = lang::MirOperand{.kind = lang::MirOperandKind::Value,
+                                   .value = *instruction.result,
+                                   .type = lang::SemanticType::Bool};
+      if (!literal && instruction.operation == lang::MirOperation::Literal &&
+          instruction.literal &&
+          std::holds_alternative<bool>(*instruction.literal) &&
+          !std::get<bool>(*instruction.literal)) {
+        literal = instruction.result.value_or(0);
+        instruction.literal = true;
+      }
+    }
+  check(literal != 0 && dynamic.has_value(),
+        "fixture contains independent literal and dynamic condition producers");
+  if (literal) {
+    rejects(changedLiteral, "requires obligation");
+    auto unknown = entry->body;
+    bool changed = false;
+    for (auto &block : unknown.blocks)
+      if (dynamic && block.terminator.kind == lang::MirTerminatorKind::Branch &&
+          block.terminator.value &&
+          block.terminator.value->kind == lang::MirOperandKind::Value &&
+          block.terminator.value->value == literal) {
+        block.terminator.value = *dynamic;
+        changed = true;
+      }
+    check(changed, "unknown-condition mutation changes the guarded move edge");
+    if (changed) {
+      check(lang::rebuildMirValueUses(unknown),
+            "unknown-condition mutation repairs only its SSA use index");
+      rejects(unknown, "requires obligation");
+    }
+  }
+  auto wrongCleanup = entry->body;
+  bool changed = false;
+  for (auto &block : wrongCleanup.blocks) {
+    for (auto &instruction : block.instructions) {
+      if (changed)
+        break;
+      for (auto &event : instruction.lifecycle)
+        if (event.kind == lang::MirLifecycleEventKind::Drop) {
+          event.conditional = !event.conditional;
+          changed = true;
+          break;
+        }
+    }
+  }
+  check(changed, "cleanup mutation has a published drop");
+  if (changed)
+    rejects(wrongCleanup, "conditionality");
+}
+
 void parserMacroRecovery() {
   for (const bool nested : {false, true}) {
     const std::string source =
@@ -463,6 +567,7 @@ int main() {
   expansionSourceOwnership();
   typedMacroSyntax();
   localBindingsAndLoops();
+  feasibleLifecycleSources();
   migrationAndOverloadDiagnostics();
   parserMacroRecovery();
   negative("[[deferred]] void old(bool condition) {}", "GTI-S2099", "#macro");
