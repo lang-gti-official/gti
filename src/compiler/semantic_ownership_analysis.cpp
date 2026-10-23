@@ -2245,14 +2245,22 @@ auto SemanticVisitor::Impl::conditionalRelayReturns(
 }
 
 auto SemanticVisitor::Impl::contractEnumField(
-    const Expr *current, const FunctionInfo &function) const
+    const Expr *expression, const FunctionInfo &function) const
     -> std::optional<std::pair<OwnerlessTextField, SemanticType>> {
+  auto fields = contractEnumFields(expression, function);
+  return fields.size() == 1 ? std::optional{std::move(fields.front())}
+                            : std::nullopt;
+}
+
+auto SemanticVisitor::Impl::contractEnumFields(
+    const Expr *current, const FunctionInfo &function) const
+    -> std::vector<std::pair<OwnerlessTextField, SemanticType>> {
   const FunctionInfo *scope = &function;
   while (const auto *group = exprAs<Grouping>(current))
     current = group->expression() ? group->expression().get() : nullptr;
   std::optional<OwnerlessTextField> formal;
   SemanticType owner = SemanticType::Unknown;
-  std::optional<std::string> name;
+  std::vector<std::string> names;
   const auto formalOwner = [&](const Expr &object) {
     formal = textFieldContractFormal(object, function);
     // An instance analysis reads its receiver's fields at their types there.
@@ -2269,16 +2277,15 @@ auto SemanticVisitor::Impl::contractEnumField(
       get != nullptr && get->access().kind != TokenKind::ARROW &&
       get->object()) {
     formalOwner(*get->object());
-    name = get->name().lexeme;
+    names.push_back(get->name().lexeme);
   } else if (call != nullptr && call->typeArguments().empty() &&
              (accessor == nullptr
                   ? exprAs<Variable>(call->callee().get()) != nullptr
                   : accessor->access().kind != TokenKind::ARROW &&
                         accessor->object() != nullptr)) {
-    // A formal's accessor that returns a reference to one of its fields
-    // designates that field, as `formal.field` does, whatever its arguments:
-    // every return names the same field. An implicit `accessor()` is the
-    // receiver's.
+    // A formal's accessor that returns a reference to its fields designates
+    // each field its returns name, as `formal.field` does, whatever its
+    // arguments. An implicit `accessor()` is the receiver's.
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     const FunctionDemandScope pauseDemand(semanticModel, nullptr);
     const FunctionInfo *callee =
@@ -2303,7 +2310,8 @@ auto SemanticVisitor::Impl::contractEnumField(
     if (formal && resolved != nullptr &&
         resolved->borrowOrigin == BorrowOriginKind::Receiver &&
         callee != nullptr)
-      name = accessorReceiverField(*callee, visiting);
+      if (auto fields = accessorReceiverFields(*callee, visiting))
+        names = std::move(*fields);
   } else if (const auto *variable = exprAs<Variable>(current)) {
     // An implicit receiver field, like `this.field`.
     const Symbol *symbol = resolve(variable->name());
@@ -2315,21 +2323,26 @@ auto SemanticVisitor::Impl::contractEnumField(
       formal = OwnerlessTextField{.receiver = true};
       owner = substituteType(openClassType(scope->ownerClass),
                              instanceTypeSubstitution);
-      name = variable->name().lexeme;
+      names.push_back(variable->name().lexeme);
     }
   }
   if (owner.kind == SemanticType::Reference && owner.arguments.size() == 1)
     owner = SemanticType(owner.arguments.front());
-  const ClassInfo *info = formal && name ? classInfo(owner) : nullptr;
-  const auto member = info == nullptr ? decltype(info->members.end()){}
-                                      : info->members.find(*name);
-  if (info == nullptr || member == info->members.end() ||
-      member->second.symbol.staticMember ||
-      member->second.symbol.bindingKind != SemanticBindingKind::Field)
-    return std::nullopt;
-  formal->field = symbolForDeclaration(member->second.symbol.declaration);
-  return std::pair{*formal, substituteType(member->second.symbol.type,
-                                           classSubstitution(owner))};
+  const ClassInfo *info = formal && !names.empty() ? classInfo(owner) : nullptr;
+  std::vector<std::pair<OwnerlessTextField, SemanticType>> fields;
+  for (const auto &name : names) {
+    const auto member = info == nullptr ? decltype(info->members.end()){}
+                                        : info->members.find(name);
+    if (info == nullptr || member == info->members.end() ||
+        member->second.symbol.staticMember ||
+        member->second.symbol.bindingKind != SemanticBindingKind::Field)
+      return {};
+    auto field = *formal;
+    field.field = symbolForDeclaration(member->second.symbol.declaration);
+    fields.emplace_back(field, substituteType(member->second.symbol.type,
+                                              classSubstitution(owner)));
+  }
+  return fields;
 }
 
 auto SemanticVisitor::Impl::contractPayloadBinding(
@@ -2371,26 +2384,28 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
 
 auto SemanticVisitor::Impl::notePayloadFieldRead(const Expr &expression)
     -> void {
-  if (&expression == observedSwitchSubject)
-    return;
   // A generic class method's type-parameter field is a payload enum only in
   // some instances, so those instances' analyses record its requirements.
   const FunctionInfo *scope = textFieldContractScope();
   if (scope == nullptr)
     scope = instanceFieldContractScope();
-  const auto field =
-      scope == nullptr ? std::nullopt : contractEnumField(&expression, *scope);
-  const auto enumeration =
-      field ? enumTypeFor(field->second) : std::optional<EnumTypeInfo>{};
-  if (!enumeration)
+  const auto fields =
+      scope == nullptr
+          ? std::vector<std::pair<OwnerlessTextField, SemanticType>>{}
+          : contractEnumFields(&expression, *scope);
+  // A switch observes one designated field in place. Its payload bindings
+  // name one field, so a switch on an accessor designating several reads
+  // them all.
+  if (fields.empty() ||
+      (fields.size() == 1 && &expression == observedSwitchSubject))
     return;
-  // An accessor's returned field is the accessor's own designation: a caller
-  // that switches on the accessor observes the field in place, and any other
-  // use of the call reads the field there (`contractEnumField`).
-  if (field->first.receiver && scope->bodyDeclaration() != nullptr &&
+  // An accessor's returned fields are the accessor's own designation: a
+  // caller keeps the call's result dependent on them, and a contract
+  // formal's call reads them there (`contractEnumFields`).
+  if (fields.front().first.receiver && scope->bodyDeclaration() != nullptr &&
       scope->bodyDeclaration()->body() != nullptr) {
     std::vector<const FunctionInfo *> visiting;
-    const auto accessed = accessorReceiverField(*scope, visiting);
+    const auto accessed = accessorReceiverFields(*scope, visiting);
     std::vector<const ExprPtr *> returns;
     if (accessed)
       collectBorrowReturnExpressions(scope->bodyDeclaration()->body().get(),
@@ -2408,21 +2423,26 @@ auto SemanticVisitor::Impl::notePayloadFieldRead(const Expr &expression)
   }
   const bool generic = scope->ownerClass != 0 &&
                        !classInfo(scope->ownerClass).genericParameters.empty();
-  const auto substitution = enumSubstitution(field->second);
-  for (const auto &variant : enumeration->enumerators)
-    for (std::size_t index = 0; index < variant.payloadSymbols.size() &&
-                                index < variant.payloadTypes.size();
-         ++index) {
-      const auto type =
-          substituteType(variant.payloadTypes[index], substitution);
-      if (type.kind != SemanticType::StringView &&
-          type.kind != SemanticType::CString && !nestedTextClass(type) &&
-          !(generic && type.kind == SemanticType::TypeParameter))
-        continue;
-      auto payload = field->first;
-      payload.payload = variant.payloadSymbols[index];
-      (void)requireOwnerlessTextField(scope->declaration, payload);
-    }
+  for (const auto &[formal, fieldType] : fields) {
+    const auto enumeration = enumTypeFor(fieldType);
+    if (!enumeration)
+      continue;
+    const auto substitution = enumSubstitution(fieldType);
+    for (const auto &variant : enumeration->enumerators)
+      for (std::size_t index = 0; index < variant.payloadSymbols.size() &&
+                                  index < variant.payloadTypes.size();
+           ++index) {
+        const auto type =
+            substituteType(variant.payloadTypes[index], substitution);
+        if (type.kind != SemanticType::StringView &&
+            type.kind != SemanticType::CString && !nestedTextClass(type) &&
+            !(generic && type.kind == SemanticType::TypeParameter))
+          continue;
+        auto payload = formal;
+        payload.payload = variant.payloadSymbols[index];
+        (void)requireOwnerlessTextField(scope->declaration, payload);
+      }
+  }
 }
 
 auto SemanticVisitor::Impl::noteConditionalTextFieldRead(const Expr &expression)

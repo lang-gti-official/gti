@@ -2260,7 +2260,11 @@ private:
                          const ResolvedPayloadPatternInfo &pattern,
                          const PayloadBindingInfo &payload) const;
   // In the field-contract scope `scope`, the contract formal's or receiver's
-  // field that `expression` names, with that field's type there.
+  // fields that `expression` names, with each field's type there: one for
+  // `formal.field`, each field an accessor call's returns designate.
+  [[nodiscard]] std::vector<std::pair<OwnerlessTextField, SemanticType>>
+  contractEnumFields(const Expr *expression, const FunctionInfo &scope) const;
+  // The one field `expression` names.
   [[nodiscard]] std::optional<std::pair<OwnerlessTextField, SemanticType>>
   contractEnumField(const Expr *expression, const FunctionInfo &scope) const;
   // A contract formal's or the receiver's payload-enum field read as a value,
@@ -4659,15 +4663,26 @@ private:
   // the overload a call `this.name()` on a read-only receiver selects.
   [[nodiscard]] const FunctionInfo *
   readOnlyReceiverAccessor(ClassId owner, const std::string &name) const;
-  // The receiver field that `accessor` returns a reference to: every return
-  // is `this.field`, or a call `this.other()` of another such accessor, or,
-  // in a body that declares nothing, the implicit `field` or `other()`.
+  // The receiver fields that `accessor` returns references to, sorted: every
+  // return is `this.field`, or a call `this.other()` of another such
+  // accessor, or, in a body that declares nothing, the implicit `field` or
+  // `other()`.
+  [[nodiscard]] std::optional<std::vector<std::string>>
+  accessorReceiverFields(const FunctionInfo &accessor,
+                         std::vector<const FunctionInfo *> &visiting) const;
+  // The receiver field `accessor` returns a reference to when every return
+  // designates that one field.
   [[nodiscard]] std::optional<std::string>
   accessorReceiverField(const FunctionInfo &accessor,
                         std::vector<const FunctionInfo *> &visiting) const;
-  // The receiver field that `subject`, a call `this.accessor()` in a method
+  // The receiver fields that `subject`, a call `this.accessor()` in a method
   // of `owner`, designates; also an implicit `accessor()` where
   // `implicitMembers` says no local can shadow the name.
+  [[nodiscard]] std::optional<std::vector<std::string>>
+  receiverAccessorFields(const Expr &subject, ClassId owner,
+                         std::vector<const FunctionInfo *> &visiting,
+                         bool implicitMembers = false) const;
+  // The one receiver field that `subject` designates.
   [[nodiscard]] std::optional<std::string>
   receiverAccessorField(const Expr &subject, ClassId owner,
                         std::vector<const FunctionInfo *> &visiting,

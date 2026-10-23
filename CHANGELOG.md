@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.466.1 — References into values over a local owner's text
+## 0.467.1 — References into values over a local owner's text
 
 - Fixed a use-after-free present since 0.465.2. A reference that a method or
   function returns into a value holding a local string's text, as in
@@ -25,6 +25,14 @@ for what minor and patch releases mean.
   switch (word) { case Word::text(value): std::println(value); break; ... }
   keepWordRef(line.wordRef());   // now error[GTI-S2045]
   ```
+
+- A method returning one of several fields by reference, such as
+  `Word& either(bool first)`, can again be switched on in place over a local
+  owner's text, as before 0.467.0.
+- A function taking a class by reference can pass on the reference one of
+  its methods returns, as in `keepWordRef(line.wordRef())`, while another
+  field of the class holds a local owner's text; this was an internal
+  compiler error (`GTI-B0001`).
 
 ## 0.466.0 — Views of the caller's string in results and nested values
 
