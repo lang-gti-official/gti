@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.464.1 — Moving one class and copying another after fallible work
+## 0.465.4 — Moving one class and copying another after fallible work
 
 - A constructor can now move one class into a field and copy another into a
   later field after an initializer that can fail, when both classes have no
@@ -20,6 +20,91 @@ for what minor and patch releases mean.
   declaration order of the two fields; it now works. If a later initializer
   or the constructor body fails, each field already built is dropped exactly
   once.
+
+## 0.465.3 — Moving classes that hold function items
+
+- A generic class whose field holds a function item, such as `class Op<F> {
+  public: F action; Op(F action) : action(action) {} }` instantiated with a
+  function name, can now be moved into another class's field after an
+  initializer that can fail. `Holder(Op<F> op) : v(std::vector<int32_t>()),
+  op(std::move(op))` used to report `error[GTI-B0001]` (an internal compiler
+  error); it now works. If a later initializer or the constructor body fails,
+  each field already built is dropped exactly once.
+- Such a class can also now be chosen by a conditional, as in `Op<F> chosen =
+  pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
+  can be assigned into a field. Each used to report `error[GTI-B0001]`.
+
+## 0.465.2 — Switching over a payload enum returned by reference
+
+- A `switch` can now match a payload enum that a call returns by reference.
+  For `Shape& shapeRef() { return this.shape; }`, `switch (h.shapeRef())`
+  used to report `error[GTI-B0001]` (an internal compiler error); it now works
+  with by-value and `auto&` bindings, `string_view` payloads (including text
+  owned elsewhere), free functions, nested accessors, `mut auto&` through a
+  mutable accessor, and generic classes.
+- Matching through a reference local, as in `Shape& s = h.shapeRef();
+  switch (s)`, also used to report `error[GTI-B0001]` when the arm bound a
+  payload but did not use `s` again; it now works.
+- A subject that reaches into a temporary owner, such as
+  `switch (Holder(3).shapeRef())`, is now rejected with `error[GTI-S2017]`
+  instead of an internal compiler error, as `Shape& s = Holder(3).shapeRef();`
+  already was. Bind the owner to a local first.
+## 0.465.1 — Class stores into globals, captures and element fields
+
+- Assigning a class value to a global, through a `[mut &p]` capture, or
+  through an overloaded subscript such as `points[uint64_t(0)] = q` used to
+  report `error[GTI-B0001]` (an internal compiler error). These stores now
+  compile and run, whether the value is a copy or a fresh construction, and a
+  global or a captured value can be the copied value (`p = g;`).
+- Reading or writing a field of a fixed-array element selected at a run-time
+  index, as in `points[i].x` or `points[i].x = 7`, and copying such an element
+  (`Point copy = points[i];`) no longer report `GTI-B0001` (issue #203). The
+  index is checked first: one out of range fails with
+  `GTI-R0007 index_out_of_bounds in fixed_array`.
+## 0.465.0 — Deferred assertions
+
+- `<std/assert>` adds always-on `std::assert` and configuration-controlled
+  `std::debug_assert`, with raw/formatted panic messages, external caller
+  locations and deterministic cleanup. Successful assertions skip message
+  evaluation; disabled debug assertions skip every argument, including moves,
+  while still checking their types and body constraints.
+- `[[deferred]]` makes the same confined statement-helper facility available to
+  application APIs. Its typed expression parameters are evaluated where used
+  in source-defined branches, through ordinary checked HIR/MIR. It introduces
+  no escaping thunk, heap allocation or compiler recognition of assertion names.
+- Default release projects define `NDEBUG`; dev projects leave it inactive.
+  Explicit profile `defines` replace that default. Direct compilation can use
+  `-D NDEBUG` at any optimization level. `std::assert` remains enabled.
+- Example 172 demonstrates both APIs, skipped owning moves and an unrelated
+  user-defined deferred helper. The first profile is statement-only, with
+  branch/expression bodies and no local binders, loops or callback conversion.
+
+## 0.464.2 — Using whole assignment results
+
+- The whole result of a class assignment can now be used. For a struct
+  `Point`, `Point r = (p = q);`, `return (p = q);`, a by-value argument such
+  as `take(p = q)`, a method call such as `(p = q).digits()` and a constructor
+  initializer such as `value(a = b)` used to report `error[GTI-B0001]` (an
+  internal compiler error); they now receive a copy of the assigned value, and
+  `p` holds `q` afterwards.
+- The result stays a copy: in `pair(p = q, p = r)` the first argument is still
+  `q`, and a `mut` method called as `(c = d).bump()` changes the copy, not `c`.
+- Using the result of an assignment of a move-only type, as in
+  `Tracked r = (p = std::move(q));` or `(p = std::move(q)).x`, now reports
+  `error[GTI-S2003]` at the `=`: the result would copy the target. Such an
+  assignment is still valid as its own statement.
+
+## 0.464.1 — Several reference bindings from one local payload enum
+
+- A `switch` arm can now bind `auto&` to more than one reference payload of an
+  enum held in a local. For `enum Pair { both(int& first, int& second), none
+  };`, `case Pair::both(auto& first, auto& second):` used to report
+  `error[GTI-B0001]` (an internal compiler error); it now works. This includes
+  three or more references, references to the same owner, enums built from
+  reference parameters, `mut auto&` bindings whose writes reach their own
+  owners, generic enums, and an enum field of a local class.
+- An `auto&` binding that the arm never reads, as in `case Slot::item(auto&
+  value): return 3;`, also used to report `error[GTI-B0001]`; it now works.
 
 ## 0.464.0 — Editor code snippets
 

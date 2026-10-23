@@ -248,6 +248,9 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
                                           requireFunctionDefinitions);
           worker->catalog = catalog.snapshotForInstanceAnalysis();
           worker->semanticModel = semanticModel;
+          worker->deferredLookup = deferredLookup;
+          worker->deferredLookupBase = deferredLookupBase;
+          worker->nextExpansion = nextExpansion;
           worker->valueFlow = valueFlow;
           // Initializer effects close over the completed program, so every
           // analysed constexpr definition is available to the concrete
@@ -2570,15 +2573,72 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr) -> SemanticType {
   return analyze(expr, OccurrenceRole::Reference | OccurrenceRole::Read);
 }
 
+auto SemanticVisitor::Impl::discardResult(const ExprPtr &expr) -> void {
+  if (expr)
+    discardedResults.insert(expr.get());
+}
+
+// The result of a built-in assignment is a copy of its committed target, so
+// only a discarded assignment may store a move-only value: using its result
+// would copy the target.
+auto SemanticVisitor::Impl::checkAssignmentResultUse(const Expr &expr,
+                                                     const SemanticType &result)
+    -> void {
+  const Token *oper = nullptr;
+  if (const auto *assign = exprAs<Assign>(&expr))
+    oper = &assign->oper();
+  else if (const auto *set = exprAs<Set>(&expr))
+    oper = &set->oper();
+  else if (const auto *set = exprAs<IndexSet>(&expr))
+    oper = &set->oper();
+  else if (const auto *set = exprAs<DereferenceSet>(&expr))
+    oper = &set->oper();
+  else if (const auto *set = exprAs<PlaceSet>(&expr))
+    oper = &set->oper();
+  if (oper == nullptr || oper->kind != TokenKind::EQUAL ||
+      discardedResults.contains(&expr) || result == SemanticType::Unknown ||
+      result == SemanticType::Void || containsOpenTypeParameter(result) ||
+      typeTraits(result).copyable)
+    return;
+  report(*oper,
+         "Cannot use the result of an assignment of move-only type '" +
+             typeSpelling(result) + "'; it would copy the target.",
+         "GTI-S2003");
+  diagnostics.back().hints.emplace_back(
+      "Assign in its own statement, then use the target.");
+}
+
 auto SemanticVisitor::Impl::analyze(const Expr &expr,
                                     OccurrenceRole requestedRoles)
     -> SemanticType {
+  struct RestoreDeferredArgumentFlow {
+    Impl &owner;
+    ValueFlowState values;
+    LoanFlowState loans;
+    explicit RestoreDeferredArgumentFlow(Impl &owner)
+        : owner(owner), values(owner.valueFlow), loans(owner.loanFlow) {}
+    ~RestoreDeferredArgumentFlow() {
+      owner.valueFlow = std::move(values);
+      owner.loanFlow = std::move(loans);
+    }
+  };
+  std::optional<RestoreDeferredArgumentFlow> argumentFlow;
+  if (deferredProbe && deferredProbeArguments.contains(&expr))
+    argumentFlow.emplace(*this);
+  std::optional<DeferredLookupScope> deferredScope;
+  if (const auto *context = deferredContext(expressionToken(expr)))
+    deferredScope.emplace(*this, *context);
   if (instanceAnalysisActive) {
     semanticModel.suppressInheritedOperator(expr);
   }
   valueFlow.rawOperatorResults.erase(&expr);
+  const std::size_t diagnosticsBefore = diagnostics.size();
   expr.accept(*this);
   SemanticType result = currentType;
+  // Report only an otherwise valid assignment; an invalid one already has
+  // its own diagnostic.
+  if (diagnostics.size() == diagnosticsBefore)
+    checkAssignmentResultUse(expr, result);
   const auto *construction = semanticModel.findConstruction(expr);
   const bool directInitialization =
       construction != nullptr && construction->directInitialization;
@@ -2687,11 +2747,14 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
       semanticModel.findOperator(expr)) {
     const Token location = expressionToken(expr);
     const SourceSpan span = tokenSpan(location);
-    semanticModel.recordCallerLocation(expr,
-                                       {.sourceUnit = sourceUnitFor(location),
-                                        .start = span.start,
-                                        .end = span.end,
-                                        .line = span.line});
+    const auto *context = deferredContext(location);
+    semanticModel.recordCallerLocation(
+        expr, context && context->caller
+                  ? *context->caller
+                  : CallerLocationOrigin{.sourceUnit = sourceUnitFor(location),
+                                         .start = span.start,
+                                         .end = span.end,
+                                         .line = span.line});
   }
   const SemanticPlace expressionPlace = semanticPlace(&expr);
   if (expressionPlace.root != nullptr) {
@@ -5034,14 +5097,23 @@ auto SemanticVisitor::Impl::resolveGeneratedTestReference(
 auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
   if (const Symbol *test = resolveGeneratedTestReference(NamePath(name)))
     return test;
-  for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+  const auto *context = deferredContext(name);
+  for (auto scope = scopes.rbegin();
+       !(context && context->definition) && scope != scopes.rend(); ++scope) {
     if (const auto found = scope->find(name.lexeme); found != scope->end()) {
       return &found->second;
     }
   }
 
-  const auto &symbols = currentNamespaceSymbols();
-  if (const auto id = resolveClassPath(NamePath(name), currentNamespace)) {
+  const auto &lookup = context ? context->namespaceScope : currentNamespace;
+  const auto &visible = activeVisibleNamespaceSymbols();
+  const auto unit = context ? context->sourceUnit : currentSourceUnit;
+  const auto foundUnit = visible.find(unit);
+  const auto &symbols =
+      context && sourceGraph && unit && foundUnit != visible.end()
+          ? foundUnit->second
+          : currentNamespaceSymbols();
+  if (const auto id = resolveClassPath(NamePath(name), lookup)) {
     const auto &type = classInfo(*id);
     if (type.enclosingClass != 0) {
       const auto found =
@@ -5050,10 +5122,10 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
         return &found->second;
     }
   }
-  for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
+  for (std::size_t depth = lookup.size() + 1; depth > 0; --depth) {
     const auto found =
-        symbols.find(qualifiedName(currentNamespace, depth - 1, name.lexeme));
-    if (found != symbols.end() && symbolVisibleNow(found->second)) {
+        symbols.find(qualifiedName(lookup, depth - 1, name.lexeme));
+    if (found != symbols.end() && symbolVisibleAt(found->second, name)) {
       return &found->second;
     }
   }
@@ -5061,6 +5133,9 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
 }
 
 auto SemanticVisitor::Impl::resolveMutable(const Token &name) -> Symbol * {
+  if (const auto *context = deferredContext(name);
+      context && context->definition)
+    return nullptr;
   for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
     if (const auto found = scope->find(name.lexeme); found != scope->end()) {
       return &found->second;
@@ -5077,13 +5152,20 @@ auto SemanticVisitor::Impl::resolvePlaceSymbol(const Token &name) -> Symbol * {
   }
   std::unordered_map<std::string, Symbol> *symbols =
       currentNamespaceSymbolsMutable();
+  const auto *context = deferredContext(name);
+  const auto &lookup = context ? context->namespaceScope : currentNamespace;
+  if (context && sourceGraph && context->sourceUnit) {
+    auto &visible = activeVisibleNamespaceSymbols();
+    const auto unit = visible.find(context->sourceUnit);
+    symbols = unit == visible.end() ? nullptr : &unit->second;
+  }
   if (symbols == nullptr) {
     return nullptr;
   }
-  for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
+  for (std::size_t depth = lookup.size() + 1; depth > 0; --depth) {
     const auto found =
-        symbols->find(qualifiedName(currentNamespace, depth - 1, name.lexeme));
-    if (found != symbols->end() && symbolVisibleNow(found->second)) {
+        symbols->find(qualifiedName(lookup, depth - 1, name.lexeme));
+    if (found != symbols->end() && symbolVisibleAt(found->second, name)) {
       return &found->second;
     }
   }
@@ -5143,7 +5225,9 @@ auto SemanticVisitor::Impl::resolveNamespacePath(
 
 auto SemanticVisitor::Impl::resolveNamespacePath(const NamePath &path) const
     -> std::optional<std::string> {
-  return resolveNamespacePath(path, currentNamespace);
+  const auto *context = deferredContext(path.segments.front());
+  return resolveNamespacePath(path, context ? context->namespaceScope
+                                            : currentNamespace);
 }
 
 auto SemanticVisitor::Impl::resolveQualified(const NamePath &path) const
@@ -5153,10 +5237,18 @@ auto SemanticVisitor::Impl::resolveQualified(const NamePath &path) const
   if (path.segments.size() < 2) {
     return resolve(path.last());
   }
-  if (const auto id = resolveClassPath(path, currentNamespace)) {
+  const auto *context = deferredContext(path.segments.front());
+  const auto &lookup = context ? context->namespaceScope : currentNamespace;
+  const auto &visible = activeVisibleNamespaceSymbols();
+  const auto unit = context ? context->sourceUnit : currentSourceUnit;
+  const auto foundUnit = visible.find(unit);
+  const auto &symbols =
+      context && sourceGraph && unit && foundUnit != visible.end()
+          ? foundUnit->second
+          : currentNamespaceSymbols();
+  if (const auto id = resolveClassPath(path, lookup)) {
     const auto &type = classInfo(*id);
     if (type.enclosingClass != 0) {
-      const auto &symbols = currentNamespaceSymbols();
       const auto found =
           symbols.find(qualifiedName(type.namespaceScope, type.name.lexeme));
       if (found != symbols.end())
@@ -5170,7 +5262,7 @@ auto SemanticVisitor::Impl::resolveQualified(const NamePath &path) const
       resolveNamespacePath(namespacePath);
   if (!resolvedNamespace) {
     if (const std::optional<ClassId> classId =
-            resolveClassPath(namespacePath, currentNamespace)) {
+            resolveClassPath(namespacePath, lookup)) {
       const ClassInfo &owner = classInfo(*classId);
       const auto member = owner.members.find(path.last().lexeme);
       return member != owner.members.end() && member->second.symbol.staticMember
@@ -5180,10 +5272,9 @@ auto SemanticVisitor::Impl::resolveQualified(const NamePath &path) const
     const EnumeratorRecord *enumerator = resolveEnumerator(path);
     return enumerator == nullptr ? nullptr : &enumerator->symbol;
   }
-  const auto &symbols = currentNamespaceSymbols();
   const auto symbol =
       symbols.find(*resolvedNamespace + "::" + path.last().lexeme);
-  if (symbol != symbols.end() && symbolVisibleNow(symbol->second)) {
+  if (symbol != symbols.end() && symbolVisibleAt(symbol->second, path.last())) {
     return &symbol->second;
   }
   const EnumeratorRecord *enumerator = resolveEnumerator(path);
@@ -5195,6 +5286,8 @@ auto SemanticVisitor::Impl::resolveQualifiedPlaceSymbol(const NamePath &path)
   if (path.segments.size() < 2) {
     return resolvePlaceSymbol(path.last());
   }
+  const auto *context = deferredContext(path.segments.front());
+  const auto &lookup = context ? context->namespaceScope : currentNamespace;
 
   NamePath namespacePath(
       std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
@@ -5202,7 +5295,7 @@ auto SemanticVisitor::Impl::resolveQualifiedPlaceSymbol(const NamePath &path)
       resolveNamespacePath(namespacePath);
   if (!resolvedNamespace) {
     const std::optional<ClassId> classId =
-        resolveClassPath(namespacePath, currentNamespace);
+        resolveClassPath(namespacePath, lookup);
     if (!classId) {
       return nullptr;
     }
@@ -5215,12 +5308,18 @@ auto SemanticVisitor::Impl::resolveQualifiedPlaceSymbol(const NamePath &path)
 
   std::unordered_map<std::string, Symbol> *symbols =
       currentNamespaceSymbolsMutable();
+  if (context && sourceGraph && context->sourceUnit) {
+    auto &visible = activeVisibleNamespaceSymbols();
+    const auto unit = visible.find(context->sourceUnit);
+    symbols = unit == visible.end() ? nullptr : &unit->second;
+  }
   if (symbols == nullptr) {
     return nullptr;
   }
   const auto symbol =
       symbols->find(*resolvedNamespace + "::" + path.last().lexeme);
-  return symbol == symbols->end() || !symbolVisibleNow(symbol->second)
+  return symbol == symbols->end() ||
+                 !symbolVisibleAt(symbol->second, path.last())
              ? nullptr
              : &symbol->second;
 }
@@ -8938,6 +9037,9 @@ auto SemanticVisitor::Impl::runRawResultQuery(
     state->idleCatalogs.pop_back();
   }
   worker->semanticModel = semanticModel;
+  worker->deferredLookup = deferredLookup;
+  worker->deferredLookupBase = deferredLookupBase;
+  worker->nextExpansion = nextExpansion;
   worker->valueFlow = valueFlow;
   // Cached summaries must describe global pointer inputs, not freeze the
   // first caller's current value. Direct addresses of globals stay ordinary

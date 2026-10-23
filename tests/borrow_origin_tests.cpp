@@ -904,6 +904,228 @@ void checkLocalCarrierSelections() {
   std::cout << "local carrier selections: " << owners << " owners, "
             << owners + evaluated << " mutations checked by C++ admission\n";
 }
+
+// Each reference selected from one carrier names its own external owner. A
+// selection under one of the carrier's additional owners keeps that owner's
+// place; claiming the carrier's primary owner instead fails verification.
+void checkSelectionOwners() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/borrowed_enum_owner_selections.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "selections name each owner of one carrier");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "owner selection MIR verifies");
+  try {
+    expect(!gti_test::emitCpp(frontend).contents.empty(),
+           "owner selections reach the production backend");
+  } catch (const std::logic_error &error) {
+    expect(false, std::string("owner selection emission: ") + error.what());
+  }
+  std::size_t additional = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &loan : function.body.loans) {
+      const auto *parent = function.body.findLoan(loan.parent);
+      const auto *owner = function.body.findPlace(loan.source);
+      if (!loan.referenceSelection || parent == nullptr ||
+          parent->kind != lang::MirLoanKind::Stored || owner == nullptr ||
+          owner->root == lang::MirPlaceRootKind::Loan ||
+          std::none_of(
+              parent->additionalDependencies.begin(),
+              parent->additionalDependencies.end(),
+              [&](const auto &dependency) {
+                return dependency.source == loan.source ||
+                       (function.body.findPlace(dependency.source) &&
+                        function.body.findPlace(dependency.source)->key ==
+                            owner->key);
+              }))
+        continue;
+      const auto *primary = function.body.findPlace(parent->source);
+      if (primary == nullptr || primary->key == owner->key)
+        continue;
+      ++additional;
+      auto malformed = frontend.mir;
+      auto *body = &const_cast<lang::MirFunctionInstance *>(
+                        malformed.findFunctionInstance(function.id))
+                        ->body;
+      body->loans[loan.id - 1].source = parent->source;
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a selection under an additional owner cannot claim the "
+             "carrier's primary owner");
+    }
+  expect(additional >= 6,
+         "fixture selects additional owners of call-result, constructed, "
+         "generic, class-field and parameter carriers");
+  std::cout << "additional-owner selections: " << additional
+            << " owner substitutions rejected by MIR verification\n";
+}
+
+// A switch over a payload enum reached through a call's reference result
+// reads that result's place after the subject's full expression. Its
+// call-result loans stay live across the Switch and end inside each arm;
+// ending one before the Switch is a use after the borrow ends.
+void checkReferenceCallSwitchSubjects() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/borrowed_enum_reference_subjects.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "switches observe payload enums through reference results");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "reference-call switch subject MIR verifies");
+  try {
+    expect(!gti_test::emitCpp(frontend).contents.empty(),
+           "reference-call switch subjects reach the production backend");
+  } catch (const std::logic_error &error) {
+    expect(false,
+           std::string("reference-call switch emission: ") + error.what());
+  }
+  const auto endsBeforeUse = [](const lang::MirProgram &program) {
+    const auto result = lang::verifyMirProgram(program);
+    return std::any_of(
+        result.errors.begin(), result.errors.end(), [](const auto &error) {
+          return error.message.find("is used after its borrow has ended") !=
+                 std::string::npos;
+        });
+  };
+  std::size_t subjects = 0;
+  std::size_t bindingArms = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks) {
+      const auto &terminator = block.terminator;
+      const auto *place =
+          terminator.kind == lang::MirTerminatorKind::Switch &&
+                  terminator.value &&
+                  terminator.value->kind == lang::MirOperandKind::BorrowRead
+              ? function.body.findPlace(terminator.value->place)
+              : nullptr;
+      const auto *loan =
+          place != nullptr && place->root == lang::MirPlaceRootKind::Loan
+              ? function.body.findLoan(place->loan)
+              : nullptr;
+      if (loan == nullptr || loan->kind != lang::MirLoanKind::CallResult)
+        continue;
+      ++subjects;
+      // Every arm ends the subject's loan, after any payload extraction.
+      for (const auto &target : terminator.switchTargets) {
+        const auto *arm = function.body.findBlock(target.target);
+        if (arm == nullptr)
+          continue;
+        bool extracted = false;
+        bool ended = false;
+        for (const auto &instruction : arm->instructions) {
+          if (instruction.operation == lang::MirOperation::PayloadExtract)
+            extracted = true;
+          if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+              instruction.loan == loan->id) {
+            expect(!ended, "an arm ends the subject loan once");
+            ended = true;
+          }
+        }
+        bindingArms += extracted ? 1 : 0;
+        // A reference binding keeps the loan until the arm's scope exit.
+        expect(ended || extracted, "a tag-only arm ends the subject loan");
+      }
+      auto malformed = frontend.mir;
+      auto *changed = const_cast<lang::MirFunctionInstance *>(
+          malformed.findFunctionInstance(function.id));
+      lang::MirInstructionId last = 0;
+      for (const auto &candidate : changed->body.blocks)
+        for (const auto &instruction : candidate.instructions)
+          last = std::max(last, instruction.id);
+      changed->body.blocks[block.id - 1].instructions.push_back(
+          {.id = last + 1,
+           .kind = lang::MirInstructionKind::EndBorrow,
+           .loan = loan->id});
+      expect(endsBeforeUse(malformed),
+             "ending a reference-call subject's loan before its switch is "
+             "rejected");
+    }
+  expect(subjects >= 12 && bindingArms >= 12,
+         "fixture switches over method, free-function, nested, mutable, "
+         "generic and text-payload reference results");
+  std::cout << "reference-call switch subjects: " << subjects << " ("
+            << bindingArms << " binding arms)\n";
+
+  const auto temporary =
+      analyzeWithStandardLibrary("temporary-switch-subject.gti", R"gti(
+enum Shape { circle(int radius), none };
+class Holder {
+public:
+  Shape shape;
+  Holder(int radius) : shape(Shape::circle(radius)) {}
+  Shape& shapeRef() { return this.shape; }
+};
+int main() {
+  switch (Holder(3).shapeRef()) {
+  case Shape::circle(radius): return radius;
+  case Shape::none: return 0;
+  }
+}
+)gti");
+  expect(!temporary.semanticValid && !temporary.canGenerateCode(),
+         "a switch cannot observe a reference into a temporary owner");
+  expect(std::any_of(temporary.diagnostics.begin(), temporary.diagnostics.end(),
+                     [](const auto &diagnostic) {
+                       return diagnostic.code == "GTI-S2017" &&
+                              diagnostic.primary.line == 10 &&
+                              diagnostic.message.find(
+                                  "Switch subject is derived from temporary "
+                                  "storage") != std::string::npos &&
+                              diagnostic.hints.size() == 1;
+                     }),
+         "the temporary switch subject is reported at the subject");
+  expect(std::none_of(temporary.diagnostics.begin(),
+                      temporary.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                        return diagnostic.code.starts_with("GTI-B");
+                      }),
+         "a temporary switch subject fails in semantics, not MIR/backend");
+
+  const auto conflict =
+      analyzeWithStandardLibrary("reference-call-switch-conflict.gti", R"gti(
+enum Shape { circle(int radius), none };
+class Holder {
+public:
+  mut Shape shape;
+  mut int count;
+  Holder(int radius) : shape(Shape::circle(radius)), count(0) {}
+  Shape& shapeRef() { return this.shape; }
+};
+int main() {
+  mut Holder holder = Holder(3);
+  switch (holder.shapeRef()) {
+  case Shape::circle(auto& radius): holder.count = 1; return radius;
+  case Shape::none: return 0;
+  }
+}
+)gti");
+  expect(
+      !conflict.semanticValid &&
+          std::any_of(conflict.diagnostics.begin(), conflict.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                        return diagnostic.code == "GTI-S2017" &&
+                               diagnostic.primary.line == 13;
+                      }) &&
+          std::none_of(conflict.diagnostics.begin(), conflict.diagnostics.end(),
+                       [](const auto &diagnostic) {
+                         return diagnostic.code.starts_with("GTI-B");
+                       }),
+      "an arm's payload reference keeps its owner borrowed");
+}
 } // namespace
 
 int main() {
@@ -917,5 +1139,7 @@ int main() {
   checkLoweringFailureContext();
   checkNestedReadonlyReferences();
   checkLocalCarrierSelections();
+  checkSelectionOwners();
+  checkReferenceCallSwitchSubjects();
   return failures == 0 ? 0 : 1;
 }

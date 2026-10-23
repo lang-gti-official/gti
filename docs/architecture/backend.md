@@ -329,8 +329,16 @@ to dominate the switch. The backend spells the discriminant, every borrowed
 payload binding and every copied payload field over that one element
 subscription, without copying the enum or checking the index again. Admission
 and the text step accept these places through one shared predicate. A field
-of an element at a runtime index, as in `records[i].state`, has no element
-spelling for any read yet, so such a switch still stops with `GTI-B0001`.
+of an element at a runtime index, as in `records[i].state`, is spelled once
+MIR has checked that element's selection at its own `AddressOf`, which program
+verification requires to dominate every access through the field.
+
+The same predicate admits any read or store of a field below fixed-array
+elements, such as `points[i].x` or `cells[i][j].start.y`, when every index is
+a compile-time in-bounds constant or a run-time index whose checked selection
+MIR completed at an `AddressOf` over the place prefix ending at that index.
+The text spells plain subscripts and the field chain without a second check;
+removing the checked selection refuses the body.
 
 Ordinary field chains projected from a checked class-payload extraction share
 that extraction's address. Admission checks every typed field projection;
@@ -1272,6 +1280,17 @@ form serves one further unprojected destination — a bare mutable binding,
 described with the prvalue assignment routes below — where the assignment
 carries no bounds site at all.
 
+Named places fuse a copy or a fresh construction the same way, without a
+bounds site. A global's storage, a lambda's by-value capture, and the referent
+of a by-reference capture are lvalues that the shared place spelling names
+directly, exactly like a bare binding: each is a destination (a captured
+reference only when it grants mutable access) and each can be the copy's
+source. A mutable loan referent, as an overloaded subscript's `mut T&` result
+yields, receives the copy through the loan, as it receives a fresh value; only
+that loan's pure two-phase activation may separate the copy from the store. A
+read-only loan or captured reference is no destination, so its copy keeps no
+declaration and the body is refused.
+
 A fixed-array element place may carry several `Index` projections, and MIR
 describes that whole chained access with one instruction and one bounds site.
 The C++ text therefore owns a bound for every dimension rather than only the
@@ -1573,10 +1592,14 @@ touches it, and it declares and spells nothing. The copy `Load` that MIR uses
 for a class assignment's result, as in `(p = q).x`, copy-constructs the slot
 from the committed destination the same way; it requires a copyable class with
 a generated destructor and no active drop state or borrowed state, takes no
-other consumer, and keeps every other copy-load route unchanged. The
-constructor form also requires exact target, owner, result, parameter, and
-operand metadata; a trivial scalar copy load; and no active cleanup,
-lifecycle, borrowed-state, or drop obligation. A text view field
+other consumer, and keeps every other copy-load route unchanged. Whole uses of
+that result need no backend rule of their own: an initialization, return or
+constructor field initializer spells the copy `Load` as any copy load, a
+receiver borrows the hidden temporary as a joined temporary, and a by-value
+argument is an ordinary copied argument staged before any later argument
+runs. The constructor form also requires exact target, owner, result,
+parameter, and operand metadata; a trivial scalar copy load; and no active
+cleanup, lifecycle, borrowed-state, or drop obligation. A text view field
 (`std::string_view` or `c_string`) is read the same way: the view is a passive
 descriptor whose text is never the temporary's own storage. A construction that
 publishes a local owner's text (`L-OWN-02`) holds borrowed state only as that
@@ -2673,10 +2696,14 @@ destruction, plus generated copy construction where a route copies it, no
 active cleanup or drop state, no state-bearing base, and only passive fields.
 A passive field copies bitwise and its destruction runs no source cleanup: a
 scalar, an enum, a raw or null pointer (a `c_string` is a raw pointer), a text
-view, a fixed array of passive fields, or a passive generated class. The rule
-names representations, not library types. A text view's dependency on its
-owner, when it has one, exists only as a MIR loan, which has no
-representation, so it changes neither the copy nor the destruction. A class
+view, a function item with its function identity, a fixed array of passive
+fields, or a passive generated class. The rule names representations, not
+library types. A function item is a stateless identity tag
+(`function_item<id, R>` natively): MIR calls the named function directly,
+never through the stored object, so a generic `Op<F>` instantiated with a
+function name copies and moves like any passive class. A text view's
+dependency on its owner, when it has one, exists only as a MIR loan, which has
+no representation, so it changes neither the copy nor the destruction. A class
 that only holds text views is therefore passive and not a borrowed carrier.
 Semantics keeps ownerless text in such a by-value field of another class, and
 MIR records no loan, value or rollback obligation for moving it. So
