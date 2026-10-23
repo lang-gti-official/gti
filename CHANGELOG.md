@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.465.4 — References to payload enums held inside another enum
+## 0.465.5 — References to payload enums held inside another enum
 
 - `std::optional<Shape>::value()` for a payload enum without cleanup, such as
   `enum Shape { circle(int radius), none }`, used to fail while compiling the
@@ -19,6 +19,23 @@ for what minor and patch releases mean.
   affected any reference bound to an `auto&` payload of that kind, whether
   returned by your own accessor or bound directly, as in
   `case Wrap::one(auto& s): Shape& r = s;`.
+
+## 0.465.4 — Text relays through accessor switch subjects
+
+- A method that returns a payload's text by reference through an accessor
+  subject now relays the receiver's text, as the same method over the field
+  does. For `Word& wordRef() { return this.word; }`,
+  `std::string_view& textRef() { switch (this.wordRef()) { case
+  Word::text(auto& v): return v; ... } }` used to make `line.textRef()` on
+  text owned elsewhere report `error[GTI-S2045]` when passed or printed; it
+  now works, as it does through `switch (this.word)`.
+- Fixed: binding a payload's text by value through an accessor subject did
+  not carry the field's ownerless-text requirement. In 0.465.2,
+  `std::string_view first() { switch (this.wordRef()) { case
+  Word::text(v): return v; ... } }` compiled even when called on text owned
+  by a local that is destroyed before the result is used, leaving a dangling
+  view. It now reports `error[GTI-S2045]`, exactly as through
+  `switch (this.word)`.
 
 ## 0.465.3 — Moving classes that hold function items
 
