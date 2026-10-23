@@ -2009,6 +2009,25 @@ Phase 2c adds re-rooting constructions and dependent returns:
   payload binding that semantics gives a retained loan carries that loan in
   MIR (`bindingLoans`).
 
+Phase 3 verifies nested paths:
+- `directTextPath` walks class fields and payload-enum payloads to text at
+  any depth. `TextContracts` records a nested text class formal stored whole
+  (relay key `(parameter, 0)`) or a class field of one, read directly or
+  through an accessor whose every return moves that receiver field
+  (`classFieldSource`). `publishesFieldRelay` and the verifier's
+  `dependentTextRelayPath` accept a designated path through either, and the
+  relay's own producers are exempt from the constructor's whole-use check.
+- A call publishing a dependent class argument that its callee returns whole
+  (`publishesWholeCallText`, `dependentTextCallPublication`) nests the path
+  under the published field; returned fresh constructions derive those relays
+  for class formals.
+- `classReferenceRelay` derives the receiver payload that a reference to a
+  nested text class designates, through payload reference bindings and
+  composed accessors. Text read under such a call's result resolves to the
+  origin's prefix (`classReferenceSources`), and a whole use of the result
+  requires it. A relay of a nested path is contracted only through a payload
+  prefix.
+
 A text field result (`textFieldResult`: one `returnBorrowFields` mapping of an
 Argument or Receiver origin to one source field, no result fields) carries the
 dependency the caller's value holds in that field:
