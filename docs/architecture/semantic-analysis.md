@@ -2485,7 +2485,13 @@ origins. Selected reference accessors do not inherit an unrelated first field's
 permission. Forming a reference selection in a switch arm records a use of its
 parent authority and that parent's ancestors, so the carrier's dependency
 stays live while the arm forms its selections even when it never reads a
-selected binding. Concrete generic reanalysis substitutes these same facts.
+selected binding. Likewise, an arm that binds payloads of an observed subject
+reached through a reference (a reference local, or a reference-returning call
+that names no place) records a use of that reference's authority and its
+ancestors at arm entry, because its extractions read through it; an arm over
+a named owned place records none. An observed payload subject must have the
+stable borrow storage a reference initializer needs (`GTI-S2017` otherwise).
+Concrete generic reanalysis substitutes these same facts.
 Lifecycle traits reject copying any exclusive path, and transfer preserves all
 parents until the final child/carrier endpoint. Custom destruction,
 when present, extends the dependency endpoint through cleanup; it does not
