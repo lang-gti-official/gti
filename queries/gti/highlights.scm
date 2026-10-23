@@ -42,7 +42,7 @@
 (function_declaration "unsafe" @keyword)
 (constructor_declaration "implicit" @keyword.modifier)
 (operator_declaration "implicit" @keyword.modifier)
-(function_contract_attribute ["test" "noreturn" "track_caller" "discardable" "deferred" "thread_confined_callback"] @attribute)
+(function_contract_attribute ["test" "noreturn" "track_caller" "discardable" "thread_confined_callback"] @attribute)
 (borrow_origin_attribute "borrowed_from" @attribute)
 (borrow_origin_attribute origin: (identifier) @variable.parameter)
 (native_c_array_attribute
@@ -88,9 +88,18 @@
 (concept_application
   name: (identifier) @type)
 (member_requirement_expression
-  binding: (identifier) @variable.parameter
-  receiver: (identifier) @variable.parameter
-  member: (identifier) @function.method)
+  binding: (identifier) @variable.parameter)
+(member_requirement_expression
+  parameter: (identifier) @variable.parameter)
+(member_requirement_expression
+  expression: (call_expression
+    function: (member_expression
+      object: (primary_expression (identifier) @variable.parameter)
+      member: (identifier) @function.method)))
+(constraint_predicate
+  name: (identifier) @function.call)
+(constraint_predicate
+  name: (scoped_identifier name: (identifier) @function.call))
 (concept_application
   name: (scoped_identifier
     name: (identifier) @type))
@@ -101,6 +110,9 @@
 
 (function_declaration
   name: (identifier) @function)
+(macro_declaration
+  "#macro" @keyword.type
+  name: (identifier) @function.macro)
 (function_declaration
   name: (scoped_identifier
     name: (identifier) @function.method))

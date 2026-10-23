@@ -229,7 +229,9 @@ The current implemented foundation includes:
 
 - `<std/meta>` compile-time reflection: `std::meta::fields_of<T>()`,
   `std::meta::type_of<T>()`, `std::meta::name_of<T>()`,
-  `std::meta::primary_name_of<T>()`, type predicates, the
+  `std::meta::primary_name_of<T>()`, classification/lifecycle/relocation and
+  transfer/share predicates, exact `is_same<T, U>()` and
+  `is_enum_underlying<E, U>()` relations, the
   `field` and `type` metaobjects with `name()`, `index()`, `is_public()`,
   `type()`, `get()`, `get_mut()`, `has_default()` and `default_value()`,
   declared attributes
@@ -255,7 +257,7 @@ The current implemented foundation includes:
   their type checking; it never disables `std::assert`. The built-in release
   project profile defines `NDEBUG`; direct compilation can use `-D NDEBUG`,
   independently of optimization. These are source-defined
-  [deferred statement helpers](execution.md#deferred-statement-helpers), a
+  [typed statement macros](execution.md#typed-statement-macros), a
   facility available equally to application APIs. `static_assert` remains the
   unqualified compile-time language construct; and
 - `<std/testing>` provides caller-tracked `std::testing::check`, reporting a
