@@ -4384,6 +4384,24 @@ private:
                                  .arguments = *plannedArguments};
   }
 
+  // The selected checked access step of a `->` member whose receiver is an
+  // ordinary argument. Its reference result is the place the member names.
+  [[nodiscard]] HirValueId
+  lowerArrowAccessCall(HirValueId receiver,
+                       const ResolvedOperatorInfo &resolved, const Expr &member,
+                       HirBody &body) {
+    HirValue arrowCall{.id = nextValueId++,
+                       .kind = HirValueKind::Call,
+                       .source = &member,
+                       .operands = {receiver}};
+    configureOperatorCall(arrowCall, resolved, body);
+    (void)enqueueClass(arrowCall.info.type);
+    const HirValueId arrowId = arrowCall.id;
+    body.values.push_back(std::move(arrowCall));
+    output.program.sourceValueIds[&member].push_back(arrowId);
+    return arrowId;
+  }
+
   [[nodiscard]] HirValueId splitOverloadedArrowProjection(
       HirValue value, const ResolvedOperatorInfo &resolved, HirBody &body) {
     const HirValueId receiver = value.operands.front();
@@ -5491,7 +5509,23 @@ private:
         lifecycleValid = false;
       for (std::size_t index = 0;
            index < resolvedCallArgumentCount(*call, resolved); ++index) {
+        const std::size_t lowered = operands.size();
         lowerOperand(*resolvedCallArgument(*call, resolved, index));
+        // A normalized receiver written with `->` is the place its selected
+        // access step designates, not the written object.
+        const auto *member = exprAs<Get>(call->callee().get());
+        if (index != 0 || resolved == nullptr ||
+            resolved->argumentReceiver == nullptr || member == nullptr ||
+            member->access().kind != TokenKind::ARROW)
+          continue;
+        const ResolvedOperatorInfo *arrow = model.findOperator(*member);
+        if (arrow == nullptr || arrow->kind != OverloadedOperator::Arrow ||
+            operands.size() != lowered + 1) {
+          lifecycleValid = false;
+          continue;
+        }
+        operands.back() =
+            lowerArrowAccessCall(operands.back(), *arrow, *member, body);
       }
     } else if (const auto *conditional = exprAs<ConditionalExpr>(raw)) {
       kind = HirValueKind::Conditional;

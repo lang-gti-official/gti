@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.466.1 — Text members through `operator->`
+
+- When an `operator->` returns a `std::string_view&`, its members can be
+  called through `->`. For a class with `std::string_view& operator->()`,
+  `b->size()` used to report `error[GTI-B0001]` (an internal compiler error);
+  it now calls the view's `size()`. The same holds for `empty()` and for
+  `end()`/`rend()`, and for `std::optional<std::string_view>`, whose
+  `o->size()` now works like `(*o).size()`. On an empty optional, `o->size()`
+  reports its defined `empty_owner_access` failure.
+- A referent without members is reported at the call: `->` through an
+  `int&` or `c_string&` result reports `GTI-S2000`, and an unknown
+  `string_view` member reports `GTI-S2035`.
+- Not yet supported: building a text iterator directly from a returned view
+  reference, as in `o->begin()` or `o.value().begin()`, still reports
+  `GTI-B0001`. Bind the reference first (`std::string_view& view =
+  o.value();`) and iterate `view`.
+
 ## 0.466.0 — Typed macros
 
 - Declare namespace-scope statement templates with `#macro NAME(typed
@@ -31,6 +48,7 @@ for what minor and patch releases mean.
 - Diagnostics include nested expansion context. Neovim's read-only
   `:GTIExpandMacro` view explains the checked expansion and local bindings.
 
+
 ## 0.465.6 — Moving one class and copying another after fallible work
 
 - A constructor can now move one class into a field and copy another into a
@@ -43,6 +61,7 @@ for what minor and patch releases mean.
   or the constructor body fails, each field already built is dropped exactly
   once.
 
+
 ## 0.465.5 — Test-target editor diagnostics
 
 - The language server recognizes `kind = "test"` and no longer asks valid
@@ -50,6 +69,7 @@ for what minor and patch releases mean.
   suites, invalid test signatures and conflicting user-written entry points.
   Changing a target between executable and test refreshes editor diagnostics.
   Generated test dispatchers stay out of editor source snapshots and symbols.
+
 
 ## 0.465.4 — Text relays through accessor switch subjects
 
@@ -68,6 +88,7 @@ for what minor and patch releases mean.
   view. It now reports `error[GTI-S2045]`, exactly as through
   `switch (this.word)`.
 
+
 ## 0.465.3 — Moving classes that hold function items
 
 - A generic class whose field holds a function item, such as `class Op<F> {
@@ -80,6 +101,7 @@ for what minor and patch releases mean.
 - Such a class can also now be chosen by a conditional, as in `Op<F> chosen =
   pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
   can be assigned into a field. Each used to report `error[GTI-B0001]`.
+
 
 ## 0.465.2 — Switching over a payload enum returned by reference
 
@@ -96,6 +118,7 @@ for what minor and patch releases mean.
   `switch (Holder(3).shapeRef())`, is now rejected with `error[GTI-S2017]`
   instead of an internal compiler error, as `Shape& s = Holder(3).shapeRef();`
   already was. Bind the owner to a local first.
+
 ## 0.465.1 — Class stores into globals, captures and element fields
 
 - Assigning a class value to a global, through a `[mut &p]` capture, or

@@ -7480,19 +7480,27 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   }
 
   if (const auto *member = exprAs<Get>(expr.callee().get())) {
-    const SemanticType *objectType = semanticModel.findType(*member->object());
-    if (objectType && containsOpenTypeParameter(*objectType)) {
+    // `->` designates the place its one checked access step returns, so a
+    // builtin or required member is looked up on that place's type exactly
+    // as `.` looks it up on the written object. A rejected step has already
+    // been diagnosed by the callee's analysis.
+    const SemanticType receiverType =
+        member->access().kind == TokenKind::ARROW &&
+                calleeType == SemanticType::Unknown
+            ? SemanticType::Unknown
+            : memberAccessObjectType(*member);
+    if (containsOpenTypeParameter(receiverType)) {
       if (const auto result = symbolicReadMemberReturnType(
-              *objectType, member->name().lexeme)) {
+              receiverType, member->name().lexeme)) {
         std::optional<ExpandedStructuralRequirement> selected;
         bool ambiguous = false;
         for (const auto &requirement : activeStructuralRequirements()) {
           if (requirement.kind != StructuralConstraintKind::ReadMember ||
               requirement.memberName != member->name().lexeme ||
               requirement.arguments.size() != argumentTypes.size() + 2 ||
-              requirement.arguments[0] != *objectType ||
+              requirement.arguments[0] != receiverType ||
               (requirement.mutableReceiver &&
-               !isMutableObject(member->object())))
+               !memberReceiverIsMutable(*member)))
             continue;
           bool matches = true;
           for (std::size_t index = 0; index < argumentTypes.size(); ++index)
@@ -7536,14 +7544,13 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         return;
       }
     }
-    if (objectType != nullptr &&
-        objectType->kind == SemanticType::TypeParameter) {
+    if (receiverType.kind == SemanticType::TypeParameter) {
       const bool generatedRangeEndpoint =
           member->name().generated && (member->name().lexeme == "begin" ||
                                        member->name().lexeme == "begin_mut" ||
                                        member->name().lexeme == "end");
       const std::optional<SemanticType> result =
-          symbolicRangeMemberReturnType(*objectType, member->name().lexeme);
+          symbolicRangeMemberReturnType(receiverType, member->name().lexeme);
       if (result &&
           (member->name().lexeme == "size" || generatedRangeEndpoint)) {
         if (hasExplicitGenericArguments) {
@@ -7573,7 +7580,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         return;
       }
     }
-    if (objectType != nullptr && objectType->kind == SemanticType::Array) {
+    if (receiverType.kind == SemanticType::Array) {
       if (hasExplicitGenericArguments) {
         report(expr.paren(),
                "Fixed array member functions do not take generic arguments.");
@@ -7585,7 +7592,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       analyzeArrayMemberCall(expr, *member, argumentTypes, expr.paren());
       return;
     }
-    if (objectType != nullptr && objectType->kind == SemanticType::StringView) {
+    if (receiverType.kind == SemanticType::StringView) {
       if (hasExplicitGenericArguments) {
         report(expr.paren(),
                "String-view member functions do not take generic arguments.",
