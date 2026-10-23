@@ -1,0 +1,102 @@
+// References selected from a payload enum held in a local, where one
+// alternative stores several references to different external owners. Each
+// selection names its own owner, including the carrier's additional owners,
+// and a selection that the arm never reads still keeps the carrier's
+// dependency live while it is formed.
+enum Slot { item(int& value), empty };
+
+Slot borrow_slot(int& owner, bool present) {
+  if (!present) { return Slot::empty; }
+  return Slot::item(owner);
+}
+
+enum Pair { both(int& first, int& second), none };
+
+Pair pair_of(int& first, int& second) { return Pair::both(first, second); }
+
+enum Triple { all(int& a, int& b, int& c), none };
+
+enum Both<T> { both(T first, T second), none };
+
+enum Edits { both(mut int& first, mut int& second), none };
+
+class Holder {
+public:
+  Pair pair;
+  Holder(int& first, int& second) : pair(Pair::both(first, second)) {}
+};
+
+int sum_parameters(int& first, int& second) {
+  auto pair = pair_of(first, second);
+  switch (pair) {
+  case Pair::both(auto& x, auto& y): return x + y;
+  case Pair::none: return -1;
+  }
+}
+
+void bump(mut int& first, mut int& second) {
+  mut auto edits = Edits::both(first, second);
+  switch (edits) {
+  case Edits::both(mut auto& x, mut auto& y): x += 10; y += 100; return;
+  case Edits::none: return;
+  }
+}
+
+int main() {
+  int left = 3;
+  int right = 4;
+  // An unread selection, over either alternative.
+  auto missing = borrow_slot(left, false);
+  switch (missing) {
+  case Slot::item(auto& unused): return 1;
+  case Slot::empty: break;
+  }
+  auto present = borrow_slot(left, true);
+  switch (present) {
+  case Slot::item(auto& unused): break;
+  case Slot::empty: return 2;
+  }
+
+  auto called = pair_of(left, right);
+  switch (called) {
+  case Pair::both(auto& first, auto& second): if (first + second != 7) { return 3; } break;
+  case Pair::none: return 4;
+  }
+  auto direct = Pair::both(left, right);
+  switch (direct) {
+  case Pair::both(auto& first, auto& second): if (first != 3 || second != 4) { return 5; } break;
+  case Pair::none: return 6;
+  }
+  switch (called) {
+  case Pair::both(auto& first, auto& unused): if (first != 3) { return 7; } break;
+  case Pair::none: return 8;
+  }
+  auto same = pair_of(left, left);
+  switch (same) {
+  case Pair::both(auto& first, auto& second): if (first + second != 6) { return 9; } break;
+  case Pair::none: return 10;
+  }
+
+  int third = 5;
+  auto triple = Triple::all(left, right, third);
+  switch (triple) {
+  case Triple::all(auto& a, auto& b, auto& c): if (a + b + c != 12) { return 11; } break;
+  case Triple::none: return 12;
+  }
+  auto generic = Both<int&>::both(left, right);
+  switch (generic) {
+  case Both<int&>::both(auto& first, auto& second): if (second - first != 1) { return 13; } break;
+  case Both<int&>::none: return 14;
+  }
+  auto holder = Holder(left, right);
+  switch (holder.pair) {
+  case Pair::both(auto& first, auto& second): if (first * second != 12) { return 15; } break;
+  case Pair::none: return 16;
+  }
+  if (sum_parameters(left, right) != 7) { return 17; }
+
+  mut int a = 3;
+  mut int b = 4;
+  bump(a, b);
+  return a == 13 && b == 104 ? 0 : 18;
+}
