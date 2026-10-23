@@ -1,0 +1,104 @@
+// Constructors over passive values are failure-free: integral enums, payload
+// enums over passive payloads, passive records, and a consuming member call
+// on a passive record. A checked operation beside them keeps its failure form.
+#include <std/string>
+#include <std/vector>
+
+mut int32_t stage = 0;
+
+int32_t divisor_for(int32_t step) { return stage >= step ? 0 : 1; }
+
+enum class Mode : int32_t { Fast = 1, Slow = 2 };
+
+enum slot_state { ready(int32_t count), lost(Mode mode), empty };
+
+class Token {
+public:
+  mut Mode mode;
+  int32_t weight;
+  Token(Mode mode, int32_t weight) : mode(mode), weight(weight) {}
+  Mode take() && { return std::move(this.mode); }
+};
+
+class Slot {
+public:
+  mut slot_state state;
+  Slot(int32_t count) : state(slot_state::ready(count)) {}
+  Slot(mut Token token) : state(slot_state::lost(std::move(token).take())) {}
+  Slot() : state(slot_state::empty) {}
+  int32_t code() {
+    switch (this.state) {
+    case slot_state::ready(count): return count;
+    case slot_state::lost(mode): return mode == Mode::Slow ? -2 : -1;
+    case slot_state::empty: return 0;
+    }
+  }
+};
+
+class Stamp {
+public:
+  mut int32_t number = 0;
+  Mode mode = Mode::Fast;
+};
+
+class Holder {
+public:
+  Stamp stamp;
+  Mode mode;
+  Holder(Stamp stamp, Mode mode) : stamp(std::move(stamp)), mode(mode) {}
+};
+
+// A move-only passive record moves into a payload; reading a field through a
+// construction that consumed a prepared record argument needs no result
+// obligation.
+class Ticket {
+public:
+  int32_t number;
+  Ticket(int32_t number) : number(number) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+
+enum ticket_state { issued(Ticket ticket), void_ticket };
+
+class Desk {
+public:
+  mut ticket_state state;
+  Desk(Ticket ticket) : state(ticket_state::issued(std::move(ticket))) {}
+  int32_t number() {
+    switch (this.state) {
+    case ticket_state::issued(auto& ticket): return ticket.number;
+    case ticket_state::void_ticket: return 0;
+    }
+  }
+};
+
+int32_t held_mode(Stamp stamp) {
+  return Holder(stamp, Mode::Slow).stamp.number;
+}
+
+// A division beside a payload construction keeps the constructor fallible.
+class Divided {
+public:
+  mut slot_state state;
+  Divided(int32_t count) : state(slot_state::ready(60 / divisor_for(1))) {}
+};
+
+Slot ready_slot(int32_t count) { return Slot(count); }
+
+Slot lost_slot(Mode mode) { return Slot(Token(mode, 3)); }
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  std::println(ready_slot(7).code());
+  std::println(lost_slot(Mode::Slow).code());
+  std::println(Slot().code());
+  mut Stamp stamp = Stamp();
+  stamp.number = 5;
+  Holder holder = Holder(stamp, Mode::Slow);
+  std::println(holder.stamp.number + (holder.mode == Mode::Slow ? 10 : 0));
+  std::println(Desk(Ticket(21)).number() + held_mode(stamp));
+  Divided divided = Divided(4);
+  std::println(Slot(divided.state == slot_state::empty ? 0 : 60).code());
+  return 0;
+}

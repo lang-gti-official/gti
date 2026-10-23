@@ -639,6 +639,7 @@ private:
          .ownerlessTextParameters = declaration.ownerlessTextParameters,
          .ownerlessTextFields = declaration.ownerlessTextFields,
          .publishedTextFields = declaration.publishedTextFields,
+         .dependentTextReturn = declaration.dependentTextReturn,
          .entryKind = declaration.entryKind,
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
          .explicitReturnBorrowOrigin = declaration.explicitReturnBorrowOrigin,
@@ -2140,6 +2141,8 @@ private:
           concrete->ownerlessTextFields;
       output.program.functions[index].publishedTextFields =
           concrete->publishedTextFields;
+      output.program.functions[index].dependentTextReturn =
+          concrete->dependentTextReturn;
       output.program.functions[index].ownerlessTextContractProof =
           model->ownerlessTextContractProof(*concrete->declaration);
       output.program.functions[index].returnBorrowOrigin =
@@ -4233,7 +4236,11 @@ private:
           !input->info.traits.movable ||
           (input->info.traits.containsBorrowedState &&
            (input->info.type.kind != SemanticType::Class ||
-            !input->borrowDependencies))) {
+            (!input->borrowDependencies &&
+             // A dependent text value's class holds no borrowed state of
+             // its own (L-OWN-02); the callee's field contract governs it.
+             instanceProvider->traitsFor(input->info.type)
+                 .containsBorrowedState)))) {
         return std::nullopt;
       }
       while (input->kind == HirValueKind::Grouping &&
@@ -5123,6 +5130,17 @@ private:
         .dependentTextPublication = construction.dependentTextPublication,
         .constructorKind = construction.kind,
     };
+    // A conversion that publishes its argument's owner gives a dependent
+    // value, as semantics classifies an explicit publishing construction
+    // (L-OWN-02): it carries borrowed state and cannot be reassigned.
+    if (construction.dependentTextPublication) {
+      auto &traits = value.info.traits;
+      traits.copyAssignable = false;
+      traits.moveAssignable = false;
+      traits.containsBorrowedState = true;
+      traits.transferCapable = false;
+      traits.shareCapable = false;
+    }
     if (construction.contextualBorrowDependencies) {
       value.borrowDependencies = construction.contextualBorrowDependencies;
       for (auto &dependency : value.borrowDependencies->dependencies)

@@ -1983,6 +1983,56 @@ fields.
   for that call: readers resolve the text through `returnSources`, so a
   method composing another accessor's reference relays what it relays.
 
+Phase 2c adds re-rooting constructions and dependent returns:
+- A construction that re-roots a class argument's text field has one
+  `borrowFields` mapping with one `sourceFields` entry. The verifier's
+  `dependentTextPublication` admits it when `dependentTextFieldRelay`, read
+  from the constructor's initializers, maps that parameter's field to exactly
+  the mapping's `resultFields`. In `TextContracts`, a dependent CallInput into
+  such a construction is re-rooted (`publishesFieldRelay`), and a re-rooted
+  formal field must reach no ownerless text storage in the constructor
+  (`constructorBodyFieldNeeds`). `contractPlace` treats a constructor's
+  by-value class formal as a contract place. `dependentDesignationPath`
+  follows a value that a Move or Load produced, so a moved dependent argument
+  is checked too; before 0.466.0 it skipped the relay check.
+- A consuming receiver is a contract formal (`readOnlyContractFormal`). A
+  consuming call whose result is a text field result of its receiver is
+  exempt from the consuming-call borrow rule.
+- In a field-contract function, an instruction other than a `PayloadExtract`
+  that names a contract formal's payload-enum field place (a copy, move or
+  borrow of the field) requires every text payload of that field. A switch
+  observes its subject in place, in its terminator.
+- `dependentTextReturnSummary` admits a function flagged
+  `dependentTextReturn`: one Argument mapping over a read-only reference
+  parameter, with no source fields, at a direct text path, or at a payload of
+  an enum result. It replaces the complete-layout check for that summary. A
+  return that is a Construct or Call without a loan and without publication
+  is an ownerless alternative. Clearing the flag or the path fails
+  verification.
+- HIR gives a publishing contextual construction dependent traits, and its
+  verifier requires the construction and its value node to agree. A by-value
+  payload binding that semantics gives a retained loan carries that loan in
+  MIR (`bindingLoans`).
+
+Phase 3 verifies nested paths:
+- `directTextPath` walks class fields and payload-enum payloads to text at
+  any depth. `TextContracts` records a nested text class formal stored whole
+  (relay key `(parameter, 0)`) or a class field of one, read directly or
+  through an accessor whose every return moves that receiver field
+  (`classFieldSource`). `publishesFieldRelay` and the verifier's
+  `dependentTextRelayPath` accept a designated path through either, and the
+  relay's own producers are exempt from the constructor's whole-use check.
+- A call publishing a dependent class argument that its callee returns whole
+  (`publishesWholeCallText`, `dependentTextCallPublication`) nests the path
+  under the published field; returned fresh constructions derive those relays
+  for class formals.
+- `classReferenceRelay` derives the receiver payload that a reference to a
+  nested text class designates, through payload reference bindings and
+  composed accessors. Text read under such a call's result resolves to the
+  origin's prefix (`classReferenceSources`), and a whole use of the result
+  requires it. A relay of a nested path is contracted only through a payload
+  prefix.
+
 A text field result (`textFieldResult`: one `returnBorrowFields` mapping of an
 Argument or Receiver origin to one source field, no result fields) carries the
 dependency the caller's value holds in that field:
@@ -2189,6 +2239,25 @@ record only when its event equals the event of the exact `Move` it repeats.
 The constructor proof admits a moved formal's owned-parameter initializer
 when that formal's type is passive. A class move still needs its lifecycle
 events, and a real failure source beside a move keeps the body conservative.
+Its passive values are program-aware (RT-12): scalars, integral enums, fixed
+arrays of passive values, payload enums whose every alternative payload is
+passive and needs no active cleanup, and records with generated special
+members, no destructor, no borrowed state and only passive fields. A
+constructor whose class holds only such fields may take such formals, build
+an enum constant or a payload construction whose operands match the selected
+alternative, keep passive drop obligations (no destructor, no active cleanup,
+no active child), move a passive input into its prepared call slot, and make
+a consuming (`Once`) call of an already proved non-virtual member of a
+passive record whose receiver is that slot, provided the call retires exactly
+the slot's obligation. So `Slot(int32_t n) : state(state_t::ready(n))`, the
+prelude's `expected(T value)`, `expected()` and
+`expected(unexpected_value<E>)` for passive `T` and `E`, and
+`unexpected_value<E>(E)` for an integral enum `E` are failure-free, and the
+structural function proof then lifts result builders over them, such as
+`expected<int32_t, E>`, `expected<void, int32_t>` and
+`expected<Record, int32_t>` returns. A payload whose alternative needs active
+cleanup, a checked operation, a non-consuming or lifecycle-free receiver call,
+or a borrowed or actively cleaned value keeps the constructor conservative.
 This is only the defined-
 failure dimension by itself. Every function, constructor, or destructor whose
 definition provenance is a declaration (and every runtime-bound function) is

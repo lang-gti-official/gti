@@ -360,14 +360,14 @@ workflow determine task scope and integration.
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
 | `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
-| `L-OWN-02` owner-tracked view fields | phase 1, 2a and 2b implemented; 2c (constructor relays and returned dependent values) next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values; 1b-i relays them into functions and methods through inferred field-level contracts, and a function that returns one text field relays it to its result. Payload enums hold the same dependency in a text payload, and a temporary holds it within its expression. Phase 2a lets a function that returns a fresh value over its text formal relay it, including `std::make_pair` and `unexpected`; 2b adds reference accessors, generic class methods and nested publication through payload-enum fields, covering `optional<std::string_view>` and success `expected`. Later steps cover `expected`'s constructor relays, returned dependent values, nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
+| `L-OWN-02` owner-tracked view fields | phases 1 and 2 implemented; phase 3 (nested borrowing values) next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values; 1b-i relays them into functions and methods through inferred field-level contracts, and a function that returns one text field relays it to its result. Payload enums hold the same dependency in a text payload, and a temporary holds it within its expression. Phase 2a lets a function that returns a fresh value over its text formal relay it, including `std::make_pair` and `unexpected`; 2b adds reference accessors, generic class methods and nested publication through payload-enum fields, covering `optional<std::string_view>` and success `expected`; 2c publishes through implicit conversions, re-roots a class formal's text field in a constructor (`expected` from `unexpected_value`), and lets a function return a value over a reference formal's referent, as `parse(std::string&)` returning `unexpected(input.view())` does. Later steps cover nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
 | Native import `C-08B` | ordinary foreign objects implemented | Exact external-storage identity, unsafe loads/stores, inert addresses, explicit owner-witness borrowing, headers and bindgen cover scalar, recursive pointer, callback and passive-record objects. TLS/volatile and top-level arrays require their general access/address contracts. |
 | `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Select remaining stored-reference, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
 | `T-LSP` latency client | reachable trusted bodies implemented in 0.411.0; library-only instance reuse in 0.420.0; library-only instance bodies omitted from editor HIR in 0.421.0; trusted prefix preamble in 0.423.0 | Snapshots and completion use demand-driven trusted bodies, with explicit HIR-to-semantics requests and a bounded complete-check fallback. Editor snapshots reuse validated library-only concrete instance analyses, no longer lower library-only instance bodies, and resume from a preamble of the standard-library prefix analysed once per include graph (089 per-edit 470 to about 80 ms; exit measure met). Remaining: the adoption copy (about 17 ms per edit). See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
-| `RT-2` through `RT-12` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. RT-12 recovers the optimizer proofs and exit sharing that the source-defined `expected` (0.449.0) gave up by owner decision; its tests mark the lost controls as recovery-pending. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
+| `RT-2` through `RT-12` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. RT-12 recovers the optimizer proofs and exit sharing that the source-defined `expected` (0.449.0) gave up by owner decision; its tests mark the lost controls as recovery-pending. Its closed-call proofs and failure closure are delivered in 0.466.0 ([RT-12](optimization.md)); exit sharing for exits that construct the result remains. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2; their scalar normal exits in 0.421.1 | Continuation records entered by `ContinueFailure` share identical failure-cleanup suffixes, and normal exits returning nothing, a scalar or a scalar error share exit ladders; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; exits returning owning, class or borrowed results; path-dependent steps stay private. |
 | Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. General payload-enum destination construction, tagged representation and observation/retirement improvements replace the historical 1.6-times scalar / 1.13-times string result. Singleton cleanup forwarding removes the preceding robust GCC/Linux string residual in fresh paired evidence at `560cafa9` (median 1.0035, interval spanning parity); fresh macOS measurements remain pending ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)). Promotion to `std::optional` still requires surface, failure-behaviour and platform performance acceptance, not merely the representation change. `expected` is a source class on the same `std::tryable` protocol since 0.449.0, and conformance-block patterns over raw pointers and fixed-length arrays are delivered in 0.450.0. Further goals include signature-level borrow-origin contracts on concept operations, and moving member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
 | Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; process capture and environment mutation/enumeration or child-local overrides; required text/range/service breadth. Owned read-only environment lookup is delivered in 0.402.0. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
@@ -8992,9 +8992,10 @@ prerequisite checkpoints as full acceptance.
 - **State/role:** owner decision 2026-10-21 (option 1 of the caller-owned text
   question in the 0.449.0 follow-ups). Phase 1 is implemented: 1a (local class
   and struct values), 1b-i (relays and receivers) and 1b-ii (returns, payload
-  enums and temporaries). Phases 2a (published text results) and 2b
-  (reference accessors, generic class methods and nested publication) are
-  implemented; 2c and phases 3–4 are planned.
+  enums and temporaries). Phase 2 is implemented: 2a (published text
+  results), 2b (reference accessors, generic class methods and nested
+  publication) and 2c (conversions, field relays and returns). Phases 3–4
+  are planned.
 - **Problem and client:** no field can hold a view of caller-owned text. A
   `std::string_view` or `c_string` field, a payload-enum alternative of either
   type, and the storage of any constructor that keeps a text parameter accept
@@ -9196,20 +9197,83 @@ prerequisite checkpoints as full acceptance.
       accessors (`std::move(o).value()`) and returning the value. `o->`
       over a `std::string_view` payload is a backend `GTI-B0001` for every
       receiver (an existing gap that this release makes reachable).
-  - *2c: constructor relays and returned dependent values.* `expected`'s
-    constructor from `unexpected_value<E>` re-roots `[payload]` at
-    `[state, error]` through a consuming accessor. A function may return a
-    value over a reference formal's referent, as in
-    `parse(std::string& input)` returning `unexpected(input.view())`, the
-    motivating client. That return converts implicitly, so 2c also publishes
-    through a contextual construction, as in
-    `std::optional<std::string_view> o = input.view();`.
+  - *Implemented in 0.466.0 (2c): conversions, field relays and returns.*
+    - *Contextual construction.* An implicit conversion's one expression
+      node is both the argument and the converted value. It publishes the
+      argument's owner as an explicit construction does, so
+      `std::optional<std::string_view> o = input.view();` and
+      `expected<int, std::string_view> r = unexpected(input.view());` work.
+      A view binding's owner, not the binding, is the dependency: a value
+      over `std::string_view v = input.view()` depends on `input`.
+    - *Field relays.* A constructor that stores a by-value class formal's
+      text field, directly or through a zero-argument accessor returning
+      it, re-roots the argument's dependency at that field to the stored
+      path (`BorrowedFieldOrigin::sourceFields`). The formal is mentioned
+      once, and the constructor keeps published text. `expected`'s
+      constructor from `unexpected_value<E>` re-roots `[payload]` at
+      `[state, failure]` through the consuming `error() &&`; consuming
+      receivers are contract receivers, because a write into a text field
+      already requires ownerless text. MIR recomputes the path from the
+      constructor's initializers (`dependentTextFieldRelay`).
+    - *Returns.* A function whose returned value's single owner dependency
+      is the referent of one read-only reference formal relays it
+      (`FunctionInfo::dependentTextReturn`, an Argument return summary at
+      the text path). Each call's result is a dependent value over that
+      call's argument. Ownerless alternatives such as `return 0;` and
+      `std::nullopt` are admitted, and a returned call of such a function
+      relays again. MIR checks the summary's shape and that every return
+      either borrows the formal at that path or holds no dynamic text.
+    - *Payload field uses.* In a field-contract function, any use of a
+      formal's or the receiver's payload-enum field other than a `switch`
+      on it (a copy, move, borrow, store or reference return) requires
+      every text payload ownerless, in semantics and in MIR. 0.463.0 let a
+      dependent value's payload escape through such a use.
+    - *Still `GTI-S2045`:* returns needing two implicit conversions and
+      views of locals (owner decisions), by-value or `mut` reference
+      owners, two owner formals, a view of a method's receiver
+      (`Doc::first()` returning `Token(this.body.view(), 1)`), a factory
+      converting its by-value text formal into a payload path
+      (`std::optional<std::string_view> back(std::string_view v)`), an
+      implicit conversion inside a constructor initializer (`opt(t)`), and
+      `std::move(o).value()` and `value_or` over a dependent optional.
 - **Phase 3 (nested borrowing values):** a field whose type is itself
   dependent, as in `struct conflict { Diag diag; }`. It also covers borrowed
   error structs such as `expected<int, conflict>` where `conflict` holds an
   `Entry& entry` (`GTI-S2045` today, even as a local). This reuses the
   composed receiver-prefix proof from the nested conditional carriers
   follow-up.
+  - *Implemented in 0.466.0 (3a): nested text values.* A constructor that
+    stores a class parameter of a nested text class whole in a field or
+    payload, or a class field of one through its accessor, nests the
+    argument's text path there, at any depth; a generic function returning
+    such a parameter whole (`unexpected`) publishes it too. Field reads and
+    reference relays (`*o`, `o.value()`, `r.error()`) give dependent places
+    with the prefix stripped. A field contract names a prefix: a payload of
+    a nested text class covers every path below it, in semantics and in
+    MIR. So `std::optional<Token>`, `expected<int, Diag>` and user classes
+    such as `Report { Diag diag; }` keep their owner's text, and
+    `expected<int, Diag> check(std::string&)` may return one over its
+    parameter. Still `GTI-S2045`: copying a nested value out, and passing a
+    value whose text sits in a class field (no class-field contracts yet).
+  - *3b (nested reference carriers), remaining.* A class holding a checked
+    reference nests in a class field or a generic class today
+    (`Holder { Conflict conflict; }`, `Wrapper<Conflict>`), but not in a
+    payload-enum alternative, which `optional<Conflict>` and
+    `expected<int, Conflict>` need. Measured on 0.466.0 (identical on main):
+    - A non-generic enum (`enum Outcome { clash(Conflict c), done(int) }`) is
+      a MIR `GTI-B0001`: the complete-value fact of the `PayloadConstruct`
+      keeps the staged carrier's own group as the dependency's parent, while
+      lowering roots it at the carrier's origin, as class constructions do.
+      Transferring the staged group in `constructedCompleteBorrowFact` makes
+      MIR verify; the C++ emitter then cannot represent the carrier payload
+      (`GTI-B0001`), which is backend work alongside the deferred field
+      storage stages (#273-#275).
+    - `std::optional<Conflict>` and `expected<int, Conflict>` are
+      `GTI-S2045`: the complete constructor borrow query cannot summarize a
+      carrier moved out through a consuming accessor
+      (`std::move(failure).error()`) into a guarded payload.
+    - `expected<int, Entry&>` built from `unexpected(entry)` copies the entry
+      (`GTI-S2003`), the reference-error profile the owner placed here.
 - **Phase 4 (retire special cases):**
   - the ownerless text contracts for fields (`ownerlessTextParameters`,
     `recordOwnerlessTextCall`, and the field writes in
