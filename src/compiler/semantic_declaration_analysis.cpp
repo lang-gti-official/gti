@@ -4660,7 +4660,7 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .neverReturns = function->hasFunctionAttribute("noreturn"),
           .tracksCaller = function->hasFunctionAttribute("track_caller"),
           .discardableResult = function->hasFunctionAttribute("discardable"),
-          .deferredEvaluation = function->hasFunctionAttribute("deferred"),
+          .macroExpansion = function->isMacro(),
           .threadConfinedCallback =
               function->hasFunctionAttribute("thread_confined_callback"),
           .testFunction = function->hasFunctionAttribute("test"),
@@ -9790,7 +9790,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .neverReturns = declaration.neverReturns,
       .tracksCaller = declaration.tracksCaller,
       .discardableResult = declaration.discardableResult,
-      .deferredEvaluation = declaration.deferredEvaluation,
+      .macroExpansion = declaration.macroExpansion,
       .threadConfinedCallback = declaration.threadConfinedCallback,
       .testFunction = declaration.testFunction,
       .cThreadOperation = declaration.cThreadOperation,

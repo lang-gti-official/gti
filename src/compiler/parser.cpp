@@ -178,6 +178,9 @@ private:
     if (match({TokenKind::HASH_ERROR})) {
       return compileErrorDirective();
     }
+    if (match({TokenKind::HASH_MACRO})) {
+      return macroDeclaration(previous());
+    }
     rejectStrayConditionalDirective();
     if (match({TokenKind::STATIC_ASSERT})) {
       return staticAssertDeclaration(previous());
@@ -1040,8 +1043,9 @@ private:
       }
       // Attribute spelling is semantic policy. A typed declaration identifies
       // the function-attribute context even when every attribute is unknown.
-      bool functionAttributeList =
-          !functionAttributes.empty() || isTypedDeclaration();
+      bool functionAttributeList = !functionAttributes.empty() ||
+                                   isTypedDeclaration() ||
+                                   check(TokenKind::HASH_MACRO);
       for (const FunctionAttribute &attribute : attributes) {
         if (parsedNativeFunctionAttribute &&
             attribute.name.lexeme != "discardable") {
@@ -1055,7 +1059,6 @@ private:
             attribute.name.lexeme == "track_caller" ||
             attribute.name.lexeme == "thread_confined_callback" ||
             attribute.name.lexeme == "discardable" ||
-            attribute.name.lexeme == "deferred" ||
             attribute.name.lexeme == "borrowed_from";
       }
       if (functionAttributeList) {
@@ -1065,6 +1068,15 @@ private:
         if (check(TokenKind::LEFT_BRACKET) &&
             peekAt(1).kind == TokenKind::LEFT_BRACKET) {
           continue;
+        }
+        if (match({TokenKind::HASH_MACRO})) {
+          if (!namespaceScope || linkage != LanguageLinkage::Gti ||
+              nativeCArray || nativeLinkName || !declared.empty()) {
+            throw error(previous(),
+                        "A #macro requires namespace scope and cannot have "
+                        "native or declared attributes.");
+          }
+          return macroDeclaration(previous(), std::move(functionAttributes));
         }
         if (!isTypedDeclaration()) {
           throw error(peek(), "Function attributes require a function "
@@ -1400,6 +1412,33 @@ private:
         mutability, std::move(type), name, std::move(staticKeyword),
         std::move(constexprKeyword), std::move(mutKeyword), linkage,
         std::move(nativeLinkName));
+  }
+
+  StmtPtr macroDeclaration(Token keyword,
+                           std::vector<FunctionAttribute> attributes = {}) {
+    Token name =
+        consume(TokenKind::IDENTIFIER, "Expect a macro name after '#macro'.");
+    std::vector<GenericParameter> genericParameters;
+    if (check(TokenKind::LESS)) {
+      genericParameters = genericParameterList();
+    }
+    consume(TokenKind::LEFT_PAREN, "Expect '(' after the macro name.");
+    Token implicitVoid = keyword;
+    implicitVoid.kind = TokenKind::VOID;
+    implicitVoid.lexeme = "void";
+    implicitVoid.generated = true;
+    StmtPtr result = functionDeclaration(
+        TypeRef(std::move(implicitVoid)), std::move(name),
+        std::move(genericParameters), std::nullopt, false,
+        Mutability::Immutable, std::nullopt, std::nullopt, std::nullopt,
+        LanguageLinkage::Gti, std::nullopt, std::nullopt, std::nullopt,
+        std::nullopt, std::move(attributes));
+    auto &declaration = static_cast<FunctionDecl &>(*result);
+    declaration.setMacroKeyword(keyword);
+    if (!declaration.body()) {
+      throw error(keyword, "A #macro declaration requires a body.");
+    }
+    return result;
   }
 
   StmtPtr functionDeclaration(
@@ -2533,6 +2572,9 @@ private:
   StmtPtr itemWithoutExtent(ItemContext context) {
     if (context == ItemContext::Declaration) {
       return declarationWithoutExtent();
+    }
+    if (match({TokenKind::HASH_MACRO})) {
+      throw error(previous(), "Typed macros are limited to namespace scope.");
     }
     if (match({TokenKind::HASH_IF, TokenKind::HASH_IFDEF,
                TokenKind::HASH_IFNDEF})) {
@@ -4465,12 +4507,12 @@ private:
         if (allowClasses &&
             (check(TokenKind::HASH_IF) || check(TokenKind::HASH_IFDEF) ||
              check(TokenKind::HASH_IFNDEF) || check(TokenKind::HASH_ERROR) ||
-             check(TokenKind::AT) || check(TokenKind::CLASS) ||
-             check(TokenKind::CONCEPT) || check(TokenKind::ENUM) ||
-             check(TokenKind::EXTERN) || check(TokenKind::STRUCT) ||
-             check(TokenKind::INTERFACE) || check(TokenKind::UNION) ||
-             check(TokenKind::NAMESPACE) || check(TokenKind::USING) ||
-             isConformanceStart())) {
+             check(TokenKind::HASH_MACRO) || check(TokenKind::AT) ||
+             check(TokenKind::CLASS) || check(TokenKind::CONCEPT) ||
+             check(TokenKind::ENUM) || check(TokenKind::EXTERN) ||
+             check(TokenKind::STRUCT) || check(TokenKind::INTERFACE) ||
+             check(TokenKind::UNION) || check(TokenKind::NAMESPACE) ||
+             check(TokenKind::USING) || isConformanceStart())) {
           return;
         }
         if (allowStatements &&

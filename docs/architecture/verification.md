@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Failure-free passive constructors (RT-12, 0.466.0)
+## Failure-free passive constructors (RT-12, 0.467.0)
 
 `optimizer_foundation` covers the owned failure closure's passive values in
 `testPassiveValueConstructorFailureEffects`, over user types unrelated to
@@ -42,7 +42,7 @@ staged `unexpected_value` live on the destructor's failure path. The failure
 form now builds a returned construction at its MIR position whenever a
 failure can occur before the Return (`returnConstructCrossesFailure`).
 
-## Nested dependent values (0.466.0)
+## Nested dependent values (0.467.0)
 
 `view_fields` covers phase 3a in `testNestedValues`.
 - A `Report` storing a `Diag` whole, an `Outer` holding a `Report`, an
@@ -69,7 +69,7 @@ use-after-free (ASan). And MIR derived whole-value relays for owned classes
 that semantics never declared, a `GTI-B0001` on `owned_expected_error`. Both
 are fixed, and `testContextualConstruction` covers the first.
 
-## Conversions, field relays and returns (0.466.0)
+## Conversions, field relays and returns (0.467.0)
 
 `view_fields` covers phase 2c in four tests.
 - `testContextualConstruction`: `std::optional<std::string_view> maybe =
@@ -238,39 +238,62 @@ Still `GTI-B0001`, as on main: a constructor initializing a class's
 fixed-array field from its parameters (`Polygon(Point a, Point b) :
 corners({a, b})`).
 
-## Deferred assertions and statement helpers (0.465.0)
+## Typed macros and assertions
 
-`deferred_assertions` checks the general `[[deferred]]` statement-helper rule
+The existing `deferred_assertions*` gate names are retained for continuity after
+the public syntax migration to `#macro`; no old attribute support remains.
+`deferred_assertions` checks the general typed statement macro rule
 with unrelated application types: conditional/repeated moves, live loans,
 disabled formatter errors, exact argument types, unsafe obligations, invalid
 signatures/bodies, recursion limits and callable-identity boundaries. It also
 checks HIR expansion, independent MIR verification, the absence of eager helper
-instances, and rejection of an erased tracked-caller origin.
+instances, and rejection of an erased tracked-caller origin. Syntax regressions
+cover exact macro-only overloads, generic/default parameters, qualified calls,
+caller-tracked declarations, incomplete parser recovery, rejected mixed
+macro/function names in both declaration orders and legacy migration diagnostics.
+Local binding regressions cover evaluate-once initialization, same-spelled
+caller/definition names, local shadowing, named references, explicit owner
+moves, automatic storage and scoped loops. Invalid ownership and escape paths
+must fail through ordinary semantic rules, not be hidden by macro expansion.
+Generic owning-local tests also independently mutate verified MIR: changing a
+skipped move's literal condition to true or to a dynamic call result must fail
+source-availability checking, even after repairing the SSA use index. Flipping
+a published drop's conditionality must still fail structural cleanup validation.
+Feasible source availability does not replace structural cleanup publication.
+The ownership regression copies HIR out of a destroyed `FrontendResult` and
+temporary lowerer, then traverses reached nested/instance expansion roots and
+their constructor-call descendants. Its ordinary and concrete generic cases
+must retain the exact sources without retaining whole semantic models.
 
 `deferred_assertions_runtime` runs the success/failure fixtures and runnable
-example 172 with C++20/C++23 at O0/O1/O3, disabled elision, ASan/UBSan, and native
+examples 172 and 174 with C++20/C++23 at O0/O1/O3, disabled elision, ASan/UBSan, and native
 `-DNDEBUG`, each with source `NDEBUG` enabled and disabled. It checks forcing
 count/order, skipped moves and message construction, lookup/access hygiene,
 caller defaults and nested wrappers, reverse cleanup, panic during cleanup,
-and managed-thread propagation. The example is identified by its selected
-path, not a numeric-prefix convention, so renumbering cannot change the expected
+managed-thread propagation, and owning local cleanup on normal scope exit,
+panic, break and continue. Examples are identified by their selected
+paths, not a numeric-prefix convention, so renumbering cannot change the expected
 output policy.
 
 `deferred_assertions_lsp` covers unsaved/incomplete text, UTF-16 spans, static
-argument errors and hover contracts. Project-model and scoped-configuration
+argument errors, macro hover/definition identity, qualified overload selection
+and recovery from the removed attribute. `macro_expansion_queries` checks
+bounded deterministic inspection, hygiene labels and exact local rename identity;
+the LSP and Neovim gates cover the read-only `:GTIExpandMacro` request and stale
+buffer rejection. Project-model and scoped-configuration
 checks cover default release `NDEBUG`, explicit profile overrides and frontend
 versus native flags. The module/surface gates, both corpus censuses, pinned
 Tree-sitter corpus and shipped-source parsing cover the new header, module,
-attribute and example inventories.
+declaration and example inventories.
 
 `deferred_assertions_cost` compares the same complete-state workload with
 handwritten control flow. Zero observed successful-path allocations and cold
 message calls are correctness gates; `--measure` adds two warmups and nine
 interleaved samples, native/generated size, build time and child peak memory.
-Timing samples are reported rather than gated on noisy shared hosts. Deferred
+Timing samples are reported rather than gated on noisy shared hosts. Macro
 source expansion still has a compile-time cost; runtime parity does not imply
 compilation-cost parity. The current structural/forcing bounds are recorded in
-[execution](../language/execution.md#deferred-statement-helpers) and
+[execution](../language/execution.md#typed-statement-macros) and
 [ADR 030](../decisions/030-deferred-statement-helpers.md).
 
 ## Whole assignment results (0.464.2)

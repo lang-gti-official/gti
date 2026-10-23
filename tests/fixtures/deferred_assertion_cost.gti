@@ -23,6 +23,19 @@ std::string diagnostic() {
   return std::string("this owning diagnostic must remain cold");
 }
 
+// Exercise a checked evaluate-once local and macro-owned loop against the
+// same handwritten GTI below, not just the original binder-free assertion.
+#macro validate_once(uint64_t value) {
+  uint64_t saved = value;
+  for (mut uint32_t stage = uint32_t(0); stage < uint32_t(2); ++stage) {
+    if (stage == uint32_t(0)) {
+      std::assert(saved != uint64_t(0), "{}", diagnostic());
+    } else {
+      std::debug_assert(saved != uint64_t(0), "{}", diagnostic());
+    }
+  }
+}
+
 int main(int argc, std::vector<std::string> argv) {
   mut uint64_t state = uint64_t(argc);
   unsafe { adoption_count_begin(); }
@@ -31,13 +44,18 @@ int main(int argc, std::vector<std::string> argv) {
     state = state ^ (state >> uint(7));
     state = state ^ (state << uint(17));
 #ifdef COST_MANUAL
-    if (state == uint64_t(0)) { std::panic("{}", diagnostic()); }
-    if (std::debug_assertions_enabled) {
-      if (state == uint64_t(0)) { std::panic("{}", diagnostic()); }
+    uint64_t saved = state;
+    for (mut uint32_t stage = uint32_t(0); stage < uint32_t(2); ++stage) {
+      if (stage == uint32_t(0)) {
+        if (saved == uint64_t(0)) { std::panic("{}", diagnostic()); }
+      } else {
+        if (std::debug_assertions_enabled) {
+          if (saved == uint64_t(0)) { std::panic("{}", diagnostic()); }
+        }
+      }
     }
 #else
-    std::assert(state != uint64_t(0), "{}", diagnostic());
-    std::debug_assert(state != uint64_t(0), "{}", diagnostic());
+    validate_once(state);
 #endif
   }
   unsafe {
