@@ -379,11 +379,11 @@ private:
   [[nodiscard]] std::shared_ptr<VariableDecl>
   variable(const VariableDecl &node) {
     auto copy = std::make_shared<VariableDecl>(
-        node.mutability(), node.type(), tok(node.name()),
-        expr(node.initializer()), node.staticKeyword(), node.isRangeBinding(),
-        tok(node.constexprKeyword()), node.isRangeOwner(),
-        node.isRangeIterator(), node.mutKeyword(), node.isRangeElementOwner(),
-        node.linkage(), node.nativeLinkName());
+        node.mutability(), type(node.type()), tok(node.name()),
+        expr(node.initializer()), tok(node.staticKeyword()),
+        node.isRangeBinding(), tok(node.constexprKeyword()),
+        node.isRangeOwner(), node.isRangeIterator(), tok(node.mutKeyword()),
+        node.isRangeElementOwner(), node.linkage(), node.nativeLinkName());
     if (node.extent()) {
       copy->setExtent(*node.extent());
     }

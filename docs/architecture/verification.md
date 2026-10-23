@@ -104,6 +104,11 @@ Local binding regressions cover evaluate-once initialization, same-spelled
 caller/definition names, local shadowing, named references, explicit owner
 moves, automatic storage and scoped loops. Invalid ownership and escape paths
 must fail through ordinary semantic rules, not be hidden by macro expansion.
+Generic owning-local tests also independently mutate verified MIR: changing a
+skipped move's literal condition to true or to a dynamic call result must fail
+source-availability checking, even after repairing the SSA use index. Flipping
+a published drop's conditionality must still fail structural cleanup validation.
+Feasible source availability does not replace structural cleanup publication.
 The ownership regression copies HIR out of a destroyed `FrontendResult` and
 temporary lowerer, then traverses reached nested/instance expansion roots and
 their constructor-call descendants. Its ordinary and concrete generic cases
