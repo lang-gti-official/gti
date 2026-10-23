@@ -635,23 +635,40 @@ int main() {
   if (!result.canGenerateCode())
     return;
   // The copied view carries the relay's result loan, whose stored
-  // dependency is the owner's loan designating the relayed field. Like a view
-  // copied from a field read, its retention is a semantic decision: MIR
-  // checks the loan's shape, not which bindings must carry it.
-  bool carried = false;
+  // dependency is the owner's loan designating the relayed field. MIR derives
+  // that the view holds the owner's text through the reference, so the view
+  // must carry a loan that retains that publication.
+  const lang::MirFunctionInstance *carrier = nullptr;
+  std::size_t carried = 0;
   for (const auto &function : result.mir.functionInstances()) {
     const auto &loans = function.body.loans;
-    for (const auto &loan : loans)
-      carried =
-          carried ||
-          (loan.kind == lang::MirLoanKind::CallResult &&
-           loan.carriers.size() == 1 && loan.storedDependency != 0 &&
-           loan.storedDependency <= loans.size() &&
-           loans[loan.storedDependency - 1].kind == lang::MirLoanKind::Stored &&
-           loans[loan.storedDependency - 1].designatedFields.size() == 1);
+    for (std::size_t index = 0; index < loans.size(); ++index) {
+      const auto &loan = loans[index];
+      if (loan.kind == lang::MirLoanKind::CallResult &&
+          loan.carriers.size() == 1 && loan.storedDependency != 0 &&
+          loan.storedDependency <= loans.size() &&
+          loans[loan.storedDependency - 1].kind == lang::MirLoanKind::Stored &&
+          loans[loan.storedDependency - 1].designatedFields.size() == 1) {
+        carrier = &function;
+        carried = index;
+      }
+    }
   }
-  expect(carried, "the copied view carries the relay's loan, which depends "
-                  "on the owner's loan");
+  expect(carrier != nullptr, "the copied view carries the relay's loan, "
+                             "which depends on the owner's loan");
+  if (carrier != nullptr) {
+    const auto mutated = [&](const auto &change) {
+      auto changed = result.mir;
+      change(const_cast<lang::MirFunctionInstance *>(
+                 changed.findFunctionInstance(carrier->id))
+                 ->body.loans[carried]);
+      return lang::verifyMirProgram(changed).valid();
+    };
+    expect(!mutated([](lang::MirLoan &loan) { loan.carriers.clear(); }),
+           "a view copied through a relayed reference must carry its loan");
+    expect(!mutated([](lang::MirLoan &loan) { loan.storedDependency = 0; }),
+           "a relayed reference's loan must retain the owner's loan");
+  }
 
   struct Case {
     const char *body;
