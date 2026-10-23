@@ -458,6 +458,16 @@ Run `:Lazy sync`, restart Neovim, and open a `.gti` file. Mason and
 `nvim-lspconfig` are not required. `:GTIInfo` reports the active plugin,
 toolchain, LSP, and parser versions.
 
+Code completion also offers snippets: type `cl` for a class skeleton, `ct` or
+`dt` inside a class for its constructor or destructor, and `method`/`mutmethod`
+for read-only/mutable methods. Structs, generic classes, interfaces, enums,
+namespaces, aliases, fields, functions and common control-flow templates are
+included. Select the snippet completion, then use your completion frontend's
+tab-stop navigation to edit its placeholders; class names are linked to their
+constructor names. The completion client must advertise LSP snippet support and
+provide a snippet expansion engine. Ordinary symbol completion still works
+without that capability. These are editor templates, not additional GTI syntax.
+
 The editor normally analyses the project's `dev` profile. Use `:GTIProfile release`
 or `:GTIProfile dev` to switch without rebuilding or restarting the server;
 `:GTIProfile!` restores the project default. This updates profile defines,
