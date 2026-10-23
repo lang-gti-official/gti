@@ -814,6 +814,17 @@ This applies to read-only as well as exclusive carrier-reference fields.
 A reference obtained through an owning accessor also retains its exact
 transient call-result ancestry until the adapter's endpoint; a coarse owner
 identity is not a substitute for the selected constructor input's loan chain.
+A by-value carrier that a call builds from a reference argument naming exactly
+what an accessor returned (the call's own result place, as in
+`b.get().begin()`, or a reference binding initialized from it) has a `Stored`
+loan whose source is the place rooted at that accessor's `CallResult` loan and
+whose parent is that loan. It holds exactly the accessor loan's stored
+dependency, which is none for ownerless text. A temporary accessor result has
+no semantic loan of its own, so its semantic carrier contract names the
+accessor's owner; lowering refines that to the returned referent, and a binding
+that retains the accessor's loan does not move the carrier's source back to the
+owner. The program verifier admits ownerless text at that exact referent only
+under its result loan.
 Conversely, a completed call with no reference or borrowed-state result can
 retire an unretained transient accessor loan even when its receiver is an
 owning member projected from that accessor. Lowering uses the already
