@@ -47,6 +47,10 @@ struct FrontendOptions {
   bool toolingOccurrences = true;
   // Set only for an executable root, never inferred from a source filename.
   bool requireEntryPoint = false;
+  // Test-suite analysis still validates/discovers tests and entry contracts,
+  // but editor snapshots must retain written source rather than append a
+  // generated hosted dispatcher. Artifact requests keep the default.
+  bool synthesizeTestEntry = true;
   // Executable representation requests require selected GTI call definitions
   // even when they intentionally do not require a hosted entry point.
   bool requireFunctionDefinitions = false;

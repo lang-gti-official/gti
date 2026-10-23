@@ -125,6 +125,8 @@ std::string cacheContext(const FrontendOptions &options) {
   result += '\n';
   result += options.requireEntryPoint ? "entry:required\n" : "entry:optional\n";
   result += options.program.testSuite ? "tests:enabled\n" : "tests:disabled\n";
+  result += options.synthesizeTestEntry ? "test-entry:generated\n"
+                                        : "test-entry:source-only\n";
   result += options.target.dataLayout.supported() ? "layout:supported"
                                                   : "layout:unsupported";
   for (std::size_t index = 0; index < targetScalarKindCount; ++index) {
@@ -611,7 +613,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
               {"An annotated test suite supplies its own entry point; remove "
                "the suite's main or use a separate legacy test target."}));
           result.semanticValid = false;
-        } else {
+        } else if (options.synthesizeTestEntry) {
           // Generate ordinary source only after semantic discovery validates
           // declaration identities and signatures. The dispatcher goes back
           // through semantics, HIR and verified MIR, including hosted argv
@@ -692,8 +694,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     const std::size_t semanticDiagnosticCount = semantic.errors().size();
     // Complete the requested inference phases before applying CI policy, so
     // Strict and Warn discover the same concrete bodies and audit findings.
-    if (options.requireEntryPoint && result.sourceValid && result.syntaxValid &&
-        result.semanticValid && !options.completionOffset) {
+    const bool discoveredTestEntry = options.program.testSuite &&
+                                     !options.synthesizeTestEntry &&
+                                     !result.testCases.empty();
+    if (options.requireEntryPoint && !discoveredTestEntry &&
+        result.sourceValid && result.syntaxValid && result.semanticValid &&
+        !options.completionOffset) {
       const SourceUnit *entry =
           result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
       if (auto diagnostic = semantic.model().executableEntryDiagnostic(
