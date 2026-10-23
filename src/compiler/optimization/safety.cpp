@@ -225,6 +225,13 @@ using EntryRelativeFields = std::map<FieldPath, EntryRelativeField>;
 struct AbstractState;
 void publishFieldFact(const MirBody &body, AbstractState &state,
                       const FieldOrigin &origin, const IntegerFact &fact);
+[[nodiscard]] std::optional<FieldOrigin>
+ownedRootPath(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+              MirPlaceId id);
+[[nodiscard]] const MirPayloadEnum *carrierPayload(const MirProgram *program,
+                                                   MirBodyAddress address,
+                                                   const MirBody &body,
+                                                   const FieldOrigin &carrier);
 
 struct PointeeField {
   FieldPath pointer;
@@ -261,6 +268,50 @@ struct InputField {
   FieldPath field;
   friend auto operator<=>(const InputField &, const InputField &) = default;
 };
+
+// Facts conditional on the alternative one payload-enum carrier holds. The
+// carrier is an immutable value or a root place; `path` leads from it to the
+// payload enum (empty when the carrier is the enum itself). Keys are the
+// variant indexes still possible: a missing key is impossible, while a
+// carrier without an entry is wholly unknown. The facts describe
+// still-current owned integer fields, as fieldOrigins do; they are retired by
+// the same writes. Nothing here names a library type.
+struct TagAlternatives {
+  FieldPath path;
+  std::map<std::size_t, std::map<FieldOrigin, IntegerFact>> facts;
+  friend bool operator==(const TagAlternatives &,
+                         const TagAlternatives &) = default;
+};
+
+// A boolean computed from the alternative one carrier held when the value was
+// produced. A missing key leaves that alternative's result unknown. The
+// predicate is retired with any write to its carrier.
+struct TagPredicate {
+  FieldOrigin carrier;
+  std::map<std::size_t, bool> results;
+  Evidence evidence;
+  friend bool operator==(const TagPredicate &, const TagPredicate &) = default;
+};
+
+// Summary forms of the two relations, relative to the callee's receiver
+// (no parameter) or a checked reference parameter.
+struct InputAlternatives {
+  FieldPath path;
+  std::map<std::size_t, std::map<InputField, IntegerFact>> facts;
+  friend bool operator==(const InputAlternatives &,
+                         const InputAlternatives &) = default;
+};
+
+struct InputTagPredicate {
+  InputField carrier;
+  std::map<std::size_t, bool> results;
+  friend bool operator==(const InputTagPredicate &,
+                         const InputTagPredicate &) = default;
+};
+
+// Bounds on retained tag state. Dropping an entry is always conservative.
+constexpr std::size_t maxTagCarriers = 64;
+constexpr std::size_t maxTagFacts = 64;
 
 // These are transfer-rule barriers, not replacement MIR effects. A vacant
 // structural construction remains opaque, but has a narrower supported transfer
@@ -330,6 +381,11 @@ struct AbstractState {
   std::map<MirValueId, MirPlaceId> aggregateOrigins;
   std::map<MirValueId, ObjectFact> objectValues;
   ValueOrders orders;
+  // Payload-enum alternatives of immutable values and of root places (key
+  // zero is the analysis-only implicit receiver), and boolean tag tests.
+  std::map<MirValueId, TagAlternatives> valueAlternatives;
+  std::map<MirPlaceId, TagAlternatives> placeAlternatives;
+  std::map<MirValueId, TagPredicate> tagPredicates;
 
   friend bool operator==(const AbstractState &,
                          const AbstractState &) = default;
@@ -396,6 +452,10 @@ struct ClosedCallSummary {
   EntryRelativeFields receiverUpdates;
   std::vector<ObservedFact<ObjectFact>> argumentObjects;
   ObservedFact<ObjectFact> constructed;
+  // Postconditions per alternative of the returned (or constructed) payload
+  // carrier, and a boolean result computed from an input's alternative.
+  std::optional<InputAlternatives> resultAlternatives;
+  std::optional<InputTagPredicate> resultPredicate;
 
   friend bool operator==(const ClosedCallSummary &,
                          const ClosedCallSummary &) = default;
@@ -1720,12 +1780,36 @@ strictlyOrdered(const MirBody &body, const AbstractState &state,
   return std::nullopt;
 }
 
+void refineTagPredicate(const MirProgram *program, MirBodyAddress address,
+                        const MirBody &body, AbstractState &state,
+                        const TagPredicate &predicate, bool value,
+                        Evidence evidence);
+
 void refineCondition(const MirBody &body, MirBlockId block,
                      const MirOperand &condition, AbstractState &state,
-                     bool branchTaken, Evidence conditionEvidence = {}) {
+                     bool branchTaken, Evidence conditionEvidence = {},
+                     const MirProgram *program = nullptr,
+                     MirBodyAddress address = {}) {
   if (!state.reachable || condition.kind != MirOperandKind::Value) {
     return;
   }
+  // A boolean computed from a payload carrier's alternative (directly or
+  // through the same inert staging and negation followed below) selects the
+  // alternatives that produce the taken edge's value.
+  const auto refineTag = [&](MirValueId value, bool taken) {
+    const auto predicate = state.tagPredicates.find(value);
+    if (predicate == state.tagPredicates.end())
+      return;
+    Evidence evidence = conditionEvidence;
+    add(evidence, block);
+    addValue(evidence, value);
+    const TagPredicate selected = predicate->second;
+    refineTagPredicate(program, address, body, state, selected, taken,
+                       std::move(evidence));
+  };
+  refineTag(condition.value, branchTaken);
+  if (!state.reachable)
+    return;
   const MirInstruction *comparison = definingInstruction(body, condition.value);
   // A detector consumes an exactly staged boolean value. Follow only inert
   // value staging/boolean negation, with a hard bound; arbitrary source calls
@@ -1753,7 +1837,13 @@ void refineCondition(const MirBody &body, MirBlockId block,
     addValue(conditionEvidence, *comparison->result);
     if (negated)
       branchTaken = !branchTaken;
-    comparison = definingInstruction(body, comparison->operands.front().value);
+    const MirValueId input = comparison->operands.front().value;
+    if (!state.tagPredicates.contains(*comparison->result)) {
+      refineTag(input, branchTaken);
+      if (!state.reachable)
+        return;
+    }
+    comparison = definingInstruction(body, input);
   }
   if (comparison == nullptr ||
       comparison->kind != MirInstructionKind::Compute ||
@@ -1909,11 +1999,13 @@ void refineCondition(const MirBody &body, MirBlockId block,
 }
 
 void refineBranch(const MirBody &body, const MirBlock &block,
-                  AbstractState &state, bool branchTaken) {
+                  AbstractState &state, bool branchTaken,
+                  const MirProgram *program = nullptr,
+                  MirBodyAddress address = {}) {
   if (block.terminator.kind == MirTerminatorKind::Branch &&
       block.terminator.value)
-    refineCondition(body, block.id, *block.terminator.value, state,
-                    branchTaken);
+    refineCondition(body, block.id, *block.terminator.value, state, branchTaken,
+                    {}, program, address);
 }
 
 [[nodiscard]] std::optional<IntegerFact>
@@ -2186,6 +2278,337 @@ void publishFieldFact(const MirBody &body, AbstractState &state,
         path && *path == origin.path &&
         constantIntegerDomain(place.type) == fact.domain)
       state.integerPlaces[place.id] = fact;
+}
+
+// The root and owned path of a place, normalized as owned scalar fields are:
+// the receiver (zero when only implicit) or a binding root, through at most
+// the outer checked reference. Other roots denote themselves.
+[[nodiscard]] std::optional<FieldOrigin>
+ownedRootPath(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+              MirPlaceId id) {
+  const auto *place = body.findPlace(id);
+  if (!place)
+    return std::nullopt;
+  if (place->root != MirPlaceRootKind::This &&
+      place->root != MirPlaceRootKind::Binding)
+    return FieldOrigin{.root = canonicalPlace(aliases, id)};
+  const auto root =
+      canonicalPlace(aliases, place->root == MirPlaceRootKind::This
+                                  ? thisRoot(body)
+                                  : rootForBinding(body, place->binding));
+  if (root == 0 && place->root != MirPlaceRootKind::This)
+    return std::nullopt;
+  const auto path = fieldPath(body, root, id, true);
+  if (!path)
+    return std::nullopt;
+  return FieldOrigin{.root = root, .path = *path};
+}
+
+// The closed payload enum stored at an owned carrier path, if any.
+[[nodiscard]] const MirPayloadEnum *carrierPayload(const MirProgram *program,
+                                                   MirBodyAddress address,
+                                                   const MirBody &body,
+                                                   const FieldOrigin &carrier) {
+  const auto *type =
+      liveOwnedPathType(program, address, body, carrier.root, carrier.path);
+  return program && type && type->kind == SemanticType::Enum
+             ? program->findPayloadEnum(*type)
+             : nullptr;
+}
+
+[[nodiscard]] const MirPayloadEnum *payloadAtPath(const MirProgram *program,
+                                                  const SemanticType &type,
+                                                  const FieldPath &path);
+
+// The alternatives of the object an operand denotes: an immutable value's own,
+// or its place's current carrier re-rooted at that place.
+[[nodiscard]] std::optional<TagAlternatives>
+operandAlternatives(const MirBody &body,
+                    const MirPlaceAliasEscapeAnalysis &aliases,
+                    const AbstractState &state, const MirOperand &operand) {
+  if (operand.kind == MirOperandKind::Value) {
+    const auto found = state.valueAlternatives.find(operand.value);
+    if (found == state.valueAlternatives.end())
+      return std::nullopt;
+    return found->second;
+  }
+  if (operand.place == 0 || (operand.kind != MirOperandKind::Copy &&
+                             operand.kind != MirOperandKind::Move))
+    return std::nullopt;
+  const auto origin = ownedRootPath(body, aliases, operand.place);
+  if (!origin)
+    return std::nullopt;
+  const auto found = state.placeAlternatives.find(origin->root);
+  if (found == state.placeAlternatives.end() ||
+      found->second.path.size() < origin->path.size() ||
+      !std::equal(origin->path.begin(), origin->path.end(),
+                  found->second.path.begin()))
+    return std::nullopt;
+  TagAlternatives result = found->second;
+  result.path.erase(result.path.begin(),
+                    result.path.begin() +
+                        static_cast<std::ptrdiff_t>(origin->path.size()));
+  return result;
+}
+
+// Records that `destination` now holds an object with these alternatives. The
+// caller has already retired whatever the write invalidated.
+void storeAlternatives(const MirProgram *program, MirBodyAddress address,
+                       const MirBody &body,
+                       const MirPlaceAliasEscapeAnalysis &aliases,
+                       AbstractState &state, MirPlaceId destination,
+                       TagAlternatives alternatives) {
+  const auto origin = ownedRootPath(body, aliases, destination);
+  if (!origin)
+    return;
+  FieldOrigin carrier = *origin;
+  carrier.path.insert(carrier.path.end(), alternatives.path.begin(),
+                      alternatives.path.end());
+  if (!carrierPayload(program, address, body, carrier) ||
+      (state.placeAlternatives.size() >= maxTagCarriers &&
+       !state.placeAlternatives.contains(carrier.root)))
+    return;
+  // A predicate over the carrier's previous contents no longer applies.
+  std::erase_if(state.tagPredicates, [&](const auto &entry) {
+    return entry.second.carrier.root == carrier.root;
+  });
+  alternatives.path = std::move(carrier.path);
+  state.placeAlternatives.insert_or_assign(carrier.root,
+                                           std::move(alternatives));
+}
+
+// The surviving alternatives' joint facts become current field facts. A fact
+// survives only when every remaining alternative carries it.
+void publishAlternatives(
+    const MirBody &body, AbstractState &state,
+    const std::map<std::size_t, std::map<FieldOrigin, IntegerFact>> &facts,
+    const Evidence &evidence) {
+  if (facts.empty())
+    return;
+  auto joined = facts.begin()->second;
+  for (auto entry = std::next(facts.begin()); entry != facts.end(); ++entry)
+    for (auto field = joined.begin(); field != joined.end();) {
+      const auto other = entry->second.find(field->first);
+      if (other == entry->second.end() ||
+          other->second.domain != field->second.domain) {
+        field = joined.erase(field);
+        continue;
+      }
+      field->second = joinedInteger(field->second, other->second, false);
+      ++field;
+    }
+  for (auto &[origin, fact] : joined) {
+    fact.evidence = merged(fact.evidence, evidence);
+    publishFieldFact(body, state, origin, fact);
+  }
+}
+
+// Restricts a carrier to `selected` alternatives and publishes what they
+// share. No surviving alternative makes the edge unreachable.
+void selectAlternatives(const MirBody &body, AbstractState &state,
+                        TagAlternatives &alternatives,
+                        const std::set<std::size_t> &selected,
+                        const Evidence &evidence) {
+  std::erase_if(alternatives.facts, [&](const auto &entry) {
+    return !selected.contains(entry.first);
+  });
+  if (alternatives.facts.empty()) {
+    state.reachable = false;
+    return;
+  }
+  const auto facts = alternatives.facts;
+  publishAlternatives(body, state, facts, evidence);
+}
+
+// A branch on a boolean computed from a carrier's alternative excludes the
+// alternatives whose result differs from the taken edge's value. An unknown
+// carrier becomes known when the predicate decides every alternative.
+void refineTagPredicate(const MirProgram *program, MirBodyAddress address,
+                        const MirBody &body, AbstractState &state,
+                        const TagPredicate &predicate, bool value,
+                        Evidence evidence) {
+  evidence = merged(evidence, predicate.evidence);
+  const auto carrier = state.placeAlternatives.find(predicate.carrier.root);
+  if (carrier != state.placeAlternatives.end() &&
+      carrier->second.path == predicate.carrier.path) {
+    std::set<std::size_t> selected;
+    for (const auto &[variant, facts] : carrier->second.facts) {
+      (void)facts;
+      const auto result = predicate.results.find(variant);
+      if (result == predicate.results.end() || result->second == value)
+        selected.insert(variant);
+    }
+    selectAlternatives(body, state, carrier->second, selected, evidence);
+    return;
+  }
+  if (carrier != state.placeAlternatives.end())
+    return;
+  const auto *sum = carrierPayload(program, address, body, predicate.carrier);
+  if (!sum || state.placeAlternatives.size() >= maxTagCarriers)
+    return;
+  TagAlternatives known{.path = predicate.carrier.path};
+  for (const auto &variant : sum->variants) {
+    const auto result = predicate.results.find(variant.variantIndex);
+    if (result == predicate.results.end() || result->second == value)
+      known.facts[variant.variantIndex];
+  }
+  if (known.facts.empty()) {
+    state.reachable = false;
+    return;
+  }
+  state.placeAlternatives.emplace(predicate.carrier.root, std::move(known));
+}
+
+// A payload-enum switch case selects one alternative of its subject; the
+// default edge excludes every listed case. An unknown place subject becomes
+// known on each edge. A moved subject's storage gains no new knowledge.
+void refineSwitchEdge(const MirProgram *program, MirBodyAddress address,
+                      const MirBody &body,
+                      const MirPlaceAliasEscapeAnalysis &aliases,
+                      const MirBlock &block,
+                      std::optional<std::size_t> caseIndex,
+                      AbstractState &state) {
+  const MirTerminator &terminator = block.terminator;
+  if (!program || !terminator.value || !state.reachable ||
+      terminator.value->type.kind != SemanticType::Enum)
+    return;
+  const auto *sum = program->findPayloadEnum(terminator.value->type);
+  if (!sum)
+    return;
+  std::set<std::size_t> selected;
+  if (caseIndex) {
+    const auto &label = terminator.switchTargets[*caseIndex].value;
+    if (!label || label->kind != SwitchCaseKind::Enumerator ||
+        label->value.negative)
+      return;
+    selected.insert(static_cast<std::size_t>(label->value.magnitude));
+  } else {
+    for (const auto &variant : sum->variants)
+      if (std::none_of(terminator.switchTargets.begin(),
+                       terminator.switchTargets.end(), [&](const auto &target) {
+                         return target.value &&
+                                target.value->kind ==
+                                    SwitchCaseKind::Enumerator &&
+                                !target.value->value.negative &&
+                                target.value->value.magnitude ==
+                                    variant.variantIndex;
+                       }))
+        selected.insert(variant.variantIndex);
+  }
+  Evidence evidence;
+  add(evidence, block.id);
+  const MirOperand &subject = *terminator.value;
+  if (subject.kind == MirOperandKind::Value) {
+    addValue(evidence, subject.value);
+    if (const auto found = state.valueAlternatives.find(subject.value);
+        found != state.valueAlternatives.end() && found->second.path.empty())
+      selectAlternatives(body, state, found->second, selected, evidence);
+    return;
+  }
+  if (subject.place == 0)
+    return;
+  addPlace(evidence, subject.place);
+  const auto carrier = ownedRootPath(body, aliases, subject.place);
+  if (!carrier || carrierPayload(program, address, body, *carrier) != sum)
+    return;
+  const auto found = state.placeAlternatives.find(carrier->root);
+  if (found != state.placeAlternatives.end()) {
+    if (found->second.path == carrier->path)
+      selectAlternatives(body, state, found->second, selected, evidence);
+    return;
+  }
+  if (subject.kind == MirOperandKind::Move ||
+      state.placeAlternatives.size() >= maxTagCarriers)
+    return;
+  TagAlternatives known{.path = carrier->path};
+  for (const auto variant : selected)
+    known.facts[variant];
+  if (known.facts.empty()) {
+    state.reachable = false;
+    return;
+  }
+  state.placeAlternatives.emplace(carrier->root, std::move(known));
+}
+
+// Tag state carried by non-call instructions: payload construction, inert
+// value staging, loads, boolean negation, and whole-object stores. Calls and
+// constructions apply their callee summaries in applyClosedCall.
+void transferTagState(const MirProgram *program, MirBodyAddress address,
+                      const MirBody &body,
+                      const MirPlaceAliasEscapeAnalysis &aliases,
+                      const MirInstruction &instruction, AbstractState &state) {
+  if (!program || !state.reachable || instruction.tombstone ||
+      instruction.kind == MirInstructionKind::Call ||
+      instruction.kind == MirInstructionKind::Construct)
+    return;
+  const auto boundedValue = [&](MirValueId value,
+                                TagAlternatives alternatives) {
+    if (state.valueAlternatives.size() < maxTagCarriers ||
+        state.valueAlternatives.contains(value))
+      state.valueAlternatives.insert_or_assign(value, std::move(alternatives));
+  };
+  if (instruction.kind == MirInstructionKind::Compute &&
+      instruction.operation == MirOperation::PayloadConstruct &&
+      instruction.enumVariant &&
+      instruction.info.type.kind == SemanticType::Enum &&
+      program->findPayloadEnum(instruction.info.type)) {
+    TagAlternatives constructed;
+    constructed.facts[*instruction.enumVariant];
+    if (instruction.result)
+      boundedValue(*instruction.result, constructed);
+    if (instruction.destination)
+      storeAlternatives(program, address, body, aliases, state,
+                        *instruction.destination, std::move(constructed));
+    return;
+  }
+  if (instruction.operands.size() != 1)
+    return;
+  const MirOperand &source = instruction.operands.front();
+  if (instruction.kind == MirInstructionKind::Compute &&
+      instruction.operation == MirOperation::LogicalNot && instruction.result &&
+      source.kind == MirOperandKind::Value) {
+    if (const auto found = state.tagPredicates.find(source.value);
+        found != state.tagPredicates.end()) {
+      TagPredicate negated = found->second;
+      for (auto &[variant, result] : negated.results) {
+        (void)variant;
+        result = !result;
+      }
+      addInstruction(negated.evidence, instruction.id);
+      state.tagPredicates.insert_or_assign(*instruction.result,
+                                           std::move(negated));
+    }
+    return;
+  }
+  const bool staging =
+      (instruction.kind == MirInstructionKind::Compute &&
+       instruction.operation == MirOperation::Identity) ||
+      instruction.kind == MirInstructionKind::Load ||
+      instruction.kind == MirInstructionKind::Move ||
+      (instruction.kind == MirInstructionKind::CallInput &&
+       (instruction.callInputKind == HirCallInputKind::Value ||
+        instruction.callInputKind == HirCallInputKind::CopyValue ||
+        instruction.callInputKind == HirCallInputKind::MoveValue));
+  if (staging && instruction.result && source.type == instruction.info.type) {
+    if (source.kind == MirOperandKind::Value)
+      if (const auto found = state.tagPredicates.find(source.value);
+          found != state.tagPredicates.end())
+        state.tagPredicates.insert_or_assign(*instruction.result,
+                                             found->second);
+    if (auto alternatives = operandAlternatives(body, aliases, state, source))
+      boundedValue(*instruction.result, std::move(*alternatives));
+  }
+  const bool store =
+      (instruction.kind == MirInstructionKind::Initialize ||
+       (instruction.kind == MirInstructionKind::Assign &&
+        (instruction.operation == MirOperation::Assign ||
+         instruction.operation == MirOperation::None)) ||
+       (instruction.kind == MirInstructionKind::CallInput && staging)) &&
+      instruction.destination && source.type == instruction.info.type;
+  if (store)
+    if (auto alternatives = operandAlternatives(body, aliases, state, source))
+      storeAlternatives(program, address, body, aliases, state,
+                        *instruction.destination, std::move(*alternatives));
 }
 
 [[nodiscard]] std::optional<IndexedAggregateAccess>
@@ -2598,6 +3021,87 @@ void retireScalarPointeeSnapshots(AbstractState &state) {
   }
 }
 
+// Unknown or global writes may reach any carrier or conditional field. An
+// immutable value's alternatives survive without their memory facts.
+void retireAllTagMemory(AbstractState &state) {
+  state.placeAlternatives.clear();
+  state.tagPredicates.clear();
+  for (auto &[value, alternatives] : state.valueAlternatives) {
+    (void)value;
+    for (auto &[variant, facts] : alternatives.facts) {
+      (void)variant;
+      facts.clear();
+    }
+  }
+}
+
+// Retires the tag state a write to `destination` may change: a carrier whose
+// payload path the write overlaps, a predicate over such a carrier, and each
+// conditional fact about an overlapping field. `overlaps` is the caller's root
+// relation. Direct writes to by-value frame storage cannot reach the implicit
+// receiver; a write through a dereference may.
+template <typename Overlaps>
+void retireTagState(const MirBody &body, AbstractState &state,
+                    const MirPlace &written, MirPlaceId destination, bool fresh,
+                    const Overlaps &overlaps) {
+  bool indirect = false;
+  bool fieldSeen = false;
+  bool ownedPath = true;
+  for (const auto &projection : written.projections) {
+    if (projection.kind == MirProjectionKind::Field) {
+      fieldSeen = true;
+      continue;
+    }
+    indirect |= projection.kind == MirProjectionKind::Dereference ||
+                projection.kind == MirProjectionKind::RawDereference;
+    if (fieldSeen || !transparentRootProjection(projection.kind))
+      ownedPath = false;
+  }
+  const bool frameStorage =
+      !indirect &&
+      (written.root == MirPlaceRootKind::Binding ||
+       written.root == MirPlaceRootKind::Temporary) &&
+      std::none_of(
+          body.places.begin(), body.places.end(), [&](const MirPlace &base) {
+            return samePlaceRoot(base, written) && base.projections.empty() &&
+                   base.type.kind == SemanticType::Reference;
+          });
+  const auto touches = [&](MirPlaceId root, const FieldPath &path) {
+    if (root == 0 ? fresh || frameStorage : !overlaps(root))
+      return false;
+    if (!ownedPath)
+      return true;
+    const auto writtenPath = fieldPath(body, root, destination, true);
+    if (!writtenPath)
+      return true;
+    const auto prefix = std::min(writtenPath->size(), path.size());
+    return std::equal(writtenPath->begin(), writtenPath->begin() + prefix,
+                      path.begin());
+  };
+  const auto retireFacts = [&](TagAlternatives &alternatives) {
+    for (auto &[variant, facts] : alternatives.facts) {
+      (void)variant;
+      std::erase_if(facts, [&](const auto &entry) {
+        return touches(entry.first.root, entry.first.path);
+      });
+    }
+  };
+  std::erase_if(state.placeAlternatives, [&](const auto &entry) {
+    return touches(entry.first, entry.second.path);
+  });
+  for (auto &[root, alternatives] : state.placeAlternatives) {
+    (void)root;
+    retireFacts(alternatives);
+  }
+  for (auto &[value, alternatives] : state.valueAlternatives) {
+    (void)value;
+    retireFacts(alternatives);
+  }
+  std::erase_if(state.tagPredicates, [&](const auto &entry) {
+    return touches(entry.second.carrier.root, entry.second.carrier.path);
+  });
+}
+
 void invalidatePlaceRoot(const MirBody &body,
                          const MirPlaceAliasEscapeAnalysis &aliases,
                          AbstractState &state, MirPlaceId destination,
@@ -2618,6 +3122,7 @@ void invalidatePlaceRoot(const MirBody &body,
     state.borrowedRegions.clear();
   }
   if (written == nullptr) {
+    retireAllTagMemory(state);
     state.constructedScalars.clear();
     std::erase_if(state.integerPlaces, [&](const auto &fact) {
       return !immutableScalarBinding(body, fact.first);
@@ -2834,6 +3339,7 @@ void invalidatePlaceRoot(const MirBody &body,
                 [&](const auto &entry) { return overlaps(entry.second); });
   std::erase_if(state.loadedOrigins,
                 [&](const auto &entry) { return overlaps(entry.second); });
+  retireTagState(body, state, *written, destination, fresh, overlaps);
   // Whole-root object invalidation is conservative for indirect aliases.
   // An independently retained typed field identity still denotes its current
   // scalar value after a disjoint owned-field write. Recover only that exact
@@ -3602,6 +4108,72 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                  : std::nullopt;
 }
 
+// Rebases a callee's per-alternative postconditions and boolean tag test to
+// this call's receiver and checked reference arguments. It runs after the
+// call's own effects retired the caller state they may change.
+void applyClosedCallTags(
+    const MirProgram &program, MirBodyAddress address, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases, const MirBlock &block,
+    const MirInstruction &instruction, const ClosedCallSummary &summary,
+    MirPlaceId receiverOrigin, const std::vector<MirPlaceId> &argumentOrigins,
+    AbstractState &state) {
+  const auto inputRoot = [&](const InputField &input) -> MirPlaceId {
+    if (!input.parameter)
+      return instruction.receiver ? receiverOrigin : 0;
+    return *input.parameter < argumentOrigins.size()
+               ? argumentOrigins[*input.parameter]
+               : 0;
+  };
+  const bool constructsPlace =
+      instruction.kind == MirInstructionKind::Construct &&
+      instruction.destination;
+  if (summary.resultAlternatives && (instruction.result || constructsPlace)) {
+    TagAlternatives alternatives{.path = summary.resultAlternatives->path};
+    for (const auto &[variant, facts] : summary.resultAlternatives->facts) {
+      auto &rebasedFacts = alternatives.facts[variant];
+      for (const auto &[input, fact] : facts) {
+        const MirPlaceId root = inputRoot(input);
+        if (root == 0 || rebasedFacts.size() >= maxTagFacts)
+          continue;
+        if (const auto origin = normalizedFieldOrigin(
+                program, address, body, aliases, root, input.field)) {
+          IntegerFact value = fact;
+          stabilize(value);
+          rebasedFacts.emplace(
+              *origin, rebased(std::move(value), block.id, instruction.id));
+        }
+      }
+    }
+    if (instruction.result &&
+        (state.valueAlternatives.size() < maxTagCarriers ||
+         state.valueAlternatives.contains(*instruction.result)))
+      state.valueAlternatives.insert_or_assign(*instruction.result,
+                                               alternatives);
+    if (constructsPlace)
+      storeAlternatives(&program, address, body, aliases, state,
+                        *instruction.destination, std::move(alternatives));
+  }
+  if (summary.resultPredicate && instruction.result &&
+      instruction.info.type == SemanticType::Bool &&
+      state.tagPredicates.size() < maxTagCarriers) {
+    const MirPlaceId root = inputRoot(summary.resultPredicate->carrier);
+    auto carrier = root ? ownedRootPath(body, aliases, root) : std::nullopt;
+    if (carrier) {
+      const auto &suffix = summary.resultPredicate->carrier.field;
+      carrier->path.insert(carrier->path.end(), suffix.begin(), suffix.end());
+      if (carrierPayload(&program, address, body, *carrier)) {
+        TagPredicate predicate{.carrier = std::move(*carrier),
+                               .results = summary.resultPredicate->results};
+        add(predicate.evidence, block.id);
+        addInstruction(predicate.evidence, instruction.id);
+        addValue(predicate.evidence, *instruction.result);
+        state.tagPredicates.insert_or_assign(*instruction.result,
+                                             std::move(predicate));
+      }
+    }
+  }
+}
+
 [[nodiscard]] bool
 applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
                 const MirBlock &block, const MirInstruction &instruction,
@@ -4121,11 +4693,15 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       object.prefixes.insert_or_assign(std::move(prefix.first),
                                        std::move(prefix.second));
   }
+  applyClosedCallTags(closedCalls->program, address, body, aliases, block,
+                      instruction, summary, receiverOrigin, argumentOrigins,
+                      state);
   return true;
 }
 
 void killUnknownMemory(const MirBody &body, AbstractState &state) {
   state.liveMemoryBarrier = LiveMemoryBarrier::Unknown;
+  retireAllTagMemory(state);
   state.constructedScalars.clear();
   // Readonly scalar copies are actual immutable values, not readonly
   // references to mutable storage. Valid unknown/raw effects cannot change
@@ -4269,6 +4845,20 @@ implicitReceiverType(const MirProgram *program, MirBodyAddress address) {
       record->declaredFields.begin(), record->declaredFields.end(),
       [&](const auto &candidate) { return candidate.symbol == field; });
   return member == record->declaredFields.end() ? nullptr : &member->type;
+}
+
+[[nodiscard]] const MirPayloadEnum *payloadAtPath(const MirProgram *program,
+                                                  const SemanticType &type,
+                                                  const FieldPath &path) {
+  const SemanticType *current = &type;
+  for (const auto field : path) {
+    current = ordinaryFieldType(program, current, field);
+    if (!current)
+      return nullptr;
+  }
+  return program && current->kind == SemanticType::Enum
+             ? program->findPayloadEnum(*current)
+             : nullptr;
 }
 
 [[nodiscard]] const SemanticType *
@@ -4417,6 +5007,7 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
   // structural form invokes no constructor/user code, so it cannot overwrite an
   // already live non-byte scalar place in a valid program. Byte/array storage
   // may provide an object's backing representation and is not preserved.
+  retireAllTagMemory(state);
   std::erase_if(state.integerPlaces, [&](const auto &entry) {
     return !liveScalarPath(program, address, body, entry.first);
   });
@@ -4672,6 +5263,8 @@ void applyInstruction(const MirBody &body,
   const MirProgram *program =
       closedCalls == nullptr ? nullptr : &closedCalls->program;
   if (instruction.result) {
+    state.valueAlternatives.erase(*instruction.result);
+    state.tagPredicates.erase(*instruction.result);
     state.entryRelativeValues.erase(*instruction.result);
     state.scalarAddressValues.erase(*instruction.result);
     // A loop re-executes this definition: the previous iteration's orders
@@ -5833,6 +6426,8 @@ transferBlock(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     }
     applyInstruction(body, aliases, block, instruction, state, thresholds,
                      closedCalls, address);
+    transferTagState(closedCalls ? &closedCalls->program : nullptr, address,
+                     body, aliases, instruction, state);
   }
   result.output = std::move(state);
   return result;
@@ -5930,6 +6525,28 @@ void joinObjectFacts(std::map<MirPlaceId, ObjectFact> &target,
   }
 }
 
+// A missing alternative is impossible on its path, so joined alternatives are
+// the union; a fact survives under one alternative only where every path that
+// may hold that alternative agrees. An unknown carrier on either side erases.
+template <typename Key>
+void joinTagAlternatives(std::map<Key, TagAlternatives> &target,
+                         const std::map<Key, TagAlternatives> &incoming,
+                         bool widen) {
+  for (auto entry = target.begin(); entry != target.end();) {
+    const auto found = incoming.find(entry->first);
+    if (found == incoming.end() || found->second.path != entry->second.path) {
+      entry = target.erase(entry);
+      continue;
+    }
+    for (const auto &[variant, facts] : found->second.facts) {
+      auto [slot, inserted] = entry->second.facts.try_emplace(variant, facts);
+      if (!inserted)
+        joinIntegers(slot->second, facts, widen);
+    }
+    ++entry;
+  }
+}
+
 void joinAggregateElementIntegers(
     std::map<MirPlaceId, IntegerFieldFacts> &target,
     const std::map<MirPlaceId, IntegerFieldFacts> &incoming, bool widen) {
@@ -5993,6 +6610,16 @@ void joinConstructed(std::map<Key, ConstructedScalar> &target,
   joinAggregateElementIntegers(target.aggregateElementIntegers,
                                incoming.aggregateElementIntegers, widen);
   joinObjectFacts(target.objects, incoming.objects, widen);
+  joinTagAlternatives(target.valueAlternatives, incoming.valueAlternatives,
+                      widen);
+  joinTagAlternatives(target.placeAlternatives, incoming.placeAlternatives,
+                      widen);
+  std::erase_if(target.tagPredicates, [&](const auto &entry) {
+    const auto found = incoming.tagPredicates.find(entry.first);
+    return found == incoming.tagPredicates.end() ||
+           found->second.carrier != entry.second.carrier ||
+           found->second.results != entry.second.results;
+  });
   joinEntryRelative(target.entryRelativeFields, incoming.entryRelativeFields);
   joinEntryRelative(target.entryRelativeValues, incoming.entryRelativeValues);
   joinScalarAddresses(target.scalarAddressValues, incoming.scalarAddressValues);
@@ -6173,9 +6800,10 @@ struct Edge {
   AbstractState state;
 };
 
-[[nodiscard]] std::vector<Edge> outgoingEdges(const MirBody &body,
-                                              const MirBlock &block,
-                                              const BlockTransfer &transfer) {
+[[nodiscard]] std::vector<Edge> outgoingEdges(
+    const MirBody &body, const MirBlock &block, const BlockTransfer &transfer,
+    const MirPlaceAliasEscapeAnalysis &aliases,
+    const MirProgram *program = nullptr, MirBodyAddress address = {}) {
   const MirTerminator &terminator = block.terminator;
   std::vector<Edge> result;
   const auto append = [&](MirBlockId target,
@@ -6186,8 +6814,13 @@ struct Edge {
       return;
     }
     if (refine) {
-      refineBranch(body, block, state, branchTaken);
+      refineBranch(body, block, state, branchTaken, program, address);
     }
+    if (terminator.kind == MirTerminatorKind::Switch)
+      refineSwitchEdge(program, address, body, aliases, block,
+                       ordinal == 0 ? std::nullopt
+                                    : std::optional<std::size_t>{ordinal - 1},
+                       state);
     if (!state.reachable) {
       return;
     }
@@ -6232,7 +6865,7 @@ struct Edge {
       Evidence evidence;
       addInstruction(evidence, detector->id);
       refineCondition(body, block.id, detector->operands.front(), success, true,
-                      std::move(evidence));
+                      std::move(evidence), program, address);
     }
     append(terminator.target, terminator.targetArguments, 0, std::move(success),
            false, false);
@@ -6886,7 +7519,9 @@ solveStatesOnce(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
         const BlockTransfer transfer = transferBlock(
             body, aliases, block, incoming, thresholds, closedCalls, address);
         std::vector<MirForwardDataflowEdge<AbstractState>> result;
-        for (Edge &edge : outgoingEdges(body, block, transfer)) {
+        for (Edge &edge : outgoingEdges(
+                 body, block, transfer, aliases,
+                 closedCalls ? &closedCalls->program : nullptr, address)) {
           result.push_back({.target = edge.target,
                             .ordinal = edge.ordinal,
                             .state = std::move(edge.state)});
@@ -7606,6 +8241,180 @@ objectAtExits(const MirProgram &program, const MirBody &body,
   return result;
 }
 
+// Exports what callers may learn from a returned (or constructed) payload
+// carrier's alternative: the receiver and checked reference postconditions of
+// the exits that can produce each alternative, and a boolean result computed
+// from an input carrier's alternative. An exit whose carrier is unknown
+// contributes to every alternative; disagreeing exits export nothing.
+void exportTagSummary(const MirProgram &program, MirBodyAddress address,
+                      const MirBody &body,
+                      const MirPlaceAliasEscapeAnalysis &aliases,
+                      const MirFunctionInstance *function,
+                      const MirClassInstance *constructorOwner,
+                      const std::vector<AbstractState> &exits,
+                      const std::vector<std::optional<MirOperand>> &values,
+                      const std::vector<HirBindingId> &bindings,
+                      const std::vector<SemanticType> &types,
+                      ClosedCallSummary &summary) {
+  const MirPlaceId receiverRoot = canonicalPlace(aliases, thisRoot(body));
+  const bool member = function && function->owner;
+  std::vector<std::pair<std::size_t, MirPlaceId>> references;
+  for (std::size_t index = 0; index < bindings.size() && index < types.size();
+       ++index)
+    if (types[index].kind == SemanticType::Reference)
+      if (const auto root = rootForBinding(body, bindings[index]))
+        references.emplace_back(index, canonicalPlace(aliases, root));
+  const auto exported =
+      [&](const FieldOrigin &carrier) -> std::optional<InputField> {
+    if (member && carrier.root == receiverRoot)
+      return InputField{std::nullopt, carrier.path};
+    for (const auto &[index, root] : references)
+      if (carrier.root == root)
+        return InputField{index, carrier.path};
+    return std::nullopt;
+  };
+
+  const SemanticType *carrierType =
+      constructorOwner ? &constructorOwner->type : &body.returnType;
+  if (carrierType->kind == SemanticType::Class ||
+      carrierType->kind == SemanticType::Enum) {
+    std::optional<FieldPath> path;
+    bool consistent = true;
+    std::vector<std::optional<TagAlternatives>> carriers(exits.size());
+    for (std::size_t index = 0; index < exits.size(); ++index) {
+      if (constructorOwner) {
+        if (const auto found =
+                exits[index].placeAlternatives.find(receiverRoot);
+            found != exits[index].placeAlternatives.end())
+          carriers[index] = found->second;
+      } else if (index < values.size() && values[index]) {
+        carriers[index] =
+            operandAlternatives(body, aliases, exits[index], *values[index]);
+      }
+      if (!carriers[index])
+        continue;
+      if (path && *path != carriers[index]->path)
+        consistent = false;
+      path = carriers[index]->path;
+    }
+    const auto *sum = path && consistent
+                          ? payloadAtPath(&program, *carrierType, *path)
+                          : nullptr;
+    if (sum) {
+      std::map<std::size_t, std::vector<AbstractState>> alternativeExits;
+      for (std::size_t index = 0; index < exits.size(); ++index) {
+        if (!carriers[index]) {
+          for (const auto &variant : sum->variants)
+            alternativeExits[variant.variantIndex].push_back(exits[index]);
+          continue;
+        }
+        for (const auto &[variant, facts] : carriers[index]->facts) {
+          AbstractState state = exits[index];
+          for (const auto &[origin, fact] : facts)
+            publishFieldFact(body, state, origin, fact);
+          alternativeExits[variant].push_back(std::move(state));
+        }
+      }
+      InputAlternatives result{.path = *path};
+      for (const auto &[variant, states] : alternativeExits) {
+        auto &fields = result.facts[variant];
+        const auto collect = [&](std::optional<std::size_t> parameter,
+                                 const ObservedFact<ObjectFact> &object) {
+          if (!object.fact)
+            return;
+          for (const auto &[field, fact] : object.fact->integers)
+            if (fields.size() < maxTagFacts)
+              fields.emplace(InputField{parameter, field}, fact);
+        };
+        if (member)
+          if (const auto *owner = program.findClassInstance(*function->owner))
+            collect(std::nullopt, objectAtExits(program, body, aliases, states,
+                                                receiverRoot, owner->type));
+        for (const auto &[index, root] : references)
+          collect(index, objectAtExits(program, body, aliases, states, root,
+                                       types[index]));
+      }
+      summary.resultAlternatives = std::move(result);
+    }
+  }
+
+  if (constructorOwner || body.returnType != SemanticType::Bool)
+    return;
+  std::optional<InputField> carrier;
+  std::map<std::size_t, std::optional<bool>> results;
+  for (std::size_t index = 0; index < exits.size(); ++index) {
+    const AbstractState &exit = exits[index];
+    if (index >= values.size() || !values[index] ||
+        values[index]->kind != MirOperandKind::Value)
+      return;
+    const MirValueId value = values[index]->value;
+    std::optional<FieldOrigin> origin;
+    // Absent: this exit cannot run for that alternative. Empty: unknown.
+    std::map<std::size_t, std::optional<bool>> exitResults;
+    if (const auto predicate = exit.tagPredicates.find(value);
+        predicate != exit.tagPredicates.end()) {
+      origin = predicate->second.carrier;
+      const auto *sum = carrierPayload(&program, address, body, *origin);
+      if (!sum)
+        return;
+      const auto known = exit.placeAlternatives.find(origin->root);
+      for (const auto &variant : sum->variants) {
+        if (known != exit.placeAlternatives.end() &&
+            known->second.path == origin->path &&
+            !known->second.facts.contains(variant.variantIndex))
+          continue;
+        const auto result =
+            predicate->second.results.find(variant.variantIndex);
+        exitResults[variant.variantIndex] =
+            result == predicate->second.results.end()
+                ? std::nullopt
+                : std::optional<bool>{result->second};
+      }
+    } else {
+      const auto *definition = definingInstruction(body, value);
+      const bool *literal =
+          definition && definition->kind == MirInstructionKind::Compute &&
+                  definition->operation == MirOperation::Literal &&
+                  definition->literal
+              ? std::get_if<bool>(&*definition->literal)
+              : nullptr;
+      if (!literal)
+        return;
+      for (const auto &[root, alternatives] : exit.placeAlternatives) {
+        const FieldOrigin candidate{.root = root, .path = alternatives.path};
+        if (!exported(candidate))
+          continue;
+        if (origin)
+          return;
+        origin = candidate;
+        for (const auto &[variant, facts] : alternatives.facts) {
+          (void)facts;
+          exitResults[variant] = *literal;
+        }
+      }
+    }
+    if (!origin)
+      return;
+    const auto input = exported(*origin);
+    if (!input || (carrier && *carrier != *input))
+      return;
+    carrier = input;
+    for (const auto &[variant, result] : exitResults) {
+      const auto [slot, inserted] = results.try_emplace(variant, result);
+      if (!inserted && slot->second != result)
+        slot->second.reset();
+    }
+  }
+  if (!carrier)
+    return;
+  InputTagPredicate predicate{.carrier = *carrier};
+  for (const auto &[variant, result] : results)
+    if (result)
+      predicate.results.emplace(variant, *result);
+  if (!predicate.results.empty())
+    summary.resultPredicate = std::move(predicate);
+}
+
 struct ContextualBodyResult {
   ClosedCallSummary summary;
   MirSafetyAnalysis safety;
@@ -7893,6 +8702,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
       result.safety.proofs.end());
 
   std::vector<AbstractState> exits;
+  std::vector<std::optional<MirOperand>> exitValues;
   std::vector<std::optional<IntegerFact>> returnFacts;
   std::vector<std::optional<FieldPath>> returnFields;
   std::vector<std::optional<InputAddress>> returnPointers;
@@ -7962,6 +8772,9 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
         returnObjects.push_back(std::move(object));
       }
     }
+    exitValues.push_back(block.terminator.kind == MirTerminatorKind::Return
+                             ? block.terminator.value
+                             : std::nullopt);
     exits.push_back(std::move(transferred.output));
   }
   if (exits.empty() || round.incompleteBodies.contains(address)) {
@@ -8121,6 +8934,10 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
                                                  root, constructorOwner->type);
     }
   }
+  exportTagSummary(program, address, *body, aliases, function,
+                   address.kind == MirBodyKind::Constructor ? constructorOwner
+                                                            : nullptr,
+                   exits, exitValues, bindings, types, result.summary);
   return result;
 }
 
