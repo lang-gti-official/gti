@@ -325,10 +325,17 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     return;
   }
   if (failure.expressionFailure) {
+    const bool unaryPredicate =
+        failure.leafApplication && failure.leafApplication->predicate &&
+        failure.leafApplication->arguments.size() == 1 &&
+        failure.argument != SemanticType::Unknown;
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2029", DiagnosticPhase::Semantics, site,
-        "Generic arguments do not satisfy the required expression or "
-        "compile-time predicate.");
+        unaryPredicate
+            ? "Type '" + typeSpelling(failure.argument) +
+                  "' does not satisfy the required compile-time predicate."
+            : "Generic arguments do not satisfy the required expression or "
+              "compile-time predicate.");
     const Token &location = failure.leafApplication
                                 ? failure.leafApplication->name.last()
                                 : failure.parameter;
@@ -509,27 +516,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "state. Raw pointers remain nonowning and retain their unsafe "
           "validity "
           "obligations; copying or moving the element is not required.");
-      break;
-    case StructuralConstraintKind::Adds:
-      diagnostic.hints.emplace_back(
-          "The domain type must provide a public read-only "
-          "'T operator+(T&)' returning an owned value of its own type.");
-      break;
-    case StructuralConstraintKind::Subtracts:
-      diagnostic.hints.emplace_back(
-          "The domain type must provide a public read-only "
-          "'T operator-(T&)' returning an owned value of its own type.");
-      break;
-    case StructuralConstraintKind::Negates:
-      diagnostic.hints.emplace_back(
-          "The domain type must provide a public read-only unary "
-          "'T operator-()' returning an owned value of its own type.");
-      break;
-    case StructuralConstraintKind::ScalesBy:
-      diagnostic.hints.emplace_back(
-          "The domain type must provide a public read-only "
-          "'T operator*(Scalar)' returning an owned value of its own type "
-          "for the exact scalar type.");
       break;
     case StructuralConstraintKind::ReadCallable:
     case StructuralConstraintKind::MutCallable:

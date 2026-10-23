@@ -8042,6 +8042,10 @@ auto SemanticVisitor::Impl::analyzeTypeParameterCall(
     valid = false;
   }
   if (valid && targetType.kind == SemanticType::Class) {
+    // Concrete construction replaces the open type-parameter intrinsic.
+    // Retaining both would publish a callable intrinsic and a constructor
+    // selection for one expression, with incompatible HIR/MIR contracts.
+    semanticModel.suppressInheritedCall(expr);
     auto arguments = analyzeContextualCallArguments(expr.arguments());
     if (expr.arguments().size() == 1 &&
         analyzeExplicitConversion(expr, expr.arguments().front(),
@@ -8171,18 +8175,6 @@ auto SemanticVisitor::Impl::analyzeTypeParameterCall(
                  "' requires the default-initialization capability.",
              "GTI-S2029");
       valid = false;
-    }
-    // Generic instance analysis substitutes T before revisiting T(). Once
-    // that substitution is a class, resolve the exact zero-argument
-    // constructor like any other class construction. Leaving the generic
-    // intrinsic in place loses the constructor instance from HIR/MIR and
-    // can produce a declaration with no definition after the MIR cutover.
-    if (valid && targetType.kind == SemanticType::Class) {
-      semanticModel.suppressInheritedCall(expr);
-      analyzeConstructorCall(expr, targetType.classId, targetType.arguments,
-                             targetType.valueArguments, {}, expr.arguments(),
-                             expr.paren());
-      return;
     }
     currentType = valid ? targetType : SemanticType::Unknown;
     if (valid) {
