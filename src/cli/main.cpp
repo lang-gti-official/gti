@@ -3634,7 +3634,7 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   } else {
     observer.finished = [&](const lang::driver::TestCaseReport &report) {
       const bool passed = report.status == lang::driver::TestCaseStatus::Passed;
-      std::cerr << "  " << report.name << " ... "
+      std::cerr << "  [" << report.target << "] " << report.name << " ... "
                 << terminalStyle.code(std::cerr,
                                       passed ? Style::Success : Style::Error)
                 << lang::driver::testCaseStatusName(report.status)

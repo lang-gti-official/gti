@@ -112,6 +112,14 @@ extern "C" { int raise(int signal); int usleep(uint32_t duration); }
         events = run(expected=23)
         assert events[-1]["discovered"] == events[-1]["completed"] == 1
         assert next(e for e in events if e["event"] == "test_finished")["status"] == "failed"
+        source.write_text('#include <std/string>\n[[test]] void shared() { std::println("first-suite"); }\n')
+        (project / "tests/other.gti").write_text('#include <std/string>\n[[test]] void shared() { std::println("second-suite"); }\n')
+        with (project / "gti.toml").open("a") as manifest:
+            manifest.write('\n[targets.other-tests]\nkind = "test"\nroot = "tests/other.gti"\n')
+        human = run("--jobs", "2", structured=False)
+        assert "[engine-tests] shared ... passed" in human.stderr, human.stderr
+        assert "[other-tests] shared ... passed" in human.stderr, human.stderr
+        assert "first-suite" in human.stderr and "second-suite" in human.stderr
 
 
 if __name__ == "__main__":

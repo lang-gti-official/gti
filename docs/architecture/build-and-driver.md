@@ -706,7 +706,10 @@ groups, and reports an incomplete run with status 128+signal. Unstarted selected
 cases do not receive fabricated completion records. Uncatchable parent death is
 outside this guarantee. Launch setup/exec failure uses a close-on-exec handshake, distinct
 from a program returning 127; signal status is derived from `waitpid`, not
-inferred from an integer exit value. Windows currently rejects bounded isolated
+inferred from an integer exit value. Capture seek/size/read/premature-EOF/close
+errors produce driver diagnostics and runner errors, preserving available output
+and genuine nonzero child statuses; an otherwise successful child becomes status
+74. A valid empty capture still passes. Windows currently rejects bounded isolated
 execution explicitly; the shipped macOS and Linux platforms implement it.
 
 `--format json` emits UTF-8 JSON Lines exclusively on stdout; human build
@@ -751,8 +754,8 @@ identities; ordinary user bodies retain their normal visibility rules.
 The cost model is one GTI/native build per suite and one process launch per
 selected function, including normal hosted argument ownership and capture of
 that child's output. Successful cases do not enter the panic path. Isolation
-intentionally repeats global initialization and teardown; resources are not
-shared between cases. The initial dispatcher compares qualified-name selectors
+intentionally repeats global initialization and teardown; process-local state is
+not shared between cases. The initial dispatcher compares qualified-name selectors
 once per child. No test-specific runtime, extra worker thread, or exception
 mechanism is involved; the parent polls a bounded set of child handles. Ordinary non-test builds do not run test discovery or
 the second semantic pass. Build/run comparisons must retain equivalent process
