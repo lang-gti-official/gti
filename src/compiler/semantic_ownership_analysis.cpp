@@ -1278,12 +1278,6 @@ auto SemanticVisitor::Impl::textDependentPaths(const Expr &expression) const
     if (const auto relay = operatorTextReferenceRelay(*unary))
       if (auto nested = nestedTextRelay(*relay))
         return std::move(*nested);
-  // A receiver accessor designates its field, as the field read would.
-  if (const auto *call = exprAs<Call>(&expression))
-    if (const auto *resolved = semanticModel.findCall(*call))
-      if (const auto relay = accessorFieldRelay(*call, *resolved))
-        if (auto nested = nestedTextRelay(*relay))
-          return std::move(*nested);
   // A field that paths go through holds their remainder.
   if (const auto *get = exprAs<Get>(&expression)) {
     const auto *place = semanticModel.findPlace(expression);
@@ -1521,39 +1515,6 @@ auto SemanticVisitor::Impl::nestedTextRelay(const FieldSourcedTextResult &relay)
       paths.push_back(std::move(path));
     }
   return paths.empty() ? std::nullopt : std::optional{std::move(paths)};
-}
-
-auto SemanticVisitor::Impl::accessorFieldRelay(
-    const Call &call, const ResolvedCallInfo &resolved) const
-    -> std::optional<FieldSourcedTextResult> {
-  const auto *member = exprAs<Get>(call.callee().get());
-  if (member == nullptr || member->access().kind == TokenKind::ARROW ||
-      !member->object() ||
-      resolved.borrowOrigin != BorrowOriginKind::Receiver ||
-      resolved.returnType.kind != SemanticType::Reference ||
-      resolved.returnType.arguments.size() != 1 ||
-      resolved.returnType.arguments.front().kind != SemanticType::Enum)
-    return std::nullopt;
-  // Finding the callee is bookkeeping, not a use of its body.
-  const FunctionDemandScope pauseDemand(semanticModel, nullptr);
-  const FunctionInfo *callee = semanticModel.findFunction(resolved.function);
-  if (callee == nullptr && instanceBaseModel != nullptr)
-    callee = instanceBaseModel->findFunction(resolved.function);
-  std::vector<const FunctionInfo *> visiting;
-  const auto name = callee == nullptr
-                        ? std::nullopt
-                        : accessorReceiverField(*callee, visiting);
-  if (!name)
-    return std::nullopt;
-  const ClassInfo &owner = classInfo(callee->ownerClass);
-  const auto found = owner.members.find(*name);
-  if (found == owner.members.end() || found->second.symbol.staticMember ||
-      found->second.symbol.bindingKind != SemanticBindingKind::Field)
-    return std::nullopt;
-  return FieldSourcedTextResult{
-      .origin = &member->object(),
-      .receiver = true,
-      .field = symbolForDeclaration(found->second.symbol.declaration)};
 }
 
 auto SemanticVisitor::Impl::contractPrefix(const SemanticType &type,

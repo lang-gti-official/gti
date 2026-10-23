@@ -1866,12 +1866,6 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
           field && nestedTextClass(type) && nestedTextRelay(*field).has_value())
         return textDependentValueInfo(std::move(type), ValueCategory::Place,
                                       resolved->returnType.referenceAccess);
-      // A receiver accessor of a payload-enum field through which the
-      // dependency designates a text payload is that dependent field.
-      if (const auto field = accessorFieldRelay(call, *resolved);
-          field && nestedTextRelay(*field).has_value())
-        return textDependentValueInfo(std::move(type), ValueCategory::Place,
-                                      resolved->returnType.referenceAccess);
       return expressionInfo(std::move(type), ValueCategory::Place,
                             resolved->returnType.referenceAccess);
     }

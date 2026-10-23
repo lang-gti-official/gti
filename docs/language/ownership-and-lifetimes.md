@@ -2619,9 +2619,8 @@ an accessor itself. Any other use of the field than a `switch` on it, such as
 copying or moving it into a local, passing it by value or by reference,
 storing it, or returning a reference to it from a method that is not such an
 accessor, may carry any of its payloads away, so it requires every text payload
-of the field ownerless. A call of the accessor used any other way than as a
-`switch` subject is such a use of the field, and on a value over a local
-owner it is the dependent field itself:
+of the field ownerless. Inside the class, a call of the accessor used any
+other way than as a `switch` subject is such a use of the field:
 
 ```gti
 class Line {

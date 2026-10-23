@@ -2333,9 +2333,6 @@ int main() {
            Case{"Line line = Line(owner.view()); line.lendOut();", "GTI-S2045"},
            Case{"Line line = Line(owner.view()); line.storeOut();",
                 "GTI-S2045"},
-           Case{"Line line = Line(owner.view()); "
-                "keepWordRef(line.wordRef());",
-                "GTI-S2045"},
            Case{"Line line = Line(owner.view()); copyLine(line);", "GTI-S2045"},
            Case{
                "mut Line line = Line(owner.view()); std::move(line).consume();",

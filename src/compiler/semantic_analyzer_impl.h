@@ -2128,10 +2128,6 @@ private:
   // nested text class designates.
   [[nodiscard]] std::optional<std::vector<std::vector<SymbolId>>>
   nestedTextRelay(const FieldSourcedTextResult &relay) const;
-  // The payload-enum field an explicit receiver accessor's call designates,
-  // as `receiver.field` would: every return of the accessor is that field.
-  [[nodiscard]] std::optional<FieldSourcedTextResult>
-  accessorFieldRelay(const Call &call, const ResolvedCallInfo &resolved) const;
   [[nodiscard]] std::optional<FieldSourcedTextResult>
   fieldSourcedTextResult(const Call &call,
                          const ResolvedCallInfo &resolved) const;
