@@ -54,10 +54,6 @@ for what minor and patch releases mean.
 - A referent without members is reported at the call: `->` through an
   `int&` or `c_string&` result reports `GTI-S2000`, and an unknown
   `string_view` member reports `GTI-S2035`.
-- Not yet supported: building a text iterator directly from a returned view
-  reference, as in `o->begin()` or `o.value().begin()`, still reports
-  `GTI-B0001`. Bind the reference first (`std::string_view& view =
-  o.value();`) and iterate `view`.
 
 ## 0.466.0 — Typed macros
 
