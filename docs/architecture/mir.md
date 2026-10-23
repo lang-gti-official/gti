@@ -1978,6 +1978,37 @@ fields.
   for that call: readers resolve the text through `returnSources`, so a
   method composing another accessor's reference relays what it relays.
 
+Phase 2c adds re-rooting constructions and dependent returns:
+- A construction that re-roots a class argument's text field has one
+  `borrowFields` mapping with one `sourceFields` entry. The verifier's
+  `dependentTextPublication` admits it when `dependentTextFieldRelay`, read
+  from the constructor's initializers, maps that parameter's field to exactly
+  the mapping's `resultFields`. In `TextContracts`, a dependent CallInput into
+  such a construction is re-rooted (`publishesFieldRelay`), and a re-rooted
+  formal field must reach no ownerless text storage in the constructor
+  (`constructorBodyFieldNeeds`). `contractPlace` treats a constructor's
+  by-value class formal as a contract place. `dependentDesignationPath`
+  follows a value that a Move or Load produced, so a moved dependent argument
+  is checked too; before 0.465.0 it skipped the relay check.
+- A consuming receiver is a contract formal (`readOnlyContractFormal`). A
+  consuming call whose result is a text field result of its receiver is
+  exempt from the consuming-call borrow rule.
+- In a field-contract function, an instruction other than a `PayloadExtract`
+  that names a contract formal's payload-enum field place (a copy, move or
+  borrow of the field) requires every text payload of that field. A switch
+  observes its subject in place, in its terminator.
+- `dependentTextReturnSummary` admits a function flagged
+  `dependentTextReturn`: one Argument mapping over a read-only reference
+  parameter, with no source fields, at a direct text path, or at a payload of
+  an enum result. It replaces the complete-layout check for that summary. A
+  return that is a Construct or Call without a loan and without publication
+  is an ownerless alternative. Clearing the flag or the path fails
+  verification.
+- HIR gives a publishing contextual construction dependent traits, and its
+  verifier requires the construction and its value node to agree. A by-value
+  payload binding that semantics gives a retained loan carries that loan in
+  MIR (`bindingLoans`).
+
 A text field result (`textFieldResult`: one `returnBorrowFields` mapping of an
 Argument or Receiver origin to one source field, no result fields) carries the
 dependency the caller's value holds in that field:

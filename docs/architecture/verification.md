@@ -1,5 +1,48 @@
 # Compiler Verification
 
+## Conversions, field relays and returns (0.465.0)
+
+`view_fields` covers phase 2c in four tests.
+- `testContextualConstruction`: `std::optional<std::string_view> maybe =
+  input.view()`, a `Token` over a view binding, `expected<int,
+  std::string_view> failed = unexpected(input.view())` and
+  `std::move(failure).error()` verify. Storing the optional's or the failure's
+  text, appending to the owner while the value or a copied view lives, and
+  returning a converted view of a local owner are rejected at source
+  (`GTI-S2045` or `GTI-S2017`), never with `GTI-B`.
+- `testFieldRelays`: `Wrap(token)` storing `token.text` as a payload,
+  `Copy` over a temporary and a moved token, and `Named` reading the field
+  through an accessor verify. MIR rejects each of the five relays, `parse`'s
+  conversion into `expected` included, when its path is extended or its
+  source field is cleared. A constructor that also stores the field
+  (`Leaky`), stores it twice (`Twice`), and storing the relayed text are
+  `GTI-S2045`.
+- `testDependentReturns`: `parse`, `parseAgain` returning `parse(input)`,
+  `tokenOf`, `viaLocal`, `wordOf` and `find` verify, with `return 0;` and
+  `std::nullopt` as ownerless alternatives. MIR rejects each of the six
+  functions with its `dependentTextReturn` flag cleared, or with its path
+  removed. Storing the result, appending to or moving the owner while it
+  lives, and a temporary owner are rejected at source. So are returns over a
+  local, by-value, `mut` or second-formal owner, and a return of `parse`
+  over the returning function's own local.
+- `testPayloadFieldUses`: methods that copy, pass by value or by reference,
+  store, return a reference to, or move and switch on a payload-enum field,
+  and consuming methods that store or return a moved text field, verify over
+  literal values. MIR rejects each of these functions with its requirements
+  cleared, so it derives them independently. Over a local owner each use is
+  `GTI-S2045`; appending to the owner while a relayed view lives is
+  `GTI-S2017`.
+
+`view_field_conversions_runtime` runs the fixture in every mode. The two
+tests that asserted a dependent value cannot be returned now return one over
+a reference formal and reject one over a local owner.
+
+0.463.0 compiled a heap-use-after-free: a read-only method copied
+`this.word` into a local, switched on it and stored the payload in a
+global, and ASan reported it once the owner reallocated. Passing the field
+by value or by reference, storing it, and passing on a returned reference to
+it escaped the same way. `testPayloadFieldUses` covers each shape.
+
 ## Nested publication through payload-enum fields (0.463.0)
 
 `view_fields` covers the paths in three tests.
