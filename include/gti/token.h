@@ -77,6 +77,7 @@ enum class TokenKind : std::uint8_t {
   HASH_ERROR,
   HASH_INCLUDE,
   HASH_DEFINE,
+  HASH_MACRO,
   HASH_UNDEF,
   HASH_IFDEF,
   HASH_IFNDEF,
@@ -214,7 +215,8 @@ inline constexpr bool isOperatorToken(TokenKind kind) {
 }
 
 inline constexpr bool isDirectiveToken(TokenKind kind) {
-  return kind >= TokenKind::HASH_IF && kind <= TokenKind::HASH_IFNDEF;
+  return kind >= TokenKind::HASH_IF && kind <= TokenKind::HASH_IFNDEF &&
+         kind != TokenKind::HASH_MACRO;
 }
 
 inline constexpr bool isKeywordToken(TokenKind kind) {
@@ -224,7 +226,7 @@ inline constexpr bool isKeywordToken(TokenKind kind) {
       kind != TokenKind::OR && kind != TokenKind::SIZEOF;
   const bool specialKeyword =
       kind >= TokenKind::THIS && kind <= TokenKind::NULLPTR;
-  return ordinaryKeyword || specialKeyword;
+  return ordinaryKeyword || specialKeyword || kind == TokenKind::HASH_MACRO;
 }
 
 inline constexpr bool isTypeKeywordToken(TokenKind kind) {
@@ -444,6 +446,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "HASH_INCLUDE";
   case TokenKind::HASH_DEFINE:
     return "HASH_DEFINE";
+  case TokenKind::HASH_MACRO:
+    return "HASH_MACRO";
   case TokenKind::HASH_UNDEF:
     return "HASH_UNDEF";
   case TokenKind::HASH_IFDEF:

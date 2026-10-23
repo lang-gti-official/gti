@@ -4,7 +4,7 @@
     "stdlib/prelude.gti": "6131853243c02c09059ac6d78e827ed8733ded04fbffbc826e0cd7d49f4a2e09",
     "stdlib/std/algorithm.gti": "e99485de4cf40d0e1e5be0d10f86780bc38f170c388473b994bb1a6f786ba656",
     "stdlib/std/array.gti": "2b892b6049d85bf53b146b4b8d1c019477c6657591774f8ef93138cee921510a",
-    "stdlib/std/assert.gti": "69b6e940e70080796731214da1d5583bc665d81094b6ea332c55e97b2c7e0b8b",
+    "stdlib/std/assert.gti": "e7996ec91748812a5a0daafcbaf954a6bff27cf023981d8de30096bbbac91453",
     "stdlib/std/atomic.gti": "c78f9f7632b8ea3a3d757b1027a570a0581071bf270e7041bf2f57f1b67abfa6",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "546221ebd010d869a41ca0829f4cd823c27c7773dc5e66c27bea53d22ec8d474",
@@ -2936,6 +2936,7 @@
         "tests/deferred_assertion_runtime_test.py",
         "tests/deferred_assertion_lsp_test.py",
         "examples/172-deferred-assertions.gti",
+        "examples/174-typed-macros.gti",
         "stdlib/std/assert.gti"
       ]
     },

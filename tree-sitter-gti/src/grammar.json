@@ -599,6 +599,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "macro_declaration"
+        },
+        {
+          "type": "SYMBOL",
           "name": "function_declaration"
         },
         {
@@ -4777,6 +4781,82 @@
         }
       ]
     },
+    "macro_declaration": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "FIELD",
+            "name": "attribute",
+            "content": {
+              "type": "SYMBOL",
+              "name": "function_contract_attribute"
+            }
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "#macro"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "type_parameters",
+              "content": {
+                "type": "SYMBOL",
+                "name": "generic_parameter_clause"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "FIELD",
+          "name": "parameters",
+          "content": {
+            "type": "SYMBOL",
+            "name": "parameter_clause"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "constraints",
+              "content": {
+                "type": "SYMBOL",
+                "name": "requires_clause"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "FIELD",
+          "name": "body",
+          "content": {
+            "type": "SYMBOL",
+            "name": "block"
+          }
+        }
+      ]
+    },
     "function_contract_attribute": {
       "type": "SEQ",
       "members": [
@@ -4802,10 +4882,6 @@
             {
               "type": "STRING",
               "value": "discardable"
-            },
-            {
-              "type": "STRING",
-              "value": "deferred"
             },
             {
               "type": "STRING",
@@ -4844,10 +4920,6 @@
                   {
                     "type": "STRING",
                     "value": "discardable"
-                  },
-                  {
-                    "type": "STRING",
-                    "value": "deferred"
                   },
                   {
                     "type": "STRING",
@@ -9736,6 +9808,10 @@
     }
   ],
   "conflicts": [
+    [
+      "function_declaration",
+      "macro_declaration"
+    ],
     [
       "generic_argument_profile_clause",
       "generic_parameter"

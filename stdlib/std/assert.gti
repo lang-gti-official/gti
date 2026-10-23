@@ -1,4 +1,4 @@
-// Assertions are source policy over the general deferred statement facility.
+// Assertions are source policy over the general typed macro facility.
 // NDEBUG disables only debug_assert; assert is always checked.
 #include <std/panic>
 
@@ -15,24 +15,24 @@ namespace std {
   constexpr bool debug_assertions_enabled = true;
 #endif
   /// Checks condition once and panics at the caller if it is false.
-  [[deferred, track_caller]]
-  void assert(bool condition) {
+  [[track_caller]]
+  #macro assert(bool condition) {
     if (!condition) {
       std::panic("Assertion failed");
     }
   }
 
   /// The pattern and formatting arguments are evaluated only on failure.
-  [[deferred, track_caller]]
-  void assert<Args...>(bool condition, std::string_view pattern, Args... args) {
+  [[track_caller]]
+  #macro assert<Args...>(bool condition, std::string_view pattern, Args... args) {
     if (!condition) {
       std::panic(pattern, args...);
     }
   }
 
   /// Like assert, but NDEBUG skips every argument's runtime evaluation.
-  [[deferred, track_caller]]
-  void debug_assert(bool condition) {
+  [[track_caller]]
+  #macro debug_assert(bool condition) {
     if (std::debug_assertions_enabled) {
       if (!condition) {
         std::panic("Debug assertion failed");
@@ -41,8 +41,8 @@ namespace std {
   }
 
   /// Disabled debug assertions still require well-typed arguments.
-  [[deferred, track_caller]]
-  void debug_assert<Args...>(bool condition, std::string_view pattern, Args... args) {
+  [[track_caller]]
+  #macro debug_assert<Args...>(bool condition, std::string_view pattern, Args... args) {
     if (std::debug_assertions_enabled) {
       if (!condition) {
         std::panic(pattern, args...);

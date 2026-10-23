@@ -21,6 +21,48 @@ does not reserve these identifiers.
 
 The LSP is an adapter over compiler-owned semantics:
 
+Typed macro declarations and ordinary-looking calls retain compiler-selected
+declaration identities. Hover/signature text prints `#macro` and its implicit
+void contract rather than the removed `[[deferred]]` attribute. Definition
+navigation and exact overload selection come from the same frontend records;
+the protocol does not infer expansion semantics from `#` spelling or names.
+Incomplete signatures, legacy-attribute migration and mixed macro/function
+overloads publish ordinary compiler diagnostics through current snapshot and
+UTF-16 conversion rules.
+
+### Read-only macro expansion inspection
+
+`LanguageQueries::macroExpansion` selects a retained checked macro invocation
+by its parser-owned source range and reads `SemanticModel::macroExpansionSites`.
+It renders substituted argument expressions, nested expansions, hygienic local
+bindings and control flow as explanatory GTI. Display-only local labels
+`name__macro_local_N` follow checked binding identities, not equal identifier
+text. The display is not executable source, an ownership proof or a backend
+input. It never triggers concrete semantic analysis or changes the snapshot.
+Calls with no retained expansion, or several distinct concrete expansions for
+one written invocation, return no result instead of guessing an instance.
+Less-common argument syntax not represented by the display printer is marked
+with an explicit omission comment. Output is deterministic and capped at
+16 KiB, 4096 visited nodes and 64 levels; truncation is explicit and UTF-8 safe.
+
+The server advertises
+`experimental.macroExpansionProvider = { method: "gti/inspectMacroExpansion",
+readOnly: true }`. The custom request takes normal `textDocument` and UTF-16
+`position` fields, with an optional `textDocument.version`. Its result is
+`null`, or owned `uri`, `version`, invocation `range`, declaration location,
+`languageId: "gti"`, `readOnly: true`, `text` and `truncated` fields. It shares
+the existing semantic snapshot queue, dirty dependency overlays, cancellation,
+close/reopen and generation rejection. A supplied stale version produces LSP
+`Content modified` (`-32801`); no source edits or executable commands are sent.
+
+Neovim's `:GTIExpandMacro` requests this view at the cursor and opens an
+unmodifiable, read-only `nofile` scratch split; `q` closes it. The adapter
+discards responses when a source/dependency buffer changed while waiting.
+There is no automatic replacement of a macro call with its displayed text.
+Definition navigation targets the written binder of a macro-local variable;
+references and rename join only exact written declaration identities across
+retained expansions, without including same-spelled caller or shadowed names.
+
 Concrete static methods on interfaces use the same compiler-owned method
 symbols, selected calls and qualified completion as static class methods.
 Hover and definition retain the exact declaration identity; semantic tokens

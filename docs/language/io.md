@@ -36,7 +36,7 @@ message truncation and containment.
 Formatting and stdout convenience APIs adopt this facility as described below.
 
 `<std/assert>` also builds `std::assert` and `std::debug_assert` in source on
-this panic facility. They use general deferred statement helpers, so a
+this panic facility. They use general typed `#macro` declarations, so a
 successful assertion does not evaluate or format its optional message.
 Disabled debug assertions evaluate no arguments, while retaining static
 argument/body checking. Their terminal path has the same bounded snapshot,

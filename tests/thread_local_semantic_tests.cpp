@@ -642,8 +642,8 @@ void modify() { value = 2; }
 struct Cleanup { ~Cleanup() { modify(); } };
 bool inspect(Cleanup& input) { return true; }
 void observe(bool value) {}
-[[deferred]] void ignore(bool value) {}
-[[deferred]] void force(bool value) { observe(value); }
+#macro ignore(bool value) {}
+#macro force(bool value) { observe(value); }
 )";
   // An unused expression parameter is checked, but neither its temporary nor
   // its destructor executes. Probe effects must not enter the caller's graph.

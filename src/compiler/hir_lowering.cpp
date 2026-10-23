@@ -548,7 +548,7 @@ private:
                   SemanticType returnType,
                   std::vector<SemanticType> parameterTypes,
                   std::optional<SourceSpan> site = std::nullopt) {
-    if (declaration.deferredEvaluation)
+    if (declaration.macroExpansion)
       return 0;
     if (constantClosure &&
         (declaration.declaration == nullptr ||
@@ -3523,10 +3523,10 @@ private:
       return std::nullopt;
     }
     if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
-      if (auto expanded = model.shareDeferredExpansion(*expression)) {
-        // A concrete instance owns its selected expansion only until its
-        // semantic delta is released. HIR source pointers must survive that
-        // delta and this lowerer, including nested or inherited expansions.
+      if (auto expanded = model.shareMacroExpansion(*expression)) {
+        // Instance-local models can die before MIR consumes HIR source
+        // pointers. Retain exact reached roots, including nested/inherited
+        // expansions, independently of the model and this lowerer.
         if (retainedSourceStatements.insert(expanded.get()).second)
           output.program.sourceStatementOwners_.push_back(expanded);
         std::vector<HirStatementId> statements;
@@ -5292,7 +5292,7 @@ private:
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
     ensurePlaceDomain(body);
-    if (const Token *caller = model.findDeferredDefault(expression);
+    if (const Token *caller = model.findMacroDefault(expression);
         caller && !activeDefaultArguments.contains(&expression))
       return lowerDefaultArgument(&expression, model, classArguments,
                                   classValueArguments, body,

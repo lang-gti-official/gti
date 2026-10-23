@@ -845,7 +845,7 @@ private:
     bool neverReturns = false;
     bool tracksCaller = false;
     bool discardableResult = false;
-    bool deferredEvaluation = false;
+    bool macroExpansion = false;
     bool threadConfinedCallback = false;
     bool testFunction = false;
     CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
@@ -5141,48 +5141,57 @@ private:
   // Deferred statement helpers borrow no closure environment. Each expansion
   // retains definition-site lookup for its body and caller-site lookup for
   // substituted arguments. Flow/loans remain those of the calling body.
-  struct DeferredLookupContext {
+  struct MacroLookupContext {
     std::vector<std::string> namespaceScope;
     SourceUnitId sourceUnit = 0;
     std::optional<ClassId> ownerClass;
     bool staticMember = false;
     bool definition = false;
+    // A definition may see only lexical frames created within its expansion.
+    // Captured argument syntax is capped at the invocation's lexical depth so
+    // later macro-local binders cannot capture same-spelled caller names.
+    std::size_t localScopeBegin = 0;
+    std::optional<std::size_t> localScopeEnd;
+    std::size_t lexicalLambdaDepth = 0;
     std::size_t declarationOrder = 0;
     std::optional<CallerLocationOrigin> caller;
     std::optional<Token> invocation;
     std::unordered_map<std::string, SemanticType> types;
     std::unordered_map<std::string, CompileTimeValue> values;
   };
-  std::unordered_map<std::uint32_t, DeferredLookupContext> deferredLookup;
+  std::unordered_map<std::uint32_t, MacroLookupContext> macroLookup;
   // A speculative worker is confined to the lifetime of its caller. Read
   // earlier expansion domains through that caller instead of repeatedly
   // copying the growing domain map; newly expanded syntax stays local.
-  const Impl *deferredLookupBase = nullptr;
-  struct DeferredLookupScope {
+  const Impl *macroLookupBase = nullptr;
+  struct MacroLookupScope {
     Impl &owner;
     std::vector<std::string> namespaceScope;
     SourceUnitId sourceUnit;
     std::optional<ClassId> ownerClass;
     bool staticMember;
     std::size_t declarationOrder;
-    DeferredLookupScope(Impl &owner, const DeferredLookupContext &context);
-    ~DeferredLookupScope();
+    MacroLookupScope(Impl &owner, const MacroLookupContext &context);
+    ~MacroLookupScope();
   };
-  bool deferredProbe = false;
-  const Call *deferredProbeCall = nullptr;
-  const Call *deferredStatementCall = nullptr;
-  std::unordered_set<const Expr *> deferredProbeArguments;
-  std::size_t deferredExpansionDepth = 0;
-  std::size_t deferredExpandedBodies = 0;
-  std::vector<const FunctionDecl *> deferredActiveBodies;
-  [[nodiscard]] const DeferredLookupContext *
-  deferredContext(const Token &token) const;
-  [[nodiscard]] bool analyzeDeferredStatement(const ExpressionStmt &statement);
+  bool macroProbe = false;
+  const Call *macroProbeCall = nullptr;
+  const Call *macroStatementCall = nullptr;
+  std::unordered_set<const Expr *> macroProbeArguments;
+  std::size_t macroExpansionDepth = 0;
+  std::size_t macroExpandedBodies = 0;
+  std::vector<std::pair<const FunctionDecl *, std::size_t>> macroActiveBodies;
+  [[nodiscard]] const MacroLookupContext *
+  macroContext(const Token &token) const;
+  [[nodiscard]] std::pair<std::size_t, std::size_t>
+  macroLocalScopeRange(const Token &token) const;
+  [[nodiscard]] bool analyzeMacroStatement(const ExpressionStmt &statement);
   [[nodiscard]] bool
-  analyzeDeferredSelection(const Call &call, const CallableCandidate &selected,
-                           const std::vector<SemanticType> &typeArguments,
-                           const std::vector<CompileTimeValue> &valueArguments);
-  [[nodiscard]] bool validDeferredBody(const Stmt &statement) const;
+  analyzeMacroSelection(const Call &call, const CallableCandidate &selected,
+                        const std::vector<SemanticType> &typeArguments,
+                        const std::vector<CompileTimeValue> &valueArguments);
+  [[nodiscard]] bool validMacroBody(const Stmt &statement,
+                                    std::size_t ownLoopDepth = 0) const;
   static constexpr std::size_t kConstexprForElementLimit = 1024;
   static constexpr std::size_t kConstexprForBodyLimit = 4096;
   // Bodies expanded by `constexpr for` inside the declaration being analysed.
@@ -6737,7 +6746,7 @@ private:
   }
   [[nodiscard]] bool symbolVisibleAt(const Symbol &symbol,
                                      const Token &token) const {
-    const auto *context = deferredContext(token);
+    const auto *context = macroContext(token);
     return !context ? symbolVisibleNow(symbol)
                     : concreteReanalysis() ||
                           symbol.variableDeclaration == nullptr ||
