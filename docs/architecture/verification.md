@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Carriers of returned references (0.465.4)
+## Carriers of returned references (0.465.5)
 
 `accessor_text_carrier_runtime` runs `accessor_text_carriers.gti` in all
 eight native modes, including the sanitized one. It builds text iterators
@@ -128,6 +128,7 @@ on a machine shared with other builds.
 Still `GTI-B0001`, as on main: a constructor initializing a class's
 fixed-array field from its parameters (`Polygon(Point a, Point b) :
 corners({a, b})`).
+
 ## Deferred assertions and statement helpers (0.465.0)
 
 `deferred_assertions` checks the general `[[deferred]]` statement-helper rule
@@ -319,6 +320,30 @@ byte-identical C++, with no text differences. Only example 170 and the new
 - `borrow_origin` now counts `Box<std::string_view>::get()` in
   `borrow_stored_view_return.gti` as a field relay rather than an ownerless
   return, and checks its three stored-view mutations.
+
+## Text relays through accessor switch subjects (0.465.4)
+
+`ownerless_text_contracts` covers `testAccessorSubjectRelays`.
+- `switch (this.wordRef())` relays an `auto&` text payload as
+  `switch (this.word)` does. A view over a local owner passes and prints
+  `line.viaCall()`.
+- `firstCall()` binds the payload by value through the accessor and carries
+  the field's ownerless requirement. MIR rejects it with that requirement
+  cleared (`omits an independently derived requirement`), deriving the field
+  through the accessor's own verified body. With that derivation removed the
+  mutation passes, which is how 0.465.2 compiled a dangling view.
+- At source, `GTI-S2045` rejects `kept = line.firstCall()`,
+  `kept = line.viaCall()`, and a function returning `firstCall()` of a local
+  owner. `GTI-S2017` rejects mutating the owner while a relayed view lives.
+- The same holds for an accessor with an argument (`this.pick(0)`), an
+  implicit `wordAt()`, an implicit `return word;` body, and an accessor that
+  returns one of two fields (a whole use). Each also compiles and verifies
+  over static text, so MIR never derives a requirement semantics omitted.
+- `borrow_origin_runtime` runs `borrowed_enum_reference_subjects.gti` with both
+  relays over owned text in every mode.
+- An accessor that returns another accessor's reference, such as
+  `int& kindOf() { return this.kindRef(); }`, stays a whole receiver use. So a
+  relay through it does not reach text owned elsewhere.
 
 ## Text read through returned references (0.462.0)
 
@@ -9536,6 +9561,29 @@ moves its parameter through two local bindings. The reviewed inventory adds
 exactly one declaration and one body to that example; generated-item counts
 are unchanged. Its C++20/O0 and C++23/O3 executions retain the same cleanup
 observations.
+
+## Validation scope and combined batches
+
+Use the [risk-based batch contract](agent-workflow.md#risk-based-batch-validation)
+for current T1/T2/T3 criteria, exact admission plans, the smoke programs,
+combined full/platform gates, CI routing, evidence and failure ownership.
+Feature-specific sections identify affected coverage; their historical full
+runs do not impose a duplicate whole-compiler campaign on every component
+fix. Focused admission is a ready-for-integration checkpoint. Full acceptance
+belongs to the selected combined compiler, with every component's regression
+and relevant subsystem/tooling/platform/performance obligations preserved.
+
+The owning automation regression `agent_workflow` exercises real disposable
+Git repositories: exact membership and ancestry, original-PR preservation,
+conflict resume, duplicate-batch exclusion, withdrawal/release, stale source
+and missing-platform refusal, complete CTest inventories/results, required
+regression skips, optimized build ownership, and advisory CI classification. Workflow-only
+changes use these tests and their affected tooling gates rather than a full
+GTI semantic suite. CI still runs full native/sanitizer coverage for compiler
+integration candidates as advisory feedback. GitHub Actions never gates local
+validation, integration or completion; preserve exact-source local/managed-runner
+coverage and required platform/performance evidence, and report pending/failed
+CI separately rather than waiting for runner capacity or calling it passed.
 
 ## Development And Completion Cadence
 

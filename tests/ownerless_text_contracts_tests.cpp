@@ -766,8 +766,186 @@ int main() {
          "inside unsafe code");
 }
 
+// A payload-enum field reached through the receiver's accessor holds what
+// the field does: an arm returning its text payload by reference relays it,
+// and one binding it by value places the same ownerless requirement as
+// `switch (this.word)` would, which MIR derives through the accessor's body.
+const std::string kAccessorSubjects = R"gti(
+#include <std/panic>
+#include <std/string>
+mut std::string_view kept = "";
+enum Word { text(std::string_view value), none };
+class Line {
+public:
+  Word word;
+  Line(std::string_view value) : word(Word::text(value)) {}
+  Word& wordRef() { return this.word; }
+  std::string_view& viaPlace() {
+    switch (this.word) {
+    case Word::text(auto& v): return v;
+    case Word::none: std::panic("none");
+    }
+  }
+  std::string_view& viaCall() {
+    switch (this.wordRef()) {
+    case Word::text(auto& v): return v;
+    case Word::none: std::panic("none");
+    }
+  }
+  std::string_view firstCall() {
+    switch (this.wordRef()) {
+    case Word::text(v): return v;
+    case Word::none: return "";
+    }
+  }
+};
+)gti";
+
+void testAccessorSubjectRelays() {
+  const auto result = analyzeText(kAccessorSubjects + R"gti(
+int main() {
+  std::string input{"relayed"};
+  Line line = Line(input.view());
+  std::println(line.viaCall());
+  std::string_view v = line.viaCall();
+  Line fixed = Line("static");
+  kept = fixed.firstCall();
+  return v.size() == line.viaPlace().size() ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "an accessor subject relays its payload text like the field does");
+  if (!result.canGenerateCode())
+    return;
+  const lang::MirFunctionInstance *first = nullptr;
+  for (const auto &function : result.mir.functionInstances())
+    if (function.definitionKind == lang::MirDefinitionKind::Source &&
+        function.returnType.kind == lang::SemanticType::StringView &&
+        function.parameterTypes.empty() &&
+        function.ownerlessTextFields.size() == 1 &&
+        function.ownerlessTextFields.front().receiver &&
+        function.ownerlessTextFields.front().payload != 0)
+      first = &function;
+  expect(first != nullptr, "binding a payload through the receiver's "
+                           "accessor requires the field's payload ownerless");
+  if (first != nullptr) {
+    auto changed = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(first->id))
+        ->ownerlessTextFields.clear();
+    expect(functionError(lang::verifyMirProgram(changed), first->id,
+                         "ownerless text field contract omits an "
+                         "independently derived requirement"),
+           "MIR derives the payload requirement through the accessor");
+  }
+
+  struct Case {
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{"kept = line.firstCall();", "GTI-S2045"},
+           Case{"kept = line.viaCall();", "GTI-S2045"},
+           Case{"std::string_view v = line.viaCall(); input.append(\"!\"); "
+                "uint64_t n = v.size();",
+                "GTI-S2017"},
+       }) {
+    const auto rejected = analyzeText(
+        kAccessorSubjects +
+        "int run() { mut std::string input{\"input\"}; Line line = "
+        "Line(input.view()); " +
+        entry.body + " return 0; }\nint main() { return run(); }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, entry.code),
+           std::string("an accessor subject's text is checked at source: ") +
+               entry.body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + entry.body);
+  }
+  // Returning the by-value payload of a local owner's text would dangle.
+  const auto escaped = analyzeText(kAccessorSubjects + R"gti(
+std::string_view leak() {
+  std::string input{"freed"};
+  Line line = Line(input.view());
+  return line.firstCall();
+}
+int main() { return leak().size() == 5 ? 0 : 1; }
+)gti");
+  expect(hasDiagnosticCode(escaped.diagnostics, "GTI-S2045") &&
+             !escaped.canGenerateCode(),
+         "a by-value payload of a local owner cannot escape as ownerless");
+
+  // Every accessor form the subject can take keeps the payload's contract:
+  // a named field precisely, any other reference into the receiver as a
+  // whole use. None lets the local owner's text escape, and MIR, which sees
+  // through the same accessors, never finds a requirement semantics missed.
+  struct Form {
+    const char *accessor;
+    const char *subject;
+  };
+  for (const Form &form : {
+           Form{"Word& pick(int index) { return this.word; }", "this.pick(0)"},
+           Form{"Word& wordAt() { return this.word; }", "wordAt()"},
+           Form{"Word& implicitWord() { return word; }", "this.implicitWord()"},
+           Form{"Word& either(bool which) { if (which) { return this.word; } "
+                "return this.spare; }",
+                "this.either(true)"},
+       }) {
+    const std::string declarations = std::string(R"gti(
+#include <std/string>
+enum Word { text(std::string_view value), none };
+class Line {
+public:
+  Word word;
+  Word spare;
+  Line(std::string_view value) : word(Word::text(value)), spare(Word::none) {}
+  )gti") + form.accessor + R"gti(
+  std::string_view first() {
+    switch ()gti" + form.subject + R"gti() {
+    case Word::text(v): return v;
+    case Word::none: return "";
+    }
+  }
+};
+)gti";
+    const auto ownerless = analyzeText(declarations + R"gti(
+int main() { Line line = Line("static"); return line.first().size() == 6 ? 0 : 1; }
+)gti");
+    if (!ownerless.canGenerateCode())
+      printDiagnostics(ownerless);
+    expect(ownerless.canGenerateCode() &&
+               lang::verifyMirProgram(ownerless.mir).valid(),
+           std::string("static text through `") + form.subject +
+               "` satisfies the contract MIR derives");
+    const auto rejected = analyzeText(declarations + R"gti(
+std::string_view leak() {
+  std::string input{"freed"};
+  Line line = Line(input.view());
+  return line.first();
+}
+int main() { return leak().size() == 5 ? 0 : 1; }
+)gti");
+    expect(hasDiagnosticCode(rejected.diagnostics, "GTI-S2045") &&
+               !rejected.canGenerateCode(),
+           std::string("a payload through `") + form.subject +
+               "` cannot escape its local owner");
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + form.subject);
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testOwnerlessForwarding", testOwnerlessForwarding},
+    {"testAccessorSubjectRelays", testAccessorSubjectRelays},
     {"testTextReferenceAccessors", testTextReferenceAccessors},
     {"testTextReferenceRelays", testTextReferenceRelays},
     {"testNativeCStringProducer", testNativeCStringProducer},

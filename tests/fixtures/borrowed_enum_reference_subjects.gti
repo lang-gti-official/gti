@@ -31,6 +31,13 @@ public:
   Word word;
   Line(std::string_view value) : word(Word::text(value)) {}
   Word& wordRef() { return this.word; }
+  // The arm relays the receiver's text payload through its accessor.
+  std::string_view& textRef() {
+    switch (this.wordRef()) {
+    case Word::text(auto& value): return value;
+    case Word::none: std::panic("no text");
+    }
+  }
 };
 
 enum Slot<T> { full(T value), empty };
@@ -177,5 +184,9 @@ int main() {
   }
   Box<std::string_view> label = Box<std::string_view>("label");
   std::println(label.get());
+  // The relays view the owner's text, as relays through a field do.
+  std::println(view.get());
+  std::string_view relayed = owned.textRef();
+  std::println(relayed);
   return 0;
 }

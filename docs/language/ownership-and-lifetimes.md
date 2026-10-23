@@ -2621,10 +2621,13 @@ passed to a function or call a method that keeps the payload within the call.
 A function that binds a payload of its formal's or receiver's field in a
 `switch` requires that payload ownerless, unless the binding is a read-only
 reference that the whole arm returns: that relays the payload by reference,
-as an accessor of a text field does. A method returning such an accessor's
-reference composes the relay, and so do overloaded `*` and `->` operators that
-return it. A method that only tests the alternative, without binding the
-payload, requires nothing.
+as an accessor of a text field does. The `switch` may name the field or call
+an accessor that returns a reference to it, a read-only method with no
+arguments whose every return is `this.field` (or another such accessor), as in
+`switch (this.wordRef())`; either form requires or relays the same payload. A
+method returning such an accessor's reference composes the relay, and so do
+overloaded `*` and `->` operators that return it. A method that only tests the
+alternative, without binding the payload, requires nothing.
 
 `std::optional<std::string_view>` and `expected<std::string_view, E>` are
 ordinary classes of this shape, so a value over a local owner can test and
