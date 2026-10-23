@@ -546,7 +546,7 @@ private:
                   SemanticType returnType,
                   std::vector<SemanticType> parameterTypes,
                   std::optional<SourceSpan> site = std::nullopt) {
-    if (declaration.deferredEvaluation)
+    if (declaration.macroExpansion)
       return 0;
     if (constantClosure &&
         (declaration.declaration == nullptr ||
@@ -3448,7 +3448,7 @@ private:
       return std::nullopt;
     }
     if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
-      if (const Stmt *expanded = model.findDeferredExpansion(*expression)) {
+      if (const Stmt *expanded = model.findMacroExpansion(*expression)) {
         std::vector<HirStatementId> statements;
         if (const auto child = lowerStatement(expanded, model, classArguments,
                                               classValueArguments, body))
@@ -5211,7 +5211,7 @@ private:
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
     ensurePlaceDomain(body);
-    if (const Token *caller = model.findDeferredDefault(expression);
+    if (const Token *caller = model.findMacroDefault(expression);
         caller && !activeDefaultArguments.contains(&expression))
       return lowerDefaultArgument(&expression, model, classArguments,
                                   classValueArguments, body,

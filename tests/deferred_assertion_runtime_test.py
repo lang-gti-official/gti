@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deferred source APIs: evaluation, ownership, panic, attribution and cleanup."""
+"""Typed macro APIs: evaluation, ownership, panic, attribution and cleanup."""
 
 import argparse
 import os
@@ -14,7 +14,10 @@ def main():
     parser.add_argument("--quick", action="store_true")
     args = parser.parse_args()
     root = pathlib.Path(__file__).resolve().parents[1]
-    example = root / "examples" / "172-deferred-assertions.gti"
+    examples = {
+        root / "examples" / "172-deferred-assertions.gti": "Deferred assertions passed\n",
+        root / "examples" / "174-typed-macros.gti": "Typed macros passed\n",
+    }
     fixtures = root / "tests" / "fixtures"
     failures = fixtures / "deferred_assertion_failures.gti"
     lines = failures.read_text().splitlines()
@@ -41,7 +44,7 @@ def main():
         for name, standard, level, native in modes:
             for disabled in (False, True):
                 flags = ["-D", "NDEBUG"] if disabled else []
-                for source in (fixtures / "deferred_assertions.gti", failures, example):
+                for source in (fixtures / "deferred_assertions.gti", failures, *examples):
                     binary = pathlib.Path(temporary) / f"{name}-{disabled}-{source.stem}"
                     command = [str(args.compiler.resolve()), str(source),
                                "--std", standard, level, *flags, "--keep-cpp",
@@ -57,7 +60,7 @@ def main():
                                              capture_output=True, text=True,
                                              env=environment, timeout=20)
                         if source != failures:
-                            expected = "Deferred assertions passed\n" if source == example else ""
+                            expected = examples.get(source, "")
                             assert (ran.returncode, ran.stdout, ran.stderr) == (0, expected, ""), (
                                 name, disabled, source, ran.returncode, ran.stdout, ran.stderr)
                             continue

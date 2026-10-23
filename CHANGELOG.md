@@ -9,6 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.466.0 — Typed macros
+
+- Declare namespace-scope statement templates with `#macro NAME(typed
+  parameters) { ... }` and invoke them with ordinary, optionally qualified
+  `NAME(...)` calls. Generic parameters, typed overloads, defaults, final packs
+  and constraints use existing GTI signature rules.
+- Arguments are checked statically and evaluated where used, with hygienic
+  definition/caller lookup, checked ownership and deterministic cleanup. There
+  is no textual substitution, eager argument frame or escaping runtime thunk.
+- `std::assert` and `std::debug_assert` now use this same facility. The previous
+  `[[deferred]]` spelling is removed and diagnosed with migration guidance;
+  macros and ordinary functions cannot share one callable name.
+- Formatter, Tree-sitter, macro semantic highlighting, hover and navigation
+  follow the declaration identity. Example 174 demonstrates application-defined
+  typed macros; example 172 retains the assertion workflow.
+
 ## 0.465.1 — Class stores into globals, captures and element fields
 
 - Assigning a class value to a global, through a `[mut &p]` capture, or

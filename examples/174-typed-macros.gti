@@ -1,0 +1,64 @@
+// Typed macros use ordinary calls, but force argument expressions at each use.
+// There is no asynchronous work, runtime thunk, or textual token replacement.
+#include <std/assert>
+#include <std/string>
+
+struct Sample {
+  int value = 7;
+};
+
+struct Observations {
+  static mut int value = 0;
+};
+
+namespace application {
+  void record(int value) { Observations::value = value; }
+  void record(bool value) { std::assert(value); }
+  void inspect(Sample& value) { std::assert(value.value == 7); }
+  void consume(std::string value) { std::assert(!value.empty()); }
+
+  #macro report(int value = 7) { record(value); }
+  #macro report(bool value) { record(value); }
+
+  #macro when<T>(bool enabled, T value) {
+    if (enabled) { report(value); }
+  }
+
+  #macro repeat(int value) { record(value); record(value); }
+  #macro positive<T>(T value) requires std::numeric<T> {
+    std::assert(value > T(0));
+  }
+  #macro inspect_when(bool enabled, Sample value) {
+    if (enabled) { inspect(value); }
+  }
+  #macro consume_when(bool enabled, std::string value) {
+    if (enabled) { consume(value); }
+  }
+}
+
+int main() {
+  // Body lookup belongs to application, not to this unrelated local name.
+  int record = 99;
+  application::report();
+  std::assert(Observations::value == 7);
+  application::report(true);
+  application::when<int>(true, 12);
+  application::positive(12);
+  std::assert(Observations::value == 12);
+
+  mut int evaluations = 0;
+  application::when(false, evaluations++);
+  std::assert(evaluations == 0);
+  application::repeat(evaluations++);
+  std::assert(evaluations == 2 && Observations::value == 1);
+
+  // Typed expression parameters do not create eager by-value parameter copies.
+  Sample sample{};
+  application::inspect_when(true, sample);
+  std::string owner{"still owned"};
+  application::consume_when(false, std::move(owner));
+  std::assert(owner.view() == "still owned");
+  std::assert(record == 99);
+  std::println("Typed macros passed");
+  return 0;
+}

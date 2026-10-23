@@ -34,7 +34,7 @@ namespace policy { constexpr bool enabled = false; }
 int impossible() { std::assert(false); }
 namespace app {
   void sink(Value& value) { std::assert(value.number == 7); }
-  [[deferred]] void conditional(bool enabled, Value value) {
+  #macro conditional(bool enabled, Value value) {
     if (enabled) { sink(value); }
   }
 }
@@ -53,15 +53,14 @@ int main() {
   if (!result.canGenerateCode())
     for (const auto &error : result.diagnostics)
       std::cerr << error.code << ": " << error.message << '\n';
-  check(result.canGenerateCode(), "deferred helpers lower through HIR/MIR");
+  check(result.canGenerateCode(), "typed macros lower through HIR/MIR");
   if (!result.canGenerateCode())
     return;
   check(lang::verifyMirProgram(result.mir).valid(),
         "expanded control flow verifies independently");
   for (const auto &instance : result.hir.functionInstances())
-    check(!instance.source ||
-              !instance.source->hasFunctionAttribute("deferred"),
-          "deferred helpers have no eager runtime function instance");
+    check(!instance.source || !instance.source->isMacro(),
+          "typed macros have no eager runtime function instance");
   bool mutatedCaller = false;
   for (const auto &function : result.mir.functionInstances()) {
     if (function.entryKind == lang::ProgramEntryKind::None)
@@ -112,6 +111,120 @@ int main() { std::debug_assert(true, "{}", Unknown{}); return 0; }
   }
 }
 
+void typedMacroSyntax() {
+  auto result = analyze(R"(
+#include <std/assert>
+namespace application {
+  void accept(int number) { std::assert(number == 7); }
+  void accept(bool condition) { std::assert(condition); }
+  #macro emit(int number = 7) { accept(number); }
+  #macro emit(bool condition) { accept(condition); }
+  #macro when<T>(bool enabled, T value) {
+    if (enabled) { emit(value); }
+  }
+  #macro numeric<T>(T value) requires std::numeric<T> {
+    std::assert(value == T(7));
+  }
+  [[track_caller]] #macro ensure(bool condition) { std::assert(condition); }
+}
+int main() {
+  int accept = 99;
+  application::emit();
+  application::emit(true);
+  application::when<int>(true, 7);
+  application::when(false, false);
+  application::numeric(7);
+  application::ensure(accept == 99);
+  return 0;
+}
+)");
+  if (!result.canGenerateCode())
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  check(result.canGenerateCode(), "typed macro overloads, defaults, generics, "
+                                  "attributes and qualified calls");
+  if (result.canGenerateCode())
+    check(lang::verifyMirProgram(result.mir).valid(),
+          "typed macro syntax preserves independently verified execution");
+  check(std::any_of(result.semantics.database().symbols().begin(),
+                    result.semantics.database().symbols().end(),
+                    [](const auto &symbol) {
+                      return symbol.kind == lang::SymbolKind::Macro;
+                    }),
+        "semantic symbols retain macro declaration identity for tooling");
+
+  for (std::string_view source :
+       {"#macro broken(int value { }\nint main() { return 0; }",
+        "#macro broken(\nint main() { return 0; }",
+        "#macro broken(int value) { if (value > 0) { }\n"}) {
+    auto malformed = analyze(source);
+    check(!malformed.canGenerateCode() &&
+              std::any_of(malformed.diagnostics.begin(),
+                          malformed.diagnostics.end(),
+                          [](const auto &error) {
+                            return error.code.starts_with("GTI-P");
+                          }),
+          "incomplete macro syntax reports a parser error without an ICE");
+    check(std::none_of(
+              malformed.diagnostics.begin(), malformed.diagnostics.end(),
+              [](const auto &error) { return error.code == "GTI-B0001"; }),
+          "incomplete macro syntax never enters backend integrity diagnostics");
+  }
+}
+
+void migrationAndOverloadDiagnostics() {
+  constexpr std::string_view legacy = "[[deferred]] void old() {}";
+  const auto migrated = analyze(legacy);
+  const auto oldAttribute = std::find_if(
+      migrated.diagnostics.begin(), migrated.diagnostics.end(),
+      [](const auto &diagnostic) {
+        return diagnostic.code == "GTI-S2099" &&
+               diagnostic.message.find("removed") != std::string::npos;
+      });
+  check(oldAttribute != migrated.diagnostics.end(),
+        "removed deferred attributes receive a migration diagnostic");
+  if (oldAttribute != migrated.diagnostics.end()) {
+    check(oldAttribute->primary.start == legacy.find("deferred") &&
+              oldAttribute->primary.end == legacy.find("deferred") + 8,
+          "legacy migration identifies the exact attribute name");
+    check(std::any_of(oldAttribute->hints.begin(), oldAttribute->hints.end(),
+                      [](const auto &hint) {
+                        return hint.find("#macro") != std::string::npos &&
+                               hint.find("without a return type") !=
+                                   std::string::npos;
+                      }),
+          "legacy migration explains macro syntax and implicit void result");
+    check(oldAttribute->fixes.empty(),
+          "migration never rewrites a declaration through an unsafe fix-it");
+  }
+
+  for (std::string_view source :
+       {"#macro same(int value) {}\nvoid same(bool value) {}",
+        "void same(bool value) {}\n#macro same(int value) {}"}) {
+    const auto mixed = analyze(source);
+    const auto diagnostic =
+        std::find_if(mixed.diagnostics.begin(), mixed.diagnostics.end(),
+                     [](const auto &error) {
+                       return error.code == "GTI-S2099" &&
+                              error.message.find("evaluation rules differ") !=
+                                  std::string::npos;
+                     });
+    check(diagnostic != mixed.diagnostics.end(),
+          "mixed macro/function names fail in either declaration order");
+    if (diagnostic == mixed.diagnostics.end())
+      continue;
+    check(diagnostic->primary.start == source.rfind("same") &&
+              diagnostic->primary.end == source.rfind("same") + 4,
+          "mixed-name error identifies the later declaration");
+    check(std::any_of(diagnostic->related.begin(), diagnostic->related.end(),
+                      [&](const auto &related) {
+                        return related.span.start == source.find("same") &&
+                               related.span.end == source.find("same") + 4;
+                      }),
+          "mixed-name error relates the original callable declaration");
+  }
+}
+
 void negative(std::string_view source, std::string_view code,
               std::string_view fragment) {
   auto result = analyze(source);
@@ -136,14 +249,30 @@ void negative(std::string_view source, std::string_view code,
 int main() {
   positive();
   disabledTypeChecks();
-  negative("[[deferred]] int wrong(bool condition) { return 1; }", "GTI-S2099",
-           "namespace-scope void");
-  negative("[[deferred]] void wrong(bool condition) { return; }", "GTI-S2099",
+  typedMacroSyntax();
+  migrationAndOverloadDiagnostics();
+  negative("[[deferred]] void old(bool condition) {}", "GTI-S2099", "#macro");
+  negative("#macro wrong(bool condition) { return; }", "GTI-S2099",
            "declarations, returns and loops");
-  negative("[[deferred, test]] void wrong() {}", "GTI-S2099",
-           "namespace-scope void");
+  negative("[[test]] #macro wrong() {}", "GTI-S2099", "namespace-scope void");
   negative(R"(
-[[deferred]] void helper(bool value) {}
+namespace app {
+  #macro same(int value) {}
+  void same(bool value) {}
+}
+)",
+           "GTI-S2099", "ordinary");
+  negative(R"(
+namespace app {
+  void same(bool value) {}
+  #macro same(int value) {}
+}
+)",
+           "GTI-S2099", "ordinary");
+  negative("#macro exact(int value) {}\nint main() { exact(true); return 0; }",
+           "GTI-S2012", "exactly matches");
+  negative(R"(
+#macro helper(bool value) {}
 int main() { return (helper(true), 0); }
 )",
            "GTI-S2124", "complete expression statement");
@@ -153,31 +282,31 @@ int main() { std::debug_assert(1); return 0; }
 )",
            "GTI-S2012", "exactly matches");
   negative(R"(
-[[deferred]] void helper(bool value) {}
+#macro helper(bool value) {}
 int main() { auto callback = helper; return 0; }
 )",
            "GTI-S2124", "not callable values");
   negative(R"(
-[[deferred]] void execute<F>(F callback) { callback(); }
+#macro execute<F>(F callback) { callback(); }
 int main() { execute([]() -> void {}); return 0; }
 )",
            "GTI-S2124", "requires a named binding");
   negative(R"(
-[[deferred]] void helper() { helper(); }
+#macro helper() { helper(); }
 int main() { helper(); return 0; }
 )",
            "GTI-S2124", "resource limit");
   negative(R"(
 #include <std/string>
 void consume(std::string value) {}
-[[deferred]] void twice(std::string value) { consume(value); consume(value); }
+#macro twice(std::string value) { consume(value); consume(value); }
 int main() { std::string owner{"owned"}; twice(std::move(owner)); return 0; }
 )",
            "GTI-S2018", "moved");
   negative(R"(
 #include <std/string>
 void consume(std::string value) {}
-[[deferred]] void choose(bool enabled, std::string value) {
+#macro choose(bool enabled, std::string value) {
   if (enabled) { consume(value); }
 }
 int main() {
@@ -190,7 +319,7 @@ int main() {
            "GTI-S2017", "borrow");
   negative(R"(
 unsafe bool inspect() { return true; }
-[[deferred]] void ignored(bool value) {}
+#macro ignored(bool value) {}
 int main() { ignored(inspect()); return 0; }
 )",
            "GTI-S2055", "unsafe");

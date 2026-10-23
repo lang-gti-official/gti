@@ -2,10 +2,13 @@
 
 Status: Current implementation.
 
-## Deferred statement expansion
+## Typed statement macro expansion
 
-`semantic_deferred.cpp` owns `[[deferred]]` helpers independently of public
-library names. Signature selection and argument diagnostics use an isolated
+`semantic_macro.cpp` owns typed `#macro` expansion independently of public
+library names. The declaration's macro identity, not an attribute or public
+spelling, selects that path. Macro/function overload mixtures at one qualified
+name are rejected; macro-only overload sets use ordinary exact selection.
+Signature selection and argument diagnostics use an isolated
 semantic probe; its speculative flow, loans and syntax never enter caller
 execution. The probe forks request context separately from semantic facts,
 reads existing facts through a model delta and owns a copy of active loan
@@ -24,7 +27,10 @@ function instance for the template. Existing MIR branches, calls, ownership
 events, failure edges and cleanup are the only executable representation.
 There is no new runtime thunk, backend interpretation or public assertion-name
 recognition. The confined structural profile and resource limits are specified
-in [execution semantics](../language/execution.md#deferred-statement-helpers).
+in [execution semantics](../language/execution.md#typed-statement-macros).
+`[[deferred]]` is removed rather than routed through a second compatibility
+engine. The syntax revision preserves the existing semantic expansion, HIR
+and verified-MIR contract, including argument probes and caller provenance.
 
 Member visibility is shared by semantic field/call/constructor/type checks and
 completion filtering. `canAccessMember` uses the lexical class context, the
