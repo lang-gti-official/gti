@@ -5,5 +5,5 @@ from lambda_pack_invocation_runtime_test import main
 if __name__ == "__main__":
     name = "dependent_reference_results"
     main(names=(name,), cases={name: [
-        ((), (0, "owned text\n10\nliteral\nliteral\n", "")),
+        ((), (0, "owned text\n10\nnone\nowned text\nliteral\nliteral\nliteral\n", "")),
     ]})

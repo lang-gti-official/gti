@@ -1929,13 +1929,18 @@ instance), `TextContracts` independently derives `ownerlessTextFields`:
 - so is a text payload extracted from a formal's enum field reached through
   that formal's accessor: a statically dispatched, non-virtual source call
   whose every return borrows `this.field`, or another such accessor's result
-  on its own receiver (`accessorResultField`, read from the callee's verified
-  body);
+  on its own receiver (`accessorResultFields`, read from the callee's
+  verified body);
+- a use of the reference such an accessor returns, other than a payload
+  extraction, uses each field its returns name, and so does a payload
+  extraction when they name several (`accessorOperandFields`); an accessor's
+  own returned borrows are its designation (`accessorReturnLoans`);
 - field sources that reach ownerless storage or a `None`-summary text return
   become requirements;
 - each other use of the whole formal or receiver requires all of its text
   fields, except a `CallInput` that a call consumes as a same-class formal or
   receiver of an in-scope callee, which inherits that callee's requirements.
+  An accessor's returned reference is not a whole use of its receiver.
   The consuming call may be in a later block than its input, after a checked
   argument such as `n - 1`;
 - a fixpoint shared with the text-formal requirements closes forwarding.

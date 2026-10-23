@@ -2789,6 +2789,16 @@ receiver or argument cannot be tracked, and such a call over a local owner's
 text is `GTI-S2045`. Over literal text the same references may be passed and
 stored.
 
+A method whose returns name several fields of its receiver, such as
+`Word& either(bool first) { if (first) { return this.word; } return
+this.other; }`, returns any of them. A `switch` may observe its result in
+place, which is then a dependent value through each field. Inside the class
+or on a formal, a call of such a method reads every field it may return:
+passing the result requires their text payloads ownerless, and so does a
+`switch` on it, since a payload binding cannot name the field it came from. A
+call of a method returning one field reads only that field, so another field
+of the same value may hold a local owner's text.
+
 An adapter that needs to retain dynamic input can instead declare a checked
 `std::string_view&` or `c_string&` field and accept the same reference type in its
 constructor. The adapter borrows the view object and retains its underlying

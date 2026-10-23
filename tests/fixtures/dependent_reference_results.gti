@@ -1,7 +1,8 @@
 // A reference a call returns into a value holding dynamic text from a local
 // owner is that value's dependent field (L-OWN-02): a switch observes it in
-// place, through the call or through reference locals bound to it. Over
-// literal text the same references may be passed and stored.
+// place, through the call or through reference locals bound to it, also
+// when the call may return either of two fields. Over literal text the same
+// references may be passed and stored.
 #include <std/string>
 
 mut std::string_view kept = "";
@@ -18,8 +19,13 @@ void keepWordRef(Word& word) {
 class Line {
 public:
   Word word;
-  Line(std::string_view value) : word(Word::text(value)) {}
+  Word other;
+  Line(std::string_view value) : word(Word::text(value)), other(Word::none) {}
   Word& wordRef() { return this.word; }
+  Word& either(bool first) {
+    if (first) { return this.word; }
+    return this.other;
+  }
 };
 
 Word& pickWord(Line& line) { return line.word; }
@@ -37,11 +43,22 @@ int main() {
   case Word::text(auto& value): std::println(value.size()); break;
   case Word::none: return 2;
   }
+  switch (owned.either(false)) {
+  case Word::text(value): return 3;
+  case Word::none: std::println("none"); break;
+  }
+  Word& chosen = owned.either(true);
+  switch (chosen) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: return 4;
+  }
   Line literal = Line("literal");
   keepWordRef(literal.wordRef());
   std::println(kept);
   Word& held = pickWord(literal);
   keepWordRef(held);
+  std::println(kept);
+  keepWordRef(literal.either(true));
   std::println(kept);
   return 0;
 }
