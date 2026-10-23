@@ -1,9 +1,11 @@
 #include "cpp_backend_test_support.h"
+#include "gti/ast_clone.h"
 #include "gti/mir_verifier.h"
 
 #include <filesystem>
 #include <iostream>
 #include <string_view>
+#include <unordered_set>
 
 namespace {
 int failures = 0;
@@ -16,10 +18,12 @@ void check(bool okay, std::string_view message) {
 const auto library =
     std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
 
-lang::FrontendResult analyze(std::string_view source,
-                             lang::ConfigurationFlags flags = {}) {
+lang::FrontendResult
+analyze(std::string_view source, lang::ConfigurationFlags flags = {},
+        lang::FrontendPhase stopAfter = lang::FrontendPhase::Mir) {
   lang::FrontendOptions options;
   options.configurationFlags = std::move(flags);
+  options.stopAfter = stopAfter;
   return lang::Frontend(options).analyze(
       "deferred-check.gti", std::string(source), {library / "prelude.gti"}, {},
       {library});
@@ -112,6 +116,74 @@ int main() { std::debug_assert(true, "{}", Unknown{}); return 0; }
   }
 }
 
+void expansionSourceOwnership() {
+  lang::HirProgram retained;
+  std::unordered_set<lang::HirFunctionInstanceId> expectedConstructors;
+  {
+    auto result = analyze(R"(
+struct Cleanup { ~Cleanup() {} };
+bool inspect(Cleanup& value) { return true; }
+void observe(bool value) {}
+[[deferred]] void force(bool value) { observe(value); }
+[[deferred]] void relay(bool value) { force(value); }
+int ordinary() { relay(inspect(Cleanup())); return 0; }
+int selected<uint64_t Mode>() {
+  if constexpr (Mode == 0) { return 0; }
+  else { relay(inspect(Cleanup())); return 1; }
+}
+int main() { return ordinary() + selected<0>() + selected<1>() - 1; }
+)",
+                          {}, lang::FrontendPhase::Hir);
+    if (!result.semanticValid || !result.hirValid)
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    check(result.semanticValid && result.hirValid,
+          "generic deferred constructor temporaries produce checked HIR");
+    if (!result.semanticValid || !result.hirValid)
+      return;
+    for (const auto &function : result.hir.functionInstances())
+      if (function.source && (function.source->name().lexeme == "ordinary" ||
+                              (function.source->name().lexeme == "selected" &&
+                               !function.valueArguments.empty() &&
+                               function.valueArguments.front().value == 1)))
+        expectedConstructors.insert(function.id);
+    retained = result.hir;
+  }
+  // Both the temporary HirLowerer and the FrontendResult are gone. Only the
+  // copied HIR's exact shared roots may keep instance-local source alive.
+  check(retained.sourceStatementOwners().size() >= 4,
+        "nested ordinary and concrete deferred roots are retained by HIR");
+  std::unordered_set<const lang::Expr *> ownedExpressions;
+  for (const auto &root : retained.sourceStatementOwners()) {
+    lang::AstCloneOptions inspection;
+    inspection.expression = [&](const lang::Expr &expression) -> lang::ExprPtr {
+      ownedExpressions.insert(&expression);
+      return nullptr;
+    };
+    const auto inspected = lang::cloneStmt(*root, 0, inspection);
+    check(inspected.statement != nullptr,
+          "retained expansion descendants remain readable after lowering");
+  }
+  std::unordered_set<lang::HirFunctionInstanceId> constructors;
+  for (const auto &function : retained.functionInstances())
+    for (const auto &value : function.body.values) {
+      if (!ownedExpressions.contains(value.source))
+        continue;
+      const auto *call = lang::exprAs<lang::Call>(value.source);
+      const auto *callee =
+          call == nullptr ? nullptr
+                          : lang::exprAs<lang::Variable>(call->callee().get());
+      if (callee && callee->name().lexeme == "Cleanup") {
+        check(call->arguments().empty(),
+              "a retained constructor source has its exact argument list");
+        constructors.insert(function.id);
+      }
+    }
+  check(expectedConstructors.size() == 2 &&
+            constructors == expectedConstructors,
+        "ordinary and concrete temporary call sources outlive their analyses");
+}
+
 void negative(std::string_view source, std::string_view code,
               std::string_view fragment) {
   auto result = analyze(source);
@@ -136,6 +208,7 @@ void negative(std::string_view source, std::string_view code,
 int main() {
   positive();
   disabledTypeChecks();
+  expansionSourceOwnership();
   negative("[[deferred]] int wrong(bool condition) { return 1; }", "GTI-S2099",
            "namespace-scope void");
   negative("[[deferred]] void wrong(bool condition) { return; }", "GTI-S2099",

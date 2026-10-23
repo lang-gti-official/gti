@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.466.0 — Thread-local storage
+## 0.466.1 — Thread-local storage
 
 - `thread_local` defines distinct per-thread storage at namespace scope, in a
   non-generic static data member, or inside an ordinary function. Both
@@ -26,6 +26,9 @@ for what minor and patch releases mean.
   literal-initialized TLS needs no dynamic GTI guard or cleanup registration.
 - Transitive storage-effect checking also protects checked borrows of ordinary
   process globals from hidden conflicting accesses through helpers or callbacks.
+- Generated deferred-expansion syntax remains alive with returned HIR, including
+  nested expansions in concrete generic functions, fixing a compiler crash
+  uncovered by the TLS integration tests.
 - See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
   and [runnable example 173](examples/173-thread-local-storage.gti).
 

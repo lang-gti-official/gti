@@ -10,6 +10,14 @@ semantic probe; its speculative flow, loans and syntax never enter caller
 execution. The probe forks request context separately from semantic facts,
 reads existing facts through a model delta and owns a copy of active loan
 identities; it does not deep-copy the growing whole-program expression model.
+The expression-order cache and active full-expression cleanup frames are local
+to a semantic-model snapshot. A probe starts with both empty: the context fork
+temporarily detaches those two members while cloning the remaining request
+state, then restores the caller before creating or executing the model delta.
+The restoration is nonthrowing, including when the context copy fails. Active
+loan flow, retained dependencies and identity counters are still copied.
+Ordinary matched model/session clones retain their caches; a speculative fork
+must neither reuse another model's expression indices nor consume its cleanup.
 The source signature is retained only as a tooling occurrence, not an eager
 call in executable effect/transport inventories. The actual body is
 cloned with compiler-owned argument/pack substitutions and separate expansion
