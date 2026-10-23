@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.465.4 — Copying a payload view that holds a local owner's text
+
+- In a `switch` over a payload enum whose `string_view` payload views a local
+  owner, as in `Word word = Word::text(input.view());`, copying the arm's
+  binding into a local (`case Word::text(value): std::string_view v = value;`)
+  used to report `error[GTI-B0001]` (an internal compiler error). The copy now
+  compiles and keeps `input` borrowed while it is live, as a copy of a class's
+  published text field does. This also covers copies of copies, a payload
+  enum held in a field (`switch (line.word)`), generic enums, `default` arms
+  and loops.
 ## 0.465.3 — Moving classes that hold function items
 
 - A generic class whose field holds a function item, such as `class Op<F> {
