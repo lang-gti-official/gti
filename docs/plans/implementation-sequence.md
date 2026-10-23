@@ -43,21 +43,32 @@ integration follows the current GitHub workflow. Reproduce a remaining
 composition against current main before treating a past rejection as a new
 compiler task.
 
-## Deferred assertion foundation (0.465.0)
+## Typed macro and assertion foundation
 
 The implementation provides source-defined `std::assert` and
-`std::debug_assert`, plus general `[[deferred]]` void statement helpers.
+`std::debug_assert`, plus general typed `#macro` statement declarations with
+ordinary call syntax and an implicit void result. This revises the original
+0.465.0 `[[deferred]]` spelling: the old attribute is rejected with migration
+guidance rather than kept as another system. Macro-only overloads, generics,
+defaults, final packs, constraints and caller tracking use the one checked
+statement-expansion engine; a callable name cannot mix macros and functions.
 Semantic substitution preserves definition/caller lookup and checks actual
 uses in caller ownership flow. Only expanded executable calls enter runtime
 effect and callable-transport inventories; written helper selections remain
 editor facts. HIR and MIR use their existing checked branch/call operations.
 Ordinary constant boolean facts refine feasible move paths without turning
 an unselected ordinary branch into an unchecked `if constexpr` branch.
+Automatic locals now supply explicit evaluate-once bindings with normal
+reference, move and cleanup rules. Per-expansion lexical lookup boundaries
+prevent capture without changing written spellings. Local mutation and scoped
+loops lower through ordinary HIR/MIR; break/continue cannot leave the macro.
+Bounded nested diagnostics and the read-only editor expansion view expose the
+checked expansion without supplying a second execution model.
 
 This changes the earlier assertion direction: call-site closures or an empty
 ordinary function do not provide the required skipped-argument guarantee.
 The accepted bounded profile is recorded in
-[execution](../language/execution.md#deferred-statement-helpers) and
+[execution](../language/execution.md#typed-statement-macros) and
 [ADR 030](../decisions/030-deferred-statement-helpers.md). Acceptance requires
 native standard/optimization/sanitizer parity, disabled type diagnostics,
 ownership/loan/caller-origin rejection tests, editor/profile/module/example
@@ -65,12 +76,20 @@ gates, broad optimized regression and successful-path cost measurements.
 
 Further goals, not implemented by this slice:
 
-- Local binders/loops and value results need hygienic binding identities,
-  explicit local-exit and full-expression lifetime facts, with replayable MIR
-  cleanup and negative escape tests.
+- When a semantic facility introduces model-local expression-order caches or
+  active full-expression cleanup frames into request context, reconcile its
+  speculative fork with the macro probe: the new model must start with empty
+  caches/frames, while active loan flow, retained dependencies and identity
+  counters are preserved. Detach/restore caller state with nonthrowing RAII
+  before any speculative semantic work, and keep matched ordinary model/session
+  copies intact. The pending TLS integration's cache-fork adaptation is that
+  prerequisite; these cache fields are not imported by the macro syntax slice.
+- Value results and caller-directed exits need an explicit result/exit and
+  full-expression lifetime contract. Hygienic automatic locals and macro-owned
+  loops are implemented; returns and introduced propagation remain excluded.
 - Fresh callable-valued arguments need source-identity-preserving type
   discovery before substitution; a named callable works in the current profile.
-- Constant-context deferred calls require the staged verified-MIR evaluation
+- Constant-context macro calls require the staged verified-MIR evaluation
   profile from L-CONST-01, preserving phase timing and diagnostic/resource
   limits. This slice does not add another AST execution rule.
 - Escaping or memoized lazy values require a separate lifetime/forcing/storage

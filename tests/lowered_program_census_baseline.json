@@ -2549,11 +2549,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 66
       }
+    },
+    "174-typed-macros.gti": {
+      "declarations": 1491,
+      "bodies": 156,
+      "generated_items": 95,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 26,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 45
+      }
     }
   },
   "totals": {
-    "declarations": 177200,
-    "bodies": 23433,
-    "generated_items": 14756
+    "declarations": 178691,
+    "bodies": 23589,
+    "generated_items": 14851
   }
 }

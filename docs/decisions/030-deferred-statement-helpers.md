@@ -1,6 +1,7 @@
-# 030: Confined Deferred Statement Helpers
+# 030: Confined Typed Statement Macros
 
-Status: Accepted for the assertion foundation.
+Status: Accepted for the assertion foundation; public syntax and local binding
+profile revised 2026-10-23.
 
 ## Problem
 
@@ -13,8 +14,10 @@ capture/loan setup even for disabled checks.
 
 ## Decision
 
-`[[deferred]]` opts a namespace-scope void statement helper into typed
-expression parameters. Every use substitutes and evaluates the corresponding
+`#macro name(typed parameters) { ... }` declares a namespace-scope statement
+macro with an implicit void result and typed expression parameters. Calls keep
+ordinary `name(...)` or `namespace::name(...)` spelling. Every use substitutes
+and evaluates the corresponding
 caller expression at that point. There is no automatic memoization, eager
 parameter storage, escaping thunk, callback conversion or public-name magic.
 Definitions own free-name lookup; invocations own argument lookup and access.
@@ -29,6 +32,51 @@ This is a structural source-template boundary, not a restriction on the
 types accepted by `std::assert`. Supporting richer templates requires hygiene
 and local exit/lifetime facts, rather than arbitrary AST substitution or
 backend inference. Arguments themselves retain ordinary executable semantics.
+
+## Public Syntax Revision: 2026-10-23
+
+The original assertion foundation shipped the `[[deferred]] void name(...)`
+spelling. The owner selected `#macro` as the clearer C++-familiar declaration
+form, retaining ordinary calls and typed parameters rather than adopting
+token-pattern matching or an invocation sigil. The attribute is removed, not
+retained as an alias. Its migration diagnostic explains the replacement.
+The same typed statement-expansion engine remains authoritative; this revision
+does not add a second macro evaluator or change argument forcing semantics.
+
+Namespaces, generic final packs, defaults, constraints and caller tracking
+remain available. Macro/function overload mixtures at one qualified name are
+rejected so overload selection cannot silently switch eager versus expression
+argument evaluation. This deliberately differs from C replacement macros:
+`#define` stays valueless configuration, macros cannot rewrite arbitrary tokens,
+and ordinary visibility, hygiene, ownership and source diagnostics apply.
+
+The syntax revision alone did not grant local binders or loops. The following
+revision establishes their independent hygiene and lifetime contract.
+
+## Hygienic Local Bindings and Loops: 2026-10-23
+
+Automatic value/reference locals and structured bindings are ordinary GTI
+bindings, identified separately for each expansion. An initializer explicitly
+forces its expression once when reached; subsequent reads use that binding.
+There is still no implicit memoization, clone or lifetime extension. Local
+mutation and ordinary scoped loops reuse checked places and MIR control flow.
+Break and continue must target a loop belonging to the macro, never the caller.
+Returns, introduced propagation, static locals, lambda definitions, generated
+declarations and value-producing expansions remain separate goals.
+
+Hygiene is structural, not name mangling: definition tokens see only their
+own lexical expansion frames before definition-scope lookup; substituted
+argument tokens retain their invocation's lexical scope boundary and access
+context. A syntax-only shadowing walk prevents substitution across a local
+binder. Ordinary semantic symbols, ownership and loans remain authoritative;
+HIR/MIR preserve their identities and deterministic cleanup. The backend does
+not rediscover bindings from spellings or introduce a thunk.
+
+Diagnostics retain argument source sites and bounded nested invocation and
+declaration traces. The read-only expansion query explains the checked syntax
+using display-only local labels; it is not executable generated source or a
+second semantic evaluator. Rename follows exact written binder identity, not
+same-spelled locals in another scope.
 
 `std::assert` and `std::debug_assert` are library clients. Both evaluate an
 enabled condition once and force messages only on failure. The debug API uses
