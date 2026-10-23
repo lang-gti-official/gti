@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Text members through checked `operator->` (0.465.2)
+## Text members through checked `operator->` (0.465.3)
 
 `testArrowNonClassReferents` in the `ownership` suite analyzes a class with
 `std::string_view& operator->()` and a `std::optional<std::string_view>`.
