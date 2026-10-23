@@ -32,6 +32,8 @@ for what minor and patch releases mean.
 - Fresh generated-default class temporaries can be borrowed as ordinary call
   arguments; exact owner, construction schedule, loan and cleanup proofs remain
   required by independent MIR verification.
+- Empty generated construction no longer invents accesses to unrelated persistent
+  storage; effectful field and base initialization retain their exact call effects.
 - See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
   and [runnable example 173](examples/173-thread-local-storage.gti).
 

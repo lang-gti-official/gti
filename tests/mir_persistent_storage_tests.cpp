@@ -1,10 +1,12 @@
 #include "../src/compiler/mir_storage_effects.h"
 #include "gti/frontend.h"
+#include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -330,6 +332,132 @@ int main() { int previous = std::exchange(value, 2); return previous + value; }
     expect(lang::verifyMirProgram(frontend.mir).valid(),
            "restoration proof is not confused with an unrepresented raw Move");
 }
+
+void generatedDefaultHasExactEmptyTargets(std::string_view storage) {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/generated-default.gti",
+      std::string(storage) + " mut int32_t first = 1;\n" +
+          std::string(storage) + " mut int32_t second = 2;\n" + R"(
+struct Cleanup { ~Cleanup() { second = 9; } };
+void inspect(Cleanup& input) {}
+void execute() { inspect(Cleanup()); }
+int main() { int32_t& borrowed = first; execute(); return borrowed; }
+)");
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "generated default construction does not invent unrelated persistent "
+         "writes while exact destructor effects remain disjoint");
+  if (!frontend.canGenerateCode())
+    return;
+
+  std::optional<lang::MirBodyAddress> producerBody;
+  lang::MirInstructionId producerId = 0;
+  for (const auto address : lang::enumerateMirBodyAddresses(frontend.mir)) {
+    const auto *body = lang::findMirBody(frontend.mir, address);
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.info.type.kind == lang::SemanticType::Class &&
+            !instruction.functionTarget && !instruction.constructorTarget &&
+            instruction.intrinsic == lang::IntrinsicKind::None) {
+          producerBody = address;
+          producerId = instruction.id;
+          const auto targets =
+              lang::mirInvocationTargets(frontend.mir, *body, instruction);
+          expect(!targets.boundary && targets.addresses.empty(),
+                 "an independently typed generated default has no hidden "
+                 "source invocation");
+        }
+  }
+  expect(producerBody.has_value(),
+         "fixture reaches a targetless generated default-construction call");
+  if (!producerBody)
+    return;
+
+  for (const bool scheduled : {false, true}) {
+    auto forged = frontend.mir;
+    const auto *body = lang::findMirBody(forged, *producerBody);
+    const lang::MirInstruction *producer = nullptr;
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.id == producerId)
+          producer = &instruction;
+    expect(producer != nullptr, "the exact generated producer is preserved");
+    if (producer == nullptr)
+      continue;
+    const auto owner =
+        std::find_if(forged.classInstances().begin(),
+                     forged.classInstances().end(), [&](const auto &candidate) {
+                       return candidate.type == producer->info.type;
+                     });
+    expect(owner != forged.classInstances().end(),
+           "generated producer has an exact concrete owner");
+    if (owner == forged.classInstances().end())
+      continue;
+    auto &changed = const_cast<lang::MirClassInstance &>(*owner);
+    if (scheduled)
+      changed.generatedDefaultRequiresSchedule = true;
+    else
+      changed.defaultConstructor = lang::SpecialMemberStatus::Deleted;
+    const auto targets = lang::mirInvocationTargets(forged, *body, *producer);
+    expect(targets.boundary,
+           "missing generated status or an omitted concrete schedule cannot "
+           "claim an empty hidden target set");
+    expect(!lang::verifyMirPersistentStorageEffects(forged).valid(),
+           "forged default-construction authority cannot suppress a hidden "
+           "persistent conflict");
+  }
+}
+
+void generatedDefaultSchedulesRetainEffects(std::string_view storage) {
+  for (const auto shape : {"struct Outer { int32_t field = initialize(); };",
+                           "struct Member { Member() { mutate(); } }; "
+                           "struct Outer { Member member; };",
+                           "struct Base { int32_t field = initialize(); }; "
+                           "struct Outer : public Base {};"}) {
+    const auto source = [&](std::string_view target) {
+      return std::string(storage) + " mut int32_t first = 1;\n" +
+             std::string(storage) + " mut int32_t second = 2;\n" +
+             "void mutate() { " + std::string(target) + " = 9; } " +
+             "int32_t initialize() { mutate(); return 0; } " + shape + R"(
+void inspect(Outer& input) {}
+void execute() { inspect(Outer()); }
+int main() { int32_t& borrowed = first; execute(); return borrowed; }
+)";
+    };
+    const auto allowed = lang::Frontend().analyze(
+        "/tmp/gti-mir-persistent-storage/generated-schedule.gti",
+        source("second"));
+    for (const auto &diagnostic : allowed.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(allowed.canGenerateCode(),
+           "effectful explicit/implicit field and inherited-base schedules "
+           "preserve disjoint persistent access");
+    bool exactSchedule = false;
+    for (const auto &constructor : allowed.mir.constructorInstances()) {
+      if (!constructor.generatedDefault)
+        continue;
+      const auto *owner = allowed.mir.findClassInstance(constructor.owner);
+      exactSchedule |= owner && owner->generatedDefaultRequiresSchedule;
+    }
+    expect(exactSchedule,
+           "generated field/base work is represented by a required concrete "
+           "constructor schedule, not a targetless default");
+    const auto rejected = lang::Frontend().analyze(
+        "/tmp/gti-mir-persistent-storage/generated-schedule-alias.gti",
+        source("first"));
+    const auto hasCode = [&](std::string_view code) {
+      return std::any_of(
+          rejected.diagnostics.begin(), rejected.diagnostics.end(),
+          [&](const auto &diagnostic) { return diagnostic.code == code; });
+    };
+    expect(!rejected.semanticValid && hasCode("GTI-S2045") &&
+               !hasCode("GTI-B0001"),
+           "an effectful generated field/base schedule cannot mutate a live "
+           "persistent loan and is rejected before MIR");
+  }
+}
 } // namespace
 
 int main() {
@@ -346,5 +474,9 @@ int main() {
   stagedBorrowMayPublishItsOriginalLifetime();
   nativeBoundaryIsNotAnUnknownSourceBody();
   exactRestorationRemainsAvailable();
+  generatedDefaultHasExactEmptyTargets("thread_local");
+  generatedDefaultHasExactEmptyTargets("");
+  generatedDefaultSchedulesRetainEffects("thread_local");
+  generatedDefaultSchedulesRetainEffects("");
   return passed ? 0 : 1;
 }
