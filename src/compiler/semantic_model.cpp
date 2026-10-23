@@ -1199,6 +1199,17 @@ const Token *SemanticModel::findMacroDefault(const Expr &expression) const {
   return base == nullptr ? nullptr : base->findMacroDefault(expression);
 }
 
+std::shared_ptr<const Stmt>
+SemanticModel::shareMacroExpansion(const Call &call) const {
+  if (const auto found = macroValueExpansions.find(&call);
+      found != macroValueExpansions.end())
+    return found->second;
+  auto inherited = base == nullptr ? nullptr : base->shareMacroExpansion(call);
+  noteBaseSyntheticSyntax(inherited != nullptr &&
+                          !baseStableSyntheticSyntax(&call));
+  return inherited;
+}
+
 std::vector<MacroExpansionSite> SemanticModel::macroExpansionSites() const {
   std::vector<MacroExpansionSite> sites;
   std::unordered_set<const ExpressionStmt *> seen;
@@ -1211,6 +1222,18 @@ std::vector<MacroExpansionSite> SemanticModel::macroExpansionSites() const {
                        declaration == model->macroDeclarations.end()
                            ? nullptr
                            : declaration->second});
+    }
+  std::unordered_set<const Call *> calls;
+  for (const SemanticModel *model = this; model != nullptr; model = model->base)
+    for (const auto &[call, body] : model->macroValueExpansions) {
+      if (!calls.insert(call).second || !body)
+        continue;
+      const auto declaration = model->macroValueDeclarations.find(call);
+      sites.push_back({nullptr, body.get(),
+                       declaration == model->macroValueDeclarations.end()
+                           ? nullptr
+                           : declaration->second,
+                       call});
     }
   return sites;
 }
@@ -2037,6 +2060,8 @@ void SemanticModel::clear() {
   constexprBranches.clear();
   constexprForExpansions.clear();
   macroExpansions.clear();
+  macroValueExpansions.clear();
+  macroValueDeclarations.clear();
   macroDeclarations.clear();
   macroDefaults.clear();
   declarationAttributes.clear();
@@ -2212,6 +2237,9 @@ void SemanticModel::markSyntheticSyntaxStable() {
   for (const auto &[statement, expansion] : macroExpansions)
     if (expansion)
       stableSyntheticSyntax.insert(statement);
+  for (const auto &[call, expansion] : macroValueExpansions)
+    if (expansion)
+      stableSyntheticSyntax.insert(call);
   for (const auto &[expression, alias] : expressionAliases)
     stableSyntheticSyntax.insert(expression);
   for (const auto &[field, anchor] : implicitFieldInitializers)
@@ -2650,6 +2678,12 @@ void SemanticModel::recordMacroExpansion(const ExpressionStmt &statement,
 
 void SemanticModel::recordMacroDefault(const Expr &expression, Token caller) {
   macroDefaults.insert_or_assign(&expression, std::move(caller));
+}
+
+void SemanticModel::recordMacroExpansion(const Call &call, StmtPtr body,
+                                         const FunctionDecl &declaration) {
+  macroValueExpansions.insert_or_assign(&call, std::move(body));
+  macroValueDeclarations.insert_or_assign(&call, &declaration);
 }
 
 void SemanticModel::recordDeclarationAttributes(

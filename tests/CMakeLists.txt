@@ -20,6 +20,44 @@ add_test(NAME code_snippets COMMAND gti_code_snippet_tests)
 add_executable(gti_macro_expansion_query_tests macro_expansion_query_tests.cpp)
 target_link_libraries(gti_macro_expansion_query_tests PRIVATE gti_compiler)
 add_test(NAME macro_expansion_queries COMMAND gti_macro_expansion_query_tests)
+add_executable(gti_macro_fresh_callable_tests macro_fresh_callable_tests.cpp)
+target_link_libraries(gti_macro_fresh_callable_tests PRIVATE gti_compiler)
+add_test(NAME macro_fresh_callables COMMAND gti_macro_fresh_callable_tests)
+add_test(NAME macro_fresh_callable_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/macro_fresh_callables.gti"
+    --ownership-checks)
+set_tests_properties(macro_fresh_callable_runtime PROPERTIES TIMEOUT 1200)
+add_executable(gti_macro_result_parser_tests macro_result_parser_tests.cpp)
+target_link_libraries(gti_macro_result_parser_tests PRIVATE gti_compiler)
+add_test(NAME macro_result_parser COMMAND gti_macro_result_parser_tests)
+find_program(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE nvim)
+if(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE)
+  add_test(NAME macro_neovim_syntax
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
+      "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test/state"
+      "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test/cache"
+      "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test/data"
+      "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-macro-syntax.log"
+      "${GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
+      -l "${PROJECT_SOURCE_DIR}/tests/macro_syntax_test.lua")
+  set_tests_properties(macro_neovim_syntax PROPERTIES TIMEOUT 30)
+endif()
+add_executable(gti_expression_text_tests expression_text_tests.cpp)
+add_executable(gti_macro_value_tests macro_value_tests.cpp)
+target_link_libraries(gti_macro_value_tests PRIVATE gti_compiler)
+add_test(NAME macro_values_semantic_ir COMMAND gti_macro_value_tests)
+add_test(NAME macro_values_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/macro_values.gti" --ownership-checks)
+set_tests_properties(macro_values_runtime PROPERTIES TIMEOUT 1200)
+target_link_libraries(gti_expression_text_tests PRIVATE gti_compiler)
+add_test(NAME expression_text_semantic_ir COMMAND gti_expression_text_tests)
+add_test(NAME expression_text_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expression_text_runtime_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(expression_text_runtime PROPERTIES TIMEOUT 1200)
 if(TARGET gti_lsp)
   add_test(NAME lsp_code_snippets
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_code_snippets_test.py"

@@ -2328,6 +2328,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::SourceFunctionName:
         case IntrinsicKind::SourceLine:
         case IntrinsicKind::SourceColumn:
+        case IntrinsicKind::SourceExpressionText:
         case IntrinsicKind::MetaFieldCount:
         case IntrinsicKind::MetaFieldName:
         case IntrinsicKind::MetaFieldIsPublic:

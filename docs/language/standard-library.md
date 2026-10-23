@@ -250,7 +250,9 @@ The current implemented foundation includes:
 - `<std/assert>` provides always-on `std::assert`, configuration-controlled
   `std::debug_assert` and `constexpr bool std::debug_assertions_enabled`.
   Both check an exact `bool`, evaluating it once when enabled, and use
-  `std::panic` on failure. Optional literal or formatted messages are evaluated
+  `std::panic` on failure. Their default messages include the exact written
+  condition through `std::expression_text`. Optional literal or formatted
+  messages are evaluated
   only on failure. `NDEBUG` disables all debug-assert argument evaluation, not
   their type checking; it never disables `std::assert`. The built-in release
   project profile defines `NDEBUG`; direct compilation can use `-D NDEBUG`,
@@ -606,7 +608,19 @@ The current implemented foundation includes:
   MIR retains base/field caller facts even for state-bearing constructor
   compositions that the current C++ backend does not yet admit; this is a
   separate constructor-rollback coverage limit, not a fallback to the
-  declaration location; and
+  declaration location. It also provides the source-defined value macro
+  `std::expression_text(expression)`, returning a literal-backed
+  `std::string_view` with static lifetime and no runtime allocation. Its
+  expression must type-check, but is never evaluated, moved, copied or
+  runtime-borrowed. The text contains the exact source bytes from the first
+  through the last expression token, including parentheses, interior whitespace,
+  comments, newlines and UTF-8 spelling; surrounding argument trivia is excluded.
+  Forwarding a complete argument through nested typed macros retains the
+  original caller text. Defaulted arguments retain the spelling of their
+  declaration's default expression. A compound expression built by substituting
+  children, or syntax without an available written source origin, is rejected
+  rather than given a reconstructed spelling. The result is read-only metadata,
+  with no token substitution or token-pasting operation; and
 - `<std/format>` heterogeneous automatic or numeric-indexed replacement for
   booleans, characters, fixed-width integers, integral enums, binary32/binary64 values, string
   views, and transferred owning strings through source-defined `std::format`,

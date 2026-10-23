@@ -1,0 +1,51 @@
+mut int effects = 0;
+mut int drops = 0;
+
+class Owner {
+  int number;
+public:
+  Owner(int value) : number(value) {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() { drops += 1; }
+  int read() { return this.number; }
+};
+
+int effect(int value) { effects += 1; return value; }
+#macro int choose(bool enabled, int first, int second) {
+  if (enabled) { return first; }
+  return second;
+}
+#macro int once(int value) {
+  int saved = value;
+  return saved + saved;
+}
+#macro int nested(int value) { return choose(true, once(value), 0); }
+#macro int local_loop(int value) {
+  for (mut int index = 0; index < 4; ++index) {
+    if (index == 2) { return value; }
+  }
+  return 0;
+}
+#macro Owner owned(bool enabled, Owner first, Owner second) {
+  Owner guard{99};
+  if (enabled) { return first; }
+  return second;
+}
+#macro Owner local(int value) { Owner saved{value}; return saved; }
+#macro int invoke<F>(F action) { return action(); }
+#macro stop() { return; }
+
+int main() {
+  if (choose(false, effect(9), nested(effect(5))) != 10 || effects != 1) { return 1; }
+  if (local_loop(effect(7)) != 7 || effects != 2) { return 2; }
+  if (invoke([]() -> int { return 4; }) != 4) { return 3; }
+  stop();
+  {
+    Owner untouched{11};
+    Owner selected = owned(false, std::move(untouched), local(17));
+    if (untouched.read() != 11 || selected.read() != 17 || drops != 1) { return 4; }
+  }
+  if (drops != 3) { return 5; }
+  return 0;
+}

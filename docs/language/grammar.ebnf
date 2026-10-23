@@ -695,17 +695,19 @@ function-declaration   = [ unsafe-function-modifier ] [ "static" ]
                          parameter-clause [ requires-clause ]
                          ( block | ";" ) ;
 
-macro-declaration      = "#macro" IDENTIFIER [ generic-parameter-clause ]
+macro-declaration      = "#macro" [ type ] IDENTIFIER [ generic-parameter-clause ]
                          parameter-clause [ requires-clause ] block ;
-(* A namespace-scope typed statement macro has an implicit void result and
+(* A namespace-scope typed macro has an implicit void or explicit typed result and
    ordinary name(args) invocation syntax. Its value expression parameters are
    checked by exact type and expanded at each use, not eagerly initialized.
    Generic final packs, defaults and constraints retain the ordinary signature
    rules. track_caller may precede #macro; macro/function overload mixtures
    at one qualified name are invalid. The current body profile admits blocks,
-   ordinary branches and binder-free expressions without direct writes.
-   Local binders, loops, returns, lambda definitions, callable-value capture,
-   member, constexpr and foreign forms are not admitted. [[deferred]] is no
+   ordinary branches, automatic locals, local writes/loops and macro-local
+   returns. Fresh caller lambda arguments retain their ordinary callable
+   identity and capture rules. Reference/tracked-borrowed results, introduced
+   propagation, body lambda definitions, member, constexpr and foreign forms
+   are not admitted. [[deferred]] is no
    longer accepted; #define remains valueless configuration, not replacement
    macro syntax. See execution.md's typed statement macro contract. *)
 

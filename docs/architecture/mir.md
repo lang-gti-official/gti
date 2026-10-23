@@ -1048,6 +1048,17 @@ selects the GTI call. A cleanup-free moved environment has no full-expression
 obligation, so its receiver is a `Value` stage of the exact Move rather than a
 `MoveValue`; the once-callable receiver proof follows that stage to the Move
 and still requires its exact ownership event.
+Scoped HIR result regions lower entirely to existing MIR operations: an exact
+typed temporary, per-return initialization and lifecycle transfer/reparent,
+local cleanup, and an ordinary join transport. Their returns cannot produce
+the surrounding body's Return terminator. The result is active in failure
+cleanup before local destruction begins, and keeps the enclosing expression's
+lifetime after successful local cleanup. Region joins reconcile outer loan
+bindings, transferred endpoints and temporary states, rather than inheriting
+the state of the last visited return. Borrowed region outputs remain rejected
+until their provenance/loan-transfer join contract is implemented. No backend
+interprets macro syntax or invents local-return cleanup.
+
 Program v72/body v62 add the generated `ReturnResult` drop obligation. A
 completed owning return operand is reparented out of its full-expression into
 this pending lifetime when callee cleanup can fail. It retains the exact

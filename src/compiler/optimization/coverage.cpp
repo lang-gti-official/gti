@@ -164,6 +164,9 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
                      "pointee value/address unknown; loan schedule unchanged");
   case IntrinsicKind::None:
     return inapplicable("ordinary instruction/call effects");
+  case IntrinsicKind::SourceExpressionText:
+    return inapplicable("semantic written metadata normalized to a literal; "
+                        "invalid as an executable intrinsic");
   case IntrinsicKind::FunctionPointerFromItem:
     return supported("exact stateless invocation address; signature retained");
   case IntrinsicKind::FunctionPointerInvoke:
@@ -700,6 +703,13 @@ MirVerificationResult verifyMirOptimizationVocabulary(const MirBody &body,
       check(instruction.kind, "instruction kind");
       check(instruction.operation, "operation");
       check(instruction.intrinsic, "intrinsic");
+      if (instruction.intrinsic == IntrinsicKind::SourceExpressionText)
+        result.errors.push_back(
+            {.bodyKind = body.kind,
+             .owner = owner,
+             .block = blockId,
+             .instruction = instructionId,
+             .message = "written expression metadata reached executable MIR"});
       check(instruction.unsafeOperation, "unsafe operation");
       check(instruction.synchronization.kind, "synchronization operation");
       if (instruction.synchronization.order)

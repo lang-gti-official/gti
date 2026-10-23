@@ -73,6 +73,7 @@ enum class HirValueKind {
   Binary,
   Call,
   Conditional,
+  ScopedResult,
   Move,
   NativeCallback,
   FunctionItem,
@@ -230,6 +231,9 @@ struct HirValue {
   UnsafeOperationKind unsafeOperation = UnsafeOperationKind::None;
   SymbolId symbol = 0;
   std::vector<HirValueId> operands;
+  // A semantic result region executes statements at this expression's
+  // position. Its returns publish this value, not the enclosing function.
+  std::optional<HirStatementId> regionBody;
   // Caller-expanded declaration defaults, in exact operand-suffix order.
   // Retained even when a concrete pack prevents a fixed-arity call plan.
   std::vector<HirValueId> defaultArguments;
@@ -394,6 +398,7 @@ struct HirStatement {
   bool unsafeBlock = false;
   std::optional<HirBindingId> binding;
   std::optional<HirValueId> value;
+  HirValueId resultRegion = 0;
   std::optional<HirValueId> condition;
   std::optional<HirValueId> increment;
   std::optional<HirStatementId> initializer;

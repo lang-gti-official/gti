@@ -571,8 +571,9 @@ int main() {
   migrationAndOverloadDiagnostics();
   parserMacroRecovery();
   negative("[[deferred]] void old(bool condition) {}", "GTI-S2099", "#macro");
-  negative("#macro wrong(bool condition) { return; }", "GTI-S2099",
-           "returns, propagation");
+  check(analyze("#macro stop() { return; } int main() { stop(); return 0; }")
+            .canGenerateCode(),
+        "void macro-local return resumes its caller");
   negative("#macro wrong() { break; }", "GTI-S2099", "within that macro");
   negative("#macro wrong() { continue; }", "GTI-S2099", "within that macro");
   negative("#macro wrong() { static int value = 1; }", "GTI-P0001",
@@ -609,11 +610,12 @@ int main() { std::debug_assert(1); return 0; }
 int main() { auto callback = helper; return 0; }
 )",
            "GTI-S2124", "not callable values");
-  negative(R"(
+  check(analyze(R"(
 #macro execute<F>(F callback) { callback(); }
 int main() { execute([]() -> void {}); return 0; }
-)",
-           "GTI-S2124", "requires a named binding");
+)")
+            .canGenerateCode(),
+        "fresh callable expressions are valid macro arguments");
   negative(R"(
 #macro helper() { helper(); }
 int main() { helper(); return 0; }

@@ -128,6 +128,17 @@ corners({a, b})`).
 
 ## Typed macros and assertions
 
+`expression_text_semantic_ir` checks exact parser extents, origin-preserving
+clones and forwarding, default-expression provenance, missing source buffers,
+private capability access, static operand errors and synthetic-composition
+rejection. Its HIR/MIR assertions require literal normalization before operand
+lowering: no metadata intrinsic or argument call may reach execution.
+`expression_text_runtime` checks untouched side effects and owner moves,
+absence of retained runtime loans, nested generic wrappers, static result
+lifetime, UTF-8/comments/newlines and ordinary generic definition-site spelling
+at C++20/C++23 O0/O1/O3 plus ASan/UBSan. The stdlib surface manifest registers
+the same public operation and focused O0/O3 fixture.
+
 The existing `deferred_assertions*` gate names are retained for continuity after
 the public syntax migration to `#macro`; no old attribute support remains.
 `deferred_assertions` checks the general typed statement macro rule
