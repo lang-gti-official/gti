@@ -6,8 +6,8 @@
 #include <cstring>
 #include <iostream>
 #include <string_view>
-#include <utility>
 #include <thread>
+#include <utility>
 
 #if defined(_WIN32)
 #include <io.h>
@@ -107,12 +107,15 @@ ProcessResult waitForProcess(pid_t child, std::string_view description,
                        : WIFSIGNALED(status) ? 128 + WTERMSIG(status)
                                              : 127;
   if (capture != nullptr) {
-    auto result = finishCapturedProcess(capture, exitCode, captureSuccessfulOutput);
-    if (WIFSIGNALED(status)) result.signal = WTERMSIG(status);
+    auto result =
+        finishCapturedProcess(capture, exitCode, captureSuccessfulOutput);
+    if (WIFSIGNALED(status))
+      result.signal = WTERMSIG(status);
     return result;
   }
   ProcessResult result{.exitCode = exitCode};
-  if (WIFSIGNALED(status)) result.signal = WTERMSIG(status);
+  if (WIFSIGNALED(status))
+    result.signal = WTERMSIG(status);
   return result;
 }
 #endif
@@ -260,7 +263,9 @@ ProcessResult invokeProcess(const std::vector<std::string> &arguments,
                             ProcessInvocationOptions options) {
   if (options.timeout || options.isolateProcessGroup) {
     if (options.outputMode != ProcessOutputMode::Capture)
-      return {.exitCode = 127, .driverDiagnostic = "gti: bounded processes require captured output"};
+      return {.exitCode = 127,
+              .driverDiagnostic =
+                  "gti: bounded processes require captured output"};
     return startProcess(arguments, std::move(options)).wait();
   }
   if (arguments.empty() || arguments.front().empty()) {
@@ -314,7 +319,8 @@ bool StartedProcess::running() const { return child != -1; }
 
 ProcessResult StartedProcess::wait() {
   for (;;) {
-    if (auto result = poll()) return std::move(*result);
+    if (auto result = poll())
+      return std::move(*result);
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
 }
@@ -327,8 +333,8 @@ std::optional<ProcessResult> StartedProcess::poll() {
   }
   if (child == -1) {
     return ProcessResult{.exitCode = 127,
-            .driverDiagnostic =
-                "gti: " + description + " has already been waited for"};
+                         .driverDiagnostic = "gti: " + description +
+                                             " has already been waited for"};
   }
 #if defined(_WIN32)
   std::FILE *captureFile = static_cast<std::FILE *>(capture);
@@ -341,39 +347,53 @@ std::optional<ProcessResult> StartedProcess::poll() {
       std::fclose(captureFile);
     }
     return ProcessResult{.exitCode = 127,
-            .driverDiagnostic = "gti: failed while waiting for " + description +
-                                ": " + std::strerror(errno)};
+                         .driverDiagnostic = "gti: failed while waiting for " +
+                                             description + ": " +
+                                             std::strerror(errno)};
   }
   return finishCapturedProcess(captureFile, status, captureSuccessfulOutput);
 #else
   const pid_t waitedChild = static_cast<pid_t>(child);
   int status = 0;
   pid_t observed;
-  do { observed = waitpid(waitedChild, &status, WNOHANG); }
-  while (observed == -1 && errno == EINTR);
+  do {
+    observed = waitpid(waitedChild, &status, WNOHANG);
+  } while (observed == -1 && errno == EINTR);
   bool expired = false;
-  if (observed == 0 && deadline && std::chrono::steady_clock::now() >= *deadline) {
+  if (observed == 0 && deadline &&
+      std::chrono::steady_clock::now() >= *deadline) {
     expired = true;
     kill(isolatedProcessGroup ? -waitedChild : waitedChild, SIGKILL);
-    do { observed = waitpid(waitedChild, &status, 0); }
-    while (observed == -1 && errno == EINTR);
+    do {
+      observed = waitpid(waitedChild, &status, 0);
+    } while (observed == -1 && errno == EINTR);
   }
-  if (observed == 0) return std::nullopt;
+  if (observed == 0)
+    return std::nullopt;
   const int waitError = errno;
-  // A completed test must not leave background descendants running in its group.
-  if (isolatedProcessGroup) kill(-waitedChild, SIGKILL);
+  // A completed test must not leave background descendants running in its
+  // group.
+  if (isolatedProcessGroup)
+    kill(-waitedChild, SIGKILL);
   child = -1;
   auto *captureFile = static_cast<std::FILE *>(capture);
   capture = nullptr;
   if (observed == -1) {
-    if (captureFile) std::fclose(captureFile);
-    return ProcessResult{.exitCode = 127, .driverDiagnostic =
-      "gti: failed while waiting for " + description + ": " + std::strerror(waitError)};
+    if (captureFile)
+      std::fclose(captureFile);
+    return ProcessResult{.exitCode = 127,
+                         .driverDiagnostic = "gti: failed while waiting for " +
+                                             description + ": " +
+                                             std::strerror(waitError)};
   }
-  const int code = expired ? 124 : WIFEXITED(status) ? WEXITSTATUS(status) :
-    WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 127;
-  auto result = finishCapturedProcess(captureFile, code, captureSuccessfulOutput);
-  if (WIFSIGNALED(status)) result.signal = WTERMSIG(status);
+  const int code = expired               ? 124
+                   : WIFEXITED(status)   ? WEXITSTATUS(status)
+                   : WIFSIGNALED(status) ? 128 + WTERMSIG(status)
+                                         : 127;
+  auto result =
+      finishCapturedProcess(captureFile, code, captureSuccessfulOutput);
+  if (WIFSIGNALED(status))
+    result.signal = WTERMSIG(status);
   result.timedOut = expired;
   return result;
 #endif
@@ -385,6 +405,17 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
   started.description = options.description;
   started.captureSuccessfulOutput = options.captureSuccessfulOutput;
   started.isolatedProcessGroup = options.isolateProcessGroup;
+  const auto maximumTimeout =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::duration::max() / 2);
+  if (options.outputMode != ProcessOutputMode::Capture ||
+      (options.timeout &&
+       (options.timeout->count() < 0 || *options.timeout > maximumTimeout))) {
+    started.startFailure = ProcessResult{
+        .exitCode = 127,
+        .driverDiagnostic = "gti: invalid captured process options or timeout"};
+    return started;
+  }
   if (options.timeout && options.timeout->count() > 0)
     started.deadline = std::chrono::steady_clock::now() + *options.timeout;
   if (arguments.empty() || arguments.front().empty()) {
@@ -399,9 +430,9 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
       options.timeout || options.isolateProcessGroup) {
     started.startFailure = ProcessResult{
         .exitCode = 127,
-        .driverDiagnostic =
-            "gti: bounded, isolated, working-directory and environment processes are "
-            "not supported on Windows yet"};
+        .driverDiagnostic = "gti: bounded, isolated, working-directory and "
+                            "environment processes are "
+                            "not supported on Windows yet"};
     return started;
   }
 #endif
@@ -415,6 +446,26 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
                             " output capture: " + std::strerror(errno)};
     return started;
   }
+#if !defined(_WIN32)
+  // Keep private descriptors above stdio even if the caller closed a stream;
+  // dup2 below must never overwrite the launch handshake. Captures belonging to
+  // other active children must not survive a later child's exec either.
+  if (fileno(capture) < 3) {
+    const int replacement = fcntl(fileno(capture), F_DUPFD_CLOEXEC, 3);
+    std::fclose(capture);
+    capture = replacement == -1 ? nullptr : fdopen(replacement, "w+b");
+    if (!capture && replacement != -1)
+      close(replacement);
+  }
+  if (!capture || fcntl(fileno(capture), F_SETFD, FD_CLOEXEC) == -1) {
+    if (capture)
+      std::fclose(capture);
+    started.startFailure = ProcessResult{
+        .exitCode = 74,
+        .driverDiagnostic = "gti: failed to configure private process capture"};
+    return started;
+  }
+#endif
   std::cout.flush();
   std::cerr.flush();
 
@@ -469,20 +520,35 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
   int errors[2];
   if (pipe(errors) == -1) {
     std::fclose(capture);
-    started.startFailure = ProcessResult{.exitCode = 127,
-      .driverDiagnostic = "gti: failed to create process launch handshake"};
+    started.startFailure = ProcessResult{
+        .exitCode = 127,
+        .driverDiagnostic = "gti: failed to create process launch handshake"};
     return started;
   }
-  if (fcntl(errors[1], F_SETFD, FD_CLOEXEC) == -1) {
-    close(errors[0]); close(errors[1]); std::fclose(capture);
-    started.startFailure = ProcessResult{.exitCode = 127,
-      .driverDiagnostic = "gti: failed to configure process launch handshake"};
+  for (int &descriptor : errors) {
+    if (descriptor < 3) {
+      const int replacement = fcntl(descriptor, F_DUPFD_CLOEXEC, 3);
+      close(descriptor);
+      descriptor = replacement;
+    }
+  }
+  if (errors[0] == -1 || errors[1] == -1 ||
+      fcntl(errors[0], F_SETFD, FD_CLOEXEC) == -1 ||
+      fcntl(errors[1], F_SETFD, FD_CLOEXEC) == -1) {
+    close(errors[0]);
+    close(errors[1]);
+    std::fclose(capture);
+    started.startFailure =
+        ProcessResult{.exitCode = 127,
+                      .driverDiagnostic =
+                          "gti: failed to configure process launch handshake"};
     return started;
   }
   const pid_t child = fork();
   if (child == -1) {
     const int forkError = errno;
-    close(errors[0]); close(errors[1]);
+    close(errors[0]);
+    close(errors[1]);
     std::fclose(capture);
     started.startFailure = ProcessResult{
         .exitCode = 127,
@@ -495,11 +561,13 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
     auto failLaunch = [&](int code) {
       // sizeof(int) is atomic for this pipe; retry interrupted writes only.
       ssize_t sent;
-      do { sent = write(errors[1], &code, sizeof(code)); }
-      while (sent == -1 && errno == EINTR);
+      do {
+        sent = write(errors[1], &code, sizeof(code));
+      } while (sent == -1 && errno == EINTR);
       _exit(127);
     };
-    if (options.isolateProcessGroup && setpgid(0, 0) == -1) failLaunch(errno);
+    if (options.isolateProcessGroup && setpgid(0, 0) == -1)
+      failLaunch(errno);
     const int descriptor = fileno(capture);
     if (descriptor == -1 || dup2(descriptor, STDOUT_FILENO) == -1 ||
         dup2(descriptor, STDERR_FILENO) == -1) {
@@ -525,18 +593,22 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
   close(errors[1]);
   int launchError = 0;
   ssize_t received;
-  do { received = read(errors[0], &launchError, sizeof(launchError)); }
-  while (received == -1 && errno == EINTR);
+  do {
+    received = read(errors[0], &launchError, sizeof(launchError));
+  } while (received == -1 && errno == EINTR);
   close(errors[0]);
   started.child = child;
   started.capture = capture;
   if (received != 0) {
-    if (received < 0) kill(options.isolateProcessGroup ? -child : child, SIGKILL);
+    if (received < 0)
+      kill(options.isolateProcessGroup ? -child : child, SIGKILL);
     auto failure = started.wait();
     failure.exitCode = 127;
-    failure.driverDiagnostic = "gti: failed to launch " + options.description +
-      ": " + (received == sizeof(launchError) ? std::string(std::strerror(launchError)) :
-        std::string("invalid process launch handshake"));
+    failure.driverDiagnostic =
+        "gti: failed to launch " + options.description + ": " +
+        (received == sizeof(launchError)
+             ? std::string(std::strerror(launchError))
+             : std::string("invalid process launch handshake"));
     started.startFailure = std::move(failure);
   }
   return started;

@@ -48,7 +48,7 @@
     "stdlib/std/string.gti": "f283b464bce49ba83e36478c02ba2732933ef0a514063fd24c4a058279811569",
     "stdlib/std/string_view.gti": "db84934530d41115374ab9f76978a276e7c2c6789b6f2848a25dacf295beba27",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
-    "stdlib/std/testing.gti": "18cf2151c6ef75c12f5adb4a52bd95435d23dce84d5e29fbaabade33bedb2ae0",
+    "stdlib/std/testing.gti": "ddcea5b0cfb4928bab496de35a203fe715063a73fcee5bd181e28d1e2264b385",
     "stdlib/std/thread.gti": "34553ae1d585d24b6eb4e6cd41f749b29da53fb907656614c614935f705f4aa4",
     "stdlib/std/unordered_map.gti": "64818406362ff0b99c30986dc7a0c25f30018eb8c28f4e1f4a3adb2d12571692",
     "stdlib/std/unordered_set.gti": "53125c982b172a3a0fc8264551d67faa34deaacd46fe1fe187b2a0a220d2b536",
@@ -953,8 +953,15 @@
       "id": "deferred-assertions",
       "mode": "run",
       "source": "tests/fixtures/deferred_assertions.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "encoding",
@@ -2925,7 +2932,9 @@
         "std::debug_assert",
         "std::debug_assertions_enabled"
       ],
-      "case_ids": ["deferred-assertions"],
+      "case_ids": [
+        "deferred-assertions"
+      ],
       "required_instantiations": [
         "boolean-only and formatted assertions",
         "disabled NDEBUG argument moves and messages",
@@ -6141,18 +6150,27 @@
       "source": "stdlib/std/testing.gti",
       "status": "executable",
       "operations": [
-        "std::testing::check"
+        "std::testing::check",
+        "std::testing::check_approx",
+        "std::testing::check_elements_eq",
+        "std::testing::check_eq",
+        "std::testing::check_ne",
+        "std::testing::check_string_eq"
       ],
       "case_ids": [
         "testing"
       ],
       "required_instantiations": [
-        "explicit and default messages; source attribution and failure cleanup in isolated tests"
+        "explicit/default and lazy messages; scalar literal single evaluation; borrowed noncopyable object operands; source attribution and deterministic failure cleanup",
+        "quoted string differences and first byte/length; floating absolute/relative tolerances, NaNs and infinities; span element/length differences",
+        "successful comparisons do not call user formatters; failing equality calls user comparison once and formats borrowed values"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_testing.gti",
         "tests/annotated_test_suite_test.py",
-        "examples/annotated-tests/tests/main.gti"
+        "examples/annotated-tests/tests/main.gti",
+        "tests/fixtures/testing_assertions.gti",
+        "tests/testing_assertions_runtime_test.py"
       ]
     },
     {

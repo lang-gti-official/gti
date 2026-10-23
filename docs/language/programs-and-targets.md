@@ -142,6 +142,12 @@ invoke tests merely because a function is annotated.
 "Test check failed")`, a source-defined caller-tracked wrapper over `std::panic`.
 Failure reports the user's check location and preserves normal deterministic
 cleanup. The library does not catch or resume a panic.
+Source-defined `check_eq`/`check_ne` macros evaluate operands once and format
+values only on failure; scalar operands accept literals while object operands
+remain borrowed. `check_string_eq`, `check_approx`, and `check_elements_eq`
+provide string byte/length, floating tolerance and borrowed contiguous collection
+diagnostics. See the [standard-library contract](standard-library.md) for exact
+type and borrowing boundaries.
 See [`examples/annotated-tests`](../../examples/annotated-tests/README.md).
 
 ## 6.2 Target And Configuration Selection

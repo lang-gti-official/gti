@@ -12,7 +12,14 @@ namespace lang::driver {
 
 // The runner owns lifecycle validation. These records only project its facts
 // into a versioned JSON Lines protocol; no test-language semantics live here.
-enum class TestCaseStatus { Passed, Failed, Crashed, TimedOut, RunnerError, Skipped };
+enum class TestCaseStatus {
+  Passed,
+  Failed,
+  Crashed,
+  TimedOut,
+  RunnerError,
+  Skipped
+};
 
 struct TestSelection {
   std::string name;
@@ -41,7 +48,8 @@ struct TestRunSummary {
   std::size_t crashed = 0;
   std::size_t timedOut = 0;
   std::size_t runnerErrors = 0;
-  // Includes every discovered-but-unselected case (filtered or explicitly skipped).
+  // Includes every discovered-but-unselected case (filtered or explicitly
+  // skipped).
   std::size_t skipped = 0;
   bool listOnly = false;
   bool complete = false;

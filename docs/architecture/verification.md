@@ -1708,6 +1708,15 @@ representation fact of either the derived or the base class is cleared.
 
 ## Annotated test suites
 
+`testing_assertions_runtime` checks the source-only equality macros, scalar
+capture and literal ergonomics, borrowed noncopyable objects, exactly-once
+operand/equality evaluation, lazy success messages/formatting, string byte/length
+differences, approximate comparison limits, and borrowed span mismatch/length.
+Independent host assertions require the panic status, user caller line, diagnostic
+values and deterministic cleanup at C++20/O0 and C++23/O3; invalid generic uses
+must be rejected. The annotated example and stdlib surface inventory remain
+registered with the extended testing API.
+
 `test_runner` independently exercises driver selection/listing/empty/duplicate
 catalog rules, bounded overlapping children, timeout progress, exact signal versus
 ordinary status (including 127 and 143), failed exec, moved process ownership and
