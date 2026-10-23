@@ -178,6 +178,57 @@ end, {
   desc = "Select the GTI editor build profile (without building)",
 })
 
+vim.api.nvim_create_user_command("GTIExpandMacro", function()
+  local buffer = vim.api.nvim_get_current_buf()
+  local client = vim.lsp.get_clients({ name = "gti_lsp", bufnr = buffer })[1]
+  local experimental = client and client.server_capabilities.experimental
+  if not client or not experimental or not experimental.macroExpansionProvider then
+    vim.notify("The attached GTI server does not support macro inspection", vim.log.levels.WARN, { title = "GTI" })
+    return
+  end
+  local generations = {}
+  for attached in pairs(client.attached_buffers) do
+    if vim.api.nvim_buf_is_valid(attached) then
+      generations[attached] = vim.api.nvim_buf_get_changedtick(attached)
+    end
+  end
+  local params = vim.lsp.util.make_position_params(0, client.offset_encoding)
+  if vim.lsp.util.buf_versions then
+    params.textDocument.version = vim.lsp.util.buf_versions[buffer]
+  end
+  client:request("gti/inspectMacroExpansion", params, function(err, result)
+    if not vim.api.nvim_buf_is_valid(buffer) then return end
+    for attached, generation in pairs(generations) do
+      if not vim.api.nvim_buf_is_valid(attached)
+        or vim.api.nvim_buf_get_changedtick(attached) ~= generation then
+        vim.notify("Macro inspection discarded because source changed; request it again", vim.log.levels.INFO, { title = "GTI" })
+        return
+      end
+    end
+    if err then
+      vim.notify(err.message or "Macro inspection failed", vim.log.levels.WARN, { title = "GTI" })
+      return
+    end
+    if not result or result == vim.NIL then
+      vim.notify("No unique checked macro expansion at the cursor", vim.log.levels.INFO, { title = "GTI" })
+      return
+    end
+    if result.readOnly ~= true or type(result.text) ~= "string" then return end
+    local scratch = vim.api.nvim_create_buf(false, true)
+    vim.bo[scratch].buftype = "nofile"
+    vim.bo[scratch].bufhidden = "wipe"
+    vim.bo[scratch].swapfile = false
+    vim.bo[scratch].filetype = "gti"
+    vim.api.nvim_buf_set_lines(scratch, 0, -1, false, vim.split(result.text, "\n", { plain = true }))
+    vim.bo[scratch].modifiable = false
+    vim.bo[scratch].readonly = true
+    vim.b[scratch].gti_macro_expansion = true
+    vim.cmd("botright vnew")
+    vim.api.nvim_win_set_buf(0, scratch)
+    vim.keymap.set("n", "q", "<cmd>close<CR>", { buffer = scratch, silent = true })
+  end, buffer)
+end, { desc = "Inspect the checked macro expansion under the cursor (read-only)" })
+
 vim.api.nvim_create_user_command("GTIInfo", function()
   local info = toolchain.version_info()
   local active_versions = {}

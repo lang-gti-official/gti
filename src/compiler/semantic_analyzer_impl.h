@@ -10,6 +10,7 @@
 #include "gti/standard_library.h"
 #include "gti/support.h"
 #include "semantic_diagnostics.h"
+#include "semantic_reflection_traits.h"
 #include "semantic_spelling.h"
 
 #include <cassert>
@@ -751,7 +752,7 @@ private:
     bool neverReturns = false;
     bool tracksCaller = false;
     bool discardableResult = false;
-    bool deferredEvaluation = false;
+    bool macroExpansion = false;
     bool threadConfinedCallback = false;
     bool testFunction = false;
     CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
@@ -804,6 +805,8 @@ private:
     std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
     bool compilerPrivate = false;
+    // Only provisional open-body candidates lack a declaration record.
+    bool requiresUnsafeFact = false;
 
     [[nodiscard]] const CallableDeclaration &record() const {
       assert(declarationRecord != nullptr);
@@ -1315,7 +1318,12 @@ private:
     const Symbol *symbol = nullptr;
   };
 
-  using Scope = std::unordered_map<std::string, Symbol>;
+  struct ScopeIdentity {};
+  struct Scope : std::unordered_map<std::string, Symbol> {
+    // Only isolated query frames need an identity. Ordinary lexical frames
+    // remain allocation-free; snapshots retain the same lexical identity.
+    std::shared_ptr<const ScopeIdentity> identity;
+  };
   using ScopeStack = std::vector<Scope>;
 
   enum class ValueControlFlowKind {
@@ -2981,6 +2989,28 @@ private:
       std::span<const SemanticType> parameters = {},
       bool mutableReceiver = false, bool requiresUnsafe = false,
       bool trustedMemberAccess = false) const;
+  [[nodiscard]] std::optional<ExpandedStructuralRequirement>
+  expressionRequirementFact(const MemberRequirement &query,
+                            std::span<const SemanticType> arguments) const;
+  [[nodiscard]] bool expressionRequirementSatisfied(
+      const MemberRequirement &query, std::span<const SemanticType> arguments,
+      std::string *reason = nullptr,
+      const std::vector<std::string> *lookupScope = nullptr) const;
+  static void
+  collectRequirementTypeArguments(const Expr *expression,
+                                  std::vector<const TypeRef *> &types);
+  void prepareRequirementLookup(const std::vector<std::string> *lookupScope,
+                                SourceUnitId unit);
+  [[nodiscard]] std::unique_ptr<Impl> unevaluatedExpressionWorker() const;
+  [[nodiscard]] bool constraintPredicateSatisfied(
+      const ConceptApplication &application,
+      const std::vector<SemanticType> &arguments, std::string *reason,
+      const std::vector<std::string> *lookupScope = nullptr) const;
+  [[nodiscard]] std::optional<PredicateCapability> predicateCapabilityFor(
+      const ConceptApplication &application,
+      const std::vector<SemanticType> &arguments,
+      const std::vector<std::string> *lookupScope = nullptr) const;
+  mutable std::size_t expressionRequirementDepth = 0;
   void recordMemberRequirementReceiver(const MemberRequirement &query,
                                        const SemanticType &type);
   struct ActiveMemberRequirement {
@@ -4086,6 +4116,23 @@ private:
 
   void resolveConcepts();
 
+  struct ConstraintPredicateDeclaration {
+    const FunctionDecl *syntax = nullptr;
+    SourceUnitId sourceUnit = 0;
+    std::vector<std::string> namespaceScope;
+  };
+
+  // This early declaration index supplies only proof discovery before the
+  // ordinary callable catalog exists. It never selects executable calls.
+  void
+  registerConstraintPredicateDeclarations(const StmtList &statements,
+                                          std::vector<std::string> scope = {});
+  void recordConstraintPredicateUses(
+      const std::vector<ConceptApplication> &requirements);
+  [[nodiscard]] std::optional<PredicateCapability>
+  constraintPredicateCapability(const Call &call,
+                                const std::vector<SemanticType> &typeArguments);
+
   [[nodiscard]] GenericConstraintSet resolveConcept(ConceptId id,
                                                     const Token *use);
 
@@ -4874,6 +4921,9 @@ private:
   [[nodiscard]] std::optional<ConstantValue>
   metaIntrinsicConstant(const ResolvedCallInfo &call,
                         const ConstexprInterpreter &context) const;
+  [[nodiscard]] bool
+  metaQueryAcceptsOpenSubject(IntrinsicKind intrinsic,
+                              const SemanticType &subject) const;
   [[nodiscard]] std::optional<ConstantValue>
   metaQueryConstant(IntrinsicKind intrinsic, const SemanticType &subject,
                     const std::optional<SemanticType> &attribute,
@@ -5004,48 +5054,78 @@ private:
   // Deferred statement helpers borrow no closure environment. Each expansion
   // retains definition-site lookup for its body and caller-site lookup for
   // substituted arguments. Flow/loans remain those of the calling body.
-  struct DeferredLookupContext {
+  struct MacroLookupContext {
+    struct ScopeOverlay {
+      std::size_t index = 0;
+      std::shared_ptr<const ScopeIdentity> identity;
+    };
     std::vector<std::string> namespaceScope;
     SourceUnitId sourceUnit = 0;
     std::optional<ClassId> ownerClass;
     bool staticMember = false;
     bool definition = false;
+    // A definition may see only lexical frames created within its expansion.
+    // Captured argument syntax is capped at the invocation's lexical depth so
+    // later macro-local binders cannot capture same-spelled caller names.
+    std::size_t localScopeBegin = 0;
+    std::optional<std::size_t> localScopeEnd;
+    std::size_t lexicalLambdaDepth = 0;
+    // A query can add synthetic locals without exposing intervening macro
+    // frames. Identity, not a reused numeric index, owns that permission.
+    std::vector<ScopeOverlay> queryScopes;
     std::size_t declarationOrder = 0;
     std::optional<CallerLocationOrigin> caller;
     std::optional<Token> invocation;
     std::unordered_map<std::string, SemanticType> types;
     std::unordered_map<std::string, CompileTimeValue> values;
   };
-  std::unordered_map<std::uint32_t, DeferredLookupContext> deferredLookup;
+  std::unordered_map<std::uint32_t, MacroLookupContext> macroLookup;
   // A speculative worker is confined to the lifetime of its caller. Read
   // earlier expansion domains through that caller instead of repeatedly
   // copying the growing domain map; newly expanded syntax stays local.
-  const Impl *deferredLookupBase = nullptr;
-  struct DeferredLookupScope {
+  const Impl *macroLookupBase = nullptr;
+  struct MacroLookupScope {
     Impl &owner;
     std::vector<std::string> namespaceScope;
     SourceUnitId sourceUnit;
     std::optional<ClassId> ownerClass;
     bool staticMember;
     std::size_t declarationOrder;
-    DeferredLookupScope(Impl &owner, const DeferredLookupContext &context);
-    ~DeferredLookupScope();
+    MacroLookupScope(Impl &owner, const MacroLookupContext &context);
+    ~MacroLookupScope();
   };
-  bool deferredProbe = false;
-  const Call *deferredProbeCall = nullptr;
-  const Call *deferredStatementCall = nullptr;
-  std::unordered_set<const Expr *> deferredProbeArguments;
-  std::size_t deferredExpansionDepth = 0;
-  std::size_t deferredExpandedBodies = 0;
-  std::vector<const FunctionDecl *> deferredActiveBodies;
-  [[nodiscard]] const DeferredLookupContext *
-  deferredContext(const Token &token) const;
-  [[nodiscard]] bool analyzeDeferredStatement(const ExpressionStmt &statement);
+  bool macroProbe = false;
+  const Call *macroProbeCall = nullptr;
+  const Call *macroStatementCall = nullptr;
+  std::unordered_set<const Expr *> macroProbeArguments;
+  std::size_t macroExpansionDepth = 0;
+  std::size_t macroExpandedBodies = 0;
+  std::vector<std::pair<const FunctionDecl *, std::size_t>> macroActiveBodies;
+  [[nodiscard]] const MacroLookupContext *
+  macroContext(const Token &token) const;
+  struct MacroLocalScopeRange {
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    std::span<const MacroLookupContext::ScopeOverlay> overlays;
+
+    [[nodiscard]] bool contains(std::size_t index, const Scope &scope) const {
+      return (index >= begin && index < end) ||
+             std::any_of(overlays.begin(), overlays.end(),
+                         [&](const auto &entry) {
+                           return entry.index == index && entry.identity &&
+                                  entry.identity == scope.identity;
+                         });
+    }
+  };
+  [[nodiscard]] MacroLocalScopeRange
+  macroLocalScopeRange(const Token &token) const;
+  [[nodiscard]] bool analyzeMacroStatement(const ExpressionStmt &statement);
   [[nodiscard]] bool
-  analyzeDeferredSelection(const Call &call, const CallableCandidate &selected,
-                           const std::vector<SemanticType> &typeArguments,
-                           const std::vector<CompileTimeValue> &valueArguments);
-  [[nodiscard]] bool validDeferredBody(const Stmt &statement) const;
+  analyzeMacroSelection(const Call &call, const CallableCandidate &selected,
+                        const std::vector<SemanticType> &typeArguments,
+                        const std::vector<CompileTimeValue> &valueArguments);
+  [[nodiscard]] bool validMacroBody(const Stmt &statement,
+                                    std::size_t ownLoopDepth = 0) const;
   static constexpr std::size_t kConstexprForElementLimit = 1024;
   static constexpr std::size_t kConstexprForBodyLimit = 4096;
   // Bodies expanded by `constexpr for` inside the declaration being analysed.
@@ -5904,6 +5984,8 @@ private:
     std::unordered_map<const ConceptDecl *, ConceptId> conceptDeclIds;
     std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
         functionGenericParameters;
+    std::unordered_map<std::string, std::vector<ConstraintPredicateDeclaration>>
+        constraintPredicateDeclarations;
     std::unordered_map<const FunctionDecl *, CallableDeclaration *>
         callableDeclarationsBySyntax;
     std::vector<std::unique_ptr<CallableDeclaration>> callableDeclarations;
@@ -6003,6 +6085,7 @@ private:
               classDeclIds.size(),
               conceptDeclIds.size(),
               functionGenericParameters.size(),
+              constraintPredicateDeclarations.size(),
               callableDeclarationsBySyntax.size(),
               callableDeclarations.size(),
               constructorGenericParameters.size(),
@@ -6583,7 +6666,7 @@ private:
   }
   [[nodiscard]] bool symbolVisibleAt(const Symbol &symbol,
                                      const Token &token) const {
-    const auto *context = deferredContext(token);
+    const auto *context = macroContext(token);
     return !context ? symbolVisibleNow(symbol)
                     : concreteReanalysis() ||
                           symbol.variableDeclaration == nullptr ||

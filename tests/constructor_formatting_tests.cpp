@@ -72,6 +72,33 @@ int main() {
         "m_client_(std::move(client)), m_base_url_(base_url.clone()) {}\n",
         {});
 
+  check("namespace app{[[track_caller]]#macro CHECK(bool condition,int value){"
+        "if(!condition){report(value);}}void use(){CHECK(true,compute());}}",
+        "namespace app {\n  [[track_caller]] #macro CHECK(bool condition, int "
+        "value) {\n    if (!condition) {\n      report(value);\n    }\n  }\n"
+        "  void use() {\n    CHECK(true, compute());\n  }\n}\n",
+        {});
+  check("#macro log_if<First,Args...>(bool condition,std::string_view "
+        "pattern,First first,Args... args)requires std::formattable<First>{"
+        "if(condition){print(pattern,first,args...);}}",
+        "#macro log_if<First, Args...>(bool condition, std::string_view "
+        "pattern, First first, Args... args)\n  requires "
+        "std::formattable<First> {\n  if (condition) {\n    "
+        "print(pattern, first, args...);\n  }\n}\n",
+        {});
+  check("#macro optional<T=int>(T value=1){consume(value);}\n#define "
+        "ENABLED\nnamespace app{#macro IGNORE(bool condition){}}",
+        "#macro optional<T = int>(T value = 1) {\n  consume(value);\n}\n"
+        "#define ENABLED\nnamespace app {\n  #macro IGNORE(bool condition) "
+        "{}\n}\n",
+        {});
+  auto macroAllman = lang::FormatOptions{};
+  macroAllman.breakBeforeBraces = lang::BraceBreakingStyle::Allman;
+  check("namespace app{#macro CHECK(bool condition){if(condition){use();}}}",
+        "namespace app\n{\n  #macro CHECK(bool condition)\n  {\n    if "
+        "(condition)\n    {\n      use();\n    }\n  }\n}\n",
+        macroAllman);
+
   check("namespace tea{class Box{public:Box(int x):a(x),b(choose(1,2)){use();}"
         "Box():a(0),b(0){}int value(){return a;}};}",
         "namespace tea {\n  class Box {\n  public:\n"

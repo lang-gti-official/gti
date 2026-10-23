@@ -81,6 +81,7 @@ def main() -> None:
         "src/compiler/semantic_analyzer.cpp",
         "src/compiler/semantic_body_analysis.cpp",
         "src/compiler/semantic_call_resolution.cpp",
+        "src/compiler/semantic_requirement_predicates.cpp",
         "src/compiler/semantic_declaration_analysis.cpp",
         "src/compiler/semantic_flow_analysis.cpp",
         "src/compiler/semantic_ownership_analysis.cpp",

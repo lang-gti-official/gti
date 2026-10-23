@@ -3481,8 +3481,8 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
     state->idleCatalogs.pop_back();
   }
   worker->semanticModel = semanticModel;
-  worker->deferredLookup = deferredLookup;
-  worker->deferredLookupBase = deferredLookupBase;
+  worker->macroLookup = macroLookup;
+  worker->macroLookupBase = macroLookupBase;
   worker->nextExpansion = nextExpansion;
   worker->valueFlow = valueFlow;
   for (const auto *definition : constexprDefinitionsAnalyzed)
@@ -5820,6 +5820,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     if (name == "meta_type_trait") {
       return IntrinsicKind::MetaTypeTrait;
+    }
+    if (name == "meta_type_relation") {
+      return IntrinsicKind::MetaTypeRelation;
     }
     if (name == "meta_enumerator_count") {
       return IntrinsicKind::MetaEnumeratorCount;
@@ -11875,6 +11878,9 @@ metaQueryShape(IntrinsicKind intrinsic) {
     return MetaQueryShape{.types = 2, .result = SemanticType::Bool};
   case IntrinsicKind::MetaTypeTrait:
     return MetaQueryShape{.indices = 1, .result = SemanticType::Bool};
+  case IntrinsicKind::MetaTypeRelation:
+    return MetaQueryShape{
+        .types = 2, .indices = 1, .result = SemanticType::Bool};
   case IntrinsicKind::MetaEnumeratorCount:
     return MetaQueryShape{};
   case IntrinsicKind::MetaEnumeratorName:
@@ -11912,6 +11918,27 @@ metaQueryShape(IntrinsicKind intrinsic) {
 
 } // namespace
 
+auto SemanticVisitor::Impl::metaQueryAcceptsOpenSubject(
+    IntrinsicKind intrinsic, const SemanticType &subject) const -> bool {
+  if (intrinsic != IntrinsicKind::MetaTypeKind ||
+      subject.kind == SemanticType::Unknown ||
+      subject.kind == SemanticType::TypeParameter ||
+      subject.kind == SemanticType::TypePack)
+    return false;
+  if (subject.kind == SemanticType::Enum &&
+      (subject.enumId == 0 || subject.enumId > enums.size()))
+    return false;
+  if (subject.kind == SemanticType::Class) {
+    const auto *owner = classInfo(subject);
+    if (owner == nullptr || owner->compilerType != CompilerTypeKind::None)
+      return false;
+  }
+  // The outer category is independent of nested type/value arguments. Exact
+  // class specializations must retain their primary's class/struct kind.
+  // Unknown/computed projections still have no category proof.
+  return metaTypeKind(subject) != 0;
+}
+
 // The constant a concrete reflection query denotes, or nullopt when the field
 // index is out of range (the caller reports it).
 auto SemanticVisitor::Impl::metaQueryConstant(
@@ -11928,6 +11955,9 @@ auto SemanticVisitor::Impl::metaQueryConstant(
     if (!index) {
       return std::nullopt;
     }
+    if (const auto constraint = metaTypeTraitConstraint(*index)) {
+      return ConstantValue{satisfiesAtomicConstraint(subject, *constraint)};
+    }
     switch (*index) {
     case 0:
       return ConstantValue{
@@ -11938,14 +11968,25 @@ auto SemanticVisitor::Impl::metaQueryConstant(
           (subject.kind == SemanticType::Class ||
            subject.kind == SemanticType::Enum) &&
           (!subject.arguments.empty() || !subject.valueArguments.empty())};
-    case 2:
-      return ConstantValue{isReflectableType(subject)};
-    case 3:
-      return ConstantValue{isSignedInteger(subject)};
     default:
       return std::nullopt;
     }
   }
+  case IntrinsicKind::MetaTypeRelation:
+    if (!attribute || !index) {
+      return std::nullopt;
+    }
+    switch (*index) {
+    case 0:
+      return ConstantValue{subject == *attribute};
+    case 1: {
+      const std::array<SemanticType, 2> arguments{subject, *attribute};
+      return ConstantValue{structuralConstraintSatisfied(
+          StructuralConstraintKind::EnumUnderlying, arguments)};
+    }
+    default:
+      return std::nullopt;
+    }
   case IntrinsicKind::MetaEnumeratorCount:
     return unsignedConstant(metaEnumeratorCount(subject));
   case IntrinsicKind::MetaBaseCount: {
@@ -12173,6 +12214,9 @@ auto SemanticVisitor::Impl::metaQueryFailure(
   case IntrinsicKind::MetaTypeTrait:
     return {"GTI-S2019", "Unknown reflection trait selector " +
                              std::to_string(index.value_or(0)) + "."};
+  case IntrinsicKind::MetaTypeRelation:
+    return {"GTI-S2019", "Unknown reflection type-relation selector " +
+                             std::to_string(index.value_or(0)) + "."};
   case IntrinsicKind::MetaMethodName:
   case IntrinsicKind::MetaMethodTrait:
   case IntrinsicKind::MetaMethodParameterCount:
@@ -12294,7 +12338,8 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
     resolved.typeArguments.push_back(*attribute);
   }
   semanticModel.record(expr, resolved);
-  if (containsOpenTypeParameter(*subject) ||
+  if ((containsOpenTypeParameter(*subject) &&
+       !metaQueryAcceptsOpenSubject(intrinsic, *subject)) ||
       (attribute && containsOpenTypeParameter(*attribute)) ||
       std::any_of(indices.begin(), indices.end(),
                   [](const CompileTimeValue &index) {
@@ -12349,7 +12394,8 @@ auto SemanticVisitor::Impl::metaIntrinsicConstant(
   }
   const SemanticType subject =
       constexprType(call.typeArguments.front(), context);
-  if (containsOpenTypeParameter(subject)) {
+  if (containsOpenTypeParameter(subject) &&
+      !metaQueryAcceptsOpenSubject(call.intrinsic, subject)) {
     return std::nullopt;
   }
   std::optional<SemanticType> attribute;

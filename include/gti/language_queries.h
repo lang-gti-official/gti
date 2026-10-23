@@ -79,6 +79,15 @@ struct HoverInfo {
   std::vector<std::string> notes;
 };
 
+// Read-only explanatory source, never an input to lowering or execution.
+// All text/spans are owned values; no snapshot AST pointers escape the query.
+struct MacroExpansionInfo {
+  SourceSpan invocation;
+  SourceSpan declaration;
+  std::string text;
+  bool truncated = false;
+};
+
 struct DefinitionInfo {
   SymbolId symbol = 0;
   SourceSpan origin;
@@ -219,6 +228,9 @@ public:
   [[nodiscard]] std::optional<HoverInfo> hover(const FrontendResult &snapshot,
                                                SourceUnitId sourceUnit,
                                                std::size_t byteOffset) const;
+  [[nodiscard]] std::optional<MacroExpansionInfo>
+  macroExpansion(const FrontendResult &snapshot, SourceUnitId sourceUnit,
+                 std::size_t byteOffset) const;
   [[nodiscard]] std::optional<DefinitionInfo>
   definition(const FrontendResult &snapshot, SourceUnitId sourceUnit,
              std::size_t byteOffset) const;
