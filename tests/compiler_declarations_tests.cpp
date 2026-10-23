@@ -5256,19 +5256,21 @@ T invalid<T>(T& x) requires reads<T> { return write(x); }
   expect(!wrongName.canGenerateCode(),
          "structural implication must preserve the required member name");
 
-  const auto malformed = lang::Frontend().analyze(
-      "member-requirement-malformed.gti",
-      "concept bad<T> = requires(T& x) { { other.clone() } -> T; };",
+  // Free expressions are now allowed. An unresolved name makes a concrete
+  // query false instead of being rejected by the old receiver-only grammar.
+  const auto unresolved = lang::Frontend().analyze(
+      "member-requirement-unresolved.gti",
+      "int main() { static_assert(!(requires(int& x) { "
+      "{ other.clone() } -> int; })); return 0; }",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!malformed.canGenerateCode() &&
-             hasDiagnostic(malformed.diagnostics, "declared receiver"),
-         "requirement syntax must reject an undeclared synthetic receiver");
+  expect(unresolved.canGenerateCode(),
+         "an unresolved required expression must be false, not a parser error");
   const auto consumingQuery = lang::Frontend().analyze(
       "member-requirement-consuming-query.gti",
       "concept bad<T> = requires(T&& x) { { x.clone() } -> T; };",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!consumingQuery.canGenerateCode() &&
-             hasDiagnostic(consumingQuery.diagnostics, "must be a reference"),
+             hasDiagnosticCode(consumingQuery.diagnostics, "GTI-P0001"),
          "member queries must not silently treat consuming references as "
          "read-only references");
   const auto directFailure = lang::Frontend().analyze(

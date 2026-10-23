@@ -2991,6 +2991,11 @@ private:
       const MemberRequirement &query, std::span<const SemanticType> arguments,
       std::string *reason = nullptr,
       const std::vector<std::string> *lookupScope = nullptr) const;
+  static void
+  collectRequirementTypeArguments(const Expr *expression,
+                                  std::vector<const TypeRef *> &types);
+  void prepareRequirementLookup(const std::vector<std::string> *lookupScope,
+                                SourceUnitId unit);
   [[nodiscard]] std::unique_ptr<Impl> unevaluatedExpressionWorker() const;
   [[nodiscard]] bool constraintPredicateSatisfied(
       const ConceptApplication &application,
@@ -4114,11 +4119,12 @@ private:
 
   // This early declaration index supplies only proof discovery before the
   // ordinary callable catalog exists. It never selects executable calls.
-  void registerConstraintPredicateDeclarations(
-      const StmtList &statements, std::vector<std::string> scope = {});
+  void
+  registerConstraintPredicateDeclarations(const StmtList &statements,
+                                          std::vector<std::string> scope = {});
   [[nodiscard]] std::optional<PredicateCapability>
-  constraintPredicateCapability(
-      const Call &call, const std::vector<SemanticType> &typeArguments);
+  constraintPredicateCapability(const Call &call,
+                                const std::vector<SemanticType> &typeArguments);
 
   [[nodiscard]] GenericConstraintSet resolveConcept(ConceptId id,
                                                     const Token *use);
@@ -4908,8 +4914,9 @@ private:
   [[nodiscard]] std::optional<ConstantValue>
   metaIntrinsicConstant(const ResolvedCallInfo &call,
                         const ConstexprInterpreter &context) const;
-  [[nodiscard]] bool metaQueryAcceptsOpenSubject(
-      IntrinsicKind intrinsic, const SemanticType &subject) const;
+  [[nodiscard]] bool
+  metaQueryAcceptsOpenSubject(IntrinsicKind intrinsic,
+                              const SemanticType &subject) const;
   [[nodiscard]] std::optional<ConstantValue>
   metaQueryConstant(IntrinsicKind intrinsic, const SemanticType &subject,
                     const std::optional<SemanticType> &attribute,

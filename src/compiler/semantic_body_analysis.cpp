@@ -8062,23 +8062,28 @@ auto SemanticVisitor::Impl::analyzeTypeParameterCall(
       for (const auto &requirement : constructions) {
         bool matches = true;
         for (std::size_t index = 0; index < arguments.types.size(); ++index)
-          matches = matches && callArgumentMatches(
-              requirement.arguments[index + 2], arguments.types[index],
-              expr.arguments()[index]);
+          matches =
+              matches && callArgumentMatches(requirement.arguments[index + 2],
+                                             arguments.types[index],
+                                             expr.arguments()[index]);
         if (!matches)
           continue;
         if (requirement.requiresUnsafe && unsafeDepth == 0) {
-          report(expr.paren(), "The required construction needs an unsafe block.",
+          report(expr.paren(),
+                 "The required construction needs an unsafe block.",
                  "GTI-S2029");
           currentType = SemanticType::Unknown;
           return;
         }
         const std::span parameters(requirement.arguments.begin() + 2,
-                                    requirement.arguments.end());
-        validateMutableCallArgumentLoans(parameters, expr.arguments(), expr.paren());
-        validateCallPlaceExclusivity(parameters, expr.arguments(), expr.paren());
+                                   requirement.arguments.end());
+        validateMutableCallArgumentLoans(parameters, expr.arguments(),
+                                         expr.paren());
+        validateCallPlaceExclusivity(parameters, expr.arguments(),
+                                     expr.paren());
         // This is open-body proof only. Concrete reanalysis above selects the
-        // real constructor/conversion before any HIR/MIR executable call exists.
+        // real constructor/conversion before any HIR/MIR executable call
+        // exists.
         currentType = targetType;
         return;
       }
@@ -10259,7 +10264,8 @@ auto SemanticVisitor::Impl::visitLayoutQueryExpr(const LayoutQuery &expr)
 auto SemanticVisitor::Impl::recordMemberRequirementReceiver(
     const MemberRequirement &query, const SemanticType &type) -> void {
   if (query.isExpressionRequirement()) {
-    std::unordered_map<std::string, std::pair<SymbolId, SemanticType>> parameters;
+    std::unordered_map<std::string, std::pair<SymbolId, SemanticType>>
+        parameters;
     for (std::size_t index = 0; index < query.parameters().size(); ++index) {
       const auto parameterType = typeOf(query.parameters()[index]);
       const auto &binding = query.bindings()[index];
@@ -10367,10 +10373,18 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
     validateType(expr.result());
     recordTypeUse(expr.result());
     arguments.push_back(typeOf(expr.result()));
+    std::vector<const TypeRef *> extraTypes;
+    collectRequirementTypeArguments(expr.expression().get(), extraTypes);
+    for (const auto *argument : extraTypes) {
+      validateType(*argument);
+      recordTypeUse(*argument);
+      arguments.push_back(typeOf(*argument));
+    }
     recordMemberRequirementReceiver(expr, SemanticType::Unknown);
     if (diagnostics.size() != before)
       return;
-    if (std::any_of(arguments.begin(), arguments.end(), containsOpenTypeParameter)) {
+    if (std::any_of(arguments.begin(), arguments.end(),
+                    containsOpenTypeParameter)) {
       if (analyzingDependentConstantCondition)
         constantConditionGenericDependency = true;
       return;

@@ -1294,27 +1294,31 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
       if (requirement.predicate) {
         std::vector<SemanticType> types;
         for (const auto &argument : argumentMap)
-          types.push_back(argument.parameter
-                              ? SemanticType::typeParameter(
-                                    conceptInfo.parameterIds[*argument.parameter])
-                              : argument.concrete);
+          types.push_back(
+              argument.parameter
+                  ? SemanticType::typeParameter(
+                        conceptInfo.parameterIds[*argument.parameter])
+                  : argument.concrete);
         const auto capability = predicateCapabilityFor(requirement, types);
         bool unary = false;
         if (capability && capability->atomic != GenericConstraintKind::None &&
             capability->arguments.size() == 1) {
-          for (std::size_t index = 0; index < conceptInfo.parameterIds.size(); ++index)
+          for (std::size_t index = 0; index < conceptInfo.parameterIds.size();
+               ++index)
             if (capability->arguments.front() ==
                 SemanticType::typeParameter(conceptInfo.parameterIds[index])) {
               leafParameterConstraints[requirementIndex][index] |=
                   constraintBit(capability->atomic);
               unary = true;
             }
-        } else if (capability && capability->structural != StructuralConstraintKind::None) {
+        } else if (capability &&
+                   capability->structural != StructuralConstraintKind::None) {
           RegisteredConcept::StructuralPattern pattern;
           pattern.kind = capability->structural;
           for (const auto &type : capability->arguments)
             pattern.arguments.push_back({.concrete = type});
-          leafStructuralConstraints[requirementIndex].push_back(std::move(pattern));
+          leafStructuralConstraints[requirementIndex].push_back(
+              std::move(pattern));
         }
         leafHasStructural[requirementIndex] = !unary;
         conceptInfo.definitionRequirements.push_back(
@@ -1329,10 +1333,11 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         if (requirement.memberRequirement->isExpressionRequirement()) {
           std::vector<SemanticType> types;
           for (const auto &argument : argumentMap)
-            types.push_back(argument.parameter
-                                ? SemanticType::typeParameter(
-                                      conceptInfo.parameterIds[*argument.parameter])
-                                : argument.concrete);
+            types.push_back(
+                argument.parameter
+                    ? SemanticType::typeParameter(
+                          conceptInfo.parameterIds[*argument.parameter])
+                    : argument.concrete);
           if (auto fact = expressionRequirementFact(
                   *requirement.memberRequirement, types)) {
             RegisteredConcept::StructuralPattern pattern;
@@ -1342,7 +1347,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
             pattern.requiresUnsafe = fact->requiresUnsafe;
             for (const auto &type : fact->arguments)
               pattern.arguments.push_back({.concrete = type});
-            leafStructuralConstraints[requirementIndex].push_back(std::move(pattern));
+            leafStructuralConstraints[requirementIndex].push_back(
+                std::move(pattern));
           }
           leafHasStructural[requirementIndex] = true;
           conceptInfo.definitionRequirements.push_back(

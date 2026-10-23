@@ -64,6 +64,19 @@ def main():
             assert "std::meta::is_integral<T>()" in str(predicate), predicate
             selected = hover(SOURCE, SOURCE.rindex("twice(left)"))
             assert "is_integral<int32_t>()" in str(selected), selected
+            use_position = lsp_position(SOURCE, SOURCE.index("left + right"))
+            definition = request("textDocument/definition", {
+                "textDocument": {"uri": uri}, "position": use_position})
+            location = definition[0] if isinstance(definition, list) else definition
+            assert location["range"]["start"] == lsp_position(
+                SOURCE, SOURCE.index("left, T&")), definition
+            rename = request("textDocument/rename", {
+                "textDocument": {"uri": uri}, "position": use_position,
+                "newName": "lhs"})
+            edits = rename["changes"][uri]
+            assert len(edits) == 2 and all(
+                edit["newText"] == "lhs" and edit["range"]["start"]["line"] == 2
+                for edit in edits), rename
 
             invalid = SOURCE.replace("left + right } -> T", "left + right } -> bool")
             diagnostics = change(invalid, 2)

@@ -269,10 +269,13 @@ permits unsafe operations in that query and retains the unsafe obligation when
 the resulting operation is used in a generic body. An enclosing unsafe block
 does not silently authorize an ordinary requirement.
 
-For an open generic body, direct bound-operand operator/call requirements and
-direct `T(arguments...)` construction requirements supply exact provisional
+For an open generic body, direct bound-operand operator/call requirements with
+a reference receiver and direct `T(arguments...)` construction requirements
+supply exact provisional
 operation facts. These facts do not create executable call targets: concrete
 instances resolve and validate ordinary operations again before HIR/MIR.
+Owned receiver queries are concrete filters until an exact consuming-access
+proof is available; they never manufacture a borrowed receiver capability.
 Compound expressions may filter concrete types, but do not manufacture proofs
 for arbitrary subexpressions in an open generic body. Conjunction unions
 guaranteed facts; disjunction retains only common facts. Recursive query

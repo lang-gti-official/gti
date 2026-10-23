@@ -1232,7 +1232,8 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
       const auto capability = predicateCapabilityFor(
           *requirement.syntax, requirement.arguments,
           requirement.lookupScope ? &*requirement.lookupScope : nullptr);
-      if (capability && capability->structural != StructuralConstraintKind::None)
+      if (capability &&
+          capability->structural != StructuralConstraintKind::None)
         result.push_back({.kind = capability->structural,
                           .arguments = capability->arguments,
                           .application = requirement.syntax});
@@ -1241,7 +1242,8 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
     if (requirement.syntax && requirement.syntax->memberRequirement) {
       if (requirement.syntax->memberRequirement->isExpressionRequirement()) {
         if (auto fact = expressionRequirementFact(
-                *requirement.syntax->memberRequirement, requirement.arguments)) {
+                *requirement.syntax->memberRequirement,
+                requirement.arguments)) {
           fact->application = requirement.syntax;
           result.push_back(std::move(*fact));
         }
@@ -1397,7 +1399,8 @@ auto SemanticVisitor::Impl::activeAtomicConstraints(
             const auto capability = predicateCapabilityFor(
                 *requirement.syntax, requirement.arguments,
                 requirement.lookupScope ? &*requirement.lookupScope : nullptr);
-            return capability && capability->atomic != GenericConstraintKind::None &&
+            return capability &&
+                           capability->atomic != GenericConstraintKind::None &&
                            capability->arguments.size() == 1 &&
                            capability->arguments.front() == type
                        ? constraintBit(capability->atomic)
@@ -1604,11 +1607,13 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
                 ((leftRequirement->syntax &&
                   (leftRequirement->syntax->predicate ||
                    (leftRequirement->syntax->memberRequirement &&
-                    leftRequirement->syntax->memberRequirement->isExpressionRequirement()))) ||
+                    leftRequirement->syntax->memberRequirement
+                        ->isExpressionRequirement()))) ||
                  (rightRequirement->syntax &&
                   (rightRequirement->syntax->predicate ||
                    (rightRequirement->syntax->memberRequirement &&
-                    rightRequirement->syntax->memberRequirement->isExpressionRequirement())))))
+                    rightRequirement->syntax->memberRequirement
+                        ->isExpressionRequirement())))))
               return leftRequirement->syntax == rightRequirement->syntax &&
                      leftRequirement->arguments == rightRequirement->arguments;
             return leftRequirement != nullptr && rightRequirement != nullptr &&
@@ -1683,25 +1688,27 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
             *requirement.syntax, requirement.arguments, &reason,
             requirement.lookupScope ? &*requirement.lookupScope : nullptr))
       return std::nullopt;
-    return ConstraintFailure{
-        .parameter = requirement.syntax->name.last(),
-        .argument = requirement.arguments.empty() ? SemanticType::Unknown
-                                                  : requirement.arguments.front(),
-        .application = requirement.syntax,
-        .leafApplication = requirement.syntax,
-        .expressionFailure = std::move(reason)};
+    return ConstraintFailure{.parameter = requirement.syntax->name.last(),
+                             .argument = requirement.arguments.empty()
+                                             ? SemanticType::Unknown
+                                             : requirement.arguments.front(),
+                             .application = requirement.syntax,
+                             .leafApplication = requirement.syntax,
+                             .expressionFailure = std::move(reason)};
   }
   if (requirement.syntax && requirement.syntax->memberRequirement) {
     if (requirement.syntax->memberRequirement->isExpressionRequirement()) {
       std::string reason;
       if (expressionRequirementSatisfied(
               *requirement.syntax->memberRequirement, requirement.arguments,
-              &reason, requirement.lookupScope ? &*requirement.lookupScope : nullptr))
+              &reason,
+              requirement.lookupScope ? &*requirement.lookupScope : nullptr))
         return std::nullopt;
       return ConstraintFailure{
           .parameter = requirement.syntax->memberRequirement->keyword(),
-          .argument = requirement.arguments.empty() ? SemanticType::Unknown
-                                                    : requirement.arguments.front(),
+          .argument = requirement.arguments.empty()
+                          ? SemanticType::Unknown
+                          : requirement.arguments.front(),
           .application = requirement.syntax,
           .leafApplication = requirement.syntax,
           .expressionFailure = std::move(reason)};
@@ -6331,7 +6338,7 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
         if (same) {
           candidate.returnType = requirement.arguments[1];
           candidate.parameterTypes.assign(requirement.arguments.begin() + 2,
-                                           requirement.arguments.end());
+                                          requirement.arguments.end());
           candidate.receiverMutability = requirement.mutableReceiver
                                              ? ReceiverMutability::Mutable
                                              : ReceiverMutability::ReadOnly;

@@ -448,9 +448,10 @@ struct Player {
 void checkTypeFacts(const std::filesystem::path &root,
                     const std::filesystem::path &directory) {
   for (const auto trustedBodies : {lang::TrustedBodyAnalysis::Complete,
-                                  lang::TrustedBodyAnalysis::Reachable}) {
-    const auto result = analyze(root, root / "tests/fixtures/reflection_type_facts.gti",
-                                lang::FrontendPhase::Hir, trustedBodies);
+                                   lang::TrustedBodyAnalysis::Reachable}) {
+    const auto result =
+        analyze(root, root / "tests/fixtures/reflection_type_facts.gti",
+                lang::FrontendPhase::Hir, trustedBodies);
     expect(result.diagnostics.empty() && result.hirValid,
            "general reflection lifecycle, classification, safety and exact "
            "type-relation facts match GTI semantics");
@@ -466,23 +467,24 @@ int main() {
   return 0;
 }
 )";
-  const auto result = analyzeSource(root, directory, "invalid-type-relation.gti",
-                                    malformed);
-  const auto error = std::find_if(
-      result.diagnostics.begin(), result.diagnostics.end(),
-      [](const lang::Diagnostic &diagnostic) {
-        return diagnostic.code == "GTI-S2058" &&
-               diagnostic.message.find("Compiler-private name") !=
-                   std::string::npos;
-      });
+  const auto result =
+      analyzeSource(root, directory, "invalid-type-relation.gti", malformed);
+  const auto error =
+      std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
+                   [](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.code == "GTI-S2058" &&
+                            diagnostic.message.find("Compiler-private name") !=
+                                std::string::npos;
+                   });
   expect(error != result.diagnostics.end(),
          "application source cannot invoke private reflection relations");
   if (error != result.diagnostics.end()) {
     expect(std::filesystem::path(error->primary.source).filename() ==
                    "invalid-type-relation.gti" &&
                error->primary.start == malformed.find("gti_internal") &&
-               error->primary.end == error->primary.start +
-                                         std::string_view("gti_internal").size() &&
+               error->primary.end ==
+                   error->primary.start +
+                       std::string_view("gti_internal").size() &&
                !error->related.empty() && !error->hints.empty(),
            "a private reflection relation retains the access diagnostic's "
            "source span, declaration and public-facility hint");
@@ -530,8 +532,8 @@ int main() {
               << diagnostic.message << '\n';
   }
 
-  const auto opaque = analyzeSource(
-      root, directory, "opaque-predicate-does-not-prove.gti", R"(
+  const auto opaque =
+      analyzeSource(root, directory, "opaque-predicate-does-not-prove.gti", R"(
 namespace lookalike {
   constexpr bool is_transferable<T>() { return true; }
 }
@@ -545,8 +547,8 @@ int main() { RawAddress value{}; relay(value); return 0; }
          "an arbitrary true predicate with a familiar public name cannot "
          "invent a transfer safety fact");
 
-  const auto wrongSubject = analyzeSource(
-      root, directory, "predicate-wrong-subject.gti", R"(
+  const auto wrongSubject =
+      analyzeSource(root, directory, "predicate-wrong-subject.gti", R"(
 constexpr bool copyable_int<T>() {
   return std::meta::is_copy_constructible<int32_t>();
 }
@@ -565,8 +567,8 @@ int main() { relay<MoveOnly>(); return 0; }
          "proof of a different type cannot be rebound to a wrapper's generic "
          "parameter by matching its position or spelling");
 
-  const auto shadowedAlias = analyzeSource(
-      root, directory, "predicate-alias-shadowing.gti", R"(
+  const auto shadowedAlias =
+      analyzeSource(root, directory, "predicate-alias-shadowing.gti", R"(
 namespace declaration_scope {
   using Subject = int32_t;
   constexpr bool can_copy<T>() {
@@ -588,8 +590,8 @@ int main() { relay<MoveOnly>(); return 0; }
          "a caller generic parameter cannot shadow an unrelated type alias "
          "inside the predicate declaration's lexical scope");
 
-  const auto outerShape = analyzeSource(
-      root, directory, "reflection-known-outer-shape.gti", R"(
+  const auto outerShape =
+      analyzeSource(root, directory, "reflection-known-outer-shape.gti", R"(
 struct Envelope<T> { T value; };
 class Opaque<T> {};
 constexpr int32_t classify<T>() {

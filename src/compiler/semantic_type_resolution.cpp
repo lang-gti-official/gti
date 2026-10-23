@@ -7037,11 +7037,11 @@ auto SemanticVisitor::Impl::resolveRequirements(
     const ConceptApplication &application =
         clause->requirements()[applicationIndex];
     if (application.predicate) {
-      AppliedConceptRequirement requirement{
-          .syntax = &application,
-          .expression = &clause->expression,
-          .expressionApplication = applicationIndex,
-          .lookupScope = scope};
+      AppliedConceptRequirement requirement{.syntax = &application,
+                                            .expression = &clause->expression,
+                                            .expressionApplication =
+                                                applicationIndex,
+                                            .lookupScope = scope};
       for (const auto &argument : application.arguments) {
         argumentsToValidate.push_back(&argument);
         requirement.arguments.push_back(typeOf(argument, scope));
