@@ -5313,13 +5313,13 @@ void testCompilerPrivateMemberRequirements() {
   const auto trusted =
       analyzeTrustedPreludeFixture("compiler-private-member-probe.gti", R"(
 namespace gti_internal {
-@compiler_constraint("enum_underlying")
-concept probe_enum_underlying<E, U>;
+@compiler_constraint("equality_comparable")
+concept probe_equality<E>;
 struct plain_probe<T> {
   bool matches() { return true; }
 };
 struct underlying_probe<E, U> {
-  bool matches() requires gti_internal::probe_enum_underlying<E, U> {
+  bool matches() requires gti_internal::probe_equality<E> && std::enum_underlying<E, U> {
     return true;
   }
 };
