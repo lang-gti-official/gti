@@ -309,11 +309,9 @@ class Batches:
         identity = {key: proof[key] for key in ("head", "base")} if proof else None
         if not proof or any(state.get("batch_verified", {}).get(platform) != identity for platform in required):
             raise WorkflowError("Full combined validation is missing for a required platform or current head/base")
-        rule = self.flow.protection()
-        contexts = set(rule["required_status_checks"].get("contexts", []))
-        contexts.update(check["context"] for check in rule["required_status_checks"].get("checks", []))
-        if "Validation gate" not in contexts:
-            raise WorkflowError("Activate the published Validation gate before merging batches: protection --configure --batch-gate")
+        # Full exact-source/platform proof above is the acceptance gate.
+        # GitHub Actions is additional feedback, never a runner-queue dependency.
+        self.flow.protection()
 
     def release(self, task, reason):
         with self.flow.lock():

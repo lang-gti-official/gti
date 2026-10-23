@@ -69,13 +69,16 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   commit. Do not start duplicate per-component full campaigns. Collect ready
   changes for no more than ten minutes; a lone ready change may form a batch
   immediately and never waits for unfinished features. See `batch status`.
-- Draft/component PRs run inexpensive CI checks and have a deliberately blocked
-  `Validation gate`; only the validated combined candidate or a withdrawn,
-  independently validated task may merge. Full native and sanitizer CI remain
-  required on compiler integration candidates. Developer-automation-only diffs
-  use the workflow regression gate instead. After publishing this policy, use
-  `protection --configure --batch-gate` to require `Validation gate`, preserving
-  all existing review/status requirements. This activation is owner-authorized.
+- GitHub CI is advisory, not a development, validation, merge or completion
+  gate. Never wait for queued/running Actions or require a passing GitHub check
+  before integration. Keep required exact-source local/managed-runner validation,
+  full combined compiler coverage, platform/performance checks and reviews.
+  Draft/component CI runs inexpensive checks; ready compiler candidates also
+  run native/sanitizer feedback without blocking their locally validated merge.
+  Use `protection --configure --advisory-ci` to remove required GitHub check
+  contexts/app pins while preserving PR-only/up-to-date/admin/review protection.
+  This policy change is owner-authorized. Report pending/failed CI honestly;
+  investigate known failures without calling them passes or hiding local failures.
 - Completed features may enter the opt-in `preview` source branch through
   `python3 scripts/agent_workflow.py preview submit <task> --tests <focused-ctest-names>`
   while their original PRs continue full validation and review. Submission is
@@ -130,7 +133,8 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   clones or builds on any runner.
 - Use `scripts/agent_workflow.py` for lifecycle operations. Reconcile upstream,
   validate the resulting head/base, and merge only through GitHub PRs. Respect
-  required checks/reviews. No direct pushes to `main`, rewritten shared history,
+  required local validation and reviews; GitHub CI is advisory. No direct
+  pushes to `main`, rewritten shared history,
   or administrative bypasses. The owner authorizes the helper's `protection
   --configure` to establish this PR-only/up-to-date rule; preserve existing
   review and status requirements.
