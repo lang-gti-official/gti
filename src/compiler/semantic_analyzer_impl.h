@@ -2645,6 +2645,10 @@ private:
 
   void recordSemanticLoanUseForLoan(SemanticLoanId loan);
 
+  // A use of `loan` and of every authority it depends on: parents, stored
+  // dependencies and additional-dependency parents.
+  void recordSemanticLoanAuthorityUse(SemanticLoanId loan);
+
   void recordSemanticLoanUse(SymbolId carrier);
 
   [[nodiscard]] bool supportsProvenLoanEnd(const LoanFlowRecord &loan) const;
