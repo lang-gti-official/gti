@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--quick", action="store_true")
     args = parser.parse_args()
     root = pathlib.Path(__file__).resolve().parents[1]
+    example = root / "examples" / "172-deferred-assertions.gti"
     fixtures = root / "tests" / "fixtures"
     failures = fixtures / "deferred_assertion_failures.gti"
     lines = failures.read_text().splitlines()
@@ -40,8 +41,7 @@ def main():
         for name, standard, level, native in modes:
             for disabled in (False, True):
                 flags = ["-D", "NDEBUG"] if disabled else []
-                for source in (fixtures / "deferred_assertions.gti", failures,
-                               root / "examples" / "172-deferred-assertions.gti"):
+                for source in (fixtures / "deferred_assertions.gti", failures, example):
                     binary = pathlib.Path(temporary) / f"{name}-{disabled}-{source.stem}"
                     command = [str(args.compiler.resolve()), str(source),
                                "--std", standard, level, *flags, "--keep-cpp",
@@ -57,7 +57,7 @@ def main():
                                              capture_output=True, text=True,
                                              env=environment, timeout=20)
                         if source != failures:
-                            expected = "Deferred assertions passed\n" if source.name.startswith("171-") else ""
+                            expected = "Deferred assertions passed\n" if source == example else ""
                             assert (ran.returncode, ran.stdout, ran.stderr) == (0, expected, ""), (
                                 name, disabled, source, ran.returncode, ran.stdout, ran.stderr)
                             continue
