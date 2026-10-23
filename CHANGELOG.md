@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.464.1 — Several reference bindings from one local payload enum
+
+- A `switch` arm can now bind `auto&` to more than one reference payload of an
+  enum held in a local. For `enum Pair { both(int& first, int& second), none
+  };`, `case Pair::both(auto& first, auto& second):` used to report
+  `error[GTI-B0001]` (an internal compiler error); it now works. This includes
+  three or more references, references to the same owner, enums built from
+  reference parameters, `mut auto&` bindings whose writes reach their own
+  owners, generic enums, and an enum field of a local class.
+- An `auto&` binding that the arm never reads, as in `case Slot::item(auto&
+  value): return 3;`, also used to report `error[GTI-B0001]`; it now works.
+
 ## 0.464.0 — Editor code snippets
 
 - Completion offers class, generic-class, struct, interface, enum, namespace
