@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.465.4 — Moving one class and copying another after fallible work
+## 0.465.5 — Moving one class and copying another after fallible work
 
 - A constructor can now move one class into a field and copy another into a
   later field after an initializer that can fail, when both classes have no
@@ -20,6 +20,23 @@ for what minor and patch releases mean.
   declaration order of the two fields; it now works. If a later initializer
   or the constructor body fails, each field already built is dropped exactly
   once.
+
+## 0.465.4 — Text relays through accessor switch subjects
+
+- A method that returns a payload's text by reference through an accessor
+  subject now relays the receiver's text, as the same method over the field
+  does. For `Word& wordRef() { return this.word; }`,
+  `std::string_view& textRef() { switch (this.wordRef()) { case
+  Word::text(auto& v): return v; ... } }` used to make `line.textRef()` on
+  text owned elsewhere report `error[GTI-S2045]` when passed or printed; it
+  now works, as it does through `switch (this.word)`.
+- Fixed: binding a payload's text by value through an accessor subject did
+  not carry the field's ownerless-text requirement. In 0.465.2,
+  `std::string_view first() { switch (this.wordRef()) { case
+  Word::text(v): return v; ... } }` compiled even when called on text owned
+  by a local that is destroyed before the result is used, leaving a dangling
+  view. It now reports `error[GTI-S2045]`, exactly as through
+  `switch (this.word)`.
 
 ## 0.465.3 — Moving classes that hold function items
 
