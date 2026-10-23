@@ -7369,9 +7369,8 @@ auto SemanticVisitor::Impl::predeclaredTextFieldSource(
   };
   // Only a read-only formal or a read-only or consuming receiver takes a
   // relayed value, so only its fields can hold a caller's dynamic text.
-  const bool receiver =
-      function.ownerClass != 0 && !function.staticMember &&
-      contractReceiver(declaration.receiverMutability());
+  const bool receiver = function.ownerClass != 0 && !function.staticMember &&
+                        contractReceiver(declaration.receiverMutability());
   struct Origin {
     PredeclaredTextBorrowSource source;
     SemanticType type;

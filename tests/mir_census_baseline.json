@@ -167,8 +167,8 @@
     "167-callable-result-types.gti": 16,
     "168-source-value-profiles.gti": 40,
     "169-source-expected.gti": 192,
-    "170-view-fields.gti": 162,
+    "170-view-fields.gti": 176,
     "171-recursive-text-relays.gti": 146
   },
-  "total": 23228
+  "total": 23242
 }

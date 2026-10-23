@@ -1798,8 +1798,7 @@ auto SemanticVisitor::Impl::conditionalRelayReturns(
       if (const auto *group = exprAs<Grouping>(current))
         current = group->expression() ? group->expression().get() : nullptr;
       else if (const auto *call = exprAs<Call>(current);
-               call != nullptr && call->arguments().size() == 1 &&
-               [&] {
+               call != nullptr && call->arguments().size() == 1 && [&] {
                  const auto intrinsic = intrinsicCandidate(call->callee());
                  return intrinsic &&
                         intrinsic->record().intrinsic == IntrinsicKind::Move;
@@ -1923,7 +1922,8 @@ auto SemanticVisitor::Impl::notePayloadFieldRead(const Expr &expression)
     for (std::size_t index = 0; index < variant.payloadSymbols.size() &&
                                 index < variant.payloadTypes.size();
          ++index) {
-      const auto type = substituteType(variant.payloadTypes[index], substitution);
+      const auto type =
+          substituteType(variant.payloadTypes[index], substitution);
       if (type.kind != SemanticType::StringView &&
           type.kind != SemanticType::CString &&
           !(generic && type.kind == SemanticType::TypeParameter))
@@ -2639,8 +2639,9 @@ auto SemanticVisitor::Impl::noteDependentTextReturn(const ExprPtr &value)
   consumeTextDependentValue(value);
 }
 
-auto SemanticVisitor::Impl::publishTextReturnResult(
-    const Call &call, ResolvedCallInfo &resolved, const FunctionInfo &callee)
+auto SemanticVisitor::Impl::publishTextReturnResult(const Call &call,
+                                                    ResolvedCallInfo &resolved,
+                                                    const FunctionInfo &callee)
     -> void {
   if (!callee.dependentTextReturn || callee.returnBorrowFields.size() != 1 ||
       resolved.returnType.kind == SemanticType::Reference)
@@ -3078,7 +3079,8 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
     }
     return {source, false};
   };
-  const auto formalIndex = [&](const Expr *expression) -> std::optional<std::size_t> {
+  const auto formalIndex =
+      [&](const Expr *expression) -> std::optional<std::size_t> {
     const auto *variable = exprAs<Variable>(expression);
     if (variable == nullptr)
       return std::nullopt;
@@ -3109,7 +3111,8 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
   const auto formalFieldOf = [&](const ExprPtr &expression,
                                  const SemanticType &stored)
       -> std::optional<std::pair<std::size_t, SymbolId>> {
-    const auto [source, sourceMoved] = unmove(expression, owner->namespaceScope);
+    const auto [source, sourceMoved] =
+        unmove(expression, owner->namespaceScope);
     (void)sourceMoved;
     const ExprPtr *object = nullptr;
     const Token *name = nullptr;
@@ -3140,8 +3143,7 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
     const ClassInfo *formalClass = classInfo(formalType);
     if (formalClass == nullptr)
       return std::nullopt;
-    const auto fieldNamed =
-        [&](const Token &field) -> std::optional<SymbolId> {
+    const auto fieldNamed = [&](const Token &field) -> std::optional<SymbolId> {
       const auto member = formalClass->members.find(field.lexeme);
       if (member == formalClass->members.end() ||
           member->second.symbol.staticMember ||
@@ -3184,7 +3186,8 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
         body == nullptr ? nullptr : stmtAs<BlockStmt>(body->body().get());
     if (block == nullptr || block->statements().size() != 1)
       return std::nullopt;
-    const auto *returned = stmtAs<ReturnStmt>(block->statements().front().get());
+    const auto *returned =
+        stmtAs<ReturnStmt>(block->statements().front().get());
     if (returned == nullptr || !returned->value())
       return std::nullopt;
     const auto [value, valueMoved] =
@@ -6473,8 +6476,8 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
       contextual != nullptr && contextual->dependentTextPublication) {
     if (contextual->borrowFields.size() != 1)
       return {};
-    const Expr *enclosing = std::exchange(contextualTextArgument,
-                                          expression.get());
+    const Expr *enclosing =
+        std::exchange(contextualTextArgument, expression.get());
     auto sources = storedBorrowDependencies(expression);
     contextualTextArgument = enclosing;
     const auto &mapping = contextual->borrowFields.front();

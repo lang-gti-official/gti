@@ -2416,10 +2416,9 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       // (L-OWN-02).
       if (input.sourceField != 0) {
         if (!potentialPackView && index < arguments.size())
-          relayConstructorTextField(constructedType,
-                                    *selected.constructor->declaration, input,
-                                    *argument, textOrigins,
-                                    contextualConstruction);
+          relayConstructorTextField(
+              constructedType, *selected.constructor->declaration, input,
+              *argument, textOrigins, contextualConstruction);
         continue;
       }
       const bool conditionalText =

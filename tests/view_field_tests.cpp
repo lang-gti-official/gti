@@ -2122,26 +2122,32 @@ int main() {
     const char *code;
   };
   for (const Case &entry : {
-           Case{"", "expected<int, std::string_view> parsed = parse(owner); "
-                    "kept = parsed.error();",
+           Case{"",
+                "expected<int, std::string_view> parsed = parse(owner); "
+                "kept = parsed.error();",
                 "GTI-S2045"},
-           Case{"", "expected<int, std::string_view> parsed = parse(owner); "
-                    "owner.append(\"!\"); uint64_t n = parsed.error().size();",
+           Case{"",
+                "expected<int, std::string_view> parsed = parse(owner); "
+                "owner.append(\"!\"); uint64_t n = parsed.error().size();",
                 "GTI-S2017"},
-           Case{"", "expected<int, std::string_view> parsed = parse(owner); "
-                    "std::string moved = std::move(owner); uint64_t n = "
-                    "parsed.error().size();",
+           Case{"",
+                "expected<int, std::string_view> parsed = parse(owner); "
+                "std::string moved = std::move(owner); uint64_t n = "
+                "parsed.error().size();",
                 "GTI-S2017"},
-           Case{"", "expected<int, std::string_view> parsed = parse(owner); "
-                    "std::string_view text = parsed.error(); "
-                    "owner.append(\"!\"); uint64_t n = text.size();",
+           Case{"",
+                "expected<int, std::string_view> parsed = parse(owner); "
+                "std::string_view text = parsed.error(); "
+                "owner.append(\"!\"); uint64_t n = text.size();",
                 "GTI-S2017"},
-           Case{"", "expected<int, std::string_view> parsed = "
-                    "parse(std::string(\"temporary\"));",
+           Case{"",
+                "expected<int, std::string_view> parsed = "
+                "parse(std::string(\"temporary\"));",
                 "GTI-S2045"},
-           Case{"", "Word word = wordOf(owner); switch (word) { case "
-                    "Word::text(value): kept = value; break; case Word::none: "
-                    "break; }",
+           Case{"",
+                "Word word = wordOf(owner); switch (word) { case "
+                "Word::text(value): kept = value; break; case Word::none: "
+                "break; }",
                 "GTI-S2045"},
            Case{"Token localOwner() { std::string text{\"x\"}; return "
                 "Token(text.view(), 1); }\n",
@@ -2281,21 +2287,18 @@ int main() {
     const char *code;
   };
   for (const Case &entry : {
-           Case{"Line line = Line(owner.view()); line.copyOut();",
-                "GTI-S2045"},
-           Case{"Line line = Line(owner.view()); line.passOut();",
-                "GTI-S2045"},
-           Case{"Line line = Line(owner.view()); line.lendOut();",
-                "GTI-S2045"},
+           Case{"Line line = Line(owner.view()); line.copyOut();", "GTI-S2045"},
+           Case{"Line line = Line(owner.view()); line.passOut();", "GTI-S2045"},
+           Case{"Line line = Line(owner.view()); line.lendOut();", "GTI-S2045"},
            Case{"Line line = Line(owner.view()); line.storeOut();",
                 "GTI-S2045"},
            Case{"Line line = Line(owner.view()); "
                 "keepWordRef(line.wordRef());",
                 "GTI-S2045"},
-           Case{"Line line = Line(owner.view()); copyLine(line);",
-                "GTI-S2045"},
-           Case{"mut Line line = Line(owner.view()); std::move(line).consume();",
-                "GTI-S2045"},
+           Case{"Line line = Line(owner.view()); copyLine(line);", "GTI-S2045"},
+           Case{
+               "mut Line line = Line(owner.view()); std::move(line).consume();",
+               "GTI-S2045"},
            Case{"mut Box box = Box(owner.view()); std::move(box).keep();",
                 "GTI-S2045"},
            Case{"mut Box box = Box(owner.view()); kept = "
@@ -2310,10 +2313,9 @@ int main() {
                 "std::move(maybe).value();",
                 "GTI-S2045"},
        }) {
-    const auto rejected =
-        analyzeText(kPayloadUses +
-                    "int run() { mut std::string owner{\"owner\"}; " +
-                    entry.body + " return 0; }\nint main() { return run(); }\n");
+    const auto rejected = analyzeText(
+        kPayloadUses + "int run() { mut std::string owner{\"owner\"}; " +
+        entry.body + " return 0; }\nint main() { return run(); }\n");
     expect(hasDiagnosticCode(rejected.diagnostics, entry.code),
            std::string("a dependent payload field use is checked at source: ") +
                entry.body);
