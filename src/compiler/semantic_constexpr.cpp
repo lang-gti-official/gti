@@ -190,6 +190,9 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
                                          workMetrics, sources, rawPointerAudit);
     worker.impl->catalog = catalog.snapshotForInstanceAnalysis();
     worker.impl->semanticModel = stagingModel;
+    worker.impl->deferredLookup = deferredLookup;
+    worker.impl->deferredLookupBase = deferredLookupBase;
+    worker.impl->nextExpansion = nextExpansion;
     // The copy is a snapshot that outlives this evaluation. It must not keep
     // the side channels (a late-demand probe's sink, a batch's call journal)
     // an enclosing analysis lent the canonical model for its own duration.
