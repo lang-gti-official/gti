@@ -2506,9 +2506,9 @@
       }
     },
     "170-view-fields.gti": {
-      "declarations": 1489,
-      "bodies": 176,
-      "generated_items": 117,
+      "declarations": 1496,
+      "bodies": 192,
+      "generated_items": 125,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
@@ -2517,7 +2517,7 @@
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 66
+        "concrete_instance_adapter": 74
       }
     },
     "171-recursive-text-relays.gti": {
@@ -2552,8 +2552,8 @@
     }
   },
   "totals": {
-    "declarations": 177203,
-    "bodies": 23446,
-    "generated_items": 14763
+    "declarations": 177210,
+    "bodies": 23462,
+    "generated_items": 14771
   }
 }
