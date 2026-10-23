@@ -24214,6 +24214,107 @@ CppMirEmissionEncoding classifyCppMirBodyKind(MirBodyKind kind) {
   return CppMirEmissionEncoding::Invalid;
 }
 
+bool cppMirSmallSourceBody(const MirProgram &program, MirBodyAddress root) {
+  std::size_t remaining = 256;
+  std::vector<MirBodyAddress> active;
+  const auto visit = [&](const auto &self, MirBodyAddress address) -> bool {
+    if (active.size() == 16 ||
+        std::find(active.begin(), active.end(), address) != active.end())
+      return false;
+    if (address.kind == MirBodyKind::Function) {
+      const auto *function = program.findFunctionInstance(address.owner);
+      if (!function || function->definitionKind != MirDefinitionKind::Source ||
+          function->entryKind != ProgramEntryKind::None ||
+          function->virtualMethod || function->linkage != LanguageLinkage::Gti)
+        return false;
+    } else if (address.kind == MirBodyKind::Constructor) {
+      const auto *constructor = program.findConstructorInstance(address.owner);
+      if (!constructor ||
+          constructor->definitionKind != MirDefinitionKind::Source)
+        return false;
+    } else {
+      return false;
+    }
+    const MirBody *body = findMirBody(program, address);
+    if (!body || body->blocks.empty() || body->blocks.size() > 64)
+      return false;
+    std::vector<unsigned char> colors(body->blocks.size(), 0);
+    const auto acyclic = [&](const auto &walk, MirBlockId id) -> bool {
+      if (id == 0)
+        return true;
+      const auto *block = body->findBlock(id);
+      if (!block || colors[id - 1] == 1)
+        return false;
+      if (colors[id - 1] == 2)
+        return true;
+      colors[id - 1] = 1;
+      if (!walk(walk, block->terminator.target) ||
+          !walk(walk, block->terminator.elseTarget))
+        return false;
+      for (const auto &target : block->terminator.switchTargets)
+        if (!walk(walk, target.target))
+          return false;
+      colors[id - 1] = 2;
+      return true;
+    };
+    if (!acyclic(acyclic, body->entry))
+      return false;
+    active.push_back(address);
+    std::size_t local = 0;
+    for (const auto &block : body->blocks) {
+      if (colors[block.id - 1] == 0)
+        continue;
+      for (const auto &instruction : block.instructions) {
+        if (instruction.tombstone)
+          continue;
+        if (++local > 64 || remaining == 0)
+          return false;
+        --remaining;
+        const auto traits = effects(program, *body, instruction);
+        if (traits.allocates || traits.maySynchronize)
+          return false;
+        // A verified empty cleanup recipe is a local retirement, not an
+        // unknown invocation. The general invocation inventory conservatively
+        // marks an empty destructor-target list as a boundary. Retain the
+        // retirement operation and its budget, but do not chase a callee that
+        // the sealed MIR explicitly says does not exist.
+        const bool localRetirement =
+            instruction.kind == MirInstructionKind::Drop &&
+            instruction.destination && !instruction.lifecycle.empty() &&
+            std::all_of(instruction.lifecycle.begin(),
+                        instruction.lifecycle.end(), [&](const auto &event) {
+                          if (event.kind != MirLifecycleEventKind::Drop ||
+                              event.source == 0 ||
+                              event.source > body->dropObligations.size())
+                            return false;
+                          const auto &obligation =
+                              body->dropObligations[event.source - 1];
+                          const auto &drop = obligation.dropType;
+                          return obligation.place == *instruction.destination &&
+                                 drop.type == instruction.info.type &&
+                                 !drop.requiresActiveCleanup &&
+                                 !drop.destructor && !drop.fixedArray &&
+                                 !drop.uniquePointeeClass &&
+                                 !drop.polymorphicCleanup &&
+                                 !drop.recursiveCleanup &&
+                                 drop.aggregate.empty();
+                        });
+        if (localRetirement || isMirStructuralValueDrop(program, instruction))
+          continue;
+        const auto targets = mirInvocationTargets(program, *body, instruction);
+        if (targets.boundary)
+          return false;
+        for (const auto target : targets.addresses)
+          if (!self(self, target))
+            return false;
+      }
+    }
+    active.pop_back();
+    return true;
+  };
+  return visit(visit, root);
+}
+
 namespace {
 
 // General per-instance text step (ADR 016 phase 5). Ported verbatim from the
@@ -40951,33 +41052,25 @@ private:
     case MirTerminatorKind::Invoke: {
       const MirInstruction *producer =
           findInstruction(facts.body, terminator.invokeInstruction);
-      const auto emitConditionalEdgeTransfer =
-          [&](const std::string &condition) {
-            writeIndent();
-            output << "if (" << condition << ") {\n";
-            ++indentation;
-            emitEdgeArguments(block, terminator.target,
-                              terminator.targetArguments, 0, facts);
-            emitControlFlowTransfer(block, terminator.target, 0, controlFlow);
-            --indentation;
-            writeIndent();
-            // In a failure-form body this alternate begins with the cold,
-            // noinline incoming-cleanup check, which already marks the edge
-            // cold for native block placement. A synthetic branch weight on
-            // the success flag would instead survive inlining as a claim about
-            // whatever data condition the callee's success reduces to, such as
-            // a payload tag, and native jump threading can move that weight
-            // onto an unrelated data-dependent branch.
-            output << (failureForm ? "} else {\n" : "} else [[unlikely]] {\n");
-            ++indentation;
-            emitEdgeArguments(block, terminator.elseTarget,
-                              terminator.elseArguments, 1, facts);
-            emitControlFlowTransfer(block, terminator.elseTarget, 1,
-                                    controlFlow);
-            --indentation;
-            writeIndent();
-            output << "}\n";
-          };
+      const auto emitConditionalEdgeTransfer = [&](const std::string &condition,
+                                                   bool weighted = true) {
+        writeIndent();
+        output << "if (" << condition << ") {\n";
+        ++indentation;
+        emitEdgeArguments(block, terminator.target, terminator.targetArguments,
+                          0, facts);
+        emitControlFlowTransfer(block, terminator.target, 0, controlFlow);
+        --indentation;
+        writeIndent();
+        output << (weighted ? "} else [[unlikely]] {\n" : "} else {\n");
+        ++indentation;
+        emitEdgeArguments(block, terminator.elseTarget,
+                          terminator.elseArguments, 1, facts);
+        emitControlFlowTransfer(block, terminator.elseTarget, 1, controlFlow);
+        --indentation;
+        writeIndent();
+        output << "}\n";
+      };
       if (producer != nullptr && allMirLocalFailuresDischarged(*producer) &&
           producer->definedFailure.propagation ==
               FailurePropagationKind::None) {
@@ -41140,8 +41233,21 @@ private:
       }
       if (producer != nullptr && producer->kind == MirInstructionKind::Call &&
           transformedCallee(*producer) != nullptr) {
-        emitConditionalEdgeTransfer("__gti_mir_call_success_" +
-                                    std::to_string(producer->id));
+        // An always-inline callee's own failure path, which ends in a cold
+        // publication or incoming-cleanup call, marks this edge cold once it
+        // inlines, and in a failure-form body the alternate begins with the
+        // cold incoming-cleanup check. A synthetic weight on the success flag
+        // would instead survive inlining as a claim about whatever data
+        // condition the callee's success reduces to, such as a payload tag,
+        // and native jump threading moves that weight onto the unrelated
+        // branch that selected it. Calls the native inliner may decline keep
+        // the weight, which informs that inlining decision.
+        const MirFunctionInstance *callee = transformedCallee(*producer);
+        emitConditionalEdgeTransfer(
+            "__gti_mir_call_success_" + std::to_string(producer->id),
+            !(failureForm && !callee->virtualMethod &&
+              cppMirSmallSourceBody(program,
+                                    {MirBodyKind::Function, callee->id})));
         return;
       }
       if (producer != nullptr && producer->kind == MirInstructionKind::Call &&
