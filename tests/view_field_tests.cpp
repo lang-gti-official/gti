@@ -2559,7 +2559,7 @@ int main() {
 // A reference a call returns into a value holding dynamic text from a local
 // owner is that value's dependent field (L-OWN-02), as `value.field` is: a
 // switch observes it in place, through the call or a reference local bound
-// to it, but it cannot carry the text out. Before 0.466.1 every escape below
+// to it, but it cannot carry the text out. Before 0.467.1 every escape below
 // compiled, and `leak` returned freed text.
 const std::string kReferenceResults = R"gti(
 #include <std/string>
