@@ -985,6 +985,33 @@ class BatchLifecycle(unittest.TestCase):
         self.assertEqual(report["tests"], ["compiler_pipeline", "regression", "unrelated"])
         self.assertTrue((root / "full.xml").is_file())
 
+    def test_batch_focused_runner_selects_exact_names_with_a_ctest_regex(self):
+        # Real CTest has no `(?:` groups; the selector must be one it compiles,
+        # and its escaped names must match only themselves.
+        root = self.primary
+        (root / "scripts").mkdir()
+        (root / "scripts/build_window.py").write_bytes((ROOT / "scripts/build_window.py").read_bytes())
+        canary = root / "unselected-ran"
+        touch = ('"' + sys.executable + '" -c "import pathlib; pathlib.Path(r\'' +
+                 str(canary) + '\').touch()"')
+        cmake = ('cmake_minimum_required(VERSION 3.20)\nproject(FakeCompiler NONE)\n'
+                 'enable_testing()\nadd_custom_target(gti)\nadd_custom_target(gti_runtime)\n'
+                 'add_test(NAME compiler_pipeline COMMAND "' + sys.executable + '" -c "pass")\n'
+                 'add_test(NAME regression_2 COMMAND "' + sys.executable + '" -c "pass")\n'
+                 'add_test(NAME smoke.gate-1 COMMAND "' + sys.executable + '" -c "pass")\n'
+                 'add_test(NAME regression_20 COMMAND ' + touch + ')\n'
+                 'add_test(NAME smokeXgate-1 COMMAND ' + touch + ')\n')
+        (root / "CMakeLists.txt").write_text(cmake)
+        build = root / "build"
+        subprocess.run(["cmake", "-S", str(root), "-B", str(build), "-DCMAKE_BUILD_TYPE=Release"],
+                       check=True, capture_output=True)
+        required = {"compiler_pipeline", "regression_2", "smoke.gate-1"}
+        with (root / "focused.log").open("w") as log, unittest.mock.patch.object(validation, "smoke", return_value=["scalar-O0", "scalar-O3", "owners-O0", "owners-O3"]):
+            report = validation.run(root, build, required, False, log=log, junit=root / "focused.xml")
+        self.assertFalse(canary.exists())
+        self.assertEqual(report["scope"], "focused")
+        self.assertEqual(report["tests"], sorted(required))
+
     def test_batch_remote_acceptance_requires_fixed_full_runner_and_real_summary(self):
         state = self.combined()
         base = git(self.primary, "rev-parse", "origin/main")

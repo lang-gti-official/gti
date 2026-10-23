@@ -251,7 +251,9 @@ def run(root, build, required, full, targets=(), extra=(), jobs=4, log=None, jun
         command += ["--target", *sorted({"gti", "gti_runtime", *targets})]
     subprocess.run([sys.executable, str(root / "scripts/build_window.py"), "--kind", "build", "--", *command],
                    check=True, cwd=root, stdout=log, stderr=subprocess.STDOUT)
-    selected = [] if full else ["-R", "^(?:" + "|".join(re.escape(name) for name in sorted(required)) + ")$"]
+    # CTest's regular expressions have no non-capturing groups; `(?:` makes
+    # it print a compile error ahead of its JSON listing.
+    selected = [] if full else ["-R", "^(" + "|".join(re.escape(name) for name in sorted(required)) + ")$"]
     document = json.loads(subprocess.check_output(["ctest", "--test-dir", str(build), "--show-only=json-v1", *selected], text=True))
     expected = inventory(document, required)
     with tempfile.TemporaryDirectory(prefix="gti-validation-results-") as directory:
