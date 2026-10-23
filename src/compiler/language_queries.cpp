@@ -76,8 +76,6 @@ SignaturePrinter::function(const FunctionInfo &info,
   if (info.discardableResult) {
     result += "[[discardable]] ";
   }
-  if (info.deferredEvaluation)
-    result += "[[deferred]] ";
   if (info.threadConfinedCallback) {
     result += "[[thread_confined_callback]] ";
   }
@@ -121,6 +119,8 @@ SignaturePrinter::function(const FunctionInfo &info,
       result += "implicit ";
     }
     result += functionName(info);
+  } else if (info.macroExpansion) {
+    result += "#macro " + functionName(info);
   } else {
     result += types.print(returnType) + " " + functionName(info);
   }

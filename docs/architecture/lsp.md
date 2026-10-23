@@ -21,6 +21,15 @@ does not reserve these identifiers.
 
 The LSP is an adapter over compiler-owned semantics:
 
+Typed macro declarations and ordinary-looking calls retain compiler-selected
+declaration identities. Hover/signature text prints `#macro` and its implicit
+void contract rather than the removed `[[deferred]]` attribute. Definition
+navigation and exact overload selection come from the same frontend records;
+the protocol does not infer expansion semantics from `#` spelling or names.
+Incomplete signatures, legacy-attribute migration and mixed macro/function
+overloads publish ordinary compiler diagnostics through current snapshot and
+UTF-16 conversion rules.
+
 Concrete static methods on interfaces use the same compiler-owned method
 symbols, selected calls and qualified completion as static class methods.
 Hover and definition retain the exact declaration identity; semantic tokens

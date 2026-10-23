@@ -30,24 +30,24 @@ namespace application {
   void record(int number) { Observations::recorded = number; }
 
   // This application API uses exactly the same mechanism as std::assert.
-  [[deferred]] void when(bool enabled, int value) {
+  #macro when(bool enabled, int value) {
     if (enabled) { record(value); }
   }
 
-  [[deferred]] void repeat(int value) { record(value); record(value); }
+  #macro repeat(int value) { record(value); record(value); }
 
   bool has_text(Record& value) { return !value.text.empty(); }
   void consume_record(Record value) { std::assert(!value.text.empty()); }
 
-  [[deferred]] void inspect(bool enabled, Record value) {
+  #macro inspect(bool enabled, Record value) {
     if (enabled) { std::assert(has_text(value)); }
   }
 
-  [[deferred]] void choose(bool first, Record left, Record right) {
+  #macro choose(bool first, Record left, Record right) {
     if (first) { consume_record(left); } else { consume_record(right); }
   }
 
-  [[deferred]] void invoke_if<F>(bool enabled, F operation) {
+  #macro invoke_if<F>(bool enabled, F operation) {
     if (enabled) { operation(); }
   }
 
@@ -55,7 +55,7 @@ namespace application {
     Observations::source_line = location.line();
   }
 
-  [[deferred]] void remember(bool enabled,
+  #macro remember(bool enabled,
       std::source_location location = std::source_location::current()) {
     if (enabled) { record_location(location); }
   }

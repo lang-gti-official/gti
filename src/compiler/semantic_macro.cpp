@@ -1,24 +1,26 @@
 #include "semantic_analyzer_impl.h"
 
+// The single typed statement-expansion engine, selected by #macro syntax.
+
 namespace lang {
 
-auto SemanticVisitor::Impl::analyzeDeferredSelection(
+auto SemanticVisitor::Impl::analyzeMacroSelection(
     const Call &call, const CallableCandidate &selected,
     const std::vector<SemanticType> &typeArguments,
     const std::vector<CompileTimeValue> &valueArguments) -> bool {
-  if (!selected.record().deferredEvaluation)
+  if (!selected.record().macroExpansion)
     return false;
-  const bool probe = deferredProbe && deferredProbeCall == &call;
+  const bool probe = macroProbe && macroProbeCall == &call;
   const bool openStatement =
-      deferredStatementCall == &call &&
+      macroStatementCall == &call &&
       std::any_of(selected.parameterTypes.begin(),
                   selected.parameterTypes.end(), [&](const SemanticType &type) {
                     return containsOpenTypeParameter(type);
                   });
   if (!probe && !openStatement) {
     diagnostics.push_back(
-        makeDiagnostic(DiagnosticId::DeferredEvaluation, call.paren(),
-                       {"A deferred helper must be invoked as a complete "
+        makeDiagnostic(DiagnosticId::MacroExpansion, call.paren(),
+                       {"A typed macro must be invoked as a complete "
                         "expression statement."}));
     currentType = SemanticType::Unknown;
     return true;
@@ -41,17 +43,16 @@ auto SemanticVisitor::Impl::analyzeDeferredSelection(
   return true;
 }
 
-auto SemanticVisitor::Impl::deferredContext(const Token &token) const
-    -> const DeferredLookupContext * {
-  const auto found = deferredLookup.find(token.expansion);
-  if (found != deferredLookup.end())
+auto SemanticVisitor::Impl::macroContext(const Token &token) const
+    -> const MacroLookupContext * {
+  const auto found = macroLookup.find(token.expansion);
+  if (found != macroLookup.end())
     return &found->second;
-  return deferredLookupBase ? deferredLookupBase->deferredContext(token)
-                            : nullptr;
+  return macroLookupBase ? macroLookupBase->macroContext(token) : nullptr;
 }
 
-SemanticVisitor::Impl::DeferredLookupScope::DeferredLookupScope(
-    Impl &owner, const DeferredLookupContext &context)
+SemanticVisitor::Impl::MacroLookupScope::MacroLookupScope(
+    Impl &owner, const MacroLookupContext &context)
     : owner(owner), namespaceScope(std::move(owner.currentNamespace)),
       sourceUnit(owner.currentSourceUnit), ownerClass(owner.currentClass),
       staticMember(owner.currentStaticMemberFunction),
@@ -63,7 +64,7 @@ SemanticVisitor::Impl::DeferredLookupScope::DeferredLookupScope(
   owner.currentDeclarationOrder = context.declarationOrder;
 }
 
-SemanticVisitor::Impl::DeferredLookupScope::~DeferredLookupScope() {
+SemanticVisitor::Impl::MacroLookupScope::~MacroLookupScope() {
   owner.currentNamespace = std::move(namespaceScope);
   owner.currentSourceUnit = sourceUnit;
   owner.currentClass = ownerClass;
@@ -71,7 +72,7 @@ SemanticVisitor::Impl::DeferredLookupScope::~DeferredLookupScope() {
   owner.currentDeclarationOrder = declarationOrder;
 }
 
-auto SemanticVisitor::Impl::validDeferredBody(const Stmt &statement) const
+auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement) const
     -> bool {
   const auto expressionAllowed = [](const Expr &expression) {
     bool allowed = true;
@@ -122,17 +123,17 @@ auto SemanticVisitor::Impl::validDeferredBody(const Stmt &statement) const
     return !block->isUnsafe() &&
            std::all_of(block->statements().begin(), block->statements().end(),
                        [&](const StmtPtr &child) {
-                         return child && validDeferredBody(*child);
+                         return child && validMacroBody(*child);
                        });
   if (const auto *branch = stmtAs<IfStmt>(&statement))
     return !branch->isConstexpr() && expressionAllowed(*branch->condition()) &&
-           branch->thenBranch() && validDeferredBody(*branch->thenBranch()) &&
-           (!branch->elseBranch() || validDeferredBody(*branch->elseBranch()));
+           branch->thenBranch() && validMacroBody(*branch->thenBranch()) &&
+           (!branch->elseBranch() || validMacroBody(*branch->elseBranch()));
   if (const auto *branch = stmtAs<ConditionalStmt>(&statement)) {
     const StmtList *active = branch->activeBranch(target);
     return !active || std::all_of(active->begin(), active->end(),
                                   [&](const StmtPtr &child) {
-                                    return child && validDeferredBody(*child);
+                                    return child && validMacroBody(*child);
                                   });
   }
   if (const auto *expression = stmtAs<ExpressionStmt>(&statement))
@@ -140,31 +141,30 @@ auto SemanticVisitor::Impl::validDeferredBody(const Stmt &statement) const
   return stmtAs<EmptyStmt>(&statement);
 }
 
-auto SemanticVisitor::Impl::analyzeDeferredStatement(
+auto SemanticVisitor::Impl::analyzeMacroStatement(
     const ExpressionStmt &statement) -> bool {
-  if (currentFunctionDeclaration &&
-      currentFunctionDeclaration->hasFunctionAttribute("deferred"))
+  if (currentFunctionDeclaration && currentFunctionDeclaration->isMacro())
     return false;
   const Call *call = directCall(statement.expression());
   if (!call)
     return false;
-  if (deferredProbe && deferredProbeCall == call)
+  if (macroProbe && macroProbeCall == call)
     return false;
-  std::optional<DeferredLookupScope> lookupScope;
-  if (const auto *context = deferredContext(expressionToken(*call)))
+  std::optional<MacroLookupScope> lookupScope;
+  if (const auto *context = macroContext(expressionToken(*call)))
     lookupScope.emplace(*this, *context);
   const auto symbol = resolveExpressionSymbol(call->callee());
   if (!symbol || symbol->type != SemanticType::Function ||
       std::none_of(symbol->overloads.begin(), symbol->overloads.end(),
                    [](const CallableCandidate &candidate) {
-                     return candidate.record().deferredEvaluation;
+                     return candidate.record().macroExpansion;
                    }))
     return false;
   const auto reject = [&](std::string message) {
-    diagnostics.push_back(makeDiagnostic(DiagnosticId::DeferredEvaluation,
-                                         call->paren(), {message}));
+    diagnostics.push_back(
+        makeDiagnostic(DiagnosticId::MacroExpansion, call->paren(), {message}));
   };
-  if (deferredExpansionDepth >= 64 || deferredExpandedBodies >= 4096) {
+  if (macroExpansionDepth >= 64 || macroExpandedBodies >= 4096) {
     reject(
         "Deferred expansion exceeds the 64-call or 4096-body resource limit.");
     return true;
@@ -230,15 +230,15 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
   probe.requestSession.trackedAssertionFailed = false;
   probe.requestSession.assertionTrackingStart = 0;
   probe.requestSession.assertionDiagnostics.clear();
-  probe.deferredProbe = true;
-  probe.deferredProbeCall = call;
+  probe.macroProbe = true;
+  probe.macroProbeCall = call;
   for (const auto &argument : call->arguments())
-    probe.deferredProbeArguments.insert(argument.get());
-  probe.deferredLookupBase = this;
+    probe.macroProbeArguments.insert(argument.get());
+  probe.macroLookupBase = this;
   probe.nextExpansion = nextExpansion;
-  probe.deferredExpansionDepth = deferredExpansionDepth;
-  probe.deferredExpandedBodies = deferredExpandedBodies;
-  probe.deferredActiveBodies = deferredActiveBodies;
+  probe.macroExpansionDepth = macroExpansionDepth;
+  probe.macroExpandedBodies = macroExpandedBodies;
+  probe.macroActiveBodies = macroActiveBodies;
   probe.instanceAnalysisActive = instanceAnalysisActive;
   probe.instanceBaseModel = instanceBaseModel;
   probe.instanceTypeSubstitution = instanceTypeSubstitution;
@@ -253,7 +253,7 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
   const auto *selection = probe.semanticModel.findCall(*call);
   const FunctionInfo *function =
       selection ? semanticModel.findFunction(selection->function) : nullptr;
-  if (!function || !function->declaration || !function->deferredEvaluation)
+  if (!function || !function->declaration || !function->macroExpansion)
     return false;
   const auto unstableType = [&](const auto &self,
                                 const SemanticType &type) -> bool {
@@ -267,7 +267,7 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
   if (std::any_of(
           selection->typeArguments.begin(), selection->typeArguments.end(),
           [&](const auto &type) { return unstableType(unstableType, type); })) {
-    reject("A fresh callable-valued deferred argument requires a named binding "
+    reject("A fresh callable-valued macro argument requires a named binding "
            "so its concrete type identity is established before expansion.");
     return true;
   }
@@ -305,31 +305,31 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
     }
   }
   const FunctionDecl &definition = *function->bodyDeclaration();
-  if (std::find(deferredActiveBodies.begin(), deferredActiveBodies.end(),
-                &definition) != deferredActiveBodies.end()) {
+  if (std::find(macroActiveBodies.begin(), macroActiveBodies.end(),
+                &definition) != macroActiveBodies.end()) {
     reject("Deferred expansion reaches its recursion resource limit; statement "
            "templates cannot expand a recursive helper cycle.");
     return true;
   }
-  if (!definition.body() || !validDeferredBody(*definition.body())) {
-    reject("The selected deferred helper has no eligible statement body.");
+  if (!definition.body() || !validMacroBody(*definition.body())) {
+    reject("The selected typed macro has no eligible statement body.");
     return true;
   }
   if (statement.discardAttribute()) {
     report(*statement.discardAttribute(),
-           "'[[discard]]' cannot be applied to a void deferred helper.");
+           "'[[discard]]' cannot be applied to a void typed macro.");
     return true;
   }
   const auto &parameters = definition.parameters();
   std::unordered_map<std::string, const Expr *> arguments;
   std::unordered_set<std::string> defaultArguments;
   std::unordered_map<std::string, std::vector<const Expr *>> packs;
-  DeferredLookupContext caller{.namespaceScope = currentNamespace,
-                               .sourceUnit = currentSourceUnit,
-                               .ownerClass = currentClass,
-                               .staticMember = currentStaticMemberFunction,
-                               .declarationOrder = currentDeclarationOrder};
-  if (const auto *parent = deferredContext(expressionToken(*call)))
+  MacroLookupContext caller{.namespaceScope = currentNamespace,
+                            .sourceUnit = currentSourceUnit,
+                            .ownerClass = currentClass,
+                            .staticMember = currentStaticMemberFunction,
+                            .declarationOrder = currentDeclarationOrder};
+  if (const auto *parent = macroContext(expressionToken(*call)))
     caller = *parent;
   Token invocation = expressionToken(*call);
   if (caller.definition && caller.invocation)
@@ -346,18 +346,18 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
               .line = span.line};
   }
   const std::uint32_t bodyExpansion = ++nextExpansion;
-  deferredLookup.emplace(
+  macroLookup.emplace(
       bodyExpansion,
-      DeferredLookupContext{.namespaceScope = function->namespaceScope,
-                            .sourceUnit = function->sourceUnit,
-                            .definition = true,
-                            .declarationOrder =
-                                declarationOrders.contains(&definition)
-                                    ? declarationOrders.at(&definition)
-                                    : currentDeclarationOrder,
-                            .caller = origin,
-                            .invocation = invocation});
-  auto &bodyContext = deferredLookup.at(bodyExpansion);
+      MacroLookupContext{.namespaceScope = function->namespaceScope,
+                         .sourceUnit = function->sourceUnit,
+                         .definition = true,
+                         .declarationOrder =
+                             declarationOrders.contains(&definition)
+                                 ? declarationOrders.at(&definition)
+                                 : currentDeclarationOrder,
+                         .caller = origin,
+                         .invocation = invocation});
+  auto &bodyContext = macroLookup.at(bodyExpansion);
   std::size_t typeIndex = 0;
   std::size_t valueIndex = 0;
   for (const auto &parameter : function->genericParameters) {
@@ -378,8 +378,7 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
                                 selection->typeArguments[typeIndex++]);
   }
   const auto cloneArgument = [&](const Expr &expression,
-                                 const DeferredLookupContext *fallback =
-                                     nullptr) {
+                                 const MacroLookupContext *fallback = nullptr) {
     // An argument of a nested expansion may itself contain substituted
     // caller expressions. Preserve each token's lookup domain independently.
     std::unordered_map<std::uint32_t, std::uint32_t> identities;
@@ -389,10 +388,10 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
       auto [entry, inserted] = identities.try_emplace(token.expansion, 0);
       if (inserted) {
         entry->second = ++nextExpansion;
-        const auto *context = deferredContext(token);
-        deferredLookup.emplace(entry->second, context    ? *context
-                                              : fallback ? *fallback
-                                                         : caller);
+        const auto *context = macroContext(token);
+        macroLookup.emplace(entry->second, context    ? *context
+                                           : fallback ? *fallback
+                                                      : caller);
       }
       copy.expansion = entry->second;
       return copy;
@@ -413,7 +412,7 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
                         parameter.defaultArgument->expression.get());
       defaultArguments.insert(parameter.name.lexeme);
     } else {
-      reject("A deferred call requires explicit fixed arguments before a "
+      reject("A macro invocation requires explicit fixed arguments before a "
              "forwarded pack.");
       return true;
     }
@@ -429,9 +428,9 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
     const bool defaulted = defaultArguments.contains(variable->name().lexeme);
     ExprPtr value =
         cloneArgument(*argument->second,
-                      defaulted ? &deferredLookup.at(bodyExpansion) : nullptr);
+                      defaulted ? &macroLookup.at(bodyExpansion) : nullptr);
     if (defaulted)
-      semanticModel.recordDeferredDefault(*value, invocation);
+      semanticModel.recordMacroDefault(*value, invocation);
     return value;
   };
   options.pack = [&](const PackExpansion &pack) -> std::optional<ExprList> {
@@ -446,7 +445,7 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
   AstCloneResult expansion =
       cloneStmt(*definition.body(), bodyExpansion, options);
   if (!expansion.statement) {
-    reject("The deferred helper body could not be expanded.");
+    reject("The macro body could not be expanded.");
     return true;
   }
   ResolvedCallInfo selected = *selection;
@@ -466,13 +465,13 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
          semanticModel.database().findSymbol(occurrence->symbol)))
       semanticModel.recordOccurrence(*occurrence);
   }
-  ++deferredExpansionDepth;
-  ++deferredExpandedBodies;
-  deferredActiveBodies.push_back(&definition);
+  ++macroExpansionDepth;
+  ++macroExpandedBodies;
+  macroActiveBodies.push_back(&definition);
   const std::size_t diagnosticStart = diagnostics.size();
   analyze(expansion.statement);
-  deferredActiveBodies.pop_back();
-  --deferredExpansionDepth;
+  macroActiveBodies.pop_back();
+  --macroExpansionDepth;
   for (std::size_t index = diagnosticStart; index < diagnostics.size();
        ++index) {
     auto &diagnostic = diagnostics[index];
@@ -481,12 +480,11 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
         diagnostic.primary.start >= definition.extent()->start &&
         diagnostic.primary.end <= definition.extent()->end) {
       diagnostic.related.push_back(
-          {diagnostic.primary, "In the expanded deferred helper body."});
+          {diagnostic.primary, "In the expanded macro body."});
       diagnostic.primary = tokenSpan(expressionToken(*call));
     }
   }
-  semanticModel.recordDeferredExpansion(statement,
-                                        std::move(expansion.statement));
+  semanticModel.recordMacroExpansion(statement, std::move(expansion.statement));
   currentType = SemanticType::Void;
   return true;
 }

@@ -35,7 +35,7 @@ def main():
         samples = {}
         for disabled in (False, True):
             for manual in (False, True):
-                key = f"{'manual' if manual else 'deferred'}-NDEBUG={disabled}"
+                key = f"{'manual' if manual else 'macro'}-NDEBUG={disabled}"
                 binary = pathlib.Path(directory) / key
                 command = [str(args.compiler.resolve()), str(source), "-O3"]
                 for flag, active in (("NDEBUG", disabled), ("COST_MANUAL", manual)):

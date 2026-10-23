@@ -40,39 +40,45 @@ on a machine shared with other builds.
 Still `GTI-B0001`, as on main: a constructor initializing a class's
 fixed-array field from its parameters (`Polygon(Point a, Point b) :
 corners({a, b})`).
-## Deferred assertions and statement helpers (0.465.0)
+## Typed macros and assertions
 
-`deferred_assertions` checks the general `[[deferred]]` statement-helper rule
+The existing `deferred_assertions*` gate names are retained for continuity after
+the public syntax migration to `#macro`; no old attribute support remains.
+`deferred_assertions` checks the general typed statement macro rule
 with unrelated application types: conditional/repeated moves, live loans,
 disabled formatter errors, exact argument types, unsafe obligations, invalid
 signatures/bodies, recursion limits and callable-identity boundaries. It also
 checks HIR expansion, independent MIR verification, the absence of eager helper
-instances, and rejection of an erased tracked-caller origin.
+instances, and rejection of an erased tracked-caller origin. Syntax regressions
+cover exact macro-only overloads, generic/default parameters, qualified calls,
+caller-tracked declarations, incomplete parser recovery, rejected mixed
+macro/function names in both declaration orders and legacy migration diagnostics.
 
 `deferred_assertions_runtime` runs the success/failure fixtures and runnable
-example 172 with C++20/C++23 at O0/O1/O3, disabled elision, ASan/UBSan, and native
+examples 172 and 174 with C++20/C++23 at O0/O1/O3, disabled elision, ASan/UBSan, and native
 `-DNDEBUG`, each with source `NDEBUG` enabled and disabled. It checks forcing
 count/order, skipped moves and message construction, lookup/access hygiene,
 caller defaults and nested wrappers, reverse cleanup, panic during cleanup,
-and managed-thread propagation. The example is identified by its selected
-path, not a numeric-prefix convention, so renumbering cannot change the expected
+and managed-thread propagation. Examples are identified by their selected
+paths, not a numeric-prefix convention, so renumbering cannot change the expected
 output policy.
 
 `deferred_assertions_lsp` covers unsaved/incomplete text, UTF-16 spans, static
-argument errors and hover contracts. Project-model and scoped-configuration
+argument errors, macro hover/definition identity, qualified overload selection
+and recovery from the removed attribute. Project-model and scoped-configuration
 checks cover default release `NDEBUG`, explicit profile overrides and frontend
 versus native flags. The module/surface gates, both corpus censuses, pinned
 Tree-sitter corpus and shipped-source parsing cover the new header, module,
-attribute and example inventories.
+declaration and example inventories.
 
 `deferred_assertions_cost` compares the same complete-state workload with
 handwritten control flow. Zero observed successful-path allocations and cold
 message calls are correctness gates; `--measure` adds two warmups and nine
 interleaved samples, native/generated size, build time and child peak memory.
-Timing samples are reported rather than gated on noisy shared hosts. Deferred
+Timing samples are reported rather than gated on noisy shared hosts. Macro
 source expansion still has a compile-time cost; runtime parity does not imply
 compilation-cost parity. The current structural/forcing bounds are recorded in
-[execution](../language/execution.md#deferred-statement-helpers) and
+[execution](../language/execution.md#typed-statement-macros) and
 [ADR 030](../decisions/030-deferred-statement-helpers.md).
 
 ## Whole assignment results (0.464.2)

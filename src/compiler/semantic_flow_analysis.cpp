@@ -248,8 +248,8 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
                                           requireFunctionDefinitions);
           worker->catalog = catalog.snapshotForInstanceAnalysis();
           worker->semanticModel = semanticModel;
-          worker->deferredLookup = deferredLookup;
-          worker->deferredLookupBase = deferredLookupBase;
+          worker->macroLookup = macroLookup;
+          worker->macroLookupBase = macroLookupBase;
           worker->nextExpansion = nextExpansion;
           worker->valueFlow = valueFlow;
           // Initializer effects close over the completed program, so every
@@ -2623,10 +2623,10 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     }
   };
   std::optional<RestoreDeferredArgumentFlow> argumentFlow;
-  if (deferredProbe && deferredProbeArguments.contains(&expr))
+  if (macroProbe && macroProbeArguments.contains(&expr))
     argumentFlow.emplace(*this);
-  std::optional<DeferredLookupScope> deferredScope;
-  if (const auto *context = deferredContext(expressionToken(expr)))
+  std::optional<MacroLookupScope> deferredScope;
+  if (const auto *context = macroContext(expressionToken(expr)))
     deferredScope.emplace(*this, *context);
   if (instanceAnalysisActive) {
     semanticModel.suppressInheritedOperator(expr);
@@ -2747,7 +2747,7 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
       semanticModel.findOperator(expr)) {
     const Token location = expressionToken(expr);
     const SourceSpan span = tokenSpan(location);
-    const auto *context = deferredContext(location);
+    const auto *context = macroContext(location);
     semanticModel.recordCallerLocation(
         expr, context && context->caller
                   ? *context->caller
@@ -3663,7 +3663,8 @@ auto SemanticVisitor::Impl::recordFunctionSymbol(
           : declaration.operatorName()->symbol;
   const bool method = info != nullptr && info->ownerClass != 0;
   const SymbolKind kind =
-      declaration.operatorName()
+      declaration.isMacro() ? SymbolKind::Macro
+      : declaration.operatorName()
           ? SymbolKind::Operator
           : (method ? SymbolKind::Method : SymbolKind::Function);
   const SymbolId id = recordToolingSymbol(
@@ -4240,6 +4241,20 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
   }
 
   for (const CallableCandidate &previous : existing.overloads) {
+    if (previous.record().macroExpansion != candidate.record().macroExpansion) {
+      Diagnostic diagnostic = makeDiagnostic(
+          DiagnosticId::InvalidFunctionContract, name,
+          {"A macro and an ordinary function cannot share the same callable "
+           "name; their argument evaluation rules differ."});
+      if (previous.declaration)
+        diagnostic.related.push_back(
+            {tokenSpan(previous.declaration->name()),
+             "The previous callable declaration is here."});
+      diagnostic.hints.emplace_back(
+          "Use distinct names for eager functions and typed macros.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return true;
+    }
     const bool previousC =
         previous.declaration != nullptr && previous.declaration->hasCLinkage();
     const bool candidateC = candidate.declaration != nullptr &&
@@ -5097,7 +5112,7 @@ auto SemanticVisitor::Impl::resolveGeneratedTestReference(
 auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
   if (const Symbol *test = resolveGeneratedTestReference(NamePath(name)))
     return test;
-  const auto *context = deferredContext(name);
+  const auto *context = macroContext(name);
   for (auto scope = scopes.rbegin();
        !(context && context->definition) && scope != scopes.rend(); ++scope) {
     if (const auto found = scope->find(name.lexeme); found != scope->end()) {
@@ -5133,8 +5148,7 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
 }
 
 auto SemanticVisitor::Impl::resolveMutable(const Token &name) -> Symbol * {
-  if (const auto *context = deferredContext(name);
-      context && context->definition)
+  if (const auto *context = macroContext(name); context && context->definition)
     return nullptr;
   for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
     if (const auto found = scope->find(name.lexeme); found != scope->end()) {
@@ -5152,7 +5166,7 @@ auto SemanticVisitor::Impl::resolvePlaceSymbol(const Token &name) -> Symbol * {
   }
   std::unordered_map<std::string, Symbol> *symbols =
       currentNamespaceSymbolsMutable();
-  const auto *context = deferredContext(name);
+  const auto *context = macroContext(name);
   const auto &lookup = context ? context->namespaceScope : currentNamespace;
   if (context && sourceGraph && context->sourceUnit) {
     auto &visible = activeVisibleNamespaceSymbols();
@@ -5225,7 +5239,7 @@ auto SemanticVisitor::Impl::resolveNamespacePath(
 
 auto SemanticVisitor::Impl::resolveNamespacePath(const NamePath &path) const
     -> std::optional<std::string> {
-  const auto *context = deferredContext(path.segments.front());
+  const auto *context = macroContext(path.segments.front());
   return resolveNamespacePath(path, context ? context->namespaceScope
                                             : currentNamespace);
 }
@@ -5237,7 +5251,7 @@ auto SemanticVisitor::Impl::resolveQualified(const NamePath &path) const
   if (path.segments.size() < 2) {
     return resolve(path.last());
   }
-  const auto *context = deferredContext(path.segments.front());
+  const auto *context = macroContext(path.segments.front());
   const auto &lookup = context ? context->namespaceScope : currentNamespace;
   const auto &visible = activeVisibleNamespaceSymbols();
   const auto unit = context ? context->sourceUnit : currentSourceUnit;
@@ -5286,7 +5300,7 @@ auto SemanticVisitor::Impl::resolveQualifiedPlaceSymbol(const NamePath &path)
   if (path.segments.size() < 2) {
     return resolvePlaceSymbol(path.last());
   }
-  const auto *context = deferredContext(path.segments.front());
+  const auto *context = macroContext(path.segments.front());
   const auto &lookup = context ? context->namespaceScope : currentNamespace;
 
   NamePath namespacePath(
@@ -9037,8 +9051,8 @@ auto SemanticVisitor::Impl::runRawResultQuery(
     state->idleCatalogs.pop_back();
   }
   worker->semanticModel = semanticModel;
-  worker->deferredLookup = deferredLookup;
-  worker->deferredLookupBase = deferredLookupBase;
+  worker->macroLookup = macroLookup;
+  worker->macroLookupBase = macroLookupBase;
   worker->nextExpansion = nextExpansion;
   worker->valueFlow = valueFlow;
   // Cached summaries must describe global pointer inputs, not freeze the

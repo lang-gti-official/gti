@@ -8,6 +8,14 @@ executable typed values. It sits after semantic analysis and before body-local
 control-flow lowering. It is not a pretty AST and it is not an independent
 type system.
 
+Typed statement macros are expanded and ownership-checked by semantics before
+HIR execution lowering. HIR consumes that retained statement expansion and
+does not instantiate an eager runtime function for a `#macro` declaration.
+The result consists of ordinary typed branches, calls, places and full
+expressions; MIR owns their control flow, failure edges and cleanup. Changing
+the source spelling from `[[deferred]]` to `#macro` introduces no second
+executable representation or backend macro interpreter.
+
 Concrete function instances preserve the semantic owned-pointee accessor
 summary (exact receiver-field identity and private borrow operation), refreshed
 from concrete instance analysis. It is proof metadata, not a synthetic field

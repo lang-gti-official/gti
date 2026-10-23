@@ -1227,6 +1227,9 @@ SemanticClassification classificationForSymbol(const lang::SymbolRecord &symbol,
   case lang::SymbolKind::Function:
     type = Function;
     break;
+  case lang::SymbolKind::Macro:
+    type = Macro;
+    break;
   case lang::SymbolKind::Field:
     type = Property;
     break;

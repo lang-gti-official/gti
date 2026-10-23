@@ -1,0 +1,154 @@
+==================
+Typed statement macros and ordinary calls
+==================
+
+#macro ignore(bool condition) {}
+[[track_caller]] #macro checked(bool condition) {
+  if (!condition) { fail(); }
+}
+void run() { checked(true); }
+
+---
+
+(source_file
+  (macro_declaration
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)))
+    (block))
+  (macro_declaration
+    (function_contract_attribute)
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)))
+    (block
+      (if_statement
+        (unary_expression
+          (primary_expression
+            (identifier)))
+        (block
+          (expression_statement
+            (call_expression
+              (primary_expression
+                (identifier))
+              (argument_list)))))))
+  (function_declaration
+    (type)
+    (identifier)
+    (parameter_clause)
+    (block
+      (expression_statement
+        (call_expression
+          (primary_expression
+            (identifier))
+          (argument_list
+            (primary_expression
+              (literal
+                (boolean_literal)))))))))
+
+==================
+Generic typed macro defaults, packs, constraints and namespace exports
+==================
+
+namespace app {
+  export [[track_caller]] #macro checked<First, Args...>(bool condition,
+      std::string_view message, First first, Args... args)
+      requires std::formattable<First> {
+    if (!condition) { report(message, first, args...); }
+  }
+  #macro optional<T = int>(T value = 1) { consume(value); }
+}
+
+---
+
+(source_file
+  (namespace_declaration
+    (identifier)
+    (namespace_body
+      (export_declaration
+        (macro_declaration
+          (function_contract_attribute)
+          (identifier)
+          (generic_parameter_clause
+            (generic_parameter
+              (identifier))
+            (generic_parameter
+              (identifier)))
+          (parameter_clause
+            (parameter
+              (type
+                (primitive_type))
+              (identifier))
+            (parameter
+              (type
+                (user_type
+                  (scoped_identifier
+                    (identifier)
+                    (identifier))))
+              (identifier))
+            (parameter
+              (type
+                (user_type
+                  (identifier)))
+              (identifier))
+            (parameter
+              (type
+                (user_type
+                  (identifier)))
+              (identifier)))
+          (requires_clause
+            (constraint_expression
+              (concept_application
+                (scoped_identifier
+                  (identifier)
+                  (identifier))
+                (type
+                  (user_type
+                    (identifier))))))
+          (block
+            (if_statement
+              (unary_expression
+                (primary_expression
+                  (identifier)))
+              (block
+                (expression_statement
+                  (call_expression
+                    (primary_expression
+                      (identifier))
+                    (argument_list
+                      (primary_expression
+                        (identifier))
+                      (primary_expression
+                        (identifier))
+                      (pack_expansion
+                        (identifier))))))))))
+      (macro_declaration
+        (identifier)
+        (generic_parameter_clause
+          (generic_parameter
+            (identifier)
+            (type
+              (primitive_type))))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier)))
+            (identifier)
+            (primary_expression
+              (literal
+                (integer_literal)))))
+        (block
+          (expression_statement
+            (call_expression
+              (primary_expression
+                (identifier))
+              (argument_list
+                (primary_expression
+                  (identifier))))))))))

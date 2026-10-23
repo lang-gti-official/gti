@@ -26,7 +26,7 @@ struct CleanupPanic {
 }
 
 namespace application {
-  [[deferred]] void require(bool condition, std::string_view reason) {
+  #macro require(bool condition, std::string_view reason) {
     if (!condition) { std::panic(reason); }
   }
 }
