@@ -27,11 +27,11 @@ void diagnostic(std::string source, std::string_view fragment) {
   const auto result = analyze(std::move(source));
   check(!result.canGenerateCode(),
         "invalid result macro must stop before emission");
-  const bool found = std::any_of(
-      result.diagnostics.begin(), result.diagnostics.end(),
-      [&](const auto &value) {
-        return value.message.find(fragment) != std::string::npos;
-      });
+  const bool found =
+      std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                  [&](const auto &value) {
+                    return value.message.find(fragment) != std::string::npos;
+                  });
   check(found, fragment);
   if (!found)
     for (const auto &value : result.diagnostics)
