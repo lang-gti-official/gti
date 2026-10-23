@@ -1,0 +1,50 @@
+#include <std/assert>
+#include <std/panic>
+#include <std/format>
+#include <std/string>
+#include <std/vector>
+
+#ifdef COST_MANUAL
+#define COST_MANUAL
+#endif
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+
+struct ColdWork {
+  static mut int calls = 0;
+};
+
+std::string diagnostic() {
+  ColdWork::calls++;
+  return std::string("this owning diagnostic must remain cold");
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut uint64_t state = uint64_t(argc);
+  unsafe { adoption_count_begin(); }
+  for (mut uint index = 0; index < uint(20000000); index++) {
+    state = state ^ (state << uint(13));
+    state = state ^ (state >> uint(7));
+    state = state ^ (state << uint(17));
+#ifdef COST_MANUAL
+    if (state == uint64_t(0)) { std::panic("{}", diagnostic()); }
+    if (std::debug_assertions_enabled) {
+      if (state == uint64_t(0)) { std::panic("{}", diagnostic()); }
+    }
+#else
+    std::assert(state != uint64_t(0), "{}", diagnostic());
+    std::debug_assert(state != uint64_t(0), "{}", diagnostic());
+#endif
+  }
+  unsafe {
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0)) { return 1; }
+  }
+  if (ColdWork::calls != 0) { return 2; }
+  std::println(state);
+  return 0;
+}
