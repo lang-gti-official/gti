@@ -29,12 +29,10 @@ public:
                                  .count()))) {
     std::filesystem::create_directories(root / "std");
     write(root / "prelude.gti", R"(
-namespace gti_internal {
-@compiler_constraint("copyable") concept copyable_capability<T>;
-}
-
 namespace std {
-concept copyable<T> = gti_internal::copyable_capability<T>;
+// The synthetic fixture exercises concept presentation, not the real
+// standard library's complete construction/assignment capability policy.
+concept copyable<T> = requires(T& source) { { T(source) } -> T; };
 }
 )");
     write(root / "std/sample.gti", R"(

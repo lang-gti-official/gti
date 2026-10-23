@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Array fields from constructor parameters (0.466.1)
+## Array fields from constructor parameters (0.467.1)
 
 `array_field_constructor_elements_runtime` runs
 `array_field_constructor_elements.gti`. Constructors of user-defined structs
@@ -13,7 +13,7 @@ shows each element's value, that copied parameters are still readable, and
 that every counted object is destroyed exactly once, as an element. With an
 argument the first index is out of range and fails with `GTI-R0007` (exit
 status 70). Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and
-ASan/UBSan. The 0.466.0 compiler stops the fixture with `GTI-B0001`.
+ASan/UBSan. The 0.467.0 compiler stops the fixture with `GTI-B0001`.
 
 In `cpp_mir_body_emitter_lifecycle`, `testArrayFieldConstructorElements`
 checks that the constructors spell their parameters inside the field's

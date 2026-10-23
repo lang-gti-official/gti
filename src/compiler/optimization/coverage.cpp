@@ -238,6 +238,7 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::MetaTypeAttributeCount:
   case IntrinsicKind::MetaTypeHasAttribute:
   case IntrinsicKind::MetaTypeTrait:
+  case IntrinsicKind::MetaTypeRelation:
   case IntrinsicKind::MetaEnumeratorCount:
   case IntrinsicKind::MetaEnumeratorName:
   case IntrinsicKind::MetaEnumeratorValue:
