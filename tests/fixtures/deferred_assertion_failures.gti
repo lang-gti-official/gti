@@ -32,6 +32,14 @@ struct MacroOwner {
 }
 
 namespace application {
+  [[track_caller]] #macro default_condition(int value) {
+    std::assert(value > 0);
+  }
+
+  [[track_caller]] #macro default_debug_condition(int value) {
+    std::debug_assert(value > 0);
+  }
+
   #macro require(bool condition, std::string_view reason) {
     if (!condition) { std::panic(reason); }
   }
@@ -130,6 +138,12 @@ int main(int argc, std::vector<std::string> argv) {
   }
   if (argc == 15) {
     application::local_loop(false, 6);
+  }
+  if (argc == 16) {
+    application::default_condition(0); // synthesized-default
+  }
+  if (argc == 17) {
+    application::default_debug_condition(0); // synthesized-debug-default
   }
   return 0;
 }

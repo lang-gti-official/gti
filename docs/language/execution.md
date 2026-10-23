@@ -178,10 +178,12 @@ full-expression lifetime then applies. Returning a macro-local move-only owner
 can move it implicitly; returning a substituted caller owner cannot silently
 consume it and requires a written move. There is no implicit clone.
 
-The current result profile admits owned and dependency-free values, including
+The current result profile admits movable/copyable owned and dependency-free values, including
 literal-backed text. Reference and tracked-borrowed results are diagnosed;
 extending them requires checked result-origin joins and loan transfer across
-the region boundary, not a backend reference escape. Ordinary references and
+the region boundary, not a backend reference escape. Direct immovable results
+require destination-passing construction support; an owning indirection can
+transport an immovable payload in this profile. Ordinary references and
 borrowed values remain usable *inside* macros under their existing rules.
 
 `std::expression_text(expression)` from `<std/source_location>` is a library

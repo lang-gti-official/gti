@@ -27,11 +27,15 @@ void diagnostic(std::string source, std::string_view fragment) {
   const auto result = analyze(std::move(source));
   check(!result.canGenerateCode(),
         "invalid result macro must stop before emission");
-  check(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
-                    [&](const auto &value) {
-                      return value.message.find(fragment) != std::string::npos;
-                    }),
-        fragment);
+  const bool found = std::any_of(
+      result.diagnostics.begin(), result.diagnostics.end(),
+      [&](const auto &value) {
+        return value.message.find(fragment) != std::string::npos;
+      });
+  check(found, fragment);
+  if (!found)
+    for (const auto &value : result.diagnostics)
+      std::cerr << value.code << ": " << value.message << '\n';
   check(
       std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
                    [](const auto &value) { return value.code == "GTI-B0001"; }),
@@ -142,5 +146,23 @@ int main() {
              "int main() { std::string value{\"owned\"}; std::string moved = "
              "identity(value); return 0; }",
              "macro result");
+  diagnostic(R"gti(
+#include <std/string>
+#macro std::string inner(std::string argument) { return argument; }
+#macro std::string outer() { std::string saved{"owned"}; return inner(saved); }
+int main() { std::string value = outer(); return 0; }
+)gti",
+             "macro result");
+  diagnostic(R"gti(
+class Pinned {
+public:
+  Pinned() {}
+  Pinned(Pinned& other) = delete;
+  Pinned(Pinned&& other) = delete;
+};
+#macro Pinned pinned() { return Pinned(); }
+int main() { Pinned value = pinned(); return 0; }
+)gti",
+             "movable or copyable");
   return failures == 0 ? 0 : 1;
 }

@@ -18,8 +18,7 @@ public:
 #macro relay<F>(F action) { when(true, action); }
 #macro ignore<F>(F action) {}
 
-void observe(int value) { calls += value; }
-void observe(bool value) { if (value) { calls += 1; } }
+void observe<T>(T value) { calls += 1; }
 void generic<T>(T value) {
   relay([value]() -> void { observe(value); });
 }
@@ -49,6 +48,6 @@ int main() {
   when(false, [mut &borrowed]() -> void { borrowed += 100; });
   borrowed += 1;
   when(true, [mut &borrowed]() -> void { borrowed += 1; });
-  if (borrowed != 7 || calls != 20 || drops != 2) { return 5; }
+  if (borrowed != 7 || calls != 17 || drops != 2) { return 5; }
   return 0;
 }

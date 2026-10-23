@@ -33,6 +33,10 @@ int effect(int value) { effects += 1; return value; }
   return second;
 }
 #macro Owner local(int value) { Owner saved{value}; return saved; }
+#macro int read_borrowed(Owner expression) {
+  Owner& saved = expression;
+  return saved.read();
+}
 #macro int invoke<F>(F action) { return action(); }
 #macro stop() { return; }
 
@@ -47,5 +51,12 @@ int main() {
     if (untouched.read() != 11 || selected.read() != 17 || drops != 1) { return 4; }
   }
   if (drops != 3) { return 5; }
+  {
+    Owner observed{23};
+    if (read_borrowed(observed) != 23) { return 6; }
+    Owner transferred = std::move(observed);
+    if (transferred.read() != 23) { return 7; }
+  }
+  if (drops != 4) { return 8; }
   return 0;
 }

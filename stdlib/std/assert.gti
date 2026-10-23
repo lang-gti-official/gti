@@ -19,7 +19,8 @@ namespace std {
   [[track_caller]]
   #macro assert(bool condition) {
     if (!condition) {
-      std::panic("Assertion failed: {}", std::expression_text(condition));
+      std::panic("Assertion failed: {}",
+                 std::expression_text(condition, "assertion condition"));
     }
   }
 
@@ -36,7 +37,8 @@ namespace std {
   #macro debug_assert(bool condition) {
     if (std::debug_assertions_enabled) {
       if (!condition) {
-        std::panic("Debug assertion failed: {}", std::expression_text(condition));
+        std::panic("Debug assertion failed: {}",
+                   std::expression_text(condition, "assertion condition"));
       }
     }
   }

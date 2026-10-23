@@ -5059,6 +5059,7 @@ private:
   struct MacroResultRegion {
     const FunctionDecl *function = nullptr;
     std::size_t lambdaDepth = 0;
+    std::uint32_t expansion = 0;
     SemanticType type = SemanticType::Unknown;
     std::vector<std::pair<const ReturnStmt *, ScopeStack>> exits;
   };

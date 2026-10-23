@@ -9,8 +9,12 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
-`GTI-S2124` reports invalid typed macro invocation shapes and deterministic
-expansion-budget exhaustion. `GTI-S2099` diagnoses an ineligible `#macro`
+`GTI-S2124` reports invalid typed macro invocation/result shapes, missing
+normal-path result returns and deterministic expansion-budget exhaustion.
+Reference/tracked-borrowed and direct immovable outputs stop in semantics;
+they must not fall through to native C++ errors. Ordinary result initialization
+errors retain `GTI-S2003`, including caller owners that need an explicit move.
+`GTI-S2099` diagnoses an ineligible `#macro`
 signature/body, a macro/function overload mixture at one qualified name, or
 the removed `[[deferred]]` attribute (with migration guidance to `#macro`).
 Concrete body failures retain the owning

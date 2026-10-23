@@ -251,9 +251,10 @@ The current implemented foundation includes:
   `std::debug_assert` and `constexpr bool std::debug_assertions_enabled`.
   Both check an exact `bool`, evaluating it once when enabled, and use
   `std::panic` on failure. Their default messages include the exact written
-  condition through `std::expression_text`. Optional literal or formatted
-  messages are evaluated
-  only on failure. `NDEBUG` disables all debug-assert argument evaluation, not
+  condition through `std::expression_text`, or the explicit description
+  `assertion condition` for synthesized macro expressions. Optional literal or
+  formatted messages are evaluated only on failure. `NDEBUG` disables all
+  debug-assert argument evaluation, not
   their type checking; it never disables `std::assert`. The built-in release
   project profile defines `NDEBUG`; direct compilation can use `-D NDEBUG`,
   independently of optimization. These are source-defined
@@ -620,7 +621,14 @@ The current implemented foundation includes:
   declaration's default expression. A compound expression built by substituting
   children, or syntax without an available written source origin, is rejected
   rather than given a reconstructed spelling. The result is read-only metadata,
-  with no token substitution or token-pasting operation; and
+  with no token substitution or token-pasting operation.
+  The overload `std::expression_text(expression, fallback)` uses the exact text
+  when available and otherwise returns the explicit fallback. The fallback must
+  be compile-time literal-backed `std::string_view` text, even when the exact
+  expression origin is available. Both arguments are type-checked without
+  runtime evaluation, moves, copies or loans; the fallback uses the existing
+  constant-evaluation service. The one-argument form retains its fail-closed
+  requirement; and
 - `<std/format>` heterogeneous automatic or numeric-indexed replacement for
   booleans, characters, fixed-width integers, integral enums, binary32/binary64 values, string
   views, and transferred owning strings through source-defined `std::format`,

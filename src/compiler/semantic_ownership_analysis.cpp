@@ -5882,7 +5882,8 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "source_column") {
       return IntrinsicKind::SourceColumn;
     }
-    if (name == "source_expression_text") {
+    if (name == "source_expression_text" ||
+        name == "source_expression_text_or") {
       return IntrinsicKind::SourceExpressionText;
     }
     return IntrinsicKind::None;
@@ -12506,8 +12507,11 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
   if (intrinsic == IntrinsicKind::SourceExpressionText) {
     for (const TypeRef &argument : expr.typeArguments())
       validateType(argument);
-    if (expr.arguments().size() != 1 ||
-        declaration.parameterTypes.size() != 1 ||
+    const bool hasFallback = expr.arguments().size() == 2;
+    if ((expr.arguments().size() != 1 && !hasFallback) ||
+        declaration.parameterTypes.size() != expr.arguments().size() ||
+        (hasFallback &&
+         declaration.parameterTypes.back() != SemanticType::StringView) ||
         declaration.returnType != SemanticType::StringView ||
         expr.typeArguments().size() != 1 ||
         declaration.record().genericParameters.size() != 1 ||
@@ -12517,8 +12521,8 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
             SemanticType::typeParameter(
                 declaration.record().genericParameters.front().id)) {
       report(expr.paren(),
-             "An expression-text capability requires one typed expression "
-             "and a string-view result.",
+             "An expression-text capability requires one typed expression, "
+             "an optional string-view fallback and a string-view result.",
              "GTI-S2019");
       currentType = SemanticType::Unknown;
       return;
@@ -12547,11 +12551,38 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       currentType = SemanticType::Unknown;
       return;
     }
+    std::optional<std::string> fallback;
+    if (hasFallback) {
+      auto fallbackProbe = makeMacroProbe(expr);
+      const SemanticType fallbackType =
+          fallbackProbe->analyze(expr.arguments().back());
+      diagnostics.insert(diagnostics.end(), fallbackProbe->diagnostics.begin(),
+                         fallbackProbe->diagnostics.end());
+      if (hasErrorDiagnostics(fallbackProbe->diagnostics)) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      ConstexprInterpreter context = fallbackProbe->makeConstexprInterpreter();
+      const auto constant = fallbackProbe->evaluateConstexprExpression(
+          expr.arguments().back(), context);
+      const auto *text =
+          constant ? std::get_if<std::string>(&*constant.value) : nullptr;
+      if (fallbackType != SemanticType::StringView || !text) {
+        report(expr.paren(),
+               "An expression-text fallback must be compile-time "
+               "literal-backed string-view text.",
+               "GTI-S2019");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      fallback = *text;
+    }
     const auto &origin = expr.arguments().front()->writtenOrigin();
     const std::string *source =
         sources && origin ? sources->find(origin->source) : nullptr;
-    if (!origin || !source || origin->start >= origin->end ||
-        origin->end > source->size()) {
+    const bool written = origin && source && origin->start < origin->end &&
+                         origin->end <= source->size();
+    if (!written && !fallback) {
       report(expr.paren(),
              "Expression text requires one complete written source "
              "expression; a synthetic or composed expansion has no exact "
@@ -12564,7 +12595,9 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     semanticModel.record(expr, ResolvedCallInfo{.returnType = currentType,
                                                 .intrinsic = intrinsic});
     semanticModel.recordConstant(
-        expr, source->substr(origin->start, origin->end - origin->start));
+        expr, written
+                  ? source->substr(origin->start, origin->end - origin->start)
+                  : *fallback);
     semanticModel.recordProgramConstantSubstitution(expr);
     bindIntrinsicCallDeclaration(expr, declaration);
     return;

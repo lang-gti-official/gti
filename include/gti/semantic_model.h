@@ -2899,6 +2899,9 @@ private:
                               const FunctionDecl &definition);
 
   void record(const Lambda &declaration, LambdaInfo info);
+  // Callable type discovery carries no analyzed executable body. Only ID
+  // lookup sees these shapes; AST lookup requires ordinary lambda analysis.
+  void recordLambdaTypeDiscovery(LambdaInfo info);
 
   void recordClassType(const ClassDecl &declaration, ClassTypeInfo info);
 
@@ -3117,6 +3120,7 @@ private:
   std::unordered_map<FunctionId, const FunctionDecl *> functionsById;
   std::unordered_map<const Lambda *, LambdaInfo> lambdas;
   std::unordered_map<LambdaId, const Lambda *> lambdasById;
+  std::unordered_map<LambdaId, LambdaInfo> lambdaTypeDiscoveries;
   std::unordered_map<const ClassDecl *, ClassTypeInfo> classTypes;
   std::unordered_map<ClassId, const ClassDecl *> classTypesById;
   struct ExactClassSpecializationRecord {

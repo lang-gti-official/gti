@@ -33,6 +33,65 @@ void rejected(const std::string &source, std::string_view diagnostic,
       message + " uses the ordinary ownership/loan diagnostic");
 }
 
+void discoveryBoundary() {
+  lang::FrontendOptions options;
+  options.stopAfter = lang::FrontendPhase::Semantics;
+  const auto result =
+      lang::Frontend(options).analyze("macro-discovery-boundary.gti", R"(
+#macro ignore<F>(F callback) {}
+int main() {
+  int value = 1;
+  ignore([value]() -> void { int local = value; });
+  return 0;
+}
+)");
+  expect(result.semanticValid, "unused lambda discovery has valid semantics");
+  for (const auto &declaration : result.program.declarations()) {
+    const auto *function = lang::stmtAs<lang::FunctionDecl>(declaration.get());
+    if (!function || function->name().lexeme != "main" || !function->body())
+      continue;
+    const auto *block = lang::stmtAs<lang::BlockStmt>(function->body().get());
+    if (!block || block->statements().size() < 2)
+      continue;
+    const auto *statement =
+        lang::stmtAs<lang::ExpressionStmt>(block->statements()[1].get());
+    const auto *call =
+        statement ? lang::exprAs<lang::Call>(statement->expression().get())
+                  : nullptr;
+    const auto *lambda =
+        call && call->arguments().size() == 1
+            ? lang::exprAs<lang::Lambda>(call->arguments()[0].get())
+            : nullptr;
+    const auto *callee =
+        call ? lang::exprAs<lang::Variable>(call->callee().get()) : nullptr;
+    const auto *occurrence =
+        callee ? result.semantics.database().findOccurrence(
+                     result.sourceGraph.entryUnit(), callee->name().position)
+               : nullptr;
+    const auto *selected = occurrence && occurrence->selectedCall
+                               ? &*occurrence->selectedCall
+                               : nullptr;
+    expect(lambda && selected && selected->typeArguments.size() == 1,
+           "unused lambda retains its selected callable type");
+    if (!lambda || !selected || selected->typeArguments.size() != 1)
+      return;
+    const auto *shape =
+        result.semantics.findLambda(selected->typeArguments[0].lambdaId);
+    expect(shape && !result.semantics.findLambda(*lambda),
+           "type discovery never advertises an analyzed executable lambda AST");
+    expect(
+        shape && std::all_of(shape->captures.begin(), shape->captures.end(),
+                             [](const auto &capture) {
+                               return !capture.initializer &&
+                                      !capture.sourceSymbol &&
+                                      !capture.bindingSymbol;
+                             }),
+        "discovery shape retains no speculative capture pointers or bindings");
+    return;
+  }
+  expect(false, "unused callable discovery fixture has its written invocation");
+}
+
 void tests() {
   valid(R"(
 mut int total = 0;
@@ -54,8 +113,7 @@ int main() {
 
   valid(R"(
 #macro invoke<F>(F callback) { callback(); }
-void observe(int value) {}
-void observe(bool value) {}
+void observe<T>(T value) {}
 void generic<T>(T value) {
   invoke([value]() -> void { observe(value); });
 }
@@ -126,6 +184,7 @@ int main() {
 } // namespace
 
 int main() {
+  discoveryBoundary();
   tests();
   return failures == 0 ? 0 : 1;
 }

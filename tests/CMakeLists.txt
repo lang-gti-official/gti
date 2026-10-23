@@ -28,6 +28,10 @@ add_test(NAME macro_fresh_callable_runtime
     $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/macro_fresh_callables.gti"
     --ownership-checks)
 set_tests_properties(macro_fresh_callable_runtime PROPERTIES TIMEOUT 1200)
+add_test(NAME macro_result_failures
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/macro_result_failure_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(macro_result_failures PROPERTIES TIMEOUT 1200)
 add_executable(gti_macro_result_parser_tests macro_result_parser_tests.cpp)
 target_link_libraries(gti_macro_result_parser_tests PRIVATE gti_compiler)
 add_test(NAME macro_result_parser COMMAND gti_macro_result_parser_tests)
@@ -58,6 +62,12 @@ add_test(NAME expression_text_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expression_text_runtime_test.py"
     $<TARGET_FILE:gti>)
 set_tests_properties(expression_text_runtime PROPERTIES TIMEOUT 1200)
+if(TARGET gti_lsp)
+  add_test(NAME expression_text_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expression_text_lsp_test.py"
+      $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(expression_text_lsp PROPERTIES TIMEOUT 180)
+endif()
 if(TARGET gti_lsp)
   add_test(NAME lsp_code_snippets
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_code_snippets_test.py"

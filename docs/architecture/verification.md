@@ -130,14 +130,21 @@ corners({a, b})`).
 
 `expression_text_semantic_ir` checks exact parser extents, origin-preserving
 clones and forwarding, default-expression provenance, missing source buffers,
-private capability access, static operand errors and synthetic-composition
-rejection. Its HIR/MIR assertions require literal normalization before operand
-lowering: no metadata intrinsic or argument call may reach execution.
+private capability access, static operand errors, strict synthetic-composition
+rejection and explicit constant fallback selection. Dynamic fallbacks are
+rejected even for operands with available written origins. Its HIR/MIR assertions
+require literal normalization before operand lowering: no metadata intrinsic or
+argument call may reach execution.
 `expression_text_runtime` checks untouched side effects and owner moves,
 absence of retained runtime loans, nested generic wrappers, static result
-lifetime, UTF-8/comments/newlines and ordinary generic definition-site spelling
+lifetime, synthesized fallback without owner consumption or loans,
+UTF-8/comments/newlines and ordinary generic definition-site spelling
 at C++20/C++23 O0/O1/O3 plus ASan/UBSan. The stdlib surface manifest registers
 the same public operation and focused O0/O3 fixture.
+`expression_text_lsp` checks value-result hover signatures and exact helper
+definition identities, UTF-16 argument diagnostic spans, synthetic-source
+diagnostics, explicit fallback recovery, dynamic-fallback diagnostic clearing,
+incomplete source and reopen.
 
 The existing `deferred_assertions*` gate names are retained for continuity after
 the public syntax migration to `#macro`; no old attribute support remains.
@@ -173,6 +180,14 @@ managed-thread propagation, and owning local cleanup on normal scope exit,
 panic, break and continue. Examples are identified by their selected
 paths, not a numeric-prefix convention, so renumbering cannot change the expected
 output policy.
+
+`macro_result_failures` checks an unrelated move-only resource returned through
+a typed macro result region. Its six exact stderr traces cover normal result
+publication, failure before result creation, macro-local cleanup failure after
+result initialization, failure in a later caller argument, double failure while
+cleaning the pending result, and ordinary cleanup failure after publication.
+The matrix uses C++20/C++23 at O0/O3, disabled elision and native ASan/UBSan;
+failure cases require status 70 and the original primary/secondary sites.
 
 `deferred_assertions_lsp` covers unsaved/incomplete text, UTF-16 spans, static
 argument errors, macro hover/definition identity, qualified overload selection
