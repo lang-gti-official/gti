@@ -1,5 +1,6 @@
 #include "gti/formatter.h"
 #include "gti/frontend.h"
+#include "gti/generic_constraint.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -10,6 +11,11 @@
 #include <unistd.h>
 
 namespace {
+static_assert(!lang::compilerStructuralConstraint("adds"));
+static_assert(!lang::compilerStructuralConstraint("subtracts"));
+static_assert(!lang::compilerStructuralConstraint("negates"));
+static_assert(!lang::compilerStructuralConstraint("scales_by"));
+
 int failures = 0;
 
 void expect(bool condition, const std::string &message) {
@@ -102,9 +108,18 @@ public:
 };
 T make<T, A>(A& argument) requires builds<T, A> { return T(argument); }
 T empty<T>() requires defaults<T> { return T(); }
+T standard_empty<T>() requires std::default_initializable<T> { return T(); }
+class Leaf { public: Leaf() {} };
+class Holder<T> {
+  T value;
+public:
+  Holder() requires std::default_initializable<T> : value(T()) {}
+};
 int main() {
   int value = 9;
   Box result = make<Box, int>(value);
+  Leaf leaf = standard_empty<Leaf>();
+  Holder<Leaf> holder{};
   return result.read() == 9 && empty<int>() == 0 ? 0 : 1;
 }
 )"),

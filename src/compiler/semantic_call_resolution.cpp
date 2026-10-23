@@ -5674,33 +5674,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
                           .sentinel = end->returnType};
   };
 
-  // A domain value operator is an exact read-only member returning an owned
-  // value of the same domain type. The result may not be a reference: a
-  // borrowed result would tie the produced value to a receiver whose
-  // lifetime the requirement cannot name.
-  const auto ownedDomainResult = [](const CallableCandidate &candidate,
-                                    const SemanticType &domain) {
-    return candidate.returnType == domain &&
-           candidate.receiverMutability == ReceiverMutability::ReadOnly &&
-           candidate.returnBorrowOrigin == BorrowOriginKind::None;
-  };
-  const auto hasBinaryDomainOperator = [&](const SemanticType &domain,
-                                           OverloadedOperator oper,
-                                           const SemanticType &operand) {
-    const SemanticType parameter =
-        SemanticType::referenceTo(operand, AccessMode::ReadOnly);
-    const std::optional<CallableCandidate> byReference =
-        selectStructuralOperator(
-            domain, oper, std::span<const SemanticType>(&parameter, 1), false);
-    if (byReference && ownedDomainResult(*byReference, domain)) {
-      return true;
-    }
-    // A scalar operand is ordinarily taken by value.
-    const std::optional<CallableCandidate> byValue = selectStructuralOperator(
-        domain, oper, std::span<const SemanticType>(&operand, 1), false);
-    return byValue && ownedDomainResult(*byValue, domain);
-  };
-
   const auto readableCallableParameter = [](const SemanticType &parameter,
                                             const SemanticType &argument) {
     return parameter == argument ||
@@ -5971,34 +5944,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
         arguments.front(), "size", ReceiverMutability::ReadOnly);
     return size && size->returnType == SemanticType::UInt64;
   }
-  // The domain family is deliberately member-only, matching the language's
-  // member-only user-operator rule. A built-in numeric keeps its own
-  // checked arithmetic and its `std::numeric` contract: admitting one here
-  // would resolve its operators as symbolic member calls and drop the
-  // canonical local failure outcomes that checked integer arithmetic must
-  // retain.
-  case StructuralConstraintKind::Adds:
-    return arguments.size() == 1 &&
-           hasBinaryDomainOperator(arguments[0], OverloadedOperator::Plus,
-                                   arguments[0]);
-  case StructuralConstraintKind::Subtracts:
-    return arguments.size() == 1 &&
-           hasBinaryDomainOperator(arguments[0], OverloadedOperator::Minus,
-                                   arguments[0]);
-  case StructuralConstraintKind::Negates: {
-    if (arguments.size() != 1) {
-      return false;
-    }
-    // Unary minus is the nullary-parameter member form; the binary
-    // difference operator shares the spelling and is excluded by arity.
-    const std::optional<CallableCandidate> negate = selectStructuralOperator(
-        arguments[0], OverloadedOperator::Minus, {}, false);
-    return negate && ownedDomainResult(*negate, arguments[0]);
-  }
-  case StructuralConstraintKind::ScalesBy:
-    return arguments.size() == 2 &&
-           hasBinaryDomainOperator(arguments[0], OverloadedOperator::Multiply,
-                                   arguments[1]);
   case StructuralConstraintKind::EnumUnderlying:
     return arguments.size() == 2 && arguments[0].kind == SemanticType::Enum &&
            satisfiesAtomicConstraint(arguments[0],
@@ -6266,47 +6211,6 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       // Enum representation classification grants no numeric operators.
       break;
 
-    // A domain operator produces an owned value of the receiver's own type.
-    // The operand is named by reference so the concrete member may take it
-    // either way; exact argument matching selects the real declaration in
-    // the instance reanalysis.
-    case StructuralConstraintKind::Adds:
-    case StructuralConstraintKind::Subtracts:
-      if (requirement.arguments.size() == 1 &&
-          requirement.arguments[0] == receiverType &&
-          argumentTypes.size() == 1 &&
-          argumentTypes[0] == requirement.arguments[0] &&
-          kind == (requirement.kind == StructuralConstraintKind::Adds
-                       ? OverloadedOperator::Plus
-                       : OverloadedOperator::Minus)) {
-        candidate.returnType = requirement.arguments[0];
-        candidate.parameterTypes = {SemanticType::referenceTo(
-            requirement.arguments[0], AccessMode::ReadOnly)};
-        candidate.receiverMutability = ReceiverMutability::ReadOnly;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::Negates:
-      if (kind == OverloadedOperator::Minus &&
-          requirement.arguments.size() == 1 &&
-          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
-        candidate.returnType = requirement.arguments[0];
-        candidate.receiverMutability = ReceiverMutability::ReadOnly;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::ScalesBy:
-      if (kind == OverloadedOperator::Multiply &&
-          requirement.arguments.size() == 2 &&
-          requirement.arguments[0] == receiverType &&
-          argumentTypes.size() == 1 &&
-          argumentTypes[0] == requirement.arguments[1]) {
-        candidate.returnType = requirement.arguments[0];
-        candidate.parameterTypes = {requirement.arguments[1]};
-        candidate.receiverMutability = ReceiverMutability::ReadOnly;
-        matches = true;
-      }
-      break;
     case StructuralConstraintKind::ReadCallable:
     case StructuralConstraintKind::MutCallable:
     case StructuralConstraintKind::OnceCallable:

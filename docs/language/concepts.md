@@ -433,6 +433,9 @@ The boundary has three layers:
 The prelude now defines numeric, enum, lifecycle and transfer/share concepts
 through reflection rather than duplicate private concept declarations.
 Arithmetic domain concepts use source requirements for the actual operations.
+The former `adds`, `subtracts`, `negates`, and `scales_by` compiler bindings
+and dedicated proof branches have been removed. Their generic-body operation
+facts now use the same general expression-requirement path as user concepts.
 The exact equality and relational declaration-shape contracts remain private:
 ordinary expression viability cannot yet prove their requirement-free,
 read-only, exact-reference signature policy. Replacing them needs general

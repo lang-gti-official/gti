@@ -56,6 +56,27 @@ T zero<T>() requires default_constructible<T> {
   return T();
 }
 
+// Compiler-verified reflection facts and source operation checks select the
+// same ordinary concrete construction. The resource remains source-defined.
+mut int live_resources = 0;
+class DefaultResource {
+public:
+  DefaultResource() { live_resources += 1; }
+  DefaultResource(DefaultResource& other) = delete;
+  DefaultResource(DefaultResource&& other) = default;
+  ~DefaultResource() { live_resources -= 1; }
+};
+
+class DefaultHolder<T> {
+  T value;
+public:
+  DefaultHolder() requires std::default_initializable<T> : value(T()) {}
+};
+
+T default_from_fact<T>() requires std::default_initializable<T> {
+  return T();
+}
+
 T construct<T, Arg>(Arg& argument) requires constructed_from<T, Arg> {
   return T(argument);
 }
@@ -67,6 +88,12 @@ T twice<T>(T value) requires integer_type<T> && transferable_value<T> {
 enum class status : uint8_t { ready = 0, busy = 1 };
 
 int main() {
+  {
+    DefaultResource resource = default_from_fact<DefaultResource>();
+    DefaultHolder<DefaultResource> holder{};
+    if (live_resources != 2) { return 2; }
+  }
+  if (live_resources != 0) { return 3; }
   static_assert(std::meta::is_enum_underlying<status, uint8_t>());
   static_assert(std::meta::is_bitwise_relocatable<Distance>());
   static_assert(requires(int& left, int& right) {

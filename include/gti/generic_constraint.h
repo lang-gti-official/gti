@@ -55,10 +55,6 @@ enum class StructuralConstraintKind : std::uint8_t {
   RangeOf,
   MutableRangeOf,
   SizedRange,
-  Adds,
-  Subtracts,
-  Negates,
-  ScalesBy,
   ReadCallable,
   MutCallable,
   OnceCallable,
@@ -138,7 +134,7 @@ inline constexpr std::array<CompilerConstraintRecord, 20> compilerConstraints{{
     {"meta_reflectable", GenericConstraintKind::Reflectable},
 }};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 32>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 28>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
@@ -155,10 +151,6 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 32>
         {"range_of", StructuralConstraintKind::RangeOf, 2},
         {"mutable_range_of", StructuralConstraintKind::MutableRangeOf, 2},
         {"sized_range", StructuralConstraintKind::SizedRange, 1},
-        {"adds", StructuralConstraintKind::Adds, 1},
-        {"subtracts", StructuralConstraintKind::Subtracts, 1},
-        {"negates", StructuralConstraintKind::Negates, 1},
-        {"scales_by", StructuralConstraintKind::ScalesBy, 2},
         {"read_callable", StructuralConstraintKind::ReadCallable, 3},
         {"mut_callable", StructuralConstraintKind::MutCallable, 3},
         {"once_callable", StructuralConstraintKind::OnceCallable, 3},
