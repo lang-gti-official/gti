@@ -684,9 +684,13 @@ execute once, using their target name as their test identity.
 apply after the filter. `--list` builds/discovers the selected suites and lists
 selected tests without launching them. Empty selections fail unless
 `--allow-empty` is explicit, including in list mode. `--jobs N` bounds concurrent
-test children (default one); suite builds remain sequential. Human results and
-the first failing status follow target/declaration order, independent of
-completion order. All selected tests continue after a child failure.
+test children (default one); suite builds remain sequential. Results are streamed
+in completion order; single-job runs retain target/declaration order. The first
+failing status always follows stable target/declaration order, independent of
+completion order. All selected tests continue after a child failure. CLI observers
+consume and release captured output after each completion, rather than retaining
+all suite output in memory. Reusable driver callers may retain it explicitly
+through the default `retainOutput` option. Metadata remains in declaration order.
 
 The per-child monotonic deadline defaults to five minutes. `--timeout Nms|Ns|Nm`
 overrides it; `0` explicitly disables it. The POSIX process owner creates a new

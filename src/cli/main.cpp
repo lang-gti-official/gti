@@ -3609,6 +3609,7 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
     suites.push_back({plan.targetName(), plan.output(), std::move(testCases)});
   }
   auto execution = options.test;
+  execution.retainOutput = false;
   execution.jobs = options.jobs.value_or(1);
   execution.environment = programColorEnvironment();
   lang::driver::TestRunObserver observer;
@@ -3630,14 +3631,8 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
     observer.finished = [&](const lang::driver::TestCaseReport &report) {
       lang::driver::writeTestFinishedJson(std::cout, report);
     };
-  }
-  TestInterruptScope interrupts;
-  observer.interruption = [] { return static_cast<int>(testInterruptSignal); };
-  const auto result = lang::driver::runTestSuites(suites, execution, observer);
-  if (options.testJson)
-    lang::driver::writeTestSummaryJson(std::cout, result.summary);
-  else {
-    for (const auto &report : result.cases) {
+  } else {
+    observer.finished = [&](const lang::driver::TestCaseReport &report) {
       const bool passed = report.status == lang::driver::TestCaseStatus::Passed;
       std::cerr << "  " << report.name << " ... "
                 << terminalStyle.code(std::cerr,
@@ -3661,8 +3656,13 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
           });
       if (suite != suites.end() && suite->tests.empty())
         std::cerr << (passed ? "Passed " : "Failed ") << report.target << '\n';
-    }
+    };
   }
+  TestInterruptScope interrupts;
+  observer.interruption = [] { return static_cast<int>(testInterruptSignal); };
+  const auto result = lang::driver::runTestSuites(suites, execution, observer);
+  if (options.testJson)
+    lang::driver::writeTestSummaryJson(std::cout, result.summary);
   const auto &summary = result.summary;
   if (summary.diagnostic)
     std::cerr << "gti: " << *summary.diagnostic << '\n';

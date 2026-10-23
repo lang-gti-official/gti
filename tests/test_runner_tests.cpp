@@ -28,6 +28,10 @@ int main(int argc, char **argv) {
 #else
   if (argc == 2) {
     const std::string mode = argv[1];
+    if (mode.starts_with("large")) {
+      std::cout << std::string(128 * 1024, 'x');
+      return 0;
+    }
     if (mode == "closed-streams") {
       close(0);
       close(1);
@@ -115,6 +119,24 @@ int main(int argc, char **argv) {
             result.summary.started == 2 && result.summary.completed == 2,
         "skip must exclude exactly the selected names");
   TestSuiteCommand duplicate{"suite", executable, {"same", "same"}};
+  const TestSuiteCommand verbose{
+      "suite", executable, {"large1", "large2", "large3"}};
+  auto streaming = options;
+  streaming.retainOutput = false;
+  std::size_t outputBytes = 0;
+  const auto streamed = runTestSuites(std::span(&verbose, 1), streaming,
+                                      {.finished = [&](const auto &report) {
+                                        outputBytes += report.output.size();
+                                      }});
+  check(outputBytes == 3 * 128 * 1024 && streamed.summary.passed == 3 &&
+            std::all_of(streamed.cases.begin(), streamed.cases.end(),
+                        [](const auto &report) {
+                          return report.output.empty() &&
+                                 report.output.capacity() <=
+                                     std::string{}.capacity();
+                        }),
+        "streaming reports must release captured storage after the observer "
+        "consumes it");
   result = runTestSuites(std::span(&duplicate, 1), options);
   check(result.summary.exitCode != 0 && result.summary.started == 0,
         "duplicate compiler identities must be rejected before execution");
