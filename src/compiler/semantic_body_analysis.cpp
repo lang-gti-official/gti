@@ -5259,6 +5259,41 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           if (!relay || *relay != *entry ||
               *scope->returnedTextReference != *entry)
             (void)requireOwnerlessTextField(scope->declaration, *entry);
+        } else if (const auto *scope = textFieldContractScope()) {
+          // A text payload reached through a call whose reference result
+          // borrows a contract formal, at a field no accessor rule names, may
+          // be any of that formal's text: binding it is a whole use.
+          const Expr *subject = stmt.expression().get();
+          while (const auto *group = exprAs<Grouping>(subject))
+            subject = group->expression() ? group->expression().get() : nullptr;
+          const auto *call = exprAs<Call>(subject);
+          const ResolvedCallInfo *resolved =
+              call == nullptr ? nullptr : semanticModel.findCall(*call);
+          const auto enumeration = enumTypeFor(pattern.type);
+          const auto variant =
+              enumeration ? std::find_if(enumeration->enumerators.begin(),
+                                         enumeration->enumerators.end(),
+                                         [&](const auto &candidate) {
+                                           return candidate.variantIndex ==
+                                                  pattern.variantIndex;
+                                         })
+                          : decltype(enumeration->enumerators.begin()){};
+          const auto type =
+              enumeration && variant != enumeration->enumerators.end() &&
+                      payload.payloadIndex < variant->payloadTypes.size()
+                  ? substituteType(variant->payloadTypes[payload.payloadIndex],
+                                   enumSubstitution(pattern.type))
+                  : SemanticType(SemanticType::Unknown);
+          const bool text = type.kind == SemanticType::StringView ||
+                            type.kind == SemanticType::CString ||
+                            type.kind == SemanticType::TypeParameter;
+          if (const auto formal =
+                  text && resolved != nullptr &&
+                          resolved->returnType.kind == SemanticType::Reference
+                      ? callBorrowedTextFormal(*call, *resolved)
+                      : std::nullopt;
+              formal && scope != nullptr)
+            noteTextFieldFormalUse(*subject, *formal);
         }
         // The text payload that an observed subject's owner dependency
         // designates holds that owner's dynamic text (L-OWN-02). A by-value
