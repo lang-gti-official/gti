@@ -1135,19 +1135,54 @@ arrayFieldElementAccess(const MirBody &body, const MirPlace &place) {
   return std::nullopt;
 }
 
-struct ConstantArrayElementFieldAccess {
+struct ArrayElementFieldAccess {
   ArrayElementAccess element;
   SemanticType elementType = SemanticType::Unknown;
   std::vector<MirPlaceProjection> fields;
 };
 
-// A field projected from a compile-time in-bounds fixed-array element needs no
-// second storage row and no runtime bounds edge. Dynamic or unchecked indices
-// stay outside this shape so a field projection cannot hide a failing access.
-// The array itself is either the bare root or an array-typed field chain of
-// the root record (a fixed-array class field), proved by its sibling place.
-[[nodiscard]] std::optional<ConstantArrayElementFieldAccess>
-constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
+// Whether MIR completed the bound check of the dynamic index at `position`
+// of `place` before any access through a projection below it: a checked
+// fixed-array AddressOf of exactly that element selection.
+[[nodiscard]] bool checkedElementSelection(const MirBody &body,
+                                           const MirPlace &place,
+                                           std::size_t position) {
+  const std::vector<DefinedFailureOutcome> bound{
+      {DefinedFailureCode::IndexOutOfBounds, DefinedFailureDetail::FixedArray}};
+  for (const MirBlock &block : body.blocks)
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Compute ||
+          instruction.operation != MirOperation::AddressOf ||
+          instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != MirOperandKind::Address ||
+          std::none_of(
+              instruction.definedFailure.localOrigins.begin(),
+              instruction.definedFailure.localOrigins.end(),
+              [&](const auto &origin) { return origin.outcomes == bound; }))
+        continue;
+      const MirPlace *selected =
+          body.findPlace(instruction.operands.front().place);
+      if (selected != nullptr && selected->root == place.root &&
+          selected->binding == place.binding &&
+          selected->symbol == place.symbol &&
+          selected->capture == place.capture &&
+          selected->value == place.value &&
+          selected->projections.size() == position + 1 &&
+          std::equal(selected->projections.begin(), selected->projections.end(),
+                     place.projections.begin()))
+        return true;
+    }
+  return false;
+}
+
+// A field projected from a fixed-array element needs no second storage row
+// and no bounds edge of its own. Every index is compile-time in bounds or a
+// dynamic index whose selection MIR already checked at its AddressOf, so a
+// field projection cannot hide a failing access. The array itself is either
+// the bare root or an array-typed field chain of the root record (a
+// fixed-array class field), proved by its sibling place.
+[[nodiscard]] std::optional<ArrayElementFieldAccess>
+arrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
   const bool bindingRoot =
       place.root == MirPlaceRootKind::Binding && place.binding != 0;
   const bool symbolRoot =
@@ -1217,8 +1252,14 @@ constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
     for (auto projection = firstIndex; projection != firstField; ++projection) {
       if (current.kind != SemanticType::Array ||
           current.arguments.size() != 1 ||
-          current.arrayLengthParameterId != 0 || !projection->constantIndex ||
-          *projection->constantIndex >= current.arrayLength) {
+          (projection->constantIndex
+               ? current.arrayLengthParameterId != 0 ||
+                     *projection->constantIndex >= current.arrayLength
+               : projection->index == 0 ||
+                     !checkedElementSelection(
+                         body, place,
+                         static_cast<std::size_t>(
+                             projection - place.projections.begin())))) {
         valid = false;
         break;
       }
@@ -1229,7 +1270,7 @@ constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
     if (!valid || current.kind != SemanticType::Class) {
       continue;
     }
-    return ConstantArrayElementFieldAccess{
+    return ArrayElementFieldAccess{
         .element = ArrayElementAccess{.array = candidate.id,
                                       .indices = std::move(indices)},
         .elementType = current,
@@ -1241,7 +1282,7 @@ constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
 
 // An enum observed in place through a fixed-array selection: an element of an
 // array local, global or array field, or a field of an element whose indices
-// are compile-time in bounds. MIR finishes each checked selection at its
+// are proved in bounds. MIR finishes each checked selection at its
 // AddressOf before a switch reads the enum, so its discriminant and payload
 // reads spell the same element subscription as every other use of the place.
 // Admission and the text step share this predicate.
@@ -1250,7 +1291,7 @@ constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
   return place.type.kind == SemanticType::Enum &&
          (arrayElementAccess(body, place) ||
           arrayFieldElementAccess(body, place) ||
-          constantArrayElementFieldAccess(body, place));
+          arrayElementFieldAccess(body, place));
 }
 
 // A string-view element place reads through the terminal bounds-checked
@@ -3314,6 +3355,34 @@ classMoveAssignmentFusion(const MirProgram &program, const MirBody &body,
   return {};
 }
 
+// A global's storage, a lambda's by-value capture, or the referent of a
+// by-reference capture (mutable, when the place is written): named lvalues the
+// shared place spelling reads and writes directly, exactly like a bare
+// binding.
+[[nodiscard]] bool namedSymbolPlace(const MirBody &body, const MirPlace &place,
+                                    bool written) {
+  if (place.root != MirPlaceRootKind::Symbol || place.symbol == 0)
+    return false;
+  if (place.projections.empty())
+    return place.type.kind != SemanticType::Reference;
+  if (place.projections.size() != 1 ||
+      place.projections.front().kind != MirProjectionKind::Dereference)
+    return false;
+  return std::any_of(body.places.begin(), body.places.end(),
+                     [&](const MirPlace &carrier) {
+                       return carrier.id != place.id &&
+                              carrier.root == MirPlaceRootKind::Symbol &&
+                              carrier.symbol == place.symbol &&
+                              carrier.capture == place.capture &&
+                              carrier.projections.empty() &&
+                              carrier.type.kind == SemanticType::Reference &&
+                              carrier.type.arguments.size() == 1 &&
+                              carrier.type.arguments.front() == place.type &&
+                              (!written || carrier.type.referenceAccess ==
+                                               AccessMode::Mutable);
+                     });
+}
+
 // A class copy used only by the immediately following assignment has no MIR
 // lifetime of its own: no place or drop obligation owns the loaded SSA value,
 // and the discarded assignment result is metadata only. Fuse the exact
@@ -3348,12 +3417,11 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
   const std::vector<MirValueUse> uses = nonRootRecordUses(body, copiedValue);
   if (copied == nullptr || copied->definition != load->id ||
       copied->info.type != load->info.type || source == nullptr ||
-      (source->root != MirPlaceRootKind::Binding &&
+      ((source->root != MirPlaceRootKind::Binding ||
+        !source->projections.empty()) &&
        !exactPassiveClassField(program, body, *source, false) &&
-       !foreignCAbiRecordPlace(program, *source)) ||
-      (!source->projections.empty() &&
-       !exactPassiveClassField(program, body, *source, false) &&
-       !foreignCAbiRecordPlace(program, *source)) ||
+       !foreignCAbiRecordPlace(program, *source) &&
+       !namedSymbolPlace(body, *source, false)) ||
       source->type != load->info.type || !source->traits.copyable ||
       load->operands.front().type != source->type || uses.size() != 1 ||
       uses.front().kind != MirValueUseKind::InstructionOperand ||
@@ -3398,6 +3466,17 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
       destination == nullptr
           ? std::nullopt
           : checkedArrayElementDestination(body, *destination);
+  const bool storageDestination =
+      destination != nullptr && namedSymbolPlace(body, *destination, true);
+  // A mutable borrow's referent, as an overloaded subscript yields, receives
+  // the copy through the loan, as a fresh value is published there.
+  const MirLoan *destinationLoan =
+      destination != nullptr && destination->root == MirPlaceRootKind::Loan
+          ? body.findLoan(destination->loan)
+          : nullptr;
+  const bool loanDestination = destinationLoan != nullptr &&
+                               destination->projections.empty() &&
+                               destinationLoan->access == AccessMode::Mutable;
   if (assignment == nullptr || destination == nullptr ||
       assignmentResult == nullptr ||
       assignment->kind != MirInstructionKind::Assign ||
@@ -3412,8 +3491,9 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
       destination->type != source->type || !destination->traits.copyable ||
       !destination->traits.copyAssignable ||
       (!bareDestination && !checkedDestination && !receiverDestination &&
-       !foreignDestination) ||
-      ((bareDestination || receiverDestination || foreignDestination) &&
+       !foreignDestination && !storageDestination && !loanDestination) ||
+      ((bareDestination || receiverDestination || foreignDestination ||
+        storageDestination || loanDestination) &&
        (!assignment->localFailureSites.empty() ||
         !assignment->definedFailure.empty())) ||
       (receiverDestination &&
@@ -3441,11 +3521,30 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
     return {};
   }
 
+  // Only a two-phase loan's activation may separate the copy from its
+  // store through that loan; it reads and writes nothing.
+  const auto pureActivation = [&](const MirInstruction &instruction) {
+    return loanDestination && destinationLoan->twoPhase &&
+           instruction.kind == MirInstructionKind::ActivateBorrow &&
+           instruction.loan == destinationLoan->id && !instruction.result &&
+           !instruction.destination && !instruction.receiver &&
+           instruction.operands.empty() && instruction.lifecycle.empty() &&
+           instruction.localFailureSites.empty() &&
+           instruction.definedFailure.empty() && !instruction.ownership &&
+           instruction.fullExpressionEnd == 0 &&
+           !instruction.earlyExitFullExpressionEnd &&
+           instruction.cleanupBoundaryEnd == 0;
+  };
   for (const MirBlock &block : body.blocks) {
     for (std::size_t index = 0; index + 1 < block.instructions.size();
          ++index) {
-      if (block.instructions[index].id == load->id &&
-          block.instructions[index + 1].id == assignment->id) {
+      if (block.instructions[index].id != load->id)
+        continue;
+      std::size_t next = index + 1;
+      if (next + 1 < block.instructions.size() &&
+          pureActivation(block.instructions[next]))
+        ++next;
+      if (block.instructions[next].id == assignment->id) {
         return {.load = load,
                 .assignment = assignment,
                 .source = source,
@@ -3547,6 +3646,8 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
                                destination->binding != 0 &&
                                destination->projections.empty() &&
                                destination->access == AccessMode::Mutable;
+  const bool storageDestination =
+      destination != nullptr && namedSymbolPlace(body, *destination, true);
   const SemanticType &assignedType = value->info.type;
   const bool receiverDestination =
       destination != nullptr &&
@@ -3589,11 +3690,12 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
       destination->type != assignedType || !destination->traits.movable ||
       !destination->traits.moveAssignable ||
       (!bareDestination && !checkedDestination && !loanDestination &&
-       !receiverDestination) ||
-      // Neither a bare binding assignment nor a write through an already
+       !receiverDestination && !storageDestination) ||
+      // Neither a named-place assignment nor a write through an already
       // produced loan can fail; only the checked array write carries a
       // bounds failure site for its enclosing invoke edge.
-      ((bareDestination || loanDestination || receiverDestination) &&
+      ((bareDestination || loanDestination || receiverDestination ||
+        storageDestination) &&
        (!assignment->localFailureSites.empty() ||
         !assignment->definedFailure.empty())) ||
       (receiverDestination &&
@@ -30313,7 +30415,7 @@ public:
       if (arrayFieldElementAccess(facts.body, place)) {
         continue;
       }
-      if (constantArrayElementFieldAccess(facts.body, place)) {
+      if (arrayElementFieldAccess(facts.body, place)) {
         continue;
       }
       // A view element spells through the terminal checked helper.
@@ -33699,8 +33801,9 @@ private:
           emitChecked(*access, [&] { emitArrayFieldParent(facts, *access); });
         } else if (const auto access = arrayElementAccess(facts.body, *place)) {
           emitChecked(*access, [&] { emitArrayParent(facts, *access); });
-        } else if (constantArrayElementFieldAccess(facts.body, *place)) {
-          // Every dimension already has a sealed constant in-bounds proof.
+        } else if (arrayElementFieldAccess(facts.body, *place)) {
+          // Every dimension already has a constant in-bounds proof or a
+          // completed checked selection.
           emitPlaceExpression(facts, *place);
         } else {
           throw std::logic_error("checked address lost its array place");
@@ -33934,8 +34037,8 @@ private:
       }
     }
     if (place != nullptr) {
-      if (const std::optional<ConstantArrayElementFieldAccess> access =
-              constantArrayElementFieldAccess(facts.body, *place)) {
+      if (const std::optional<ArrayElementFieldAccess> access =
+              arrayElementFieldAccess(facts.body, *place)) {
         const MirPlace *array = facts.body.findPlace(access->element.array);
         if (array == nullptr) {
           throw std::logic_error(
@@ -34004,14 +34107,13 @@ private:
           throw std::logic_error(
               "verified array-element field store changed root kind");
         }
-        for (const MirPlaceProjection &index : access->element.indices) {
-          if (!index.constantIndex) {
-            throw std::logic_error(
-                "verified array-element field store lost its constant index");
-          }
+        // A dynamic index's selection is already checked.
+        for (const MirPlaceProjection &index : access->element.indices)
           spelling += "[static_cast<std::size_t>(" +
-                      std::to_string(*index.constantIndex) + ")]";
-        }
+                      (index.constantIndex
+                           ? std::to_string(*index.constantIndex)
+                           : "__gti_mir_v_" + std::to_string(index.index)) +
+                      ")]";
         spelling += fieldProjectionChainSpelling(access->elementType,
                                                  access->fields, 0);
         return spelling;
@@ -34260,7 +34362,7 @@ private:
               *access, [&] { emitArrayBase(facts, *access); },
               [&] { emitArrayElement(facts, *access, true); });
         } else if (const auto access =
-                       constantArrayElementFieldAccess(facts.body, *place)) {
+                       arrayElementFieldAccess(facts.body, *place)) {
           emitCheckedAddress(
               access->element, [&] { emitArrayBase(facts, access->element); },
               [&] {
@@ -35354,9 +35456,10 @@ private:
         const std::optional<CheckedArrayElementDestination> checked =
             checkedArrayElementDestination(facts.body, *fusion.destination);
         if (!checked) {
-          // A bare mutable binding or an already-produced mutable loan assigns
-          // the construction directly; MIR gave the cleanup-free prvalue no
-          // storage or cleanup identity of its own.
+          // A bare mutable binding, a named storage place or an
+          // already-produced mutable loan assigns the construction directly;
+          // MIR gave the cleanup-free prvalue no storage or cleanup identity of
+          // its own.
           emitStoragePlaceValue(facts, *fusion.destination);
           output << " = ";
           emitClassConstructionExpression(facts, *fusion.construct);
@@ -42079,9 +42182,10 @@ private:
       emitArrayElement(facts, *access);
       return;
     }
-    if (const std::optional<ConstantArrayElementFieldAccess> access =
-            constantArrayElementFieldAccess(facts.body, place)) {
-      emitArrayElement(facts, access->element);
+    if (const std::optional<ArrayElementFieldAccess> access =
+            arrayElementFieldAccess(facts.body, place)) {
+      // Every selection is already in bounds, so no index is guarded again.
+      emitArrayElement(facts, access->element, true);
       emitFieldProjectionChain(access->elementType, access->fields, 0);
       return;
     }
@@ -50367,7 +50471,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       continue;
     }
-    if (const auto access = constantArrayElementFieldAccess(body, place)) {
+    if (const auto access = arrayElementFieldAccess(body, place)) {
       const MirPlace *array = body.findPlace(access->element.array);
       if (array == nullptr || !typeRow(array->type) || !typeRow(place.type) ||
           !exactFieldProjectionRows(program_, representations_,
@@ -53513,7 +53617,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               checkedArrayAssignmentFailure(program_, instruction) &&
               (arrayElementAccess(body, *place) ||
                arrayFieldElementAccess(body, *place) ||
-               constantArrayElementFieldAccess(body, *place));
+               arrayElementFieldAccess(body, *place));
           if (!exactPointer ||
               ((!instruction.localFailureSites.empty() ||
                 !instruction.definedFailure.empty()) &&

@@ -1,0 +1,42 @@
+// Build normally, then with -D NDEBUG: the disabled debug condition is not run.
+#include <std/assert>
+#include <std/panic>
+#include <std/string>
+
+struct Observations {
+  static mut int message_calls = 0;
+};
+
+std::string explain_failure() {
+  Observations::message_calls++;
+  return std::string("an expensive explanation");
+}
+
+namespace application {
+  // No special compiler recognition of this name or of assertion APIs.
+  [[deferred, track_caller]]
+  void require(bool condition, std::string_view reason) {
+    if (!condition) { std::panic(reason); }
+  }
+}
+
+int main() {
+  mut int checks = 0;
+  std::assert(checks++ == 0, "Failure: {}", explain_failure());
+  std::debug_assert(checks++ == 1, "Debug failure: {}", explain_failure());
+  application::require(checks >= 1, "Application invariant failed");
+
+  // Merely writing a deferred move does not consume the source. This message
+  // is never needed; no move, allocation or destruction is performed for it.
+  std::string name{"still owned"};
+  std::assert(true, "{}", std::move(name));
+  std::assert(name.view() == "still owned");
+  std::assert(Observations::message_calls == 0);
+  if (std::debug_assertions_enabled) {
+    std::assert(checks == 2);
+  } else {
+    std::assert(checks == 1);
+  }
+  std::println("Deferred assertions passed");
+  return 0;
+}

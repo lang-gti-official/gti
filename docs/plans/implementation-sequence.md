@@ -43,6 +43,39 @@ integration follows the current GitHub workflow. Reproduce a remaining
 composition against current main before treating a past rejection as a new
 compiler task.
 
+## Deferred assertion foundation (0.465.0)
+
+The implementation provides source-defined `std::assert` and
+`std::debug_assert`, plus general `[[deferred]]` void statement helpers.
+Semantic substitution preserves definition/caller lookup and checks actual
+uses in caller ownership flow. Only expanded executable calls enter runtime
+effect and callable-transport inventories; written helper selections remain
+editor facts. HIR and MIR use their existing checked branch/call operations.
+Ordinary constant boolean facts refine feasible move paths without turning
+an unselected ordinary branch into an unchecked `if constexpr` branch.
+
+This changes the earlier assertion direction: call-site closures or an empty
+ordinary function do not provide the required skipped-argument guarantee.
+The accepted bounded profile is recorded in
+[execution](../language/execution.md#deferred-statement-helpers) and
+[ADR 030](../decisions/030-deferred-statement-helpers.md). Acceptance requires
+native standard/optimization/sanitizer parity, disabled type diagnostics,
+ownership/loan/caller-origin rejection tests, editor/profile/module/example
+gates, broad optimized regression and successful-path cost measurements.
+
+Further goals, not implemented by this slice:
+
+- Local binders/loops and value results need hygienic binding identities,
+  explicit local-exit and full-expression lifetime facts, with replayable MIR
+  cleanup and negative escape tests.
+- Fresh callable-valued arguments need source-identity-preserving type
+  discovery before substitution; a named callable works in the current profile.
+- Constant-context deferred calls require the staged verified-MIR evaluation
+  profile from L-CONST-01, preserving phase timing and diagnostic/resource
+  limits. This slice does not add another AST execution rule.
+- Escaping or memoized lazy values require a separate lifetime/forcing/storage
+  contract; they are not silently provided by expression parameters.
+
 ## Runtime Performance Requirement: 2026-10-09
 
 Runtime performance is now a first-class design and delivery requirement under
@@ -9164,7 +9197,7 @@ prerequisite checkpoints as full acceptance.
       accessors (`std::move(o).value()`) and returning the value. `o->`
       over a `std::string_view` payload is a backend `GTI-B0001` for every
       receiver (an existing gap that this release makes reachable).
-  - *Implemented in 0.465.0 (2c): conversions, field relays and returns.*
+  - *Implemented in 0.466.0 (2c): conversions, field relays and returns.*
     - *Contextual construction.* An implicit conversion's one expression
       node is both the argument and the converted value. It publishes the
       argument's owner as an explicit construction does, so
