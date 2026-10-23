@@ -9061,7 +9061,10 @@ prerequisite checkpoints as full acceptance.
     that text's opaque owner, as the empty path already does for a lone view.
     Verification accepts that terminal and never treats it as a referent
     place. `verifyOwnerlessTextContracts` admits a dependent text-field write
-    only when the written value's `Stored` loan designates that field.
+    only when the written value's `Stored` loan designates that field. It
+    also derives which local bindings hold a publication's text and requires
+    each to carry a loan that retains the owner, so semantics' carrier lists
+    are checked rather than trusted.
   - *Where a dependent value may live.* A local binding it initializes, a
     by-value argument or result under a summary, and a temporary within one
     expression. Still rejected:
