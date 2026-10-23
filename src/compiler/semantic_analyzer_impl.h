@@ -2278,8 +2278,12 @@ private:
     // The payload construction's argument naming the formal.
     const Expr *payloadArgument = nullptr;
     // For a class formal, the text field of it that the initializer stores,
-    // read directly or through an accessor relaying it.
+    // read directly or through an accessor relaying it, or a field of a
+    // publishable class type holding text paths.
     SymbolId sourceField = 0;
+    // A class formal the initializer stores whole, in a field or payload of
+    // its own type: every text path of the argument nests under it.
+    bool wholeValue = false;
   };
   [[nodiscard]] std::vector<ConstructorTextInput>
   ownerlessTextConstructorInputs(
