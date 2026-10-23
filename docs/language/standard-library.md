@@ -247,6 +247,17 @@ The current implemented foundation includes:
   deterministic cleanup. Formatting and stdout convenience APIs use the same
   facility; see [panic reporting](io.md#surface) and
   [defined runtime failure](execution.md#410-defined-runtime-failure); and
+- `<std/assert>` provides always-on `std::assert`, configuration-controlled
+  `std::debug_assert` and `constexpr bool std::debug_assertions_enabled`.
+  Both check an exact `bool`, evaluating it once when enabled, and use
+  `std::panic` on failure. Optional literal or formatted messages are evaluated
+  only on failure. `NDEBUG` disables all debug-assert argument evaluation, not
+  their type checking; it never disables `std::assert`. The built-in release
+  project profile defines `NDEBUG`; direct compilation can use `-D NDEBUG`,
+  independently of optimization. These are source-defined
+  [deferred statement helpers](execution.md#deferred-statement-helpers), a
+  facility available equally to application APIs. `static_assert` remains the
+  unqualified compile-time language construct; and
 - `<std/testing>` provides caller-tracked `std::testing::check`, reporting a
   failed condition through cleanup-preserving panic. Manifest test suites
   discover `[[test]] void` functions and run each in its own process; see

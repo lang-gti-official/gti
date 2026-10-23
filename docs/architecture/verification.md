@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Conversions, field relays and returns (0.465.0)
+## Conversions, field relays and returns (0.466.0)
 
 `view_fields` covers phase 2c in four tests.
 - `testContextualConstruction`: `std::optional<std::string_view> maybe =
@@ -42,6 +42,81 @@ a reference formal and reject one over a local owner.
 global, and ASan reported it once the owner reallocated. Passing the field
 by value or by reference, storing it, and passing on a returned reference to
 it escaped the same way. `testPayloadFieldUses` covers each shape.
+
+## Class stores into named places and element fields (0.465.1)
+
+`class_store_destinations_runtime` runs `class_store_destinations.gti`.
+User-defined structs are copied into, and constructed directly into, a
+class-typed global and the referent of a `[mut &p]` capture, and copied from a
+global and from a by-value capture; copied and read back through
+`std::vector`'s mutable subscript, including from a global; and read, stored,
+copied, returned and used as a receiver through a fixed-array element selected
+at a run-time index, including `segments[i].start.y`, `cells[i][j].x`, a
+class's array field `shape.corners[i]` and an enum switch on `jobs[i].state`.
+A run-time index out of range fails with `GTI-R0007` (exit status 70) before
+the field is read, after every earlier line. Each result is checked in
+C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan. The 0.464.0 compiler stops
+the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_lifecycle`, `testClassStoresIntoNamedPlaces` checks
+the emitted single store for a copy into a global (`g = p.get()`), a global as
+the source, a fresh construction into the global, a copy through a
+by-reference capture from a by-value capture (`p = q;`) and a copy through the
+subscript's two-phase loan after its activation; a read-only loan or captured
+reference refuses the body. `testCheckedArrayElementFieldAccess` checks that a
+field read, a field store and a whole class element copy at a run-time index
+follow exactly one checked `AddressOf` of the element and carry no bound of
+their own, that a constant index has none, and that the text checks the bound
+once before the plain subscript; clearing the check's origin fails program
+verification ("field access reads a fixed-array element before its checked
+selection") and refuses the body.
+
+A differential `--emit-cpp` against main `6333da11`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1821 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3. Only the new
+fixture changed, from `GTI-B0001` to success. Every other program emits
+byte-identical C++, so constant-index element fields keep their check-free
+spelling, and the 736 pairs that fail with both compilers report identical
+diagnostics. The summed emission time was 3197.9 s before and 3203.6 s after,
+on a machine shared with other builds.
+
+Still `GTI-B0001`, as on main: a constructor initializing a class's
+fixed-array field from its parameters (`Polygon(Point a, Point b) :
+corners({a, b})`).
+## Deferred assertions and statement helpers (0.465.0)
+
+`deferred_assertions` checks the general `[[deferred]]` statement-helper rule
+with unrelated application types: conditional/repeated moves, live loans,
+disabled formatter errors, exact argument types, unsafe obligations, invalid
+signatures/bodies, recursion limits and callable-identity boundaries. It also
+checks HIR expansion, independent MIR verification, the absence of eager helper
+instances, and rejection of an erased tracked-caller origin.
+
+`deferred_assertions_runtime` runs the success/failure fixtures and runnable
+example 172 with C++20/C++23 at O0/O1/O3, disabled elision, ASan/UBSan, and native
+`-DNDEBUG`, each with source `NDEBUG` enabled and disabled. It checks forcing
+count/order, skipped moves and message construction, lookup/access hygiene,
+caller defaults and nested wrappers, reverse cleanup, panic during cleanup,
+and managed-thread propagation. The example is identified by its selected
+path, not a numeric-prefix convention, so renumbering cannot change the expected
+output policy.
+
+`deferred_assertions_lsp` covers unsaved/incomplete text, UTF-16 spans, static
+argument errors and hover contracts. Project-model and scoped-configuration
+checks cover default release `NDEBUG`, explicit profile overrides and frontend
+versus native flags. The module/surface gates, both corpus censuses, pinned
+Tree-sitter corpus and shipped-source parsing cover the new header, module,
+attribute and example inventories.
+
+`deferred_assertions_cost` compares the same complete-state workload with
+handwritten control flow. Zero observed successful-path allocations and cold
+message calls are correctness gates; `--measure` adds two warmups and nine
+interleaved samples, native/generated size, build time and child peak memory.
+Timing samples are reported rather than gated on noisy shared hosts. Deferred
+source expansion still has a compile-time cost; runtime parity does not imply
+compilation-cost parity. The current structural/forcing bounds are recorded in
+[execution](../language/execution.md#deferred-statement-helpers) and
+[ADR 030](../decisions/030-deferred-statement-helpers.md).
 
 ## Whole assignment results (0.464.2)
 

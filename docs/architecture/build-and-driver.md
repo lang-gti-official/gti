@@ -8,6 +8,16 @@ explicit add/fetch and deterministic publication are implemented behind a
 backend-independent protocol; Gitea Generic Packages is the official bootstrap
 backend.
 
+The built-in `release` project's default configuration defines `NDEBUG`,
+disabling source-defined `std::debug_assert` evaluation; `dev` leaves it
+inactive. An explicit profile `defines` array replaces that profile default,
+so `defines = []` deliberately keeps debug assertions enabled even in a
+release profile. Refining other release fields preserves its default defines.
+Direct compilation does not infer this switch from `-O`: use `-D NDEBUG` to
+disable debug assertions independently of optimization. The resolved flags
+remain shared by compiler, cache identity, metadata and LSP analysis. Ordinary
+`std::assert` is never disabled by this flag.
+
 GTI has one language compilation pipeline and two user entry modes:
 
 ```text
