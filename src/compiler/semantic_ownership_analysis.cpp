@@ -1495,12 +1495,12 @@ auto SemanticVisitor::Impl::textFieldContractFormal(const Expr &object) const
       return std::nullopt;
     current = group->expression().get();
   }
-  // Only a read-only formal or receiver: a mutable one may be rewritten, so
-  // its reads keep the ownerless rule and it takes no relay.
+  // Only a read-only formal or a read-only or consuming receiver: a mutable
+  // one may be rewritten, so its reads keep the ownerless rule and it takes
+  // no relay.
   if (exprAs<This>(current) != nullptr) {
     if (function->ownerClass == 0 || function->staticMember ||
-        function->bodyDeclaration()->receiverMutability() !=
-            ReceiverMutability::ReadOnly ||
+        !contractReceiver(function->bodyDeclaration()->receiverMutability()) ||
         !textPublicationOwner(openClassType(function->ownerClass)))
       return std::nullopt;
     return OwnerlessTextField{.receiver = true};
@@ -1641,8 +1641,7 @@ auto SemanticVisitor::Impl::fieldSourcedTextFormal(
   // An implicit receiver call relays this method's own receiver.
   const FunctionInfo *scope = textFieldContractScope();
   if (scope == nullptr || scope->ownerClass == 0 || scope->staticMember ||
-      scope->bodyDeclaration()->receiverMutability() !=
-          ReceiverMutability::ReadOnly ||
+      !contractReceiver(scope->bodyDeclaration()->receiverMutability()) ||
       !textPublicationOwner(openClassType(scope->ownerClass)))
     return std::nullopt;
   return OwnerlessTextField{
@@ -1660,8 +1659,7 @@ auto SemanticVisitor::Impl::implicitReceiverTextField(
   if (symbol == nullptr || symbol->ownerClass == 0 || symbol->staticMember ||
       symbol->parameterDeclaration != nullptr ||
       function->ownerClass != symbol->ownerClass || function->staticMember ||
-      function->bodyDeclaration()->receiverMutability() !=
-          ReceiverMutability::ReadOnly)
+      !contractReceiver(function->bodyDeclaration()->receiverMutability()))
     return std::nullopt;
   const SemanticType owner = openClassType(function->ownerClass);
   const SymbolId field = symbolForDeclaration(symbol->declaration);
@@ -1711,8 +1709,8 @@ auto SemanticVisitor::Impl::conditionalTextField(const Expr &expression) const
       classInfo(scope->ownerClass).genericParameters.empty())
     return std::nullopt;
   const bool readOnlyReceiver =
-      !scope->staticMember && scope->bodyDeclaration()->receiverMutability() ==
-                                  ReceiverMutability::ReadOnly;
+      !scope->staticMember &&
+      contractReceiver(scope->bodyDeclaration()->receiverMutability());
   std::optional<OwnerlessTextField> formal;
   SemanticType owner = SemanticType::Unknown;
   const Token *name = nullptr;
@@ -1778,8 +1776,23 @@ auto SemanticVisitor::Impl::conditionalRelayReturns(
   std::unordered_set<const Expr *> found;
   for (const ExprPtr *returned : returns) {
     const Expr *current = returned != nullptr ? returned->get() : nullptr;
-    while (const auto *group = exprAs<Grouping>(current))
-      current = group->expression() ? group->expression().get() : nullptr;
+    // A returned move of the field relays it as a returned read does; the
+    // call is not resolved yet, so the movement capability is matched as
+    // the predeclared relay summary matches it.
+    while (current != nullptr) {
+      if (const auto *group = exprAs<Grouping>(current))
+        current = group->expression() ? group->expression().get() : nullptr;
+      else if (const auto *call = exprAs<Call>(current);
+               call != nullptr && call->arguments().size() == 1 &&
+               [&] {
+                 const auto intrinsic = intrinsicCandidate(call->callee());
+                 return intrinsic &&
+                        intrinsic->record().intrinsic == IntrinsicKind::Move;
+               }())
+        current = call->arguments().front().get();
+      else
+        break;
+    }
     const auto field =
         current != nullptr ? conditionalTextField(*current) : std::nullopt;
     if (!field || !field->receiver || (relayed && *relayed != field->field))
@@ -1819,8 +1832,7 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
     if (symbol != nullptr && scope->ownerClass != 0 &&
         symbol->ownerClass == scope->ownerClass && !symbol->staticMember &&
         symbol->parameterDeclaration == nullptr && !scope->staticMember &&
-        scope->bodyDeclaration()->receiverMutability() ==
-            ReceiverMutability::ReadOnly &&
+        contractReceiver(scope->bodyDeclaration()->receiverMutability()) &&
         textPublicationOwner(openClassType(scope->ownerClass))) {
       formal = OwnerlessTextField{.receiver = true};
       owner = openClassType(scope->ownerClass);
@@ -1889,8 +1901,7 @@ auto SemanticVisitor::Impl::noteReturnedFormalReference(const Expr &returned)
       // An implicit receiver call borrows this method's receiver.
       const FunctionInfo *scope = textFieldContractScope();
       if (scope != nullptr && scope->ownerClass != 0 && !scope->staticMember &&
-          scope->bodyDeclaration()->receiverMutability() ==
-              ReceiverMutability::ReadOnly &&
+          contractReceiver(scope->bodyDeclaration()->receiverMutability()) &&
           textPublicationOwner(openClassType(scope->ownerClass)))
         formal = OwnerlessTextField{.receiver = true};
     } else if (member->access().kind != TokenKind::ARROW && member->object()) {
@@ -2030,8 +2041,7 @@ auto SemanticVisitor::Impl::recordTextFieldUses(
     consumeTextFieldFormalUse(argument);
   };
   if (target.ownerClass != 0 && !target.staticMember &&
-      target.declaration->receiverMutability() ==
-          ReceiverMutability::ReadOnly) {
+      contractReceiver(target.declaration->receiverMutability())) {
     const SemanticType owner = openClassType(target.ownerClass);
     if (receiver != nullptr) {
       // A generic class's receiver is an instance of the open owner.
@@ -2392,13 +2402,19 @@ auto SemanticVisitor::Impl::publishTextDependency(
     -> void {
   dependency.designatedFields = std::move(path);
   dependency.access = AccessMode::ReadOnly;
-  // A local view binding's loan only carries the owner dependency it copied:
-  // the value depends on that owner directly and may outlive the binding.
+  // A local carrier's loan, a view's or a dependent value's, only carries
+  // the owner dependency it copied: the value depends on that owner directly
+  // and may outlive the carrier.
   if (const SemanticLoanInfo *carrier =
           semanticModel.findLoan(dependency.parent);
       carrier != nullptr && carrier->kind == SemanticLoanKind::StoredValue &&
-      !carrier->entry && carrier->designatedFields.empty() &&
-      carrier->place == dependency.place)
+      !carrier->entry && carrier->place.root == dependency.place.root &&
+      carrier->place.receiver == dependency.place.receiver &&
+      carrier->place.projections.size() <=
+          dependency.place.projections.size() &&
+      std::equal(carrier->place.projections.begin(),
+                 carrier->place.projections.end(),
+                 dependency.place.projections.begin()))
     dependency.parent = carrier->parent;
 }
 
@@ -2781,6 +2797,93 @@ auto SemanticVisitor::Impl::lifecycleBoundBorrowCarrierFor(
   return visit(visit, type);
 }
 
+auto SemanticVisitor::Impl::relayConstructorTextField(
+    const SemanticType &constructedType, const ConstructorDecl &constructor,
+    const ConstructorTextInput &input, const ExprPtr &argument,
+    std::vector<BorrowedFieldOrigin> &textOrigins, bool contextual) -> void {
+  const ExpressionInfo *info = semanticModel.findExpression(*argument);
+  if (info == nullptr || !isTextDependentValue(*info))
+    return;
+  const auto paths = textDependentPaths(*argument);
+  if (std::find(paths.begin(), paths.end(),
+                std::vector<SymbolId>{input.sourceField}) == paths.end())
+    return;
+  // The formal must reach nothing but this initializer: the value keeps its
+  // published text only when no other code reads the formal or `this`.
+  const auto &parameters = constructor.parameters();
+  if (input.parameter >= parameters.size() ||
+      !textPublicationOwner(constructedType) ||
+      !constructionKeepsPublishedText(constructedType, &constructor))
+    return;
+  const std::string &name = parameters[input.parameter].name.lexeme;
+  std::size_t mentions = 0;
+  const auto count = [&](const auto &self, const Expr *expression) -> void {
+    if (expression == nullptr)
+      return;
+    if (const auto *variable = exprAs<Variable>(expression)) {
+      mentions += variable->name().lexeme == name ? 1 : 0;
+      return;
+    }
+    const auto each = [&](const ExprPtr &child) { self(self, child.get()); };
+    if (const auto *group = exprAs<Grouping>(expression))
+      each(group->expression());
+    else if (const auto *get = exprAs<Get>(expression))
+      each(get->object());
+    else if (const auto *call = exprAs<Call>(expression)) {
+      each(call->callee());
+      for (const auto &child : call->arguments())
+        each(child);
+    } else if (const auto *unary = exprAs<Unary>(expression))
+      each(unary->right());
+    else if (const auto *binary = exprAs<Binary>(expression)) {
+      each(binary->left());
+      each(binary->right());
+    } else if (exprAs<LiteralExpr>(expression) == nullptr &&
+               exprAs<QualifiedName>(expression) == nullptr &&
+               exprAs<This>(expression) == nullptr)
+      mentions += 2;
+  };
+  for (const auto &initializer : constructor.initializers())
+    for (const auto &child : initializer.arguments)
+      count(count, child.get());
+  if (mentions != 1)
+    return;
+  auto dependencies = storedBorrowDependencies(argument);
+  const auto source = std::find_if(
+      dependencies.begin(), dependencies.end(), [&](const auto &dependency) {
+        return dependency.designatedFields ==
+               std::vector<SymbolId>{input.sourceField};
+      });
+  const ClassInfo *owner = classInfo(constructedType);
+  const auto member =
+      owner == nullptr
+          ? decltype(owner->members.end()){}
+          : owner->members.find(input.initializer->target.name.last().lexeme);
+  if (source == dependencies.end() || owner == nullptr ||
+      member == owner->members.end())
+    return;
+  if (!textOrigins.empty()) {
+    report(expressionToken(argument),
+           "A value can hold dynamic text from one owner; this argument would "
+           "add a second owner dependency.",
+           "GTI-S2045");
+    return;
+  }
+  std::vector<SymbolId> path{toolingSymbolFor(member->second.symbol)};
+  if (input.payload != 0)
+    path.push_back(input.payload);
+  textOrigins.push_back({.resultFields = std::move(path),
+                         .origin = BorrowOriginKind::Argument,
+                         .parameter = input.parameter,
+                         .sourceFields = {input.sourceField},
+                         .access = AccessMode::ReadOnly});
+  // A contextual construction is its own argument's expression: the one
+  // dependent value it denotes is the converted value, which its consumer
+  // keeps.
+  if (!contextual)
+    consumeTextDependentValue(argument);
+}
+
 auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
     const SemanticType &type, const ConstructorDecl *constructor,
     std::span<const SemanticType> parameterTypes) const
@@ -2799,46 +2902,161 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
            candidate.kind == SemanticType::CString ||
            candidate.kind == SemanticType::TypeParameter;
   };
-  // The formal of `textType` that `expression` names, possibly grouped or
-  // explicitly moved.
-  const auto formalOf =
-      [&](const ExprPtr &expression,
-          const SemanticType &stored) -> std::optional<std::size_t> {
+  // Whether `call` invokes the movement capability, resolved in `scope`,
+  // never in a caller's lexical scope and never by the public spelling.
+  const auto moveCall = [&](const Call &call,
+                            const std::vector<std::string> &scope) {
+    const auto *name = exprAs<QualifiedName>(call.callee().get());
+    if (name == nullptr || call.arguments().size() != 1)
+      return false;
+    const auto &path = name->name();
+    const NamePath qualifier(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    const auto resolved = resolveNamespacePathGlobally(qualifier, scope);
+    if (!resolved)
+      return false;
+    const auto found =
+        activeNamespaceSymbols().find(*resolved + "::" + path.last().lexeme);
+    return found != activeNamespaceSymbols().end() &&
+           found->second.overloads.size() == 1 &&
+           found->second.overloads.front().record().intrinsic ==
+               IntrinsicKind::Move;
+  };
+  // `expression` without groupings and one explicit move, and whether it
+  // was moved.
+  const auto unmove = [&](const ExprPtr &expression,
+                          const std::vector<std::string> &scope)
+      -> std::pair<const ExprPtr *, bool> {
     const ExprPtr *source = &expression;
     while (const auto *group = exprAs<Grouping>(source->get()))
       source = &group->expression();
-    if (const auto *call = exprAs<Call>(source->get())) {
-      // Resolve a qualified movement capability in the declaration's
-      // namespace, never in a caller's lexical scope and never by the public
-      // spelling.
-      const auto *name = exprAs<QualifiedName>(call->callee().get());
-      if (name == nullptr || call->arguments().size() != 1)
-        return std::nullopt;
-      const auto &path = name->name();
-      const NamePath qualifier(
-          std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
-      const auto scope =
-          resolveNamespacePathGlobally(qualifier, owner->namespaceScope);
-      if (!scope)
-        return std::nullopt;
-      const auto found =
-          activeNamespaceSymbols().find(*scope + "::" + path.last().lexeme);
-      if (found == activeNamespaceSymbols().end() ||
-          found->second.overloads.size() != 1 ||
-          found->second.overloads.front().record().intrinsic !=
-              IntrinsicKind::Move)
-        return std::nullopt;
+    if (const auto *call = exprAs<Call>(source->get());
+        call != nullptr && moveCall(*call, scope)) {
       source = &call->arguments().front();
+      while (const auto *group = exprAs<Grouping>(source->get()))
+        source = &group->expression();
+      return {source, true};
     }
-    const Variable *variable = movedVariable(*source);
+    return {source, false};
+  };
+  const auto formalIndex = [&](const Expr *expression) -> std::optional<std::size_t> {
+    const auto *variable = exprAs<Variable>(expression);
     if (variable == nullptr)
       return std::nullopt;
     const auto &parameters = constructor->parameters();
     for (std::size_t index = 0;
          index < parameters.size() && index < parameterTypes.size(); ++index)
-      if (!parameters[index].pack && parameterTypes[index] == stored &&
+      if (!parameters[index].pack &&
           parameters[index].name.lexeme == variable->name().lexeme)
         return index;
+    return std::nullopt;
+  };
+  // The formal of `textType` that `expression` names, possibly grouped or
+  // explicitly moved.
+  const auto formalOf =
+      [&](const ExprPtr &expression,
+          const SemanticType &stored) -> std::optional<std::size_t> {
+    const auto [source, moved] = unmove(expression, owner->namespaceScope);
+    (void)moved;
+    if (movedVariable(*source) == nullptr)
+      return std::nullopt;
+    const auto index = formalIndex(source->get());
+    return index && parameterTypes[*index] == stored ? index : std::nullopt;
+  };
+  // The text field of a by-value class formal that `expression` reads, of
+  // type `stored`: `formal.field`, or a zero-argument accessor of the formal
+  // (moved for a consuming one) whose sole statement returns that field of
+  // its receiver, possibly moved.
+  const auto formalFieldOf = [&](const ExprPtr &expression,
+                                 const SemanticType &stored)
+      -> std::optional<std::pair<std::size_t, SymbolId>> {
+    const auto [source, sourceMoved] = unmove(expression, owner->namespaceScope);
+    (void)sourceMoved;
+    const ExprPtr *object = nullptr;
+    const Token *name = nullptr;
+    const Call *accessor = nullptr;
+    if (const auto *get = exprAs<Get>(source->get());
+        get != nullptr && get->access().kind != TokenKind::ARROW &&
+        get->object()) {
+      object = &get->object();
+      name = &get->name();
+    } else if (const auto *call = exprAs<Call>(source->get());
+               call != nullptr && call->arguments().empty() &&
+               call->typeArguments().empty())
+      if (const auto *get = exprAs<Get>(call->callee().get());
+          get != nullptr && get->access().kind != TokenKind::ARROW &&
+          get->object()) {
+        object = &get->object();
+        name = &get->name();
+        accessor = call;
+      }
+    if (object == nullptr)
+      return std::nullopt;
+    const auto [formalExpression, moved] =
+        unmove(*object, owner->namespaceScope);
+    const auto index = formalIndex(formalExpression->get());
+    if (!index || parameterTypes[*index].kind != SemanticType::Class)
+      return std::nullopt;
+    const SemanticType &formalType = parameterTypes[*index];
+    const ClassInfo *formalClass = classInfo(formalType);
+    if (formalClass == nullptr)
+      return std::nullopt;
+    const auto fieldNamed =
+        [&](const Token &field) -> std::optional<SymbolId> {
+      const auto member = formalClass->members.find(field.lexeme);
+      if (member == formalClass->members.end() ||
+          member->second.symbol.staticMember ||
+          member->second.symbol.bindingKind != SemanticBindingKind::Field ||
+          substituteType(member->second.symbol.type,
+                         classSubstitution(formalType)) != stored)
+        return std::nullopt;
+      const SymbolId symbol =
+          symbolForDeclaration(member->second.symbol.declaration);
+      return directTextField(formalType, symbol) ? std::optional{symbol}
+                                                 : std::nullopt;
+    };
+    if (accessor == nullptr) {
+      if (const auto field = fieldNamed(*name))
+        return std::pair{*index, *field};
+      return std::nullopt;
+    }
+    const auto member = formalClass->members.find(name->lexeme);
+    if (member == formalClass->members.end())
+      return std::nullopt;
+    const ReceiverMutability wanted =
+        moved ? ReceiverMutability::Consuming : ReceiverMutability::ReadOnly;
+    const CallableCandidate *selected = nullptr;
+    for (const CallableCandidate &candidate : member->second.symbol.overloads) {
+      if (candidate.staticMember || candidate.parameterPack ||
+          !candidate.parameterTypes.empty() ||
+          candidate.receiverMutability != wanted || candidate.virtualMethod ||
+          candidate.overrideMethod)
+        continue;
+      if (selected != nullptr)
+        return std::nullopt;
+      selected = &candidate;
+    }
+    const FunctionDecl *body =
+        selected == nullptr ? nullptr
+        : selected->declaration != nullptr && selected->declaration->body()
+            ? selected->declaration
+            : nullptr;
+    const auto *block =
+        body == nullptr ? nullptr : stmtAs<BlockStmt>(body->body().get());
+    if (block == nullptr || block->statements().size() != 1)
+      return std::nullopt;
+    const auto *returned = stmtAs<ReturnStmt>(block->statements().front().get());
+    if (returned == nullptr || !returned->value())
+      return std::nullopt;
+    const auto [value, valueMoved] =
+        unmove(returned->value(), formalClass->namespaceScope);
+    (void)valueMoved;
+    const auto *get = exprAs<Get>(value->get());
+    if (get == nullptr || get->access().kind == TokenKind::ARROW ||
+        !get->object() || exprAs<This>(get->object().get()) == nullptr)
+      return std::nullopt;
+    if (const auto field = fieldNamed(get->name()))
+      return std::pair{*index, *field};
     return std::nullopt;
   };
   for (const auto &initializer : constructor->initializers()) {
@@ -2855,6 +3073,11 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
     if (textType(fieldType)) {
       if (const auto index = formalOf(initializer.arguments.front(), fieldType))
         result.push_back({.parameter = *index, .initializer = &initializer});
+      else if (const auto relay =
+                   formalFieldOf(initializer.arguments.front(), fieldType))
+        result.push_back({.parameter = relay->first,
+                          .initializer = &initializer,
+                          .sourceField = relay->second});
       continue;
     }
     // A payload construction of the field's own enum stores each formal it
@@ -2903,6 +3126,13 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
                           .initializer = &initializer,
                           .payload = variant->payloadSymbols[index],
                           .payloadArgument = call->arguments()[index].get()});
+      else if (const auto relay =
+                   formalFieldOf(call->arguments()[index], payloadType))
+        result.push_back({.parameter = relay->first,
+                          .initializer = &initializer,
+                          .payload = variant->payloadSymbols[index],
+                          .payloadArgument = call->arguments()[index].get(),
+                          .sourceField = relay->second});
     }
   }
   return result;
@@ -6107,11 +6337,16 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
                                           expression.get());
     auto sources = storedBorrowDependencies(expression);
     contextualTextArgument = enclosing;
-    if (sources.size() != 1 || !sources.front().designatedFields.empty())
+    const auto &mapping = contextual->borrowFields.front();
+    const auto source = std::find_if(
+        sources.begin(), sources.end(), [&](const auto &dependency) {
+          return dependency.designatedFields == mapping.sourceFields;
+        });
+    if (source == sources.end() ||
+        (mapping.sourceFields.empty() && sources.size() != 1))
       return {};
-    publishTextDependency(sources.front(),
-                          contextual->borrowFields.front().resultFields);
-    return sources;
+    publishTextDependency(*source, mapping.resultFields);
+    return {std::move(*source)};
   }
   if (const auto *group = exprAs<Grouping>(expression.get())) {
     return storedBorrowDependencies(group->expression());
@@ -6185,10 +6420,16 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
       if (input == nullptr)
         return {};
       auto sources = storedBorrowDependencies(*input);
-      if (sources.size() != 1 || !sources.front().designatedFields.empty())
+      // A re-rooted input names the argument's own designated field.
+      const auto source = std::find_if(
+          sources.begin(), sources.end(), [&](const auto &dependency) {
+            return dependency.designatedFields == mapping.sourceFields;
+          });
+      if (source == sources.end() ||
+          (mapping.sourceFields.empty() && sources.size() != 1))
         return {};
-      publishTextDependency(sources.front(), mapping.resultFields);
-      dependencies.push_back(std::move(sources.front()));
+      publishTextDependency(*source, mapping.resultFields);
+      dependencies.push_back(std::move(*source));
     }
     return dependencies;
   }

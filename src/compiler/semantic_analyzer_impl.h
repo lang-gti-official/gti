@@ -2160,6 +2160,26 @@ private:
   // `type`.
   [[nodiscard]] bool directTextPayload(const SemanticType &type,
                                        SymbolId payload) const;
+  // A result that returns one text field of the receiver (L-OWN-02): the
+  // text that field holds, never storage of the receiver itself, so even a
+  // consuming method may return it.
+  [[nodiscard]] static bool
+  receiverTextFieldResult(const SemanticType &result, BorrowOriginKind origin,
+                          const std::vector<BorrowedFieldOrigin> &fields) {
+    return (result.kind == SemanticType::StringView ||
+            result.kind == SemanticType::CString) &&
+           origin == BorrowOriginKind::Receiver && fields.size() == 1 &&
+           fields.front().sourceFields.size() == 1 &&
+           fields.front().resultFields.empty();
+  }
+  // A receiver whose text fields carry field contracts (L-OWN-02): a
+  // read-only one, or a consuming one, which owns the caller's value and can
+  // only write ownerless text into a text field.
+  [[nodiscard]] static constexpr bool
+  contractReceiver(ReceiverMutability mutability) {
+    return mutability == ReceiverMutability::ReadOnly ||
+           mutability == ReceiverMutability::Consuming;
+  }
   // Whether `function`'s formal `index` has a type parameter, or a reference
   // to one, as its declared type.
   [[nodiscard]] static bool typeParameterFormal(const FunctionInfo &function,
@@ -2241,11 +2261,23 @@ private:
     SymbolId payload = 0;
     // The payload construction's argument naming the formal.
     const Expr *payloadArgument = nullptr;
+    // For a class formal, the text field of it that the initializer stores,
+    // read directly or through an accessor relaying it.
+    SymbolId sourceField = 0;
   };
   [[nodiscard]] std::vector<ConstructorTextInput>
   ownerlessTextConstructorInputs(
       const SemanticType &type, const ConstructorDecl *constructor,
       std::span<const SemanticType> parameterTypes) const;
+  // At a construction, a dependent `argument` designating the class formal
+  // `input`'s source field publishes its owner at the field path that the
+  // constructor stores it in; any other argument keeps the existing rules.
+  void relayConstructorTextField(const SemanticType &constructedType,
+                                 const ConstructorDecl &constructor,
+                                 const ConstructorTextInput &input,
+                                 const ExprPtr &argument,
+                                 std::vector<BorrowedFieldOrigin> &textOrigins,
+                                 bool contextual);
 
   [[nodiscard]] BindingInfo
   bindingInfo(SemanticType type,

@@ -6891,9 +6891,11 @@ auto SemanticVisitor::Impl::consumingReceiverValue(
     const ExprPtr &receiver) const -> bool {
   const ExpressionInfo *info =
       receiver ? semanticModel.findExpression(*receiver) : nullptr;
+  // A dependent text value's text is governed by the callee's field
+  // contract, which a relay checks at the call (L-OWN-02).
   return info != nullptr && info->category == ValueCategory::Value &&
          info->type.kind == SemanticType::Class && info->traits.movable &&
-         (!info->traits.containsBorrowedState ||
+         (!info->traits.containsBorrowedState || isTextDependentValue(*info) ||
           completeBorrowDependencySet(receiver).has_value());
 }
 

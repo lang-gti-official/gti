@@ -4199,7 +4199,11 @@ private:
           !input->info.traits.movable ||
           (input->info.traits.containsBorrowedState &&
            (input->info.type.kind != SemanticType::Class ||
-            !input->borrowDependencies))) {
+            (!input->borrowDependencies &&
+             // A dependent text value's class holds no borrowed state of
+             // its own (L-OWN-02); the callee's field contract governs it.
+             instanceProvider->traitsFor(input->info.type)
+                 .containsBorrowedState)))) {
         return std::nullopt;
       }
       while (input->kind == HirValueKind::Grouping &&

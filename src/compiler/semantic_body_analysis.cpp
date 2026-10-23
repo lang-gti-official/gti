@@ -3408,7 +3408,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         (result.kind == SemanticType::Reference ||
          typeTraits(result).containsBorrowedState ||
          (functionInfo != nullptr &&
-          functionInfo->returnBorrowOrigin != BorrowOriginKind::None))) {
+          functionInfo->returnBorrowOrigin != BorrowOriginKind::None &&
+          !receiverTextFieldResult(result, functionInfo->returnBorrowOrigin,
+                                   functionInfo->returnBorrowFields)))) {
       report(stmt.name(),
              std::string("A consuming ") +
                  (stmt.operatorName() ? "operator" : "method") +
