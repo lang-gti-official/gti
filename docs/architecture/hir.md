@@ -828,6 +828,13 @@ executable HIR source is a separate out-of-line definition with renamed
 parameters and no repeated defaults. Verification resolves the canonical
 declaration through the exact selected function identity, not body syntax or
 name lookup.
+
+A by-value argument whose input is a built-in class assignment is staged as
+`CopyValue`, not `MoveValue`, although semantics gives the assignment a value
+result: that result is a copy of the committed destination, so the stage
+copies the destination, and MIR places that copy directly after the `Assign`.
+Only a copyable class result without borrowed state is staged this way;
+semantics rejects using a move-only assignment's result.
 MIR flattens the written pack
 before staging those defaults, using the flattened parameter index and ordinary
 prepared-owner failure/transfer rules. A non-final written pack is not newly

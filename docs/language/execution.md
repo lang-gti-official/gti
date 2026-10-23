@@ -232,10 +232,20 @@ enclosing full-expression. A later write of the target, including one by a
 later operand of the same full-expression, does not change that result, and a
 reference derived from it cannot outlive the full-expression. For a class the
 result is a copy of the target, so `(p = q).x` reads `q`'s field, and in
-`combine((p = q).x, (p = r).x)` the first argument is still `q.x`. Reading
-fields of a copyable class assignment's result is implemented. Reading fields
-of a move-only class's assignment result, and using a class assignment's whole
-result, are not yet implemented.
+`combine((p = q).x, (p = r).x)` the first argument is still `q.x`. Every use
+of a class assignment's result receives that copy: a field read, an
+initialization such as `Point r = (p = q);`, a return, a by-value argument, a
+constructor field initializer, and a method receiver. In `pair(p = q, p = r)`
+the first argument is still `q`, and a `mut` method called as
+`(c = d).bump()` changes the copy while `c` keeps holding `d`.
+
+A move-only type has no copy, so only a discarded assignment may store one.
+Using the result of an assignment of a move-only type, as in
+`Tracked r = (p = std::move(q));`, `take(p = std::move(q))` or
+`(p = std::move(q)).x`, is rejected with `GTI-S2003`. A result is discarded
+when the assignment is an expression statement, a for-loop increment, or a
+comma's left operand, or when it is what a discarded grouping, comma or
+conditional yields.
 
 When a plain subscript or dereference assignment forms its target through a
 source-defined operator returning `mut T&`, the selected target call runs

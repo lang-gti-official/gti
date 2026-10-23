@@ -2634,6 +2634,7 @@ auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
   } restoreDeferredStatement{deferredStatementCall, deferredStatementCall};
   deferredStatementCall = directCall(stmt.expression());
   semanticModel.recordFullExpression(stmt, stmt.expression());
+  discardResult(stmt.expression());
   const SemanticType resultType = analyze(stmt.expression());
   consumeTextDependentValue(stmt.expression());
   const Call *call = directCall(stmt.expression());
@@ -2714,6 +2715,7 @@ auto SemanticVisitor::Impl::visitForStmt(const ForStmt &stmt) -> void {
 
   ScopeStack afterIteration = beforeLoop;
   semanticModel.recordFullExpression(stmt, stmt.increment());
+  discardResult(stmt.increment());
   if (!incrementInputs.empty()) {
     scopes = mergedValueStates(beforeLoop, incrementInputs);
     analyze(stmt.increment());
@@ -6802,6 +6804,11 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
 }
 
 auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
+  if (expr.oper().kind == TokenKind::COMMA) {
+    discardResult(expr.left());
+    if (discardedResults.contains(&expr))
+      discardResult(expr.right());
+  }
   const auto [leftType, rightType] = analyzeBinaryOperands(expr);
   validateSequencedTransientLoans(expr.left(), expr.right(), expr.oper());
 
@@ -8246,6 +8253,10 @@ auto SemanticVisitor::Impl::analyzeAliasConversion(
 
 auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
     -> void {
+  if (discardedResults.contains(&expr)) {
+    discardResult(expr.thenExpression());
+    discardResult(expr.elseExpression());
+  }
   // Each arm is the conditional's value and has its use. An arm keeps that
   // use even when the other arm's type is expected of it.
   const std::optional<ResultUse> use = resultUseFor(expr);
@@ -9069,6 +9080,8 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
 }
 
 auto SemanticVisitor::Impl::visitGroupingExpr(const Grouping &expr) -> void {
+  if (discardedResults.contains(&expr))
+    discardResult(expr.expression());
   if (expr.unsafeKeyword())
     enterUnsafeRegion(*expr.unsafeKeyword(), true);
   {
