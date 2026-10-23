@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Passive class moved beside a passive copy (0.465.5)
+## Passive class moved beside a passive copy (0.465.6)
 
 `passive_class_move_and_copy_runtime` runs `passive_class_move_and_copy.gti`.
 - `Shelved` moves a `Pair` and copies another after a `Ledger` field that can

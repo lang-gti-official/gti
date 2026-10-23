@@ -4759,6 +4759,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(lsp_configuration PROPERTIES TIMEOUT 120)
+    add_test(
+      NAME lsp_test_target
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_test_target_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(lsp_test_target PROPERTIES TIMEOUT 90)
     find_program(GTI_NEOVIM_EXECUTABLE nvim)
     if(GTI_NEOVIM_EXECUTABLE)
       add_test(
