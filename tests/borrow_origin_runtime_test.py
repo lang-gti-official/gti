@@ -16,7 +16,8 @@ if __name__ == "__main__":
              "borrow_direct_projected_return", "borrow_static_return_alternative",
              "borrowed_enum_fields", "borrowed_enum_generic_fields",
              "borrowed_enum_formal_fields", "borrowed_enum_local_selection",
-             "borrowed_enum_owner_selections", "borrowed_enum_relay_returns", "conditional_carrier_consume",
+             "borrowed_enum_owner_selections", "borrowed_enum_reference_subjects",
+             "borrowed_enum_relay_returns", "conditional_carrier_consume",
              "borrow_stored_view_return")
     # The original map is deliberately empty: compilation must succeed, but
     # its checked at() call must retain the defined missing-key failure. The
@@ -28,6 +29,8 @@ if __name__ == "__main__":
                         if "gti_internal::require_key" in map_lines[index])
     cases = {name: [((), (0, "2\n", ""))] for name in names[1:3]}
     cases["borrow_stored_view_return"] = [((), (0, "x\n", ""))]
+    cases["borrowed_enum_reference_subjects"] = [
+        ((), (0, "hello\nhello\n" + "owned text\n" * 4 + "label\n", ""))]
     # An extra argument fails the ledger before the slot moves into its field.
     formal_lines = (root / "fixtures/borrowed_enum_formal_fields.gti").read_text().splitlines()
     ledger_line = next(index + 1 for index, line in enumerate(formal_lines)
