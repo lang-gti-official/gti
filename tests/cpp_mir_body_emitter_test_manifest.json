@@ -322,6 +322,10 @@
       "suite": "text"
     },
     {
+      "name": "testPassiveFunctionItemClassAfterFallibleSibling",
+      "suite": "text"
+    },
+    {
       "name": "testMovedChainReturnConstruction",
       "suite": "text"
     },
