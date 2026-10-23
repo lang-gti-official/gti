@@ -2408,6 +2408,13 @@ public:
   [[nodiscard]] bool hasFunctionAttribute(std::string_view name) const {
     return findFunctionAttribute(name) != nullptr;
   }
+  // Typed macros share signature syntax and lookup with functions, but are
+  // source declarations, not an attribute or an executable callable body.
+  void setMacroKeyword(Token keyword) { macroKeyword_ = std::move(keyword); }
+  [[nodiscard]] const std::optional<Token> &macroKeyword() const {
+    return macroKeyword_;
+  }
+  [[nodiscard]] bool isMacro() const { return macroKeyword_.has_value(); }
   // Set only by the compiler after validating the selected test catalog.
   void markGeneratedTestEntry() { generatedTestEntry_ = true; }
   [[nodiscard]] bool generatedTestEntry() const { return generatedTestEntry_; }
@@ -2436,6 +2443,7 @@ private:
   std::optional<NamePath> definitionOwner_;
   bool generatedTestEntry_ = false;
   std::optional<Token> implicitKeyword_;
+  std::optional<Token> macroKeyword_;
 };
 
 class IfStmt final : public StmtOfKind<StmtKind::IfStmt> {

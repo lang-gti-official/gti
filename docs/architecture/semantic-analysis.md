@@ -2,10 +2,13 @@
 
 Status: Current implementation.
 
-## Deferred statement expansion
+## Typed statement macro expansion
 
-`semantic_deferred.cpp` owns `[[deferred]]` helpers independently of public
-library names. Signature selection and argument diagnostics use an isolated
+`semantic_macro.cpp` owns typed `#macro` expansion independently of public
+library names. The declaration's macro identity, not an attribute or public
+spelling, selects that path. Macro/function overload mixtures at one qualified
+name are rejected; macro-only overload sets use ordinary exact selection.
+Signature selection and argument diagnostics use an isolated
 semantic probe; its speculative flow, loans and syntax never enter caller
 execution. The probe forks request context separately from semantic facts,
 reads existing facts through a model delta and owns a copy of active loan
@@ -18,13 +21,35 @@ flow. Definition and invocation namespace/source/class domains stay distinct.
 Concrete generic context and tracked caller origins accompany body tokens;
 argument tokens retain their own origins. `SemanticModel` owns the checked
 statement expansion for the frontend snapshot and its instance deltas.
+Expansion lookup contexts also bound lexical frames: body tokens may see
+locals introduced by their own expansion, while substituted arguments are
+capped at their invocation's pre-expansion scope. A syntax-only lexical walk
+identifies expression-parameter uses not shadowed by local binders before
+cloning; ordinary symbols and typed places establish actual binding identity.
+Caller-written lambda capture initializers retain those enclosing bounds;
+their bodies use their own scope stack, and a nested macro captures that
+fresh domain. Recursive-template detection likewise distinguishes a nested
+callable body from a definition-expansion cycle; global expansion budgets
+remain in force across both.
+Assignments to expression parameters become ordinary place assignments to the
+supplied expression, retaining its assignability, access and loan checks.
+Automatic locals, moves and macro-owned loop exits therefore reuse ordinary
+ownership flow and cleanup rather than an alternate macro lifetime system.
+HIR's shared expansion query retains only a selected root, preserving inherited
+synthetic-syntax stability accounting. Returned or copied HIR therefore keeps
+its reached ordinary, nested and concrete-instance expansion descendants alive
+after both the instance-analysis delta and temporary lowerer are destroyed.
+It does not retain the whole semantic model as a lifetime workaround.
 
 HIR lowers that expansion as ordinary statements and does not enqueue an eager
 function instance for the template. Existing MIR branches, calls, ownership
 events, failure edges and cleanup are the only executable representation.
 There is no new runtime thunk, backend interpretation or public assertion-name
 recognition. The confined structural profile and resource limits are specified
-in [execution semantics](../language/execution.md#deferred-statement-helpers).
+in [execution semantics](../language/execution.md#typed-statement-macros).
+`[[deferred]]` is removed rather than routed through a second compatibility
+engine. The syntax revision preserves the existing semantic expansion, HIR
+and verified-MIR contract, including argument probes and caller provenance.
 
 Member visibility is shared by semantic field/call/constructor/type checks and
 completion filtering. `canAccessMember` uses the lexical class context, the

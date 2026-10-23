@@ -21,13 +21,37 @@ struct CleanupPanic {
   ~CleanupPanic() { std::assert(false, "cleanup assertion"); } // secondary
 };
 
+struct MacroOwner {
+  std::string label;
+  MacroOwner(std::string value) : label(std::move(value)) {}
+  ~MacroOwner() { [[discard]] std::try_write_stderr(label.view()); }
+};
+
 [[track_caller]] void tracked_wrapper() {
   std::assert(false, "through tracked wrapper");
 }
 
 namespace application {
-  [[deferred]] void require(bool condition, std::string_view reason) {
+  #macro require(bool condition, std::string_view reason) {
     if (!condition) { std::panic(reason); }
+  }
+
+  [[track_caller]] #macro local_failure(bool fail, std::string label) {
+    MacroOwner owned{label};
+    if (fail) { std::panic("macro local failure"); }
+  }
+
+  [[track_caller]] #macro local_loop(bool fail, int count) {
+    bool should_fail = fail;
+    int limit = count;
+    for (mut int index = 0; index < limit; ++index) {
+      MacroOwner owned{std::string("iteration\n")};
+      if (index == 0) { continue; }
+      if (index == 2) {
+        if (should_fail) { std::panic("macro loop failure"); }
+        break;
+      }
+    }
   }
 }
 
@@ -94,6 +118,18 @@ int main(int argc, std::vector<std::string> argv) {
   }
   if (argc == 11) {
     std::assert(ordered_condition(), ordered_pattern(), ordered_argument(1), ordered_argument(2)); // ordered
+  }
+  if (argc == 12) {
+    application::local_failure(true, std::string("macro\n")); // macro-local-panic
+  }
+  if (argc == 13) {
+    application::local_failure(false, std::string("macro\n"));
+  }
+  if (argc == 14) {
+    application::local_loop(true, 6); // macro-loop-panic
+  }
+  if (argc == 15) {
+    application::local_loop(false, 6);
   }
   return 0;
 }

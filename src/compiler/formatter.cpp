@@ -1528,7 +1528,7 @@ private:
            (lexeme.text == "export" || lexeme.text == "virtual" ||
             lexeme.text == "static" || lexeme.text == "constexpr" ||
             lexeme.text == "mut" || lexeme.text == "unsafe" ||
-            lexeme.text == "implicit");
+            lexeme.text == "implicit" || lexeme.text == "#macro");
   }
 
   static bool isDeclarationBoundary(const Lexeme *lexeme) {
@@ -1628,6 +1628,10 @@ private:
       const std::vector<Lexeme> &lexemes, std::size_t name,
       const std::unordered_set<std::string> &declaredTypes) {
     const Lexeme *typeEnd = previousSyntaxLexeme(lexemes, name);
+    if (typeEnd != nullptr && typeEnd->kind == Kind::Word &&
+        typeEnd->text == "#macro") {
+      return isDeclarationScope(lexemes, name);
+    }
     if (typeEnd != nullptr) {
       const std::optional<std::size_t> typeStart = declarationTypeStartEndingAt(
           lexemes, static_cast<std::size_t>(typeEnd - lexemes.data()));
@@ -1921,7 +1925,10 @@ private:
         while (current < source.size() && isIdentifierPart(source[current])) {
           ++current;
         }
-        add(Kind::Directive, source.substr(start, current - start));
+        const std::string_view spelling = source.substr(start, current - start);
+        // Unlike configuration/include directives, #macro introduces a
+        // normal braced declaration and follows structural indentation.
+        add(spelling == "#macro" ? Kind::Word : Kind::Directive, spelling);
         continue;
       }
 
