@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.466.1 — Thread-local storage
+## 0.466.2 — Thread-local storage
 
 - `thread_local` defines distinct per-thread storage at namespace scope, in a
   non-generic static data member, or inside an ordinary function. Both
@@ -29,6 +29,9 @@ for what minor and patch releases mean.
 - Generated deferred-expansion syntax remains alive with returned HIR, including
   nested expansions in concrete generic functions, fixing a compiler crash
   uncovered by the TLS integration tests.
+- Fresh generated-default class temporaries can be borrowed as ordinary call
+  arguments; exact owner, construction schedule, loan and cleanup proofs remain
+  required by independent MIR verification.
 - See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
   and [runnable example 173](examples/173-thread-local-storage.gti).
 

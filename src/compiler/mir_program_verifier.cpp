@@ -1985,14 +1985,11 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                             lambda->returnType == receiverPlace->type &&
                             !producer->info.traits.containsBorrowedState;
           }
-          if (!producer->functionTarget && receiverClass != nullptr &&
+          if (receiverClass != nullptr &&
               receiverClass->defaultConstructor ==
                   SpecialMemberStatus::Generated &&
-              !producer->constructorTarget && !producer->lambdaTarget &&
-              !producer->receiver && !producer->loan && !producer->ownership &&
-              producer->operands.empty() && producer->parameterTypes.empty() &&
-              producer->constructorKind == ConstructorKind::Ordinary &&
-              producer->intrinsic == IntrinsicKind::None &&
+              !receiverClass->generatedDefaultRequiresSchedule &&
+              mir_detail::generatedDefaultConstruction(*producer) &&
               producer->info.type == receiverClass->type) {
             exactProducer = true;
           }
@@ -2168,13 +2165,28 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               published->kind == MirLoanKind::Stored && !published->entry &&
               !published->escapes &&
               published->producedBy == producer->hirValue;
+          const MirClassInstance *generatedOwner = nullptr;
+          if (argumentPlace != nullptr &&
+              mir_detail::generatedDefaultConstruction(*producer)) {
+            const auto found = std::find_if(
+                program.classInstances().begin(),
+                program.classInstances().end(), [&](const auto &candidate) {
+                  return candidate.type == argumentPlace->type;
+                });
+            if (found != program.classInstances().end())
+              generatedOwner = &*found;
+          }
           exactProducer =
-              target != nullptr && argumentPlace != nullptr &&
-              target->definitionKind == MirDefinitionKind::Source &&
-              target->linkage == LanguageLinkage::Gti &&
-              target->returnType == argumentPlace->type &&
-              (target->returnBorrowOrigin == BorrowOriginKind::None ||
-               retainedCarrier);
+              (target != nullptr && argumentPlace != nullptr &&
+               target->definitionKind == MirDefinitionKind::Source &&
+               target->linkage == LanguageLinkage::Gti &&
+               target->returnType == argumentPlace->type &&
+               (target->returnBorrowOrigin == BorrowOriginKind::None ||
+                retainedCarrier)) ||
+              (generatedOwner != nullptr &&
+               generatedOwner->defaultConstructor ==
+                   SpecialMemberStatus::Generated &&
+               !generatedOwner->generatedDefaultRequiresSchedule);
         } else if (producer != nullptr && argumentPlace != nullptr &&
                    producer->kind == MirInstructionKind::Compute &&
                    producer->operation == MirOperation::PayloadConstruct &&
