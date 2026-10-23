@@ -1200,15 +1200,20 @@ GNU-compatible compilers use cold/noinline hints; MSVC uses noinline. The helper
 is not noexcept because managed-worker emergency handoff can unwind through it.
 
 Every emitted `Invoke` failure alternate is cold for native block placement
-and call-site frequencies. Detector alternates, and status tests outside a
-failure-form body, are `[[unlikely]]` branches. A failure-form body's call,
-construction, drop and replacement alternates are not: each begins with the
-cold, noinline incoming-cleanup check, and that callee attribute marks the edge. A branch
-weight on the success flag would survive inlining as a claim about the data
-condition the callee's success reduces to, such as a payload tag, and native
-jump threading moved such weights onto unrelated data-dependent branches: with
-the trailing payload-enum tag (RT-11), a `has_value()`/`value()` loop ran about
-twice as slowly. A detector's failure record and its incoming-cleanup check are one out-of-line
+and call-site frequencies. The emitter spells it `[[unlikely]]`, except for a
+failure-form call whose callee carries the always-inline small-source hint
+(`cppMirSmallSourceBody`, the same predicate that spells the declaration). That
+alternate begins with the cold, noinline incoming-cleanup check, and once the
+callee inlines, its own failure path ends in a cold publication or check call.
+A weight on the success flag would instead survive inlining as a claim about
+the data condition that success reduces to, such as a payload tag; native jump
+threading then moved it onto the unrelated branch that selected the tag, and
+with the trailing payload-enum tag (RT-11) a `has_value()`/`value()` loop ran
+about twice as slowly. Calls the native inliner may decline keep the weight,
+which informs that decision: dropping it everywhere cost about 10% on a
+string-producing payload-enum loop.
+
+A detector's failure record and its incoming-cleanup check are one out-of-line
 call to `mir_publish_failure_v1`. It writes exactly the record the inline
 sequence wrote, taking the artifact identity from the program's descriptor,
 keeps a propagated inner record, and then performs the same check. A panic
