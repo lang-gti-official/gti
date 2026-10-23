@@ -32,7 +32,7 @@ jobs:
         run: |
           base="${GTI_BASE_SHA}"
           if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
-            base="$(git rev-parse HEAD^)"
+            base="$(git rev-parse origin/main)"
           fi
           python3 scripts/validation_checks.py ci-mode \
             --event "${GITHUB_EVENT_PATH}" --base "${base}" >> "${GITHUB_OUTPUT}"
@@ -217,7 +217,7 @@ jobs:
         run: |
           base="${GTI_BASE_SHA}"
           if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
-            base="$(git rev-parse HEAD^)"
+            base="$(git rev-parse origin/main)"
           fi
           python3 scripts/build_window.py --kind suite -- \
             python3 scripts/validation_checks.py full --build build \

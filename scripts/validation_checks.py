@@ -22,6 +22,8 @@ NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 # This is a conservative floor, not a substitute for reviewing the invariant.
 SHARED = ("include/gti/semantic", "include/gti/hir", "include/gti/mir",
+          "src/compiler/semantic_analyzer_impl.h", "src/compiler/semantic_model.cpp",
+          "src/compiler/semantic_flow_analysis.cpp", "src/compiler/semantic_constexpr.cpp",
           "src/compiler/semantic_ownership", "src/compiler/semantic_type",
           "src/compiler/semantic_generic", "src/compiler/mir_", "src/compiler/hir_",
           "src/compiler/cpp_", "src/compiler/optimization/", "runtime/")
