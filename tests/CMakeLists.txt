@@ -1158,6 +1158,11 @@ add_test(NAME assignment_result_projection_runtime
                  "${PROJECT_SOURCE_DIR}/tests/assignment_result_projection_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(assignment_result_projection_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME class_store_destinations_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/class_store_destinations_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(class_store_destinations_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME declaration_owned_defaults_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/declaration_owned_defaults_runtime_test.py"
