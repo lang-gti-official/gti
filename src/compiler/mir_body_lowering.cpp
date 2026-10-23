@@ -118,7 +118,8 @@ public:
         if (!inserted && entry->second != statement.id)
           entry->second = 0;
       }
-      if (statement.kind == HirStatementKind::Return) {
+      if (statement.kind == HirStatementKind::Return &&
+          statement.resultRegion == 0) {
         ++exitCount;
       }
     }
@@ -4213,6 +4214,7 @@ private:
     case HirValueKind::Call:
     case HirValueKind::Propagation:
     case HirValueKind::Conditional:
+    case HirValueKind::ScopedResult:
       place = loanOrValuePlace(*value);
       break;
     case HirValueKind::Unary:
@@ -4657,6 +4659,7 @@ private:
     case HirValueKind::Call:
     case HirValueKind::Propagation:
     case HirValueKind::Conditional:
+    case HirValueKind::ScopedResult:
     case HirValueKind::Grouping:
     case HirValueKind::Index:
     case HirValueKind::MemberAccess:
@@ -4954,7 +4957,8 @@ private:
     if (isCallLike(*value) || value->kind == HirValueKind::DirectInitializer ||
         value->kind == HirValueKind::Move ||
         value->kind == HirValueKind::Propagation ||
-        value->kind == HirValueKind::Conditional) {
+        value->kind == HirValueKind::Conditional ||
+        value->kind == HirValueKind::ScopedResult) {
       emitValue(id);
       return;
     }
@@ -5363,6 +5367,7 @@ private:
     // is a transport identity, not a second materialization.
     const bool conditionalResult =
         (temporary->kind == HirValueKind::Conditional ||
+         temporary->kind == HirValueKind::ScopedResult ||
          isAssignmentExpression(temporary->kind)) &&
         materialized != nullptr &&
         materialized->root == MirPlaceRootKind::Temporary &&
@@ -9250,6 +9255,181 @@ private:
     std::unordered_map<MirLoanId, HirStatementId> transfers;
   };
 
+  struct ResultRegion {
+    const HirValue *value = nullptr;
+    MirPlaceId destination = 0;
+    MirDropObligationId obligation = 0;
+    std::vector<Scope> incomingScopes;
+    std::vector<TemporaryDrop> incomingTemporaries;
+    std::unordered_map<HirBindingId, MirLoanId> incomingBindings;
+    std::unordered_map<MirLoanId, HirStatementId> incomingTransfers;
+    std::vector<OpenBranch> exits;
+    std::vector<std::vector<TemporaryDrop>> exitTemporaries;
+    std::vector<std::unordered_map<HirBindingId, MirLoanId>> exitBindings;
+  };
+
+  void emitRegionReturn(const HirStatement &statement) {
+    if (resultRegions.empty() ||
+        statement.resultRegion != resultRegions.back().value->id) {
+      valid = false;
+      return;
+    }
+    // Evaluating a return expression may itself enter another result region,
+    // so retain indices/identities, not references into the region stack.
+    const std::size_t index = resultRegions.size() - 1;
+    const auto *regionValue = resultRegions[index].value;
+    const auto incomingScopes = scopes;
+    if (regionValue->info.type != SemanticType::Void) {
+      if (!statement.value) {
+        valid = false;
+        return;
+      }
+      const MirOperand operand = valueOperand(*statement.value);
+      if (terminated())
+        return;
+      MirInstruction initialize{.kind = MirInstructionKind::Initialize,
+                                .hirValue = regionValue->id,
+                                .hirStatement = statement.id,
+                                .destination = resultRegions[index].destination,
+                                .operands = {operand},
+                                .info = {.type = regionValue->info.type,
+                                         .category = ValueCategory::Place,
+                                         .access = AccessMode::Mutable,
+                                         .traits = regionValue->info.traits}};
+      const auto sourceDrop = dropObligationForValue(*statement.value);
+      const auto resultDrop = resultRegions[index].obligation;
+      if (resultDrop != 0) {
+        if (temporaryIsActive(sourceDrop)) {
+          appendReparentOrTypedTransfer(initialize, sourceDrop, resultDrop);
+          (void)removeTemporary(sourceDrop);
+        } else {
+          appendLifecycle(initialize,
+                          {.kind = MirLifecycleEventKind::Initialize,
+                           .target = resultDrop});
+        }
+        registerTemporary(resultDrop);
+      }
+      (void)appendInstruction(std::move(initialize));
+    } else if (statement.value) {
+      emitValue(*statement.value);
+      if (terminated())
+        return;
+    }
+    endReturnExpressionLoans(incomingScopes);
+    auto retained = resultRegions[index].incomingTemporaries;
+    const auto resultDrop = resultRegions[index].obligation;
+    for (const auto &temporary : temporaryDrops)
+      if (temporary.obligation == resultDrop)
+        retained.push_back(temporary);
+    // The published result already has its outer full-expression lifetime.
+    // Keep it in failure cleanup while destroying macro-local temporaries
+    // and locals. A cleanup panic must still destroy it exactly once.
+    emitTemporaryDrops(retained, statement.value.value_or(0), statement.id);
+    emitScopeExit(resultRegions[index].incomingScopes.size());
+    const MirBlockId bridge = appendBlock();
+    terminate({.kind = MirTerminatorKind::Goto,
+               .hirStatement = statement.id,
+               .target = bridge});
+    auto exitedScopes = scopes;
+    exitedScopes.resize(resultRegions[index].incomingScopes.size());
+    resultRegions[index].exits.push_back(
+        {.end = bridge,
+         .scopes = std::move(exitedScopes),
+         .transfers = callTransferredLoanEndpoints});
+    resultRegions[index].exitTemporaries.push_back(temporaryDrops);
+    resultRegions[index].exitBindings.push_back(projectOuterBindingLoans(
+        resultRegions[index].incomingBindings, bindingLoans));
+  }
+
+  void emitScopedResult(const HirValue &value) {
+    if (!value.regionBody || value.info.category != ValueCategory::Value ||
+        std::any_of(
+            resultRegions.begin(), resultRegions.end(),
+            [&](const auto &region) { return region.value == &value; }) ||
+        value.info.traits.containsBorrowedState) {
+      valid = false;
+      return;
+    }
+    const MirBlockId merge = appendBlock();
+    const bool hasResult = value.info.type != SemanticType::Void;
+    const MirPlaceId destination = hasResult ? conditionalTemporary(value) : 0;
+    resultRegions.push_back(
+        {.value = &value,
+         .destination = destination,
+         .obligation =
+             hasResult ? dropObligationForValue(value.id, destination) : 0,
+         .incomingScopes = scopes,
+         .incomingTemporaries = temporaryDrops,
+         .incomingBindings = bindingLoans,
+         .incomingTransfers = callTransferredLoanEndpoints});
+    lowerStatement(*value.regionBody);
+    if (!terminated()) {
+      if (hasResult) {
+        valid = false;
+      } else {
+        const MirBlockId bridge = appendBlock();
+        terminate({.kind = MirTerminatorKind::Goto, .target = bridge});
+        resultRegions.back().exits.push_back(
+            {.end = bridge,
+             .scopes = scopes,
+             .transfers = callTransferredLoanEndpoints});
+        resultRegions.back().exitTemporaries.push_back(temporaryDrops);
+        resultRegions.back().exitBindings.push_back(projectOuterBindingLoans(
+            resultRegions.back().incomingBindings, bindingLoans));
+      }
+    }
+    auto region = std::move(resultRegions.back());
+    resultRegions.pop_back();
+    std::vector<OpenBranch *> branches;
+    for (auto &exit : region.exits)
+      branches.push_back(&exit);
+    const auto consumed = joinConsumedBranches(branches, region.incomingScopes,
+                                               region.incomingTransfers, merge);
+    scopes = region.incomingScopes;
+    for (const auto &[loan, endpoint] : consumed)
+      removeLoanFromState(loan, scopes, bindingLoans);
+    current = merge;
+    callTransferredLoanEndpoints = region.incomingTransfers;
+    temporaryDrops = region.incomingTemporaries;
+    bindingLoans = region.incomingBindings;
+    for (auto &bindings : region.exitBindings)
+      for (const auto &[loan, endpoint] : consumed)
+        std::erase_if(bindings,
+                      [&](const auto &entry) { return entry.second == loan; });
+    if (region.exits.empty()) {
+      terminate({.kind = MirTerminatorKind::Unreachable});
+      emittedValues.insert(value.id);
+      return;
+    }
+    callTransferredLoanEndpoints = region.exits.front().transfers;
+    temporaryDrops = region.exitTemporaries.front();
+    bindingLoans = region.exitBindings.front();
+    scopes = region.exits.front().scopes;
+    for (std::size_t index = 1; index < region.exits.size(); ++index) {
+      if (!sameScopeState(scopes, region.exits[index].scopes) ||
+          bindingLoans != region.exitBindings[index])
+        valid = false;
+      callTransferredLoanEndpoints = intersectTransferredLoanEndpoints(
+          callTransferredLoanEndpoints, region.exits[index].transfers);
+      temporaryDrops =
+          mergeTemporaryDrops(temporaryDrops, region.exitTemporaries[index]);
+    }
+    if (hasResult) {
+      const bool move = value.info.traits.drop != DropKind::Trivial ||
+                        !value.info.traits.copyable;
+      (void)appendInstruction(
+          {.kind = move ? MirInstructionKind::Move : MirInstructionKind::Load,
+           .hirValue = value.id,
+           .result = resultFor(value),
+           .operands = {{.kind =
+                             move ? MirOperandKind::Move : MirOperandKind::Copy,
+                         .place = destination,
+                         .type = value.info.type}},
+           .info = value.info});
+    }
+    emittedValues.insert(value.id);
+  }
+
   [[nodiscard]] std::unordered_map<MirLoanId, HirStatementId>
   joinConsumedBranches(
       std::vector<OpenBranch *> branches, const std::vector<Scope> &incoming,
@@ -10419,6 +10599,10 @@ private:
     }
     if (value->kind == HirValueKind::Conditional) {
       emitConditional(*value);
+      return;
+    }
+    if (value->kind == HirValueKind::ScopedResult) {
+      emitScopedResult(*value);
       return;
     }
     if (value->kind == HirValueKind::PackFold) {
@@ -12283,6 +12467,11 @@ private:
       valid = false;
       return;
     }
+    if (statement->kind != HirStatementKind::Return &&
+        statement->resultRegion != 0) {
+      valid = false;
+      return;
+    }
     switch (statement->kind) {
     case HirStatementKind::Block:
       scopes.push_back({});
@@ -12355,7 +12544,10 @@ private:
                  .target = continueContexts.back().target});
       return;
     case HirStatementKind::Return:
-      lowerReturn(*statement);
+      if (!resultRegions.empty() || statement->resultRegion != 0)
+        emitRegionReturn(*statement);
+      else
+        lowerReturn(*statement);
       return;
     case HirStatementKind::Empty:
       return;
@@ -14807,6 +14999,7 @@ private:
   std::unordered_set<HirValueId> emittedValues;
   std::unordered_set<HirValueId> checkedPlacePrefixes;
   std::vector<Scope> scopes;
+  std::vector<ResultRegion> resultRegions;
   std::vector<TemporaryDrop> temporaryDrops;
   std::vector<BreakContext> breakContexts;
   std::vector<ContinueContext> continueContexts;

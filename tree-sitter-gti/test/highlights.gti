@@ -353,3 +353,4 @@ expected<int, int> source_result_highlight() {
 }
 [[unsatisfied("A gauge reads.")]] concept explained_highlight<T> = std::integral<T>;
 [[track_caller]] #macro macro_highlight<Args...>(bool condition, Args... args) { if (condition) { use(args...); } }
+[[track_caller]] #macro int macro_value_highlight(bool condition, int value) { if (condition) { return value; } return 0; }

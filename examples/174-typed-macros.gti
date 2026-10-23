@@ -2,6 +2,7 @@
 // There is no asynchronous work, runtime thunk, or textual token replacement.
 #include <std/assert>
 #include <std/string>
+#include <std/source_location>
 
 struct Sample {
   int value = 7;
@@ -28,6 +29,25 @@ namespace application {
   }
 
   #macro repeat(int value) { record(value); record(value); }
+  // A macro-local return selects a lazy value; it never exits main.
+  #macro int choose(bool enabled, int first, int second) {
+    if (enabled) { return first; }
+    return second;
+  }
+  #macro int twice_once(int expression) {
+    int saved = expression;
+    return saved + saved;
+  }
+  #macro std::string owned_text(std::string expression) {
+    std::string saved = expression;
+    return saved; // Ordinary implicit movement of this macro-local owner.
+  }
+  #macro run_when<F>(bool enabled, F action) {
+    if (enabled) { action(); }
+  }
+  #macro std::string_view written<T>(T expression) {
+    return std::expression_text(expression);
+  }
   #macro positive<T>(T value) requires std::numeric<T> {
     std::assert(value > T(0));
   }
@@ -118,6 +138,19 @@ int main() {
   application::bounded_steps(application::next_bound());
   std::assert(Observations::bounds == 1 && Observations::steps == 2);
   std::assert(record == 99);
+  int chosen = application::choose(false, ++evaluations,
+                                   application::twice_once(6));
+  std::assert(chosen == 12 && evaluations == 3);
+  std::string text = application::owned_text(std::string("macro result"));
+  std::assert(text.view() == "macro result");
+  application::run_when(false, [owned = std::move(text)]() -> void {
+    std::println(owned.view());
+  }); // Even the move-capture is skipped; there is no eager closure frame.
+  std::assert(text.view() == "macro result");
+  application::run_when(true, []() -> void { Observations::value = 42; });
+  std::assert(Observations::value == 42);
+  std::string_view source = application::written(++evaluations);
+  std::assert(source == "++evaluations" && evaluations == 3);
   std::println("Typed macros passed");
   return 0;
 }

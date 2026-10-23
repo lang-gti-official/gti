@@ -2949,6 +2949,7 @@ private:
     case HirValueKind::Binary:
     case HirValueKind::Call:
     case HirValueKind::Conditional:
+    case HirValueKind::ScopedResult:
     case HirValueKind::Move:
     case HirValueKind::NativeCallback:
     case HirValueKind::FunctionItem:
@@ -3449,19 +3450,16 @@ private:
       return std::nullopt;
     }
     if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
-      if (auto expanded = model.shareMacroExpansion(*expression)) {
-        // Instance-local models can die before MIR consumes HIR source
-        // pointers. Retain exact reached roots, including nested/inherited
-        // expansions, independently of the model and this lowerer.
-        if (retainedSourceStatements.insert(expanded.get()).second)
-          output.program.sourceStatementOwners_.push_back(expanded);
+      if (auto expansion = model.shareMacroExpansion(*expression)) {
+        // A void template with no local return needs no result join. Preserve
+        // the existing statement-only lowering and its exact loan endpoints.
+        if (retainedSourceStatements.insert(expansion.get()).second)
+          output.program.sourceStatementOwners_.push_back(expansion);
         std::vector<HirStatementId> statements;
         if (const auto child =
-                lowerStatement(expanded.get(), model, classArguments,
+                lowerStatement(expansion.get(), model, classArguments,
                                classValueArguments, body))
           statements.push_back(*child);
-        // Preserve both endpoint domains. The caller statement can end an
-        // existing loan; the checked expansion has its own nested endpoints.
         return appendStatement({.kind = HirStatementKind::Block,
                                 .source = statement,
                                 .statements = std::move(statements)},
@@ -3662,7 +3660,8 @@ private:
       }
       return appendStatement({.kind = HirStatementKind::Return,
                               .source = statement,
-                              .value = returned},
+                              .value = returned,
+                              .resultRegion = activeResultRegion},
                              body);
     }
     if (const auto *switchStatement = stmtAs<SwitchStmt>(statement)) {
@@ -3952,8 +3951,10 @@ private:
     for (const Parameter &parameter : lambda.parameters()) {
       parameterBindings.push_back(lowerBinding(parameter, model, body));
     }
+    const auto enclosingResultRegion = std::exchange(activeResultRegion, 0);
     body.roots = lowerStatements(lambda.body(), model, classArguments,
                                  classValueArguments, body);
+    activeResultRegion = enclosingResultRegion;
     currentSourceFunctionName = enclosingSourceFunctionName;
     finalizeLifetimes(body, model, true);
     lowerLoans(model, body, nullptr, info->captures);
@@ -5218,6 +5219,33 @@ private:
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
     ensurePlaceDomain(body);
+    if (const auto *call = exprAs<Call>(&expression)) {
+      if (auto expansion = model.shareMacroExpansion(*call)) {
+        const auto *info = model.findExpression(expression);
+        if (!info) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        if (retainedSourceStatements.insert(expansion.get()).second)
+          output.program.sourceStatementOwners_.push_back(expansion);
+        const HirValueId id = nextValueId++;
+        const HirValueId enclosing = std::exchange(activeResultRegion, id);
+        const auto region = lowerStatement(
+            expansion.get(), model, classArguments, classValueArguments, body);
+        activeResultRegion = enclosing;
+        if (!region) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        body.values.push_back({.id = id,
+                               .kind = HirValueKind::ScopedResult,
+                               .source = &expression,
+                               .info = *info,
+                               .regionBody = *region});
+        output.program.sourceValueIds[&expression].push_back(id);
+        return id;
+      }
+    }
     if (const Token *caller = model.findMacroDefault(expression);
         caller && !activeDefaultArguments.contains(&expression))
       return lowerDefaultArgument(&expression, model, classArguments,
@@ -5342,6 +5370,33 @@ private:
       }
     }
     const Expr *raw = &expression;
+    if (const auto *call = exprAs<Call>(raw)) {
+      const ResolvedCallInfo *resolved = model.findCall(*call);
+      if (resolved &&
+          resolved->intrinsic == IntrinsicKind::SourceExpressionText) {
+        const ExpressionInfo *info = model.findExpression(*raw);
+        const auto constant = model.findConstant(*raw);
+        const auto *text =
+            constant ? std::get_if<std::string>(&*constant) : nullptr;
+        if (!info || info->type != SemanticType::StringView || !text) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        // Source metadata is already a semantic literal. In particular, do
+        // not lower its checked expression argument or its callee into an
+        // executable value, call, move, loan, or failure edge.
+        const HirValueId id = nextValueId++;
+        body.values.push_back({.id = id,
+                               .kind = HirValueKind::Literal,
+                               .source = raw,
+                               .info = *info,
+                               .literal = Literal{*text},
+                               .constant = constant,
+                               .programConstantSubstitution = true});
+        output.program.sourceValueIds[raw].push_back(id);
+        return id;
+      }
+    }
     HirValueKind kind = HirValueKind::Literal;
     std::vector<HirValueId> operands;
     std::optional<TokenKind> operation;
@@ -6928,6 +6983,7 @@ private:
   const SemanticModel *baseModel = nullptr;
   HirLoweringResult output;
   HirValueId nextValueId = 1;
+  HirValueId activeResultRegion = 0;
   HirBindingId nextBindingId = 1;
   HirStatementId nextStatementId = 1;
   std::size_t placeSnapshotId = 0;

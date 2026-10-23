@@ -115,6 +115,12 @@ to declaration scope; relational expressions ending in a qualified call retain
 their ordinary operator spacing. Formatting remains token-preserving and
 idempotent, including incomplete method definitions.
 
+Typed macro declarations use the same structural declaration formatting in
+both implicit-void `#macro name(...)` and explicit-result
+`#macro Result name<T>(...)` forms. Result-type generic arguments, macro generic
+parameters, attributes and macro-local returns retain ordinary GTI spacing and
+indentation without turning the declaration into a line-oriented directive.
+
 The GTI base style attaches pointer and reference markers to the type:
 `T* pointer` and `T& reference`. Declaration recognition covers standalone
 `unsafe` function modifiers, preserving contract attributes followed by the

@@ -1,6 +1,7 @@
 // Assertions are source policy over the general typed macro facility.
 // NDEBUG disables only debug_assert; assert is always checked.
 #include <std/panic>
+#include <std/source_location>
 
 // Declare this optional configuration switch without changing its value.
 #ifdef NDEBUG
@@ -18,7 +19,7 @@ namespace std {
   [[track_caller]]
   #macro assert(bool condition) {
     if (!condition) {
-      std::panic("Assertion failed");
+      std::panic("Assertion failed: {}", std::expression_text(condition));
     }
   }
 
@@ -35,7 +36,7 @@ namespace std {
   #macro debug_assert(bool condition) {
     if (std::debug_assertions_enabled) {
       if (!condition) {
-        std::panic("Debug assertion failed");
+        std::panic("Debug assertion failed: {}", std::expression_text(condition));
       }
     }
   }

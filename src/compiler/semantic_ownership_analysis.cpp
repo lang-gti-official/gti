@@ -5882,6 +5882,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "source_column") {
       return IntrinsicKind::SourceColumn;
     }
+    if (name == "source_expression_text") {
+      return IntrinsicKind::SourceExpressionText;
+    }
     return IntrinsicKind::None;
   }
   if (isSimdLibraryUnit(sourceUnit) && scope.front() == "gti_internal") {
@@ -12500,6 +12503,72 @@ auto SemanticVisitor::Impl::runtimeObjectLayoutType(
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  if (intrinsic == IntrinsicKind::SourceExpressionText) {
+    for (const TypeRef &argument : expr.typeArguments())
+      validateType(argument);
+    if (expr.arguments().size() != 1 ||
+        declaration.parameterTypes.size() != 1 ||
+        declaration.returnType != SemanticType::StringView ||
+        expr.typeArguments().size() != 1 ||
+        declaration.record().genericParameters.size() != 1 ||
+        declaration.record().genericParameters.front().value ||
+        declaration.record().genericParameters.front().pack ||
+        declaration.parameterTypes.front() !=
+            SemanticType::typeParameter(
+                declaration.record().genericParameters.front().id)) {
+      report(expr.paren(),
+             "An expression-text capability requires one typed expression "
+             "and a string-view result.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    auto probe = makeMacroProbe(expr);
+    (void)probe->analyze(expr.arguments().front());
+    diagnostics.insert(diagnostics.end(), probe->diagnostics.begin(),
+                       probe->diagnostics.end());
+    if (hasErrorDiagnostics(probe->diagnostics)) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    SemanticType actual = probe->currentType;
+    if (actual.kind == SemanticType::Reference &&
+        actual.arguments.size() == 1) {
+      SemanticType referent = actual.arguments.front();
+      actual = std::move(referent);
+    }
+    const SemanticType expected = typeOf(expr.typeArguments().front());
+    if (actual != expected && actual != SemanticType::Unknown &&
+        expected != SemanticType::Unknown) {
+      report(expr.paren(),
+             "Expression text requires the exact expression type as its "
+             "generic argument.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const auto &origin = expr.arguments().front()->writtenOrigin();
+    const std::string *source =
+        sources && origin ? sources->find(origin->source) : nullptr;
+    if (!origin || !source || origin->start >= origin->end ||
+        origin->end > source->size()) {
+      report(expr.paren(),
+             "Expression text requires one complete written source "
+             "expression; a synthetic or composed expansion has no exact "
+             "written spelling.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    currentType = SemanticType::StringView;
+    semanticModel.record(expr, ResolvedCallInfo{.returnType = currentType,
+                                                .intrinsic = intrinsic});
+    semanticModel.recordConstant(
+        expr, source->substr(origin->start, origin->end - origin->start));
+    semanticModel.recordProgramConstantSubstitution(expr);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::EraseReference ||
       intrinsic == IntrinsicKind::EraseReferenceMut ||
       intrinsic == IntrinsicKind::RestoreReference ||

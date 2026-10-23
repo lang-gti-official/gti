@@ -668,6 +668,14 @@ requireCapture(macroRow, "track_caller", "attribute");
 requireCapture(macroRow, "condition", "variable.parameter");
 requireCapture(macroRow, "Args", "type.parameter");
 requireLocalCapture(macroRow, "macro_highlight", "local.definition.function");
+const macroValueRow = fixtureLines.findIndex((line) =>
+  line.includes("#macro int macro_value_highlight"),
+);
+requireCapture(macroValueRow, "#macro", "keyword.type");
+requireCapture(macroValueRow, "int", "type.builtin");
+requireCapture(macroValueRow, "macro_value_highlight", "function.macro");
+requireCapture(macroValueRow, "track_caller", "attribute");
+requireLocalCapture(macroValueRow, "macro_value_highlight", "local.definition.function");
 
 const borrowOriginRow = fixtureLines.findIndex((line) =>
   line.includes("int& borrow_highlight"),

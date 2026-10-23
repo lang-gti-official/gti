@@ -1,6 +1,7 @@
 #include "gti/hir.h"
 
 #include <algorithm>
+#include <functional>
 #include <unordered_set>
 
 namespace lang {
@@ -221,6 +222,85 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
   }
   const auto verifyConcreteBindings = [&](const HirBody &body) {
+    const bool hasResultRegion =
+        std::any_of(body.values.begin(), body.values.end(),
+                    [](const auto &value) {
+                      return value.kind == HirValueKind::ScopedResult ||
+                             value.regionBody;
+                    }) ||
+        std::any_of(
+            body.statements.begin(), body.statements.end(),
+            [](const auto &statement) { return statement.resultRegion != 0; });
+    if (hasResultRegion) {
+      std::unordered_map<HirStatementId, HirValueId> statementRegions;
+      std::unordered_set<HirValueId> checkedValues;
+      std::unordered_set<HirValueId> activeValues;
+      std::function<void(HirStatementId, HirValueId)> statement;
+      std::function<void(HirValueId, HirValueId)> value;
+      value = [&](HirValueId id, HirValueId region) {
+        const auto *node = body.findValue(id);
+        if (!node || activeValues.contains(id)) {
+          result.errors.emplace_back(
+              "HIR result region has a missing/cyclic value");
+          return;
+        }
+        if (!checkedValues.insert(id).second)
+          return;
+        activeValues.insert(id);
+        if (node->kind == HirValueKind::ScopedResult) {
+          if (!node->regionBody || !exprAs<Call>(node->source) ||
+              node->info.category != ValueCategory::Value ||
+              node->info.traits.containsBorrowedState ||
+              !node->operands.empty() || node->functionTarget ||
+              node->intrinsic != IntrinsicKind::None) {
+            result.errors.emplace_back(
+                "HIR scoped result has an invalid region contract");
+          } else {
+            statement(*node->regionBody, node->id);
+          }
+        } else if (node->regionBody) {
+          result.errors.emplace_back(
+              "HIR ordinary value cannot own a result region");
+        }
+        for (const auto operand : node->operands)
+          value(operand, region);
+        for (const auto input : node->sequencedInputs)
+          value(input, region);
+        if (node->receiver)
+          value(*node->receiver, region);
+        activeValues.erase(id);
+      };
+      statement = [&](HirStatementId id, HirValueId region) {
+        const auto *node = body.findStatement(id);
+        const auto [found, inserted] = statementRegions.emplace(id, region);
+        if (!node || (!inserted && found->second != region)) {
+          result.errors.emplace_back(
+              "HIR statement crosses result-region boundaries");
+          return;
+        }
+        if (!inserted)
+          return;
+        if ((node->kind == HirStatementKind::Return &&
+             node->resultRegion != region) ||
+            (node->kind != HirStatementKind::Return && node->resultRegion != 0))
+          result.errors.emplace_back(
+              "HIR return has a missing or forged result-region target");
+        for (const auto input : {node->value, node->condition, node->increment})
+          if (input)
+            value(*input, region);
+        for (const auto child :
+             {node->initializer, node->body, node->elseBranch})
+          if (child)
+            statement(*child, region);
+        for (const auto child : node->statements)
+          statement(child, region);
+        for (const auto &arm : node->switchArms)
+          for (const auto child : arm.statements)
+            statement(child, region);
+      };
+      for (const auto root : body.roots)
+        statement(root, 0);
+    }
     for (const HirBinding &binding : body.bindings) {
       const auto found = instanceSymbols.find(binding.info.symbol);
       if (found != instanceSymbols.end() &&
@@ -688,6 +768,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   const auto verifyGeneratedConstructionValues = [&](const HirBody &body) {
     verifyDirectInitializations(body);
     for (const auto &value : body.values) {
+      if (value.intrinsic == IntrinsicKind::SourceExpressionText)
+        result.errors.emplace_back(
+            "written expression metadata was not normalized to a HIR literal");
       if (!value.defaultArguments.empty()) {
         const std::vector<Parameter> *parameters = nullptr;
         if (const auto *target =
