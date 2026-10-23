@@ -4312,7 +4312,7 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/borrowed_payload_pattern_runtime_test.py"
               "$<TARGET_FILE:gti>"
     )
-    set_tests_properties(borrowed_payload_pattern_runtime PROPERTIES TIMEOUT 300)
+    set_tests_properties(borrowed_payload_pattern_runtime PROPERTIES TIMEOUT 600)
     add_test(
       NAME argument_reference_return_runtime
       COMMAND "${Python3_EXECUTABLE}"

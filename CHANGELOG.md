@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.466.3 — References to payload enums held inside another enum
+
+- `std::optional<Shape>::value()` for a payload enum without cleanup, such as
+  `enum Shape { circle(int radius), none }`, used to fail while compiling the
+  generated C++ (`use of undeclared identifier '__gti_mir_v_1'` in the saved
+  backend log). `Shape inner = o.value();`, `auto& r = o.value();`, `*o`,
+  `o.value() = ...`, and `o.clone()` now compile and run. The same failure
+  affected any reference bound to an `auto&` payload of that kind, whether
+  returned by your own accessor or bound directly, as in
+  `case Wrap::one(auto& s): Shape& r = s;`.
+
 ## 0.466.2 — Iterators and carriers from returned references
 
 - A text iterator can now be built directly from a view that a call returns
