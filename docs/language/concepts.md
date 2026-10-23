@@ -28,8 +28,8 @@ member in a constant condition.
 ## Concept declarations
 
 A namespace-scoped source concept declares one or more type parameters and
-combines existing concepts and bounded member requirements with conjunction
-and disjunction:
+combines existing concepts, unevaluated expression requirements and constexpr
+boolean-call predicates with conjunction and disjunction:
 
 ```gti
 concept sortable<T> =
@@ -51,7 +51,8 @@ generic inference. Its application remains an ordinary predicate branch, so a
 false closed application may be bypassed by a satisfied `||` alternative.
 Dependent compound arguments such as `Wrapper<T>` use ordinary type substitution
 and exact specialization selection; they do not infer generic arguments.
-Unexpanded packs, values, and expressions remain outside this grammar. Concept names
+Unexpanded packs remain outside concept-application arguments. A constexpr
+boolean call can additionally test reflected type facts, as described below. Concept names
 follow ordinary namespace and direct-source-unit visibility. They may be
 declared after use within a visible source unit. Definitions may use
 `&&`/`and` and `||`/`or`. Conjunction binds more tightly than disjunction, and
@@ -111,7 +112,8 @@ T consume<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, mut T init)
 The implemented clause has this bounded grammar:
 
 ```text
-constraint-primary    = concept-application | member-requirement
+constraint-primary    = concept-application | expression-requirement
+                      | constexpr-boolean-call
                       | '(' constraint-expression ')'
 constraint-and        = constraint-primary (('&&' | 'and') constraint-primary)*
 constraint-expression = constraint-and (('||' | 'or') constraint-and)*
@@ -120,9 +122,12 @@ requires-clause       = 'requires' constraint-expression
 
 Every argument must be a visible non-pack type parameter, closed exact type,
 or dependent compound type,
-and every application must have the declared arity. Unexpanded packs,
-values, arbitrary expressions, general nested requires-expressions, boolean
-predicates, and negation are not accepted in this clause.
+and every application must have the declared arity. Predicate leaves use an
+ordinary explicitly type-argumentized call such as
+`std::meta::is_integral<T>()`; they must evaluate to exact `bool` in the existing
+constant evaluator. General Boolean expressions belong inside such a constexpr
+function, not directly in the clause. Unexpanded packs and constraint-level
+negation are not accepted. These additions do not introduce overload ranking.
 
 The compiler forms all clause applications before validating dependent
 compound arguments against the clause's guaranteed facts. For example,
@@ -230,7 +235,80 @@ needs general call-site constant validation and must reuse the canonical
 constant-evaluation direction, not an optimizer-dependent check or a second
 format grammar embedded in the compiler.
 
-## Exact member signature requirements
+## Unevaluated expression requirements
+
+A requirement can check an ordinary expression without executing it or changing
+the surrounding ownership state:
+
+```gti
+concept adds_to<L, R, V> = requires(L& left, R& right) {
+  { left + right } -> V;
+};
+concept builds<T, A> = requires(A& argument) {
+  { T(argument) } -> T;
+};
+concept defaults<T> = requires { { T() } -> T; };
+```
+
+The parameter list is optional. Each binding has an exact type; `mut` is
+permitted only on a reference parameter. A block contains one or more checks,
+all of which must hold. Each `-> R` names an exact owned, non-borrowed result
+type, including `void`; it is not a result concept or an implicit conversion.
+The same query is a Boolean expression usable in `static_assert` and
+`if constexpr`. Example [173](../../examples/173-general-requires.gti) demonstrates
+operators, construction, composition and reflection on an unrelated user type.
+
+Semantic analysis checks general expressions using ordinary GTI resolution,
+access, ownership, mutability and lifetime rules in an isolated unevaluated
+context. Missing or ambiguous operations, inaccessible constructors, invalid
+transfers, or an incorrect result make the query false. It does not instantiate
+a runtime receiver, execute a function or publish moves, loans or writes into
+the caller. An owned synthetic parameter can be consumed; a checked reference
+does not gain permission to move its referent. Prefixing a check with `unsafe`
+permits unsafe operations in that query and retains the unsafe obligation when
+the resulting operation is used in a generic body. An enclosing unsafe block
+does not silently authorize an ordinary requirement.
+
+A requirement expression supplied as a typed-macro argument keeps the caller's
+lexical lookup domain. Synthetic query parameters are local to the query; they
+do not expose intervening macro-local variables or leak into a separately
+analysed function or lambda scope.
+The current typed-macro body profile does not yet admit a directly written
+requirement expression; a caller may supply the query as a Boolean argument.
+
+For an open generic body, direct bound-operand operator/call requirements with
+a reference receiver and direct `T(arguments...)` construction requirements
+supply exact provisional
+operation facts. These facts do not create executable call targets: concrete
+instances resolve and validate ordinary operations again before HIR/MIR.
+Owned receiver queries are concrete filters until an exact consuming-access
+proof is available; they never manufacture a borrowed receiver capability.
+Compound expressions may filter concrete types, but do not manufacture proofs
+for arbitrary subexpressions in an open generic body. Conjunction unions
+guaranteed facts; disjunction retains only common facts. Recursive query
+checking is bounded to 64 active checks.
+
+### Constexpr reflection predicates
+
+```gti
+concept integer_value<T> = std::meta::is_integral<T>();
+concept plain_integer<T> =
+    integer_value<T> && std::meta::is_bitwise_relocatable<T>();
+concept same_representation<E, U> = std::meta::is_enum_underlying<E, U>();
+```
+
+Predicates use the existing constexpr execution rules and limits. A nonconstant,
+non-Boolean, unsafe or false call cannot satisfy a constraint. An arbitrary
+constexpr function is a concrete validity filter, not a promise that the
+compiler can deduce every consequence of its implementation. Direct reflected
+facts, and unambiguous safe constexpr wrappers that directly forward such a
+fact, additionally carry that fact into symbolic body checking. Public function
+names are not special: the fact originates at a trusted declaration identity.
+Lexical lookup belongs to the predicate declaration rather than the caller's
+generic bindings. No separate constexpr interpreter or native template probing
+is involved.
+
+### Exact member signature compatibility
 
 Library authors can describe a public, nongeneric instance method with
 an exact owned result type:
@@ -265,11 +343,12 @@ is a public predicate. Its member requirements never admit a compiler-private
 member, even when trusted source declares or applies the concept, and the
 failure reports that the member is compiler-private rather than nonpublic.
 
-Each query admits one checked reference receiver and one nongeneric member.
+The existing exact member-signature shape admits one checked reference receiver
+and one nongeneric member. It remains a compatible strict subset:
 An immutable `T&` receiver requires a read-only method; `mut T&` requires a
 mutable method. Additional typed parameters describe the exact method signature,
 including reference access. The call must use every declared parameter once in
-declaration order; it cannot contain arbitrary expressions or transfers:
+declaration order:
 
 ```gti
 concept accumulates<C, V> =
@@ -343,26 +422,49 @@ compiler.
 
 ## Ownership boundary
 
-The compiler must evaluate facts that current source concept composition cannot
-itself express, such as whether a primitive is integral or whether an iterator
-declaration exposes an exact dereference operation. It must not understand
-public library names or library policy.
+The compiler must establish facts that source cannot safely derive, including
+primitive classification, structural copying/movement/relocation, concurrency
+eligibility and exact enum representation. Source composes public reflection
+queries for these facts; it does not implement layout or ownership truth by
+trying arbitrary operations. The compiler must not understand public library
+names or library policy.
 
 The boundary has three layers:
 
 1. compiler-owned capability records contain irreducible semantic facts;
 2. trusted declarations in `gti_internal` bind one fact or exact structural
    relationship by declaration identity; and
-3. public `std` concepts and user concepts compose those declarations in GTI.
+3. public `std::meta` predicates expose general facts, and `std` concepts and
+   user concepts compose those predicates or expression requirements in GTI.
 
-For example, `std::totally_ordered` is not a compiler enum value. The prelude
-defines it as equality plus the irreducible relational-operator fact. The
-iterator units likewise define public concepts over private structural facts:
+The prelude now defines numeric, enum, lifecycle and transfer/share concepts
+through reflection rather than duplicate private concept declarations.
+Their obsolete declaration-binding labels have been removed; the underlying
+compiler fact kinds remain the authority for reflection and proof checking.
+The exact enum-underlying relation likewise uses reflection rather than a
+separate private concept binding.
+Arithmetic domain concepts use source requirements for the actual operations.
+Their `[[unsatisfied(...)]]` explanations also live in source, so constraint
+diagnostics retain useful guidance without recognizing those concept names.
+The former `adds`, `subtracts`, `negates`, and `scales_by` compiler bindings
+and dedicated proof branches have been removed. Their generic-body operation
+facts now use the same general expression-requirement path as user concepts.
+The exact equality and relational declaration-shape contracts remain private:
+ordinary expression viability cannot yet prove their requirement-free,
+read-only, exact-reference signature policy. Replacing them needs general
+receiver/requirement metadata, not weaker acceptance or a renamed private trait.
+Iterator relations returning checked borrows, and callable relations carrying
+the complete read/mutable/once-use and borrow/escape contract, retain their
+existing compiler facts. A single owned-result expression query is not a
+replacement for those complete relationships.
+
+For example, `std::totally_ordered` remains source composition, and the iterator
+units still define public concepts over the necessary private structural facts:
 
 ```gti
 namespace std {
 concept copy_constructible<T> =
-    gti_internal::copy_constructible_capability<T>;
+    std::meta::is_copy_constructible<T>();
 
 concept input_iterator<I> = gti_internal::input_iterator_capability<I>;
 
@@ -428,11 +530,12 @@ The current structural capability set is intentionally small:
   it, so only copyable read cursors satisfy them; and
 - `accumulates_into<I, T>` is the numeric-library composition of the same
   exact dereference relationship;
-- `adds<T>`, `subtracts<T>`, and `negates<T>` each require one exact public
-  read-only member — `T operator+(T&)`, `T operator-(T&)`, and unary
-  `T operator-()` — returning an *owned* value of the domain type itself; and
-- `scales_by<T, Scalar>` requires public read-only `T operator*(Scalar)`
-  returning an owned domain value for that exact scalar type;
+- `addable<T>`, `subtractable<T>`, and `negatable<T>` are source-defined
+  requirements for readable addition, subtraction and negation returning an
+  owned `T`; `scalable_by<T, Scalar>` checks readable multiplication by an owned
+  exact `Scalar`. These domain concepts require a struct/class, not a primitive.
+  Ordinary call viability applies: a by-value operand cannot copy a move-only
+  borrowed value merely because a signature exists;
 - `read_callable<F, A, R>`, `mut_callable<F, A, R>`, and
   `once_callable<F, A, R>` require one exact unary callable signature whose
   result is the owned, non-borrowed `R` and whose readable argument is either

@@ -76,8 +76,6 @@ SignaturePrinter::function(const FunctionInfo &info,
   if (info.discardableResult) {
     result += "[[discardable]] ";
   }
-  if (info.deferredEvaluation)
-    result += "[[deferred]] ";
   if (info.threadConfinedCallback) {
     result += "[[thread_confined_callback]] ";
   }
@@ -121,6 +119,8 @@ SignaturePrinter::function(const FunctionInfo &info,
       result += "implicit ";
     }
     result += functionName(info);
+  } else if (info.macroExpansion) {
+    result += "#macro " + functionName(info);
   } else {
     result += types.print(returnType) + " " + functionName(info);
   }
@@ -632,8 +632,34 @@ void SignaturePrinter::appendParameters(
 
 void SignaturePrinter::appendConceptApplication(
     std::string &result, const ConceptApplication &application) {
+  if (application.predicate) {
+    result += semantic_spelling::expressionSpelling(*application.predicate);
+    return;
+  }
   if (application.memberRequirement) {
     const auto &query = *application.memberRequirement;
+    if (query.isExpressionRequirement()) {
+      result += "requires";
+      if (!query.parameters().empty()) {
+        result += " (";
+        for (std::size_t index = 0; index < query.parameters().size();
+             ++index) {
+          if (index != 0)
+            result += ", ";
+          if (query.parameters()[index].referenceMutability)
+            result += "mut ";
+          result +=
+              semantic_spelling::typeRefSpelling(query.parameters()[index]) +
+              " " + query.bindings()[index].lexeme;
+        }
+        result += ")";
+      }
+      result += query.unsafeKeyword() ? " { unsafe { " : " { { ";
+      result += semantic_spelling::expressionSpelling(*query.expression());
+      result +=
+          " } -> " + semantic_spelling::typeRefSpelling(query.result()) + "; }";
+      return;
+    }
     result += "requires (" +
               (query.receiver().referenceMutability ? std::string("mut ")
                                                     : std::string()) +
@@ -726,6 +752,18 @@ void SignaturePrinter::appendRequirements(
       }
     }
     result += '>';
+    if (syntax[index].predicate) {
+      result += "(";
+      if (const auto *call = exprAs<Call>(syntax[index].predicate.get()))
+        for (std::size_t argument = 0; argument < call->arguments().size();
+             ++argument) {
+          if (argument != 0)
+            result += ", ";
+          result += semantic_spelling::expressionSpelling(
+              *call->arguments()[argument]);
+        }
+      result += ")";
+    }
   };
   result += " requires ";
   std::function<void(std::size_t, int)> appendNode = [&](std::size_t nodeIndex,
@@ -754,6 +792,346 @@ void SignaturePrinter::appendRequirements(
   };
   appendNode(expression.root, 0);
 }
+
+namespace {
+
+// Inspection is deliberately separate from lowering. This bounded printer
+// renders retained checked syntax and marks omissions rather than attempting
+// to reconstruct an executable program or its ownership schedule.
+class MacroExpansionDisplay {
+public:
+  explicit MacroExpansionDisplay(const SemanticModel &semantics)
+      : semantics(semantics) {}
+
+  std::string print(const Stmt &body) {
+    append(
+        "// Explanatory GTI macro expansion; read-only, not executable "
+        "source.\n"
+        "// Arguments remain expressions: repeated uses repeat evaluation.\n"
+        "// __macro_local_N labels distinguish checked hygienic bindings.\n");
+    statement(body, 0);
+    if (truncated_)
+      output += "\n// Expansion display truncated (16 KiB / 4096 nodes / 64 "
+                "levels).\n";
+    return std::move(output);
+  }
+
+  bool truncated() const { return truncated_; }
+
+private:
+  static constexpr std::size_t byteLimit = 16000;
+  const SemanticModel &semantics;
+  std::string output;
+  std::size_t visited = 0;
+  bool truncated_ = false;
+  std::unordered_map<SymbolId, std::string> localNames;
+
+  void append(std::string_view text) {
+    if (truncated_)
+      return;
+    if (text.size() <= byteLimit - output.size()) {
+      output += text;
+      return;
+    }
+    std::size_t length = byteLimit - output.size();
+    // JSON/editor text must remain valid UTF-8 even at the output bound.
+    while (length > 0 && length < text.size() &&
+           (static_cast<unsigned char>(text[length]) & 0xc0U) == 0x80U)
+      --length;
+    output.append(text.substr(0, length));
+    truncated_ = true;
+  }
+
+  bool enter(std::size_t depth) {
+    if (truncated_)
+      return false;
+    if (++visited > 4096 || depth >= 64) {
+      truncated_ = true;
+      return false;
+    }
+    return true;
+  }
+
+  void indentation(std::size_t depth) { append(std::string(depth * 2, ' ')); }
+
+  void path(const NamePath &name) {
+    for (std::size_t index = 0; index < name.segments.size(); ++index) {
+      if (index)
+        append("::");
+      append(name.segments[index].lexeme);
+    }
+  }
+
+  void arguments(const ExprList &values, std::size_t depth,
+                 const std::vector<Token> *designators = nullptr) {
+    for (std::size_t index = 0; index < values.size() && !truncated_; ++index) {
+      if (index)
+        append(", ");
+      if (designators && index < designators->size() &&
+          !(*designators)[index].lexeme.empty()) {
+        append(".");
+        append((*designators)[index].lexeme);
+        append(" = ");
+      }
+      expression(values[index].get(), depth + 1);
+    }
+  }
+
+  void expression(const Expr *value, std::size_t depth) {
+    if (!value || !enter(depth))
+      return;
+    if (const auto *node = exprAs<Variable>(value)) {
+      const PlaceKey *place = semantics.findPlace(*node);
+      const auto local =
+          place ? localNames.find(place->root) : localNames.end();
+      append(local == localNames.end() ? node->name().lexeme : local->second);
+    } else if (const auto *node = exprAs<LiteralExpr>(value)) {
+      append(node->token().lexeme.empty() ? "/* synthesized literal */"
+                                          : node->token().lexeme);
+    } else if (const auto *node = exprAs<QualifiedName>(value)) {
+      if (node->ownerType()) {
+        append(semantic_spelling::typeRefSpelling(*node->ownerType()));
+        append("::");
+        append(node->name().last().lexeme);
+      } else {
+        path(node->name());
+      }
+    } else if (exprAs<This>(value)) {
+      append("this");
+    } else if (const auto *node = exprAs<Binary>(value)) {
+      binary(*node->left(), node->oper().lexeme, *node->right(), depth);
+    } else if (const auto *node = exprAs<Logical>(value)) {
+      binary(*node->left(), node->oper().lexeme, *node->right(), depth);
+    } else if (const auto *node = exprAs<ConditionalExpr>(value)) {
+      append("(");
+      expression(node->condition().get(), depth + 1);
+      append(" ? ");
+      expression(node->thenExpression().get(), depth + 1);
+      append(" : ");
+      expression(node->elseExpression().get(), depth + 1);
+      append(")");
+    } else if (const auto *node = exprAs<Unary>(value)) {
+      append("(");
+      append(node->oper().lexeme);
+      append(" ");
+      expression(node->right().get(), depth + 1);
+      append(")");
+    } else if (const auto *node = exprAs<Postfix>(value)) {
+      append("(");
+      expression(node->expression().get(), depth + 1);
+      append(node->oper().lexeme);
+      append(")");
+    } else if (const auto *node = exprAs<Grouping>(value)) {
+      append(node->unsafeKeyword() ? "unsafe(" : "(");
+      expression(node->expression().get(), depth + 1);
+      append(")");
+    } else if (const auto *node = exprAs<Call>(value)) {
+      expression(node->callee().get(), depth + 1);
+      if (!node->typeArguments().empty()) {
+        append("<");
+        for (std::size_t index = 0; index < node->typeArguments().size();
+             ++index) {
+          if (index)
+            append(", ");
+          append(
+              semantic_spelling::typeRefSpelling(node->typeArguments()[index]));
+        }
+        append(">");
+      }
+      append("(");
+      arguments(node->arguments(), depth);
+      append(")");
+    } else if (const auto *node = exprAs<Get>(value)) {
+      expression(node->object().get(), depth + 1);
+      append(node->access().lexeme);
+      append(node->name().lexeme);
+    } else if (const auto *node = exprAs<Index>(value)) {
+      expression(node->object().get(), depth + 1);
+      append("[");
+      expression(node->index().get(), depth + 1);
+      append("]");
+    } else if (const auto *node = exprAs<Assign>(value)) {
+      const PlaceKey *place = semantics.findPlace(*node);
+      const auto local =
+          place ? localNames.find(place->root) : localNames.end();
+      if (local != localNames.end())
+        append(local->second);
+      else
+        path(node->path());
+      append(" ");
+      append(node->oper().lexeme);
+      append(" ");
+      expression(node->value().get(), depth + 1);
+    } else if (const auto *node = exprAs<PlaceSet>(value)) {
+      binary(*node->target(), node->oper().lexeme, *node->value(), depth);
+    } else if (const auto *node = exprAs<Set>(value)) {
+      expression(node->object().get(), depth + 1);
+      append(node->access().lexeme);
+      append(node->name().lexeme);
+      append(" ");
+      append(node->oper().lexeme);
+      append(" ");
+      expression(node->value().get(), depth + 1);
+    } else if (const auto *node = exprAs<IndexSet>(value)) {
+      expression(node->object().get(), depth + 1);
+      append("[");
+      expression(node->index().get(), depth + 1);
+      append("] ");
+      append(node->oper().lexeme);
+      append(" ");
+      expression(node->value().get(), depth + 1);
+    } else if (const auto *node = exprAs<DereferenceSet>(value)) {
+      append("*");
+      expression(node->object().get(), depth + 1);
+      append(" ");
+      append(node->oper().lexeme);
+      append(" ");
+      expression(node->value().get(), depth + 1);
+    } else if (const auto *node = exprAs<Conversion>(value)) {
+      append(semantic_spelling::typeRefSpelling(node->targetType()));
+      append("(");
+      expression(node->value().get(), depth + 1);
+      append(")");
+    } else if (const auto *node = exprAs<DirectInitializer>(value)) {
+      append("{");
+      arguments(node->arguments(), depth, &node->designators());
+      append("}");
+    } else if (const auto *node = exprAs<ArrayInitializer>(value)) {
+      append("{");
+      arguments(node->elements(), depth);
+      append("}");
+    } else if (const auto *node = exprAs<LayoutQuery>(value)) {
+      append(node->keyword().lexeme);
+      append("(");
+      append(semantic_spelling::typeRefSpelling(node->type()));
+      append(")");
+    } else if (const auto *node = exprAs<PackExpansion>(value)) {
+      append(node->name().lexeme);
+      append("...");
+    } else {
+      // Lambdas/unevaluated requirements supplied by an argument may remain
+      // in checked syntax. Do not misrepresent their source as fully rendered.
+      append("/* expression omitted from inspection */");
+    }
+  }
+
+  void binary(const Expr &left, std::string_view oper, const Expr &right,
+              std::size_t depth) {
+    append("(");
+    expression(&left, depth + 1);
+    append(" ");
+    append(oper);
+    append(" ");
+    expression(&right, depth + 1);
+    append(")");
+  }
+
+  void statement(const Stmt &value, std::size_t depth) {
+    if (!enter(depth))
+      return;
+    if (const auto *node = stmtAs<BlockStmt>(&value)) {
+      indentation(depth);
+      append("{\n");
+      for (const auto &child : node->statements()) {
+        if (truncated_)
+          break;
+        if (child)
+          statement(*child, depth + 1);
+      }
+      indentation(depth);
+      append("}\n");
+    } else if (const auto *node = stmtAs<ExpressionStmt>(&value)) {
+      if (const Stmt *expanded = semantics.findMacroExpansion(*node)) {
+        indentation(depth);
+        append("// Nested macro expansion:\n");
+        statement(*expanded, depth + 1);
+      } else {
+        indentation(depth);
+        if (node->discardAttribute())
+          append("[[discard]] ");
+        expression(node->expression().get(), depth + 1);
+        append(";\n");
+      }
+    } else if (const auto *node = stmtAs<VariableDecl>(&value)) {
+      indentation(depth);
+      variable(*node, depth);
+      append(";\n");
+    } else if (const auto *node = stmtAs<IfStmt>(&value)) {
+      indentation(depth);
+      append(node->isConstexpr() ? "if constexpr (" : "if (");
+      expression(node->condition().get(), depth + 1);
+      append(")\n");
+      if (node->thenBranch())
+        statement(*node->thenBranch(), depth + 1);
+      if (node->elseBranch()) {
+        indentation(depth);
+        append("else\n");
+        statement(*node->elseBranch(), depth + 1);
+      }
+    } else if (const auto *node = stmtAs<ForStmt>(&value)) {
+      indentation(depth);
+      append("for (");
+      if (const auto *initializer =
+              stmtAs<VariableDecl>(node->initializer().get()))
+        variable(*initializer, depth);
+      else if (const auto *initializer =
+                   stmtAs<ExpressionStmt>(node->initializer().get()))
+        expression(initializer->expression().get(), depth + 1);
+      append("; ");
+      expression(node->condition().get(), depth + 1);
+      append("; ");
+      expression(node->increment().get(), depth + 1);
+      append(")\n");
+      if (node->body())
+        statement(*node->body(), depth + 1);
+    } else if (const auto *node = stmtAs<WhileStmt>(&value)) {
+      indentation(depth);
+      append("while (");
+      expression(node->condition().get(), depth + 1);
+      append(")\n");
+      if (node->body())
+        statement(*node->body(), depth + 1);
+    } else if (const auto *node = stmtAs<DoWhileStmt>(&value)) {
+      indentation(depth);
+      append("do\n");
+      if (node->body())
+        statement(*node->body(), depth + 1);
+      indentation(depth);
+      append("while (");
+      expression(node->condition().get(), depth + 1);
+      append(");\n");
+    } else if (const auto *node = stmtAs<LoopControlStmt>(&value)) {
+      indentation(depth);
+      append(node->keyword().lexeme);
+      append(";\n");
+    } else {
+      indentation(depth);
+      append(stmtAs<EmptyStmt>(&value)
+                 ? ";\n"
+                 : "/* statement omitted from inspection */\n");
+    }
+  }
+
+  void variable(const VariableDecl &node, std::size_t depth) {
+    if (node.isMutable())
+      append("mut ");
+    append(semantic_spelling::typeRefSpelling(node.type()));
+    append(" ");
+    const auto *binding = semantics.findBinding(node);
+    std::string name = node.name().lexeme;
+    if (binding && binding->symbol) {
+      name += "__macro_local_" + std::to_string(localNames.size() + 1);
+      localNames.insert_or_assign(binding->symbol, name);
+    }
+    append(name);
+    if (node.initializer()) {
+      append(" = ");
+      expression(node.initializer().get(), depth + 1);
+    }
+  }
+};
+
+} // namespace
 
 class LanguageQueriesImpl {
 public:
@@ -1102,7 +1480,8 @@ public:
     }
 
     ReferencesInfo result{.symbol = symbol->id};
-    result.sites = collectSites(snapshot, sourceUnit, {symbol->id});
+    result.sites = collectSites(snapshot, sourceUnit,
+                                writtenBindingSymbols(snapshot, *symbol));
     if (!includeDeclaration) {
       std::erase_if(result.sites, [&](const ReferenceSite &site) {
         return (hasRole(site.roles, OccurrenceRole::Declaration) ||
@@ -1594,6 +1973,36 @@ private:
            left.end == right.end;
   }
 
+  // Several checked expansion-local symbols can denote one written binder.
+  // Link only exact compiler-recorded declaration identity inside a retained
+  // macro definition, never same-spelled caller names or unrelated scopes.
+  static std::vector<SymbolId>
+  writtenBindingSymbols(const FrontendResult &snapshot,
+                        const SymbolRecord &symbol) {
+    std::vector<SymbolId> result{symbol.id};
+    if (symbol.kind != SymbolKind::LocalVariable || !symbol.expansion)
+      return result;
+    const auto sites = snapshot.semantics.macroExpansionSites();
+    const bool macroLocal = std::any_of(
+        sites.begin(), sites.end(), [&](const MacroExpansionSite &site) {
+          if (!site.declaration || !site.declaration->extent())
+            return false;
+          const auto &extent = *site.declaration->extent();
+          return extent.source == symbol.nameSpan.source &&
+                 extent.start <= symbol.nameSpan.start &&
+                 symbol.nameSpan.end <= extent.end;
+        });
+    if (!macroLocal)
+      return result;
+    for (const auto &candidate : snapshot.semantics.database().symbols())
+      if (candidate.id != symbol.id && candidate.expansion &&
+          candidate.kind == symbol.kind &&
+          sameSpan(candidate.nameSpan, symbol.nameSpan) &&
+          sameSpan(candidate.declarationSpan, symbol.declarationSpan))
+        result.push_back(candidate.id);
+    return result;
+  }
+
   // Deduplicated, ordered occurrence sites for a set of snapshot symbols.
   // Sites the requesting unit may not present are dropped, so results fail
   // closed for compiler-private records.
@@ -1696,7 +2105,7 @@ private:
       return core;
     }
 
-    std::vector<SymbolId> closure{symbol->id};
+    std::vector<SymbolId> closure = writtenBindingSymbols(snapshot, *symbol);
     const std::vector<LambdaCaptureLink> links =
         snapshot.semantics.lambdaCaptureLinks();
     const auto contains = [&closure](SymbolId id) {
@@ -2234,6 +2643,52 @@ std::optional<HoverInfo> LanguageQueries::hover(const FrontendResult &snapshot,
                                                 SourceUnitId sourceUnit,
                                                 std::size_t byteOffset) const {
   return LanguageQueriesImpl().hover(snapshot, sourceUnit, byteOffset);
+}
+
+std::optional<MacroExpansionInfo>
+LanguageQueries::macroExpansion(const FrontendResult &snapshot,
+                                SourceUnitId sourceUnit,
+                                std::size_t byteOffset) const {
+  const SourceUnit *unit = snapshot.sourceGraph.findUnit(sourceUnit);
+  if (!unit)
+    return std::nullopt;
+  const std::string *source = snapshot.sources.find(unit->path.string());
+  if (!source || byteOffset >= source->size())
+    return std::nullopt;
+  std::optional<MacroExpansionSite> selected;
+  SourceSpan selectedSpan;
+  bool ambiguous = false;
+  for (const auto &site : snapshot.semantics.macroExpansionSites()) {
+    if (!site.invocation || !site.body || !site.declaration)
+      continue;
+    const auto *call = exprAs<Call>(site.invocation->expression().get());
+    if (!call)
+      continue;
+    SourceSpan span = tokenSpan(site.invocation->expressionStart());
+    span.end = tokenSpan(call->paren()).end;
+    if (span.source != unit->path.string() || span.end > source->size() ||
+        span.start > byteOffset || byteOffset >= span.end)
+      continue;
+    const std::size_t length = span.end - span.start;
+    if (!selected || length < selectedSpan.end - selectedSpan.start) {
+      selected = site;
+      selectedSpan = std::move(span);
+      ambiguous = false;
+    } else if (span == selectedSpan && site.body != selected->body) {
+      // A written call instantiated with several concrete meanings has no
+      // single honest expansion to display. Never select by map/pointer order.
+      ambiguous = true;
+    }
+  }
+  if (!selected || ambiguous)
+    return std::nullopt;
+  MacroExpansionDisplay display(snapshot.semantics);
+  std::string text = display.print(*selected->body);
+  return MacroExpansionInfo{.invocation = std::move(selectedSpan),
+                            .declaration =
+                                tokenSpan(selected->declaration->name()),
+                            .text = std::move(text),
+                            .truncated = display.truncated()};
 }
 
 std::optional<DefinitionInfo>

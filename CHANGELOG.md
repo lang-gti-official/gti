@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.465.7 — References to payload enums held inside another enum
+## 0.467.1 — References to payload enums held inside another enum
 
 - `std::optional<Shape>::value()` for a payload enum without cleanup, such as
   `enum Shape { circle(int radius), none }`, used to fail while compiling the
@@ -19,6 +19,45 @@ for what minor and patch releases mean.
   affected any reference bound to an `auto&` payload of that kind, whether
   returned by your own accessor or bound directly, as in
   `case Wrap::one(auto& s): Shape& r = s;`.
+
+## 0.467.0 — Source-defined requirements and general type facts
+
+- `requires` queries can check ordinary expressions and construction with exact
+  owned results, optional synthetic parameters and multiple checks. Queries
+  execute no code and retain normal access, ownership and unsafe obligations.
+- Concepts and trailing clauses can compose constexpr Boolean calls, including
+  general `std::meta` classification, lifecycle, relocation, transfer/share,
+  exact-type and enum-representation predicates. Existing compiler facts stay
+  authoritative; arbitrary predicates do not invent safety proofs.
+- Prelude numeric/lifecycle/enum concepts now compose reflection queries, and
+  domain arithmetic concepts use source expression requirements. Strict
+  comparison and borrowed-result contracts retain their necessary compiler
+  support. Exact member requirements remain compatible; overload ranking and
+  subsumption are unchanged.
+- Hover signatures, requirement parameter navigation/rename, formatting and
+  Tree-sitter support cover the extended syntax. Example 173 demonstrates it.
+
+## 0.466.0 — Typed macros
+
+- Declare namespace-scope statement templates with `#macro NAME(typed
+  parameters) { ... }` and invoke them with ordinary, optionally qualified
+  `NAME(...)` calls. Generic parameters, typed overloads, defaults, final packs
+  and constraints use existing GTI signature rules.
+- Arguments are checked statically and evaluated where used, with hygienic
+  definition/caller lookup, checked ownership and deterministic cleanup. There
+  is no textual substitution, eager argument frame or escaping runtime thunk.
+- Automatic locals give explicit evaluate-once bindings with ordinary values,
+  references, moves and cleanup. Local mutation and scoped loops are supported;
+  macro-local names cannot capture caller names, and break/continue cannot
+  escape to a caller's loop.
+- `std::assert` and `std::debug_assert` now use this same facility. The previous
+  `[[deferred]]` spelling is removed and diagnosed with migration guidance;
+  macros and ordinary functions cannot share one callable name.
+- Formatter, Tree-sitter, macro semantic highlighting, hover and navigation
+  follow the declaration identity. Example 174 demonstrates application-defined
+  typed macros; example 172 retains the assertion workflow.
+- Diagnostics include nested expansion context. Neovim's read-only
+  `:GTIExpandMacro` view explains the checked expansion and local bindings.
 
 ## 0.465.6 — Moving one class and copying another after fallible work
 

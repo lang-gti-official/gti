@@ -1228,7 +1228,27 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
     -> std::vector<ExpandedStructuralRequirement> {
   const auto expandLeaf = [&](const AppliedConceptRequirement &requirement) {
     std::vector<ExpandedStructuralRequirement> result;
+    if (requirement.syntax && requirement.syntax->predicate) {
+      const auto capability = predicateCapabilityFor(
+          *requirement.syntax, requirement.arguments,
+          requirement.lookupScope ? &*requirement.lookupScope : nullptr);
+      if (capability &&
+          capability->structural != StructuralConstraintKind::None)
+        result.push_back({.kind = capability->structural,
+                          .arguments = capability->arguments,
+                          .application = requirement.syntax});
+      return result;
+    }
     if (requirement.syntax && requirement.syntax->memberRequirement) {
+      if (requirement.syntax->memberRequirement->isExpressionRequirement()) {
+        if (auto fact = expressionRequirementFact(
+                *requirement.syntax->memberRequirement,
+                requirement.arguments)) {
+          fact->application = requirement.syntax;
+          result.push_back(std::move(*fact));
+        }
+        return result;
+      }
       result.push_back(
           {.kind = StructuralConstraintKind::ReadMember,
            .arguments = requirement.arguments,
@@ -1375,6 +1395,17 @@ auto SemanticVisitor::Impl::activeAtomicConstraints(
     const auto atomicForLeaf =
         [&](const AppliedConceptRequirement &requirement) {
           GenericConstraintSet leaf = 0;
+          if (requirement.syntax && requirement.syntax->predicate) {
+            const auto capability = predicateCapabilityFor(
+                *requirement.syntax, requirement.arguments,
+                requirement.lookupScope ? &*requirement.lookupScope : nullptr);
+            return capability &&
+                           capability->atomic != GenericConstraintKind::None &&
+                           capability->arguments.size() == 1 &&
+                           capability->arguments.front() == type
+                       ? constraintBit(capability->atomic)
+                       : leaf;
+          }
           if (requirement.conceptId == 0 ||
               requirement.conceptId > concepts.size()) {
             return leaf;
@@ -1572,6 +1603,19 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
                 requirementAt(requirements, expression, left.application);
             const AppliedConceptRequirement *rightRequirement =
                 requirementAt(active, activeExpression, right.application);
+            if (leftRequirement && rightRequirement &&
+                ((leftRequirement->syntax &&
+                  (leftRequirement->syntax->predicate ||
+                   (leftRequirement->syntax->memberRequirement &&
+                    leftRequirement->syntax->memberRequirement
+                        ->isExpressionRequirement()))) ||
+                 (rightRequirement->syntax &&
+                  (rightRequirement->syntax->predicate ||
+                   (rightRequirement->syntax->memberRequirement &&
+                    rightRequirement->syntax->memberRequirement
+                        ->isExpressionRequirement())))))
+              return leftRequirement->syntax == rightRequirement->syntax &&
+                     leftRequirement->arguments == rightRequirement->arguments;
             return leftRequirement != nullptr && rightRequirement != nullptr &&
                    leftRequirement->conceptId == rightRequirement->conceptId &&
                    (!leftRequirement->syntax ||
@@ -1638,7 +1682,84 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
 auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     const AppliedConceptRequirement &requirement) const
     -> std::optional<ConstraintFailure> {
+  if (requirement.syntax && requirement.syntax->predicate) {
+    std::string reason;
+    if (constraintPredicateSatisfied(
+            *requirement.syntax, requirement.arguments, &reason,
+            requirement.lookupScope ? &*requirement.lookupScope : nullptr))
+      return std::nullopt;
+    ConstraintFailure failure{.parameter = requirement.syntax->name.last(),
+                              .argument = requirement.arguments.empty()
+                                              ? SemanticType::Unknown
+                                              : requirement.arguments.front(),
+                              .application = requirement.syntax,
+                              .leafApplication = requirement.syntax,
+                              .applicationArgumentIndex =
+                                  requirement.arguments.size() == 1
+                                      ? std::optional<std::size_t>(0)
+                                      : std::nullopt,
+                              .expressionFailure = std::move(reason)};
+    // Preserve the fact's existing diagnostic without deriving a subject
+    // from coincidentally equal arguments in a multi-parameter predicate.
+    if (requirement.arguments.size() == 1) {
+      const auto capability = predicateCapabilityFor(
+          *requirement.syntax, requirement.arguments,
+          requirement.lookupScope ? &*requirement.lookupScope : nullptr);
+      if (capability && capability->arguments == requirement.arguments)
+        failure.failed = capability->atomic;
+    }
+    return failure;
+  }
   if (requirement.syntax && requirement.syntax->memberRequirement) {
+    if (requirement.syntax->memberRequirement->isExpressionRequirement()) {
+      std::string reason;
+      if (expressionRequirementSatisfied(
+              *requirement.syntax->memberRequirement, requirement.arguments,
+              &reason,
+              requirement.lookupScope ? &*requirement.lookupScope : nullptr))
+        return std::nullopt;
+      const auto &query = *requirement.syntax->memberRequirement;
+      const auto operation =
+          expressionRequirementFact(query, requirement.arguments);
+      // An arbitrary expression may ignore its first synthetic parameter,
+      // mention several types, or fail only because of its required result.
+      // Retain an input origin only for a supported operation whose sole
+      // synthetic parameter is its actual borrowed receiver, and whose result
+      // cannot introduce an independent generic subject.
+      bool unaryReceiver = false;
+      if (query.parameters().size() == 1 && requirement.arguments.size() == 2 &&
+          operation && operation->memberName != "$construct") {
+        const auto &result = query.result();
+        const bool fixedBuiltinResult =
+            result.name.segments.size() == 1 &&
+            isTypeKeywordToken(result.name.last().kind) &&
+            result.name.last().kind != TokenKind::AUTO &&
+            result.arguments.empty() && !result.qualifiedOwner &&
+            result.pointers.empty() && result.arrayExtents.empty() &&
+            !result.reference && !result.isNativeFunction() &&
+            !result.isFunctionSignature() && !result.packExpansion &&
+            !result.genericValueExpression;
+        TypeRef receiverSubject = query.parameters().front();
+        receiverSubject.reference.reset();
+        receiverSubject.referenceMutability.reset();
+        unaryReceiver =
+            fixedBuiltinResult ||
+            typeRefSpelling(receiverSubject) == typeRefSpelling(result);
+      }
+      return ConstraintFailure{
+          .parameter = requirement.syntax->memberRequirement->keyword(),
+          .argument =
+              !unaryReceiver ? SemanticType::Unknown
+              : requirement.arguments.front().kind == SemanticType::Reference &&
+                      requirement.arguments.front().arguments.size() == 1
+                  ? requirement.arguments.front().arguments.front()
+                  : requirement.arguments.front(),
+          .application = requirement.syntax,
+          .leafApplication = requirement.syntax,
+          .applicationArgumentIndex =
+              unaryReceiver ? std::optional<std::size_t>(0) : std::nullopt,
+          .expressionFailure = std::move(reason)};
+    }
     const auto &member = requirement.syntax->memberRequirement->member();
     SemanticMemberRequirementFailure memberFailure;
     if (requirement.arguments.size() >= 2 &&
@@ -1767,7 +1888,8 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
           .conceptId = pattern.conceptId,
           .syntax = pattern.syntax,
           .expression = conceptInfo.definitionExpression,
-          .expressionApplication = pattern.expressionApplication};
+          .expressionApplication = pattern.expressionApplication,
+          .lookupScope = conceptInfo.namespaceScope};
       bool valid = true;
       for (const RegisteredConcept::StructuralPattern::Argument &argument :
            pattern.arguments) {
@@ -1830,7 +1952,8 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
         failure->constraintName = requirement.syntax->name;
         failure->application = requirement.syntax;
         failure->parameter =
-            requirement.syntax->arguments.empty()
+            (failure->expressionFailure && !outerArgument) ||
+                    requirement.syntax->arguments.empty()
                 ? requirement.syntax->name.last()
                 : requirement.syntax->arguments.front().name.last();
       }
@@ -5599,33 +5722,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
                           .sentinel = end->returnType};
   };
 
-  // A domain value operator is an exact read-only member returning an owned
-  // value of the same domain type. The result may not be a reference: a
-  // borrowed result would tie the produced value to a receiver whose
-  // lifetime the requirement cannot name.
-  const auto ownedDomainResult = [](const CallableCandidate &candidate,
-                                    const SemanticType &domain) {
-    return candidate.returnType == domain &&
-           candidate.receiverMutability == ReceiverMutability::ReadOnly &&
-           candidate.returnBorrowOrigin == BorrowOriginKind::None;
-  };
-  const auto hasBinaryDomainOperator = [&](const SemanticType &domain,
-                                           OverloadedOperator oper,
-                                           const SemanticType &operand) {
-    const SemanticType parameter =
-        SemanticType::referenceTo(operand, AccessMode::ReadOnly);
-    const std::optional<CallableCandidate> byReference =
-        selectStructuralOperator(
-            domain, oper, std::span<const SemanticType>(&parameter, 1), false);
-    if (byReference && ownedDomainResult(*byReference, domain)) {
-      return true;
-    }
-    // A scalar operand is ordinarily taken by value.
-    const std::optional<CallableCandidate> byValue = selectStructuralOperator(
-        domain, oper, std::span<const SemanticType>(&operand, 1), false);
-    return byValue && ownedDomainResult(*byValue, domain);
-  };
-
   const auto readableCallableParameter = [](const SemanticType &parameter,
                                             const SemanticType &argument) {
     return parameter == argument ||
@@ -5896,34 +5992,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
         arguments.front(), "size", ReceiverMutability::ReadOnly);
     return size && size->returnType == SemanticType::UInt64;
   }
-  // The domain family is deliberately member-only, matching the language's
-  // member-only user-operator rule. A built-in numeric keeps its own
-  // checked arithmetic and its `std::numeric` contract: admitting one here
-  // would resolve its operators as symbolic member calls and drop the
-  // canonical local failure outcomes that checked integer arithmetic must
-  // retain.
-  case StructuralConstraintKind::Adds:
-    return arguments.size() == 1 &&
-           hasBinaryDomainOperator(arguments[0], OverloadedOperator::Plus,
-                                   arguments[0]);
-  case StructuralConstraintKind::Subtracts:
-    return arguments.size() == 1 &&
-           hasBinaryDomainOperator(arguments[0], OverloadedOperator::Minus,
-                                   arguments[0]);
-  case StructuralConstraintKind::Negates: {
-    if (arguments.size() != 1) {
-      return false;
-    }
-    // Unary minus is the nullary-parameter member form; the binary
-    // difference operator shares the spelling and is excluded by arity.
-    const std::optional<CallableCandidate> negate = selectStructuralOperator(
-        arguments[0], OverloadedOperator::Minus, {}, false);
-    return negate && ownedDomainResult(*negate, arguments[0]);
-  }
-  case StructuralConstraintKind::ScalesBy:
-    return arguments.size() == 2 &&
-           hasBinaryDomainOperator(arguments[0], OverloadedOperator::Multiply,
-                                   arguments[1]);
   case StructuralConstraintKind::EnumUnderlying:
     return arguments.size() == 2 && arguments[0].kind == SemanticType::Enum &&
            satisfiesAtomicConstraint(arguments[0],
@@ -6191,47 +6259,6 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       // Enum representation classification grants no numeric operators.
       break;
 
-    // A domain operator produces an owned value of the receiver's own type.
-    // The operand is named by reference so the concrete member may take it
-    // either way; exact argument matching selects the real declaration in
-    // the instance reanalysis.
-    case StructuralConstraintKind::Adds:
-    case StructuralConstraintKind::Subtracts:
-      if (requirement.arguments.size() == 1 &&
-          requirement.arguments[0] == receiverType &&
-          argumentTypes.size() == 1 &&
-          argumentTypes[0] == requirement.arguments[0] &&
-          kind == (requirement.kind == StructuralConstraintKind::Adds
-                       ? OverloadedOperator::Plus
-                       : OverloadedOperator::Minus)) {
-        candidate.returnType = requirement.arguments[0];
-        candidate.parameterTypes = {SemanticType::referenceTo(
-            requirement.arguments[0], AccessMode::ReadOnly)};
-        candidate.receiverMutability = ReceiverMutability::ReadOnly;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::Negates:
-      if (kind == OverloadedOperator::Minus &&
-          requirement.arguments.size() == 1 &&
-          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
-        candidate.returnType = requirement.arguments[0];
-        candidate.receiverMutability = ReceiverMutability::ReadOnly;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::ScalesBy:
-      if (kind == OverloadedOperator::Multiply &&
-          requirement.arguments.size() == 2 &&
-          requirement.arguments[0] == receiverType &&
-          argumentTypes.size() == 1 &&
-          argumentTypes[0] == requirement.arguments[1]) {
-        candidate.returnType = requirement.arguments[0];
-        candidate.parameterTypes = {requirement.arguments[1]};
-        candidate.receiverMutability = ReceiverMutability::ReadOnly;
-        matches = true;
-      }
-      break;
     case StructuralConstraintKind::ReadCallable:
     case StructuralConstraintKind::MutCallable:
     case StructuralConstraintKind::OnceCallable:
@@ -6247,6 +6274,31 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       // member operator expression synthesized by this table.
       break;
     case StructuralConstraintKind::ReadMember:
+      if (requirement.memberName == operatorFunctionName(kind) &&
+          requirement.arguments.size() == argumentTypes.size() + 2 &&
+          requirement.arguments[0] == receiverType) {
+        bool same = true;
+        for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+          SemanticType parameter = requirement.arguments[index + 2];
+          if (parameter.kind == SemanticType::Reference &&
+              parameter.arguments.size() == 1) {
+            SemanticType value = parameter.arguments.front();
+            parameter = std::move(value);
+          }
+          same = same && parameter == argumentTypes[index];
+        }
+        if (same) {
+          candidate.returnType = requirement.arguments[1];
+          candidate.parameterTypes.assign(requirement.arguments.begin() + 2,
+                                          requirement.arguments.end());
+          candidate.receiverMutability = requirement.mutableReceiver
+                                             ? ReceiverMutability::Mutable
+                                             : ReceiverMutability::ReadOnly;
+          candidate.requiresUnsafeFact = requirement.requiresUnsafe;
+          matches = true;
+        }
+      }
+      break;
     case StructuralConstraintKind::None:
       break;
     }
@@ -6294,7 +6346,8 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
         unique.begin(), unique.end(), [&](const CallableCandidate &existing) {
           return existing.returnType == candidate.returnType &&
                  existing.parameterTypes == candidate.parameterTypes &&
-                 existing.receiverMutability == candidate.receiverMutability;
+                 existing.receiverMutability == candidate.receiverMutability &&
+                 existing.requiresUnsafeFact == candidate.requiresUnsafeFact;
         });
     if (!duplicate) {
       unique.emplace_back(std::move(candidate));
@@ -6362,6 +6415,10 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
   }
 
   const CallableCandidate &selected = viable.front();
+  if (selected.requiresUnsafeFact && unsafeDepth == 0) {
+    report(token, "The required operator needs an unsafe block.", "GTI-S2029");
+    return std::nullopt;
+  }
   const AccessMode receiverAccess =
       receiverAllowsMutation(selected.receiverMutability)
           ? AccessMode::Mutable
@@ -7298,7 +7355,7 @@ auto SemanticVisitor::Impl::recordSelectedCallOccurrence(
   // A statement template has a source-level selection for editor queries,
   // not an executable call/parameter boundary. Its expanded calls own effects.
   const FunctionInfo *target = semanticModel.findFunction(resolved.function);
-  if (target == nullptr || !target->deferredEvaluation)
+  if (target == nullptr || !target->macroExpansion)
     recordRawBorrowCall(call, resolved);
   const Token token =
       resolved.nativeCalleeType && exprAs<Call>(call.callee().get()) != nullptr

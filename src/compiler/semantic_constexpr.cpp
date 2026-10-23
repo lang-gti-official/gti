@@ -92,6 +92,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   copy.classDeclIds = other.classDeclIds;
   copy.conceptDeclIds = other.conceptDeclIds;
   copy.functionGenericParameters = other.functionGenericParameters;
+  copy.constraintPredicateDeclarations = other.constraintPredicateDeclarations;
   for (const auto &declaration : other.callableDeclarations) {
     auto owned = std::make_unique<CallableDeclaration>(*declaration);
     copy.callableDeclarationsBySyntax.insert_or_assign(owned->syntax,
@@ -146,6 +147,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   copy.classDeclIds = classDeclIds;
   copy.conceptDeclIds = conceptDeclIds;
   copy.functionGenericParameters = functionGenericParameters;
+  copy.constraintPredicateDeclarations = constraintPredicateDeclarations;
   for (const auto &declaration : callableDeclarations) {
     (void)copy.registerCallable(*declaration);
   }
@@ -190,8 +192,8 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
                                          workMetrics, sources, rawPointerAudit);
     worker.impl->catalog = catalog.snapshotForInstanceAnalysis();
     worker.impl->semanticModel = stagingModel;
-    worker.impl->deferredLookup = deferredLookup;
-    worker.impl->deferredLookupBase = deferredLookupBase;
+    worker.impl->macroLookup = macroLookup;
+    worker.impl->macroLookupBase = macroLookupBase;
     worker.impl->nextExpansion = nextExpansion;
     // The copy is a snapshot that outlives this evaluation. It must not keep
     // the side channels (a late-demand probe's sink, a batch's call journal)
