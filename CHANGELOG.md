@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.465.7 — Text members through `operator->`
+## 0.466.1 — Text members through `operator->`
 
 - When an `operator->` returns a `std::string_view&`, its members can be
   called through `->`. For a class with `std::string_view& operator->()`,
@@ -25,6 +25,29 @@ for what minor and patch releases mean.
   reference, as in `o->begin()` or `o.value().begin()`, still reports
   `GTI-B0001`. Bind the reference first (`std::string_view& view =
   o.value();`) and iterate `view`.
+
+## 0.466.0 — Typed macros
+
+- Declare namespace-scope statement templates with `#macro NAME(typed
+  parameters) { ... }` and invoke them with ordinary, optionally qualified
+  `NAME(...)` calls. Generic parameters, typed overloads, defaults, final packs
+  and constraints use existing GTI signature rules.
+- Arguments are checked statically and evaluated where used, with hygienic
+  definition/caller lookup, checked ownership and deterministic cleanup. There
+  is no textual substitution, eager argument frame or escaping runtime thunk.
+- Automatic locals give explicit evaluate-once bindings with ordinary values,
+  references, moves and cleanup. Local mutation and scoped loops are supported;
+  macro-local names cannot capture caller names, and break/continue cannot
+  escape to a caller's loop.
+- `std::assert` and `std::debug_assert` now use this same facility. The previous
+  `[[deferred]]` spelling is removed and diagnosed with migration guidance;
+  macros and ordinary functions cannot share one callable name.
+- Formatter, Tree-sitter, macro semantic highlighting, hover and navigation
+  follow the declaration identity. Example 174 demonstrates application-defined
+  typed macros; example 172 retains the assertion workflow.
+- Diagnostics include nested expansion context. Neovim's read-only
+  `:GTIExpandMacro` view explains the checked expansion and local bindings.
+
 
 ## 0.465.6 — Moving one class and copying another after fallible work
 

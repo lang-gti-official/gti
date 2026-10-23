@@ -56,6 +56,8 @@ documentationKind(const SymbolRecord &symbol,
     return DocumentationKind::Destructor;
   case SymbolKind::Function:
     return DocumentationKind::Function;
+  case SymbolKind::Macro:
+    return DocumentationKind::Macro;
   case SymbolKind::Method:
     return DocumentationKind::Method;
   case SymbolKind::Operator:
@@ -112,6 +114,7 @@ declarationOccurrence(const SemanticDatabase &database, SymbolId symbol) {
   case SymbolKind::Operator:
   case SymbolKind::Field:
   case SymbolKind::GlobalVariable:
+  case SymbolKind::Macro:
     return true;
   case SymbolKind::Namespace:
   case SymbolKind::NamespaceAlias:
@@ -253,6 +256,7 @@ signature(const SymbolRecord &symbol, const SemanticOccurrence *declaration,
     }
     return std::nullopt;
   case SymbolKind::Function:
+  case SymbolKind::Macro:
   case SymbolKind::Method:
   case SymbolKind::Operator:
     if (declaration != nullptr && declaration->function != nullptr) {
@@ -321,6 +325,7 @@ signature(const SymbolRecord &symbol, const SemanticOccurrence *declaration,
   case DocumentationKind::Constructor:
   case DocumentationKind::Destructor:
   case DocumentationKind::Function:
+  case DocumentationKind::Macro:
   case DocumentationKind::Method:
   case DocumentationKind::Operator:
     return false;
@@ -478,6 +483,8 @@ std::string_view documentationKindName(DocumentationKind kind) {
     return "destructor";
   case DocumentationKind::Function:
     return "function";
+  case DocumentationKind::Macro:
+    return "macro";
   case DocumentationKind::Method:
     return "method";
   case DocumentationKind::Operator:
