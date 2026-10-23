@@ -2580,6 +2580,41 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr) -> SemanticType {
   return analyze(expr, OccurrenceRole::Reference | OccurrenceRole::Read);
 }
 
+auto SemanticVisitor::Impl::discardResult(const ExprPtr &expr) -> void {
+  if (expr)
+    discardedResults.insert(expr.get());
+}
+
+// The result of a built-in assignment is a copy of its committed target, so
+// only a discarded assignment may store a move-only value: using its result
+// would copy the target.
+auto SemanticVisitor::Impl::checkAssignmentResultUse(const Expr &expr,
+                                                     const SemanticType &result)
+    -> void {
+  const Token *oper = nullptr;
+  if (const auto *assign = exprAs<Assign>(&expr))
+    oper = &assign->oper();
+  else if (const auto *set = exprAs<Set>(&expr))
+    oper = &set->oper();
+  else if (const auto *set = exprAs<IndexSet>(&expr))
+    oper = &set->oper();
+  else if (const auto *set = exprAs<DereferenceSet>(&expr))
+    oper = &set->oper();
+  else if (const auto *set = exprAs<PlaceSet>(&expr))
+    oper = &set->oper();
+  if (oper == nullptr || oper->kind != TokenKind::EQUAL ||
+      discardedResults.contains(&expr) || result == SemanticType::Unknown ||
+      result == SemanticType::Void || containsOpenTypeParameter(result) ||
+      typeTraits(result).copyable)
+    return;
+  report(*oper,
+         "Cannot use the result of an assignment of move-only type '" +
+             typeSpelling(result) + "'; it would copy the target.",
+         "GTI-S2003");
+  diagnostics.back().hints.emplace_back(
+      "Assign in its own statement, then use the target.");
+}
+
 auto SemanticVisitor::Impl::analyze(const Expr &expr,
                                     OccurrenceRole requestedRoles)
     -> SemanticType {
@@ -2587,8 +2622,13 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     semanticModel.suppressInheritedOperator(expr);
   }
   valueFlow.rawOperatorResults.erase(&expr);
+  const std::size_t diagnosticsBefore = diagnostics.size();
   expr.accept(*this);
   SemanticType result = currentType;
+  // Report only an otherwise valid assignment; an invalid one already has
+  // its own diagnostic.
+  if (diagnostics.size() == diagnosticsBefore)
+    checkAssignmentResultUse(expr, result);
   const auto *construction = semanticModel.findConstruction(expr);
   const bool directInitialization =
       construction != nullptr && construction->directInitialization;
