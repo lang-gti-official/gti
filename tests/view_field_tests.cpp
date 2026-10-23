@@ -641,6 +641,87 @@ int main() { return 0; }
          "a dependent payload value is not returned in this phase");
 }
 
+// A switch's by-value binding of a dependent payload carries the subject's
+// loan (L-OWN-02), so a local copied from it, and a copy of that copy, is a
+// dependent view carrying the same loan, as a copy of a published field read
+// is.
+void testCopiedPayloadBindings() {
+  const auto result = analyzeText(kPayloadDeclarations + R"gti(
+int main() {
+  std::string input{"token text"};
+  Word word = Word::text(input.view());
+  mut uint64_t size = 0;
+  switch (word) {
+  case Word::text(value):
+    std::string_view copied = value;
+    std::string_view again = copied;
+    size = copied.size() + again.size();
+    break;
+  case Word::count(value): break;
+  }
+  return size == 20 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "a copy of a dependent payload binding is a verified dependent view");
+  const auto published = publications(result.mir);
+  expect(published.size() == 1, "the payload construction publishes");
+  if (!result.canGenerateCode() || published.size() != 1)
+    return;
+  const auto location = published.front();
+  const auto &body = result.mir.findFunctionInstance(location.function)->body;
+  const auto &publication =
+      body.blocks[location.block].instructions[location.instruction];
+  const auto *loan =
+      publication.loan ? body.findLoan(*publication.loan) : nullptr;
+  expect(loan != nullptr && loan->kind == lang::MirLoanKind::Stored,
+         "the published payload has its own Stored loan");
+  if (loan == nullptr)
+    return;
+  // The copies are the locals initialized from a load of another binding.
+  std::unordered_map<lang::MirValueId, lang::HirBindingId> loaded;
+  std::vector<lang::HirBindingId> copies;
+  const auto bindingOf = [&](lang::MirPlaceId id) -> lang::HirBindingId {
+    const auto *place = body.findPlace(id);
+    return place && place->root == lang::MirPlaceRootKind::Binding &&
+                   place->projections.empty()
+               ? place->binding
+               : 0;
+  };
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Load &&
+          instruction.result && instruction.operands.size() == 1 &&
+          instruction.operands[0].kind == lang::MirOperandKind::Copy)
+        if (const auto source = bindingOf(instruction.operands[0].place))
+          loaded.emplace(*instruction.result, source);
+      if (instruction.kind == lang::MirInstructionKind::Initialize &&
+          instruction.destination && instruction.operands.size() == 1 &&
+          instruction.operands[0].kind == lang::MirOperandKind::Value &&
+          loaded.contains(instruction.operands[0].value))
+        if (const auto destination = bindingOf(*instruction.destination))
+          copies.push_back(destination);
+    }
+  expect(copies.size() == 2, "both views are copied from a binding");
+  for (const auto copy : copies) {
+    expect(std::find(loan->carriers.begin(), loan->carriers.end(), copy) !=
+               loan->carriers.end(),
+           "a copied view carries the payload's loan");
+    // MIR derives that the copy holds the owner's text, so a copy that
+    // does not carry the loan leaves that text unretained.
+    auto dropped = result.mir;
+    std::erase(const_cast<lang::MirFunctionInstance *>(
+                   dropped.findFunctionInstance(location.function))
+                   ->body.loans[loan->id - 1]
+                   .carriers,
+               copy);
+    expect(!lang::verifyMirProgram(dropped).valid(),
+           "MIR rejects a copied view that does not carry the payload's loan");
+  }
+}
+
 // A class temporary may be read within its expression (L-OWN-02). A
 // dependent temporary's text field, a relay of the temporary and its method
 // relay hold the owner's text; an ownerless temporary's text field is
@@ -1816,6 +1897,7 @@ constexpr NamedTest kTests[] = {
     {"testConstructorReads", testConstructorReads},
     {"testFieldResults", testFieldResults},
     {"testPayloads", testPayloads},
+    {"testCopiedPayloadBindings", testCopiedPayloadBindings},
     {"testTemporaries", testTemporaries},
     {"testPublishedResults", testPublishedResults},
     {"testPublishedResultOrder", testPublishedResultOrder},
