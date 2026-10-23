@@ -1,24 +1,45 @@
 # Compiler Verification
 
-## Validation scope and combined batches
+## Class stores into named places and element fields (0.465.1)
 
-Use the [risk-based batch contract](agent-workflow.md#risk-based-batch-validation)
-for current T1/T2/T3 criteria, exact admission plans, the smoke programs,
-combined full/platform gates, CI routing, evidence and failure ownership.
-Feature-specific sections below identify affected coverage; their historical
-full runs do not impose a duplicate whole-compiler campaign on every component
-fix. Focused admission is a ready-for-integration checkpoint. Full acceptance
-belongs to the selected combined compiler, with every component's regression
-and relevant subsystem/tooling/platform/performance obligations preserved.
+`class_store_destinations_runtime` runs `class_store_destinations.gti`.
+User-defined structs are copied into, and constructed directly into, a
+class-typed global and the referent of a `[mut &p]` capture, and copied from a
+global and from a by-value capture; copied and read back through
+`std::vector`'s mutable subscript, including from a global; and read, stored,
+copied, returned and used as a receiver through a fixed-array element selected
+at a run-time index, including `segments[i].start.y`, `cells[i][j].x`, a
+class's array field `shape.corners[i]` and an enum switch on `jobs[i].state`.
+A run-time index out of range fails with `GTI-R0007` (exit status 70) before
+the field is read, after every earlier line. Each result is checked in
+C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan. The 0.464.0 compiler stops
+the fixture with `GTI-B0001`.
 
-The owning automation regression `agent_workflow` exercises real disposable
-Git repositories: exact membership and ancestry, original-PR preservation,
-conflict resume, duplicate-batch exclusion, withdrawal/release, stale source
-and missing-platform refusal, complete CTest inventories/results, required
-regression skips, optimized build ownership, and CI admission. Workflow-only
-changes use these tests and their affected tooling gates rather than a full
-GTI semantic suite. CI still runs full native/sanitizer coverage for compiler
-integration candidates.
+In `cpp_mir_body_emitter_lifecycle`, `testClassStoresIntoNamedPlaces` checks
+the emitted single store for a copy into a global (`g = p.get()`), a global as
+the source, a fresh construction into the global, a copy through a
+by-reference capture from a by-value capture (`p = q;`) and a copy through the
+subscript's two-phase loan after its activation; a read-only loan or captured
+reference refuses the body. `testCheckedArrayElementFieldAccess` checks that a
+field read, a field store and a whole class element copy at a run-time index
+follow exactly one checked `AddressOf` of the element and carry no bound of
+their own, that a constant index has none, and that the text checks the bound
+once before the plain subscript; clearing the check's origin fails program
+verification ("field access reads a fixed-array element before its checked
+selection") and refuses the body.
+
+A differential `--emit-cpp` against main `6333da11`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1821 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3. Only the new
+fixture changed, from `GTI-B0001` to success. Every other program emits
+byte-identical C++, so constant-index element fields keep their check-free
+spelling, and the 736 pairs that fail with both compilers report identical
+diagnostics. The summed emission time was 3197.9 s before and 3203.6 s after,
+on a machine shared with other builds.
+
+Still `GTI-B0001`, as on main: a constructor initializing a class's
+fixed-array field from its parameters (`Polygon(Point a, Point b) :
+corners({a, b})`).
 
 ## Deferred assertions and statement helpers (0.465.0)
 
@@ -9428,6 +9449,26 @@ moves its parameter through two local bindings. The reviewed inventory adds
 exactly one declaration and one body to that example; generated-item counts
 are unchanged. Its C++20/O0 and C++23/O3 executions retain the same cleanup
 observations.
+
+## Validation scope and combined batches
+
+Use the [risk-based batch contract](agent-workflow.md#risk-based-batch-validation)
+for current T1/T2/T3 criteria, exact admission plans, the smoke programs,
+combined full/platform gates, CI routing, evidence and failure ownership.
+Feature-specific sections identify affected coverage; their historical full
+runs do not impose a duplicate whole-compiler campaign on every component
+fix. Focused admission is a ready-for-integration checkpoint. Full acceptance
+belongs to the selected combined compiler, with every component's regression
+and relevant subsystem/tooling/platform/performance obligations preserved.
+
+The owning automation regression `agent_workflow` exercises real disposable
+Git repositories: exact membership and ancestry, original-PR preservation,
+conflict resume, duplicate-batch exclusion, withdrawal/release, stale source
+and missing-platform refusal, complete CTest inventories/results, required
+regression skips, optimized build ownership, and CI admission. Workflow-only
+changes use these tests and their affected tooling gates rather than a full
+GTI semantic suite. CI still runs full native/sanitizer coverage for compiler
+integration candidates.
 
 ## Development And Completion Cadence
 
