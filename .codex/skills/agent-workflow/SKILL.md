@@ -49,6 +49,14 @@ impose reasoning-depth or reconsideration limits.
 
 ## Start and publish
 
+Rename your own chat's sidebar title to a short description of the new task
+before starting work, and refresh it when the task changes. Use the client's
+chat-title control, such as `set_thread_title` with the current chat as its
+target, not another agent's chat. If unavailable, note that limitation in the
+task update and continue without claiming a rename. Follow the canonical
+[sidebar-title contract](../../../docs/architecture/agent-workflow.md#sidebar-task-titles)
+for completion and intermediate statuses.
+
 1. Inspect status; preserve other tasks' work. Fetch current `origin/main`.
    Give each task its own `codex/` branch and worktree. Never implement on
    primary `main`, reuse another task's branch, or reset a checkout.
@@ -197,3 +205,7 @@ same command removes its clean worktree and branches instead of opening a PR.
 Report the merged PR, resulting local-main commit, validation and any cleanup
 exception. State that the checkout is ready for the installer only after sync.
 Run the installer automatically only when the user asked for installation.
+After delivering the requested outcome, rename the chat `Complete — <task>`.
+Do not mark work complete while required validation/integration remains; a
+component handed off for integration is `Handed off — <task>`, not complete.
+Explicit PR-only or local-only requests use their requested delivery boundary.

@@ -86,6 +86,25 @@ Do not relabel earlier results or override the helper's identity checks. When
 cost or duration grows materially, explain the cause, evidence obtained and
 remaining work to the user; efficiency does not authorize reduced correctness.
 
+## Sidebar task titles
+
+Each agent keeps its own chat's sidebar title aligned with its current task.
+At task start, use a short, specific description such as `Fix LSP test-target
+diagnostics`; replace it when beginning a different task. Use the client's
+chat-title control (for example, `set_thread_title` targeting the current chat)
+when available. If unsupported, report that limitation in the task update and
+continue; a missing UI control is not an implementation blocker. Do not claim
+an unsuccessful rename succeeded or rename another agent's chat for this rule.
+
+On successful delivery, use `Complete — <task>`. Normal implementation delivery
+includes required validation, PR integration and local-main synchronization;
+explicit PR-only/local-only requests retain their requested boundary. Until
+then, use an honest status when useful, such as `Validating — <task>`,
+`Handed off — <task>`, `Blocked — <task>` or `Cancelled — <task>`, rather than
+`Complete`. Update titles at task/status transitions, not on every poll.
+Sidebar labels aid navigation; PRs, commits and retained evidence remain the
+authoritative work inventory and verification record.
+
 ## Task identity and operations
 
 `scripts/agent_workflow.py` uses Python's standard library and Git. One task
