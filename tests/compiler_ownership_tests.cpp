@@ -13780,6 +13780,89 @@ int main() {
          "lowering");
 }
 
+// `->` names the place its selected checked access step returns, and members
+// are looked up on that place's type. A builtin text referent supplies its own
+// members; a referent with none is an ordinary source error.
+void testArrowNonClassReferents() {
+  const auto analyze = [](std::string_view name, std::string source) {
+    source.insert(0, "#include <std/string>\n#include <std/optional>\n");
+    return lang::Frontend().analyze(
+        std::filesystem::temp_directory_path() / std::string(name),
+        std::move(source), {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+  };
+  const auto accepted = analyze("arrow-text-referents.gti", R"(
+class Label {
+public:
+  std::string_view text;
+  Label(std::string_view text) : text(text) {}
+  std::string_view& operator->() { return this.text; }
+};
+int main() {
+  Label label = Label("label");
+  std::string_view text = "text";
+  std::optional<std::string_view> maybe = text;
+  uint64_t total = label->size() + maybe->size() + label->end().position();
+  return label->empty() || total != 14 ? 1 : 0;
+}
+)");
+  for (const lang::Diagnostic &diagnostic : accepted.diagnostics)
+    std::cerr << "Unexpected arrow diagnostic: " << diagnostic.code << ": "
+              << diagnostic.message << '\n';
+  expect(accepted.canGenerateCode() &&
+             lang::verifyMirProgram(accepted.mir).valid(),
+         "text members are called through a checked operator->");
+  // Each member resolved to its builtin observer; none reaches MIR untyped.
+  bool untyped = false;
+  for (const auto &function : accepted.mir.functionInstances())
+    for (const auto &value : function.body.values)
+      untyped |= value.info.type == lang::SemanticType::Unknown;
+  expect(
+      !untyped &&
+          hasMirIntrinsicKind(accepted, lang::IntrinsicKind::StringViewSize) &&
+          hasMirIntrinsicKind(accepted, lang::IntrinsicKind::StringViewEmpty),
+      "arrow text members lower to their builtin observers");
+
+  const std::string cell = "class Cell { int value = 3; public: int& "
+                           "operator->() { return this.value; } }; ";
+  const std::string text = "class Text { public: c_string text; Text(c_string "
+                           "text) : text(text) {} c_string& operator->() { "
+                           "return this.text; } }; ";
+  const std::string label = "class Label { public: std::string_view text; "
+                            "Label(std::string_view text) : text(text) {} "
+                            "std::string_view& operator->() { return "
+                            "this.text; } }; ";
+  struct Rejected {
+    std::string source;
+    const char *code;
+  };
+  for (const Rejected &entry : {
+           Rejected{cell + "int read(Cell& c) { return c->size(); }",
+                    "GTI-S2000"},
+           Rejected{cell + "int read(Cell& c) { return c->value; }",
+                    "GTI-S2000"},
+           Rejected{text + "int read(Text& t) { return int(t->size()); }",
+                    "GTI-S2000"},
+           Rejected{label + "int read(Label& l) { return int(l->missing()); }",
+                    "GTI-S2035"},
+           Rejected{label + "int read(Label& l) { return int(l->size(1)); }",
+                    "GTI-S2035"},
+       }) {
+    const auto rejected =
+        analyze("arrow-rejected-referent.gti",
+                entry.source + "\nint main() { return 0; }\n");
+    expect(!rejected.canGenerateCode() &&
+               hasDiagnosticCode(rejected.diagnostics, entry.code) &&
+               std::none_of(rejected.diagnostics.begin(),
+                            rejected.diagnostics.end(),
+                            [](const lang::Diagnostic &diagnostic) {
+                              return diagnostic.code.starts_with("GTI-B");
+                            }),
+           "an arrow referent's missing member is a source error: " +
+               entry.source);
+  }
+}
+
 void testCallableMemberOperators() {
   const std::string source = R"(
 class Accumulator {
@@ -23001,6 +23084,7 @@ constexpr NamedTest kTests[] = {
     {"testDefaultedDefaultLifecycle", testDefaultedDefaultLifecycle},
     {"testDestructorsAndActiveDropState", testDestructorsAndActiveDropState},
     {"testRestrictedMemberOperators", testRestrictedMemberOperators},
+    {"testArrowNonClassReferents", testArrowNonClassReferents},
     {"testCallableMemberOperators", testCallableMemberOperators},
     {"testConsumingCallableOperators", testConsumingCallableOperators},
     {"testConsumingMethodsAndValueOperators",
