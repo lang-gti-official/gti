@@ -4,6 +4,8 @@ namespace lang {
 
 auto SemanticVisitor::Impl::recordConstraintPredicateUses(
     const std::vector<ConceptApplication> &requirements) -> void {
+  if (!toolingOccurrences)
+    return;
   // Predicate checking may run before ordinary callable registration and in a
   // detached query worker. The lexical visit records only declaration-owned
   // editor references once ordinary lookup is available; no executable call

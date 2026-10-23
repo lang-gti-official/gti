@@ -165,7 +165,7 @@ class Vault {
   int secret() { return 7; }
 public:
   int probe() {
-    static_assert(requires(Vault& other) { { other.secret() } -> int; });
+    static_assert(requires(Vault& other) { { (other.secret()) } -> int; });
     return this.secret();
   }
 };
@@ -245,7 +245,7 @@ struct AddOne {
 int main() {
   int value = 4;
   AddOne add_one{};
-  auto lambda = [](int& input) { return input + 2; };
+  auto lambda = [](int& input) -> int { return input + 2; };
   return invoke<AddOne, int, int>(add_one, value) == 5 &&
          invoke_int(lambda, value) == 6 ? 0 : 1;
 }
@@ -319,6 +319,7 @@ int main() {
 
   accepted(
       check(root, directory, "declaration_query_scope", R"(
+#include <std/meta>
 namespace definition {
   using Chosen = int;
   int leaf<T>() requires std::integral<T> { return 1; }
@@ -400,6 +401,23 @@ int selected<T>() requires selects<T> { return 0; }
 int main() { return selected<int>(); }
 )"),
            "compound requirements retain explicit generic arguments");
+
+  accepted(check(root, directory, "nested_unsafe_permission", R"(
+concept raw_read<T> = requires(T& value) {
+  { unsafe { value.raw() } } -> int;
+};
+struct Device { unsafe int raw() { return 9; } };
+int read<T>(T& value) requires raw_read<T> { return unsafe { value.raw() }; }
+int main() { Device value{}; return read(value) == 9 ? 0 : 1; }
+)"),
+           "unsafe expressions retain their call obligation in generic facts");
+  rejected(check(root, directory, "nested_unsafe_permission_missing", R"(
+concept raw_read<T> = requires(T& value) {
+  { unsafe { value.raw() } } -> int;
+};
+int read<T>(T& value) requires raw_read<T> { return value.raw(); }
+)"),
+           "a query cannot hide an unsafe obligation", "GTI-S2055");
 
   const std::string formatting =
       R"(concept sum<T>=requires(T& a,T& b){{a+b}->T;{a==b}->bool;};

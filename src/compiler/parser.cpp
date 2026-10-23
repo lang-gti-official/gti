@@ -3692,6 +3692,11 @@ private:
           if (match({TokenKind::MUT}))
             access = previous();
           TypeRef parameter = parseType();
+          if (parameter.reference &&
+              parameter.reference->kind == TokenKind::AND)
+            throw error(*parameter.reference,
+                        "Requirement parameters do not support '&&'; use an "
+                        "owned value or a checked '&' reference.");
           if (access && !parameter.reference)
             throw error(*access,
                         "Mutable requirement parameters must be references.");

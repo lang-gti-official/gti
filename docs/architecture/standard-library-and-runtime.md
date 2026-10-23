@@ -801,9 +801,9 @@ lifecycle, relocation and transfer/share facts are general constexpr
 its public concepts with those queries and ordinary expression requirements;
 it does not maintain duplicate private concept declarations for migrated facts.
 The compiler retains structural truth, not library composition policy. Strict
-comparison-signature and borrowed-result iterator/callable contracts still use
-private structural concepts where the general source vocabulary cannot express
-the full rule. Public concepts such as `std::input_iterator`,
+comparison-signature, checked-borrow iterator, and complete callable
+access/escape contracts still use private structural concepts where the general
+source vocabulary cannot express the full rule. Public concepts such as `std::input_iterator`,
 `std::sentinel_for` and `std::accumulates_into` remain source composition.
 Semantics recognizes only trusted declaration identities and exact facts,
 never those public names or `std::accumulate`.

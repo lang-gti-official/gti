@@ -437,8 +437,10 @@ The exact equality and relational declaration-shape contracts remain private:
 ordinary expression viability cannot yet prove their requirement-free,
 read-only, exact-reference signature policy. Replacing them needs general
 receiver/requirement metadata, not weaker acceptance or a renamed private trait.
-Borrowed-result iterator/callable relations likewise retain their existing
-compiler facts until source contracts can express their complete lifetime rule.
+Iterator relations returning checked borrows, and callable relations carrying
+the complete read/mutable/once-use and borrow/escape contract, retain their
+existing compiler facts. A single owned-result expression query is not a
+replacement for those complete relationships.
 
 For example, `std::totally_ordered` remains source composition, and the iterator
 units still define public concepts over the necessary private structural facts:

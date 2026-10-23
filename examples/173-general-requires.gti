@@ -14,6 +14,10 @@ concept constructed_from<T, Arg> = requires(Arg& argument) {
   { T(argument) } -> T;
 };
 
+concept invokes<F, Arg, Result> = requires(F& function, Arg& argument) {
+  { function(argument) } -> Result;
+};
+
 concept integer_type<T> = std::meta::is_integral<T>();
 concept transferable_value<T> = std::meta::is_transferable<T>();
 
@@ -34,6 +38,15 @@ public:
   Counter(int& value) : value(value) {}
   int read() { return this.value; }
 };
+
+struct Doubler {
+  int operator()(int& value) { return value * 2; }
+};
+
+Result invoke<F, Arg, Result>(F& function, Arg& argument)
+    requires invokes<F, Arg, Result> {
+  return function(argument);
+}
 
 T sum<T>(T& left, T& right) requires math_value<T> {
   return left + right;
@@ -68,6 +81,9 @@ int main() {
   Distance right{.value = 9};
   Distance total = sum(left, right);
   Distance empty = zero<Distance>();
+  Doubler doubler{};
+  int input = 3;
+  if (invoke<Doubler, int, int>(doubler, input) != 6) { return 1; }
   int initial = 12;
   Counter counter = construct<Counter, int>(initial);
   return total.value == 16 && empty.value == 0 && counter.read() == 12 &&

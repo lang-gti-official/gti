@@ -9,8 +9,11 @@ std::string expressionSpelling(const Expr &expression) {
     return pathSpelling(qualified->name());
   if (const auto *literal = exprAs<LiteralExpr>(&expression))
     return literal->token().lexeme;
-  if (const auto *group = exprAs<Grouping>(&expression))
-    return "(" + expressionSpelling(*group->expression()) + ")";
+  if (const auto *group = exprAs<Grouping>(&expression)) {
+    const auto value = expressionSpelling(*group->expression());
+    return group->unsafeKeyword() ? "unsafe { " + value + " }"
+                                  : "(" + value + ")";
+  }
   if (const auto *binary = exprAs<Binary>(&expression))
     return "(" + expressionSpelling(*binary->left()) + " " +
            binary->oper().lexeme + " " + expressionSpelling(*binary->right()) +

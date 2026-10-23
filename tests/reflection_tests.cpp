@@ -592,6 +592,7 @@ int main() { relay<MoveOnly>(); return 0; }
 
   const auto outerShape =
       analyzeSource(root, directory, "reflection-known-outer-shape.gti", R"(
+#include <std/meta>
 struct Envelope<T> { T value; };
 class Opaque<T> {};
 constexpr int32_t classify<T>() {
