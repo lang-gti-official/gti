@@ -1817,6 +1817,7 @@ public:
   Token(std::string_view text, int kind) : text(text), kind(kind) {}
   std::string_view name() { return this.text; }
   std::string_view& ref() { return this.text; }
+  int& kindRef() { return this.kind; }
 };
 enum Word { text(std::string_view value), count(int value) };
 class Line {
@@ -1833,7 +1834,8 @@ std::string_view id(std::string_view text) { return text; }
 // (L-OWN-02): copies and moves of the value, reads of its designated field,
 // bound payloads (also through a field's payload enum), relay and formal
 // relay results, and views copied through a returned reference. Each must
-// carry a loan that retains the owner.
+// carry a loan that retains the owner; an int read through the value's
+// reference holds no text.
 void testDerivedCarriers() {
   const auto result = analyzeText(kCarrierDeclarations + R"gti(
 int main() {
@@ -1848,6 +1850,7 @@ int main() {
   std::string_view formal = id(field);
   std::string_view referenced = token.ref();
   std::string_view temporary = first(Token(input.view(), 2));
+  int kind = token.kindRef();
   Word word = Word::text(input.view());
   Line line = Line(input.view());
   mut uint64_t total = field.size() + again.size() + relayed.size() +
@@ -1861,7 +1864,7 @@ int main() {
   case Word::text(value): total = total + value.size(); break;
   case Word::count(value): break;
   }
-  return total == 63 ? 0 : 1;
+  return total + uint64_t(kind) == 64 ? 0 : 1;
 }
 )gti");
   if (!result.canGenerateCode())
