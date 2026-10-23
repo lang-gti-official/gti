@@ -2904,6 +2904,14 @@ initializations. The arm's extractions cover every field of the variant
 exactly once, no extraction follows the transfer, and the transfer appears
 exactly when the subject owns a drop obligation; lifecycle flow then proves
 the obligation is retired once on every path.
+An observing switch over a carrier that stores several external references
+selects each `auto&` reference with the carrier's Stored loan as parent. A
+selection of the carrier's primary owner sources a place rooted at that loan.
+A loan-rooted place always names the primary referent, so a selection of one
+of the carrier's additional owners sources the owner place the carrier already
+materialized for that dependency (the referent of a reference-typed owner).
+Verification rejects a selection that claims the primary owner for another
+field's referent.
 The bounded direct callable schedule uses those same obligations for argument
 preparation, parameter entry, direct result placement, success activation, and
 defined-failure cleanup. No AST or HIR expression is re-emitted to manufacture

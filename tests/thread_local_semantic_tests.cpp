@@ -633,6 +633,86 @@ int selected<uint64_t Mode>() {
            "through both concrete query orders");
   }
 }
+
+void deferredProbeIsolation() {
+  const std::string prefix = R"(
+thread_local mut int value = 1;
+thread_local mut int other = 2;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); } };
+bool inspect(Cleanup& input) { return true; }
+void observe(bool value) {}
+[[deferred]] void ignore(bool value) {}
+[[deferred]] void force(bool value) { observe(value); }
+)";
+  // An unused expression parameter is checked, but neither its temporary nor
+  // its destructor executes. Probe effects must not enter the caller's graph.
+  const auto ignored =
+      analyze(prefix + "int main() { int& borrowed = value; "
+                       "ignore(inspect(Cleanup())); return borrowed; }",
+              true, true);
+  if (!ignored.canGenerateCode())
+    for (const auto &diagnostic : ignored.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(ignored.canGenerateCode(),
+         "an ignored deferred expression does not eagerly execute a "
+         "temporary's conflicting TLS cleanup");
+
+  for (const bool forced : {true, false}) {
+    // The second form makes a real temporary after an ignored probe of the
+    // same shape. A discarded probe must not consume or suppress real cleanup.
+    const std::string selected =
+        prefix + R"(
+int selected<uint64_t Mode>() {
+  if constexpr (Mode == 0) {
+    int first = 0;
+    int second = 1;
+    int third = 2;
+    ignore(inspect(Cleanup()));
+    return first + second + third;
+  } else {
+)" +
+        (forced ? "force(inspect(Cleanup())); return 1; "
+                : "ignore(inspect(Cleanup())); bool seen = "
+                  "inspect(Cleanup()); return seen ? 1 : 0; ") +
+        "} }";
+    for (const bool reverse : {false, true}) {
+      const std::string calls =
+          reverse ? "int first = selected<1>(); int second = selected<0>(); "
+                  : "int first = selected<0>(); int second = selected<1>(); ";
+      const auto source = [&](std::string_view owner) {
+        return selected + "int main() { int& borrowed = " + std::string(owner) +
+               "; " + calls + "return borrowed + first + second; }";
+      };
+      const std::string rejectedSource = source("value");
+      const auto rejected = analyze(rejectedSource, true, true);
+      const auto mutation = rejectedSource.find("selected<1>()");
+      const bool exactConflict = std::any_of(
+          rejected.diagnostics.begin(), rejected.diagnostics.end(),
+          [&](const auto &diagnostic) {
+            return diagnostic.code == "GTI-S2045" &&
+                   diagnostic.message.find("overlapping path") !=
+                       std::string::npos &&
+                   diagnostic.primary.start >= mutation &&
+                   diagnostic.primary.end <=
+                       mutation + std::string_view("selected<1>()").size();
+          });
+      expect(!rejected.semanticValid && exactConflict &&
+                 !code(rejected, "GTI-B0001"),
+             forced ? "actually forced deferred temporary cleanup conflicts "
+                      "with the retained TLS origin in either query order"
+                    : "real cleanup after an ignored probe is not suppressed "
+                      "in either concrete query order");
+      const auto allowed = analyze(source("other"), true, true);
+      if (!allowed.canGenerateCode())
+        for (const auto &diagnostic : allowed.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(allowed.canGenerateCode(),
+             "deferred probe isolation preserves disjoint-owner "
+             "execution through both concrete query orders");
+    }
+  }
+}
 } // namespace
 
 int main() {
@@ -643,5 +723,6 @@ int main() {
   invalidDeclarations();
   instanceCleanupCache();
   instanceTextRelayEffects();
+  deferredProbeIsolation();
   return failures ? 1 : 0;
 }

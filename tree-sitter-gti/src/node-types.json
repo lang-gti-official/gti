@@ -6223,6 +6223,10 @@
     "named": false
   },
   {
+    "type": "deferred",
+    "named": false
+  },
+  {
     "type": "defined",
     "named": false
   },

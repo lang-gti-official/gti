@@ -904,6 +904,68 @@ void checkLocalCarrierSelections() {
   std::cout << "local carrier selections: " << owners << " owners, "
             << owners + evaluated << " mutations checked by C++ admission\n";
 }
+
+// Each reference selected from one carrier names its own external owner. A
+// selection under one of the carrier's additional owners keeps that owner's
+// place; claiming the carrier's primary owner instead fails verification.
+void checkSelectionOwners() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/borrowed_enum_owner_selections.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "selections name each owner of one carrier");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "owner selection MIR verifies");
+  try {
+    expect(!gti_test::emitCpp(frontend).contents.empty(),
+           "owner selections reach the production backend");
+  } catch (const std::logic_error &error) {
+    expect(false, std::string("owner selection emission: ") + error.what());
+  }
+  std::size_t additional = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &loan : function.body.loans) {
+      const auto *parent = function.body.findLoan(loan.parent);
+      const auto *owner = function.body.findPlace(loan.source);
+      if (!loan.referenceSelection || parent == nullptr ||
+          parent->kind != lang::MirLoanKind::Stored || owner == nullptr ||
+          owner->root == lang::MirPlaceRootKind::Loan ||
+          std::none_of(
+              parent->additionalDependencies.begin(),
+              parent->additionalDependencies.end(),
+              [&](const auto &dependency) {
+                return dependency.source == loan.source ||
+                       (function.body.findPlace(dependency.source) &&
+                        function.body.findPlace(dependency.source)->key ==
+                            owner->key);
+              }))
+        continue;
+      const auto *primary = function.body.findPlace(parent->source);
+      if (primary == nullptr || primary->key == owner->key)
+        continue;
+      ++additional;
+      auto malformed = frontend.mir;
+      auto *body = &const_cast<lang::MirFunctionInstance *>(
+                        malformed.findFunctionInstance(function.id))
+                        ->body;
+      body->loans[loan.id - 1].source = parent->source;
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a selection under an additional owner cannot claim the "
+             "carrier's primary owner");
+    }
+  expect(additional >= 6,
+         "fixture selects additional owners of call-result, constructed, "
+         "generic, class-field and parameter carriers");
+  std::cout << "additional-owner selections: " << additional
+            << " owner substitutions rejected by MIR verification\n";
+}
 } // namespace
 
 int main() {
@@ -917,5 +979,6 @@ int main() {
   checkLoweringFailureContext();
   checkNestedReadonlyReferences();
   checkLocalCarrierSelections();
+  checkSelectionOwners();
   return failures == 0 ? 0 : 1;
 }

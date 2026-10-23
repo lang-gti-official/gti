@@ -69,7 +69,7 @@ int main(int argc, char **argv) {
     const std::filesystem::path source = root / "examples" / name;
     lang::TargetInfo target = lang::TargetInfo::host();
     if (name == "066-managed-threads.gti" || name == "076-scalar-atomics.gti" ||
-        name == "172-thread-local-storage.gti") {
+        name == "173-thread-local-storage.gti") {
       target.executionProfile = lang::ExecutionProfile::Concurrent;
       target.runtimeCapabilities.threads = true;
     }

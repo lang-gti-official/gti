@@ -318,6 +318,7 @@ add_library(
   "gti_semantic_analysis" OBJECT
   "src/compiler/semantic_analyzer.cpp"
   "src/compiler/semantic_body_analysis.cpp"
+  "src/compiler/semantic_deferred.cpp"
   "src/compiler/semantic_constexpr.cpp"
   "src/compiler/semantic_call_resolution.cpp"
   "src/compiler/semantic_protocol_concepts.cpp"
@@ -368,6 +369,7 @@ add_library(
   "src/compiler/hir_model.cpp"
   "src/compiler/hir_lowering.cpp"
   "src/compiler/language_queries.cpp"
+  "src/compiler/language_snippets.cpp"
   "src/compiler/lexer.cpp"
   "src/compiler/loaded_lexical_unit.cpp"
   "src/compiler/lowered_program.cpp"
