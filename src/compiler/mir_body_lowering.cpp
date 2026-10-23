@@ -219,7 +219,13 @@ public:
           const std::vector<TemporaryDrop> incomingTemporaryDrops =
               temporaryDrops;
           for (const HirValueId argument : initializer.arguments) {
-            (void)emitValue(argument);
+            // The initializer reads each argument after all of them run, so
+            // a class assignment's result is copied at its own commit.
+            const HirValue *input = findValue(argument);
+            if (input != nullptr && hasAssignmentResultCopy(*input))
+              (void)assignmentResultValue(*input);
+            else
+              (void)emitValue(argument);
           }
           stageBaseInitializer(initializer, initializerIndex);
           const auto constructorOwnerIterator =
@@ -4474,6 +4480,17 @@ private:
               .value = mirValueFor(*value),
               .type = value->info.type};
     }
+    // Consuming a class assignment's whole result consumes the copy of its
+    // committed destination that a projection of the result reads. A
+    // discarded assignment is emitted as a sequenced input, never here.
+    if (hasAssignmentResultCopy(*value)) {
+      const MirValueId result = assignmentResultValue(*value);
+      if (result == 0)
+        return {};
+      return {.kind = MirOperandKind::Value,
+              .value = result,
+              .type = value->info.type};
+    }
     if (emittedValues.contains(id)) {
       const MirLoanId loan = loanForValue(id);
       const MirLoan *borrow = output.findLoan(loan);
@@ -4559,7 +4576,12 @@ private:
     if (value->info.category == ValueCategory::Place &&
         isPlaceExpression(value->kind) &&
         computeOperation(*value) != MirOperation::EnumConstant) {
-      emitPlaceDependencies(id);
+      // A class element is copied as a whole object, which its consumer
+      // constructs from the element place. As for a copied argument, an
+      // element selected at a run-time index completes its check at its
+      // AddressOf before the copy.
+      emitPlaceDependencies(id, value->info.type.kind == SemanticType::Class &&
+                                    dynamicallySelectedElement(id));
       if (emittedValues.contains(id)) {
         return valueOperand(id);
       }
@@ -4570,7 +4592,7 @@ private:
                                .operands = {{.kind = MirOperandKind::Copy,
                                              .place = place,
                                              .type = value->info.type}},
-                               .definedFailure = localDefinedFailure(value),
+                               .definedFailure = selectedPlaceFailure(value),
                                .info = value->info});
       emittedValues.insert(id);
       endConsumedCallResultLoans(value->operands, *value);
@@ -4675,20 +4697,25 @@ private:
   // that copy as one Load placed directly after the Assign, before any later
   // operand runs and before a selected accessor's store loan ends. Only a
   // copyable class without borrowed state or active cleanup has such a copy.
-  [[nodiscard]] MirValueId assignmentResultSnapshot(const HirValue &value) {
-    if (const auto found = assignmentSnapshots.find(value.id);
-        found != assignmentSnapshots.end())
-      return found->second;
+  [[nodiscard]] bool hasAssignmentResultCopy(const HirValue &value) const {
+    if (!isAssignmentExpression(value.kind) ||
+        value.info.type.kind != SemanticType::Class ||
+        !value.info.traits.copyable || value.info.traits.containsBorrowedState)
+      return false;
     const auto owner = std::find_if(program.classInstances().begin(),
                                     program.classInstances().end(),
                                     [&](const HirClassInstance &candidate) {
                                       return candidate.type == value.info.type;
                                     });
-    if (value.info.type.kind != SemanticType::Class ||
-        !value.info.traits.copyable ||
-        value.info.traits.containsBorrowedState ||
-        owner == program.classInstances().end() ||
-        owner->requiresActiveCleanup) {
+    return owner != program.classInstances().end() &&
+           !owner->requiresActiveCleanup;
+  }
+
+  [[nodiscard]] MirValueId assignmentResultSnapshot(const HirValue &value) {
+    if (const auto found = assignmentSnapshots.find(value.id);
+        found != assignmentSnapshots.end())
+      return found->second;
+    if (!hasAssignmentResultCopy(value)) {
       reject(value.id, "assignment result has no copy of its destination");
       return 0;
     }
@@ -4719,9 +4746,14 @@ private:
     info.category = ValueCategory::Value;
     info.access = AccessMode::ReadOnly;
     const MirValueId snapshot = appendValue(value.id, info);
-    // The copy reads the committed destination; the assignment's own
-    // reinitialization event stays on the Assign. A store through a raw
-    // pointer is read back through that same raw place.
+    // The copy reads the committed destination and records that read; the
+    // assignment's own reinitialization event stays on the Assign. A store
+    // through a raw pointer is read back through that same raw place.
+    const MirPlace *committed = output.findPlace(destination);
+    std::optional<OwnershipEvent> read;
+    if (committed != nullptr && committed->key)
+      read = OwnershipEvent{.kind = OwnershipEventKind::Read,
+                            .place = *committed->key};
     (void)appendInstruction({.kind = MirInstructionKind::Load,
                              .hirValue = value.id,
                              .unsafeOperation = value.unsafeOperation,
@@ -4729,9 +4761,132 @@ private:
                              .operands = {{.kind = MirOperandKind::Copy,
                                            .place = destination,
                                            .type = value.info.type}},
-                             .info = info},
+                             .info = info,
+                             .ownership = read},
                             false);
     assignmentSnapshots.emplace(value.id, snapshot);
+  }
+
+  // Whether `id` is an element selected at a run-time index, seen through
+  // groupings and field projections. A constant index keeps the static bound
+  // proof of its place instead of a run-time check before the access.
+  [[nodiscard]] bool dynamicallySelectedElement(HirValueId id) const {
+    const HirValue *value = findValue(id);
+    while (value != nullptr && !value->operands.empty() &&
+           (value->kind == HirValueKind::Grouping ||
+            (value->kind == HirValueKind::MemberAccess &&
+             value->unsafeOperation != UnsafeOperationKind::RawMember)))
+      value = findValue(value->operands.front());
+    if (value == nullptr || value->kind != HirValueKind::Index || !value->place)
+      return false;
+    const auto index = std::find_if(
+        value->place->projections.rbegin(), value->place->projections.rend(),
+        [](const PlaceProjection &projection) {
+          return projection.kind == PlaceProjectionKind::ConstantIndex ||
+                 projection.kind == PlaceProjectionKind::DynamicIndex;
+        });
+    return index != value->place->projections.rend() &&
+           index->kind == PlaceProjectionKind::DynamicIndex;
+  }
+
+  // The local failure of an access to `value`'s place, without the bound its
+  // completed AddressOf prefix already checked. Membership is recorded only
+  // after emitting this exact Index's AddressOf with its local failure.
+  // Retain every other origin/propagation family rather than erasing
+  // arbitrary operation failures when this source shape grows.
+  [[nodiscard]] DefinedFailureOperation
+  selectedPlaceFailure(const HirValue *value) {
+    DefinedFailureOperation failure = localDefinedFailure(value);
+    if (value != nullptr && checkedPlacePrefixes.contains(value->id))
+      std::erase_if(failure.localOrigins, [](const auto &origin) {
+        return origin.outcomes == std::vector<DefinedFailureOutcome>{
+                                      {DefinedFailureCode::IndexOutOfBounds,
+                                       DefinedFailureDetail::FixedArray}};
+      });
+    return failure;
+  }
+
+  // The whole result is that copy. When HIR planned a value obligation for
+  // the result (a borrowed receiver keeps it alive), the copy initializes a
+  // hidden temporary carrying that obligation, exactly as a value
+  // conditional's join publishes an arm, and the result leaves it; the
+  // borrow then reads a live temporary rather than the destination.
+  [[nodiscard]] MirValueId assignmentResultValue(const HirValue &value) {
+    if (const auto found = assignmentResults.find(value.id);
+        found != assignmentResults.end())
+      return found->second;
+    const MirValueId copy = assignmentResultSnapshot(value);
+    if (copy == 0 || terminated())
+      return 0;
+    if (!value.dropObligation)
+      return copy;
+    const MirPlaceId temporary = conditionalTemporary(value);
+    const MirDropObligationId obligation =
+        dropObligationForValue(value.id, temporary);
+    if (obligation == 0) {
+      valid = false;
+      return 0;
+    }
+    MirInstruction initialize{
+        .kind = MirInstructionKind::Initialize,
+        .hirValue = value.id,
+        .destination = temporary,
+        .operands = {{.kind = MirOperandKind::Value,
+                      .value = copy,
+                      .type = value.info.type}},
+        .info = ExpressionInfo{.type = value.info.type,
+                               .category = ValueCategory::Place,
+                               .access = AccessMode::Mutable,
+                               .traits = value.info.traits}};
+    appendLifecycle(initialize, {.kind = MirLifecycleEventKind::Initialize,
+                                 .target = obligation});
+    registerTemporary(obligation);
+    (void)appendInstruction(std::move(initialize), false);
+    const bool moveResult = value.info.traits.drop != DropKind::Trivial;
+    ExpressionInfo info = value.info;
+    info.category = ValueCategory::Value;
+    const MirValueId result = appendValue(value.id, info);
+    (void)appendInstruction(
+        {.kind =
+             moveResult ? MirInstructionKind::Move : MirInstructionKind::Load,
+         .hirValue = value.id,
+         .result = result,
+         .operands = {{.kind = moveResult ? MirOperandKind::Move
+                                          : MirOperandKind::Copy,
+                       .place = temporary,
+                       .type = value.info.type}},
+         .info = info},
+        false);
+    assignmentResults.emplace(value.id, result);
+    return result;
+  }
+
+  // HIR stages a class assignment's result passed by value as a copy. The
+  // copy reads the committed destination itself, staged directly after the
+  // Assign and before any later operand runs, exactly as a copied local
+  // argument is. A store through a selected accessor has no destination left
+  // to read once its loan ends.
+  [[nodiscard]] MirOperand
+  assignmentResultCopyOperand(const HirValue &value,
+                              const SemanticType &parameter) {
+    if (emittedValues.contains(value.id)) {
+      reject(value.id, "assignment result was requested after its commit");
+      return {};
+    }
+    assignmentDestinationRequests.insert(value.id);
+    emitValue(value.id);
+    assignmentDestinationRequests.erase(value.id);
+    if (terminated())
+      return {};
+    const auto found = assignmentDestinations.find(value.id);
+    const MirPlaceId place = found == assignmentDestinations.end()
+                                 ? 0
+                                 : clonePlace(found->second, value);
+    if (place == 0) {
+      reject(value.id, "assignment result has no destination to copy");
+      return {};
+    }
+    return {.kind = MirOperandKind::Copy, .place = place, .type = parameter};
   }
 
   // A projected array used as another index's base must finish its checked
@@ -4808,7 +4963,12 @@ private:
       if (value->operation == TokenKind::COMMA && !value->operands.empty()) {
         for (auto operand = value->operands.begin();
              operand != std::prev(value->operands.end()); ++operand) {
-          (void)valueOperand(*operand);
+          // A discarded assignment commits without copying its result.
+          const HirValue *discarded = findValue(*operand);
+          if (discarded != nullptr && isAssignmentExpression(discarded->kind))
+            emitValue(*operand);
+          else
+            (void)valueOperand(*operand);
         }
         emitPlaceDependencies(value->operands.back(), checkedPrefix);
       }
@@ -4823,7 +4983,12 @@ private:
         if (value->unsafeOperation == UnsafeOperationKind::RawMember) {
           (void)valueOperand(value->operands.front());
         } else {
-          emitPlaceDependencies(value->operands.front(), checkedPrefix);
+          // A field projection performs no selection check, so an element
+          // selected at a run-time index completes its check at its
+          // AddressOf before any access through the field.
+          emitPlaceDependencies(value->operands.front(),
+                                checkedPrefix ||
+                                    dynamicallySelectedElement(id));
         }
       }
       break;
@@ -5033,6 +5198,9 @@ private:
 
   [[nodiscard]] MirOperand copyArgumentOperand(HirValueId id,
                                                const SemanticType &parameter) {
+    if (const HirValue *assignment = findValue(id);
+        assignment != nullptr && isAssignmentExpression(assignment->kind))
+      return assignmentResultCopyOperand(*assignment, parameter);
     emitPlaceDependencies(id, true);
     if (terminated()) {
       return {};
@@ -5190,10 +5358,12 @@ private:
       }
     }
     const MirPlace *materialized = output.findPlace(place);
-    // A conditional result's lifetime is rooted in its join temporary. Its
-    // final Move is a transport identity, not a second materialization.
+    // A conditional result's lifetime is rooted in its join temporary, and an
+    // assignment result's in the temporary holding its copy. The final Move
+    // is a transport identity, not a second materialization.
     const bool conditionalResult =
-        temporary->kind == HirValueKind::Conditional &&
+        (temporary->kind == HirValueKind::Conditional ||
+         isAssignmentExpression(temporary->kind)) &&
         materialized != nullptr &&
         materialized->root == MirPlaceRootKind::Temporary &&
         std::any_of(
@@ -6372,20 +6542,7 @@ private:
                                     isCallLike(*sourceValueInfo) &&
                                     emittedValues.contains(sourceValue);
     if (materializesCheckedPlace && !evaluatedCallPlace) {
-      input.definedFailure = localDefinedFailure(sourceValueInfo);
-      if (checkedPlacePrefixes.contains(sourceValue)) {
-        // Membership is recorded only after emitting this exact Index's
-        // AddressOf with localDefinedFailure(sourceValueInfo). Retain every
-        // other origin/propagation family rather than erasing arbitrary
-        // operation failures when this source shape grows.
-        std::erase_if(input.definedFailure.localOrigins,
-                      [](const auto &origin) {
-                        return origin.outcomes ==
-                               std::vector<DefinedFailureOutcome>{
-                                   {DefinedFailureCode::IndexOutOfBounds,
-                                    DefinedFailureDetail::FixedArray}};
-                      });
-      }
+      input.definedFailure = selectedPlaceFailure(sourceValueInfo);
     }
     MirDropObligationId parameterDrop = 0;
     const std::optional<MirDropType> dropType =
@@ -10012,7 +10169,11 @@ private:
             emitDeferredBorrowRootOperands(*deferredRoot);
             (void)valueOperand(value->operands.back());
           }
-          emitPlaceDependencies(value->operands.front());
+          // As for a field read, an element selected at a run-time index
+          // below the field completes its check before the store.
+          emitPlaceDependencies(
+              value->operands.front(),
+              dynamicallySelectedElement(value->operands.front()));
         }
       } else if (value->kind == HirValueKind::IndexSet &&
                  value->operands.size() >= 2) {
@@ -10214,6 +10375,8 @@ private:
       if (assignmentSnapshotRequests.contains(id)) {
         emitAssignmentResultCopy(*value, destination);
       }
+      if (assignmentDestinationRequests.contains(id) && !overloadedBorrowStore)
+        assignmentDestinations.emplace(id, destination);
       emittedValues.insert(id);
       if (overloadedBorrowStore) {
         endConsumedCallResultLoans({value->id}, *value);
@@ -14620,6 +14783,9 @@ private:
   // committed destination that represents that result.
   std::unordered_set<HirValueId> assignmentSnapshotRequests;
   std::unordered_map<HirValueId, MirValueId> assignmentSnapshots;
+  std::unordered_map<HirValueId, MirValueId> assignmentResults;
+  std::unordered_set<HirValueId> assignmentDestinationRequests;
+  std::unordered_map<HirValueId, MirPlaceId> assignmentDestinations;
   // Every extraction observes the same subject representation that selected
   // its arm, including mixed copied/borrowed bindings of passive enums.
   std::unordered_map<HirValueId, MirOperand> payloadSwitchSubjects;

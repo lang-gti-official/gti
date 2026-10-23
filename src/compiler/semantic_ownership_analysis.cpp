@@ -3435,6 +3435,9 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
     state->idleCatalogs.pop_back();
   }
   worker->semanticModel = semanticModel;
+  worker->deferredLookup = deferredLookup;
+  worker->deferredLookupBase = deferredLookupBase;
+  worker->nextExpansion = nextExpansion;
   worker->valueFlow = valueFlow;
   for (const auto *definition : constexprDefinitionsAnalyzed)
     if (declaredBeforeCurrent(definition))
