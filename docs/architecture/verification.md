@@ -44,6 +44,45 @@ byte matched: both compilers accepted 2,956 compiles and refused 750. Main's
 next change before integration, batched validation, changed no compiled
 source.
 
+## Passive class moved beside a passive copy (0.465.6)
+
+`passive_class_move_and_copy_runtime` runs `passive_class_move_and_copy.gti`.
+- `Shelved` moves a `Pair` and copies another after a `Ledger` field that can
+  fail. `Reordered` copies a text-view `Name` declared before the moved one.
+  `Gauge` moves a scalar after a read of its formal beside a `Pair` copy.
+- When the ledger itself fails, the object has no ledger to drop. When a later
+  sibling or the body fails, the built ledger is rolled back exactly once, and
+  `main`'s live ledgers close once each. Every failure exits with status 70
+  and the division diagnostic.
+- Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan.
+  The main compiler (`6333da11`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`,
+`testPassiveClassMoveAndCopyAfterFallibleSibling` checks four points:
+- the move is body-staged and the copy is an exact parameter copy, for both
+  `Shelved` and `Gauge`;
+- the failure form admits both;
+- the emitted `Shelved` starts `moved` empty and publishes it after the
+  ledger, while `copied(__gti_mir_arg_1)` stays in the member-initializer list;
+- a copy whose records are reordered fails closed.
+
+Mutation checks:
+- without `failureConstructorHoistablePassiveCopy`, both admissions fail;
+- without its adjacency guard, the reordering forgery is accepted;
+- without `everyFormalCopyWitnessed`, the stripped full-expression forgery of
+  the existing `testMixedConstructorParameterFields` is accepted.
+
+The same stripping forgery applied to the hoisted copy is accepted on main as
+well. That copy has no witness, so it falls back to the existing body-ordered
+copy route.
+
+An `--emit-cpp` differential against main `6333da11`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1,823 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3:
+- 3,644 of 3,646 compilations emit byte-identical C++, and failing pairs
+  report identical diagnostics;
+- only the new fixture changes status, from `GTI-B0001` to success.
+
 ## Classes holding function items (0.465.3)
 
 `passive_function_item_class_runtime` runs `passive_function_item_classes.gti`.
@@ -323,6 +362,30 @@ byte-identical C++, with no text differences. Only example 170 and the new
 - `borrow_origin` now counts `Box<std::string_view>::get()` in
   `borrow_stored_view_return.gti` as a field relay rather than an ownerless
   return, and checks its three stored-view mutations.
+
+## Text relays through accessor switch subjects (0.465.4)
+
+`ownerless_text_contracts` covers `testAccessorSubjectRelays`.
+- `switch (this.wordRef())` relays an `auto&` text payload as
+  `switch (this.word)` does. A view over a local owner passes and prints
+  `line.viaCall()`.
+- `firstCall()` binds the payload by value through the accessor and carries
+  the field's ownerless requirement. MIR rejects it with that requirement
+  cleared (`omits an independently derived requirement`), deriving the field
+  through the accessor's own verified body. With that derivation removed the
+  mutation passes, which is how 0.465.2 compiled a dangling view.
+- At source, `GTI-S2045` rejects `kept = line.firstCall()`,
+  `kept = line.viaCall()`, and a function returning `firstCall()` of a local
+  owner. `GTI-S2017` rejects mutating the owner while a relayed view lives.
+- The same holds for an accessor with an argument (`this.pick(0)`), an
+  implicit `wordAt()`, an implicit `return word;` body, and an accessor that
+  returns one of two fields (a whole use). Each also compiles and verifies
+  over static text, so MIR never derives a requirement semantics omitted.
+- `borrow_origin_runtime` runs `borrowed_enum_reference_subjects.gti` with both
+  relays over owned text in every mode.
+- An accessor that returns another accessor's reference, such as
+  `int& kindOf() { return this.kindRef(); }`, stays a whole receiver use. So a
+  relay through it does not reach text owned elsewhere.
 
 ## Text read through returned references (0.462.0)
 

@@ -30,7 +30,7 @@ if __name__ == "__main__":
     cases = {name: [((), (0, "2\n", ""))] for name in names[1:3]}
     cases["borrow_stored_view_return"] = [((), (0, "x\n", ""))]
     cases["borrowed_enum_reference_subjects"] = [
-        ((), (0, "hello\nhello\n" + "owned text\n" * 4 + "label\n", ""))]
+        ((), (0, "hello\nhello\n" + "owned text\n" * 4 + "label\n" + "owned text\n" * 2, ""))]
     # An extra argument fails the ledger before the slot moves into its field.
     formal_lines = (root / "fixtures/borrowed_enum_formal_fields.gti").read_text().splitlines()
     ledger_line = next(index + 1 for index, line in enumerate(formal_lines)

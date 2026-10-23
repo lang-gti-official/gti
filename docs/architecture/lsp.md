@@ -609,6 +609,17 @@ compiler work.
   reanalyses every open document, so configuration, package aliases, and
   materialized locked dependencies cannot leave a stale project snapshot.
 
+Entry-point validation follows the uniquely selected manifest target at its
+actual root. Executables require a hosted `main`; `kind = "test"` passes the
+compiler's test-suite request, accepting validated `[[test]]` functions or a
+legacy `main` and rejecting empty suites and conflicting entries. Other source
+files and ambiguous target roots remain fragments; the server does not invent
+an executable target from a filename. Watched target-kind changes reanalyse
+open roots. Editor requests disable `FrontendOptions::synthesizeTestEntry`:
+the compiler still validates and discovers tests, but does not append the
+artifact-only dispatcher to the document or expose it through editor queries.
+Written source digests, ranges, diagnostics and generations remain unchanged.
+
 ### Reusable frontend work
 
 The process-local frontend cache is a thread-safe LRU. The compiler's generic

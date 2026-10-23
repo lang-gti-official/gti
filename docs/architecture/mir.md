@@ -1927,6 +1927,11 @@ a non-generic source function or method, or a method of a generic class's
 instance), `TextContracts` independently derives `ownerlessTextFields`:
 - a formal's or the receiver's text-field projection is a field source, not
   ownerless text;
+- so is a text payload extracted from a formal's enum field reached through
+  that formal's accessor: a statically dispatched, non-virtual source call
+  whose every return borrows `this.field`, or another such accessor's result
+  on its own receiver (`accessorResultField`, read from the callee's verified
+  body);
 - field sources that reach ownerless storage or a `None`-summary text return
   become requirements;
 - each other use of the whole formal or receiver requires all of its text
