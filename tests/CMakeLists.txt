@@ -17,6 +17,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 add_executable(gti_code_snippet_tests code_snippet_tests.cpp)
 target_link_libraries(gti_code_snippet_tests PRIVATE gti_compiler)
 add_test(NAME code_snippets COMMAND gti_code_snippet_tests)
+add_executable(gti_macro_expansion_query_tests macro_expansion_query_tests.cpp)
+target_link_libraries(gti_macro_expansion_query_tests PRIVATE gti_compiler)
+add_test(NAME macro_expansion_queries COMMAND gti_macro_expansion_query_tests)
 if(TARGET gti_lsp)
   add_test(NAME lsp_code_snippets
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_code_snippets_test.py"

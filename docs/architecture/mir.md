@@ -880,6 +880,18 @@ without rejecting an intermediate worklist state before its other predecessor
 arrives; transfer states remain derived from MIR operations, not asserted event
 results.
 
+Lifecycle cleanup publication still uses the complete structural CFG: guarded
+temporary drops and their exact conditionality must remain valid even when a
+literal makes one a runtime no-op. Only an ambiguous consuming source's
+`Available` precondition can additionally use feasible lifecycle availability.
+This lazily reuses the same literal-successor proof, lifecycle event transfers,
+invoke-success initialization and join lattice. Unknown branches remain joined;
+unclassified/dead blocks retain structural validation. Destination initialization,
+drop conditionality, loan retirement, full-expression/lexical boundaries and
+terminal obligations are never relaxed by that refinement. Ordinary bodies
+need no second dataflow or allocated callback; a queried block's event prefix is
+advanced incrementally rather than rescanned for every consuming source.
+
 Checked indexed swap is a sealed intrinsic over one mutable fixed-array
 reference and two staged `uint64_t` indices. Source prefix storage instead
 uses general object-lifetime operations; it is not another intrinsic operand
@@ -1994,7 +2006,7 @@ Phase 2c adds re-rooting constructions and dependent returns:
   (`constructorBodyFieldNeeds`). `contractPlace` treats a constructor's
   by-value class formal as a contract place. `dependentDesignationPath`
   follows a value that a Move or Load produced, so a moved dependent argument
-  is checked too; before 0.466.0 it skipped the relay check.
+  is checked too; before 0.467.0 it skipped the relay check.
 - A consuming receiver is a contract formal (`readOnlyContractFormal`). A
   consuming call whose result is a text field result of its receiver is
   exempt from the consuming-call borrow rule.

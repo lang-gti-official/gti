@@ -393,6 +393,8 @@ void Lexer::directive() {
     addToken(TokenKind::HASH_INCLUDE);
   } else if (text == "#define") {
     addToken(TokenKind::HASH_DEFINE);
+  } else if (text == "#macro") {
+    addToken(TokenKind::HASH_MACRO);
   } else if (text == "#undef") {
     addToken(TokenKind::HASH_UNDEF);
   } else if (text == "#ifdef") {
