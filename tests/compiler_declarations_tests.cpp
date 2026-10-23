@@ -4795,10 +4795,14 @@ int main() {
              constrainedCallableBody - constrainedCallable < 512,
          "frontend-checked generic constraints should retain a verified-MIR "
          "source-template body for an unnameable callable instance");
+  // Source-defined reflection methods such as is_transferable/is_shareable
+  // are ordinary declarations. Policy attributes and source concept spellings
+  // must not become backend traits or constraints.
   expect(generatedProgram.find("unsafe_transfer") == std::string_view::npos &&
              generatedProgram.find("no_transfer") == std::string_view::npos &&
-             generatedProgram.find("transferable") == std::string_view::npos &&
-             generatedProgram.find("shareable") == std::string_view::npos,
+             generatedProgram.find("std::transferable<") ==
+                 std::string_view::npos &&
+             generatedProgram.find("std::shareable<") == std::string_view::npos,
          "capability policy and constraints should remain frontend facts, not "
          "emitted C++ traits or spellings");
 
@@ -5464,14 +5468,20 @@ int bad<C>(C& receiver, int& input, mut int& output)
          "a mut contract must not grant mutation through a read-only receiver");
   for (const std::string body :
        {"requires(T& r, int& a) { { r.f() } -> int; }",
-        "requires(T& r, int& a) { { r.f(r) } -> int; }",
-        "requires(T& r, int& a, int& a) { { r.f(a, a) } -> int; }",
+        "requires(T& r, int& a) { { r.f(r) } -> int; }"}) {
+    const auto general = analyze("concept valid<T> = " + body + ";");
+    expect(general.canGenerateCode(),
+           "general expression requirements allow unused synthetic parameters "
+           "and using the receiver as an argument");
+  }
+  for (const std::string body :
+       {"requires(T& r, int& a, int& a) { { r.f(a, a) } -> int; }",
         "requires(T& r, mut int a) { { r.f(a) } -> int; }"}) {
     const auto malformed = analyze("concept invalid<T> = " + body + ";");
     expect(!malformed.canGenerateCode() &&
                hasDiagnosticCode(malformed.diagnostics, "GTI-P0001"),
-           "signature query must not admit expressions, duplicate bindings or "
-           "unused arguments");
+           "requirement parameters still reject duplicate bindings and invalid "
+           "owned mutability syntax");
   }
   const auto unrelated = analyze(R"(
 struct Box<T> { T value; };
@@ -6178,8 +6188,13 @@ int main() {
         {standardLibraryRoot()});
     expect(
         !result.canGenerateCode() &&
-            hasDiagnostic(result.diagnostics, std::string("satisfy concept '") +
-                                                  std::string(conceptName)) &&
+            hasDiagnosticCode(result.diagnostics, "GTI-S2029") &&
+            (hasDiagnostic(result.diagnostics,
+                           std::string("satisfy concept '") +
+                               std::string(conceptName)) ||
+             hasDiagnostic(result.diagnostics,
+                           std::string("satisfy any alternative in concept '") +
+                               std::string(conceptName))) &&
             hasDiagnosticHint(result.diagnostics, std::string(hintFragment)),
         std::string(message));
   };
@@ -6233,7 +6248,8 @@ int main() { vec2 v = vec2(1.0, 2.0); vec2 r = scale(v, 2); return 0; }
           "scaling by a type the domain does not accept should fail "
           "std::scalable_by rather than converting the scalar");
 
-  rejects("domain-operator-borrowed-result.gti", R"(
+  const auto borrowedResult = lang::Frontend().analyze(
+      "domain-operator-borrowed-result.gti", R"(
 class holder {
 public:
   holder(float v) : v(v) {}
@@ -6243,9 +6259,14 @@ public:
 T twice<T>(T& a) requires std::addable<T> { return a + a; }
 int main() { holder h = holder(1.0); holder r = twice(h); return 0; }
 )",
-          "std::addable", "owned value",
-          "a borrowed operator result should fail std::addable: the capability "
-          "requires an owned domain value");
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!borrowedResult.canGenerateCode() &&
+             hasDiagnosticCode(borrowedResult.diagnostics, "GTI-S2022") &&
+             hasDiagnostic(borrowedResult.diagnostics,
+                           "must return an owned value") &&
+             !hasDiagnosticCode(borrowedResult.diagnostics, "GTI-B0001"),
+         "a borrowed operator result is rejected at its invalid declaration "
+         "without requiring a secondary std::addable failure");
 }
 
 void testStructuralRequiresAndAccumulate() {
@@ -7908,7 +7929,8 @@ int main() {
       lang::LoweredProgramPrinter().print(loweredProgram);
   expect(lowered.find("constructor(id=") != std::string::npos &&
              lowered.find(";generics=[generic(") != std::string::npos &&
-             lowered.find(";requirements=[{concept=") != std::string::npos &&
+             lowered.find(";requirements=[{kind=concept;concept=") !=
+                 std::string::npos &&
              lowered.find(";requires=1;") != std::string::npos,
          "the lowered declaration contract should retain constructor "
          "generics and their symbolic requirements");
