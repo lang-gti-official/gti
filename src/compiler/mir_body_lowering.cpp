@@ -4576,7 +4576,12 @@ private:
     if (value->info.category == ValueCategory::Place &&
         isPlaceExpression(value->kind) &&
         computeOperation(*value) != MirOperation::EnumConstant) {
-      emitPlaceDependencies(id);
+      // A class element is copied as a whole object, which its consumer
+      // constructs from the element place. As for a copied argument, an
+      // element selected at a run-time index completes its check at its
+      // AddressOf before the copy.
+      emitPlaceDependencies(id, value->info.type.kind == SemanticType::Class &&
+                                    dynamicallySelectedElement(id));
       if (emittedValues.contains(id)) {
         return valueOperand(id);
       }
@@ -4587,7 +4592,7 @@ private:
                                .operands = {{.kind = MirOperandKind::Copy,
                                              .place = place,
                                              .type = value->info.type}},
-                               .definedFailure = localDefinedFailure(value),
+                               .definedFailure = selectedPlaceFailure(value),
                                .info = value->info});
       emittedValues.insert(id);
       endConsumedCallResultLoans(value->operands, *value);
@@ -4760,6 +4765,45 @@ private:
                              .ownership = read},
                             false);
     assignmentSnapshots.emplace(value.id, snapshot);
+  }
+
+  // Whether `id` is an element selected at a run-time index, seen through
+  // groupings and field projections. A constant index keeps the static bound
+  // proof of its place instead of a run-time check before the access.
+  [[nodiscard]] bool dynamicallySelectedElement(HirValueId id) const {
+    const HirValue *value = findValue(id);
+    while (value != nullptr && !value->operands.empty() &&
+           (value->kind == HirValueKind::Grouping ||
+            (value->kind == HirValueKind::MemberAccess &&
+             value->unsafeOperation != UnsafeOperationKind::RawMember)))
+      value = findValue(value->operands.front());
+    if (value == nullptr || value->kind != HirValueKind::Index || !value->place)
+      return false;
+    const auto index = std::find_if(
+        value->place->projections.rbegin(), value->place->projections.rend(),
+        [](const PlaceProjection &projection) {
+          return projection.kind == PlaceProjectionKind::ConstantIndex ||
+                 projection.kind == PlaceProjectionKind::DynamicIndex;
+        });
+    return index != value->place->projections.rend() &&
+           index->kind == PlaceProjectionKind::DynamicIndex;
+  }
+
+  // The local failure of an access to `value`'s place, without the bound its
+  // completed AddressOf prefix already checked. Membership is recorded only
+  // after emitting this exact Index's AddressOf with its local failure.
+  // Retain every other origin/propagation family rather than erasing
+  // arbitrary operation failures when this source shape grows.
+  [[nodiscard]] DefinedFailureOperation
+  selectedPlaceFailure(const HirValue *value) {
+    DefinedFailureOperation failure = localDefinedFailure(value);
+    if (value != nullptr && checkedPlacePrefixes.contains(value->id))
+      std::erase_if(failure.localOrigins, [](const auto &origin) {
+        return origin.outcomes == std::vector<DefinedFailureOutcome>{
+                                      {DefinedFailureCode::IndexOutOfBounds,
+                                       DefinedFailureDetail::FixedArray}};
+      });
+    return failure;
   }
 
   // The whole result is that copy. When HIR planned a value obligation for
@@ -4939,7 +4983,12 @@ private:
         if (value->unsafeOperation == UnsafeOperationKind::RawMember) {
           (void)valueOperand(value->operands.front());
         } else {
-          emitPlaceDependencies(value->operands.front(), checkedPrefix);
+          // A field projection performs no selection check, so an element
+          // selected at a run-time index completes its check at its
+          // AddressOf before any access through the field.
+          emitPlaceDependencies(value->operands.front(),
+                                checkedPrefix ||
+                                    dynamicallySelectedElement(id));
         }
       }
       break;
@@ -6493,20 +6542,7 @@ private:
                                     isCallLike(*sourceValueInfo) &&
                                     emittedValues.contains(sourceValue);
     if (materializesCheckedPlace && !evaluatedCallPlace) {
-      input.definedFailure = localDefinedFailure(sourceValueInfo);
-      if (checkedPlacePrefixes.contains(sourceValue)) {
-        // Membership is recorded only after emitting this exact Index's
-        // AddressOf with localDefinedFailure(sourceValueInfo). Retain every
-        // other origin/propagation family rather than erasing arbitrary
-        // operation failures when this source shape grows.
-        std::erase_if(input.definedFailure.localOrigins,
-                      [](const auto &origin) {
-                        return origin.outcomes ==
-                               std::vector<DefinedFailureOutcome>{
-                                   {DefinedFailureCode::IndexOutOfBounds,
-                                    DefinedFailureDetail::FixedArray}};
-                      });
-      }
+      input.definedFailure = selectedPlaceFailure(sourceValueInfo);
     }
     MirDropObligationId parameterDrop = 0;
     const std::optional<MirDropType> dropType =
@@ -10129,7 +10165,11 @@ private:
             emitDeferredBorrowRootOperands(*deferredRoot);
             (void)valueOperand(value->operands.back());
           }
-          emitPlaceDependencies(value->operands.front());
+          // As for a field read, an element selected at a run-time index
+          // below the field completes its check before the store.
+          emitPlaceDependencies(
+              value->operands.front(),
+              dynamicallySelectedElement(value->operands.front()));
         }
       } else if (value->kind == HirValueKind::IndexSet &&
                  value->operands.size() >= 2) {
