@@ -902,6 +902,10 @@ struct FunctionInfo {
   // The receiver's direct text field that every returned reference to text
   // designates (L-OWN-02): reading the result reads that field.
   std::optional<OwnerlessTextField> returnedTextReference;
+  // Every dependent value the function returns views the referent of its
+  // read-only reference formal returnBorrowParameter at the path of its one
+  // returnBorrowFields mapping (L-OWN-02). A body fact.
+  bool dependentTextReturn = false;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -1403,6 +1407,9 @@ struct ResolvedCallInfo {
   // (its publishedTextFields), so the result carries that argument's owner
   // there (L-OWN-02). Its borrow facts describe this call only.
   bool dependentTextPublication = false;
+  // The callee's dependentTextReturn: the result views the borrowed
+  // argument's text at the borrowFields path.
+  bool dependentTextReturn = false;
   // The callee's body was still being analyzed (recursion), so its relays
   // were not final: every text argument of this call must be ownerless.
   bool provisionalTextRelays = false;

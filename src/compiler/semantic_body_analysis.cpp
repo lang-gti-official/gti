@@ -4745,6 +4745,7 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
   const SemanticType valueType =
       analyzeInitializer(stmt.value(), currentReturnType, false, true);
   contextualReturnValue = enclosingReturnValue;
+  noteDependentTextReturn(stmt.value());
   const bool contextualInitialization =
       recordsDeclarationConversion(*stmt.value());
   recordRawResult(stmt.value());
