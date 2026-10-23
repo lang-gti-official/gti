@@ -1,5 +1,51 @@
 # Compiler Verification
 
+## Classes holding function items (0.464.1)
+
+`passive_function_item_class_runtime` runs `passive_function_item_classes.gti`.
+Function items reach fields only through generics, so every class is generic
+and instantiated with a function name.
+- `Holder<F>` moves an `Op<F>` into a field after a `std::vector` field;
+  `CopiedHolder<F>` copies it. Both return the called function's 7.
+- `Shelved<F>` moves a `Tagged<F>` (a view, a function item and a rank) after
+  a `Ledger` field that can fail. `Copied<F>` copies one after its own ledger.
+  In each, a later sibling or the body can fail.
+- When the ledger itself fails, the object has no ledger to drop. When a later
+  sibling or the body fails, the built ledger is rolled back exactly once, and
+  `run`'s live ledgers close once each. Every failure exits with status 70 and
+  the division diagnostic.
+- A conditional join of copies and of moves, and a copy assigned into a
+  mutable field, give the expected values.
+- Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan.
+  The main compiler (`6333da11`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`,
+`testPassiveFunctionItemClassAfterFallibleSibling` covers four points:
+- the MIR shape of the moved `Op<F>`: no loans, no value or rollback
+  obligation, and no lifecycle event;
+- failure-form admission, with the field started empty and published once
+  after the vector;
+- the native parameter copy of the copied variant;
+- forgeries: a function item without its function identity, and active
+  cleanup on the field.
+
+Mutation checks:
+- with function items removed from the passive leaf rule, the test fails at
+  failure-form admission;
+- with the `hasFunctionItemShape` guard removed, only the copy-side shapeless
+  forgery fails. The move side is still refused by the empty-state proof,
+  which requires the shape too.
+
+An `--emit-cpp` differential against main `6333da11`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1,823 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3:
+- 3,644 of 3,646 compilations emit byte-identical C++, and failing pairs
+  report identical diagnostics;
+- only the new fixture changes status, from `GTI-B0001` to success.
+No existing program, including the standard library's generic callable
+adapters, changes text. Closure captures and call inputs of a function-item
+class emit the same C++ as before.
+
 ## Editor code snippets
 
 `code_snippets` checks parser-owned declaration/member/statement boundaries,
