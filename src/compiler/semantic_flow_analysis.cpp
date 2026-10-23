@@ -792,7 +792,8 @@ auto SemanticVisitor::Impl::hasExactWholeObjectVirtualTarget(
           candidate.dispatchOwner != resolved.dispatchOwner ||
           candidate.returnType != resolved.returnType ||
           candidate.parameterTypes != resolved.parameterTypes ||
-          candidate.receiverMutability != selected->receiverMutability)
+          candidate.receiverMutability !=
+              selected->declaration->receiverMutability())
         return false;
       found = true;
     }
