@@ -1879,7 +1879,7 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     // A callee that returns a dynamic argument in a text field of its fresh
     // result gives a value carrying that argument's owner there (L-OWN-02).
     if (textDependentType(type) && resolved != nullptr &&
-        resolved->dependentTextPublication)
+        (resolved->dependentTextPublication || resolved->dependentTextReturn))
       return textDependentValueInfo(std::move(type));
     if (borrowedTextType(type) && resolved != nullptr &&
         resolved->borrowOrigin != BorrowOriginKind::None) {

@@ -637,6 +637,7 @@ private:
          .ownerlessTextParameters = declaration.ownerlessTextParameters,
          .ownerlessTextFields = declaration.ownerlessTextFields,
          .publishedTextFields = declaration.publishedTextFields,
+         .dependentTextReturn = declaration.dependentTextReturn,
          .entryKind = declaration.entryKind,
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
          .explicitReturnBorrowOrigin = declaration.explicitReturnBorrowOrigin,
@@ -2138,6 +2139,8 @@ private:
           concrete->ownerlessTextFields;
       output.program.functions[index].publishedTextFields =
           concrete->publishedTextFields;
+      output.program.functions[index].dependentTextReturn =
+          concrete->dependentTextReturn;
       output.program.functions[index].ownerlessTextContractProof =
           model->ownerlessTextContractProof(*concrete->declaration);
       output.program.functions[index].returnBorrowOrigin =

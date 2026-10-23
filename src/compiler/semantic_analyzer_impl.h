@@ -2238,6 +2238,14 @@ private:
   // makes `call` publish that argument's owner there, as a constructor does.
   void publishTextCallResult(const Call &call, ResolvedCallInfo &resolved,
                              const FunctionInfo &callee);
+  // A returned dependent value whose sole owner is the referent of a
+  // read-only reference formal makes the function relay that referent's
+  // text at the value's path (FunctionInfo::dependentTextReturn).
+  void noteDependentTextReturn(const ExprPtr &value);
+  // A call of such a function: its result views the borrowed argument's
+  // text at that path.
+  void publishTextReturnResult(const Call &call, ResolvedCallInfo &resolved,
+                               const FunctionInfo &callee);
   void recordOwnerlessTextCall(const Call &call,
                                const CallableCandidate &target);
   // An overloaded operator's receiver and operands relay or forward like a

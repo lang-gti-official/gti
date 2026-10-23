@@ -2515,6 +2515,85 @@ auto SemanticVisitor::Impl::relayReturnedTextFormal(
   return true;
 }
 
+auto SemanticVisitor::Impl::noteDependentTextReturn(const ExprPtr &value)
+    -> void {
+  if (!value || lambdaDepth != 0 || constructorDepth != 0 ||
+      destructorDepth != 0)
+    return;
+  const SemanticType &type = currentReturnType;
+  if ((type.kind != SemanticType::Class && type.kind != SemanticType::Enum) ||
+      typeTraits(type).containsBorrowedState)
+    return;
+  const ExpressionInfo *info = semanticModel.findExpression(*value);
+  if (info == nullptr ||
+      !((isTextDependentValue(*info) && info->type == type) ||
+        contextualTextValue(*value, type)))
+    return;
+  const FunctionInfo *function = [&] {
+    const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+    return currentFunctionInfo();
+  }();
+  if (function == nullptr || function->declaration == nullptr ||
+      function->bodyDeclaration() == nullptr || function->virtualMethod ||
+      function->overrideMethod || function->linkage != LanguageLinkage::Gti)
+    return;
+  const auto dependencies = storedBorrowDependencies(value);
+  if (dependencies.size() != 1 ||
+      dependencies.front().designatedFields.empty() ||
+      !dependencies.front().conditions.empty())
+    return;
+  const auto &dependency = dependencies.front();
+  // The owner is a read-only reference formal's referent, which outlives
+  // the call; a view of any local stays rejected.
+  const auto &parameters = function->bodyDeclaration()->parameters();
+  std::optional<std::size_t> formal;
+  for (std::size_t index = 0;
+       index < parameters.size() && index < function->parameterTypes.size();
+       ++index) {
+    const SemanticType &parameter = function->parameterTypes[index];
+    const Symbol *symbol = resolve(parameters[index].name);
+    if (parameter.kind == SemanticType::Reference &&
+        parameter.referenceAccess == AccessMode::ReadOnly && symbol &&
+        symbol->parameterDeclaration == &parameters[index] &&
+        toolingSymbolFor(*symbol) == dependency.place.root)
+      formal = index;
+  }
+  if (!formal || dependency.access != AccessMode::ReadOnly)
+    return;
+  const BorrowedFieldOrigin mapping{.resultFields = dependency.designatedFields,
+                                    .origin = BorrowOriginKind::Argument,
+                                    .parameter = *formal,
+                                    .access = AccessMode::ReadOnly};
+  if (function->dependentTextReturn
+          ? function->returnBorrowFields !=
+                std::vector<BorrowedFieldOrigin>{mapping}
+          : function->returnBorrowOrigin != BorrowOriginKind::None)
+    return;
+  FunctionInfo updated = *function;
+  updated.dependentTextReturn = true;
+  updated.returnBorrowOrigin = BorrowOriginKind::Argument;
+  updated.returnBorrowParameter = *formal;
+  updated.returnBorrowAccess = AccessMode::ReadOnly;
+  updated.returnBorrowFields = {mapping};
+  semanticModel.record(*updated.declaration, std::move(updated));
+  consumeTextDependentValue(value);
+}
+
+auto SemanticVisitor::Impl::publishTextReturnResult(
+    const Call &call, ResolvedCallInfo &resolved, const FunctionInfo &callee)
+    -> void {
+  if (!callee.dependentTextReturn || callee.returnBorrowFields.size() != 1 ||
+      resolved.returnType.kind == SemanticType::Reference)
+    return;
+  resolved.borrowOrigin = BorrowOriginKind::Argument;
+  resolved.borrowArgument = callee.returnBorrowParameter;
+  resolved.borrowAccess = AccessMode::ReadOnly;
+  resolved.borrowArguments.clear();
+  resolved.borrowFields = callee.returnBorrowFields;
+  resolved.dependentTextReturn = true;
+  semanticModel.record(call, resolved);
+}
+
 auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
                                                   ResolvedCallInfo &resolved,
                                                   const FunctionInfo &callee)
@@ -6507,6 +6586,25 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
     }
     return dependencies;
   }
+  // A function relaying its reference formal's referent text returns a
+  // value that views the borrowed argument itself at the relayed path.
+  if (const auto *call = exprAs<Call>(expression.get()))
+    if (const auto *resolved = semanticModel.findCall(*call);
+        resolved != nullptr && resolved->dependentTextReturn &&
+        resolved->borrowFields.size() == 1 &&
+        resolved->borrowArgument < resolvedCallArgumentCount(*call, resolved)) {
+      const ExprPtr &argument =
+          *resolvedCallArgument(*call, resolved, resolved->borrowArgument);
+      SemanticLoanDependency dependency{
+          .place = retainedLoanPlace(argument),
+          .designatedFields = resolved->borrowFields.front().resultFields,
+          .access = AccessMode::ReadOnly,
+          .protectsStorage = hasStableBorrowStorage(argument),
+          .parent = accessLoan(argument)};
+      if (!dependency.place.valid())
+        return {};
+      return {std::move(dependency)};
+    }
   {
     const auto *call = exprAs<Call>(expression.get());
     const auto *resolved =
