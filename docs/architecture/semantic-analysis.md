@@ -2458,7 +2458,10 @@ exact constructor parameter-to-field bindings. Field-wise return summaries
 identify the result field, receiver or parameter, source field path and access
 mode; body analysis validates that inferred summary against actual returned
 origins. Selected reference accessors do not inherit an unrelated first field's
-permission. Concrete generic reanalysis substitutes these same facts.
+permission. Forming a reference selection in a switch arm records a use of its
+parent authority and that parent's ancestors, so the carrier's dependency
+stays live while the arm forms its selections even when it never reads a
+selected binding. Concrete generic reanalysis substitutes these same facts.
 Lifecycle traits reject copying any exclusive path, and transfer preserves all
 parents until the final child/carrier endpoint. Custom destruction,
 when present, extends the dependency endpoint through cleanup; it does not

@@ -1778,13 +1778,17 @@ auto SemanticVisitor::Impl::conditionalRelayReturns(
   const auto [entry, inserted] =
       requestSession.conditionalRelayReturns.try_emplace(
           function.bodyDeclaration());
+  // References to unordered-map values survive recursive cache insertion;
+  // retaining its iterator across conditionalTextField queries would not.
+  auto &result = entry->second;
   if (!inserted || function.bodyDeclaration()->body() == nullptr)
-    return entry->second;
+    return result;
   std::vector<const ExprPtr *> returns;
   collectBorrowReturnExpressions(function.bodyDeclaration()->body().get(),
                                  returns);
   std::optional<SymbolId> relayed;
-  std::unordered_set<const Expr *> found;
+  std::vector<const Expr *> found;
+  found.reserve(returns.size());
   for (const ExprPtr *returned : returns) {
     const Expr *current = returned != nullptr ? returned->get() : nullptr;
     // A returned move of the field relays it as a returned read does; the
@@ -1807,12 +1811,14 @@ auto SemanticVisitor::Impl::conditionalRelayReturns(
     const auto field =
         current != nullptr ? conditionalTextField(*current) : std::nullopt;
     if (!field || !field->receiver || (relayed && *relayed != field->field))
-      return entry->second;
+      return result;
     relayed = field->field;
-    found.insert(current);
+    found.push_back(current);
   }
-  entry->second = std::move(found);
-  return entry->second;
+  // Publish expression identities into cache-owned storage only after the
+  // complete relay has been proved. No local container storage escapes.
+  result.insert(found.begin(), found.end());
+  return result;
 }
 
 auto SemanticVisitor::Impl::contractEnumField(const Expr *current) const
@@ -3892,12 +3898,13 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
   const bool directReference =
       function.returnType.kind == SemanticType::Reference &&
       function.returnType.arguments.size() == 1;
-  const auto inventory =
-      directReference
-          ? std::optional<
-                std::vector<StoredReferencePath>>{{{.reference =
-                                                        function.returnType}}}
-          : storedReferenceInventory(function.returnType);
+  std::optional<std::vector<StoredReferencePath>> inventory;
+  if (directReference) {
+    inventory.emplace();
+    inventory->push_back({.reference = function.returnType});
+  } else {
+    inventory = storedReferenceInventory(function.returnType);
+  }
   if (!inventory)
     return std::nullopt;
   const auto alternatives =
