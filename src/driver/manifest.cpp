@@ -728,12 +728,13 @@ ProjectNativeSettings parseOptionalNative(
 
 ProjectProfile defaultProfile(std::string name, SourceSpan declaration = {}) {
   const bool release = name == "release";
-  return {.name = std::move(name),
-          .optimization =
-              release ? OptimizationLevel::O3 : OptimizationLevel::O0,
-          .cppStandard = CppStandard::Cpp23,
-          .keepCpp = false,
-          .declaration = std::move(declaration)};
+  return {
+      .name = std::move(name),
+      .optimization = release ? OptimizationLevel::O3 : OptimizationLevel::O0,
+      .cppStandard = CppStandard::Cpp23,
+      .keepCpp = false,
+      .declaration = std::move(declaration),
+      .defines = release ? ConfigurationFlags{"NDEBUG"} : ConfigurationFlags{}};
 }
 
 OptimizationLevel optimizationLevel(std::int64_t value) {
@@ -797,9 +798,10 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
                   "disabled-warnings", "dependency-warnings", "keep-cpp",
                   "debug-info", "native", "defines"},
                  "profile", sourceName, source, diagnostics);
-  profile.defines =
-      parseConfigurationDefines(table, "Profile", sourceName, source,
-                                diagnostics, profile.defineDeclarations);
+  if (table.contains("defines"))
+    profile.defines =
+        parseConfigurationDefines(table, "Profile", sourceName, source,
+                                  diagnostics, profile.defineDeclarations);
 
   if (const toml::node *optimization = table.get("optimization")) {
     const std::optional<std::int64_t> value =
