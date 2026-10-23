@@ -566,6 +566,10 @@
       "suite": "text"
     },
     {
+      "name": "testBorrowedCleanupFreeEnumPayloadReference",
+      "suite": "text"
+    },
+    {
       "name": "testForwardListEmplacementPublication",
       "suite": "lifecycle"
     },
