@@ -1382,17 +1382,24 @@ auto SemanticVisitor::Impl::finalizeTextDependentValues() -> void {
         callee == nullptr || relay.paths.empty() ||
         !semanticModel.hasAnalyzedFunctionBody(*callee->bodyDeclaration()))
       continue;
+    // A contract names a text field or a payload-enum field's text payload;
+    // a path through a nested class field has none, so it may escape.
+    SemanticType argumentType = semanticModel.typeOf(*relay.argument);
+    if (argumentType.kind == SemanticType::Reference &&
+        argumentType.arguments.size() == 1)
+      argumentType = SemanticType(argumentType.arguments.front());
     const auto required = std::find_if(
         relay.paths.begin(), relay.paths.end(), [&](const auto &path) {
-          return path.empty() || path.size() > 2 ||
-                 std::binary_search(
-                     callee->ownerlessTextFields.begin(),
-                     callee->ownerlessTextFields.end(),
-                     OwnerlessTextField{
-                         .receiver = relay.calleeFormal.receiver,
-                         .parameter = relay.calleeFormal.parameter,
-                         .field = path.front(),
-                         .payload = path.size() == 2 ? path.back() : 0});
+          if (path.empty() || path.size() > 2)
+            return true;
+          const OwnerlessTextField entry{
+              .receiver = relay.calleeFormal.receiver,
+              .parameter = relay.calleeFormal.parameter,
+              .field = path.front(),
+              .payload = path.size() == 2 ? path.back() : 0};
+          return !contractTextPath(argumentType, entry) ||
+                 std::binary_search(callee->ownerlessTextFields.begin(),
+                                    callee->ownerlessTextFields.end(), entry);
         });
     if (required == relay.paths.end()) {
       found->second.consumed = true;
@@ -2944,10 +2951,17 @@ auto SemanticVisitor::Impl::relayConstructorTextField(
   const ExpressionInfo *info = semanticModel.findExpression(*argument);
   if (info == nullptr || !isTextDependentValue(*info))
     return;
+  // The stored part of the formal: one text or class field of it, or the
+  // whole value. The argument holds one path through it.
+  const std::vector<SymbolId> stored =
+      input.wholeValue ? std::vector<SymbolId>{}
+                       : std::vector<SymbolId>{input.sourceField};
   const auto paths = textDependentPaths(*argument);
-  if (std::find(paths.begin(), paths.end(),
-                std::vector<SymbolId>{input.sourceField}) == paths.end())
+  if (paths.size() != 1 || paths.front().empty() ||
+      paths.front().size() < stored.size() ||
+      !std::equal(stored.begin(), stored.end(), paths.front().begin()))
     return;
+  const std::vector<SymbolId> held = paths.front();
   // The formal must reach nothing but this initializer: the value keeps its
   // published text only when no other code reads the formal or `this`.
   const auto &parameters = constructor.parameters();
@@ -2989,11 +3003,10 @@ auto SemanticVisitor::Impl::relayConstructorTextField(
   if (mentions != 1)
     return;
   auto dependencies = storedBorrowDependencies(argument);
-  const auto source = std::find_if(
-      dependencies.begin(), dependencies.end(), [&](const auto &dependency) {
-        return dependency.designatedFields ==
-               std::vector<SymbolId>{input.sourceField};
-      });
+  const auto source = std::find_if(dependencies.begin(), dependencies.end(),
+                                   [&](const auto &dependency) {
+                                     return dependency.designatedFields == held;
+                                   });
   const ClassInfo *owner = classInfo(constructedType);
   const auto member =
       owner == nullptr
@@ -3012,10 +3025,11 @@ auto SemanticVisitor::Impl::relayConstructorTextField(
   std::vector<SymbolId> path{toolingSymbolFor(member->second.symbol)};
   if (input.payload != 0)
     path.push_back(input.payload);
+  path.insert(path.end(), held.begin() + stored.size(), held.end());
   textOrigins.push_back({.resultFields = std::move(path),
                          .origin = BorrowOriginKind::Argument,
                          .parameter = input.parameter,
-                         .sourceFields = {input.sourceField},
+                         .sourceFields = held,
                          .access = AccessMode::ReadOnly});
   // A contextual construction is its own argument's expression: the one
   // dependent value it denotes is the converted value, which its consumer
@@ -3153,8 +3167,12 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
         return std::nullopt;
       const SymbolId symbol =
           symbolForDeclaration(member->second.symbol.declaration);
-      return directTextField(formalType, symbol) ? std::optional{symbol}
-                                                 : std::nullopt;
+      // A field of a publishable class type holds text paths of its own.
+      return directTextField(formalType, symbol) ||
+                     (stored.kind == SemanticType::Class &&
+                      textPublicationOwner(stored))
+                 ? std::optional{symbol}
+                 : std::nullopt;
     };
     if (accessor == nullptr) {
       if (const auto field = fieldNamed(*name))
@@ -3222,6 +3240,21 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
                           .sourceField = relay->second});
       continue;
     }
+    // A class formal stored whole nests every text path of its argument
+    // under the field (L-OWN-02); so does a class field of a formal.
+    if (fieldType.kind == SemanticType::Class &&
+        textPublicationOwner(fieldType)) {
+      if (const auto index = formalOf(initializer.arguments.front(), fieldType))
+        result.push_back({.parameter = *index,
+                          .initializer = &initializer,
+                          .wholeValue = true});
+      else if (const auto relay =
+                   formalFieldOf(initializer.arguments.front(), fieldType))
+        result.push_back({.parameter = relay->first,
+                          .initializer = &initializer,
+                          .sourceField = relay->second});
+      continue;
+    }
     // A payload construction of the field's own enum stores each formal it
     // takes at that payload. The enum is resolved from the declaration's
     // namespace, as the movement capability is.
@@ -3261,13 +3294,16 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
     for (std::size_t index = 0; index < call->arguments().size(); ++index) {
       const auto payloadType =
           substituteType(variant->payloadTypes[index], substitution);
-      if (!textType(payloadType))
+      const bool nested = payloadType.kind == SemanticType::Class &&
+                          textPublicationOwner(payloadType);
+      if (!textType(payloadType) && !nested)
         continue;
       if (const auto formal = formalOf(call->arguments()[index], payloadType))
         result.push_back({.parameter = *formal,
                           .initializer = &initializer,
                           .payload = variant->payloadSymbols[index],
-                          .payloadArgument = call->arguments()[index].get()});
+                          .payloadArgument = call->arguments()[index].get(),
+                          .wholeValue = nested});
       else if (const auto relay =
                    formalFieldOf(call->arguments()[index], payloadType))
         result.push_back({.parameter = relay->first,

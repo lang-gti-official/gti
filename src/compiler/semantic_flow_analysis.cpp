@@ -1804,9 +1804,11 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                                     : AccessMode::ReadOnly);
     }
     // A payload-enum field through which the dependency designates a text
-    // payload is itself a dependent value, observed by a switch.
-    if (type.kind == SemanticType::Enum && member != nullptr &&
-        objectInfo != nullptr && get.access().kind != TokenKind::ARROW &&
+    // payload is itself a dependent value, observed by a switch; so is a
+    // class field through which it designates a nested text path.
+    if ((type.kind == SemanticType::Enum || type.kind == SemanticType::Class) &&
+        member != nullptr && objectInfo != nullptr &&
+        get.access().kind != TokenKind::ARROW &&
         isTextDependentValue(*objectInfo)) {
       const auto field = symbolForDeclaration(member->symbol.declaration);
       const auto paths = textDependentPaths(*get.object());

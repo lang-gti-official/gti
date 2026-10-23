@@ -204,15 +204,17 @@ dependentTextPublication(const MirProgram &program,
   const auto &mapping = instruction.borrowFields.front();
   // A class formal's text field re-rooted at the path its constructor stores
   // it in: the argument's dependency at that field moves to the result.
-  if (mapping.sourceFields.size() == 1)
+  if (!mapping.sourceFields.empty())
     return mapping.origin == BorrowOriginKind::Argument &&
            mapping.parameter == instruction.borrowArgument &&
            mapping.globalRoot == 0 && mapping.access == AccessMode::ReadOnly &&
            mapping.resultConditions.empty() &&
            mapping.sourceConditions.empty() &&
-           mir_detail::dependentTextFieldRelay(
-               program, constructor, mapping.parameter,
-               mapping.sourceFields.front()) == mapping.resultFields;
+           mir_detail::dependentTextRelayPath(
+               program, constructor, mapping.parameter, mapping.sourceFields) ==
+               mapping.resultFields &&
+           mir_detail::directTextPath(program, instruction.info.type,
+                                      mapping.resultFields);
   return mapping.origin == BorrowOriginKind::Argument &&
          mapping.parameter == instruction.borrowArgument &&
          mapping.globalRoot == 0 && mapping.sourceFields.empty() &&
@@ -306,12 +308,8 @@ dependentTextReturnSummary(const MirProgram &program,
       instance.parameterTypes[parameter].referenceAccess !=
           AccessMode::ReadOnly)
     return false;
-  const auto &type = instance.returnType;
-  return type.kind == SemanticType::Enum
-             ? mapping.resultFields.size() == 1 &&
-                   mir_detail::directTextPayload(program, type,
-                                                 mapping.resultFields.front())
-             : mir_detail::directTextPath(program, type, mapping.resultFields);
+  return mir_detail::directTextPath(program, instance.returnType,
+                                    mapping.resultFields);
 }
 
 // The traits of a value whose text field or payload holds a relayed owner's

@@ -23,8 +23,8 @@ verifyOwnerlessTextContracts(const MirProgram &program);
 [[nodiscard]] bool directTextPayload(const MirProgram &program,
                                      const SemanticType &type,
                                      SymbolId payload);
-// A direct text field of the class `type`, or a text payload of one of its
-// payload-enum fields: `{field}` or `{field, payload}`.
+// A path from `type` to text through class fields and payload-enum payloads,
+// none with borrowed state: `{field}`, `{field, payload}` or a nested path.
 [[nodiscard]] bool directTextPath(const MirProgram &program,
                                   const SemanticType &type,
                                   std::span<const SymbolId> path);
@@ -34,11 +34,12 @@ verifyOwnerlessTextContracts(const MirProgram &program);
 dependentTextFieldFormal(const MirProgram &program,
                          const MirConstructorInstance &constructor,
                          std::span<const SymbolId> path);
-// The text field path at which the constructor alone stores the text field
-// `field` of its class formal `parameter`, which a construction may re-root
-// its argument's owner dependency at.
+// The path at which the constructor alone stores the text that its class
+// formal `parameter` holds at `held`, through one field of the formal or the
+// whole value, which a construction may re-root its argument's owner
+// dependency at.
 [[nodiscard]] std::optional<std::vector<SymbolId>>
-dependentTextFieldRelay(const MirProgram &program,
-                        const MirConstructorInstance &constructor,
-                        std::size_t parameter, SymbolId field);
+dependentTextRelayPath(const MirProgram &program,
+                       const MirConstructorInstance &constructor,
+                       std::size_t parameter, std::span<const SymbolId> held);
 } // namespace lang::mir_detail

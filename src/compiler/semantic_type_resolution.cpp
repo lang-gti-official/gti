@@ -2412,9 +2412,9 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       if (argument == nullptr || !*argument)
         continue;
       // A class formal whose text field the constructor stores re-roots the
-      // argument's owner dependency at that field to the stored path
-      // (L-OWN-02).
-      if (input.sourceField != 0) {
+      // argument's owner dependency at that field to the stored path, and
+      // one it stores whole nests every path under it (L-OWN-02).
+      if (input.sourceField != 0 || input.wholeValue) {
         if (!potentialPackView && index < arguments.size())
           relayConstructorTextField(
               constructedType, *selected.constructor->declaration, input,
