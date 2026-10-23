@@ -1688,13 +1688,27 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
             *requirement.syntax, requirement.arguments, &reason,
             requirement.lookupScope ? &*requirement.lookupScope : nullptr))
       return std::nullopt;
-    return ConstraintFailure{.parameter = requirement.syntax->name.last(),
-                             .argument = requirement.arguments.empty()
-                                             ? SemanticType::Unknown
-                                             : requirement.arguments.front(),
-                             .application = requirement.syntax,
-                             .leafApplication = requirement.syntax,
-                             .expressionFailure = std::move(reason)};
+    ConstraintFailure failure{.parameter = requirement.syntax->name.last(),
+                              .argument = requirement.arguments.empty()
+                                              ? SemanticType::Unknown
+                                              : requirement.arguments.front(),
+                              .application = requirement.syntax,
+                              .leafApplication = requirement.syntax,
+                              .applicationArgumentIndex =
+                                  requirement.arguments.size() == 1
+                                      ? std::optional<std::size_t>(0)
+                                      : std::nullopt,
+                              .expressionFailure = std::move(reason)};
+    // Preserve the fact's existing diagnostic without deriving a subject
+    // from coincidentally equal arguments in a multi-parameter predicate.
+    if (requirement.arguments.size() == 1) {
+      const auto capability = predicateCapabilityFor(
+          *requirement.syntax, requirement.arguments,
+          requirement.lookupScope ? &*requirement.lookupScope : nullptr);
+      if (capability && capability->arguments == requirement.arguments)
+        failure.failed = capability->atomic;
+    }
+    return failure;
   }
   if (requirement.syntax && requirement.syntax->memberRequirement) {
     if (requirement.syntax->memberRequirement->isExpressionRequirement()) {
@@ -1706,11 +1720,18 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
         return std::nullopt;
       return ConstraintFailure{
           .parameter = requirement.syntax->memberRequirement->keyword(),
-          .argument = requirement.arguments.empty()
-                          ? SemanticType::Unknown
-                          : requirement.arguments.front(),
+          .argument =
+              requirement.arguments.empty() ? SemanticType::Unknown
+              : requirement.arguments.front().kind == SemanticType::Reference &&
+                      requirement.arguments.front().arguments.size() == 1
+                  ? requirement.arguments.front().arguments.front()
+                  : requirement.arguments.front(),
           .application = requirement.syntax,
           .leafApplication = requirement.syntax,
+          .applicationArgumentIndex =
+              requirement.syntax->memberRequirement->parameters().empty()
+                  ? std::nullopt
+                  : std::optional<std::size_t>(0),
           .expressionFailure = std::move(reason)};
     }
     const auto &member = requirement.syntax->memberRequirement->member();

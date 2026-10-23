@@ -193,6 +193,11 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       diagnostic.hints.push_back(std::move(reason));
   };
   const auto publish = [&](Diagnostic diagnostic) {
+    if (failure.expressionFailure && !failure.context.empty()) {
+      diagnostic.message = "Type '" + typeSpelling(failure.argument) +
+                           "' does not satisfy concept '" +
+                           applicationSpelling(failure.context.front()) + "'.";
+    }
     if (failure.callArgument && failure.callArgumentIndex) {
       diagnostic.primary = tokenSpan(*failure.callArgument);
       std::string prefix =
@@ -222,6 +227,13 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       diagnostic.related.push_back(
           {tokenSpan(context.location),
            "Required application '" + applicationSpelling(context) + "'."});
+    }
+    if (failure.expressionFailure) {
+      const Token &location = failure.leafApplication
+                                  ? failure.leafApplication->name.last()
+                                  : failure.parameter;
+      diagnostic.related.push_back(
+          {tokenSpan(location), *failure.expressionFailure});
     }
     appendMemberReason(diagnostic, failure);
     if (failure.conformanceBorrowOperation) {
@@ -324,7 +336,8 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     publish(std::move(diagnostic));
     return;
   }
-  if (failure.expressionFailure) {
+  if (failure.expressionFailure &&
+      failure.failed == GenericConstraintKind::None) {
     const bool unaryPredicate =
         failure.leafApplication && failure.leafApplication->predicate &&
         failure.leafApplication->arguments.size() == 1 &&
@@ -336,11 +349,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                   "' does not satisfy the required compile-time predicate."
             : "Generic arguments do not satisfy the required expression or "
               "compile-time predicate.");
-    const Token &location = failure.leafApplication
-                                ? failure.leafApplication->name.last()
-                                : failure.parameter;
-    diagnostic.related.push_back(
-        {tokenSpan(location), *failure.expressionFailure});
     diagnostic.hints.emplace_back(
         "The expression must be valid under its declared access and unsafe "
         "contract, with the exact required result; a predicate must evaluate "

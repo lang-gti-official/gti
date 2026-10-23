@@ -437,6 +437,8 @@ compiler fact kinds remain the authority for reflection and proof checking.
 The exact enum-underlying relation likewise uses reflection rather than a
 separate private concept binding.
 Arithmetic domain concepts use source requirements for the actual operations.
+Their `[[unsatisfied(...)]]` explanations also live in source, so constraint
+diagnostics retain useful guidance without recognizing those concept names.
 The former `adds`, `subtracts`, `negates`, and `scales_by` compiler bindings
 and dedicated proof branches have been removed. Their generic-body operation
 facts now use the same general expression-requirement path as user concepts.
