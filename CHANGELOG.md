@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.465.0 — Returning a view of the caller's string
+## 0.466.0 — Returning a view of the caller's string
 
 - A function can now return a value over the text of one of its read-only
   reference parameters, and each call's result views that call's argument:
@@ -54,6 +54,36 @@ for what minor and patch releases mean.
   this.word; switch (w) { case Word::text(v): kept = v; break; ... } }`,
   compiled when called on such a value. It now reports `error[GTI-S2045]`;
   over literal text it still works.
+
+## 0.465.1 — Class stores into globals, captures and element fields
+
+- Assigning a class value to a global, through a `[mut &p]` capture, or
+  through an overloaded subscript such as `points[uint64_t(0)] = q` used to
+  report `error[GTI-B0001]` (an internal compiler error). These stores now
+  compile and run, whether the value is a copy or a fresh construction, and a
+  global or a captured value can be the copied value (`p = g;`).
+- Reading or writing a field of a fixed-array element selected at a run-time
+  index, as in `points[i].x` or `points[i].x = 7`, and copying such an element
+  (`Point copy = points[i];`) no longer report `GTI-B0001` (issue #203). The
+  index is checked first: one out of range fails with
+  `GTI-R0007 index_out_of_bounds in fixed_array`.
+## 0.465.0 — Deferred assertions
+
+- `<std/assert>` adds always-on `std::assert` and configuration-controlled
+  `std::debug_assert`, with raw/formatted panic messages, external caller
+  locations and deterministic cleanup. Successful assertions skip message
+  evaluation; disabled debug assertions skip every argument, including moves,
+  while still checking their types and body constraints.
+- `[[deferred]]` makes the same confined statement-helper facility available to
+  application APIs. Its typed expression parameters are evaluated where used
+  in source-defined branches, through ordinary checked HIR/MIR. It introduces
+  no escaping thunk, heap allocation or compiler recognition of assertion names.
+- Default release projects define `NDEBUG`; dev projects leave it inactive.
+  Explicit profile `defines` replace that default. Direct compilation can use
+  `-D NDEBUG` at any optimization level. `std::assert` remains enabled.
+- Example 172 demonstrates both APIs, skipped owning moves and an unrelated
+  user-defined deferred helper. The first profile is statement-only, with
+  branch/expression bodies and no local binders, loops or callback conversion.
 
 ## 0.464.2 — Using whole assignment results
 

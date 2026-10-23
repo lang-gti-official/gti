@@ -10,13 +10,16 @@ namespace {
 
 class Cloner {
 public:
-  explicit Cloner(std::uint32_t expansion) : expansion(expansion) {}
+  explicit Cloner(std::uint32_t expansion,
+                  const AstCloneOptions *options = nullptr)
+      : expansion(expansion), options(options) {}
 
   AstCloneResult result;
   std::uint32_t expansion = 0;
+  const AstCloneOptions *options = nullptr;
 
   [[nodiscard]] Token tok(const Token &token) const {
-    Token copy = token;
+    Token copy = options && options->token ? options->token(token) : token;
     if (expansion != 0) {
       copy.expansion = expansion;
     }
@@ -44,14 +47,39 @@ public:
 
   [[nodiscard]] TypeRef type(const TypeRef &value) const {
     TypeRef copy = value;
-    if (expansion != 0) {
+    if (expansion != 0 || options) {
       for (Token &segment : copy.name.segments) {
-        segment.expansion = expansion;
+        segment = tok(segment);
       }
       for (TypeRef &argument : copy.arguments) {
         argument = type(argument);
       }
+      if (value.qualifiedOwner)
+        copy.qualifiedOwner =
+            std::make_shared<TypeRef>(type(*value.qualifiedOwner));
+      for (auto &pointer : copy.pointers) {
+        pointer.star = tok(pointer.star);
+        pointer.pointeeConst = tok(pointer.pointeeConst);
+      }
+      for (auto &extent : copy.arrayExtents)
+        extent = extentExpression(extent);
+      copy.genericValueExpression =
+          extentExpression(copy.genericValueExpression);
+      copy.reference = tok(copy.reference);
+      copy.referenceMutability = tok(copy.referenceMutability);
+      copy.packExpansion = tok(copy.packExpansion);
+      copy.functionSignatureQualifier = tok(copy.functionSignatureQualifier);
     }
+    return copy;
+  }
+
+  [[nodiscard]] ArrayExtentExprPtr
+  extentExpression(const ArrayExtentExprPtr &value) const {
+    if (!value)
+      return nullptr;
+    auto copy = std::make_shared<ArrayExtentExpr>(tok(value->token));
+    copy->left = extentExpression(value->left);
+    copy->right = extentExpression(value->right);
     return copy;
   }
 
@@ -78,13 +106,25 @@ public:
     ExprList copies;
     copies.reserve(expressions.size());
     for (const ExprPtr &expression : expressions) {
+      if (const auto *pack = exprAs<PackExpansion>(expression.get());
+          pack && options && options->pack) {
+        if (auto values = options->pack(*pack)) {
+          for (auto &value : *values)
+            copies.emplace_back(std::move(value));
+          continue;
+        }
+      }
       copies.emplace_back(expr(expression));
     }
     return copies;
   }
 
   [[nodiscard]] ExprPtr expr(const Expr &expression) {
-    ExprPtr copy = cloneExpression(expression);
+    ExprPtr copy = options && options->expression
+                       ? options->expression(expression)
+                       : nullptr;
+    if (!copy)
+      copy = cloneExpression(expression);
     if (copy) {
       result.expressions.emplace(&expression, copy.get());
     }
@@ -188,9 +228,9 @@ private:
     }
     case ExprKind::Call: {
       const auto &node = static_cast<const Call &>(expression);
-      auto copy =
-          std::make_unique<Call>(expr(node.callee()), node.typeArguments(),
-                                 tok(node.paren()), exprs(node.arguments()));
+      auto copy = std::make_unique<Call>(
+          expr(node.callee()), types(node.typeArguments()), tok(node.paren()),
+          exprs(node.arguments()));
       if (tok(node.leftParen())) {
         copy->setArgumentGeometry(*tok(node.leftParen()),
                                   toks(node.argumentCommas()));
@@ -580,8 +620,21 @@ AstCloneResult cloneStmt(const Stmt &statement, std::uint32_t expansion) {
   return std::move(cloner.result);
 }
 
+AstCloneResult cloneStmt(const Stmt &statement, std::uint32_t expansion,
+                         const AstCloneOptions &options) {
+  Cloner cloner(expansion, &options);
+  cloner.result.statement = cloner.stmt(statement);
+  return std::move(cloner.result);
+}
+
 ExprPtr cloneExpr(const Expr &expression, std::uint32_t expansion) {
   Cloner cloner(expansion);
+  return cloner.expr(expression);
+}
+
+ExprPtr cloneExpr(const Expr &expression, std::uint32_t expansion,
+                  const AstCloneOptions &options) {
+  Cloner cloner(expansion, &options);
   return cloner.expr(expression);
 }
 

@@ -3,6 +3,7 @@
 #include "gti/ast.h"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <unordered_map>
 
@@ -25,11 +26,26 @@ struct AstCloneResult {
   std::unordered_map<const Expr *, const Expr *> expressions;
 };
 
+// Compiler-owned hygienic expansions may replace an expression (or a final
+// pack expansion in an argument list) before cloning its children. Returning
+// no replacement preserves the ordinary deep-copy path. The token callback
+// retains a separate expansion identity and source provenance for each copy.
+struct AstCloneOptions {
+  std::function<ExprPtr(const Expr &)> expression;
+  std::function<std::optional<ExprList>(const PackExpansion &)> pack;
+  std::function<Token(const Token &)> token;
+};
+
 // `expansion`, when nonzero, is stamped on every copied token
 // (Token::expansion) so the copy's declarations get identities of their own.
 [[nodiscard]] AstCloneResult cloneStmt(const Stmt &statement,
                                        std::uint32_t expansion = 0);
+[[nodiscard]] AstCloneResult cloneStmt(const Stmt &statement,
+                                       std::uint32_t expansion,
+                                       const AstCloneOptions &options);
 [[nodiscard]] ExprPtr cloneExpr(const Expr &expression,
                                 std::uint32_t expansion = 0);
+[[nodiscard]] ExprPtr cloneExpr(const Expr &expression, std::uint32_t expansion,
+                                const AstCloneOptions &options);
 
 } // namespace lang
