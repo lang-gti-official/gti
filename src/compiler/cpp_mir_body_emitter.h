@@ -655,6 +655,16 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
 [[nodiscard]] bool cppMirOrdinaryBodyStagedParameterMoves(
     const MirProgram &program, const MirConstructorInstance &constructor);
 
+// Native cleanup guards can make a small source wrapper look expensive to the
+// host inliner before those guards fold away. A bounded, closed, acyclic
+// source graph rooted at `root` receives an early always-inline hint; this
+// never removes a MIR operation or changes its effect/cleanup contract. The
+// budget counts every invocation, not merely distinct callees, and rejects
+// both control-flow and call cycles. Declaration spelling and call-site
+// failure hints share this one predicate.
+[[nodiscard]] bool cppMirSmallSourceBody(const MirProgram &program,
+                                         MirBodyAddress root);
+
 // Optional per-caller instrumentation. It observes validation without changing
 // admission and has no process-wide cache or lifetime beyond the caller.
 struct CppMirBodyEmissionMetrics {
