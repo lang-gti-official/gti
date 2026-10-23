@@ -9,13 +9,24 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
-`GTI-S2124` reports invalid deferred invocation shapes and deterministic
-expansion-budget exhaustion. `GTI-S2099` diagnoses an ineligible `[[deferred]]`
-signature or body at its attribute. Concrete body failures retain the owning
+`GTI-S2124` reports invalid typed macro invocation shapes and deterministic
+expansion-budget exhaustion. `GTI-S2099` diagnoses an ineligible `#macro`
+signature/body, a macro/function overload mixture at one qualified name, or
+the removed `[[deferred]]` attribute (with migration guidance to `#macro`).
+Concrete body failures retain the owning
 ordinary diagnostic code; when they originate in the helper body, the written
 invocation is primary and the expanded body site is related. No automatic edit
 changes ownership, forces an expression, or silently converts an eager API to
-a deferred one. The LSP publishes the same compiler records.
+a macro. The LSP publishes the same compiler records.
+
+Expansion failures retain a bounded, deduplicated trace naming the nested macro
+invocations and their declarations. An error in a substituted argument keeps
+that argument's written primary source span; body failures relate the original
+body site before anchoring the diagnostic at the written invocation. The trace
+does not replace ordinary diagnostic codes or infer origins from macro names.
+Editors may inspect a retained expansion through the read-only
+[`gti/inspectMacroExpansion` workflow](lsp.md#read-only-macro-expansion-inspection);
+that explanatory view has no authority to repair or execute an invalid body.
 
 `GTI-S2082` follows payload-enum alternatives, including those inside the
 source `expected` class, as well as fixed arrays when detecting a recursive

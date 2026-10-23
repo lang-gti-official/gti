@@ -72,18 +72,27 @@ An explicit argument bypasses that parameter's default. Default evaluation is
 caller-side language behavior, remains in the enclosing call full-expression,
 and cannot be delegated to a backend language's default-argument mechanism.
 
-#### Deferred statement helpers
+#### Typed statement macros
 
-`[[deferred]]` explicitly opts a source-defined namespace-scope `void`
-function into **expression parameters**, instead of ordinary eager parameter
-initialization. It is invoked only as a complete expression statement:
+`#macro` declares a source-defined namespace-scope statement macro with typed
+**expression parameters**, instead of ordinary eager parameter initialization.
+Its result is implicitly `void`: no return type is written. Calls use ordinary
+qualified or unqualified call syntax, only as a complete expression statement:
 
 ```gti
-[[deferred]] void report_when(bool enabled, std::string_view message) {
+#macro report_when(bool enabled, std::string_view message) {
   if (enabled) { std::println(message); }
 }
 report_when(verbose, make_message());
 ```
+
+Generic parameters follow the macro name (`#macro when<T>(bool enabled, T value)`),
+and signatures may have final packs, trailing defaults and `requires` clauses.
+Typed macro overloads share ordinary exact overload selection. A qualified name
+cannot mix macro and ordinary-function overloads: a caller must not have its
+evaluation policy silently selected by an argument type. `[[track_caller]]`
+may precede the declaration. Macros participate in ordinary namespace, source
+visibility and module export rules; no invocation marker such as `!` is used.
 
 The signature selects and type-checks the written arguments, including ones
 that will not execute. Each parameter use evaluates its supplied expression
@@ -100,20 +109,42 @@ invocation.
 Expansion is hygienic: free body names and omitted defaults resolve at the
 definition; argument expressions resolve at the invocation, with their
 original class access and generic context. Invocations nested in other
-deferred helpers preserve both domains. A body call's caller-location origin
+macros preserve both domains. A body call's caller-location origin
 is its external invocation, or that invocation's tracked caller. Argument
 calls keep their own written source origin. The resulting ordinary branches,
 calls, places and full expressions are checked in caller flow and lowered
 through HIR to verified MIR, including failure edges and deterministic cleanup.
 No closure, heap allocation, runtime helper frame or backend assertion rule is
-introduced by deferred evaluation itself.
+introduced by macro expansion itself. Expansion is synchronous; it does not
+schedule work, produce an asynchronous task, or run on scope exit.
 
-The current structural slice accepts blocks, ordinary `if` branches,
-configuration-selected statements and expressions without local binders or
-direct assignment/increment. Conditions and arguments supplied by callers
-may themselves mutate, allocate, borrow, move, or fail under ordinary rules.
-Put loops, local declarations, direct writes and lambdas in an ordinary helper
-called from the selected branch. Deferred signatures have value expression
+Ordinary automatic locals provide explicit evaluate-once bindings:
+
+```gti
+#macro inspect_once(int expression) {
+  int saved = expression;
+  std::assert(saved >= 0);
+  std::println("{}", saved);
+}
+inspect_once(next_number()); // next_number runs once, when initialization is reached
+```
+
+Each invocation has a separate lexical scope and distinct local identities.
+Macro-local spellings cannot capture caller expressions, and callers cannot
+capture macro locals, even when their written names coincide. Local shadowing
+follows ordinary lexical rules. Values, named references, structured bindings,
+explicit moves and cleanup follow their normal rules: initialization does not
+implicitly clone an owner or extend a borrowed temporary's lifetime. A local
+binding not reached at runtime establishes no runtime resource or cleanup.
+
+The structural slice accepts blocks, ordinary `if`, configuration-selected
+statements, automatic locals, assignments/increments, and ordinary `for`,
+range-`for`, `while` and `do` loops. `break` and `continue` must target a loop
+within that macro; they cannot target a caller's loop. Returns, macro-introduced
+`?` propagation, static storage, lambda definitions and generated declarations
+remain excluded. Caller-written expressions retain ordinary effects and
+propagation rules. Use an ordinary helper for the excluded operations.
+Macro signatures have value expression
 parameters (including generic final packs and defaults), no `mut` bindings or
 reference parameters, and no `constexpr`, foreign/runtime binding, unsafe
 caller modifier, member/operator or `noreturn` form. Their bodies are typed
@@ -128,12 +159,18 @@ source-identity-preserving deferred type discovery, not a second closure model.
 They cannot be taken as function items or callbacks, returned as a value, or
 used inside another expression. Expansion has deterministic limits of 64
 nested calls and 4096 expanded bodies in one analysis request; recursive
-helper cycles are rejected without expanding the cycle repeatedly.
+macro cycles are rejected without expanding the cycle repeatedly.
 
-These bounds describe a confined first slice, not implicit laziness for
-ordinary functions or a textual preprocessor. Supporting local binders,
-value-producing helpers or escaping deferred values requires a further
+These bounds describe statement templates, not implicit laziness for
+ordinary functions or a textual preprocessor. Supporting
+value-producing macros or escaping deferred values requires a further
 semantic/IR lifetime contract, not a relaxation in the C++ emitter.
+
+This is the only typed statement-expansion facility. The former
+`[[deferred]] void name(...)` spelling is rejected with migration guidance to
+`#macro name(...)`; it is not an alias or a second evaluation system. The
+valueless `#define` configuration directive remains unchanged and cannot define
+replacement text, function-like text macros, stringification or token pasting.
 
 Stabilizing an argument includes binding its reference or directly
 initializing its by-value parameter. Parameters are initialized from left to

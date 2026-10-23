@@ -170,7 +170,8 @@
     "170-view-fields.gti": 162,
     "171-recursive-text-relays.gti": 146,
     "172-deferred-assertions.gti": 195,
-    "173-thread-local-storage.gti": 274
+    "173-thread-local-storage.gti": 274,
+    "174-typed-macros.gti": 156
   },
-  "total": 23697
+  "total": 23853
 }

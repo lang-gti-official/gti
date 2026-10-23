@@ -100,7 +100,7 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
       source.analyzedDeclarationAttributeOwners;
   initializerEffectOwners = source.initializerEffectOwners;
   nextExpansion = source.nextExpansion;
-  deferredLookup = source.deferredLookup;
+  macroLookup = source.macroLookup;
   expansionArena = source.expansionArena;
   synthesizedExpressions = source.synthesizedExpressions;
   registrationFloor = {.classes = classes.size(),

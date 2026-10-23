@@ -318,7 +318,7 @@ add_library(
   "gti_semantic_analysis" OBJECT
   "src/compiler/semantic_analyzer.cpp"
   "src/compiler/semantic_body_analysis.cpp"
-  "src/compiler/semantic_deferred.cpp"
+  "src/compiler/semantic_macro.cpp"
   "src/compiler/semantic_constexpr.cpp"
   "src/compiler/semantic_call_resolution.cpp"
   "src/compiler/semantic_protocol_concepts.cpp"
