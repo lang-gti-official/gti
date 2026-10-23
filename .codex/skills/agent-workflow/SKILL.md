@@ -77,6 +77,44 @@ Use the owning feature skill and `verify-change` to select real checks with an
 optimized GTI compiler. Provide required runnable examples and their inventory
 updates for language changes. Use `finish-release` for VERSION decisions.
 
+For concurrent fixes, use the canonical
+[risk-based batch contract](../../../docs/architecture/agent-workflow.md#risk-based-batch-validation):
+
+- Enroll a completed published draft with a reviewed T1/T2/T3 plan, original
+  regression evidence, exact owning/cross-phase tests, appropriate broader
+  checks, targets and platform obligations. `batch enroll` rebuilds the
+  optimized compiler, runs those checks plus smoke, and records **ready for
+  integration**. It does not authorize a direct merge.
+- The designated integrator selects at most eight ready tasks explicitly with
+  `batch prepare`. Keep collection to at most ten minutes; never wait for an
+  unfinished feature. A single ready fix may proceed alone. `batch status`
+  exposes queued age and the one active batch. Do not sweep unadmitted PRs in.
+- Resolve source conflicts in the candidate, preserving original commits,
+  then `batch resume`. Run `batch verify` on the combined source for each
+  required platform. This executes the full suite and all members' required
+  tests and rejects missing/skipped regressions. Use the ordinary `finish`
+  only after full exact-source/platform evidence passes. GitHub CI is advisory.
+  Never merge `preview`.
+- Diagnose combined failures before changing tests. The owner of the violated
+  invariant repairs its patch, or the integrator releases the batch with a
+  reason and prepares a new explicit selection. Source heads cannot silently
+  change inside a running batch. Preserve each attempt's evidence.
+- `batch withdraw` returns an unassigned component to independent validation;
+  `batch release` closes a published unsuccessful batch while preserving its
+  work and returning its members to the queue. Normal sync/cleanup still
+  applies to all confirmed integrated original PRs after the umbrella merge.
+
+Draft/component CI skips full native builds and reports incomplete integration;
+the helper, not GitHub CI, blocks component merges until combined validation.
+Ready independent/candidate PRs start additional CI feedback. GitHub CI is
+advisory: never wait for it before merge, synchronization or completion, and do
+not duplicate validation because Actions is queued. Retain required optimized
+local/managed-runner coverage, including full combined/platform evidence.
+Report CI as pending/failed when applicable, never as passed. Retrying `finish`
+with an unchanged description does not restart CI. The owner authorizes
+`protection --configure --advisory-ci` to remove required check contexts/app
+pins while preserving strict PR freshness, admin enforcement and reviews.
+
 1. Run `reconcile <task>` to merge current `origin/main` into the task branch
    and push. Resolve any conflicts in this worktree; do not force-push.
 2. Put the proportionate final commands in a temporary JSON file containing
@@ -101,22 +139,29 @@ updates for language changes. Use `finish-release` for VERSION decisions.
    for the reconciled head/base with `verify-change`. Do not automatically
    restart a full suite on every status poll, or relabel earlier results as
    current. Required/affected broad and platform gates remain mandatory.
+   For developer-automation-only changes, `verify --focused --checks-file ...`
+   runs the owning checks directly and records scope `automation`; its source
+   diff guard rejects compiler changes. Select the full/broad window normally
+   if the actual check workload is broad. This is separate from compiler
+   component admission through `batch enroll`.
 3. Write the final PR description to a temporary file, including behaviour,
    validation and limitations. Run `finish <task> --body-file <file>`.
    It marks the PR ready, checks validation and branch protection, merges through
    GitHub with the exact tested head, then attempts a local-main fast-forward
    and pushes `main` and the tags to the `gitea` mirror remote.
    Use `--pr-only` when the user requested review before integration.
-4. Required server checks/reviews are respected; never force or administratively
-   bypass a rejection. Wait using the product's wait/continuation facilities
-   when needed, then retry after the cause changes. Do not silently downgrade
-   the outcome to "PR opened". Packaging/nightly/stable jobs after integration
+4. Required reviews and PR freshness are respected; never force or administratively
+   bypass a rejection. If old required CI contexts remain, apply the separately
+   owner-authorized advisory-CI protection policy; do not bypass a server rule.
+   Do not wait for advisory CI or silently downgrade the outcome to "PR opened".
+   Packaging/nightly/stable jobs after integration
    do not block completion or the user's local installation.
 
 `protection` audits server enforcement. `protection --configure` installs the
 owner-approved `main` rule denying direct/force pushes and bypasses and requiring
-an up-to-date branch. It preserves existing review/status-check requirements.
-Changing those requirements requires separate authorization.
+an up-to-date branch. By default it preserves review/status-check requirements;
+the owner-authorized `--advisory-ci` policy removes only required status checks.
+Other changes to those requirements need separate authorization.
 
 ## Sync, cleanup and recovery
 
