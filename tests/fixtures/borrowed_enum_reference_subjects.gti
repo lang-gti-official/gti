@@ -1,0 +1,192 @@
+// A switch observes a payload enum reached through a reference: a call that
+// returns one, or a reference local bound to one. The reference stays live
+// until each arm has bound its payloads, as a reference local's loan does.
+#include <std/panic>
+#include <std/string>
+
+enum Shape { circle(int radius), none };
+
+class Holder {
+public:
+  mut Shape shape;
+  mut int count;
+  Holder(int radius) : shape(Shape::circle(radius)), count(0) {}
+  Shape& shapeRef() { return this.shape; }
+  mut Shape& shapeMut() mut { return this.shape; }
+};
+
+class Outer {
+public:
+  Holder inner;
+  Outer(int radius) : inner(Holder(radius)) {}
+  Holder& innerRef() { return this.inner; }
+};
+
+Shape& pick(Holder& holder) { return holder.shape; }
+
+enum Word { text(std::string_view value), none };
+
+class Line {
+public:
+  Word word;
+  Line(std::string_view value) : word(Word::text(value)) {}
+  Word& wordRef() { return this.word; }
+  // The arm relays the receiver's text payload through its accessor.
+  std::string_view& textRef() {
+    switch (this.wordRef()) {
+    case Word::text(auto& value): return value;
+    case Word::none: std::panic("no text");
+    }
+  }
+};
+
+enum Slot<T> { full(T value), empty };
+
+class Box<T> {
+public:
+  Slot<T> slot;
+  Box(T value) : slot(Slot<T>::full(std::move(value))) {}
+  Slot<T>& slotRef() { return this.slot; }
+  bool has() {
+    switch (this.slotRef()) {
+    case Slot<T>::full(auto& value): return true;
+    case Slot<T>::empty: return false;
+    }
+  }
+  T& get() {
+    switch (this.slotRef()) {
+    case Slot<T>::full(auto& value): return value;
+    case Slot<T>::empty: std::panic("empty box");
+    }
+  }
+};
+
+int radiusByValue(Holder& holder) {
+  switch (holder.shapeRef()) {
+  case Shape::circle(radius): return radius;
+  case Shape::none: return 0;
+  }
+}
+
+int radiusByReference(Holder& holder) {
+  switch (holder.shapeRef()) {
+  case Shape::circle(auto& radius): return radius;
+  case Shape::none: return 0;
+  }
+}
+
+int main() {
+  mut Holder holder = Holder(3);
+  switch (holder.shapeRef()) {
+  case Shape::circle(radius): if (radius != 3) { return 1; } break;
+  case Shape::none: return 2;
+  }
+  switch (holder.shapeRef()) {
+  case Shape::circle(auto& radius): if (radius != 3) { return 3; } break;
+  case Shape::none: return 4;
+  }
+  switch (pick(holder)) {
+  case Shape::circle(auto& radius): if (radius != 3) { return 5; } break;
+  default: return 6;
+  }
+  if (radiusByValue(holder) + radiusByReference(holder) != 6) {
+    return 7;
+  }
+  // A by-value binding ends the subject's reference at arm entry, so the arm
+  // may write the owner; a tag-only arm never holds it.
+  mut int seen = 0;
+  switch (holder.shapeRef()) {
+  case Shape::circle(radius): holder.shape = Shape::none; seen = radius; break;
+  case Shape::none: return 8;
+  }
+  switch (holder.shapeRef()) {
+  case Shape::circle: return 9;
+  case Shape::none: holder.shape = Shape::circle(seen + 1); break;
+  }
+  switch (holder.shapeMut()) {
+  case Shape::circle(mut auto& radius): radius += 1; break;
+  case Shape::none: return 10;
+  }
+  if (radiusByValue(holder) != 5) {
+    return 11;
+  }
+  Outer outer = Outer(7);
+  switch (outer.innerRef().shapeRef()) {
+  case Shape::circle(radius): if (radius != 7) { return 12; } break;
+  case Shape::none: return 13;
+  }
+  switch (outer.innerRef().shapeRef()) {
+  case Shape::circle(auto& radius): if (radius != 7) { return 14; } break;
+  case Shape::none: return 15;
+  }
+  mut int total = 0;
+  for (mut int index = 0; index < 4; index += 1) {
+    switch (holder.shapeRef()) {
+    case Shape::circle(auto& radius):
+      if (index == 1) { continue; }
+      total += radius;
+      break;
+    case Shape::none: return 16;
+    }
+  }
+  if (total != 15) {
+    return 17;
+  }
+  // The comparison shape: a reference local bound to the same result.
+  Shape& bound = holder.shapeRef();
+  switch (bound) {
+  case Shape::circle(radius): if (radius != 5) { return 18; } break;
+  case Shape::none: return 19;
+  }
+  Shape& unused = holder.shapeRef();
+  switch (unused) {
+  case Shape::circle(auto& radius): break;
+  case Shape::none: return 20;
+  }
+
+  Line literal = Line("hello");
+  switch (literal.wordRef()) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: return 21;
+  }
+  switch (literal.wordRef()) {
+  case Word::text(auto& value): std::println(value); break;
+  case Word::none: return 22;
+  }
+  std::string input{"owned text"};
+  Line owned = Line(input.view());
+  switch (owned.wordRef()) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: return 23;
+  }
+  switch (owned.wordRef()) {
+  case Word::text(auto& value): std::println(value); break;
+  case Word::none: return 24;
+  }
+  Word& word = owned.wordRef();
+  switch (word) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: return 25;
+  }
+
+  Box<int> number = Box<int>(11);
+  switch (number.slotRef()) {
+  case Slot<int>::full(value): if (value != 11) { return 26; } break;
+  case Slot<int>::empty: return 27;
+  }
+  if (!number.has() || number.get() != 11) {
+    return 28;
+  }
+  Box<std::string_view> view = Box<std::string_view>(input.view());
+  switch (view.slotRef()) {
+  case Slot<std::string_view>::full(auto& value): std::println(value); break;
+  case Slot<std::string_view>::empty: return 29;
+  }
+  Box<std::string_view> label = Box<std::string_view>("label");
+  std::println(label.get());
+  // The relays view the owner's text, as relays through a field do.
+  std::println(view.get());
+  std::string_view relayed = owned.textRef();
+  std::println(relayed);
+  return 0;
+}

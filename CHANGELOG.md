@@ -56,11 +56,12 @@ for what minor and patch releases mean.
   value;` inside `case Word::text(value):`, used to report `error[GTI-B0001]`;
   it now works.
 - Fixed a 0.463.0 soundness bug that could leave a dangling view. A method
-  that copied an enum field holding a view of a local string, passed it on,
-  stored it or returned a reference to it, as in `void keep() { Word w =
-  this.word; switch (w) { case Word::text(v): kept = v; break; ... } }`,
-  compiled when called on such a value. It now reports `error[GTI-S2045]`;
-  over literal text it still works.
+  that copied an enum field holding a view of a local string, passed it on or
+  stored it, directly or through an accessor like `Word& wordRef() { return
+  this.word; }`, as in `void keep() { Word w = this.word; switch (w) { case
+  Word::text(v): kept = v; break; ... } }`, compiled when called on such a
+  value. It now reports `error[GTI-S2045]`; over literal text it still works,
+  and switching on the field or the accessor in place still relays its text.
 - Programs that use `std::vector` run at 0.448.4 speed again. Since 0.449.0 a
   checked loop over a vector ran about 8 to 10 times slower, and a game-style
   update loop about 3 times slower, because the optimizer lost what it knew
@@ -69,6 +70,52 @@ for what minor and patch releases mean.
   your own enum-holding class from numbers, enums or plain records, such as
   `Slot(int32_t n) : state(slot_state::ready(n)) {}`, are again known not to
   fail, as in 0.448.4, so their callers no longer check for a failure.
+
+## 0.465.4 — Text relays through accessor switch subjects
+
+- A method that returns a payload's text by reference through an accessor
+  subject now relays the receiver's text, as the same method over the field
+  does. For `Word& wordRef() { return this.word; }`,
+  `std::string_view& textRef() { switch (this.wordRef()) { case
+  Word::text(auto& v): return v; ... } }` used to make `line.textRef()` on
+  text owned elsewhere report `error[GTI-S2045]` when passed or printed; it
+  now works, as it does through `switch (this.word)`.
+- Fixed: binding a payload's text by value through an accessor subject did
+  not carry the field's ownerless-text requirement. In 0.465.2,
+  `std::string_view first() { switch (this.wordRef()) { case
+  Word::text(v): return v; ... } }` compiled even when called on text owned
+  by a local that is destroyed before the result is used, leaving a dangling
+  view. It now reports `error[GTI-S2045]`, exactly as through
+  `switch (this.word)`.
+
+## 0.465.3 — Moving classes that hold function items
+
+- A generic class whose field holds a function item, such as `class Op<F> {
+  public: F action; Op(F action) : action(action) {} }` instantiated with a
+  function name, can now be moved into another class's field after an
+  initializer that can fail. `Holder(Op<F> op) : v(std::vector<int32_t>()),
+  op(std::move(op))` used to report `error[GTI-B0001]` (an internal compiler
+  error); it now works. If a later initializer or the constructor body fails,
+  each field already built is dropped exactly once.
+- Such a class can also now be chosen by a conditional, as in `Op<F> chosen =
+  pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
+  can be assigned into a field. Each used to report `error[GTI-B0001]`.
+
+## 0.465.2 — Switching over a payload enum returned by reference
+
+- A `switch` can now match a payload enum that a call returns by reference.
+  For `Shape& shapeRef() { return this.shape; }`, `switch (h.shapeRef())`
+  used to report `error[GTI-B0001]` (an internal compiler error); it now works
+  with by-value and `auto&` bindings, `string_view` payloads (including text
+  owned elsewhere), free functions, nested accessors, `mut auto&` through a
+  mutable accessor, and generic classes.
+- Matching through a reference local, as in `Shape& s = h.shapeRef();
+  switch (s)`, also used to report `error[GTI-B0001]` when the arm bound a
+  payload but did not use `s` again; it now works.
+- A subject that reaches into a temporary owner, such as
+  `switch (Holder(3).shapeRef())`, is now rejected with `error[GTI-S2017]`
+  instead of an internal compiler error, as `Shape& s = Holder(3).shapeRef();`
+  already was. Bind the owner to a local first.
 
 ## 0.465.1 — Class stores into globals, captures and element fields
 

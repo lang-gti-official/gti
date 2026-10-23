@@ -1926,6 +1926,11 @@ a non-generic source function or method, or a method of a generic class's
 instance), `TextContracts` independently derives `ownerlessTextFields`:
 - a formal's or the receiver's text-field projection is a field source, not
   ownerless text;
+- so is a text payload extracted from a formal's enum field reached through
+  that formal's accessor: a statically dispatched, non-virtual source call
+  whose every return borrows `this.field`, or another such accessor's result
+  on its own receiver (`accessorResultField`, read from the callee's verified
+  body);
 - field sources that reach ownerless storage or a `None`-summary text return
   become requirements;
 - each other use of the whole formal or receiver requires all of its text
@@ -2975,6 +2980,17 @@ of the carrier's additional owners sources the owner place the carrier already
 materialized for that dependency (the referent of a reference-typed owner).
 Verification rejects a selection that claims the primary owner for another
 field's referent.
+A reference result names its referent through its call's loan, so an
+observing switch over one read-borrows a place rooted at that loan. That loan
+and the uncarried accessor results it reborrows outlive the subject's full
+expression: the `Switch` and each arm's extractions read through them. Each
+arm owns them, ending them at entry in a tag-only arm and after its payload
+bindings otherwise, unless a reference binding sourced under them keeps them
+until the arm's scope exit; the unmatched edge ends them before the exit. An
+extraction is therefore not their consumer. The subject place takes its
+overlap key from the owner its loans borrow, the place an arm's payload
+borrow also protects. Ending such a loan before the `Switch` is a use after
+the borrow ends.
 The bounded direct callable schedule uses those same obligations for argument
 preparation, parameter entry, direct result placement, success activation, and
 defined-failure cleanup. No AST or HIR expression is re-emitted to manufacture

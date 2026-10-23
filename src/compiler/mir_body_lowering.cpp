@@ -8774,12 +8774,16 @@ private:
     return ancestors;
   }
 
-  void endFullExpressionLoans(const std::vector<Scope> &baseline) {
+  // `outliving` names loans whose endpoint the caller schedules after this
+  // full expression, such as a switch subject's place loans.
+  void endFullExpressionLoans(const std::vector<Scope> &baseline,
+                              const std::vector<MirLoanId> &outliving = {}) {
     if (baseline.size() != scopes.size()) {
       valid = false;
       return;
     }
-    const std::unordered_set<MirLoanId> retained = retainedReborrowAncestors();
+    std::unordered_set<MirLoanId> retained = retainedReborrowAncestors();
+    retained.insert(outliving.begin(), outliving.end());
     for (std::size_t depth = scopes.size(); depth > 0; --depth) {
       const std::vector<MirLoanId> &before = baseline[depth - 1].loans;
       std::vector<MirLoanId> &after = scopes[depth - 1].loans;
@@ -10796,7 +10800,14 @@ private:
           {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
       removeLoanFromState(*loan, scopes, bindingLoans);
     }
-    endConsumedCallResultLoans(value->operands, *value);
+    // An extraction does not consume an observed switch subject: the switch
+    // ends that subject's place loans once the arm has bound its payloads.
+    std::vector<HirValueId> consumedOperands = value->operands;
+    if (value->kind == HirValueKind::PayloadExtraction)
+      std::erase_if(consumedOperands, [&](HirValueId operand) {
+        return payloadSwitchSubjects.contains(operand);
+      });
+    endConsumedCallResultLoans(consumedOperands, *value);
     emittedValues.insert(id);
   }
 
@@ -13680,6 +13691,91 @@ private:
     }
   }
 
+  // A reference result names its referent through the producing call's loan.
+  // A read-borrowed switch subject rooted at such a loan is observed after the
+  // subject's full expression, by the `Switch` and then by every arm's payload
+  // extractions, as a reference local's subject is through that local's loan.
+  // Returns that uncarried loan and the uncarried accessor results it
+  // reborrows, child first.
+  [[nodiscard]] std::vector<MirLoanId>
+  switchSubjectLoans(const MirOperand &subject,
+                     const std::vector<Scope> &baseline) const {
+    std::vector<MirLoanId> loans;
+    const MirPlace *place = subject.kind == MirOperandKind::BorrowRead
+                                ? output.findPlace(subject.place)
+                                : nullptr;
+    MirLoanId loan = place != nullptr && place->root == MirPlaceRootKind::Loan
+                         ? place->loan
+                         : 0;
+    while (loan != 0 && !containsLoan(loans, loan) &&
+           !loanIsActive(baseline, loan) && loanIsActive(scopes, loan)) {
+      const MirLoan *record = output.findLoan(loan);
+      if (record == nullptr || record->lifecycleBound || record->escapes ||
+          !record->carriers.empty())
+        break;
+      loans.push_back(loan);
+      loan = record->parent;
+    }
+    return loans;
+  }
+
+  // Subject loans an arm's live loans still depend on: those reborrowed or
+  // stored-retained by a live loan, or rooting its source place. An ancestor
+  // of a retained loan stays with it.
+  [[nodiscard]] std::vector<MirLoanId>
+  retainedSwitchSubjectLoans(const std::vector<MirLoanId> &subjectLoans) const {
+    const auto retained = retainedReborrowAncestors();
+    const auto kept = std::find_if(
+        subjectLoans.begin(), subjectLoans.end(), [&](MirLoanId subject) {
+          if (retained.contains(subject))
+            return true;
+          return std::any_of(
+              scopes.begin(), scopes.end(), [&](const Scope &scope) {
+                return std::any_of(
+                    scope.loans.begin(), scope.loans.end(), [&](MirLoanId id) {
+                      const MirLoan *loan = output.findLoan(id);
+                      const MirPlace *source =
+                          loan == nullptr ? nullptr
+                                          : output.findPlace(loan->source);
+                      return !containsLoan(subjectLoans, id) &&
+                             source != nullptr &&
+                             source->root == MirPlaceRootKind::Loan &&
+                             source->loan == subject;
+                    });
+              });
+        });
+    return {kept, subjectLoans.end()};
+  }
+
+  // The semantic place a chain of call-result loans borrows from: the first
+  // keyed source along the chain, a prefix of the selected referent.
+  [[nodiscard]] std::optional<PlaceKey> loanOriginKey(MirLoanId loan) const {
+    std::unordered_set<MirLoanId> visited;
+    while (loan != 0 && visited.insert(loan).second) {
+      const MirLoan *record = output.findLoan(loan);
+      const MirPlace *source =
+          record == nullptr ? nullptr : output.findPlace(record->source);
+      if (source == nullptr)
+        return std::nullopt;
+      if (source->key)
+        return source->key;
+      loan = source->root == MirPlaceRootKind::Loan ? source->loan : 0;
+    }
+    return std::nullopt;
+  }
+
+  void endSwitchSubjectLoans(const std::vector<MirLoanId> &loans,
+                             HirStatementId statement) {
+    for (const MirLoanId loan : childFirstMirLoans(loans)) {
+      if (!loanIsActive(scopes, loan))
+        continue;
+      (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                               .hirStatement = statement,
+                               .loan = loan});
+      removeLoanFromState(loan, scopes, bindingLoans);
+    }
+  }
+
   void lowerSwitch(const HirStatement &statement) {
     const std::vector<Scope> subjectScopes = scopes;
     const std::vector<TemporaryDrop> subjectTemporaryDrops = temporaryDrops;
@@ -13729,6 +13825,14 @@ private:
       const MirPlaceId sourcePlace =
           payloadPlace ? placeForValue(*statement.value) : 0;
       if (payloadPlace && sourcePlace != 0) {
+        // A reference result names no semantic place of its own. Its overlap
+        // identity is the owner its producing loans borrow, the place an
+        // arm's payload borrow also protects.
+        if (const MirPlace *place = output.findPlace(sourcePlace);
+            place != nullptr && place->root == MirPlaceRootKind::Loan &&
+            !place->key)
+          if (auto key = loanOriginKey(place->loan))
+            output.places[sourcePlace - 1].key = std::move(key);
         // Matching observes the discriminant of a place; it does not copy
         // the complete enum merely because its payload happens to be passive.
         // Arm bindings still perform their independently selected copy/borrow.
@@ -13739,7 +13843,12 @@ private:
         subject = valueOperand(*statement.value);
       }
     }
-    endFullExpressionLoans(subjectScopes);
+    // Each arm ends these after binding its payloads; the unmatched edge ends
+    // them before reaching the exit.
+    const std::vector<MirLoanId> subjectLoans =
+        consumed ? std::vector<MirLoanId>{}
+                 : switchSubjectLoans(subject, subjectScopes);
+    endFullExpressionLoans(subjectScopes, subjectLoans);
     if (statement.value && !consumed)
       payloadSwitchSubjects[*statement.value] = subject;
     emitTemporaryDrops(subjectTemporaryDrops, statement.value.value_or(0),
@@ -13762,8 +13871,10 @@ private:
     const MirBlockId unmatchedBlock =
         statement.exhaustiveSwitch
             ? appendBlock()
-            : (!hasDefault && !statement.endedLoans.empty() ? appendBlock()
-                                                            : exitBlock);
+            : (!hasDefault &&
+                       (!statement.endedLoans.empty() || !subjectLoans.empty())
+                   ? appendBlock()
+                   : exitBlock);
 
     MirTerminator terminator{.kind = MirTerminatorKind::Switch,
                              .hirStatement = statement.id,
@@ -13794,6 +13905,8 @@ private:
     }
     std::unordered_map<HirBindingId, MirLoanId> exitBindingLoans =
         switchBindingLoans;
+    for (const MirLoanId loan : subjectLoans)
+      removeLoanFromState(loan, exitScopes, exitBindingLoans);
     normalizeSemanticLoanState(statement.endedLoans, exitScopes,
                                exitBindingLoans);
     if (coversEveryValue && !statement.switchArms.empty()) {
@@ -13835,6 +13948,7 @@ private:
       scopes = switchScopes;
       temporaryDrops = switchTemporaryDrops;
       bindingLoans = switchBindingLoans;
+      endSwitchSubjectLoans(subjectLoans, statement.id);
       endSemanticLoans(statement.endedLoans, statement.id);
       terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
     }
@@ -13853,6 +13967,18 @@ private:
         forgetConsumedSwitchSubject(scopes, consumed->place);
       }
       scopes.push_back({});
+      // The arm owns the subject's place loans: a tag-only arm ends them at
+      // entry, before loans they may reborrow; a binding arm ends them once
+      // its payloads are bound, unless a reference binding still depends on
+      // them, in which case its scope exit ends them after that binding.
+      const auto &payloadBindings =
+          statement.switchArms[armIndex].payloadBindings;
+      for (const MirLoanId loan : subjectLoans) {
+        removeLoanFromState(loan, scopes, bindingLoans);
+        scopes.back().loans.push_back(loan);
+      }
+      if (payloadBindings.empty())
+        endSwitchSubjectLoans(subjectLoans, statement.id);
       auto entryEnded = statement.switchArms[armIndex].entryEndedLoans;
       if (consumed && consumed->dependency != 0) {
         if (std::find(entryEnded.begin(), entryEnded.end(),
@@ -13914,6 +14040,14 @@ private:
                 carriers.end())
               carriers.push_back(payload.binding);
           }
+      }
+      if (!payloadBindings.empty()) {
+        const auto retained = retainedSwitchSubjectLoans(subjectLoans);
+        std::vector<MirLoanId> released;
+        for (const MirLoanId loan : subjectLoans)
+          if (!containsLoan(retained, loan))
+            released.push_back(loan);
+        endSwitchSubjectLoans(released, statement.id);
       }
       lowerStatements(statement.switchArms[armIndex].statements);
       if (!terminated()) {

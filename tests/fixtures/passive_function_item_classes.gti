@@ -1,0 +1,137 @@
+// A generic class whose fields are function items, text views or scalars is
+// a passive generated class once its type argument is a function name: a
+// function item is a stateless identity tag, so each field copies bitwise and
+// destroying it runs no source cleanup, and calls go to the named function.
+// Moving or copying such a class into a field after initializer work that
+// can fail publishes in body order, exactly like a class of scalar fields.
+// Work before the move or copy, a later sibling or the constructor body can
+// still fail, and the owning field built first is then dropped exactly once.
+// A conditional join of two of them and a copy assigned into a field take
+// the same passive routes. Moving one after a fallible field, joining two
+// and assigning a copy into a field were GTI-B0001.
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+mut int stage = 0;
+
+int32_t divisor_for(int at) { return stage == at ? 0 : 1; }
+
+class Ledger {
+public:
+  int32_t id;
+  Ledger(int32_t id, int32_t divisor) : id(id + 60 / divisor) {}
+  ~Ledger() { std::println("close ledger"); }
+};
+
+int32_t seven() { return 7; }
+
+class Op<F> {
+public:
+  F action;
+  Op(F action) : action(action) {}
+};
+
+// The class is moved after a library owner.
+class Holder<F> {
+  std::vector<int32_t> v;
+  Op<F> op;
+public:
+  Holder(Op<F> op) : v(std::vector<int32_t>()), op(std::move(op)) {}
+  int32_t get() {
+    int32_t called = op.action();
+    return called;
+  }
+};
+
+// The same class copied after a library owner.
+class CopiedHolder<F> {
+  std::vector<int32_t> v;
+  Op<F> op;
+public:
+  CopiedHolder(Op<F> op) : v(std::vector<int32_t>()), op(op) {}
+  int32_t get() {
+    int32_t called = op.action();
+    return called;
+  }
+};
+
+class Tagged<F> {
+public:
+  std::string_view name;
+  F action;
+  int32_t rank;
+  Tagged(std::string_view name, F action, int32_t rank)
+      : name(name), action(action), rank(rank) {}
+};
+
+int32_t measure<F>(Tagged<F> tagged) {
+  int32_t called = tagged.action();
+  return int32_t(tagged.name.size()) * 10 + called + tagged.rank;
+}
+
+// A fallible owning field precedes a moved class; a sibling after it and the
+// body can fail.
+class Shelved<F> {
+public:
+  Ledger ledger;
+  Tagged<F> tagged;
+  int32_t quotient;
+  mut int32_t extra;
+  Shelved(Tagged<F> tagged)
+      : ledger(Ledger(31, divisor_for(1))), tagged(std::move(tagged)),
+        quotient(60 / divisor_for(2)), extra(0) {
+    this.extra = 60 / divisor_for(3);
+  }
+};
+
+// The same schedule with a copied class.
+class Copied<F> {
+public:
+  Ledger ledger;
+  Tagged<F> tagged;
+  int32_t quotient;
+  mut int32_t extra;
+  Copied(Tagged<F> tagged)
+      : ledger(Ledger(37, divisor_for(4))), tagged(tagged),
+        quotient(60 / divisor_for(5)), extra(0) {
+    this.extra = 60 / divisor_for(6);
+  }
+};
+
+class Slot<F> {
+public:
+  mut Tagged<F> tagged;
+  Slot(Tagged<F> tagged) : tagged(tagged) {}
+};
+
+void run<F>(F action) {
+  Holder<F> moved = Holder<F>(Op<F>(action));
+  CopiedHolder<F> copied = CopiedHolder<F>(Op<F>(action));
+  std::println(moved.get() + copied.get());
+
+  Shelved<F> shelved = Shelved<F>(Tagged<F>("moved", action, 1));
+  std::println(measure(shelved.tagged));
+  std::println(shelved.ledger.id + shelved.quotient + shelved.extra);
+
+  Copied<F> copy = Copied<F>(Tagged<F>("copy", action, 2));
+  std::println(measure(copy.tagged));
+  std::println(copy.ledger.id + copy.quotient + copy.extra);
+
+  Tagged<F> first = Tagged<F>("first", action, 5);
+  Tagged<F> second = Tagged<F>("second", action, 6);
+  bool pick = first.name.size() == 5;
+  Tagged<F> chosen = pick ? first : second;
+  Tagged<F> taken = pick ? std::move(second) : std::move(first);
+  std::println(measure(chosen) + measure(taken));
+
+  mut Slot<F> slot = Slot<F>(Tagged<F>("held", action, 7));
+  slot.tagged = chosen;
+  std::println(measure(slot.tagged));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  run(seven);
+  return 0;
+}
