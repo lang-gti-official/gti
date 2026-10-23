@@ -155,15 +155,19 @@ namespace std {
   /// public read-only member returning an owned value of the domain type,
   /// so a generic body may use the operator without importing ADL, free
   /// lookup, rewritten candidates, or conversion ranking.
+  [[unsatisfied("The domain type must provide a public read-only T operator+(T&) returning an owned value of its own type.")]]
   concept addable<T> =
       (std::meta::is_struct<T>() || std::meta::is_class<T>()) &&
       requires(T& left, T& right) { { left + right } -> T; };
+  [[unsatisfied("The domain type must provide a public read-only T operator-(T&) returning an owned value of its own type.")]]
   concept subtractable<T> =
       (std::meta::is_struct<T>() || std::meta::is_class<T>()) &&
       requires(T& left, T& right) { { left - right } -> T; };
+  [[unsatisfied("The domain type must provide a public read-only unary T operator-() returning an owned value of its own type.")]]
   concept negatable<T> =
       (std::meta::is_struct<T>() || std::meta::is_class<T>()) &&
       requires(T& value) { { -value } -> T; };
+  [[unsatisfied("The domain type must provide a public read-only T operator*(Scalar) returning an owned value of its own type for the exact scalar type.")]]
   concept scalable_by<T, Scalar> =
       (std::meta::is_struct<T>() || std::meta::is_class<T>()) &&
       requires(T& value, Scalar& factor) { { value * factor } -> T; };
