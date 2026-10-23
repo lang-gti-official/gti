@@ -33,6 +33,7 @@ enum class DocumentationKind {
   Operator,
   Field,
   GlobalVariable,
+  Macro,
 };
 
 [[nodiscard]] std::string_view documentationKindName(DocumentationKind kind);

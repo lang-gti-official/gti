@@ -48,6 +48,8 @@
 
 (function_declaration
   name: (identifier) @local.definition.function) @local.scope
+(macro_declaration
+  name: (identifier) @local.definition.function) @local.scope
 (function_declaration
   name: (scoped_identifier
     name: (identifier) @local.definition.method)) @local.scope

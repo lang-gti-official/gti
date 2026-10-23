@@ -108,11 +108,11 @@
     "arguments": 1
   },
   {
-    "id": "DeferredEvaluation",
+    "id": "MacroExpansion",
     "code": "GTI-S2124",
     "phase": "Semantics",
     "severity": "Error",
-    "group": "deferred-evaluation",
+    "group": "macro-expansion",
     "format": "{0}",
     "arguments": 1
   },

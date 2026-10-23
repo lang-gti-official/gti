@@ -75,10 +75,11 @@ def run(executable, compiler, root, support):
             "class Widget { public:\n|\n};\nint main() { return 0; }\n",
             "#include <std/vector>\nvoid f() {\n  bool condition = false; int32_t count = 0; int32_t value = 0;\n  std::vector<int32_t> values = std::vector<int32_t>();\n  |\n}\nint main() { f(); return 0; }\n",
         )
-        for marked in contexts:
+        for context_index, marked in enumerate(contexts):
             source, items = complete(marked)
             snippets = [item for item in items if item.get("kind") == 15]
             assert snippets, (marked, items)
+            assert any(item["label"] == "macro" for item in snippets) == (context_index == 0), (marked, snippets)
             for item in snippets:
                 assert item["insertTextFormat"] == 2, item
                 edit = item["textEdit"]
@@ -101,6 +102,15 @@ def run(executable, compiler, root, support):
             "end": lsp_position(source, len(source)),
         }, item
         assert "$1()" in item["textEdit"]["newText"], item
+        source, items = complete("/* 😀 */ ma|cro")
+        macro = next(item for item in items if item["label"] == "macro" and item.get("kind") == 15)
+        assert macro["textEdit"]["newText"] == "#macro ${1:name}(${2:int value}) {\n\t$0\n}", macro
+        assert macro["textEdit"]["range"] == {
+            "start": lsp_position(source, source.index("macro")),
+            "end": lsp_position(source, len(source)),
+        }, macro
+        _, items = complete("namespace app { ma| }")
+        assert any(item["label"] == "macro" and item.get("kind") == 15 for item in items), items
         _, items = complete("class Outer { struct Inner { ct| }; };")
         ctor = next(item for item in items if item["label"] == "ctor")
         assert ctor["textEdit"]["newText"].startswith("Inner("), ctor

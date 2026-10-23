@@ -122,6 +122,44 @@ local ok, problem = xpcall(function()
   vim.cmd("GTIProfile!")
   assert(client.settings.gti.profile == vim.NIL)
   assert_profile(true)
+
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    'void use(int value) {}',
+    '#macro inspect(int value) { mut int local_value = value; use(local_value); }',
+    'int main() { inspect(7); return 0; }',
+  })
+  vim.api.nvim_win_set_cursor(0, { 3, 15 })
+  local unchanged = vim.api.nvim_buf_get_changedtick(buffer)
+  vim.cmd("GTIExpandMacro")
+  assert(vim.wait(10000, function()
+    return vim.api.nvim_get_current_buf() ~= buffer and vim.b.gti_macro_expansion
+  end, 20), "macro inspection did not open a scratch view")
+  local expansion = vim.api.nvim_get_current_buf()
+  assert(vim.bo[expansion].buftype == "nofile" and vim.bo[expansion].readonly
+    and not vim.bo[expansion].modifiable, "macro view is not read-only")
+  local text = table.concat(vim.api.nvim_buf_get_lines(expansion, 0, -1, false), "\n")
+  assert(text:find("not executable source", 1, true), text)
+  assert(text:find("local_value__macro_local_1", 1, true), text)
+  assert(vim.api.nvim_buf_get_changedtick(buffer) == unchanged, "inspection edited source")
+  assert(not pcall(vim.api.nvim_buf_set_lines, expansion, 0, -1, false, { "changed" }),
+    "inspection scratch accepts accidental source edits")
+  vim.cmd("close")
+  assert(vim.api.nvim_get_current_buf() == buffer)
+
+  -- Simulate an editor response arriving after a source edit. The command
+  -- must discard it before opening another explanatory buffer.
+  local request = client.request
+  local delayed
+  client.request = function(self, method, params, callback, request_buffer)
+    if method == "gti/inspectMacroExpansion" then delayed = callback; return true, 99999 end
+    return request(self, method, params, callback, request_buffer)
+  end
+  vim.cmd("GTIExpandMacro")
+  client.request = request
+  assert(delayed, "macro command did not use the documented request")
+  vim.api.nvim_buf_set_lines(buffer, 0, 0, false, { "// edited while inspecting" })
+  delayed(nil, { readOnly = true, text = "// obsolete expansion" })
+  assert(vim.api.nvim_get_current_buf() == buffer, "stale inspection opened a view")
 end, debug.traceback)
 
 if client then
