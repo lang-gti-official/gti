@@ -48,6 +48,10 @@
         "named": true
       },
       {
+        "type": "macro_declaration",
+        "named": true
+      },
+      {
         "type": "namespace_alias_declaration",
         "named": true
       },
@@ -3825,6 +3829,72 @@
     }
   },
   {
+    "type": "macro_declaration",
+    "named": true,
+    "fields": {
+      "attribute": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "function_contract_attribute",
+            "named": true
+          }
+        ]
+      },
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      },
+      "constraints": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "requires_clause",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "parameters": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "parameter_clause",
+            "named": true
+          }
+        ]
+      },
+      "type_parameters": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "generic_parameter_clause",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "member_expression",
     "named": true,
     "fields": {
@@ -6038,6 +6108,10 @@
     "named": false
   },
   {
+    "type": "#macro",
+    "named": false
+  },
+  {
     "type": "#undef",
     "named": false
   },
@@ -6284,10 +6358,6 @@
   },
   {
     "type": "default",
-    "named": false
-  },
-  {
-    "type": "deferred",
     "named": false
   },
   {

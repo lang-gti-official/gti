@@ -885,7 +885,7 @@ struct FunctionInfo {
   bool neverReturns = false;
   bool tracksCaller = false;
   bool discardableResult = false;
-  bool deferredEvaluation = false;
+  bool macroExpansion = false;
   bool threadConfinedCallback = false;
   bool testFunction = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
@@ -1744,6 +1744,7 @@ enum class SymbolKind {
   // A source-only name inside an unevaluated member requirement. It never
   // denotes runtime storage and may have a concept-dependent type.
   RequirementParameter,
+  Macro,
 };
 
 enum class OccurrenceRole : std::uint32_t {
@@ -2230,6 +2231,14 @@ enum class StaticAssertResult {
   Deferred,
 };
 
+// Snapshot-scoped source facts for read-only macro inspection. These pointers
+// never escape the owning frontend snapshot or become executable authority.
+struct MacroExpansionSite {
+  const ExpressionStmt *invocation = nullptr;
+  const Stmt *body = nullptr;
+  const FunctionDecl *declaration = nullptr;
+};
+
 class SemanticModel {
 public:
   // Own semantic-generated constructor syntax for the lifetime of every
@@ -2393,11 +2402,16 @@ public:
   [[nodiscard]] const ConstexprForExpansion *
   findConstexprForExpansion(const ConstexprForStmt &statement) const;
 
-  // A confined deferred call is executed as its checked statement expansion,
+  // A typed macro call is executed as its checked statement expansion,
   // never as an eager call of the declaration's source-level signature.
   [[nodiscard]] const Stmt *
-  findDeferredExpansion(const ExpressionStmt &statement) const;
-  [[nodiscard]] const Token *findDeferredDefault(const Expr &expression) const;
+  findMacroExpansion(const ExpressionStmt &statement) const;
+  // HIR keeps source pointers after an instance-analysis delta is destroyed.
+  // Retain only a selected expansion's root, not its whole semantic model.
+  [[nodiscard]] std::shared_ptr<const Stmt>
+  shareMacroExpansion(const ExpressionStmt &statement) const;
+  [[nodiscard]] std::vector<MacroExpansionSite> macroExpansionSites() const;
+  [[nodiscard]] const Token *findMacroDefault(const Expr &expression) const;
   // The declared attributes of a field or class-like declaration; nullptr
   // when none were recorded.
   [[nodiscard]] const std::vector<ResolvedDeclarationAttribute> *
@@ -2844,8 +2858,9 @@ private:
   void
   recordConstexprForExpansion(const ConstexprForStmt &statement,
                               std::optional<ConstexprForExpansion> expansion);
-  void recordDeferredExpansion(const ExpressionStmt &statement, StmtPtr body);
-  void recordDeferredDefault(const Expr &expression, Token caller);
+  void recordMacroExpansion(const ExpressionStmt &statement, StmtPtr body,
+                            const FunctionDecl &declaration);
+  void recordMacroDefault(const Expr &expression, Token caller);
   void recordDeclarationAttributes(
       const Stmt &declaration,
       std::vector<ResolvedDeclarationAttribute> attributes);
@@ -3071,8 +3086,10 @@ private:
   std::unordered_map<const ConstexprForStmt *,
                      std::optional<ConstexprForExpansion>>
       constexprForExpansions;
-  std::unordered_map<const ExpressionStmt *, StmtPtr> deferredExpansions;
-  std::unordered_map<const Expr *, Token> deferredDefaults;
+  std::unordered_map<const ExpressionStmt *, StmtPtr> macroExpansions;
+  std::unordered_map<const ExpressionStmt *, const FunctionDecl *>
+      macroDeclarations;
+  std::unordered_map<const Expr *, Token> macroDefaults;
   std::unordered_map<const Stmt *, std::vector<ResolvedDeclarationAttribute>>
       declarationAttributes;
   std::unordered_map<const Expr *, std::shared_ptr<const Expr>>

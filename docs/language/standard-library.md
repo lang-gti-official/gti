@@ -257,7 +257,7 @@ The current implemented foundation includes:
   their type checking; it never disables `std::assert`. The built-in release
   project profile defines `NDEBUG`; direct compilation can use `-D NDEBUG`,
   independently of optimization. These are source-defined
-  [deferred statement helpers](execution.md#deferred-statement-helpers), a
+  [typed statement macros](execution.md#typed-statement-macros), a
   facility available equally to application APIs. `static_assert` remains the
   unqualified compile-time language construct; and
 - `<std/testing>` provides caller-tracked `std::testing::check`, reporting a
