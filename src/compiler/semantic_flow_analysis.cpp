@@ -1607,6 +1607,14 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       return ownerDependentTextInfo(type, ValueCategory::Place,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
+    // A reference local bound to a dependent place is that place.
+    if (textDependentType(type) && symbol != nullptr &&
+        symbol->type.kind == SemanticType::Reference &&
+        symbol->variableDeclaration != nullptr &&
+        dependentReferenceAliases.contains(symbol->variableDeclaration))
+      return textDependentValueInfo(type, ValueCategory::Place,
+                                    mutableAccess ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly);
     // A local binding that retains a dependent text value (L-OWN-02). A
     // reference binding's loan is its referent's, not a text dependency.
     if (textDependentType(type) && symbol != nullptr && symbol->type == type &&
@@ -1864,6 +1872,15 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       // under the relayed prefix (L-OWN-02 phase 3).
       if (const auto field = textReferenceRelay(call, *resolved);
           field && nestedTextClass(type) && nestedTextRelay(*field).has_value())
+        return textDependentValueInfo(std::move(type), ValueCategory::Place,
+                                      resolved->returnType.referenceAccess);
+      // A reference into a receiver or argument that holds a local owner's
+      // dynamic text is that origin's dependent field, as `origin.field`
+      // would be: a switch may observe it, but it cannot be passed, copied
+      // out, stored or returned (L-OWN-02).
+      if (const auto reference = dependentReferenceResult(call, *resolved);
+          reference && reference->prefixes &&
+          !dependentReferencePaths(*reference).empty())
         return textDependentValueInfo(std::move(type), ValueCategory::Place,
                                       resolved->returnType.referenceAccess);
       return expressionInfo(std::move(type), ValueCategory::Place,
@@ -2693,9 +2710,19 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   if (exprAs<Variable>(&expr) != nullptr || exprAs<Get>(&expr) != nullptr) {
     noteConditionalTextFieldRead(expr);
     notePayloadFieldRead(expr);
-  } else if (exprAs<Call>(&expr) != nullptr) {
+  } else if (const auto *call = exprAs<Call>(&expr)) {
     // A receiver accessor's call reads the field it returns.
     notePayloadFieldRead(expr);
+    // A reference into a value holding a local owner's dynamic text is
+    // tracked only through the field paths it designates (L-OWN-02).
+    if (const auto *resolved = semanticModel.findCall(*call))
+      if (const auto reference = dependentReferenceResult(*call, *resolved);
+          reference && !reference->prefixes)
+        report(expressionToken(expr),
+               "This call returns a reference into a value holding dynamic "
+               "text from a local owner, but not to a field of it, so the "
+               "text it reaches cannot be tracked.",
+               "GTI-S2045");
   }
   // A contract formal's relayed nested text value keeps its text under the
   // formal's prefix only through a field projection (L-OWN-02 phase 3).

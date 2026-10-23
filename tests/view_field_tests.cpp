@@ -2554,6 +2554,167 @@ int main() {
   }
 }
 
+// A reference a call returns into a value holding dynamic text from a local
+// owner is that value's dependent field (L-OWN-02), as `value.field` is: a
+// switch observes it in place, through the call or a reference local bound
+// to it, but it cannot carry the text out. Before 0.466.1 every escape below
+// compiled, and `leak` returned freed text.
+const std::string kReferenceResults = R"gti(
+#include <std/string>
+mut std::string_view kept = "";
+enum Word { text(std::string_view value), none };
+mut Word keptWord = Word::none;
+void keepWordRef(Word& word) {
+  switch (word) {
+  case Word::text(value): kept = value; break;
+  case Word::none: break;
+  }
+}
+void keepWord(Word word) {
+  switch (word) {
+  case Word::text(value): kept = value; break;
+  case Word::none: break;
+  }
+}
+void readWordRef(Word& word) {
+  switch (word) {
+  case Word::text(auto& value): std::println(value); break;
+  case Word::none: break;
+  }
+}
+class Line {
+public:
+  Word word;
+  Line(std::string_view value) : word(Word::text(value)) {}
+  Word& wordRef() { return this.word; }
+};
+Word& pickWord(Line& line) { return line.word; }
+)gti";
+
+void testDependentReferenceResults() {
+  const auto accepted = analyzeText(kReferenceResults + R"gti(
+int run() {
+  std::string input{"owned"};
+  Line owned = Line(input.view());
+  switch (owned.wordRef()) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: return 1;
+  }
+  Word& word = owned.wordRef();
+  Word& again = word;
+  switch (again) {
+  case Word::text(auto& value): std::println(value); break;
+  case Word::none: return 2;
+  }
+  // Over literal text the same references may leave.
+  Line literal = Line("literal");
+  keepWordRef(literal.wordRef());
+  keepWord(literal.wordRef());
+  keepWordRef(pickWord(literal));
+  Word& held = literal.wordRef();
+  keepWordRef(held);
+  keptWord = literal.wordRef();
+  return 0;
+}
+int main() { return run(); }
+)gti");
+  if (!accepted.canGenerateCode())
+    printDiagnostics(accepted);
+  expect(accepted.canGenerateCode() &&
+             lang::verifyMirProgram(accepted.mir).valid(),
+         "a dependent reference result can be observed in place, and an "
+         "ownerless one can leave");
+
+  struct Case {
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{"keepWordRef(owned.wordRef());", "GTI-S2045"},
+           Case{"keepWord(owned.wordRef());", "GTI-S2045"},
+           Case{"readWordRef(owned.wordRef());", "GTI-S2045"},
+           Case{"Word copy = owned.wordRef();", "GTI-S2045"},
+           Case{"keptWord = owned.wordRef();", "GTI-S2045"},
+           Case{"Word& word = owned.wordRef(); keepWordRef(word);",
+                "GTI-S2045"},
+           Case{"Word& word = owned.wordRef(); Word copy = word;", "GTI-S2045"},
+           Case{"Word& word = owned.wordRef(); Word copy = std::move(word);",
+                "GTI-S2045"},
+           Case{"Word& word = owned.wordRef(); Word& again = word; "
+                "keepWordRef(again);",
+                "GTI-S2045"},
+           Case{"Word& word = owned.wordRef(); keptWord = word;", "GTI-S2045"},
+           Case{"keepWordRef(pickWord(owned));", "GTI-S2045"},
+           Case{"Word& word = pickWord(owned); keepWordRef(word);",
+                "GTI-S2045"},
+           Case{"Word& word = owned.wordRef(); input.append(\"!\"); "
+                "switch (word) { case Word::text(value): "
+                "std::println(value); break; case Word::none: break; }",
+                "GTI-S2017"},
+       }) {
+    const auto rejected = analyzeText(
+        kReferenceResults +
+        "int run() { mut std::string input{\"owned\"}; Line owned = "
+        "Line(input.view()); " +
+        entry.body + " return 0; }\nint main() { return run(); }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, entry.code),
+           std::string("a dependent reference result cannot carry its text "
+                       "out: ") +
+               entry.body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + entry.body);
+  }
+
+  // Returning a copy of the referent from the owner's own function would
+  // return freed text.
+  const auto leaked = analyzeText(kReferenceResults + R"gti(
+Word leak() {
+  std::string input{"freed"};
+  Line owned = Line(input.view());
+  return owned.wordRef();
+}
+int main() { return 0; }
+)gti");
+  expect(hasDiagnosticCode(leaked.diagnostics, "GTI-S2045") &&
+             !leaked.canGenerateCode(),
+         "a copy of a dependent reference result cannot be returned");
+
+  // A reference whose returns are not field paths of the owner cannot be
+  // tracked, so it is refused over dynamic text.
+  const auto untracked = analyzeText(kReferenceResults + R"gti(
+class Holder {
+public:
+  Line line;
+  Holder(Line line) : line(line) {}
+  Word& viaLocal() {
+    Word& found = this.line.word;
+    return found;
+  }
+};
+int run() {
+  std::string input{"owned"};
+  Holder holder = Holder(Line(input.view()));
+  switch (holder.viaLocal()) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: break;
+  }
+  return 0;
+}
+int main() { return run(); }
+)gti");
+  expect(hasDiagnosticCode(untracked.diagnostics, "GTI-S2045") &&
+             std::none_of(untracked.diagnostics.begin(),
+                          untracked.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code.starts_with("GTI-B");
+                          }),
+         "an untracked reference into dynamic text is refused at source");
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
@@ -2575,6 +2736,7 @@ constexpr NamedTest kTests[] = {
     {"testDependentReturns", testDependentReturns},
     {"testPayloadFieldUses", testPayloadFieldUses},
     {"testNestedValues", testNestedValues},
+    {"testDependentReferenceResults", testDependentReferenceResults},
 };
 } // namespace
 

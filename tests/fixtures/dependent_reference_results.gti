@@ -1,0 +1,47 @@
+// A reference a call returns into a value holding dynamic text from a local
+// owner is that value's dependent field (L-OWN-02): a switch observes it in
+// place, through the call or through reference locals bound to it. Over
+// literal text the same references may be passed and stored.
+#include <std/string>
+
+mut std::string_view kept = "";
+
+enum Word { text(std::string_view value), none };
+
+void keepWordRef(Word& word) {
+  switch (word) {
+  case Word::text(value): kept = value; break;
+  case Word::none: break;
+  }
+}
+
+class Line {
+public:
+  Word word;
+  Line(std::string_view value) : word(Word::text(value)) {}
+  Word& wordRef() { return this.word; }
+};
+
+Word& pickWord(Line& line) { return line.word; }
+
+int main() {
+  std::string input{"owned text"};
+  Line owned = Line(input.view());
+  switch (owned.wordRef()) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: return 1;
+  }
+  Word& word = owned.wordRef();
+  Word& again = word;
+  switch (again) {
+  case Word::text(auto& value): std::println(value.size()); break;
+  case Word::none: return 2;
+  }
+  Line literal = Line("literal");
+  keepWordRef(literal.wordRef());
+  std::println(kept);
+  Word& held = pickWord(literal);
+  keepWordRef(held);
+  std::println(kept);
+  return 0;
+}

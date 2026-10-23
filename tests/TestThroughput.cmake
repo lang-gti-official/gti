@@ -83,6 +83,7 @@ if(Python3_Interpreter_FOUND)
     passive_class_move_and_copy_runtime
     view_fields_runtime text_reference_accessors_runtime
     view_field_payloads_runtime view_field_conversions_runtime
+    dependent_reference_results_runtime
     view_field_nesting_runtime
     recursive_text_relays_runtime
     declaration_owned_defaults_runtime

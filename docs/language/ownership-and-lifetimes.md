@@ -2764,6 +2764,31 @@ nested value out, requires ownerless text there, as for a text payload.
 Passing a value whose text sits in a class field, like `Report`, to a
 function is `GTI-S2045` for now.
 
+A reference that a call returns into such a value is that value's field, as
+`value.field` is. A method such as `Word& wordRef() { return this.word; }`, or
+a function such as `Word& pick(Line& line) { return line.word; }`, returns the
+field of its receiver or argument, so a `switch` may observe the result in
+place, directly or through a reference local bound to it:
+
+```gti
+Line line = Line(input.view());
+switch (line.wordRef()) {
+case Word::text(value): std::println(value); break;  // a view of input
+case Word::none: break;
+}
+Word& word = line.wordRef();
+switch (word) { ... }                    // also observed in place
+keepWordRef(line.wordRef());             // GTI-S2045
+Word copy = word;                        // GTI-S2045
+```
+
+The result, or a reference local bound to it, cannot be passed, copied or
+moved out, stored or returned, so a function that stores the text cannot
+keep it past its owner. A callee whose returns are not field paths of its
+receiver or argument cannot be tracked, and such a call over a local owner's
+text is `GTI-S2045`. Over literal text the same references may be passed and
+stored.
+
 An adapter that needs to retain dynamic input can instead declare a checked
 `std::string_view&` or `c_string&` field and accept the same reference type in its
 constructor. The adapter borrows the view object and retains its underlying

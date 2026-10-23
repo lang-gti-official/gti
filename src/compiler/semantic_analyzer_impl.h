@@ -2128,6 +2128,27 @@ private:
   // nested text class designates.
   [[nodiscard]] std::optional<std::vector<std::vector<SymbolId>>>
   nestedTextRelay(const FieldSourcedTextResult &relay) const;
+  // The field paths, relative to a reference-returning callee's borrowed
+  // receiver or argument, that its returns designate: each return is a field
+  // path of that origin, or a receiver accessor's result. Nullopt when a
+  // return designates anything else.
+  [[nodiscard]] std::optional<std::vector<std::vector<SymbolId>>>
+  referenceReturnPrefixes(const FunctionInfo &callee, BorrowOriginKind origin,
+                          std::size_t parameter, std::size_t depth = 0) const;
+  // A call returning a reference into its receiver or argument when that
+  // origin holds dynamic text from a local owner (L-OWN-02): the reference is
+  // the origin's dependent field at the designated prefixes.
+  struct DependentReferenceResult {
+    const ExprPtr *origin = nullptr;
+    // Nullopt when the callee's returns do not name field paths of the origin.
+    std::optional<std::vector<std::vector<SymbolId>>> prefixes;
+  };
+  [[nodiscard]] std::optional<DependentReferenceResult>
+  dependentReferenceResult(const Call &call,
+                           const ResolvedCallInfo &resolved) const;
+  // The origin's dependent paths under the result's prefixes, without them.
+  [[nodiscard]] std::vector<std::vector<SymbolId>>
+  dependentReferencePaths(const DependentReferenceResult &result) const;
   [[nodiscard]] std::optional<FieldSourcedTextResult>
   fieldSourcedTextResult(const Call &call,
                          const ResolvedCallInfo &resolved) const;
@@ -4596,6 +4617,10 @@ private:
   // The switch subject being analyzed, without groupings: a payload-enum
   // field read there is observed in place (notePayloadFieldRead).
   const Expr *observedSwitchSubject = nullptr;
+  // A reference local bound to a dependent place: its uses are that place's,
+  // so a switch may observe it but it cannot carry the text out (L-OWN-02).
+  std::unordered_map<const VariableDecl *, const Expr *>
+      dependentReferenceAliases;
   // The lowest stack position the current evaluation has read.
   std::size_t textBorrowReadDepth = std::numeric_limits<std::size_t>::max();
   // Whether a provisional summary grew in the current evaluation.
