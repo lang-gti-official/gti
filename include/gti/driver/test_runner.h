@@ -31,6 +31,9 @@ struct TestRunObserver {
       inventory;
   std::function<void(std::string_view, std::string_view)> started;
   std::function<void(const TestCaseReport &)> finished;
+  // Zero means continue; a POSIX signal number requests interruption. The
+  // caller owns signal-handler policy; the driver owns terminating/reaping.
+  std::function<int()> interruption;
 };
 struct TestRunResult {
   TestRunSummary summary;

@@ -317,6 +317,15 @@ StartedProcess::~StartedProcess() {
 
 bool StartedProcess::running() const { return child != -1; }
 
+void StartedProcess::terminate() {
+#if !defined(_WIN32)
+  if (child != -1)
+    kill(isolatedProcessGroup ? -static_cast<pid_t>(child)
+                              : static_cast<pid_t>(child),
+         SIGKILL);
+#endif
+}
+
 ProcessResult StartedProcess::wait() {
   for (;;) {
     if (auto result = poll())

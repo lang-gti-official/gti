@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -72,6 +73,33 @@ extern "C" { int raise(int signal); int usleep(uint32_t duration); }
             assert events[-1]["complete"] and events[-1]["selected"] == 0
             listing = run(level, "--list", "--filter", "after", structured=False)
             assert "e_after" in listing.stdout and "a_pass" not in listing.stdout
+
+        # Interrupt after the runner's launch event. The parent must reap the
+        # isolated child, emit an incomplete summary, and preserve signal status.
+        for interruption in (signal.SIGINT, signal.SIGTERM):
+            with tempfile.TemporaryFile() as diagnostics:
+                child = subprocess.Popen([str(compiler), "test", "--filter", "d_timeout", "--exact",
+                                          "--timeout", "0", "--format", "json"], cwd=project,
+                                         env=env, stdout=subprocess.PIPE, stderr=diagnostics,
+                                         text=True)
+                try:
+                    prefix = []
+                    while True:
+                        line = child.stdout.readline()
+                        assert line, "runner ended before starting the selected test"
+                        prefix.append(line)
+                        if json.loads(line)["event"] == "test_started":
+                            break
+                    child.send_signal(interruption)
+                    output, _ = child.communicate(timeout=15)
+                    interrupted = [json.loads(line) for line in ("".join(prefix) + output).splitlines()]
+                    assert child.returncode == 128 + interruption, interrupted
+                    assert not interrupted[-1]["complete"] and interrupted[-1]["completed"] == 1
+                    assert next(e for e in interrupted if e["event"] == "test_finished")["status"] == "runner_error"
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                        child.wait()
 
         for args in (("--jobs", "0"), ("--timeout", "-1s"), ("--timeout", "2"),
                      ("--timeout", "999999999999999999999m"), ("--exact",),
