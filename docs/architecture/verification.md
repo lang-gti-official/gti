@@ -1,5 +1,67 @@
 # Compiler Verification
 
+## Whole assignment results (0.464.2)
+
+`assignment_result_whole_value_runtime` runs
+`assignment_result_whole_value.gti`. User-defined structs use a class
+assignment's whole result as a binding initializer (`Point r = (p = q);`), a
+return, by-value arguments, a method receiver, a constructor field initializer
+(`start(a = b)`), the right operand of a chained assignment (`a = b = q`), with
+field, constant-index element and reference-parameter destinations, from a
+generic function, from a `mut` method returning `(this.last = q)`, and in a
+loop whose right operand is a call result. `pair(p = q, p = r)` prints 54787:
+the first argument keeps `q` although the second assigns `p` again.
+`(c = d).bump()` prints 65: the `mut` method bumps the copy to 6 while `c`
+keeps 5. A checked addition after a copy overflows on request and exits with
+status 70 after every earlier line. Each result is checked in C++20/C++23 at
+O0/O1/O3, no-elide and ASan/UBSan. The 0.464.0 compiler stops the fixture with
+`GTI-B0001`.
+
+In `cpp_mir_body_emitter_lifecycle`, `testAssignmentResultWholeValue` checks
+that an initialization, a return and a constructor field initializer consume
+the copy `Load` directly after the `Assign`, which records a `Read` of the
+destination's key; that each of two by-value arguments is a `CopyValue` stage
+of a place carrying the destination's key directly after its `Assign`; and
+that a receiver borrows the copy from a hidden temporary whose `Initialize`
+arms the result's value obligation. Clearing that lifecycle event fails MIR
+verification. The emitted text constructs every copy from the destination
+after the store, stages the first argument before the second store, and calls
+the receiver through the temporary's slot before ending it.
+`testAssignmentResultFieldView` now expects the move-only read to be rejected
+by semantics. In `compiler_pipeline`, `testMoveOnlyAssignmentResultUse`
+reports exactly one `GTI-S2003` at the `=` of a used move-only result, with
+its hint and no fix-it, for initialization, return, by-value argument,
+receiver, field read, chained assignment, a comma's right operand, a
+conditional arm, field, element and reference destinations, `std::unique_ptr`
+and a generic instance; it accepts statements, groupings, a comma's left
+operand, a discarded comma, a for-loop increment, discarded conditional arms
+and a copyable class's result.
+
+A differential `--emit-cpp` against main `6333da11`, with one `GTI_STDLIB_PATH`
+for both compilers, covered 1821 programs in `tests/fixtures`, `tests/coverage`
+and `examples` at O0 and O3. Only the new fixture changed, from `GTI-B0001` to
+success at both levels. Every other program emits byte-identical C++, and the
+736 pairs that fail with both compilers report identical diagnostics. The
+summed emission time was 2253.7 s before and 2243.2 s after. Before merging
+main's 0.464.1 (PR #283, payload-enum selections from local carriers), the
+compiler suites behind `compiler_pipeline` (ownership, diagnostics,
+declarations, constexpr, e2e), the emitter `lifecycle`, `text`, `preflight`,
+`corpus` and `census` gates, `mir_field_determinism`,
+`borrowing_capture_semantics` and 12 assignment runtime gates pass. The
+recorded validation repeats that selection, with `borrow_origin` and
+`borrow_origin_runtime`, on the reconciled head.
+
+Still `GTI-B0001`, as on main: a store inside a staged receiver or callee
+window, including `(p = q).with(p = r)`, a lambda call `f(p = q)`, and even
+`f(n = 5)` for a scalar; a discarded move-only store as a comma's left operand
+or in conditional arms (`((p = std::move(q)), 3)`); a whole-value use other
+than a by-value argument, or a field read, of a class with borrowed state or
+active cleanup; and array and payload-enum assignment results. A by-value
+argument of a copyable class with active cleanup takes the same `CopyValue`
+stage but is unverified, since no such class was found (`std::string` is
+move-only). Borrowing an assignment result as a read-only reference argument,
+`read(p = q)`, is rejected by semantics with `GTI-S2017`.
+
 ## Editor code snippets
 
 `code_snippets` checks parser-owned declaration/member/statement boundaries,

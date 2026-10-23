@@ -274,6 +274,16 @@ related spans, and what intentional alternatives remain through hints:
   or move assignment rather than reporting identical types as a mismatch. It
   suggests explicit movement only when move assignment exists. Constants are
   never advised to add the forbidden `mut constexpr` combination.
+- A used result of a valid built-in assignment of a move-only type is
+  `GTI-S2003` at the assignment operator: the result would copy the target.
+  Semantic analysis records the discarded positions (an expression statement,
+  a for-loop increment, a comma's left operand, and what a discarded grouping,
+  comma or conditional yields) before analysing them, and one check after any
+  plain `=` store of a binding, field, element, dereference or place reports
+  every other use. The hint directs the assignment into its own statement; no
+  fix-it is offered, because where the target is next read requires
+  programmer intent. An assignment that already reported its own diagnostic,
+  and an open type parameter before instantiation, report nothing more.
 
 These options are advisory, not ownership-changing fix-its. The LSP publishes
 the same compiler-owned notes and hints; it does not reconstruct explanations

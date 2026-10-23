@@ -15570,11 +15570,369 @@ int main() { return pick(Tracked(1), Tracked(5)) - 5; }
              std::any_of(moveOnly.diagnostics.begin(),
                          moveOnly.diagnostics.end(),
                          [](const lang::Diagnostic &diagnostic) {
-                           return diagnostic.message.find(
-                                      "assignment result has no copy of its "
-                                      "destination") != std::string::npos;
+                           return diagnostic.code == "GTI-S2003" &&
+                                  diagnostic.message.find(
+                                      "Cannot use the result of an "
+                                      "assignment") != std::string::npos;
                          }),
-         "a move-only destination has no copy for its result to read");
+         "semantics should reject reading a move-only assignment's result");
+}
+
+// The whole result of a class assignment is the same copy of the committed
+// destination. An initialization, return or constructor field initializer
+// consumes the copy Load placed directly after the Assign, which records its
+// read of the destination. A receiver borrows the copy from a hidden temporary
+// that carries HIR's value obligation. A by-value argument is staged by HIR as
+// a copy of the destination itself, directly after its Assign, so a later
+// argument that assigns the destination again cannot reach the earlier one.
+void testAssignmentResultWholeValue() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-assignment-result-whole.gti", R"(
+struct Point {
+  int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+  int32_t digits() { return this.x * 10 + this.y; }
+};
+int32_t take(Point v) { return v.digits(); }
+int32_t initialized(mut Point p, Point q) { Point r = (p = q); return r.x; }
+Point returned(mut Point p, Point q) { return (p = q); }
+int32_t passed(mut Point p, Point q, Point r) {
+  return take(p = q) * 100 + take(p = r);
+}
+int32_t received(mut Point p, Point q) { return (p = q).digits(); }
+class Holder {
+public:
+  Point value;
+  Holder(mut Point a, Point b) : value(a = b) {}
+};
+int main() {
+  Holder h = Holder(Point(1, 2), Point(5, 4));
+  return initialized(Point(1, 2), Point(5, 4)) +
+         returned(Point(1, 2), Point(5, 4)).x +
+         passed(Point(1, 2), Point(5, 4), Point(7, 8)) +
+         received(Point(1, 2), Point(5, 4)) + h.value.x - 5547;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "whole-value assignment results should construct valid MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto idOf = [&](std::string_view name) {
+    for (const auto &function : frontend.hir.functionInstances())
+      if (function.source && function.source->name().lexeme == name)
+        return function.id;
+    return lang::HirFunctionInstanceId{0};
+  };
+  const lang::MirConstructorInstance *holder = nullptr;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+    const auto *info =
+        owner == nullptr ? nullptr
+                         : frontend.semantics.findClassType(owner->declaration);
+    if (info && info->declaration &&
+        info->declaration->name().lexeme == "Holder")
+      holder = &constructor;
+  }
+  const auto bodyOf = [&](const lang::MirProgram &program,
+                          std::string_view name) -> const lang::MirBody * {
+    const auto *function = program.findFunctionInstance(idOf(name));
+    return function == nullptr ? nullptr : &function->body;
+  };
+  const std::vector<std::string> names{"initialized", "returned", "passed",
+                                       "received"};
+  const bool lowered =
+      holder != nullptr &&
+      std::all_of(names.begin(), names.end(), [&](const std::string &name) {
+        return bodyOf(frontend.mir, name) != nullptr;
+      });
+  expect(lowered, "the fixture should lower every whole-value consumer");
+  if (!lowered)
+    return;
+
+  // Each Assign whose own result has no use, with the instruction after it.
+  struct Commit {
+    const lang::MirInstruction *assign = nullptr;
+    const lang::MirInstruction *next = nullptr;
+  };
+  const auto commits = [](const lang::MirBody &body) {
+    std::vector<Commit> found;
+    for (const lang::MirBlock &block : body.blocks)
+      for (std::size_t index = 0; index + 1 < block.instructions.size();
+           ++index) {
+        const lang::MirInstruction &assign = block.instructions[index];
+        if (assign.kind == lang::MirInstructionKind::Assign &&
+            assign.destination && assign.result &&
+            body.usesOf(*assign.result).empty())
+          found.push_back({&assign, &block.instructions[index + 1]});
+      }
+    return found;
+  };
+  // The copy Load of the Assign's destination, recording that read.
+  const auto copyLoad = [](const lang::MirBody &body, const Commit &commit) {
+    const lang::MirInstruction &copy = *commit.next;
+    const lang::MirPlace *destination =
+        body.findPlace(*commit.assign->destination);
+    return copy.kind == lang::MirInstructionKind::Load && copy.result &&
+           copy.hirValue == commit.assign->hirValue &&
+           copy.operands.size() == 1 &&
+           copy.operands.front().kind == lang::MirOperandKind::Copy &&
+           copy.operands.front().place == *commit.assign->destination &&
+           destination != nullptr && destination->key && copy.ownership &&
+           copy.ownership->kind == lang::OwnershipEventKind::Read &&
+           copy.ownership->place == *destination->key;
+  };
+  // The instruction consuming `value`, which must be its only use.
+  const auto soleUser =
+      [](const lang::MirBody &body,
+         lang::MirValueId value) -> const lang::MirInstruction * {
+    const auto &uses = body.usesOf(value);
+    if (uses.size() != 1 ||
+        uses.front().kind != lang::MirValueUseKind::InstructionOperand)
+      return nullptr;
+    for (const lang::MirBlock &block : body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions)
+        if (instruction.id == uses.front().instruction)
+          return &instruction;
+    return nullptr;
+  };
+
+  // MIR: an initialization consumes the copy as its binding's value.
+  const lang::MirBody &initialized = *bodyOf(frontend.mir, "initialized");
+  const auto initializedCommits = commits(initialized);
+  const lang::MirInstruction *binding =
+      initializedCommits.size() == 1 &&
+              copyLoad(initialized, initializedCommits.front())
+          ? soleUser(initialized, *initializedCommits.front().next->result)
+          : nullptr;
+  const lang::MirPlace *bindingPlace =
+      binding == nullptr || !binding->destination
+          ? nullptr
+          : initialized.findPlace(*binding->destination);
+  expect(binding != nullptr &&
+             binding->kind == lang::MirInstructionKind::Initialize &&
+             bindingPlace != nullptr &&
+             bindingPlace->root == lang::MirPlaceRootKind::Binding,
+         "an initialization should consume the copy Load directly");
+
+  // A return returns the copy.
+  const lang::MirBody &returned = *bodyOf(frontend.mir, "returned");
+  const auto returnedCommits = commits(returned);
+  const bool returnsCopy =
+      returnedCommits.size() == 1 &&
+      copyLoad(returned, returnedCommits.front()) &&
+      std::any_of(returned.blocks.begin(), returned.blocks.end(),
+                  [&](const lang::MirBlock &block) {
+                    return block.terminator.kind ==
+                               lang::MirTerminatorKind::Return &&
+                           block.terminator.value &&
+                           block.terminator.value->value ==
+                               *returnedCommits.front().next->result;
+                  });
+  expect(returnsCopy, "a return should return the copy Load");
+
+  // Each by-value argument copies its destination right after its Assign,
+  // through a place carrying the destination's key.
+  const lang::MirBody &passed = *bodyOf(frontend.mir, "passed");
+  const auto passedCommits = commits(passed);
+  const auto stagesCopy = [&](const Commit &commit) {
+    const lang::MirInstruction &stage = *commit.next;
+    const lang::MirPlace *source =
+        stage.operands.size() == 1
+            ? passed.findPlace(stage.operands.front().place)
+            : nullptr;
+    const lang::MirPlace *destination =
+        passed.findPlace(*commit.assign->destination);
+    return stage.kind == lang::MirInstructionKind::CallInput &&
+           stage.callInputKind == lang::HirCallInputKind::CopyValue &&
+           stage.hirValue == commit.assign->hirValue &&
+           stage.operands.front().kind == lang::MirOperandKind::Copy &&
+           source != nullptr && destination != nullptr && source->key &&
+           source->key == destination->key &&
+           source->sourceValue == commit.assign->hirValue &&
+           stage.preparedParameterDrop.has_value();
+  };
+  expect(
+      passedCommits.size() == 2 &&
+          std::all_of(passedCommits.begin(), passedCommits.end(), stagesCopy),
+      "each by-value argument should be staged as a copy of its "
+      "destination directly after the Assign");
+
+  // A receiver borrows the copy from a hidden temporary armed with HIR's
+  // value obligation; the result leaves that temporary.
+  const lang::MirBody &received = *bodyOf(frontend.mir, "received");
+  const auto receivedCommits = commits(received);
+  const lang::MirInstruction *published =
+      receivedCommits.size() == 1 && copyLoad(received, receivedCommits.front())
+          ? soleUser(received, *receivedCommits.front().next->result)
+          : nullptr;
+  const lang::MirPlace *temporary =
+      published == nullptr || !published->destination
+          ? nullptr
+          : received.findPlace(*published->destination);
+  const auto armed = [&](const lang::MirInstruction &initialize) {
+    return initialize.lifecycle.size() == 1 &&
+           initialize.lifecycle.front().kind ==
+               lang::MirLifecycleEventKind::Initialize &&
+           std::any_of(
+               received.dropObligations.begin(), received.dropObligations.end(),
+               [&](const lang::MirDropObligation &drop) {
+                 return drop.id == initialize.lifecycle.front().target &&
+                        drop.kind == lang::MirDropObligationKind::Value &&
+                        drop.place == temporary->id;
+               });
+  };
+  const bool borrowed =
+      temporary != nullptr &&
+      std::any_of(
+          received.blocks.begin(), received.blocks.end(),
+          [&](const lang::MirBlock &block) {
+            return std::any_of(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const lang::MirInstruction &stage) {
+                  return stage.kind == lang::MirInstructionKind::CallInput &&
+                         stage.callInputKind ==
+                             lang::HirCallInputKind::ReadTemporaryBorrow &&
+                         stage.operands.size() == 1 &&
+                         stage.operands.front().place == temporary->id;
+                });
+          });
+  expect(published != nullptr &&
+             published->kind == lang::MirInstructionKind::Initialize &&
+             temporary != nullptr &&
+             temporary->root == lang::MirPlaceRootKind::Temporary &&
+             armed(*published) && borrowed,
+         "a receiver should borrow the copy from a hidden temporary that "
+         "carries the result's value obligation");
+
+  // A constructor field initializer publishes the copy into its field.
+  const auto holderCommits = commits(holder->body);
+  const lang::MirInstruction *field =
+      holderCommits.size() == 1 && copyLoad(holder->body, holderCommits.front())
+          ? soleUser(holder->body, *holderCommits.front().next->result)
+          : nullptr;
+  const lang::MirPlace *fieldPlace =
+      field == nullptr || !field->destination
+          ? nullptr
+          : holder->body.findPlace(*field->destination);
+  expect(field != nullptr &&
+             field->kind == lang::MirInstructionKind::Initialize &&
+             field->constructorInitializer != 0 && fieldPlace != nullptr &&
+             fieldPlace->root == lang::MirPlaceRootKind::This,
+         "a constructor field initializer should publish the copy Load");
+
+  // The hidden temporary's obligation is what keeps it alive for the borrow.
+  lang::MirProgram unarmed = frontend.mir;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      unarmed.functionInstances());
+  bool disarmed = false;
+  for (lang::MirFunctionInstance &function : functions)
+    if (function.id == idOf("received"))
+      for (lang::MirBlock &block : function.body.blocks)
+        for (lang::MirInstruction &instruction : block.instructions)
+          if (published != nullptr && instruction.id == published->id) {
+            instruction.lifecycle.clear();
+            disarmed = true;
+          }
+  expect(disarmed && !lang::verifyMirProgram(unarmed).valid(),
+         "a borrowed hidden temporary without its armed obligation must not "
+         "verify");
+
+  // Emission: every copy constructs from the destination after the store.
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const auto textOf = [&](const lang::MirBodyAddress &address, bool mayRaise) {
+    if (mayRaise)
+      return emitter.supportsFailureBodyText(address)
+                 ? emitter
+                       .emitFailureBodyText(address, "assignment-whole-v0", 1)
+                       .text
+                 : std::string();
+    return emitter.supportsBodyText(address)
+               ? emitter.emitBodyText(address, "assignment-whole-v0", 1).text
+               : std::string();
+  };
+  const auto functionText = [&](std::string_view name) {
+    const auto *function = frontend.mir.findFunctionInstance(idOf(name));
+    return textOf({.kind = lang::MirBodyKind::Function, .owner = idOf(name)},
+                  function->mayRaiseDefinedFailure);
+  };
+  const auto place = [](lang::MirPlaceId id) {
+    return "__gti_mir_p_" + std::to_string(id);
+  };
+  const auto value = [](lang::MirValueId id) {
+    return "__gti_mir_v_" + std::to_string(id);
+  };
+  // The store, then `copy` constructed from the destination.
+  const auto copiedAfterStore = [&](const std::string &text,
+                                    const Commit &commit,
+                                    const std::string &copy) {
+    const std::string destination = place(*commit.assign->destination);
+    const std::size_t store = text.find(destination + ".get() = ");
+    const std::size_t constructed =
+        text.find(copy + ".construct(" + destination + ".get());");
+    return store != std::string::npos && constructed != std::string::npos &&
+           store < constructed;
+  };
+  if (bindingPlace != nullptr)
+    expect(copiedAfterStore(functionText("initialized"),
+                            initializedCommits.front(),
+                            place(bindingPlace->id)),
+           "an initialization should construct its binding from the "
+           "destination after the store");
+  if (returnsCopy) {
+    const std::string text = functionText("returned");
+    const std::string copy = value(*returnedCommits.front().next->result);
+    expect(copiedAfterStore(text, returnedCommits.front(), copy) &&
+               text.find("return std::move(" + copy + ".get());") !=
+                   std::string::npos,
+           "a return should construct and return the copy's slot");
+  }
+  if (passedCommits.size() == 2) {
+    const std::string text = functionText("passed");
+    const std::string first = place(*passedCommits.front().next->destination);
+    const std::size_t firstStaged = text.find(first + ".construct(");
+    const std::size_t secondStore = text.find(
+        place(*passedCommits.back().assign->destination) + ".get() = ",
+        text.find(place(*passedCommits.front().assign->destination) +
+                  ".get() = ") +
+            1);
+    expect(
+        copiedAfterStore(text, passedCommits.front(), first) &&
+            copiedAfterStore(text, passedCommits.back(),
+                             place(*passedCommits.back().next->destination)) &&
+            firstStaged < secondStore,
+        "the first argument's copy should be staged before the second "
+        "argument stores the destination again");
+  }
+  if (temporary != nullptr) {
+    const std::string text = functionText("received");
+    const std::string slot = place(temporary->id);
+    const std::size_t call = text.find(slot + ".get().");
+    expect(copiedAfterStore(text, receivedCommits.front(), slot) &&
+               call != std::string::npos &&
+               text.find(slot + ".destroy();", call) != std::string::npos,
+           "a receiver should call through the hidden temporary's slot and "
+           "end it afterwards");
+  }
+  if (field != nullptr) {
+    const std::string text =
+        textOf({.kind = lang::MirBodyKind::Constructor, .owner = holder->id},
+               holder->mayRaiseDefinedFailure);
+    const std::string copy = value(*holderCommits.front().next->result);
+    const std::size_t store = text.find(
+        place(*holderCommits.front().assign->destination) + ".get() = ");
+    const std::size_t declared = text.find(
+        "auto " + copy + " = " +
+        place(*holderCommits.front().assign->destination) + ".get();");
+    expect(store != std::string::npos && declared != std::string::npos &&
+               store < declared &&
+               text.find(place(fieldPlace->id) + " = std::move(" + copy +
+                         ");") != std::string::npos,
+           "a constructor field should receive the copy declared after the "
+           "store");
+  }
 }
 
 // A class copy or fresh value assigned to a global, through a lambda's
@@ -16313,6 +16671,7 @@ constexpr NamedTest kTests[] = {
     {"testAssignmentResultFieldView", testAssignmentResultFieldView},
     {"testClassStoresIntoNamedPlaces", testClassStoresIntoNamedPlaces},
     {"testCheckedArrayElementFieldAccess", testCheckedArrayElementFieldAccess},
+    {"testAssignmentResultWholeValue", testAssignmentResultWholeValue},
     {"testNestedClassResultFieldView", testNestedClassResultFieldView},
     {"testDiscardedCleanupFreeClassResult",
      testDiscardedCleanupFreeClassResult},

@@ -2341,7 +2341,15 @@ A `MirBody` owns:
   write of `p` in the same full-expression cannot change. Only a copyable
   class without borrowed state or active cleanup has such a copy; lowering
   refuses a projection of any other assignment result rather than aliasing the
-  destination;
+  destination. The copy `Load` records its own `Read` of the destination. The
+  whole result is the same copy: an initialization, return or constructor field
+  initializer consumes the `Load` (a constructor initializer, which reads its
+  arguments after evaluating them all, takes the copy at the commit). When HIR
+  planned a value obligation for the result, as for a temporary method receiver,
+  the copy initializes a hidden temporary that carries the obligation, as a
+  value conditional's join does, and the result moves out of it. A by-value
+  argument, which HIR stages as `CopyValue`, copies a place carrying the
+  destination's key directly after the `Assign` instead;
 - explicit initialize, assign, modify, move, borrow, call, construct, drop, and
   end-borrow instructions, plus carried read/move/reinitialize ownership events;
 - for the bounded ordinary-invocation slices, one non-removable,
@@ -2890,6 +2898,14 @@ initializations. The arm's extractions cover every field of the variant
 exactly once, no extraction follows the transfer, and the transfer appears
 exactly when the subject owns a drop obligation; lifecycle flow then proves
 the obligation is retired once on every path.
+An observing switch over a carrier that stores several external references
+selects each `auto&` reference with the carrier's Stored loan as parent. A
+selection of the carrier's primary owner sources a place rooted at that loan.
+A loan-rooted place always names the primary referent, so a selection of one
+of the carrier's additional owners sources the owner place the carrier already
+materialized for that dependency (the referent of a reference-typed owner).
+Verification rejects a selection that claims the primary owner for another
+field's referent.
 The bounded direct callable schedule uses those same obligations for argument
 preparation, parameter entry, direct result placement, success activation, and
 defined-failure cleanup. No AST or HIR expression is re-emitted to manufacture
