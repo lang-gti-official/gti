@@ -1801,16 +1801,55 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
     current = group->expression() ? group->expression().get() : nullptr;
   std::optional<OwnerlessTextField> formal;
   SemanticType owner = SemanticType::Unknown;
-  const Token *name = nullptr;
-  if (const auto *get = exprAs<Get>(current);
-      get != nullptr && get->access().kind != TokenKind::ARROW &&
-      get->object()) {
-    formal = textFieldContractFormal(*get->object());
+  std::optional<std::string> name;
+  const auto formalOwner = [&](const Expr &object) {
+    formal = textFieldContractFormal(object);
     if (formal && formal->receiver)
       owner = openClassType(scope->ownerClass);
     else if (formal && formal->parameter < scope->parameterTypes.size())
       owner = scope->parameterTypes[formal->parameter];
-    name = &get->name();
+  };
+  const auto *call = exprAs<Call>(current);
+  const auto *accessor =
+      call == nullptr ? nullptr : exprAs<Get>(call->callee().get());
+  if (const auto *get = exprAs<Get>(current);
+      get != nullptr && get->access().kind != TokenKind::ARROW &&
+      get->object()) {
+    formalOwner(*get->object());
+    name = get->name().lexeme;
+  } else if (call != nullptr && call->arguments().empty() &&
+             call->typeArguments().empty() &&
+             (accessor == nullptr
+                  ? exprAs<Variable>(call->callee().get()) != nullptr
+                  : accessor->access().kind != TokenKind::ARROW &&
+                        accessor->object() != nullptr)) {
+    // A formal's accessor that returns a reference to one of its fields
+    // designates that field, as `formal.field` does. An implicit `accessor()`
+    // is the receiver's.
+    const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+    const FunctionInfo *callee =
+        resolved == nullptr ? nullptr
+                            : semanticModel.findFunction(resolved->function);
+    if (callee == nullptr && resolved != nullptr &&
+        instanceBaseModel != nullptr)
+      callee = instanceBaseModel->findFunction(resolved->function);
+    if (accessor != nullptr) {
+      formalOwner(*accessor->object());
+    } else if (callee != nullptr && scope->ownerClass != 0 &&
+               callee->ownerClass == scope->ownerClass &&
+               !callee->staticMember && !scope->staticMember &&
+               scope->bodyDeclaration()->receiverMutability() ==
+                   ReceiverMutability::ReadOnly &&
+               textPublicationOwner(openClassType(scope->ownerClass))) {
+      formal = OwnerlessTextField{.receiver = true};
+      owner = openClassType(scope->ownerClass);
+    }
+    std::vector<const FunctionInfo *> visiting;
+    if (formal && resolved != nullptr &&
+        resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+        callee != nullptr)
+      name = accessorReceiverField(*callee, visiting);
   } else if (const auto *variable = exprAs<Variable>(current)) {
     // An implicit receiver field, like `this.field`.
     const Symbol *symbol = resolve(variable->name());
@@ -1822,14 +1861,14 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
         textPublicationOwner(openClassType(scope->ownerClass))) {
       formal = OwnerlessTextField{.receiver = true};
       owner = openClassType(scope->ownerClass);
-      name = &variable->name();
+      name = variable->name().lexeme;
     }
   }
   if (owner.kind == SemanticType::Reference && owner.arguments.size() == 1)
     owner = SemanticType(owner.arguments.front());
-  const ClassInfo *info = formal ? classInfo(owner) : nullptr;
+  const ClassInfo *info = formal && name ? classInfo(owner) : nullptr;
   const auto member = info == nullptr ? decltype(info->members.end()){}
-                                      : info->members.find(name->lexeme);
+                                      : info->members.find(*name);
   if (info == nullptr || member == info->members.end() ||
       member->second.symbol.staticMember ||
       member->second.symbol.bindingKind != SemanticBindingKind::Field)
@@ -1869,6 +1908,33 @@ auto SemanticVisitor::Impl::noteConditionalTextFieldRead(const Expr &expression)
   (void)requireOwnerlessTextField(scope->declaration, *field);
 }
 
+auto SemanticVisitor::Impl::callBorrowedTextFormal(
+    const Call &call, const ResolvedCallInfo &resolved) const
+    -> std::optional<OwnerlessTextField> {
+  if (resolved.borrowOrigin == BorrowOriginKind::Receiver) {
+    const auto *member = exprAs<Get>(call.callee().get());
+    if (member == nullptr) {
+      // An implicit receiver call borrows this method's receiver.
+      const FunctionInfo *scope = textFieldContractScope();
+      if (scope != nullptr && scope->ownerClass != 0 && !scope->staticMember &&
+          scope->bodyDeclaration()->receiverMutability() ==
+              ReceiverMutability::ReadOnly &&
+          textPublicationOwner(openClassType(scope->ownerClass)))
+        return OwnerlessTextField{.receiver = true};
+    } else if (member->access().kind != TokenKind::ARROW && member->object()) {
+      return textFieldContractFormal(*member->object());
+    }
+  } else if (resolved.borrowOrigin == BorrowOriginKind::Argument &&
+             resolved.borrowArgument <
+                 resolvedCallArgumentCount(call, &resolved)) {
+    const ExprPtr *argument =
+        resolvedCallArgument(call, &resolved, resolved.borrowArgument);
+    if (argument != nullptr && *argument)
+      return textFieldContractFormal(**argument);
+  }
+  return std::nullopt;
+}
+
 auto SemanticVisitor::Impl::noteReturnedFormalReference(const Expr &returned)
     -> void {
   const Expr *current = &returned;
@@ -1880,28 +1946,8 @@ auto SemanticVisitor::Impl::noteReturnedFormalReference(const Expr &returned)
   if (resolved == nullptr ||
       resolved->returnType.kind != SemanticType::Reference)
     return;
-  std::optional<OwnerlessTextField> formal;
-  if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
-    const auto *member = exprAs<Get>(call->callee().get());
-    if (member == nullptr) {
-      // An implicit receiver call borrows this method's receiver.
-      const FunctionInfo *scope = textFieldContractScope();
-      if (scope != nullptr && scope->ownerClass != 0 && !scope->staticMember &&
-          scope->bodyDeclaration()->receiverMutability() ==
-              ReceiverMutability::ReadOnly &&
-          textPublicationOwner(openClassType(scope->ownerClass)))
-        formal = OwnerlessTextField{.receiver = true};
-    } else if (member->access().kind != TokenKind::ARROW && member->object()) {
-      formal = textFieldContractFormal(*member->object());
-    }
-  } else if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
-             resolved->borrowArgument <
-                 resolvedCallArgumentCount(*call, resolved)) {
-    const ExprPtr *argument =
-        resolvedCallArgument(*call, resolved, resolved->borrowArgument);
-    if (argument != nullptr && *argument)
-      formal = textFieldContractFormal(**argument);
-  }
+  const std::optional<OwnerlessTextField> formal =
+      callBorrowedTextFormal(*call, *resolved);
   // A method that returns its receiver accessor's relay composes that relay:
   // the reference designates the relayed field or payload, not the whole
   // receiver.

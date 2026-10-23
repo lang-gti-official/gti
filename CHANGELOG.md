@@ -31,6 +31,31 @@ for what minor and patch releases mean.
 - Diagnostics include nested expansion context. Neovim's read-only
   `:GTIExpandMacro` view explains the checked expansion and local bindings.
 
+## 0.465.5 — Test-target editor diagnostics
+
+- The language server recognizes `kind = "test"` and no longer asks valid
+  annotated suites to define `main`. Test-entry rules still diagnose empty
+  suites, invalid test signatures and conflicting user-written entry points.
+  Changing a target between executable and test refreshes editor diagnostics.
+  Generated test dispatchers stay out of editor source snapshots and symbols.
+
+## 0.465.4 — Text relays through accessor switch subjects
+
+- A method that returns a payload's text by reference through an accessor
+  subject now relays the receiver's text, as the same method over the field
+  does. For `Word& wordRef() { return this.word; }`,
+  `std::string_view& textRef() { switch (this.wordRef()) { case
+  Word::text(auto& v): return v; ... } }` used to make `line.textRef()` on
+  text owned elsewhere report `error[GTI-S2045]` when passed or printed; it
+  now works, as it does through `switch (this.word)`.
+- Fixed: binding a payload's text by value through an accessor subject did
+  not carry the field's ownerless-text requirement. In 0.465.2,
+  `std::string_view first() { switch (this.wordRef()) { case
+  Word::text(v): return v; ... } }` compiled even when called on text owned
+  by a local that is destroyed before the result is used, leaving a dangling
+  view. It now reports `error[GTI-S2045]`, exactly as through
+  `switch (this.word)`.
+
 ## 0.465.3 — Moving classes that hold function items
 
 - A generic class whose field holds a function item, such as `class Op<F> {
