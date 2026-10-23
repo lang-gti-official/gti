@@ -129,6 +129,7 @@ on a machine shared with other builds.
 Still `GTI-B0001`, as on main: a constructor initializing a class's
 fixed-array field from its parameters (`Polygon(Point a, Point b) :
 corners({a, b})`).
+
 ## Deferred assertions and statement helpers (0.465.0)
 
 `deferred_assertions` checks the general `[[deferred]]` statement-helper rule
@@ -9538,6 +9539,29 @@ moves its parameter through two local bindings. The reviewed inventory adds
 exactly one declaration and one body to that example; generated-item counts
 are unchanged. Its C++20/O0 and C++23/O3 executions retain the same cleanup
 observations.
+
+## Validation scope and combined batches
+
+Use the [risk-based batch contract](agent-workflow.md#risk-based-batch-validation)
+for current T1/T2/T3 criteria, exact admission plans, the smoke programs,
+combined full/platform gates, CI routing, evidence and failure ownership.
+Feature-specific sections identify affected coverage; their historical full
+runs do not impose a duplicate whole-compiler campaign on every component
+fix. Focused admission is a ready-for-integration checkpoint. Full acceptance
+belongs to the selected combined compiler, with every component's regression
+and relevant subsystem/tooling/platform/performance obligations preserved.
+
+The owning automation regression `agent_workflow` exercises real disposable
+Git repositories: exact membership and ancestry, original-PR preservation,
+conflict resume, duplicate-batch exclusion, withdrawal/release, stale source
+and missing-platform refusal, complete CTest inventories/results, required
+regression skips, optimized build ownership, and advisory CI classification. Workflow-only
+changes use these tests and their affected tooling gates rather than a full
+GTI semantic suite. CI still runs full native/sanitizer coverage for compiler
+integration candidates as advisory feedback. GitHub Actions never gates local
+validation, integration or completion; preserve exact-source local/managed-runner
+coverage and required platform/performance evidence, and report pending/failed
+CI separately rather than waiting for runner capacity or calling it passed.
 
 ## Development And Completion Cadence
 
