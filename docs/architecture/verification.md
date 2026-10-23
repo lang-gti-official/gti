@@ -99,6 +99,10 @@ instances, and rejection of an erased tracked-caller origin. Syntax regressions
 cover exact macro-only overloads, generic/default parameters, qualified calls,
 caller-tracked declarations, incomplete parser recovery, rejected mixed
 macro/function names in both declaration orders and legacy migration diagnostics.
+Local binding regressions cover evaluate-once initialization, same-spelled
+caller/definition names, local shadowing, named references, explicit owner
+moves, automatic storage and scoped loops. Invalid ownership and escape paths
+must fail through ordinary semantic rules, not be hidden by macro expansion.
 The ownership regression copies HIR out of a destroyed `FrontendResult` and
 temporary lowerer, then traverses reached nested/instance expansion roots and
 their constructor-call descendants. Its ordinary and concrete generic cases
@@ -109,13 +113,17 @@ examples 172 and 174 with C++20/C++23 at O0/O1/O3, disabled elision, ASan/UBSan,
 `-DNDEBUG`, each with source `NDEBUG` enabled and disabled. It checks forcing
 count/order, skipped moves and message construction, lookup/access hygiene,
 caller defaults and nested wrappers, reverse cleanup, panic during cleanup,
-and managed-thread propagation. Examples are identified by their selected
+managed-thread propagation, and owning local cleanup on normal scope exit,
+panic, break and continue. Examples are identified by their selected
 paths, not a numeric-prefix convention, so renumbering cannot change the expected
 output policy.
 
 `deferred_assertions_lsp` covers unsaved/incomplete text, UTF-16 spans, static
 argument errors, macro hover/definition identity, qualified overload selection
-and recovery from the removed attribute. Project-model and scoped-configuration
+and recovery from the removed attribute. `macro_expansion_queries` checks
+bounded deterministic inspection, hygiene labels and exact local rename identity;
+the LSP and Neovim gates cover the read-only `:GTIExpandMacro` request and stale
+buffer rejection. Project-model and scoped-configuration
 checks cover default release `NDEBUG`, explicit profile overrides and frontend
 versus native flags. The module/surface gates, both corpus censuses, pinned
 Tree-sitter corpus and shipped-source parsing cover the new header, module,

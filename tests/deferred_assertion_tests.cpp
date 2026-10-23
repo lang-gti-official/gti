@@ -298,6 +298,96 @@ void migrationAndOverloadDiagnostics() {
   }
 }
 
+void localBindingsAndLoops() {
+  auto result = analyze(R"(
+#include <std/assert>
+#include <std/string>
+namespace library {
+  struct Item { int code = 1; };
+  #macro once(bool enabled, int expression) {
+    if (enabled) {
+      int saved = expression;
+      auto& read = saved;
+      std::assert(read == saved);
+    }
+  }
+  #macro shadow(int value) {
+    { int value = 4; std::assert(value == 4); }
+    std::assert(value == 9);
+  }
+  #macro typed() { Item item{}; std::assert(item.code == 1); }
+  #macro own(bool enabled, std::string expression) {
+    if (enabled) {
+      std::string local = expression;
+      auto& borrowed = local;
+      std::assert(!borrowed.empty());
+    }
+  }
+  #macro loops(int count) {
+    mut int total = 0;
+    for (mut int index = 0; index < count; index++) {
+      if (index == 1) { continue; }
+      total += index;
+      if (index == 3) { break; }
+    }
+    while (total > 1) { total--; }
+    do { total++; } while (total < 2);
+    int values[3] = {1, 2, 3};
+    for (auto& value : values) { std::assert(value > 0); }
+  }
+  #macro assign(int destination, int value) { destination = value; }
+  #macro defaults(int expression = 9) {
+    int expression = expression;
+    std::assert(expression == 9);
+  }
+  #macro decompose() {
+    int values[2] = {1, 2};
+    auto [first, second] = values;
+    std::assert(first == 1 && second == 2);
+  }
+  #macro check_lambda(bool condition) { std::assert(condition); }
+}
+namespace application {
+  struct Item { int code = 2; };
+  int run() {
+    int saved = 9;
+    mut int evaluations = 0;
+    library::once(false, evaluations++);
+    library::once(true, saved);
+    library::once(true, saved);
+    library::shadow(saved);
+    library::typed();
+    library::loops(5);
+    library::defaults();
+    library::decompose();
+    library::decompose();
+    library::check_lambda([](int count) -> bool {
+      { { { int count = 2; return count == 2; } } }
+    }(1));
+    library::check_lambda([]() -> bool {
+      { { { int own_local = 1; return own_local == 1; } } }
+    }());
+    mut int output = 0;
+    library::assign(output, saved);
+    std::string owner{"kept"};
+    library::own(false, std::move(owner));
+    std::assert(!owner.empty());
+    library::own(true, std::move(owner));
+    return 0;
+  }
+}
+int main() { return application::run(); }
+)");
+  if (!result.canGenerateCode())
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  check(result.canGenerateCode(),
+        "macro locals, references, moves and scoped loops lower through MIR");
+  if (result.canGenerateCode())
+    check(lang::verifyMirProgram(result.mir).valid(),
+          "macro-local ownership and control flow verify independently");
+}
+
 void parserMacroRecovery() {
   for (const bool nested : {false, true}) {
     const std::string source =
@@ -371,11 +461,16 @@ int main() {
   disabledTypeChecks();
   expansionSourceOwnership();
   typedMacroSyntax();
+  localBindingsAndLoops();
   migrationAndOverloadDiagnostics();
   parserMacroRecovery();
   negative("[[deferred]] void old(bool condition) {}", "GTI-S2099", "#macro");
   negative("#macro wrong(bool condition) { return; }", "GTI-S2099",
-           "declarations, returns and loops");
+           "returns, propagation");
+  negative("#macro wrong() { break; }", "GTI-S2099", "within that macro");
+  negative("#macro wrong() { continue; }", "GTI-S2099", "within that macro");
+  negative("#macro wrong() { static int value = 1; }", "GTI-P0001",
+           "Block-scope static");
   negative("[[test]] #macro wrong() {}", "GTI-S2099", "namespace-scope void");
   negative(R"(
 namespace app {
@@ -425,6 +520,65 @@ void consume(std::string value) {}
 int main() { std::string owner{"owned"}; twice(std::move(owner)); return 0; }
 )",
            "GTI-S2018", "moved");
+  negative(R"(
+#include <std/string>
+void consume(std::string value) {}
+#macro twice(std::string expression) {
+  std::string owned = expression;
+  consume(std::move(owned));
+  consume(std::move(owned));
+}
+int main() { twice(std::string("owned")); return 0; }
+)",
+           "GTI-S2018", "moved");
+  negative(R"(
+#include <std/string>
+void consume(std::string value) {}
+#macro invalid() {
+  std::string owned{"owned"};
+  std::string_view held = owned.view();
+  consume(std::move(owned));
+  [[discard]] held.size();
+}
+int main() { invalid(); return 0; }
+)",
+           "GTI-S2017", "borrow");
+  negative(R"(
+#include <std/string>
+#macro escape(std::string_view destination) {
+  std::string local{"owned"};
+  destination = local.view();
+}
+int main() {
+  mut std::string_view output = "safe";
+  escape(output);
+  return int(output.size());
+}
+)",
+           "GTI-S2045", "cannot be assigned");
+  negative(R"(
+#include <std/string>
+void consume(std::string value) {}
+#macro loop(std::string expression) {
+  for (mut int i = 0; i < 2; ++i) { consume(expression); }
+}
+int main() {
+  std::string owner{"owned"};
+  loop(std::move(owner));
+  return 0;
+}
+)",
+           "GTI-S2018", "loop backedge");
+  negative("#macro assign(int destination) { destination = 7; }\n"
+           "int main() { assign(4); return 0; }",
+           "GTI-S2002", "mutable place");
+  negative("#macro invalid() { break; }\n"
+           "int main() { while (true) { invalid(); } return 0; }",
+           "GTI-S2099", "within that macro");
+  negative("#macro invalid() { continue; }\n"
+           "#macro outer() { while (true) { invalid(); } }\n"
+           "int main() { outer(); return 0; }",
+           "GTI-S2099", "within that macro");
   negative(R"(
 #include <std/string>
 void consume(std::string value) {}

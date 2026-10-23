@@ -58,6 +58,12 @@ effect and callable-transport inventories; written helper selections remain
 editor facts. HIR and MIR use their existing checked branch/call operations.
 Ordinary constant boolean facts refine feasible move paths without turning
 an unselected ordinary branch into an unchecked `if constexpr` branch.
+Automatic locals now supply explicit evaluate-once bindings with normal
+reference, move and cleanup rules. Per-expansion lexical lookup boundaries
+prevent capture without changing written spellings. Local mutation and scoped
+loops lower through ordinary HIR/MIR; break/continue cannot leave the macro.
+Bounded nested diagnostics and the read-only editor expansion view expose the
+checked expansion without supplying a second execution model.
 
 This changes the earlier assertion direction: call-site closures or an empty
 ordinary function do not provide the required skipped-argument guarantee.
@@ -78,9 +84,9 @@ Further goals, not implemented by this slice:
   before any speculative semantic work, and keep matched ordinary model/session
   copies intact. The pending TLS integration's cache-fork adaptation is that
   prerequisite; these cache fields are not imported by the macro syntax slice.
-- Local binders/loops and value results need hygienic binding identities,
-  explicit local-exit and full-expression lifetime facts, with replayable MIR
-  cleanup and negative escape tests.
+- Value results and caller-directed exits need an explicit result/exit and
+  full-expression lifetime contract. Hygienic automatic locals and macro-owned
+  loops are implemented; returns and introduced propagation remain excluded.
 - Fresh callable-valued arguments need source-identity-preserving type
   discovery before substitution; a named callable works in the current profile.
 - Constant-context macro calls require the staged verified-MIR evaluation

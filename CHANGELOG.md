@@ -18,12 +18,18 @@ for what minor and patch releases mean.
 - Arguments are checked statically and evaluated where used, with hygienic
   definition/caller lookup, checked ownership and deterministic cleanup. There
   is no textual substitution, eager argument frame or escaping runtime thunk.
+- Automatic locals give explicit evaluate-once bindings with ordinary values,
+  references, moves and cleanup. Local mutation and scoped loops are supported;
+  macro-local names cannot capture caller names, and break/continue cannot
+  escape to a caller's loop.
 - `std::assert` and `std::debug_assert` now use this same facility. The previous
   `[[deferred]]` spelling is removed and diagnosed with migration guidance;
   macros and ordinary functions cannot share one callable name.
 - Formatter, Tree-sitter, macro semantic highlighting, hover and navigation
   follow the declaration identity. Example 174 demonstrates application-defined
   typed macros; example 172 retains the assertion workflow.
+- Diagnostics include nested expansion context. Neovim's read-only
+  `:GTIExpandMacro` view explains the checked expansion and local bindings.
 
 ## 0.465.3 — Moving classes that hold function items
 

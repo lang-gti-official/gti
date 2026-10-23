@@ -4988,6 +4988,12 @@ private:
     std::optional<ClassId> ownerClass;
     bool staticMember = false;
     bool definition = false;
+    // A definition may see only lexical frames created within its expansion.
+    // Captured argument syntax is capped at the invocation's lexical depth so
+    // later macro-local binders cannot capture same-spelled caller names.
+    std::size_t localScopeBegin = 0;
+    std::optional<std::size_t> localScopeEnd;
+    std::size_t lexicalLambdaDepth = 0;
     std::size_t declarationOrder = 0;
     std::optional<CallerLocationOrigin> caller;
     std::optional<Token> invocation;
@@ -5018,12 +5024,15 @@ private:
   std::vector<const FunctionDecl *> macroActiveBodies;
   [[nodiscard]] const MacroLookupContext *
   macroContext(const Token &token) const;
+  [[nodiscard]] std::pair<std::size_t, std::size_t>
+  macroLocalScopeRange(const Token &token) const;
   [[nodiscard]] bool analyzeMacroStatement(const ExpressionStmt &statement);
   [[nodiscard]] bool
   analyzeMacroSelection(const Call &call, const CallableCandidate &selected,
                         const std::vector<SemanticType> &typeArguments,
                         const std::vector<CompileTimeValue> &valueArguments);
-  [[nodiscard]] bool validMacroBody(const Stmt &statement) const;
+  [[nodiscard]] bool validMacroBody(const Stmt &statement,
+                                    std::size_t ownLoopDepth = 0) const;
   static constexpr std::size_t kConstexprForElementLimit = 1024;
   static constexpr std::size_t kConstexprForBodyLimit = 4096;
   // Bodies expanded by `constexpr for` inside the declaration being analysed.

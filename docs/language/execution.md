@@ -118,12 +118,33 @@ No closure, heap allocation, runtime helper frame or backend assertion rule is
 introduced by macro expansion itself. Expansion is synchronous; it does not
 schedule work, produce an asynchronous task, or run on scope exit.
 
-The current structural slice accepts blocks, ordinary `if` branches,
-configuration-selected statements and expressions without local binders or
-direct assignment/increment. Conditions and arguments supplied by callers
-may themselves mutate, allocate, borrow, move, or fail under ordinary rules.
-Put loops, local declarations, direct writes and lambdas in an ordinary helper
-called from the selected branch. Macro signatures have value expression
+Ordinary automatic locals provide explicit evaluate-once bindings:
+
+```gti
+#macro inspect_once(int expression) {
+  int saved = expression;
+  std::assert(saved >= 0);
+  std::println("{}", saved);
+}
+inspect_once(next_number()); // next_number runs once, when initialization is reached
+```
+
+Each invocation has a separate lexical scope and distinct local identities.
+Macro-local spellings cannot capture caller expressions, and callers cannot
+capture macro locals, even when their written names coincide. Local shadowing
+follows ordinary lexical rules. Values, named references, structured bindings,
+explicit moves and cleanup follow their normal rules: initialization does not
+implicitly clone an owner or extend a borrowed temporary's lifetime. A local
+binding not reached at runtime establishes no runtime resource or cleanup.
+
+The structural slice accepts blocks, ordinary `if`, configuration-selected
+statements, automatic locals, assignments/increments, and ordinary `for`,
+range-`for`, `while` and `do` loops. `break` and `continue` must target a loop
+within that macro; they cannot target a caller's loop. Returns, macro-introduced
+`?` propagation, static storage, lambda definitions and generated declarations
+remain excluded. Caller-written expressions retain ordinary effects and
+propagation rules. Use an ordinary helper for the excluded operations.
+Macro signatures have value expression
 parameters (including generic final packs and defaults), no `mut` bindings or
 reference parameters, and no `constexpr`, foreign/runtime binding, unsafe
 caller modifier, member/operator or `noreturn` form. Their bodies are typed
@@ -140,8 +161,8 @@ used inside another expression. Expansion has deterministic limits of 64
 nested calls and 4096 expanded bodies in one analysis request; recursive
 macro cycles are rejected without expanding the cycle repeatedly.
 
-These bounds describe a confined first slice, not implicit laziness for
-ordinary functions or a textual preprocessor. Supporting local binders,
+These bounds describe statement templates, not implicit laziness for
+ordinary functions or a textual preprocessor. Supporting
 value-producing macros or escaping deferred values requires a further
 semantic/IR lifetime contract, not a relaxation in the C++ emitter.
 

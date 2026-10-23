@@ -21,6 +21,15 @@ flow. Definition and invocation namespace/source/class domains stay distinct.
 Concrete generic context and tracked caller origins accompany body tokens;
 argument tokens retain their own origins. `SemanticModel` owns the checked
 statement expansion for the frontend snapshot and its instance deltas.
+Expansion lookup contexts also bound lexical frames: body tokens may see
+locals introduced by their own expansion, while substituted arguments are
+capped at their invocation's pre-expansion scope. A syntax-only lexical walk
+identifies expression-parameter uses not shadowed by local binders before
+cloning; ordinary symbols and typed places establish actual binding identity.
+Assignments to expression parameters become ordinary place assignments to the
+supplied expression, retaining its assignability, access and loan checks.
+Automatic locals, moves and macro-owned loop exits therefore reuse ordinary
+ownership flow and cleanup rather than an alternate macro lifetime system.
 HIR's shared expansion query retains only a selected root, preserving inherited
 synthetic-syntax stability accounting. Returned or copied HIR therefore keeps
 its reached ordinary, nested and concrete-instance expansion descendants alive
