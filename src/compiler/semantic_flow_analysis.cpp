@@ -11690,6 +11690,24 @@ auto SemanticVisitor::Impl::constraintImplies(GenericConstraintSet actual,
   if (hasConstraint(actual, required)) {
     return true;
   }
+  // Classification predicates carry the same primitive category facts as a
+  // source composition of the corresponding public concepts. These are type
+  // facts, not assumptions about arbitrary user-defined arithmetic.
+  if (required == GenericConstraintKind::Numeric &&
+      (hasConstraint(actual, GenericConstraintKind::Integral) ||
+       hasConstraint(actual, GenericConstraintKind::SignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::UnsignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::SignedNumeric) ||
+       hasConstraint(actual, GenericConstraintKind::FloatingPoint)))
+    return true;
+  if (required == GenericConstraintKind::Integral &&
+      (hasConstraint(actual, GenericConstraintKind::SignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::UnsignedIntegral)))
+    return true;
+  if (required == GenericConstraintKind::SignedNumeric &&
+      (hasConstraint(actual, GenericConstraintKind::SignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::FloatingPoint)))
+    return true;
   if (required == GenericConstraintKind::Relocatable &&
       hasConstraint(actual, GenericConstraintKind::BitwiseRelocatable)) {
     return true;

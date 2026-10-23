@@ -492,19 +492,23 @@ int main() {
       root, directory, "predicate-fact-forwarding.gti", R"(#include <std/meta>
 namespace queries {
   namespace reflected = std::meta;
+  using Boolean = bool;
   constexpr bool can_copy<T>() {
     return reflected::is_copy_constructible<T>();
   }
   constexpr bool copied_again<U>() { return can_copy<U>(); }
+  constexpr Boolean aliased_result<T>() { return can_copy<T>(); }
   constexpr bool can_transfer<T>() { return reflected::is_transferable<T>(); }
   constexpr bool representation<E, U>() {
     return reflected::is_enum_underlying<E, U>();
   }
 }
 concept snapshot<T> = queries::copied_again<T>();
+concept snapshot_alias<Boolean> = queries::aliased_result<Boolean>();
 concept portable<T> = queries::can_transfer<T>();
 concept represented_by<E, U> = queries::representation<E, U>();
 T copy_value<T>(T& value) requires snapshot<T> { return value; }
+T alias_copy<T>(T& value) requires snapshot_alias<T> { return value; }
 void needs_transfer<std::transferable T>(T& value) {}
 void relay<T>(T& value) requires portable<T> { needs_transfer<T>(value); }
 U underlying<E, U>(E value) requires represented_by<E, U> {
@@ -514,7 +518,8 @@ enum class Code : uint16_t { none = 0, failed = 1 };
 int main() {
   int32_t value = 7;
   relay(value);
-  return copy_value(value) - 7 + int(underlying<Code, uint16_t>(Code::none));
+  return copy_value(value) - alias_copy(value) +
+         int(underlying<Code, uint16_t>(Code::none));
 }
 )");
   expect(forwarded.diagnostics.empty() && forwarded.hirValid,
@@ -559,6 +564,64 @@ int main() { relay<MoveOnly>(); return 0; }
   expect(hasCode(wrongSubject, "GTI-S2029"),
          "proof of a different type cannot be rebound to a wrapper's generic "
          "parameter by matching its position or spelling");
+
+  const auto shadowedAlias = analyzeSource(
+      root, directory, "predicate-alias-shadowing.gti", R"(
+namespace declaration_scope {
+  using Subject = int32_t;
+  constexpr bool can_copy<T>() {
+    return std::meta::is_copy_constructible<Subject>();
+  }
+}
+concept claimed<Subject> = declaration_scope::can_copy<Subject>();
+void needs_copy<std::copy_constructible T>() {}
+void relay<Subject>() requires claimed<Subject> { needs_copy<Subject>(); }
+class MoveOnly {
+public:
+  MoveOnly() {}
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+int main() { relay<MoveOnly>(); return 0; }
+)");
+  expect(hasCode(shadowedAlias, "GTI-S2029"),
+         "a caller generic parameter cannot shadow an unrelated type alias "
+         "inside the predicate declaration's lexical scope");
+
+  const auto outerShape = analyzeSource(
+      root, directory, "reflection-known-outer-shape.gti", R"(
+struct Envelope<T> { T value; };
+class Opaque<T> {};
+constexpr int32_t classify<T>() {
+  static_assert(std::meta::is_struct<Envelope<T>>());
+  static_assert(std::meta::is_class<Opaque<T>>());
+  static_assert(!std::meta::is_class<T*>());
+  if constexpr (std::meta::is_class<T>()) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+constexpr int32_t projected<T>() {
+  if constexpr (std::meta::is_struct<std::meta::field_type<Envelope<T>, 0>>()) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+static_assert(classify<Opaque<int32_t>>() == 1);
+static_assert(classify<int32_t>() == 2);
+static_assert(projected<int32_t>() == 2);
+static_assert(projected<Envelope<int32_t>>() == 1);
+int main() { return 0; }
+)");
+  expect(outerShape.diagnostics.empty() && outerShape.hirValid,
+         "known outer nominal/pointer categories fold with nested open "
+         "arguments while a bare T remains dependent until substitution");
+  for (const auto &diagnostic : outerShape.diagnostics) {
+    std::cerr << "  outer shape: " << diagnostic.code << ": "
+              << diagnostic.message << '\n';
+  }
 }
 
 void checkPhase3(const std::filesystem::path &root,

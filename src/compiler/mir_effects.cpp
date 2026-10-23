@@ -666,6 +666,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "meta-type-attribute-count",
     "meta-type-has-attribute",
     "meta-type-trait",
+    "meta-type-relation",
     "meta-enumerator-count",
     "meta-enumerator-name",
     "meta-enumerator-value",

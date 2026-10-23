@@ -26,6 +26,28 @@ struct RawAddress { int32_t* value = nullptr; };
 [[no_transfer, no_share]] struct ThreadAffine { int32_t value = 0; };
 enum class Code : uint16_t { none = 0, failed = 1 };
 enum Tagged { empty, value(int32_t item) };
+struct Envelope<T> { T value; };
+class Opaque<T> {};
+
+// A known outer category can fold before its nested type is concrete. A bare
+// type parameter and a computed field-type projection must still defer.
+constexpr int32_t classify<T>() {
+  static_assert(std::meta::is_struct<Envelope<T>>());
+  static_assert(std::meta::is_class<Opaque<T>>());
+  static_assert(!std::meta::is_class<T*>());
+  if constexpr (std::meta::is_class<T>()) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+constexpr int32_t projected<T>() {
+  if constexpr (std::meta::is_struct<std::meta::field_type<Envelope<T>, 0>>()) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
 
 static_assert(std::meta::is_integral<int32_t>());
 static_assert(std::meta::is_unsigned_integral<uint32_t>());
@@ -62,9 +84,24 @@ static_assert(!std::meta::is_enum_underlying<int32_t, int32_t>());
 static_assert(std::meta::is_same<int32_t, int32_t>());
 static_assert(!std::meta::is_same<int32_t, uint32_t>());
 static_assert(std::meta::type<Coordinates>().is_copyable());
+static_assert(std::meta::type<Coordinates>().is_copy_constructible());
+static_assert(std::meta::type<MoveOnly>().is_move_constructible());
+static_assert(std::meta::type<Coordinates>().is_movable());
+static_assert(std::meta::type<Coordinates>().is_relocatable());
+static_assert(std::meta::type<Coordinates>().is_bitwise_relocatable());
 static_assert(std::meta::type<Coordinates>().is_transferable());
+static_assert(std::meta::type<Coordinates>().is_shareable());
+static_assert(std::meta::type<Coordinates>().is_default_initializable());
+static_assert(std::meta::type<Code>().is_integral_enum());
+static_assert(std::meta::type<uint32_t>().is_unsigned_integral());
+static_assert(std::meta::type<double>().is_numeric());
+static_assert(std::meta::type<double>().is_signed_numeric());
 static_assert(std::meta::type<Code>().has_underlying_type<uint16_t>());
 static_assert(std::meta::type<Code>().is_same<Code>());
+static_assert(classify<Opaque<int32_t>>() == 1);
+static_assert(classify<int32_t>() == 2);
+static_assert(projected<int32_t>() == 2);
+static_assert(projected<Envelope<int32_t>>() == 1);
 
 // Runtime observations and constexpr evaluation consume the same folded facts.
 bool independent_fact<T>() {
@@ -75,5 +112,7 @@ bool independent_fact<T>() {
 int main() {
   return independent_fact<Coordinates>() &&
          !std::meta::is_copy_constructible<MoveOnly>() &&
-         std::meta::is_enum_underlying<Code, uint16_t>() ? 0 : 1;
+         std::meta::is_enum_underlying<Code, uint16_t>() &&
+         classify<Opaque<int32_t>>() == 1 && classify<int32_t>() == 2 &&
+         projected<int32_t>() == 2 && projected<Envelope<int32_t>>() == 1 ? 0 : 1;
 }

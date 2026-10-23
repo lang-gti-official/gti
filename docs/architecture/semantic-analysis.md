@@ -1011,6 +1011,26 @@ exact type identity and exact integral-enum underlying representation; the
 latter reuses the ordinary structural `EnumUnderlying` rule. These queries
 fold through the existing constant-substitution path and add no separate
 constant interpreter or executable reflection operation.
+
+The category query can fold a known outer nominal/array/reference/pointer
+shape even when nested arguments remain open, because those arguments cannot
+change that category. Bare type/pack parameters and deferred compiler-computed
+type projections remain dependent. Both direct analysis and constant execution
+use the same `metaQueryConstant` answer; partial kind knowledge does not infer
+layout, lifecycle eligibility or the contents of a generic argument.
+
+An early namespace-function declaration index belongs to the same request-local
+`SemanticCatalog`, including its sealed shape and snapshot/copy contract. It
+exists because concepts are resolved before ordinary callable registration.
+Proof discovery follows only a unique visible, safe, no-value-argument
+`constexpr bool` source wrapper whose single return expression is another such
+call, terminating at an identity-bound reflection fact query. Namespace aliases
+and declaration visibility use the ordinary lookup policy; wrapper arguments
+are resolved in the caller, then declaration lookup hides the caller's generic
+and class scopes. Cycles, ambiguity and opaque computations supply no implied
+type fact. This index never selects executable calls or interprets an arbitrary
+predicate; concrete predicate validation and constant execution remain the
+ordinary semantic/constexpr path.
 `field_attributes`, `type_attributes`, `enumerator_list`, `payload_list`,
 `payload_type`, `base_list` and `argument_list` are further computed
 compiler types rewritten by `rewriteCompilerType`.
