@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.465.5 — Iterators and carriers from returned references
+## 0.465.7 — Iterators and carriers from returned references
 
 - A text iterator can now be built directly from a view that a call returns
   by reference. For `std::string_view& Box::get()`, `box.get().begin()`,
@@ -30,6 +30,26 @@ for what minor and patch releases mean.
 - Not yet supported: constructing a carrier class directly from a returned
   reference, as in `Cursor(box.get())`, still reports `GTI-B0001`. Call a
   function that constructs it, as `open(box.get())` does.
+
+## 0.465.6 — Moving one class and copying another after fallible work
+
+- A constructor can now move one class into a field and copy another into a
+  later field after an initializer that can fail, when both classes have no
+  destructor and their fields are scalars, enums, pointers, text views or
+  classes of the same kind. `Shelved(Pair moved, Pair copied) :
+  ledger(Ledger(31, divisor)), moved(std::move(moved)), copied(copied)` used
+  to report `error[GTI-B0001]` (an internal compiler error) in either
+  declaration order of the two fields; it now works. If a later initializer
+  or the constructor body fails, each field already built is dropped exactly
+  once.
+
+## 0.465.5 — Test-target editor diagnostics
+
+- The language server recognizes `kind = "test"` and no longer asks valid
+  annotated suites to define `main`. Test-entry rules still diagnose empty
+  suites, invalid test signatures and conflicting user-written entry points.
+  Changing a target between executable and test refreshes editor diagnostics.
+  Generated test dispatchers stay out of editor source snapshots and symbols.
 
 ## 0.465.4 — Text relays through accessor switch subjects
 

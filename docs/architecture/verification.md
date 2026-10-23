@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Carriers of returned references (0.465.5)
+## Carriers of returned references (0.465.7)
 
 `accessor_text_carrier_runtime` runs `accessor_text_carriers.gti` in all
 eight native modes, including the sanitized one. It builds text iterators
@@ -41,6 +41,45 @@ Not covered: constructing a carrier class directly from a returned reference
 (`Cursor(box.get())`) still stops in MIR construction, with "carrier reference
 result requires one exact stored dependency" for literal text and "dependent
 text value is relayed where its text field may outlive" for owned text.
+
+## Passive class moved beside a passive copy (0.465.6)
+
+`passive_class_move_and_copy_runtime` runs `passive_class_move_and_copy.gti`.
+- `Shelved` moves a `Pair` and copies another after a `Ledger` field that can
+  fail. `Reordered` copies a text-view `Name` declared before the moved one.
+  `Gauge` moves a scalar after a read of its formal beside a `Pair` copy.
+- When the ledger itself fails, the object has no ledger to drop. When a later
+  sibling or the body fails, the built ledger is rolled back exactly once, and
+  `main`'s live ledgers close once each. Every failure exits with status 70
+  and the division diagnostic.
+- Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan.
+  The main compiler (`6333da11`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`,
+`testPassiveClassMoveAndCopyAfterFallibleSibling` checks four points:
+- the move is body-staged and the copy is an exact parameter copy, for both
+  `Shelved` and `Gauge`;
+- the failure form admits both;
+- the emitted `Shelved` starts `moved` empty and publishes it after the
+  ledger, while `copied(__gti_mir_arg_1)` stays in the member-initializer list;
+- a copy whose records are reordered fails closed.
+
+Mutation checks:
+- without `failureConstructorHoistablePassiveCopy`, both admissions fail;
+- without its adjacency guard, the reordering forgery is accepted;
+- without `everyFormalCopyWitnessed`, the stripped full-expression forgery of
+  the existing `testMixedConstructorParameterFields` is accepted.
+
+The same stripping forgery applied to the hoisted copy is accepted on main as
+well. That copy has no witness, so it falls back to the existing body-ordered
+copy route.
+
+An `--emit-cpp` differential against main `6333da11`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1,823 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3:
+- 3,644 of 3,646 compilations emit byte-identical C++, and failing pairs
+  report identical diagnostics;
+- only the new fixture changes status, from `GTI-B0001` to success.
 
 ## Classes holding function items (0.465.3)
 
