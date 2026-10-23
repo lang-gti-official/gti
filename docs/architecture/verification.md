@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Array fields from constructor parameters (0.465.4)
+## Array fields from constructor parameters (0.465.5)
 
 `array_field_constructor_elements_runtime` runs
 `array_field_constructor_elements.gti`. Constructors of user-defined structs
@@ -13,7 +13,7 @@ shows each element's value, that copied parameters are still readable, and
 that every counted object is destroyed exactly once, as an element. With an
 argument the first index is out of range and fails with `GTI-R0007` (exit
 status 70). Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and
-ASan/UBSan. The 0.465.3 compiler stops the fixture with `GTI-B0001`.
+ASan/UBSan. The 0.465.4 compiler stops the fixture with `GTI-B0001`.
 
 In `cpp_mir_body_emitter_lifecycle`, `testArrayFieldConstructorElements`
 checks that the constructors spell their parameters inside the field's
@@ -23,10 +23,17 @@ element class without a copy constructor, a moved element whose obligation
 does not leave at the aggregate, a lifecycle-free move of a class with a
 destructor, and a failure site on a moved element each refuse the body.
 
-An emitted-C++ differential against the 0.465.3 emitter, run on every program
+An emitted-C++ differential against the 0.465.4 emitter, run on every program
 under `tests/fixtures`, `tests/coverage` and `examples` at O0 and O3 with one
-`GTI_STDLIB_PATH`, changes only the programs this rule admits or respells; the
-PR records the exact counts.
+`GTI_STDLIB_PATH` (1831 programs, 3662 runs; `namespace-depth-63` excluded
+for its compile time), leaves 2904 runs identical and 740 refused by both
+with the same codes. No program is newly refused or changes its refusal, and
+nothing times out. Only the new fixture becomes accepted. Text changes in 8
+programs. Six spell staged element copies inline: `012-fixed-arrays`, three
+`a42-*` reproducers, `passive_fixed_array_values` and `raw_record_containers`.
+`class_array_arguments` and `storage_fixed_array_emplacement` gain a plain
+constructor for a by-value array of passive classes, so their callers drop a
+dead failure branch. The owning runtime tests of all eight pass.
 
 ## Classes holding function items (0.465.3)
 
@@ -306,6 +313,30 @@ byte-identical C++, with no text differences. Only example 170 and the new
 - `borrow_origin` now counts `Box<std::string_view>::get()` in
   `borrow_stored_view_return.gti` as a field relay rather than an ownerless
   return, and checks its three stored-view mutations.
+
+## Text relays through accessor switch subjects (0.465.4)
+
+`ownerless_text_contracts` covers `testAccessorSubjectRelays`.
+- `switch (this.wordRef())` relays an `auto&` text payload as
+  `switch (this.word)` does. A view over a local owner passes and prints
+  `line.viaCall()`.
+- `firstCall()` binds the payload by value through the accessor and carries
+  the field's ownerless requirement. MIR rejects it with that requirement
+  cleared (`omits an independently derived requirement`), deriving the field
+  through the accessor's own verified body. With that derivation removed the
+  mutation passes, which is how 0.465.2 compiled a dangling view.
+- At source, `GTI-S2045` rejects `kept = line.firstCall()`,
+  `kept = line.viaCall()`, and a function returning `firstCall()` of a local
+  owner. `GTI-S2017` rejects mutating the owner while a relayed view lives.
+- The same holds for an accessor with an argument (`this.pick(0)`), an
+  implicit `wordAt()`, an implicit `return word;` body, and an accessor that
+  returns one of two fields (a whole use). Each also compiles and verifies
+  over static text, so MIR never derives a requirement semantics omitted.
+- `borrow_origin_runtime` runs `borrowed_enum_reference_subjects.gti` with both
+  relays over owned text in every mode.
+- An accessor that returns another accessor's reference, such as
+  `int& kindOf() { return this.kindRef(); }`, stays a whole receiver use. So a
+  relay through it does not reach text owned elsewhere.
 
 ## Text read through returned references (0.462.0)
 
