@@ -146,3 +146,8 @@ Report:
 Do not call a change verified while a required gate is failing or unrun. State
 "partially verified" when environmental limits or task scope leave required
 evidence outstanding.
+
+GitHub CI is advisory, not one of those required acceptance gates. Do not wait
+for Actions to pass before handing off or merging locally validated work.
+Keep local/managed-runner requirements intact and distinguish their evidence
+from pending or failed CI feedback; a known CI failure is not a passing result.

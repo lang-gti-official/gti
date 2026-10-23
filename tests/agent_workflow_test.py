@@ -735,7 +735,7 @@ class ValidationChecks(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validation.build_cache(root, build)
 
-    def test_ci_draft_and_component_can_never_be_merge_gates(self):
+    def test_ci_draft_and_component_report_incomplete_integration(self):
         successes = {name: {"result": "success"} for name in
                      ("validation-plan", "automation-tests", "formatting", "release-version", "tree-sitter",
                       "build-and-test", "compiler-sanitizers")}
@@ -838,8 +838,11 @@ class BatchLifecycle(unittest.TestCase):
         with self.assertRaisesRegex(Error, "Full combined"):
             self.flow.finish("combined", "Must not merge focused-only batch")
         state = self.bind_full(state)
-        self.flow.protection(True, batch_gate=True)
-        self.flow.finish("combined", "Full combined tests passed")
+        self.assertEqual(self.api.rule["required_status_checks"]["contexts"], [])
+        with unittest.mock.patch.object(self.api, "request", wraps=self.api.request) as requests:
+            self.flow.finish("combined", "Full combined tests passed; GitHub CI is advisory")
+        self.assertFalse(any("/actions/" in call.args[1] or "/check-runs" in call.args[1]
+                             for call in requests.call_args_list))
         self.assertTrue(all(self.flow.ancestor(head, git(self.primary, "rev-parse", "HEAD")) for head in heads))
         self.assertEqual(self.flow.load("combined")["phase"], "synced")
 
@@ -922,14 +925,16 @@ class BatchLifecycle(unittest.TestCase):
         self.assertNotIn("integration_batch", self.flow.load("one"))
         self.assertEqual(self.flow.load("one")["phase"], "ready-for-integration")
 
-    def test_batch_gate_activation_preserves_existing_review_and_app_pins(self):
+    def test_advisory_ci_removes_contexts_and_app_pins_but_preserves_reviews(self):
         self.api.rule = {"required_status_checks": {"strict": True, "contexts": ["existing"],
                          "checks": [{"context": "existing", "app_id": 42}]},
                          "required_pull_request_reviews": {"required_approving_review_count": 2}}
-        result = self.flow.protection(True, batch_gate=True)
-        self.assertEqual(result["required_status_checks"]["contexts"], ["existing", "Validation gate"])
-        self.assertEqual(result["required_status_checks"]["checks"], [{"context": "existing", "app_id": 42}])
+        result = self.flow.protection(True, advisory_ci=True)
+        self.assertEqual(result["required_status_checks"], {"strict": True, "contexts": [], "checks": []})
         self.assertEqual(result["required_pull_request_reviews"]["required_approving_review_count"], 2)
+        self.assertTrue(result["enforce_admins"]["enabled"])
+        self.assertFalse(result["allow_force_pushes"]["enabled"])
+        self.assertFalse(result["allow_deletions"]["enabled"])
 
     def test_batch_manifest_requires_ancestry_and_becomes_immutable(self):
         state = self.combined()

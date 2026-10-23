@@ -372,13 +372,15 @@ jobs:
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
   validation-gate:
-    name: Validation gate
+    # Advisory feedback only. Exact-source local/remote validation gates merge;
+    # GitHub runner availability must not gate development or integration.
+    name: Validation summary
     runs-on: ubuntu-latest
     if: always()
     needs: [validation-plan, automation-tests, formatting, release-version, tree-sitter, build-and-test, compiler-sanitizers]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Require complete integration evidence
+      - name: Report integration CI evidence
         env:
           GTI_VALIDATION_MODE: ${{ needs.validation-plan.outputs.mode }}
           GTI_VALIDATION_RESULTS: ${{ toJSON(needs) }}

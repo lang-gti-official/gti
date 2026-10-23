@@ -434,10 +434,13 @@ checks never mark the task ready.
 Finish merges through GitHub with `merge_method: merge` and `sha` pinned to
 the validated head, so a branch that moved is refused. The `main` protection
 rule requires a pull request and an up-to-date branch, binds administrators,
-and denies force pushes and deletion. Existing required checks and reviews are
-preserved and enforced by GitHub. Pending/rejected requirements
-leave work unmerged; an agent resumes after they change rather than claiming
-completion. Release workflows run after integration and need not finish before
+and denies force pushes and deletion. Required reviews remain enforced by
+GitHub. GitHub CI is advisory and never delays a locally validated merge or
+task completion. The owner-authorized
+`protection --configure --advisory-ci` clears required status contexts and app
+pins, preserving strict freshness, admin enforcement and review settings. Do
+not force a merge or bypass a server rule. Release workflows run after
+integration and need not finish before
 local installation. VERSION follows normal repository policy; workflow-only
 automation does not change the packaged compiler version.
 
@@ -525,8 +528,9 @@ The admission binds head/base, plan and platform requirements. The original
 failure log is represented by its SHA256 in the portable plan, not uploaded.
 
 The result is **ready for integration**, not fully verified, merged or released.
-An attached PR-body marker keeps component CI blocked even if someone marks
-it ready manually. A changed source must be reconciled, published and admitted
+An attached PR-body marker makes CI report incomplete integration even if
+someone marks it ready manually; the helper independently refuses direct
+component integration. A changed source must be reconciled, published and admitted
 again. `batch withdraw <task> --reason <text>` clears an unassigned admission
 for normal independent validation; it does not authorize a partial merge.
 Withdrawal requires a draft PR so marking it ready starts independent CI.
@@ -585,18 +589,20 @@ Release closes the unsuccessful batch while preserving its branch/worktree
 and returns its members to the queue. Do not erase conflict work to release it.
 
 Normal `finish` refuses component admissions and requires full platform evidence
-for batches. Required reviews and server checks still apply. An umbrella merge
+for batches. Required reviews and strict PR freshness still apply; GitHub CI
+does not gate acceptance. An umbrella merge
 preserves all original commits and GitHub marks included original PRs merged;
 confirm their states and run their normal sync/cleanup. The primary checkout,
 backup mirror and release policy remain the normal completion boundary.
 
-### CI admission
+### Advisory CI feedback
 
 Draft and admitted component PRs run formatting, version, grammar and workflow
-regressions, without starting native full builds. Their `Validation gate`
-deliberately reports **awaiting integration** and blocks direct merge. Independent
-or batch candidates become ready for review to start final CI. Compiler changes
-require the existing full native and compiler-sanitizer jobs. A conservative
+regressions, without starting native full builds. Their `Validation summary`
+reports **awaiting integration**; helper admission rules, not a GitHub status,
+block direct component merge. Independent or batch candidates become ready for
+review to start additional CI. Compiler changes run the existing full native
+and compiler-sanitizer jobs as advisory feedback. A conservative
 automation-only diff uses the workflow tests plus the inexpensive gates; CMake,
 compiler tests, runtime, packaged scripts, release packaging and unknown paths
 still select full coverage. The helper does not restart CI on an unchanged
@@ -607,12 +613,20 @@ the actual diff and does not reserve a broad-suite slot. Compiler changes
 cannot use that path. An active `verify` is atomically refused on duplicate
 submission; resume the recorded operation instead.
 
-After this workflow is published, activate the owner-authorized required
-`Validation gate` with `protection --configure --batch-gate`. This adds to,
-and preserves, existing required contexts, app pins and review counts. No
-administrative bypass or removal of an existing required native check is
-permitted. If an existing policy requires native CI even for automation changes,
-it continues to block until that separately authorized policy is changed.
+Owner policy revision (2026-10-23): GitHub runner availability is not a merge,
+development or completion prerequisite. Never wait for queued/running Actions
+or require a passing GitHub check. Keep all mandatory optimized local or
+managed-runner validation, full combined compiler suites, required platform
+and performance evidence, PR freshness and reviews. Record pending/failed CI
+honestly and investigate known failures without mislabeling them as passes or
+hiding local failures. Do not submit duplicate validation to occupy a CI queue.
+
+Apply the explicitly owner-authorized
+`protection --configure --advisory-ci` policy to remove required status contexts
+and app pins; it preserves strict/up-to-date PRs, admin enforcement, review
+requirements, and force-push/deletion restrictions. Do not reintroduce a required
+CI gate or administratively bypass a server rejection. This revises the earlier
+proposal for a required `Validation gate`; local acceptance remains mandatory.
 
 ## Early combined preview
 

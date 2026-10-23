@@ -1,6 +1,6 @@
 ---
 name: finish-release
-description: Apply GTI version and release policy to validated work delivered through the agent-workflow PR lifecycle. Use when an implementation is ready to deliver or the user asks to commit, publish or release. Required PR checks precede integration; asynchronous release packaging does not block completion.
+description: Apply GTI version and release policy to locally validated work delivered through the agent-workflow PR lifecycle. Use when an implementation is ready to deliver or the user asks to commit, publish or release. GitHub CI and asynchronous release packaging do not block completion.
 ---
 
 # Finish A GTI Release
@@ -21,7 +21,8 @@ policy below without bypassing that lifecycle.
   and release notes in the combined candidate. Do not tag, install or publish
   a stable release from an admitted component. Complete the canonical
   [batch validation contract](../../../docs/architecture/agent-workflow.md#risk-based-batch-validation)
-  and required platform/CI gates before merging the batch and syncing main.
+  and required local/managed-runner platform gates before merging the batch and
+  syncing main. GitHub CI is advisory and must not delay this boundary.
 - Treat a change as release-bearing when repository version policy requires a
   `VERSION` advance, when it changes shipped behavior or packaging, or when the
   user explicitly requests a release.
@@ -71,8 +72,9 @@ unvalidated tree by hand.
 
 ## Finish After Dispatch
 
-Respect required PR checks/reviews before integration; never force a merge or
-administratively bypass them. Once integration and local-main sync succeed,
+Respect required local validation, PR freshness and reviews before integration;
+never force a merge or administratively bypass them. Do not wait for advisory
+GitHub CI; record its actual pending/failed state separately. Once integration and local-main sync succeed,
 report the PR, commit, intended version when applicable, validation and cleanup.
 Do not wait for post-merge packaging or release publication. A merge/sync failure
 is an incomplete task and must remain visible; a later asynchronous packaging

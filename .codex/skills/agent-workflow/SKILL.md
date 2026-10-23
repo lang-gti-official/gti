@@ -93,7 +93,8 @@ For concurrent fixes, use the canonical
   then `batch resume`. Run `batch verify` on the combined source for each
   required platform. This executes the full suite and all members' required
   tests and rejects missing/skipped regressions. Use the ordinary `finish`
-  only after full evidence and CI admission pass. Never merge `preview`.
+  only after full exact-source/platform evidence passes. GitHub CI is advisory.
+  Never merge `preview`.
 - Diagnose combined failures before changing tests. The owner of the violated
   invariant repairs its patch, or the integrator releases the batch with a
   reason and prepares a new explicit selection. Source heads cannot silently
@@ -103,13 +104,16 @@ For concurrent fixes, use the canonical
   work and returning its members to the queue. Normal sync/cleanup still
   applies to all confirmed integrated original PRs after the umbrella merge.
 
-Draft/component CI intentionally blocks direct integration and skips full
-native builds. Mark independent/candidate PRs ready to start their final CI
-campaign. The required `Validation gate` permits no compiler merge until
-full native and sanitizer jobs pass; automation-only diffs use their tested
-workflow path. Retrying `finish` with an unchanged description does not restart
-CI. Activate the published gate with `protection --configure --batch-gate`,
-preserving existing requirements as authorized in `AGENTS.md`.
+Draft/component CI skips full native builds and reports incomplete integration;
+the helper, not GitHub CI, blocks component merges until combined validation.
+Ready independent/candidate PRs start additional CI feedback. GitHub CI is
+advisory: never wait for it before merge, synchronization or completion, and do
+not duplicate validation because Actions is queued. Retain required optimized
+local/managed-runner coverage, including full combined/platform evidence.
+Report CI as pending/failed when applicable, never as passed. Retrying `finish`
+with an unchanged description does not restart CI. The owner authorizes
+`protection --configure --advisory-ci` to remove required check contexts/app
+pins while preserving strict PR freshness, admin enforcement and reviews.
 
 1. Run `reconcile <task>` to merge current `origin/main` into the task branch
    and push. Resolve any conflicts in this worktree; do not force-push.
@@ -146,16 +150,18 @@ preserving existing requirements as authorized in `AGENTS.md`.
    GitHub with the exact tested head, then attempts a local-main fast-forward
    and pushes `main` and the tags to the `gitea` mirror remote.
    Use `--pr-only` when the user requested review before integration.
-4. Required server checks/reviews are respected; never force or administratively
-   bypass a rejection. Wait using the product's wait/continuation facilities
-   when needed, then retry after the cause changes. Do not silently downgrade
-   the outcome to "PR opened". Packaging/nightly/stable jobs after integration
+4. Required reviews and PR freshness are respected; never force or administratively
+   bypass a rejection. If old required CI contexts remain, apply the separately
+   owner-authorized advisory-CI protection policy; do not bypass a server rule.
+   Do not wait for advisory CI or silently downgrade the outcome to "PR opened".
+   Packaging/nightly/stable jobs after integration
    do not block completion or the user's local installation.
 
 `protection` audits server enforcement. `protection --configure` installs the
 owner-approved `main` rule denying direct/force pushes and bypasses and requiring
-an up-to-date branch. It preserves existing review/status-check requirements.
-Changing those requirements requires separate authorization.
+an up-to-date branch. By default it preserves review/status-check requirements;
+the owner-authorized `--advisory-ci` policy removes only required status checks.
+Other changes to those requirements need separate authorization.
 
 ## Sync, cleanup and recovery
 

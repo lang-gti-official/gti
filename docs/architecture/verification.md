@@ -9511,10 +9511,13 @@ The owning automation regression `agent_workflow` exercises real disposable
 Git repositories: exact membership and ancestry, original-PR preservation,
 conflict resume, duplicate-batch exclusion, withdrawal/release, stale source
 and missing-platform refusal, complete CTest inventories/results, required
-regression skips, optimized build ownership, and CI admission. Workflow-only
+regression skips, optimized build ownership, and advisory CI classification. Workflow-only
 changes use these tests and their affected tooling gates rather than a full
 GTI semantic suite. CI still runs full native/sanitizer coverage for compiler
-integration candidates.
+integration candidates as advisory feedback. GitHub Actions never gates local
+validation, integration or completion; preserve exact-source local/managed-runner
+coverage and required platform/performance evidence, and report pending/failed
+CI separately rather than waiting for runner capacity or calling it passed.
 
 ## Development And Completion Cadence
 

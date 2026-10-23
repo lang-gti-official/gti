@@ -504,13 +504,13 @@ class Workflow:
             if state["phase"] == expected:
                 self.save(state, phase)
 
-    def protection(self, configure=False, batch_gate=False):
+    def protection(self, configure=False, advisory_ci=False):
         rule = self.api.request("GET", "/branches/main/protection")
         if configure:
             checks = (rule or {}).get("required_status_checks") or {}
-            contexts = list(checks.get("contexts") or [])
-            if batch_gate and "Validation gate" not in contexts:
-                contexts.append("Validation gate")
+            # Explicit owner policy: GitHub CI is advisory. Keep strict PR
+            # freshness and review protection without requiring runner capacity.
+            contexts = [] if advisory_ci else list(checks.get("contexts") or [])
             reviews = (rule or {}).get("required_pull_request_reviews") or {}
             payload = {
                 # Up-to-date branches only: this closes the fetch/merge race.
@@ -532,7 +532,9 @@ class Workflow:
                     ((rule or {}).get("required_conversation_resolution") or {}).get("enabled", False)),
                 "block_creations": False,
                 "lock_branch": False}
-            if checks.get("checks"):
+            if advisory_ci:
+                payload["required_status_checks"]["checks"] = []
+            elif checks.get("checks"):
                 payload["required_status_checks"]["checks"] = checks["checks"]
             rule = self.api.request("PUT", "/branches/main/protection", payload)
 
@@ -801,7 +803,7 @@ def main():
     sub.add_parser("status").add_argument("task", nargs="?")
     protection = sub.add_parser("protection")
     protection.add_argument("--configure", action="store_true")
-    protection.add_argument("--batch-gate", action="store_true", help="add the published CI Validation gate without removing existing requirements")
+    protection.add_argument("--advisory-ci", action="store_true", help="remove required GitHub CI contexts while preserving PR freshness and reviews (owner-authorized)")
     sub.add_parser("preview", help="optionally submit a detached combined preview job").add_argument(
         "arguments", nargs=argparse.REMAINDER)
     sub.add_parser("batch", help="admit focused fixes and validate an explicit combined batch").add_argument(
@@ -836,9 +838,9 @@ def main():
             elif args.command == "abandon":
                 result = workflow.abandon(args.task, args.reason)
             elif args.command == "protection":
-                if args.batch_gate and not args.configure:
-                    raise WorkflowError("--batch-gate requires --configure after publishing its workflow")
-                result = workflow.protection(args.configure, args.batch_gate)
+                if args.advisory_ci and not args.configure:
+                    raise WorkflowError("--advisory-ci requires --configure and owner authorization")
+                result = workflow.protection(args.configure, args.advisory_ci)
             else:
                 result = getattr(workflow, args.command)(args.task)
         print(json.dumps(result, indent=2))
