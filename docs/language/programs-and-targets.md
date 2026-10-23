@@ -117,7 +117,7 @@ abnormal process exit fails that test.
 A manifest target with `kind = "test"` selects one explicit suite root. Its
 source graph supplies the tests in the selected package; dependency and trusted
 standard-library tests are not automatically run. Qualified names determine
-stable ordering and reporting. One native executable is built for the suite,
+stable discovery ordering and result identities. One native executable is built for the suite,
 then each test runs in a fresh process with fresh globals and normal hosted
 initialization/cleanup. A panic terminates its child, and later tests continue.
 The command reports every result and returns the first failing child status in

@@ -1722,6 +1722,8 @@ catalog rules, bounded overlapping children, timeout progress, exact signal vers
 ordinary status (including 127 and 143), failed exec, moved process ownership and
 background descendant termination on both completion and timeout. It uses native
 host children, so its outcome does not depend on GTI-generated checks.
+Streaming observers must receive complete payloads before the driver releases
+their allocated storage; retained result facts preserve stable failure selection.
 `test_report` parses serialized events with Python's JSON implementation,
 including control bytes, valid/invalid UTF-8, hostile output, all status variants,
 large counts and non-C numeric locales.
@@ -1733,6 +1735,14 @@ inventory/start/completion identity equality and exact terminal counts externall
 SIGINT and SIGTERM during execution must terminate/reap isolated children, emit
 incomplete summaries, and preserve interruption status. Closed standard streams
 must not alias private capture or exec-handshake descriptors.
+Parallel human reports include target identities when different targets contain
+the same qualified test name.
+`process_capture_failure` injects actual stdio failures around real child
+processes: seek, tell, partial read and close errors must become runner errors,
+while empty output and a genuine status 127 preserve their distinct outcomes.
+`macos_installed_runtime` also executes an annotated test project through relocated
+installed resources, covering the source-defined checks and JSON worker results
+without source-tree standard-library overrides.
 
 `annotated_test_suites` checks the runnable `examples/annotated-tests` project
 at O0/C++20 and O3/C++23, included test declarations, independent global state,

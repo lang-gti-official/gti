@@ -1,5 +1,6 @@
 #include "gti/driver/process.h"
 #include "gti/driver/test_runner.h"
+#include <algorithm>
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>

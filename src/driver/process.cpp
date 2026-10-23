@@ -34,36 +34,72 @@ processArguments(const std::vector<std::string> &arguments) {
   return result;
 }
 
-std::string readCapture(std::FILE *capture) {
-  if (std::fseek(capture, 0, SEEK_END) != 0) {
-    return {};
+void captureError(ProcessResult &result, std::string_view operation,
+                  int error) {
+  if (!result.driverDiagnostic) {
+    result.driverDiagnostic =
+        "gti: failed to " + std::string(operation) +
+        " captured process output: " + std::strerror(error == 0 ? EIO : error);
   }
+  // Preserve the actual failure of an already-failing child, including a real
+  // exit 127. Capture failure must never turn an otherwise successful child
+  // into a passing test with missing output.
+  if (result.exitCode == 0)
+    result.exitCode = 74;
+}
+
+void readCapture(std::FILE *capture, ProcessResult &result) {
+  errno = 0;
+  if (std::fseek(capture, 0, SEEK_END) != 0) {
+    captureError(result, "seek", errno);
+    return;
+  }
+  errno = 0;
   const long capturedSize = std::ftell(capture);
-  if (capturedSize <= 0 || std::fseek(capture, 0, SEEK_SET) != 0) {
-    return {};
+  if (capturedSize < 0) {
+    captureError(result, "determine size of", errno);
+    return;
+  }
+  if (capturedSize == 0)
+    return;
+  errno = 0;
+  if (std::fseek(capture, 0, SEEK_SET) != 0) {
+    captureError(result, "seek", errno);
+    return;
   }
 
-  std::string output(static_cast<std::size_t>(capturedSize), '\0');
+  result.output.resize(static_cast<std::size_t>(capturedSize));
   std::size_t total = 0;
-  while (total < output.size()) {
-    const std::size_t size = std::fread(output.data() + total, sizeof(char),
-                                        output.size() - total, capture);
+  while (total < result.output.size()) {
+    errno = 0;
+    const std::size_t size =
+        std::fread(result.output.data() + total, sizeof(char),
+                   result.output.size() - total, capture);
+    const int readError = errno;
     total += size;
-    if (size == 0 || std::feof(capture) != 0 || std::ferror(capture) != 0) {
+    if (std::ferror(capture) != 0) {
+      captureError(result, "read", readError);
+      break;
+    }
+    if (size == 0 || std::feof(capture) != 0) {
+      // The seek/tell snapshot promised these bytes. A premature EOF or lack
+      // of progress is a capture failure, not an empty successful read.
+      if (total < result.output.size())
+        captureError(result, "read", readError);
       break;
     }
   }
-  output.resize(total);
-  return output;
+  result.output.resize(total);
 }
 
 ProcessResult finishCapturedProcess(std::FILE *capture, int status,
                                     bool captureSuccessfulOutput) {
   ProcessResult result{.exitCode = status};
-  if (status != 0 || captureSuccessfulOutput) {
-    result.output = readCapture(capture);
-  }
-  std::fclose(capture);
+  if (status != 0 || captureSuccessfulOutput)
+    readCapture(capture, result);
+  errno = 0;
+  if (std::fclose(capture) != 0)
+    captureError(result, "close", errno);
   return result;
 }
 
