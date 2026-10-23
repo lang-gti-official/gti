@@ -2798,7 +2798,11 @@ publish beside body-staged moves when it copies a passive generated class
 (`failureConstructorHoistablePassiveCopy`). The copy query already refuses a
 formal that earlier initializer work may write, and the copy itself runs no
 source code and cannot fail, so publishing it ahead of the body schedule is
-unobservable; the copy-only failure form already publishes it that way. In
+unobservable; the copy-only failure form already publishes it that way. Its
+records must still be MIR's adjacent `Load`, `Initialize` and full-expression
+boundary in one reachable block, and every initializer that copies a formal
+must have its exact copy witness, so no copy is hoisted past a reordered or
+malformed one. In
 `Shelved(Pair moved, Pair copied) : ledger(Ledger(31, divisor)),
 moved(std::move(moved)), copied(copied)`, `moved` starts empty and is moved
 after the ledger in MIR order, while `copied(__gti_mir_arg_1)` publishes in

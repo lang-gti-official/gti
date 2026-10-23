@@ -2556,6 +2556,38 @@ int main() {
            "the failure form admits the body-staged move beside the native "
            "copy");
   }
+  // A copy hoisted out of the prefix must still be MIR's exact adjacent Load,
+  // Initialize and boundary: reordering its records fails closed.
+  std::optional<lang::CppMirCopyParameterFieldBinding> hoisted;
+  if (const auto bindings =
+          lang::cppMirCopyParameterFieldBindings(frontend.mir, *shelved)) {
+    for (const auto &binding : *bindings) {
+      if (binding.initializer == 2)
+        hoisted = binding;
+    }
+  }
+  expect(hoisted.has_value() && hoisted->initializeInstruction != 0,
+         "the later copy has an exact Initialize to hoist");
+  if (hoisted) {
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                       .owner = shelved->id};
+    auto malformed = frontend.mir;
+    auto *body = lang::findMirBody(malformed, address);
+    bool forged = false;
+    for (auto &block : body->blocks) {
+      for (std::size_t index = 0; index + 1 < block.instructions.size();
+           ++index) {
+        if (!forged &&
+            block.instructions[index].id == hoisted->initializeInstruction) {
+          std::swap(block.instructions[index], block.instructions[index + 1]);
+          forged = true;
+        }
+      }
+    }
+    expect(forged && !lang::CppMirBodyEmitter(malformed, map)
+                          .supportsFailureBodyText(address),
+           "a hoisted passive copy with reordered records fails closed");
+  }
 
   std::string text;
   try {
