@@ -539,6 +539,17 @@ may carry requirements: each concrete element passes ordinary instantiation and
 constraint checking before a resolved fold can enter HIR. Signature requirements
 do not create a second executable call path or bypass actual borrow checking.
 
+A member call selects required, fixed-array and text-view members on the
+receiver type of its written member access (`memberAccessObjectType`): the
+object's type for `.`, and for a checked `->` the referent of the selected
+`operator->` result. A `T&` arrow into a constrained parameter therefore uses
+`T`'s requirement facts, and a `std::string_view&` arrow reaches the builtin
+view members. Keying these on the written object instead let `b->size()` fall
+through to ordinary symbol lookup, which recorded no call and no diagnostic;
+the target-less call then reached the C++ backend as `GTI-B0001`. A rejected
+arrow step has already been diagnosed by the callee's analysis and selects no
+member.
+
 Semantic analysis is GTI's authoritative language layer. It resolves meaning
 over the syntax-preserving AST and records facts in `SemanticModel`; HIR, MIR,
 backends, and language queries consume those facts rather than repeating
