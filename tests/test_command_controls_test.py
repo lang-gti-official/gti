@@ -22,11 +22,11 @@ def main():
         source = project / "tests/main.gti"
         source.write_text('''#include <std/testing>
 #include <std/string>
-extern "C" { int raise(int signal); int usleep(unsigned int duration); }
+extern "C" { int raise(int signal); int usleep(uint32_t duration); }
 [[test]] void a_pass() { std::println("pass-output"); }
 [[test]] void b_failure() { std::testing::check(false, "forced-failure"); }
 [[test]] void c_crash() { unsafe { [[discard]] raise(15); } }
-[[test]] void d_timeout() { unsafe { [[discard]] usleep(2000000); } }
+[[test]] void d_timeout() { unsafe { [[discard]] usleep(uint32_t(5000000)); } }
 [[test]] void e_after() { std::println("after-output"); }
 ''')
 
@@ -49,7 +49,7 @@ extern "C" { int raise(int signal); int usleep(unsigned int duration); }
             assert summary["selected"] == 5 and summary["started"] == summary["completed"] == 0
             assert summary["list_only"] and summary["complete"]
             assert [e["event"] for e in events] == ["suite_discovered", "run_finished"]
-            events = run(level, "--jobs", "2", "--timeout", "150ms", expected=70)
+            events = run(level, "--jobs", "2", "--timeout", "2s", expected=70)
             inventory = events[0]["tests"]
             started = [e["name"] for e in events if e["event"] == "test_started"]
             finished = [e for e in events if e["event"] == "test_finished"]
@@ -76,9 +76,9 @@ extern "C" { int raise(int signal); int usleep(unsigned int duration); }
         for args in (("--jobs", "0"), ("--timeout", "-1s"), ("--timeout", "2"),
                      ("--timeout", "999999999999999999999m"), ("--exact",),
                      ("--filter", ""), ("--format", "xml")):
-            run(*args, expected=1, structured=False)
+            run(*args, expected=64, structured=False)
         source.write_text("[[test]] void invalid(int value) {}\n")
-        events = run(expected=1)
+        events = run(expected=65)
         assert len(events) == 1 and not events[-1]["complete"] and events[-1]["runner_errors"] == 1
         source.write_text('int main() { return 23; }\n')
         events = run(expected=23)

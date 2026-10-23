@@ -27,7 +27,8 @@ struct TestSuiteCommand {
   std::vector<std::string> tests;
 };
 struct TestRunObserver {
-  std::function<void(std::string_view, std::span<const TestSelection>)> inventory;
+  std::function<void(std::string_view, std::span<const TestSelection>)>
+      inventory;
   std::function<void(std::string_view, std::string_view)> started;
   std::function<void(const TestCaseReport &)> finished;
 };
@@ -39,7 +40,8 @@ struct TestRunResult {
 
 // Scheduling and process lifecycle belong to the reusable driver. Presentation
 // observers run synchronously on the parent thread and must not throw.
-[[nodiscard]] TestRunResult runTestSuites(std::span<const TestSuiteCommand> suites,
-                                       const TestRunOptions &options,
-                                       const TestRunObserver &observer = {});
+[[nodiscard]] TestRunResult
+runTestSuites(std::span<const TestSuiteCommand> suites,
+              const TestRunOptions &options,
+              const TestRunObserver &observer = {});
 } // namespace lang::driver
