@@ -1123,6 +1123,11 @@ add_test(NAME passive_text_view_class_runtime
                  "${PROJECT_SOURCE_DIR}/tests/passive_text_view_class_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(passive_text_view_class_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME passive_function_item_class_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/passive_function_item_class_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(passive_function_item_class_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME view_fields_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/view_fields_runtime_test.py"
