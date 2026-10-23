@@ -2234,6 +2234,25 @@ record only when its event equals the event of the exact `Move` it repeats.
 The constructor proof admits a moved formal's owned-parameter initializer
 when that formal's type is passive. A class move still needs its lifecycle
 events, and a real failure source beside a move keeps the body conservative.
+Its passive values are program-aware (RT-12): scalars, integral enums, fixed
+arrays of passive values, payload enums whose every alternative payload is
+passive and needs no active cleanup, and records with generated special
+members, no destructor, no borrowed state and only passive fields. A
+constructor whose class holds only such fields may take such formals, build
+an enum constant or a payload construction whose operands match the selected
+alternative, keep passive drop obligations (no destructor, no active cleanup,
+no active child), move a passive input into its prepared call slot, and make
+a consuming (`Once`) call of an already proved non-virtual member of a
+passive record whose receiver is that slot, provided the call retires exactly
+the slot's obligation. So `Slot(int32_t n) : state(state_t::ready(n))`, the
+prelude's `expected(T value)`, `expected()` and
+`expected(unexpected_value<E>)` for passive `T` and `E`, and
+`unexpected_value<E>(E)` for an integral enum `E` are failure-free, and the
+structural function proof then lifts result builders over them, such as
+`expected<int32_t, E>`, `expected<void, int32_t>` and
+`expected<Record, int32_t>` returns. A payload whose alternative needs active
+cleanup, a checked operation, a non-consuming or lifecycle-free receiver call,
+or a borrowed or actively cleaned value keeps the constructor conservative.
 This is only the defined-
 failure dimension by itself. Every function, constructor, or destructor whose
 definition provenance is a declaration (and every runtime-bound function) is
