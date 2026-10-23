@@ -97,6 +97,7 @@ module.exports = grammar({
   supertypes: ($) => [$.declaration, $.statement, $.expression],
 
   conflicts: ($) => [
+    [$.function_declaration, $.macro_declaration],
     [$.generic_argument_profile_clause, $.generic_parameter],
     [$.generic_argument_profile_clause, $._qualified_identifier],
     [$.extern_c_variable_declaration, $.extern_c_function_prototype],
@@ -178,6 +179,7 @@ module.exports = grammar({
         $.type_alias_declaration,
         $.enum_declaration,
         $.class_declaration,
+        $.macro_declaration,
         $.function_declaration,
         $.static_variable_declaration,
         $.variable_declaration,
@@ -822,11 +824,22 @@ module.exports = grammar({
         $._function_declaration_body,
       ),
 
+    macro_declaration: ($) =>
+      seq(
+        repeat(field("attribute", $.function_contract_attribute)),
+        "#macro",
+        field("name", $.identifier),
+        optional(field("type_parameters", $.generic_parameter_clause)),
+        field("parameters", $.parameter_clause),
+        optional(field("constraints", $.requires_clause)),
+        field("body", $.block),
+      ),
+
     function_contract_attribute: ($) =>
       seq(
         "[[",
-        choice("test", "noreturn", "track_caller", "discardable", "deferred", "thread_confined_callback", $.borrow_origin_attribute),
-        repeat(seq(",", choice("test", "noreturn", "track_caller", "discardable", "deferred", "thread_confined_callback", $.borrow_origin_attribute))),
+        choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", $.borrow_origin_attribute),
+        repeat(seq(",", choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", $.borrow_origin_attribute))),
         "]]",
       ),
 

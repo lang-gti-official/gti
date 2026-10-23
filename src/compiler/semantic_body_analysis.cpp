@@ -5,11 +5,11 @@
 namespace lang {
 
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
-  deferredLookup.clear();
-  deferredLookupBase = nullptr;
-  deferredExpansionDepth = 0;
-  deferredExpandedBodies = 0;
-  deferredActiveBodies.clear();
+  macroLookup.clear();
+  macroLookupBase = nullptr;
+  macroExpansionDepth = 0;
+  macroExpandedBodies = 0;
+  macroActiveBodies.clear();
   diagnostics.clear();
   catalog.clear();
   valueFlow.clear();
@@ -2614,14 +2614,14 @@ auto SemanticVisitor::Impl::visitExternCDecl(const ExternCDecl &stmt) -> void {
 
 auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
     -> void {
-  if (analyzeDeferredStatement(stmt))
+  if (analyzeMacroStatement(stmt))
     return;
-  struct RestoreDeferredStatement {
+  struct RestoreMacroStatement {
     const Call *&slot;
     const Call *previous;
-    ~RestoreDeferredStatement() { slot = previous; }
-  } restoreDeferredStatement{deferredStatementCall, deferredStatementCall};
-  deferredStatementCall = directCall(stmt.expression());
+    ~RestoreMacroStatement() { slot = previous; }
+  } restoreMacroStatement{macroStatementCall, macroStatementCall};
+  macroStatementCall = directCall(stmt.expression());
   semanticModel.recordFullExpression(stmt, stmt.expression());
   discardResult(stmt.expression());
   const SemanticType resultType = analyze(stmt.expression());
@@ -3061,43 +3061,48 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                                          where, {std::move(message)}));
   };
   std::unordered_set<std::string> functionAttributeNames;
+  if (stmt.isMacro()) {
+    const Token &keyword = *stmt.macroKeyword();
+    if (functionInfo == nullptr || functionInfo->ownerClass != 0 ||
+        isEntryPoint || functionInfo->returnType != SemanticType::Void ||
+        stmt.hasCLinkage() || stmt.runtimeBinding() || !stmt.body() ||
+        stmt.isConstexpr() || stmt.unsafeKeyword() || stmt.operatorName() ||
+        stmt.hasFunctionAttribute("noreturn") ||
+        stmt.hasFunctionAttribute("test") ||
+        stmt.hasFunctionAttribute("thread_confined_callback") ||
+        std::any_of(stmt.parameters().begin(), stmt.parameters().end(),
+                    [](const Parameter &parameter) {
+                      return parameter.mutability == Mutability::Mutable ||
+                             parameter.type.reference;
+                    })) {
+      reportContract(keyword,
+                     "A typed macro requires a defined, safe, non-constexpr "
+                     "namespace-scope void statement template with value "
+                     "parameters.");
+    } else if (!validMacroBody(*stmt.body())) {
+      reportContract(keyword,
+                     "A macro body supports automatic locals, expressions, "
+                     "blocks, if and local loops. Break and continue must "
+                     "target a loop within that macro; returns, propagation, "
+                     "lambdas, static storage and generated declarations "
+                     "require an ordinary helper.");
+    }
+    std::unordered_set<std::string> expressionParameters;
+    for (const auto &parameter : stmt.parameters())
+      if (!parameter.name.lexeme.empty() &&
+          !expressionParameters.insert(parameter.name.lexeme).second)
+        reportContract(parameter.name,
+                       "Macro expression parameter names must be unique.");
+  }
   for (const auto &contract : stmt.functionAttributes()) {
     const Token &attribute = contract.name;
     if (attribute.lexeme == "deferred") {
-      if (!functionAttributeNames.insert(attribute.lexeme).second) {
-        reportContract(attribute, "Duplicate function attribute 'deferred'.");
-      } else if (contract.argument || functionInfo == nullptr ||
-                 functionInfo->ownerClass != 0 || isEntryPoint ||
-                 functionInfo->returnType != SemanticType::Void ||
-                 stmt.hasCLinkage() || stmt.runtimeBinding() || !stmt.body() ||
-                 stmt.isConstexpr() || stmt.unsafeKeyword() ||
-                 stmt.operatorName() || stmt.hasFunctionAttribute("noreturn") ||
-                 stmt.hasFunctionAttribute("test") ||
-                 stmt.hasFunctionAttribute("thread_confined_callback") ||
-                 std::any_of(stmt.parameters().begin(), stmt.parameters().end(),
-                             [](const Parameter &parameter) {
-                               return parameter.mutability ==
-                                          Mutability::Mutable ||
-                                      parameter.type.reference;
-                             })) {
-        reportContract(
-            attribute,
-            "A deferred helper requires a defined, safe, non-constexpr "
-            "namespace-scope void function with value parameters.");
-      } else if (!validDeferredBody(*stmt.body())) {
-        reportContract(
-            attribute,
-            "A deferred body supports blocks, ordinary if branches "
-            "and expressions without local binders or direct writes; "
-            "declarations, returns and loops require an ordinary "
-            "helper called from it.");
-      }
-      std::unordered_set<std::string> expressionParameters;
-      for (const auto &parameter : stmt.parameters())
-        if (!parameter.name.lexeme.empty() &&
-            !expressionParameters.insert(parameter.name.lexeme).second)
-          reportContract(parameter.name,
-                         "Deferred expression parameter names must be unique.");
+      reportContract(attribute,
+                     "The [[deferred]] attribute has been removed; use a "
+                     "typed #macro declaration instead.");
+      diagnostics.back().hints.emplace_back(
+          "Write '#macro name(typed parameters) { ... }' without a return "
+          "type.");
       continue;
     }
     if (attribute.lexeme == "test") {
@@ -3468,12 +3473,11 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
              "GTI-S2022");
     }
   }
-  if (!stmt.body() || !requirementsValid ||
-      stmt.hasFunctionAttribute("deferred")) {
-    // A deferred helper is a typed statement template, not a callable value.
+  if (!stmt.body() || !requirementsValid || stmt.isMacro()) {
+    // A typed macro is a statement template, not a callable value.
     // Its signature and body shape are checked here; actual substituted
     // expressions are checked in caller flow at each concrete invocation.
-    if (stmt.body() && stmt.hasFunctionAttribute("deferred")) {
+    if (stmt.body() && stmt.isMacro()) {
       analyzedBodies.insert(&stmt);
       semanticModel.recordAnalyzedFunctionBody(stmt);
     }
@@ -7738,9 +7742,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                 valid;
       }
 
-      if (valid &&
-          analyzeDeferredSelection(expr, resolved, resolvedTypeArguments,
-                                   resolvedValueArguments))
+      if (valid && analyzeMacroSelection(expr, resolved, resolvedTypeArguments,
+                                         resolvedValueArguments))
         return;
 
       const CallReceiverMode receiverMode =
@@ -7992,9 +7995,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
-  if (analyzeDeferredSelection(expr, viable.front().function,
-                               viable.front().typeArguments,
-                               viable.front().valueArguments))
+  if (analyzeMacroSelection(expr, viable.front().function,
+                            viable.front().typeArguments,
+                            viable.front().valueArguments))
     return;
   if (!validateSelectedFunction(viable.front().function, expr.callee(),
                                 expr.paren(), expr.arguments(),
@@ -14057,7 +14060,7 @@ auto SemanticVisitor::Impl::summarizeFlow(
             .normalReturn = returns ? returned : nullptr};
   }
   if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
-    if (const Stmt *expanded = semanticModel.findDeferredExpansion(*expression))
+    if (const Stmt *expanded = semanticModel.findMacroExpansion(*expression))
       return summarizeFlow(expanded, normalReturns, structural);
     return {.canFallThrough =
                 !expressionNeverReturns(expression->expression().get())};

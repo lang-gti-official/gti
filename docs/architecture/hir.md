@@ -8,6 +8,14 @@ executable typed values. It sits after semantic analysis and before body-local
 control-flow lowering. It is not a pretty AST and it is not an independent
 type system.
 
+Typed statement macros are expanded and ownership-checked by semantics before
+HIR execution lowering. HIR consumes that retained statement expansion and
+does not instantiate an eager runtime function for a `#macro` declaration.
+The result consists of ordinary typed branches, calls, places and full
+expressions; MIR owns their control flow, failure edges and cleanup. Changing
+the source spelling from `[[deferred]]` to `#macro` introduces no second
+executable representation or backend macro interpreter.
+
 Concrete function instances preserve the semantic owned-pointee accessor
 summary (exact receiver-field identity and private borrow operation), refreshed
 from concrete instance analysis. It is proof metadata, not a synthetic field
@@ -114,6 +122,16 @@ both adapter families, enums, and instance symbols.
 
 `HirLoweringResult::reachable` carries that prefix only when it is smaller and
 passes `verifyHirProgramPlans`; otherwise lowering uses the complete program.
+
+HIR retains shared owners for synthetic statement roots it actually lowers.
+A concrete semantic delta owns its selected macro expansions, but that delta
+and the temporary `HirLowerer` may die before MIR uses HIR's raw source pointers.
+`shareMacroExpansion` shares the selected root through the semantic query, and
+`HirProgram` retains it once. Nested expansions retain their separate roots,
+including queries inherited through a model delta; the query preserves the
+ordinary synthetic-syntax stability observation. HIR copies and reachable
+prefixes preserve those owners without retaining whole semantic analyses.
+MIR records typed operations and source spans, not these AST pointers.
 
 ### Entry-unit scope
 

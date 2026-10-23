@@ -379,11 +379,11 @@ private:
   [[nodiscard]] std::shared_ptr<VariableDecl>
   variable(const VariableDecl &node) {
     auto copy = std::make_shared<VariableDecl>(
-        node.mutability(), node.type(), tok(node.name()),
-        expr(node.initializer()), node.staticKeyword(), node.isRangeBinding(),
-        tok(node.constexprKeyword()), node.isRangeOwner(),
-        node.isRangeIterator(), node.mutKeyword(), node.isRangeElementOwner(),
-        node.linkage(), node.nativeLinkName());
+        node.mutability(), type(node.type()), tok(node.name()),
+        expr(node.initializer()), tok(node.staticKeyword()),
+        node.isRangeBinding(), tok(node.constexprKeyword()),
+        node.isRangeOwner(), node.isRangeIterator(), tok(node.mutKeyword()),
+        node.isRangeElementOwner(), node.linkage(), node.nativeLinkName());
     if (node.extent()) {
       copy->setExtent(*node.extent());
     }
@@ -566,11 +566,11 @@ private:
       bindings.reserve(node.bindings().size());
       for (const VariableDecl &binding : node.bindings()) {
         bindings.emplace_back(
-            binding.mutability(), binding.type(), binding.name(),
-            expr(binding.initializer()), binding.staticKeyword(),
-            binding.isRangeBinding(), binding.constexprKeyword(),
+            binding.mutability(), type(binding.type()), tok(binding.name()),
+            expr(binding.initializer()), tok(binding.staticKeyword()),
+            binding.isRangeBinding(), tok(binding.constexprKeyword()),
             binding.isRangeOwner(), binding.isRangeIterator(),
-            binding.mutKeyword(), binding.isRangeElementOwner());
+            tok(binding.mutKeyword()), binding.isRangeElementOwner());
       }
       auto copy = std::make_shared<StructuredBindingDecl>(
           tok(node.autoKeyword()), tok(node.leftBracket()), std::move(bindings),
