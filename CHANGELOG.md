@@ -50,6 +50,21 @@ for what minor and patch releases mean.
   user-defined deferred helper. The first profile is statement-only, with
   branch/expression bodies and no local binders, loops or callback conversion.
 
+## 0.464.2 — Using whole assignment results
+
+- The whole result of a class assignment can now be used. For a struct
+  `Point`, `Point r = (p = q);`, `return (p = q);`, a by-value argument such
+  as `take(p = q)`, a method call such as `(p = q).digits()` and a constructor
+  initializer such as `value(a = b)` used to report `error[GTI-B0001]` (an
+  internal compiler error); they now receive a copy of the assigned value, and
+  `p` holds `q` afterwards.
+- The result stays a copy: in `pair(p = q, p = r)` the first argument is still
+  `q`, and a `mut` method called as `(c = d).bump()` changes the copy, not `c`.
+- Using the result of an assignment of a move-only type, as in
+  `Tracked r = (p = std::move(q));` or `(p = std::move(q)).x`, now reports
+  `error[GTI-S2003]` at the `=`: the result would copy the target. Such an
+  assignment is still valid as its own statement.
+
 ## 0.464.1 — Several reference bindings from one local payload enum
 
 - A `switch` arm can now bind `auto&` to more than one reference payload of an

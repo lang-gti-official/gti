@@ -1,0 +1,130 @@
+// The whole result of a class assignment is a copy of its destination taken
+// right after the write. An initialization, return, by-value argument, method
+// receiver or constructor field receives that copy: later writes of the
+// destination, including one by a later operand, never reach it, and a
+// mutating method called on the result changes the copy, not the destination.
+// These uses used to fail MIR construction or C++ emission (GTI-B0001). A
+// move-only destination has no copy, so semantics rejects using the result of
+// its assignment (GTI-S2003).
+#include <std/string>
+#include <std/vector>
+
+struct Point {
+  int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+  int32_t digits() { return this.x * 10 + this.y; }
+};
+
+struct Counter {
+  mut int32_t n;
+  Counter(int32_t n) : n(n) {}
+  int32_t bump() mut {
+    this.n += 1;
+    return this.n;
+  }
+};
+
+struct Holder {
+  mut Point point;
+  Holder(Point point) : point(point) {}
+};
+
+int32_t take(Point v) { return v.digits(); }
+
+int32_t pair(Point a, Point b) { return a.digits() * 100 + b.digits(); }
+
+// The binding holds q, as does p.
+int32_t initialized(mut Point p, Point q) {
+  Point r = (p = q);
+  return r.digits() * 100 + p.digits();
+}
+
+Point returned(mut Point p, Point q) { return (p = q); }
+
+// The first argument keeps q although the second assigns p again.
+int32_t passed(mut Point p, Point q, Point r) {
+  return pair(p = q, p = r) * 10 + p.x;
+}
+
+int32_t received(mut Point p, Point q) { return (p = q).digits(); }
+
+// The mutating method bumps the copy; the destination keeps q's count.
+int32_t bumped(mut Counter c, Counter d) {
+  int32_t after = (c = d).bump();
+  return after * 10 + c.n;
+}
+
+int32_t chained(mut Point a, mut Point b, Point q) {
+  a = b = q;
+  return a.digits() * 100 + b.digits();
+}
+
+int32_t field_destination(mut Holder h, Point q) {
+  return take(h.point = q) * 10 + h.point.x;
+}
+
+int32_t element_destination(Point q) {
+  mut Point[2] points = {Point(1, 2), Point(3, 4)};
+  return take(points[1] = q) * 10 + points[1].y;
+}
+
+Point referenced_destination(mut Point& p, Point q) { return (p = q); }
+
+T relay<T>(mut T a, T b) { return (a = b); }
+
+class Line {
+public:
+  Point start;
+  int32_t tag;
+  Line(mut Point a, Point b) : start(a = b), tag(a.x) {}
+};
+
+class Tracker {
+public:
+  mut Point last;
+  Tracker() : last(Point(0, 0)) {}
+  Point record(Point q) mut { return (this.last = q); }
+};
+
+Point at(int32_t index) { return Point(index + 1, index + 2); }
+
+// Each iteration passes the value it assigned.
+int32_t loop_digits(int32_t count) {
+  mut Point current = Point(0, 0);
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < count; index++) {
+    total = total * 100 + take(current = at(index));
+  }
+  return total;
+}
+
+// The checked addition after the copy can fail; the assignment and the copy
+// complete first.
+int32_t checked(mut Point p, Point q, int32_t extra) {
+  Point r = (p = q);
+  return r.x + extra;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::println(initialized(Point(1, 2), Point(5, 4)));
+  std::println(returned(Point(1, 2), Point(5, 4)).digits());
+  std::println(passed(Point(1, 2), Point(5, 4), Point(7, 8)));
+  std::println(received(Point(1, 2), Point(5, 4)));
+  std::println(bumped(Counter(1), Counter(5)));
+  std::println(chained(Point(1, 2), Point(3, 4), Point(5, 4)));
+  std::println(field_destination(Holder(Point(1, 2)), Point(5, 4)));
+  std::println(element_destination(Point(5, 4)));
+  mut Point target = Point(1, 2);
+  Point copy = referenced_destination(target, Point(5, 4));
+  std::println(copy.digits() * 100 + target.digits());
+  std::println(relay(Point(1, 2), Point(5, 4)).digits());
+  Line line = Line(Point(1, 2), Point(5, 4));
+  std::println(line.start.digits() * 10 + line.tag);
+  mut Tracker tracker = Tracker();
+  std::println(tracker.record(Point(5, 4)).digits() * 100 +
+               tracker.last.digits());
+  std::println(loop_digits(3));
+  std::println(checked(Point(1, 2), Point(5, 4), argc > 1 ? 2147483647 : 1));
+  return 0;
+}
