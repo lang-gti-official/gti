@@ -1942,7 +1942,87 @@
           "named": true
         },
         {
+          "type": "constraint_predicate",
+          "named": true
+        },
+        {
           "type": "member_requirement_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "constraint_predicate",
+    "named": true,
+    "fields": {
+      "argument": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "scoped_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "assignment_expression",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "conditional_expression",
+          "named": true
+        },
+        {
+          "type": "generic_function",
+          "named": true
+        },
+        {
+          "type": "index_expression",
+          "named": true
+        },
+        {
+          "type": "member_expression",
+          "named": true
+        },
+        {
+          "type": "primary_expression",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "update_expression",
           "named": true
         }
       ]
@@ -3874,8 +3954,8 @@
     "type": "member_requirement_expression",
     "named": true,
     "fields": {
-      "argument": {
-        "multiple": true,
+      "binding": {
+        "multiple": false,
         "required": false,
         "types": [
           {
@@ -3884,22 +3964,48 @@
           }
         ]
       },
-      "binding": {
-        "multiple": false,
+      "expression": {
+        "multiple": true,
         "required": true,
         "types": [
           {
-            "type": "identifier",
+            "type": "assignment_expression",
             "named": true
-          }
-        ]
-      },
-      "member": {
-        "multiple": false,
-        "required": true,
-        "types": [
+          },
           {
-            "type": "identifier",
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "conditional_expression",
+            "named": true
+          },
+          {
+            "type": "generic_function",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "member_expression",
+            "named": true
+          },
+          {
+            "type": "primary_expression",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "update_expression",
             "named": true
           }
         ]
@@ -3924,19 +4030,9 @@
           }
         ]
       },
-      "receiver": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      },
       "receiver_type": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "type",
@@ -3945,7 +4041,7 @@
         ]
       },
       "result_type": {
-        "multiple": false,
+        "multiple": true,
         "required": true,
         "types": [
           {
@@ -3955,7 +4051,7 @@
         ]
       },
       "unsafe": {
-        "multiple": false,
+        "multiple": true,
         "required": false,
         "types": [
           {

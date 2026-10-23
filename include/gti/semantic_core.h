@@ -727,6 +727,7 @@ struct AppliedConceptRequirement {
   // a compiler-private member, exactly as a call written there could. Named
   // concept leaves never set it: concept satisfaction is a public predicate.
   bool trustedMemberAccess = false;
+  std::optional<std::vector<std::string>> lookupScope;
 };
 
 [[nodiscard]] std::optional<CheckedIntegerDomain>
