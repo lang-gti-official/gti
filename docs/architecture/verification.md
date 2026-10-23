@@ -1,5 +1,40 @@
 # Compiler Verification
 
+## Failure-free passive constructors (RT-12, 0.466.0)
+
+`optimizer_foundation` covers the owned failure closure's passive values in
+`testPassiveValueConstructorFailureEffects`, over user types unrelated to
+`expected`.
+- `Slot(int32_t)`, `Slot()` and `Slot(mut Token)` build a payload enum over
+  an integral enum, a scalar and a consuming `Token::take() &&` call;
+  `Token(Mode, int32_t)` and `Holder(Stamp, Mode)` take an integral enum and
+  a passive record. Each is failure-free, and `ready_slot` constructs its
+  `Slot` with no failure edge.
+- `Divided` (a checked division beside the payload) and `Keeper` (a payload
+  alternative holding a class with a destructor) stay may-raise.
+- Five forgeries turn the derivation conservative and fail verification: a
+  payload construction with borrowed state or a missing alternative, a
+  receiver call that is not consuming or drops its slot transfer, and an
+  actively cleaned record formal.
+
+`failure_free_passive_constructors_runtime` runs the same shapes in every
+mode, including a move-only record moved into a payload and a field read
+through a construction that consumed a prepared record, beside a division
+that still fails at its source location. With the probe in
+`docs/plans/optimization.md`'s RT-12 row, the 0.448.4 result builders are
+failure-free again: `expected<int32_t, E>` over an integral enum,
+`expected<void, int32_t>`, `expected<Record, int32_t>` and `unexpected(E)`.
+`std::string` results stay may-raise.
+
+Two backend gaps surfaced, each a `GTI-B0001` on existing fixtures and fixed
+in the C++ emitter: a plain constructor did not accept a move-only passive
+class parameter (`reference_expected_assignment.gti`), and a field read
+through a failure-free construction that consumed a prepared argument had no
+staging slot (`Wrap(build(raw)).outer.inner.id`). Emitter tests that pinned
+the fallible publication form for passive results now accept the plain form
+(`slot.construct_from(...)`, `slot.construct(...)`) or keep a checked sibling
+that stays fallible, so the failure-form vocabulary keeps its coverage.
+
 ## Nested dependent values (0.466.0)
 
 `view_fields` covers phase 3a in `testNestedValues`.
