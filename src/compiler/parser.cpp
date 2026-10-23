@@ -3655,6 +3655,22 @@ private:
     } else if (const auto *binary = exprAs<Binary>(expression)) {
       collectRequirementTypes(binary->left().get(), types);
       collectRequirementTypes(binary->right().get(), types);
+    } else if (const auto *logical = exprAs<Logical>(expression)) {
+      collectRequirementTypes(logical->left().get(), types);
+      collectRequirementTypes(logical->right().get(), types);
+    } else if (const auto *conditional = exprAs<ConditionalExpr>(expression)) {
+      collectRequirementTypes(conditional->condition().get(), types);
+      collectRequirementTypes(conditional->thenExpression().get(), types);
+      collectRequirementTypes(conditional->elseExpression().get(), types);
+    } else if (const auto *conversion = exprAs<Conversion>(expression)) {
+      types.push_back(conversion->targetType());
+      collectRequirementTypes(conversion->value().get(), types);
+    } else if (const auto *qualified = exprAs<QualifiedName>(expression)) {
+      if (qualified->ownerType())
+        types.push_back(*qualified->ownerType());
+    } else if (const auto *index = exprAs<Index>(expression)) {
+      collectRequirementTypes(index->object().get(), types);
+      collectRequirementTypes(index->index().get(), types);
     } else if (const auto *unary = exprAs<Unary>(expression)) {
       collectRequirementTypes(unary->right().get(), types);
     } else if (const auto *group = exprAs<Grouping>(expression)) {

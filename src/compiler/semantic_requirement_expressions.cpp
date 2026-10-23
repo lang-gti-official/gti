@@ -53,6 +53,22 @@ auto SemanticVisitor::Impl::collectRequirementTypeArguments(
   } else if (const auto *binary = exprAs<Binary>(expression)) {
     collectRequirementTypeArguments(binary->left().get(), types);
     collectRequirementTypeArguments(binary->right().get(), types);
+  } else if (const auto *logical = exprAs<Logical>(expression)) {
+    collectRequirementTypeArguments(logical->left().get(), types);
+    collectRequirementTypeArguments(logical->right().get(), types);
+  } else if (const auto *conditional = exprAs<ConditionalExpr>(expression)) {
+    collectRequirementTypeArguments(conditional->condition().get(), types);
+    collectRequirementTypeArguments(conditional->thenExpression().get(), types);
+    collectRequirementTypeArguments(conditional->elseExpression().get(), types);
+  } else if (const auto *conversion = exprAs<Conversion>(expression)) {
+    types.push_back(&conversion->targetType());
+    collectRequirementTypeArguments(conversion->value().get(), types);
+  } else if (const auto *qualified = exprAs<QualifiedName>(expression)) {
+    if (qualified->ownerType())
+      types.push_back(&*qualified->ownerType());
+  } else if (const auto *index = exprAs<Index>(expression)) {
+    collectRequirementTypeArguments(index->object().get(), types);
+    collectRequirementTypeArguments(index->index().get(), types);
   } else if (const auto *unary = exprAs<Unary>(expression)) {
     collectRequirementTypeArguments(unary->right().get(), types);
   } else if (const auto *group = exprAs<Grouping>(expression)) {
