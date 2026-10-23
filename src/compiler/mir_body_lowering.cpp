@@ -7078,6 +7078,15 @@ private:
       if (receiver) {
         originLoan = operandLoan(*receiver);
       }
+      // A consuming receiver moved out of a binding relays that binding's
+      // retained loan, as a moved argument does.
+      if (originLoan == 0)
+        if (const auto source = receiverValue(value)) {
+          const HirBindingId transferred = movedBorrowCarrierBinding(*source);
+          const auto found = bindingLoans.find(transferred);
+          if (transferred != 0 && found != bindingLoans.end())
+            originLoan = found->second;
+        }
     } else if (value.borrowOrigin == BorrowOriginKind::Argument &&
                value.borrowArgument < arguments.size() &&
                value.borrowArgument < call.operands.size()) {

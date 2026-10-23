@@ -7,6 +7,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <tuple>
 #include <span>
 #include <utility>
 
@@ -72,8 +73,11 @@ bool textPublishableClass(const MirProgram &program, const SemanticType &type) {
 // is read-only. Only such a formal takes a relayed value.
 bool readOnlyContractFormal(const MirFunctionInstance &function,
                             const OwnerlessTextField &formal) {
+  // A consuming receiver owns the caller's value: a write into its text field
+  // stores only ownerless text, as for any text field.
   if (formal.receiver)
-    return function.receiverMutability == ReceiverMutability::ReadOnly;
+    return function.receiverMutability == ReceiverMutability::ReadOnly ||
+           function.receiverMutability == ReceiverMutability::Consuming;
   if (formal.parameter >= function.parameterTypes.size() ||
       formal.parameter >= function.parameterBindings.size())
     return false;
@@ -116,6 +120,8 @@ public:
   struct InitializerTextInputs {
     std::set<std::size_t> requirements;
     std::map<std::size_t, TextFieldPath> fields;
+    // A class formal's text field that alone fills one text field path.
+    std::map<std::pair<std::size_t, SymbolId>, TextFieldPath> fieldRelays;
   };
   InitializerTextInputs initializerTextInputs(
       const MirConstructorInstance &constructor, bool diagnose,
@@ -138,6 +144,14 @@ private:
   // Formals whose text a construction published under its result's loan; the
   // constructor body must not also store them as ownerless text.
   std::set<std::pair<std::size_t, std::size_t>> publishedFormals;
+  // Per constructor: a class formal's text field that alone fills a text
+  // field path, which a construction re-roots its argument's owner at.
+  std::vector<std::map<std::pair<std::size_t, SymbolId>, TextFieldPath>>
+      constructorFieldRelays;
+  // (constructor, formal, field) re-rooted under some construction's loan;
+  // the body must not also store the field as ownerless text.
+  std::set<std::tuple<std::size_t, std::size_t, SymbolId>>
+      publishedFieldRelays;
   // Derived per function: the formals a returned fresh value holds in a
   // direct text field, which each call then publishes (L-OWN-02).
   std::vector<std::set<PublishedTextField>> relays;
@@ -256,12 +270,28 @@ private:
   std::optional<OwnerlessTextField>
   contractPlace(const TextBody &context, const MirPlace &place,
                 bool payloadField = false) const {
-    if (!context.fieldContracts)
+    // A constructor's by-value class formal holds the caller's value: its
+    // text fields hold what the argument held (L-OWN-02), and a write into
+    // one stores only ownerless text.
+    const bool constructorFormal =
+        !context.fieldContracts && context.constructor != nullptr &&
+        place.root == MirPlaceRootKind::Binding && place.capture == 0;
+    if (!context.fieldContracts && !constructorFormal)
       return std::nullopt;
     OwnerlessTextField formal;
     SemanticType type = SemanticType::Unknown;
     std::size_t offset = 0;
-    if (place.root == MirPlaceRootKind::This) {
+    if (constructorFormal) {
+      const auto found = std::find(context.bindings.begin(),
+                                   context.bindings.end(), place.binding);
+      formal.parameter =
+          static_cast<std::size_t>(found - context.bindings.begin());
+      if (found == context.bindings.end() ||
+          formal.parameter >= context.types.size() ||
+          context.types[formal.parameter].kind != SemanticType::Class)
+        return std::nullopt;
+      type = context.types[formal.parameter];
+    } else if (place.root == MirPlaceRootKind::This) {
       const auto &owner = context.fieldContracts->owner;
       const auto *instance =
           owner ? program.findClassInstance(*owner) : nullptr;
@@ -288,7 +318,8 @@ private:
       return std::nullopt;
     }
     if (!textPublishableClass(program, type) ||
-        !readOnlyContractFormal(*context.fieldContracts, formal))
+        (!constructorFormal &&
+         !readOnlyContractFormal(*context.fieldContracts, formal)))
       return std::nullopt;
     if (place.projections.size() == offset)
       return formal;
@@ -397,6 +428,15 @@ private:
   std::optional<TextFieldPath>
   dependentDesignationPath(const MirBody &body,
                            const MirOperand &operand) const {
+    // A moved or loaded carrier designates what its place does.
+    if (operand.kind == MirOperandKind::Value)
+      if (const auto *producer = definition(body, operand.value);
+          producer != nullptr && producer->operands.size() == 1 &&
+          (producer->kind == MirInstructionKind::Move ||
+           producer->kind == MirInstructionKind::Load) &&
+          producer->operands.front().kind != MirOperandKind::Value)
+        if (auto path = dependentDesignationPath(body, producer->operands.front()))
+          return path;
     const auto *loan = operand.kind == MirOperandKind::Loan
                            ? body.findLoan(operand.loan)
                            : nullptr;
@@ -462,12 +502,18 @@ private:
   TextSources heldFieldSources(const TextBody &context,
                                const MirOperand &operand, SymbolId field,
                                SymbolId payload = 0) const {
+    // Follow a staged input, and a load or move of a place, to that place.
     const MirOperand *held = &operand;
-    if (held->kind == MirOperandKind::Value)
-      if (const auto *input = definition(context.body, held->value);
-          input != nullptr && input->kind == MirInstructionKind::CallInput &&
-          input->operands.size() == 1)
-        held = &input->operands.front();
+    for (std::size_t depth = 0;
+         depth < 3 && held->kind == MirOperandKind::Value; ++depth) {
+      const auto *input = definition(context.body, held->value);
+      if (input == nullptr || input->operands.size() != 1 ||
+          (input->kind != MirInstructionKind::CallInput &&
+           input->kind != MirInstructionKind::Load &&
+           input->kind != MirInstructionKind::Move))
+        break;
+      held = &input->operands.front();
+    }
     const TextFieldPath path =
         payload == 0 ? TextFieldPath{field} : TextFieldPath{field, payload};
     if (const auto designated = dependentDesignationPath(context.body, *held))
@@ -923,6 +969,39 @@ private:
     return summary.sources;
   }
 
+  // A construction whose read-only Stored loan designates the path at which
+  // its constructor stores the text field `field` of formal `parameter`
+  // re-roots the argument's dependency there (L-OWN-02).
+  bool publishesFieldRelay(const TextBody &context,
+                           const MirInstruction &instruction,
+                           std::size_t parameter, SymbolId field) {
+    if (!instruction.constructorTarget || *instruction.constructorTarget == 0 ||
+        *instruction.constructorTarget > constructorFieldRelays.size() ||
+        !instruction.dependentTextPublication || !instruction.loan)
+      return false;
+    const auto constructor = *instruction.constructorTarget;
+    const auto &relays = constructorFieldRelays[constructor - 1];
+    const auto relay = relays.find({parameter, field});
+    const auto *loan = context.body.findLoan(*instruction.loan);
+    if (relay == relays.end() || !loan || loan->kind != MirLoanKind::Stored ||
+        loan->access != AccessMode::ReadOnly ||
+        loan->designatedFields != relay->second ||
+        !loan->additionalDependencies.empty() ||
+        !directTextPath(program, instruction.info.type, relay->second))
+      return false;
+    const BorrowedFieldOrigin expected{.resultFields = relay->second,
+                                       .origin = BorrowOriginKind::Argument,
+                                       .parameter = parameter,
+                                       .sourceFields = {field},
+                                       .access = AccessMode::ReadOnly};
+    if (std::find(instruction.borrowFields.begin(),
+                  instruction.borrowFields.end(),
+                  expected) == instruction.borrowFields.end())
+      return false;
+    publishedFieldRelays.emplace(constructor, parameter, field);
+    return true;
+  }
+
   // The payload construction that is a constructor field initializer's
   // whole argument, whose stored text that initializer accounts for.
   bool fieldInitializerValue(const TextBody &context,
@@ -947,11 +1026,29 @@ private:
   // of its text payloads. A formal that alone fills one, in a field the
   // constructor never reads back through `this`, may be published at the
   // path to that payload.
+  using FieldUses = std::map<std::pair<std::size_t, SymbolId>, std::size_t>;
+  // A formal's text field that alone fills `path`, as its source names it.
+  static void noteFieldRelay(const TextSources &source, bool exclusive,
+                             TextFieldPath path, InitializerTextInputs &inputs,
+                             FieldUses &fieldUses) {
+    for (const auto &field : source.fields)
+      if (!field.receiver && field.payload == 0)
+        ++fieldUses[{field.parameter, field.field}];
+    if (exclusive && source.known && source.parameters.empty() &&
+        source.fields.size() == 1 && !source.fields.begin()->receiver &&
+        source.fields.begin()->payload == 0)
+      inputs.fieldRelays.emplace(
+          std::pair{source.fields.begin()->parameter,
+                    source.fields.begin()->field},
+          std::move(path));
+  }
+
   void
   payloadInitializerTextInputs(const TextBody &context,
                                const MirConstructorInitializer &initializer,
                                bool diagnose, InitializerTextInputs &inputs,
-                               std::map<std::size_t, std::size_t> &uses) {
+                               std::map<std::size_t, std::size_t> &uses,
+                               FieldUses &fieldUses) {
     const auto found = std::find_if(
         context.body.values.begin(), context.body.values.end(),
         [&](const auto &value) {
@@ -997,6 +1094,11 @@ private:
         inputs.fields.emplace(
             *source.parameters.begin(),
             TextFieldPath{initializer.field, variant.payloadSymbols[index]});
+      if (initializer.field != 0 && index < variant.payloadSymbols.size())
+        noteFieldRelay(
+            source, !readBack,
+            TextFieldPath{initializer.field, variant.payloadSymbols[index]},
+            inputs, fieldUses);
     }
   }
 
@@ -1093,8 +1195,20 @@ private:
     // The call that consumes a CallInput's result, and the callee formal or
     // receiver it binds. A later checked argument places the call in another
     // block than the input.
-    const auto consumer = [&](const MirInstruction &input)
+    std::function<std::pair<const MirInstruction *, OwnerlessTextField>(
+        const MirInstruction &)>
+        consumer;
+    consumer = [&](const MirInstruction &input)
         -> std::pair<const MirInstruction *, OwnerlessTextField> {
+      // A move staged into a call input forwards to that input's call.
+      if (input.kind == MirInstructionKind::Move && input.result)
+        for (const auto &block : context.body.blocks)
+          for (const auto &candidate : block.instructions)
+            if (candidate.kind == MirInstructionKind::CallInput &&
+                candidate.operands.size() == 1 &&
+                candidate.operands.front().kind == MirOperandKind::Value &&
+                candidate.operands.front().value == *input.result)
+              return consumer(candidate);
       // A borrow that a call returning a reference to text takes as its
       // receiver forwards like an input: readers resolve the returned text
       // through the callee's returns.
@@ -1168,8 +1282,10 @@ private:
     };
     for (const auto &block : context.body.blocks) {
       for (const auto &instruction : block.instructions) {
-        // Whole-value uses of a formal or the receiver, and forwarding.
-        if (context.fieldContracts) {
+        // Whole-value uses of a formal or the receiver, and forwarding. A
+        // constructor's whole class formal counts too: a field it re-roots
+        // must reach nothing else.
+        if (context.fieldContracts || context.constructor) {
           const auto visit = [&](const MirOperand &operand, bool receiver) {
             const auto formal = wholeUse(operand);
             if (!formal)
@@ -1221,7 +1337,15 @@ private:
                 .parameter = calleeFormal.parameter,
                 .field = designated->front(),
                 .payload = designated->size() == 2 ? designated->back() : 0};
-            if (!target || !fieldContractFunction(program, *target) ||
+            // A construction re-roots the value's dependency at the path its
+            // constructor stores that field in, under its own loan.
+            const bool reRooted =
+                call && call->kind == MirInstructionKind::Construct &&
+                !calleeFormal.receiver && designated->size() == 1 &&
+                publishesFieldRelay(context, *call, calleeFormal.parameter,
+                                    designated->front());
+            if (reRooted) {
+            } else if (!target || !fieldContractFunction(program, *target) ||
                 !readOnlyContractFormal(*target, calleeFormal) ||
                 std::binary_search(target->ownerlessTextFields.begin(),
                                    target->ownerlessTextFields.end(), field))
@@ -1434,12 +1558,13 @@ auto TextContracts::initializerTextInputs(
                          .constructor = &constructor};
   InitializerTextInputs inputs;
   std::map<std::size_t, std::size_t> uses;
+  FieldUses fieldUses;
   for (const auto &initializer : constructor.initializers) {
     if (initializer.kind == ConstructorInitializerTargetKind::Field &&
         initializer.targetType.kind == SemanticType::Enum &&
         initializer.arguments.size() == 1) {
       payloadInitializerTextInputs(context, initializer, diagnose, inputs,
-                                   uses);
+                                   uses, fieldUses);
       continue;
     }
     if (initializer.kind != ConstructorInitializerTargetKind::Field ||
@@ -1470,9 +1595,15 @@ auto TextContracts::initializerTextInputs(
     if (source.known && source.parameters.size() == 1 && initializer.field != 0)
       inputs.fields.emplace(*source.parameters.begin(),
                             TextFieldPath{initializer.field});
+    if (initializer.field != 0)
+      noteFieldRelay(source, true, TextFieldPath{initializer.field}, inputs,
+                     fieldUses);
   }
   std::erase_if(inputs.fields,
                 [&](const auto &entry) { return uses[entry.first] != 1; });
+  std::erase_if(inputs.fieldRelays, [&](const auto &entry) {
+    return fieldUses[entry.first] != 1;
+  });
   return inputs;
 }
 
@@ -1481,6 +1612,7 @@ MirVerificationResult TextContracts::verify() {
   fieldRequirements.resize(program.functionInstances().size());
   constructorRequirements.resize(program.constructorInstances().size());
   constructorTextFields.resize(program.constructorInstances().size());
+  constructorFieldRelays.resize(program.constructorInstances().size());
   constructorPublishedFields.resize(program.constructorInstances().size());
   for (const auto &constructor : program.constructorInstances()) {
     auto inputs = initializerTextInputs(constructor, true);
@@ -1494,6 +1626,7 @@ MirVerificationResult TextContracts::verify() {
     constructorRequirements[constructor.id - 1] =
         std::move(inputs.requirements);
     constructorTextFields[constructor.id - 1] = std::move(inputs.fields);
+    constructorFieldRelays[constructor.id - 1] = std::move(inputs.fieldRelays);
   }
   relays.resize(program.functionInstances().size());
   const auto functionContext = [&](const MirFunctionInstance &function) {
@@ -1625,6 +1758,7 @@ MirVerificationResult TextContracts::verify() {
     (void)scan({instance.staticFieldInitializers, {}, {}}, instance.id, true);
   }
   std::vector<std::set<std::size_t>> constructorBodyNeeds;
+  std::vector<std::set<OwnerlessTextField>> constructorBodyFieldNeeds;
   for (const auto &constructor : program.constructorInstances()) {
     const TextBody context{.body = constructor.body,
                            .types = constructor.parameterTypes,
@@ -1632,7 +1766,9 @@ MirVerificationResult TextContracts::verify() {
                            .publishedFields =
                                &constructorPublishedFields[constructor.id - 1],
                            .constructor = &constructor};
-    const auto needed = scan(context, constructor.id, true);
+    std::set<OwnerlessTextField> fieldNeeds;
+    const auto needed = scan(context, constructor.id, true, &fieldNeeds);
+    constructorBodyFieldNeeds.push_back(std::move(fieldNeeds));
     if (!std::includes(constructorRequirements[constructor.id - 1].begin(),
                        constructorRequirements[constructor.id - 1].end(),
                        needed.begin(), needed.end()))
@@ -1650,6 +1786,14 @@ MirVerificationResult TextContracts::verify() {
       fail({lambda.body, lambda.parameterTypes, lambda.parameterBindings},
            lambda.id, nullptr,
            "lambda requires an unrepresented ownerless text input contract");
+  for (const auto &[constructor, index, field] : publishedFieldRelays)
+    if (constructorBodyFieldNeeds[constructor - 1].contains(
+            {.parameter = index, .field = field})) {
+      const auto &instance = program.constructorInstances()[constructor - 1];
+      fail({instance.body, instance.parameterTypes, instance.parameterBindings},
+           constructor, nullptr,
+           "re-rooted text field also reaches ownerless text storage");
+    }
   for (const auto &[constructor, index] : publishedFormals)
     if (constructorBodyNeeds[constructor - 1].contains(index)) {
       const auto &instance = program.constructorInstances()[constructor - 1];
@@ -1829,6 +1973,18 @@ bool directTextPath(const MirProgram &program, const SemanticType &type,
                        return entry.symbol == path.front() &&
                               directTextPayload(program, entry.type, path[1]);
                      });
+}
+
+std::optional<TextFieldPath>
+dependentTextFieldRelay(const MirProgram &program,
+                        const MirConstructorInstance &constructor,
+                        std::size_t parameter, SymbolId field) {
+  TextContracts contracts(program);
+  const auto relays =
+      contracts.initializerTextInputs(constructor, false).fieldRelays;
+  const auto found = relays.find({parameter, field});
+  return found == relays.end() ? std::nullopt
+                               : std::optional<TextFieldPath>{found->second};
 }
 
 std::optional<std::size_t>

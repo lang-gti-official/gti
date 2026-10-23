@@ -202,6 +202,17 @@ dependentTextPublication(const MirProgram &program,
       instruction.borrowFields.size() != 1)
     return false;
   const auto &mapping = instruction.borrowFields.front();
+  // A class formal's text field re-rooted at the path its constructor stores
+  // it in: the argument's dependency at that field moves to the result.
+  if (mapping.sourceFields.size() == 1)
+    return mapping.origin == BorrowOriginKind::Argument &&
+           mapping.parameter == instruction.borrowArgument &&
+           mapping.globalRoot == 0 && mapping.access == AccessMode::ReadOnly &&
+           mapping.resultConditions.empty() &&
+           mapping.sourceConditions.empty() &&
+           mir_detail::dependentTextFieldRelay(
+               program, constructor, mapping.parameter,
+               mapping.sourceFields.front()) == mapping.resultFields;
   return mapping.origin == BorrowOriginKind::Argument &&
          mapping.parameter == instruction.borrowArgument &&
          mapping.globalRoot == 0 && mapping.sourceFields.empty() &&
@@ -1805,8 +1816,18 @@ uniqueMirClassInstanceForType(const MirProgram &program,
           instruction.lambdaTarget
               ? program.findLambda(*instruction.lambdaTarget)
               : nullptr;
+      // A text field result of the consumed receiver (L-OWN-02) is the text
+      // that field held, never storage of the receiver.
+      const bool consumedTextField =
+          functionTarget != nullptr &&
+          functionTarget->returnBorrowOrigin == BorrowOriginKind::Receiver &&
+          mir_detail::textFieldResult(functionTarget->returnType,
+                                      functionTarget->returnBorrowOrigin,
+                                      functionTarget->returnBorrowParameter,
+                                      functionTarget->returnBorrowFields);
       if (functionTarget != nullptr &&
           functionTarget->receiverMutability == ReceiverMutability::Consuming &&
+          !consumedTextField &&
           (functionTarget->returnType.kind == SemanticType::Reference ||
            functionTarget->returnBorrowOrigin != BorrowOriginKind::None ||
            instruction.info.traits.containsBorrowedState) &&
@@ -6396,10 +6417,15 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
       // element, so storage declared as the view itself holds an ownerless
       // view. An exact copy of it is lifetime independent like a literal. A
       // reference field ends in a dereference and stays owner dependent.
+      // Moving a view out of such storage, as a consuming accessor does,
+      // copies the same view.
       const MirPlace *stored =
-          definition && definition->kind == MirInstructionKind::Load &&
+          definition &&
+                  (definition->kind == MirInstructionKind::Load ||
+                   definition->kind == MirInstructionKind::Move) &&
                   definition->operands.size() == 1 &&
-                  definition->operands.front().kind == MirOperandKind::Copy
+                  (definition->operands.front().kind == MirOperandKind::Copy ||
+                   definition->operands.front().kind == MirOperandKind::Move)
               ? body.findPlace(definition->operands.front().place)
               : nullptr;
       const bool independentStoredText =

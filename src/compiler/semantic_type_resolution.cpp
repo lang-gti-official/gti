@@ -2411,6 +2411,17 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       }
       if (argument == nullptr || !*argument)
         continue;
+      // A class formal whose text field the constructor stores re-roots the
+      // argument's owner dependency at that field to the stored path
+      // (L-OWN-02).
+      if (input.sourceField != 0) {
+        if (!potentialPackView && index < arguments.size())
+          relayConstructorTextField(constructedType,
+                                    *selected.constructor->declaration, input,
+                                    *argument, textOrigins,
+                                    contextualConstruction);
+        continue;
+      }
       const bool conditionalText =
           index < selected.parameterTypes.size() &&
           selected.parameterTypes[index].kind == SemanticType::TypeParameter;
@@ -5753,6 +5764,14 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
   }
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {
     return hasStableBorrowStorage(grouping->expression(), visiting);
+  }
+  // A moved value's text relays still view its owner's storage (L-OWN-02);
+  // a consuming method cannot return a reference into the moved value.
+  if (const ExprPtr *moved = explicitMoveSource(expression);
+      moved != nullptr && *moved) {
+    const ExpressionInfo *info = semanticModel.findExpression(**moved);
+    if (info != nullptr && isTextDependentValue(*info))
+      return hasStableBorrowStorage(*moved, visiting);
   }
   if (const auto dependencies =
           semanticModel.findBorrowDependencies(*expression);

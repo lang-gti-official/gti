@@ -34,4 +34,11 @@ verifyOwnerlessTextContracts(const MirProgram &program);
 dependentTextFieldFormal(const MirProgram &program,
                          const MirConstructorInstance &constructor,
                          std::span<const SymbolId> path);
+// The text field path at which the constructor alone stores the text field
+// `field` of its class formal `parameter`, which a construction may re-root
+// its argument's owner dependency at.
+[[nodiscard]] std::optional<std::vector<SymbolId>>
+dependentTextFieldRelay(const MirProgram &program,
+                        const MirConstructorInstance &constructor,
+                        std::size_t parameter, SymbolId field);
 } // namespace lang::mir_detail

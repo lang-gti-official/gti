@@ -4716,6 +4716,9 @@ auto SemanticVisitor::Impl::constructorSignatureSpelling(
 auto SemanticVisitor::Impl::consumingResultCarriesBorrow(
     const CallableCandidate &function) const -> bool {
   return function.receiverMutability == ReceiverMutability::Consuming &&
+         !receiverTextFieldResult(function.returnType,
+                                  function.returnBorrowOrigin,
+                                  function.returnBorrowFields) &&
          !conditionalReferenceReturn(function.returnType,
                                      function.parameterTypes,
                                      function.dispatchOwner) &&
