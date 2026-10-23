@@ -34,14 +34,15 @@ An `int` read through a dependent value's `int&` accessor also verifies. An
 earlier draft of the rule rejected it, because that accessor's loan has the
 publication as its stored dependency; holding is now typed.
 
-The recorded validation runs a same-root differential. It compares this
-head's compiler with the same build linked against main's
-`mir_text_contracts.cpp`, its only compiled difference, both with one
-`GTI_STDLIB_PATH`. It emits C++ at -O0 and -O3 for all 1,851 programs under
-`tests/` and `examples/`, which is 3,702 compiles per compiler.
-`namespace-depth-63`, which times out with both compilers, is excluded. The
-gate fails unless every exit status, refusal code set and emitted C++ byte
-matches, so no program changes status.
+A same-root differential compares this head's compiler with the same build
+linked against main's `mir_text_contracts.cpp`, its only compiled difference.
+Both use one `GTI_STDLIB_PATH`. Against main at 0.465.3 it emitted C++ at -O0
+and -O3 for all 1,853 programs under `tests/` and `examples/`, which is 3,706
+compiles per compiler. `namespace-depth-63`, which times out with both
+compilers, is excluded. Every exit status, refusal code set and emitted C++
+byte matched: both compilers accepted 2,956 compiles and refused 750. Main's
+next change before integration, batched validation, changed no compiled
+source.
 
 ## Classes holding function items (0.465.3)
 
