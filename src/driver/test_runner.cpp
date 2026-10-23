@@ -153,6 +153,8 @@ TestRunResult runTestSuites(std::span<const TestSuiteCommand> suites,
       ++summary.completed;
       if (observer.finished)
         observer.finished(report);
+      if (!options.retainOutput)
+        std::string{}.swap(report.output);
       active.erase(active.begin() + i);
     }
     if (!progress && !active.empty())

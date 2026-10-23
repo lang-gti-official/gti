@@ -16,6 +16,9 @@ struct TestRunOptions {
   std::vector<std::string> skips;
   bool listOnly = false;
   bool allowEmpty = false;
+  // Observers consume each captured output before it is released. Callers
+  // needing output again in result.cases keep the default true.
+  bool retainOutput = true;
   std::size_t jobs = 1;
   std::chrono::milliseconds timeout{300000};
   std::vector<std::pair<std::string, std::string>> environment;
