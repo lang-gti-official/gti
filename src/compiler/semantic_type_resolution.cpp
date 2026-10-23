@@ -4871,7 +4871,12 @@ auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
                                                      readInfo->category,
                                                      readInfo->access));
         const auto *group = exprAs<Grouping>(read);
-        read = group == nullptr ? nullptr : group->expression().get();
+        const auto *move = exprAs<Call>(read);
+        read = group != nullptr ? group->expression().get()
+               : move != nullptr && move->arguments().size() == 1 &&
+                       resolvedIntrinsicKind(*move) == IntrinsicKind::Move
+                   ? move->arguments().front().get()
+                   : nullptr;
       }
       return;
     }

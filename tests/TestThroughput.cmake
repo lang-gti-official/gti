@@ -80,7 +80,7 @@ if(Python3_Interpreter_FOUND)
     deferred_bound_field_runtime
     passive_text_view_class_runtime
     view_fields_runtime text_reference_accessors_runtime
-    view_field_payloads_runtime
+    view_field_payloads_runtime view_field_conversions_runtime
     recursive_text_relays_runtime
     declaration_owned_defaults_runtime
     base_rollback_record_runtime virtual_expected_owning_return_runtime

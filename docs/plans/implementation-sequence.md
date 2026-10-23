@@ -327,7 +327,7 @@ workflow determine task scope and integration.
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
 | `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
-| `L-OWN-02` owner-tracked view fields | phase 1, 2a and 2b implemented; 2c (constructor relays and returned dependent values) next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values; 1b-i relays them into functions and methods through inferred field-level contracts, and a function that returns one text field relays it to its result. Payload enums hold the same dependency in a text payload, and a temporary holds it within its expression. Phase 2a lets a function that returns a fresh value over its text formal relay it, including `std::make_pair` and `unexpected`; 2b adds reference accessors, generic class methods and nested publication through payload-enum fields, covering `optional<std::string_view>` and success `expected`. Later steps cover `expected`'s constructor relays, returned dependent values, nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
+| `L-OWN-02` owner-tracked view fields | phases 1 and 2 implemented; phase 3 (nested borrowing values) next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values; 1b-i relays them into functions and methods through inferred field-level contracts, and a function that returns one text field relays it to its result. Payload enums hold the same dependency in a text payload, and a temporary holds it within its expression. Phase 2a lets a function that returns a fresh value over its text formal relay it, including `std::make_pair` and `unexpected`; 2b adds reference accessors, generic class methods and nested publication through payload-enum fields, covering `optional<std::string_view>` and success `expected`; 2c publishes through implicit conversions, re-roots a class formal's text field in a constructor (`expected` from `unexpected_value`), and lets a function return a value over a reference formal's referent, as `parse(std::string&)` returning `unexpected(input.view())` does. Later steps cover nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
@@ -8959,9 +8959,10 @@ prerequisite checkpoints as full acceptance.
 - **State/role:** owner decision 2026-10-21 (option 1 of the caller-owned text
   question in the 0.449.0 follow-ups). Phase 1 is implemented: 1a (local class
   and struct values), 1b-i (relays and receivers) and 1b-ii (returns, payload
-  enums and temporaries). Phases 2a (published text results) and 2b
-  (reference accessors, generic class methods and nested publication) are
-  implemented; 2c and phases 3–4 are planned.
+  enums and temporaries). Phase 2 is implemented: 2a (published text
+  results), 2b (reference accessors, generic class methods and nested
+  publication) and 2c (conversions, field relays and returns). Phases 3–4
+  are planned.
 - **Problem and client:** no field can hold a view of caller-owned text. A
   `std::string_view` or `c_string` field, a payload-enum alternative of either
   type, and the storage of any constructor that keeps a text parameter accept
@@ -9163,14 +9164,39 @@ prerequisite checkpoints as full acceptance.
       accessors (`std::move(o).value()`) and returning the value. `o->`
       over a `std::string_view` payload is a backend `GTI-B0001` for every
       receiver (an existing gap that this release makes reachable).
-  - *2c: constructor relays and returned dependent values.* `expected`'s
-    constructor from `unexpected_value<E>` re-roots `[payload]` at
-    `[state, error]` through a consuming accessor. A function may return a
-    value over a reference formal's referent, as in
-    `parse(std::string& input)` returning `unexpected(input.view())`, the
-    motivating client. That return converts implicitly, so 2c also publishes
-    through a contextual construction, as in
-    `std::optional<std::string_view> o = input.view();`.
+  - *Implemented in 0.464.0 (2c): conversions, field relays and returns.*
+    - *Contextual construction.* An implicit conversion's one expression
+      node is both the argument and the converted value. It publishes the
+      argument's owner as an explicit construction does, so
+      `std::optional<std::string_view> o = input.view();` and
+      `expected<int, std::string_view> r = unexpected(input.view());` work.
+      A view binding's owner, not the binding, is the dependency: a value
+      over `std::string_view v = input.view()` depends on `input`.
+    - *Field relays.* A constructor that stores a by-value class formal's
+      text field, directly or through a zero-argument accessor returning
+      it, re-roots the argument's dependency at that field to the stored
+      path (`BorrowedFieldOrigin::sourceFields`). The formal is mentioned
+      once, and the constructor keeps published text. `expected`'s
+      constructor from `unexpected_value<E>` re-roots `[payload]` at
+      `[state, failure]` through the consuming `error() &&`; consuming
+      receivers are contract receivers, because a write into a text field
+      already requires ownerless text. MIR recomputes the path from the
+      constructor's initializers (`dependentTextFieldRelay`).
+    - *Returns.* A function whose returned value's single owner dependency
+      is the referent of one read-only reference formal relays it
+      (`FunctionInfo::dependentTextReturn`, an Argument return summary at
+      the text path). Each call's result is a dependent value over that
+      call's argument. Ownerless alternatives such as `return 0;` and
+      `std::nullopt` are admitted, and a returned call of such a function
+      relays again. MIR checks the summary's shape and that every return
+      either borrows the formal at that path or holds no dynamic text.
+    - *Still `GTI-S2045`:* returns needing two implicit conversions and
+      views of locals (owner decisions), by-value or `mut` reference
+      owners, two owner formals, a view of a method's receiver
+      (`Doc::first()` returning `Token(this.body.view(), 1)`), a factory
+      converting its by-value text formal into a payload path
+      (`std::optional<std::string_view> back(std::string_view v)`), and an
+      implicit conversion inside a constructor initializer (`opt(t)`).
 - **Phase 3 (nested borrowing values):** a field whose type is itself
   dependent, as in `struct conflict { Diag diag; }`. It also covers borrowed
   error structs such as `expected<int, conflict>` where `conflict` holds an

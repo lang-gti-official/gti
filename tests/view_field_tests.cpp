@@ -241,12 +241,27 @@ void testConfinement() {
                         }),
            std::string(entry.description) + " is diagnosed at source");
   }
-  const auto escaped = analyzeText(kDeclarations + R"gti(
+  // A value over a reference formal's referent is returned (phase 2c); one
+  // over a local owner is not.
+  const auto returned = analyzeText(kDeclarations + R"gti(
 Token make(std::string& input) { return Token(input.view(), 3); }
+int main() {
+  std::string input{"made"};
+  Token token = make(input);
+  return token.width() == 4 ? 0 : 1;
+}
+)gti");
+  if (!returned.canGenerateCode())
+    printDiagnostics(returned);
+  expect(returned.canGenerateCode() &&
+             lang::verifyMirProgram(returned.mir).valid(),
+         "a dependent value over a reference formal's referent is returned");
+  const auto escaped = analyzeText(kDeclarations + R"gti(
+Token make() { std::string input{"local"}; return Token(input.view(), 3); }
 int main() { return 0; }
 )gti");
   expect(hasDiagnosticCode(escaped.diagnostics, "GTI-S2045"),
-         "a dependent value is not returned in this phase");
+         "a dependent value over a local owner is not returned");
 }
 
 void testRelays() {
@@ -634,11 +649,11 @@ int main() {
            std::string(entry.description) + " is diagnosed at source");
   }
   const auto returned = analyzeText(kPayloadDeclarations + R"gti(
-Word make(std::string& input) { return Word::text(input.view()); }
+Word make() { std::string input{"local"}; return Word::text(input.view()); }
 int main() { return 0; }
 )gti");
   expect(hasDiagnosticCode(returned.diagnostics, "GTI-S2045"),
-         "a dependent payload value is not returned in this phase");
+         "a dependent payload value over a local owner is not returned");
 }
 
 // A class temporary may be read within its expression (L-OWN-02). A
@@ -1808,6 +1823,509 @@ int main() {
     expectPayloadRejected(*entry.setup, entry.body, entry.code);
 }
 
+const std::string kConversions = R"gti(
+#include <std/optional>
+#include <std/string>
+mut std::string_view kept = "";
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view name() { return this.text; }
+};
+enum Word { text(std::string_view value), none };
+class Wrap {
+public:
+  Word word;
+  Wrap(Token token) : word(Word::text(token.text)) {}
+};
+class Copy {
+public:
+  std::string_view text;
+  Copy(Token token) : text(token.text) {}
+};
+class Named {
+public:
+  std::string_view text;
+  Named(Token token) : text(token.name()) {}
+};
+class Leaky {
+public:
+  std::string_view text;
+  Leaky(Token token) : text(token.text) { kept = token.text; }
+};
+class Twice {
+public:
+  std::string_view first;
+  std::string_view second;
+  Twice(Token token) : first(token.text), second(token.text) {}
+};
+void keepToken(Token token) { kept = token.text; }
+expected<int, std::string_view> parse(std::string& input) {
+  if (input.empty()) {
+    return 0;
+  }
+  return unexpected(input.view());
+}
+expected<int, std::string_view> parseAgain(std::string& input) {
+  return parse(input);
+}
+Token tokenOf(std::string& input) { return Token(input.view(), 1); }
+Token viaLocal(std::string& input) {
+  Token token = Token(input.view(), 2);
+  return token;
+}
+Word wordOf(std::string& input) { return Word::text(input.view()); }
+std::optional<std::string_view> find(std::string& input) {
+  if (input.empty()) {
+    return std::nullopt;
+  }
+  return input.view();
+}
+)gti";
+
+// Each dependent form of a conversion or return shape is diagnosed at
+// source, never by the backend.
+void expectConversionRejected(const std::string &declarations,
+                              const std::string &body, const char *code) {
+  const auto rejected =
+      analyzeText(kConversions + declarations +
+                  "int run() { mut std::string owner{\"owner\"}; " + body +
+                  " return 0; }\nint main() { return run(); }\n");
+  expect(hasDiagnosticCode(rejected.diagnostics, code),
+         std::string("a dependent conversion is checked at source: ") +
+             declarations + body);
+  expect(std::none_of(rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                        return diagnostic.code.starts_with("GTI-B");
+                      }),
+         std::string("diagnosed at source: ") + declarations + body);
+}
+
+// An implicit conversion is a construction too: its one expression node is
+// both the argument and the converted value, and it publishes the argument's
+// owner as an explicit construction does (L-OWN-02).
+void testContextualConstruction() {
+  const auto result = analyzeText(kConversions + R"gti(
+int main() {
+  std::string input{"converted"};
+  std::optional<std::string_view> maybe = input.view();
+  mut uint64_t total = 0;
+  if (maybe) {
+    total = total + (*maybe).size();
+  }
+  std::string_view view = input.view();
+  Token token = Token(view, 1);
+  expected<int, std::string_view> failed = unexpected(input.view());
+  if (!failed) {
+    total = total + failed.error().size();
+  }
+  std::unexpected_value<std::string_view> failure = unexpected(input.view());
+  total = total + token.text.size() + std::move(failure).error().size();
+  return total == 36 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "implicit conversions keep the owner's text");
+
+  struct Case {
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{"std::optional<std::string_view> maybe = owner.view(); "
+                "kept = *maybe;",
+                "GTI-S2045"},
+           Case{"std::optional<std::string_view> maybe = owner.view(); "
+                "owner.append(\"!\"); uint64_t n = (*maybe).size();",
+                "GTI-S2017"},
+           Case{"std::string_view view = owner.view(); "
+                "std::optional<std::string_view> maybe = view; "
+                "owner.append(\"!\"); uint64_t n = (*maybe).size();",
+                "GTI-S2017"},
+           Case{"std::string_view view = owner.view(); Token token = "
+                "Token(view, 1); owner.append(\"!\"); uint64_t n = "
+                "token.text.size();",
+                "GTI-S2017"},
+           Case{"expected<int, std::string_view> failed = "
+                "unexpected(owner.view()); kept = failed.error();",
+                "GTI-S2045"},
+           Case{"expected<int, std::string_view> failed = "
+                "unexpected(owner.view()); std::string_view text = "
+                "failed.error(); owner.append(\"!\"); uint64_t n = "
+                "text.size();",
+                "GTI-S2017"},
+           Case{"std::unexpected_value<std::string_view> failure = "
+                "unexpected(owner.view()); kept = std::move(failure).error();",
+                "GTI-S2045"},
+       })
+    expectConversionRejected("", entry.body, entry.code);
+  // A conversion of a local owner's view does not leave its body.
+  expectConversionRejected(
+      "std::optional<std::string_view> leak() { std::string text{\"x\"}; "
+      "return text.view(); }\n",
+      "std::optional<std::string_view> maybe = leak();", "GTI-S2045");
+}
+
+// A constructor that stores a by-value class formal's text field, directly
+// or through a zero-argument accessor, re-roots the argument's dependency at
+// that field to the stored path of the new value.
+void testFieldRelays() {
+  const auto result = analyzeText(kConversions + R"gti(
+int main() {
+  std::string input{"relayed"};
+  Token token = Token(input.view(), 1);
+  Wrap wrap = Wrap(token);
+  mut uint64_t total = 0;
+  switch (wrap.word) {
+  case Word::text(value): total = total + value.size(); break;
+  case Word::none: break;
+  }
+  Copy copy = Copy(Token(input.view(), 2));
+  Copy moved = Copy(std::move(token));
+  Named named = Named(Token(input.view(), 3));
+  total = total + copy.text.size() + moved.text.size() + named.text.size();
+  return total == 28 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "constructors relay a formal's text field");
+  if (!result.canGenerateCode())
+    return;
+  // MIR recomputes each relayed path from the constructor's initializers.
+  std::size_t relays = 0;
+  for (const auto &location : publications(result.mir)) {
+    auto probe = result.mir;
+    const auto &instruction = instructionAt(probe, location);
+    if (instruction.kind != lang::MirInstructionKind::Construct ||
+        instruction.borrowFields.size() != 1 ||
+        instruction.borrowFields.front().sourceFields.size() != 1)
+      continue;
+    ++relays;
+    const auto source = instruction.borrowFields.front().sourceFields.front();
+    auto movedPath = result.mir;
+    instructionAt(movedPath, location)
+        .borrowFields.front()
+        .resultFields.push_back(source);
+    expect(!lang::verifyMirProgram(movedPath).valid(),
+           "MIR rejects a relay published at another path");
+    auto otherSource = result.mir;
+    instructionAt(otherSource, location)
+        .borrowFields.front()
+        .sourceFields.front() = 0;
+    expect(!lang::verifyMirProgram(otherSource).valid(),
+           "MIR rejects a relay from a field the constructor does not store");
+  }
+  // parse's conversion of its unexpected_value into expected relays too.
+  expect(relays == 5, "each constructor relay publishes its stored path");
+
+  struct Case {
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{"Token token = Token(owner.view(), 1); Copy copy = "
+                "Copy(token); kept = copy.text;",
+                "GTI-S2045"},
+           Case{"Token token = Token(owner.view(), 1); Wrap wrap = "
+                "Wrap(token); switch (wrap.word) { case Word::text(value): "
+                "kept = value; break; case Word::none: break; }",
+                "GTI-S2045"},
+           Case{"Token token = Token(owner.view(), 1); Wrap wrap = "
+                "Wrap(token); owner.append(\"!\"); switch (wrap.word) { case "
+                "Word::text(value): break; case Word::none: break; }",
+                "GTI-S2017"},
+           Case{"Token token = Token(owner.view(), 1); Leaky leaky = "
+                "Leaky(token);",
+                "GTI-S2045"},
+           Case{"Token token = Token(owner.view(), 1); Twice twice = "
+                "Twice(token);",
+                "GTI-S2045"},
+           Case{"Token token = Token(owner.view(), 1); "
+                "keepToken(std::move(token));",
+                "GTI-S2045"},
+       })
+    expectConversionRejected("", entry.body, entry.code);
+}
+
+// A function returning a value over its one read-only reference formal's
+// referent relays it: each call's result views that call's argument, as
+// `parse(std::string&)` returning `unexpected(input.view())` needs.
+void testDependentReturns() {
+  const auto result = analyzeText(kConversions + R"gti(
+int main() {
+  std::string input{"returned"};
+  mut uint64_t total = 0;
+  expected<int, std::string_view> parsed = parse(input);
+  if (!parsed) {
+    total = total + parsed.error().size();
+  }
+  expected<int, std::string_view> again = parseAgain(input);
+  if (!again) {
+    total = total + again.error().size();
+  }
+  Token token = tokenOf(input);
+  Token local = viaLocal(input);
+  Word word = wordOf(input);
+  switch (word) {
+  case Word::text(value): total = total + value.size(); break;
+  case Word::none: break;
+  }
+  std::optional<std::string_view> found = find(input);
+  if (found) {
+    total = total + (*found).size();
+  }
+  std::string empty{""};
+  expected<int, std::string_view> value = parse(empty);
+  total = total + token.text.size() + local.text.size() +
+          uint64_t(value.value());
+  return total == 48 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "returned values view a reference formal's referent");
+  if (!result.canGenerateCode())
+    return;
+  // MIR checks each function's return summary against its body, and admits
+  // an ownerless alternative such as `return 0;` only under the summary.
+  std::size_t summaries = 0;
+  for (const auto &function : result.mir.functionInstances()) {
+    if (!function.dependentTextReturn)
+      continue;
+    ++summaries;
+    auto cleared = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        cleared.findFunctionInstance(function.id))
+        ->dependentTextReturn = false;
+    expect(!lang::verifyMirProgram(cleared).valid(),
+           "MIR rejects a dependent return without its summary");
+    auto pathless = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        pathless.findFunctionInstance(function.id))
+        ->returnBorrowFields.front()
+        .resultFields.clear();
+    expect(!lang::verifyMirProgram(pathless).valid(),
+           "MIR rejects a dependent return summary without its text path");
+  }
+  expect(summaries == 6, "every returning function records its summary");
+
+  struct Case {
+    const char *declarations;
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{"", "expected<int, std::string_view> parsed = parse(owner); "
+                    "kept = parsed.error();",
+                "GTI-S2045"},
+           Case{"", "expected<int, std::string_view> parsed = parse(owner); "
+                    "owner.append(\"!\"); uint64_t n = parsed.error().size();",
+                "GTI-S2017"},
+           Case{"", "expected<int, std::string_view> parsed = parse(owner); "
+                    "std::string moved = std::move(owner); uint64_t n = "
+                    "parsed.error().size();",
+                "GTI-S2017"},
+           Case{"", "expected<int, std::string_view> parsed = parse(owner); "
+                    "std::string_view text = parsed.error(); "
+                    "owner.append(\"!\"); uint64_t n = text.size();",
+                "GTI-S2017"},
+           Case{"", "expected<int, std::string_view> parsed = "
+                    "parse(std::string(\"temporary\"));",
+                "GTI-S2045"},
+           Case{"", "Word word = wordOf(owner); switch (word) { case "
+                    "Word::text(value): kept = value; break; case Word::none: "
+                    "break; }",
+                "GTI-S2045"},
+           Case{"Token localOwner() { std::string text{\"x\"}; return "
+                "Token(text.view(), 1); }\n",
+                "Token token = localOwner();", "GTI-S2045"},
+           Case{"Token byValue(std::string text) { return Token(text.view(), "
+                "1); }\n",
+                "Token token = byValue(std::string(\"x\"));", "GTI-S2045"},
+           Case{"Token mutated(mut std::string& text) { return "
+                "Token(text.view(), 1); }\n",
+                "Token token = mutated(owner);", "GTI-S2045"},
+           Case{"Token pick(std::string& a, std::string& b, bool first) { if "
+                "(first) { return Token(a.view(), 1); } return "
+                "Token(b.view(), 2); }\n",
+                "Token token = pick(owner, owner, true);", "GTI-S2045"},
+           Case{"expected<int, std::string_view> outer() { std::string "
+                "text{\"x\"}; return parse(text); }\n",
+                "expected<int, std::string_view> parsed = outer();",
+                "GTI-S2045"},
+       })
+    expectConversionRejected(entry.declarations, entry.body, entry.code);
+}
+
+const std::string kPayloadUses = R"gti(
+#include <std/optional>
+#include <std/string>
+mut std::string_view kept = "";
+enum Word { text(std::string_view value), none };
+mut Word keptWord = Word::none;
+void keepWord(Word word) {
+  switch (word) {
+  case Word::text(value): kept = value; break;
+  case Word::none: break;
+  }
+}
+void keepWordRef(Word& word) {
+  switch (word) {
+  case Word::text(value): kept = value; break;
+  case Word::none: break;
+  }
+}
+class Line {
+public:
+  mut Word word;
+  Line(std::string_view text) : word(Word::text(text)) {}
+  bool hasText() {
+    switch (this.word) {
+    case Word::text: return true;
+    case Word::none: return false;
+    }
+  }
+  void copyOut() {
+    Word word = this.word;
+    switch (word) {
+    case Word::text(value): kept = value; break;
+    case Word::none: break;
+    }
+  }
+  void passOut() { keepWord(this.word); }
+  void lendOut() { keepWordRef(this.word); }
+  void storeOut() { keptWord = this.word; }
+  Word& wordRef() { return this.word; }
+  void consume() && {
+    switch (std::move(this.word)) {
+    case Word::text(value): kept = value; break;
+    case Word::none: break;
+    }
+  }
+};
+void copyLine(Line line) {
+  Word word = line.word;
+  switch (word) {
+  case Word::text(value): kept = value; break;
+  case Word::none: break;
+  }
+}
+class Box {
+public:
+  mut std::string_view text;
+  Box(std::string_view text) : text(text) {}
+  void keep() && { kept = std::move(this.text); }
+  std::string_view take() && { return std::move(this.text); }
+};
+)gti";
+
+// A payload-enum field of a contract formal or the receiver is observed in
+// place by a switch on it. Any other use, a copy, move, borrow or store of
+// the field, may carry any of its text payloads away, so each is required
+// ownerless at every call (L-OWN-02). A consuming receiver's moved text
+// field forwards or relays like a read of it.
+void testPayloadFieldUses() {
+  const auto result = analyzeText(kPayloadUses + R"gti(
+int main() {
+  mut Line line = Line("literal");
+  line.copyOut();
+  line.passOut();
+  line.lendOut();
+  line.storeOut();
+  keepWordRef(line.wordRef());
+  copyLine(line);
+  std::move(line).consume();
+  mut Box box = Box("boxed");
+  std::move(box).keep();
+  std::string input{"relayed"};
+  mut Box relayed = Box(input.view());
+  std::optional<std::string_view> maybe = std::optional<std::string_view>("x");
+  std::string_view taken = std::move(relayed).take();
+  std::string_view value = std::move(maybe).value();
+  return kept.size() + taken.size() + value.size() == 13 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "ownerless values copy, pass and store their payload fields");
+  if (!result.canGenerateCode())
+    return;
+  // MIR derives each payload requirement from the field's use; only the
+  // in-place switch of hasText requires nothing.
+  std::size_t payloadUses = 0;
+  for (const auto &function : result.mir.functionInstances()) {
+    if (std::none_of(function.ownerlessTextFields.begin(),
+                     function.ownerlessTextFields.end(),
+                     [](const auto &field) { return field.payload != 0; }))
+      continue;
+    ++payloadUses;
+    auto changed = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(function.id))
+        ->ownerlessTextFields.clear();
+    expect(!lang::verifyMirProgram(changed).valid(),
+           "MIR derives a payload field use's requirement independently");
+  }
+  expect(payloadUses >= 8, "every payload field use requires its payload");
+
+  struct Case {
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{"Line line = Line(owner.view()); line.copyOut();",
+                "GTI-S2045"},
+           Case{"Line line = Line(owner.view()); line.passOut();",
+                "GTI-S2045"},
+           Case{"Line line = Line(owner.view()); line.lendOut();",
+                "GTI-S2045"},
+           Case{"Line line = Line(owner.view()); line.storeOut();",
+                "GTI-S2045"},
+           Case{"Line line = Line(owner.view()); "
+                "keepWordRef(line.wordRef());",
+                "GTI-S2045"},
+           Case{"Line line = Line(owner.view()); copyLine(line);",
+                "GTI-S2045"},
+           Case{"mut Line line = Line(owner.view()); std::move(line).consume();",
+                "GTI-S2045"},
+           Case{"mut Box box = Box(owner.view()); std::move(box).keep();",
+                "GTI-S2045"},
+           Case{"mut Box box = Box(owner.view()); kept = "
+                "std::move(box).take();",
+                "GTI-S2045"},
+           Case{"mut Box box = Box(owner.view()); std::string_view text = "
+                "std::move(box).take(); owner.append(\"!\"); uint64_t n = "
+                "text.size();",
+                "GTI-S2017"},
+           Case{"mut std::optional<std::string_view> maybe = "
+                "std::optional<std::string_view>(owner.view()); kept = "
+                "std::move(maybe).value();",
+                "GTI-S2045"},
+       }) {
+    const auto rejected =
+        analyzeText(kPayloadUses +
+                    "int run() { mut std::string owner{\"owner\"}; " +
+                    entry.body + " return 0; }\nint main() { return run(); }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, entry.code),
+           std::string("a dependent payload field use is checked at source: ") +
+               entry.body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + entry.body);
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
@@ -1824,6 +2342,10 @@ constexpr NamedTest kTests[] = {
     {"testTypeParameterFormals", testTypeParameterFormals},
     {"testPayloadPaths", testPayloadPaths},
     {"testOptionalViews", testOptionalViews},
+    {"testContextualConstruction", testContextualConstruction},
+    {"testFieldRelays", testFieldRelays},
+    {"testDependentReturns", testDependentReturns},
+    {"testPayloadFieldUses", testPayloadFieldUses},
 };
 } // namespace
 
