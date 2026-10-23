@@ -1843,8 +1843,8 @@ auto SemanticVisitor::Impl::conditionalRelayReturns(
   return result;
 }
 
-auto SemanticVisitor::Impl::contractEnumField(const Expr *current,
-                                             const FunctionInfo &function) const
+auto SemanticVisitor::Impl::contractEnumField(
+    const Expr *current, const FunctionInfo &function) const
     -> std::optional<std::pair<OwnerlessTextField, SemanticType>> {
   const FunctionInfo *scope = &function;
   while (const auto *group = exprAs<Grouping>(current))
