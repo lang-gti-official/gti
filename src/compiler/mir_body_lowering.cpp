@@ -3576,6 +3576,39 @@ private:
                             std::equal(parentLoan->place.projections.begin(),
                                        parentLoan->place.projections.end(),
                                        loan.place.projections.begin());
+      // A place rooted at the parent loan names its primary referent. A
+      // reference selected under one of the parent's additional owners uses
+      // the owner place the carrier already materialized for that dependency
+      // (the referent of a reference-typed owner); the selection loan keeps
+      // the exact parent link.
+      if (!sameRoot && loan.referenceSelection && parent != semanticLoans.end())
+        if (const MirLoan *carrier = output.findLoan(parent->second))
+          for (const auto &dependency : carrier->additionalDependencies) {
+            const MirPlace *owner = output.findPlace(dependency.source);
+            if (owner == nullptr || owner->key != loan.place)
+              continue;
+            if (resultValue == nullptr ||
+                owner->type == resultValue->info.type) {
+              semanticLoanPlaces.emplace(loan.semanticLoan, dependency.source);
+              return dependency.source;
+            }
+            if (owner->root == MirPlaceRootKind::Binding &&
+                owner->projections.empty() &&
+                owner->type.kind == SemanticType::Reference &&
+                owner->type.arguments.size() == 1 &&
+                owner->type.arguments.front() == resultValue->info.type) {
+              MirPlace referent = *owner;
+              referent.projections.push_back(
+                  {.kind = MirProjectionKind::Dereference});
+              referent.type = resultValue->info.type;
+              referent.traits = resultValue->info.traits;
+              referent.access = loan.access;
+              referent.sourceValue = resultValue->id;
+              const MirPlaceId id = appendPlace(std::move(referent));
+              semanticLoanPlaces.emplace(loan.semanticLoan, id);
+              return id;
+            }
+          }
       if (!sameRoot) {
         valid = false;
         return 0;
