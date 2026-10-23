@@ -529,6 +529,7 @@ An attached PR-body marker keeps component CI blocked even if someone marks
 it ready manually. A changed source must be reconciled, published and admitted
 again. `batch withdraw <task> --reason <text>` clears an unassigned admission
 for normal independent validation; it does not authorize a partial merge.
+Withdrawal requires a draft PR so marking it ready starts independent CI.
 
 ### One bounded combined campaign
 
@@ -599,7 +600,8 @@ require the existing full native and compiler-sanitizer jobs. A conservative
 automation-only diff uses the workflow tests plus the inexpensive gates; CMake,
 compiler tests, runtime, packaged scripts, release packaging and unknown paths
 still select full coverage. The helper does not restart CI on an unchanged
-description when retrying a pending merge.
+description when retrying a pending merge. Description-only edits do not
+trigger full CI; source pushes and entering/leaving draft are routing events.
 Automation-only local owning checks may use `verify --focused`, which checks
 the actual diff and does not reserve a broad-suite slot. Compiler changes
 cannot use that path. An active `verify` is atomically refused on duplicate

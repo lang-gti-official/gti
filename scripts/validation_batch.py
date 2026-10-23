@@ -127,6 +127,8 @@ class Batches:
             if state.get("integration_batch"):
                 raise WorkflowError("Release the selected batch before withdrawing its member")
             pr = self.flow.pull(state)
+            if pr["state"] != "open" or not pr.get("draft"):
+                raise WorkflowError("Return the component PR to draft before withdrawal so independent CI starts on ready_for_review")
             self.flow.api.request("PATCH", f"/pulls/{state['pr']}", {"body": checks.component_body(pr.get("body"))})
             state.pop("admission", None)
             state["batch_withdrawal"] = {"reason": reason, "at": self.flow.now()}
