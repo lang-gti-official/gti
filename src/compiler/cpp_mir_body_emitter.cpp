@@ -24919,6 +24919,61 @@ returnConstructDefinition(const MirBody &body, MirValueId value) {
   return definition;
 }
 
+// Whether a failure can occur after a returned construction and before its
+// Return: an Invoke, or an instruction with a defined-failure source, on a
+// path from the construction to the block returning its value. A deferred
+// construction would then leave its staged inputs live on that failure
+// path, so the failure form builds the result at its MIR position instead.
+[[nodiscard]] bool
+returnConstructCrossesFailure(const MirBody &body,
+                              const MirInstruction &construct) {
+  const MirValue *value =
+      construct.result ? body.findValue(*construct.result) : nullptr;
+  const MirBlock *start =
+      value == nullptr ? nullptr : body.findBlock(value->definitionBlock);
+  if (start == nullptr)
+    return true;
+  const auto failing = [](const MirInstruction &instruction) {
+    return !instruction.tombstone && (!instruction.definedFailure.empty() ||
+                                      !instruction.localFailureSites.empty());
+  };
+  std::vector<MirBlockId> pending;
+  std::unordered_set<MirBlockId> visited{start->id};
+  const auto follow = [&](const MirBlock &block) {
+    const MirTerminator &terminator = block.terminator;
+    if (terminator.kind == MirTerminatorKind::Invoke)
+      return true;
+    if (terminator.kind == MirTerminatorKind::Return)
+      return false;
+    for (const MirBlockId target : {terminator.target, terminator.elseTarget})
+      if (target != 0 && visited.insert(target).second)
+        pending.push_back(target);
+    for (const MirSwitchTarget &target : terminator.switchTargets)
+      if (visited.insert(target.target).second)
+        pending.push_back(target.target);
+    return false;
+  };
+  bool after = false;
+  for (const MirInstruction &instruction : start->instructions) {
+    if (after && failing(instruction))
+      return true;
+    after = after || instruction.id == construct.id;
+  }
+  if (follow(*start))
+    return true;
+  while (!pending.empty()) {
+    const MirBlock *block = body.findBlock(pending.back());
+    pending.pop_back();
+    if (block == nullptr || block->failureParameter != 0)
+      continue;
+    if (std::any_of(block->instructions.begin(), block->instructions.end(),
+                    failing) ||
+        follow(*block))
+      return true;
+  }
+  return false;
+}
+
 // An explicit default construction fused into its consuming Return. This
 // covers both a concrete class with no declared constructor and a substituted
 // type parameter; the value publishes at the Return and no local declares.
@@ -38145,9 +38200,12 @@ private:
             &instruction) {
       writeIndent();
       if (failureForm &&
-          returnResultObligation(facts.body, *instruction.result) != nullptr) {
+          (returnResultObligation(facts.body, *instruction.result) != nullptr ||
+           returnConstructCrossesFailure(facts.body, instruction))) {
         // Direct initialization from a same-type prvalue preserves mandatory
         // elision, unlike construct_at(out, temporary), which would move it.
+        // A construction followed by a possible failure is built here too:
+        // its staged inputs are consumed at its MIR position.
         output << "::new (static_cast<void *>(__gti_mir_out_result)) "
                << bodyLocalTypeSpelling(facts.body, instruction.info.type)
                << '(';
@@ -42002,7 +42060,8 @@ private:
           } else if (construct != nullptr &&
                      (transformedConstructor(*construct) != nullptr ||
                       returnResultObligation(
-                          facts.body, terminator.value->value) != nullptr)) {
+                          facts.body, terminator.value->value) != nullptr ||
+                      returnConstructCrossesFailure(facts.body, *construct))) {
             // The transformed constructor placed the complete result into
             // the function's uninitialized out-parameter before its Invoke.
             writeIndent();
