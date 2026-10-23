@@ -172,6 +172,46 @@ int main() {
 )"),
            "queries neither execute calls nor move caller objects");
 
+  accepted(check(root, directory, "macro_query_domains", R"(
+mut int observed = 0;
+#macro inspect(bool query) {
+  bool subject = false;
+  if (query) { observed += 1; }
+}
+#macro nested(bool query) {
+  bool subject = false;
+  inspect(query);
+}
+int main() {
+  int subject = 7;
+  inspect(requires { { subject + subject } -> int; });
+  inspect(requires(int& subject) { { subject + subject } -> int; });
+  nested(requires { { subject + subject } -> int; });
+  nested(requires(int& subject) { { subject + subject } -> int; });
+  inspect(requires(int& value) {
+    { (requires { { value + value } -> int; }) } -> bool;
+  });
+  inspect(requires {
+    { ([]() -> int { int subject = 2; return subject; })() } -> int;
+  });
+  inspect(requires(int& value) {
+    { ([&value]() -> int { return value; })() } -> int;
+  });
+  return 0;
+}
+)"),
+           "macro arguments preserve caller domains and query-local bindings");
+
+  rejected(
+      check(root, directory, "macro_definition_query", R"(
+#macro inspect(bool value) {
+  if (requires(int& value) { { value + value } -> int; }) {}
+}
+int main() { inspect(true); return 0; }
+)"),
+      "typed macro definitions retain their documented query-body boundary",
+      "GTI-S2099");
+
   accepted(
       check(root, directory, "access", R"(
 class Hidden {

@@ -6476,14 +6476,13 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(
-      !rejectedGenericClass.canGenerateCode() &&
-          hasDiagnosticCode(rejectedGenericClass.diagnostics, "GTI-S2029") &&
-          hasDiagnostic(rejectedGenericClass.diagnostics,
-                        "Type 'bool' does not satisfy concept "
-                        "'std::numeric<bool>'"),
-      "a single non-generic member overload must check requirements after "
-      "substituting its generic class arguments");
+  expect(!rejectedGenericClass.canGenerateCode() &&
+             hasDiagnosticCode(rejectedGenericClass.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(rejectedGenericClass.diagnostics,
+                           "Type 'bool' does not satisfy concept "
+                           "'std::numeric<bool>'"),
+         "a single non-generic member overload must check requirements after "
+         "substituting its generic class arguments");
 
   const lang::FrontendResult rejectedConstrainedOperator =
       lang::Frontend().analyze("rejected-constrained-operator.gti", R"(

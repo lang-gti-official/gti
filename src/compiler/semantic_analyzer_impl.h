@@ -1318,7 +1318,12 @@ private:
     const Symbol *symbol = nullptr;
   };
 
-  using Scope = std::unordered_map<std::string, Symbol>;
+  struct ScopeIdentity {};
+  struct Scope : std::unordered_map<std::string, Symbol> {
+    // Only isolated query frames need an identity. Ordinary lexical frames
+    // remain allocation-free; snapshots retain the same lexical identity.
+    std::shared_ptr<const ScopeIdentity> identity;
+  };
   using ScopeStack = std::vector<Scope>;
 
   enum class ValueControlFlowKind {
@@ -5050,6 +5055,10 @@ private:
   // retains definition-site lookup for its body and caller-site lookup for
   // substituted arguments. Flow/loans remain those of the calling body.
   struct MacroLookupContext {
+    struct ScopeOverlay {
+      std::size_t index = 0;
+      std::shared_ptr<const ScopeIdentity> identity;
+    };
     std::vector<std::string> namespaceScope;
     SourceUnitId sourceUnit = 0;
     std::optional<ClassId> ownerClass;
@@ -5061,6 +5070,9 @@ private:
     std::size_t localScopeBegin = 0;
     std::optional<std::size_t> localScopeEnd;
     std::size_t lexicalLambdaDepth = 0;
+    // A query can add synthetic locals without exposing intervening macro
+    // frames. Identity, not a reused numeric index, owns that permission.
+    std::vector<ScopeOverlay> queryScopes;
     std::size_t declarationOrder = 0;
     std::optional<CallerLocationOrigin> caller;
     std::optional<Token> invocation;
@@ -5091,7 +5103,21 @@ private:
   std::vector<std::pair<const FunctionDecl *, std::size_t>> macroActiveBodies;
   [[nodiscard]] const MacroLookupContext *
   macroContext(const Token &token) const;
-  [[nodiscard]] std::pair<std::size_t, std::size_t>
+  struct MacroLocalScopeRange {
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    std::span<const MacroLookupContext::ScopeOverlay> overlays;
+
+    [[nodiscard]] bool contains(std::size_t index, const Scope &scope) const {
+      return (index >= begin && index < end) ||
+             std::any_of(overlays.begin(), overlays.end(),
+                         [&](const auto &entry) {
+                           return entry.index == index && entry.identity &&
+                                  entry.identity == scope.identity;
+                         });
+    }
+  };
+  [[nodiscard]] MacroLocalScopeRange
   macroLocalScopeRange(const Token &token) const;
   [[nodiscard]] bool analyzeMacroStatement(const ExpressionStmt &statement);
   [[nodiscard]] bool
