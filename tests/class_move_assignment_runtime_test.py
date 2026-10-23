@@ -96,7 +96,7 @@ def main() -> int:
             r"\s*(?P<status>__gti_mir_replacement_success_\d+) = [^\n]+"
             r"\}\((?P<destination>__gti_mir_p_\d+)\.get\(\)\);\n"
             r"\s*if \((?P=status)\) \{\s*goto (?P<success>__gti_mir_bb_\d+);"
-            r"\s*\} else \[\[unlikely\]\] \{\s*" + INCOMING_CLEANUP_CHECK +
+            r"\s*\} else \{\s*" + INCOMING_CLEANUP_CHECK +
             r"\s*goto (?P<failure>__gti_mir_bb_\d+);\s*\}"
         )
         schedule = list(schedule_pattern.finditer(generated))
