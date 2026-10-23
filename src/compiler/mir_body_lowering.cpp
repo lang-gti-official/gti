@@ -4526,7 +4526,12 @@ private:
     if (value->info.category == ValueCategory::Place &&
         isPlaceExpression(value->kind) &&
         computeOperation(*value) != MirOperation::EnumConstant) {
-      emitPlaceDependencies(id);
+      // A class element is copied as a whole object, which its consumer
+      // constructs from the element place. As for a copied argument, its
+      // selection completes the check at its AddressOf before the copy.
+      emitPlaceDependencies(id,
+                            value->kind == HirValueKind::Index &&
+                                value->info.type.kind == SemanticType::Class);
       if (emittedValues.contains(id)) {
         return valueOperand(id);
       }
@@ -4537,7 +4542,7 @@ private:
                                .operands = {{.kind = MirOperandKind::Copy,
                                              .place = place,
                                              .type = value->info.type}},
-                               .definedFailure = localDefinedFailure(value),
+                               .definedFailure = selectedPlaceFailure(value),
                                .info = value->info});
       emittedValues.insert(id);
       endConsumedCallResultLoans(value->operands, *value);
@@ -4701,6 +4706,23 @@ private:
     assignmentSnapshots.emplace(value.id, snapshot);
   }
 
+  // The local failure of an access to `value`'s place, without the bound its
+  // completed AddressOf prefix already checked. Membership is recorded only
+  // after emitting this exact Index's AddressOf with its local failure.
+  // Retain every other origin/propagation family rather than erasing
+  // arbitrary operation failures when this source shape grows.
+  [[nodiscard]] DefinedFailureOperation
+  selectedPlaceFailure(const HirValue *value) {
+    DefinedFailureOperation failure = localDefinedFailure(value);
+    if (value != nullptr && checkedPlacePrefixes.contains(value->id))
+      std::erase_if(failure.localOrigins, [](const auto &origin) {
+        return origin.outcomes == std::vector<DefinedFailureOutcome>{
+                                      {DefinedFailureCode::IndexOutOfBounds,
+                                       DefinedFailureDetail::FixedArray}};
+      });
+    return failure;
+  }
+
   // A projected array used as another index's base must finish its checked
   // place formation before that outer index starts. Checking only at the
   // eventual load/store/address would run later side effects after failure.
@@ -4790,7 +4812,10 @@ private:
         if (value->unsafeOperation == UnsafeOperationKind::RawMember) {
           (void)valueOperand(value->operands.front());
         } else {
-          emitPlaceDependencies(value->operands.front(), checkedPrefix);
+          // A field projection performs no selection check, so a checked
+          // element it projects from completes that check at its AddressOf
+          // before any access through the field.
+          emitPlaceDependencies(value->operands.front(), true);
         }
       }
       break;
@@ -6339,20 +6364,7 @@ private:
                                     isCallLike(*sourceValueInfo) &&
                                     emittedValues.contains(sourceValue);
     if (materializesCheckedPlace && !evaluatedCallPlace) {
-      input.definedFailure = localDefinedFailure(sourceValueInfo);
-      if (checkedPlacePrefixes.contains(sourceValue)) {
-        // Membership is recorded only after emitting this exact Index's
-        // AddressOf with localDefinedFailure(sourceValueInfo). Retain every
-        // other origin/propagation family rather than erasing arbitrary
-        // operation failures when this source shape grows.
-        std::erase_if(input.definedFailure.localOrigins,
-                      [](const auto &origin) {
-                        return origin.outcomes ==
-                               std::vector<DefinedFailureOutcome>{
-                                   {DefinedFailureCode::IndexOutOfBounds,
-                                    DefinedFailureDetail::FixedArray}};
-                      });
-      }
+      input.definedFailure = selectedPlaceFailure(sourceValueInfo);
     }
     MirDropObligationId parameterDrop = 0;
     const std::optional<MirDropType> dropType =
@@ -9975,7 +9987,9 @@ private:
             emitDeferredBorrowRootOperands(*deferredRoot);
             (void)valueOperand(value->operands.back());
           }
-          emitPlaceDependencies(value->operands.front());
+          // As for a field read, a checked element below the field completes
+          // its selection check before the store.
+          emitPlaceDependencies(value->operands.front(), true);
         }
       } else if (value->kind == HirValueKind::IndexSet &&
                  value->operands.size() >= 2) {
