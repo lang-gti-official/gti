@@ -4826,7 +4826,14 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   loanFlow.switchBoundaries.push_back({.region = loanFlow.currentRegion,
                                        .order = loanFlow.currentOrder,
                                        .statement = &stmt});
+  // A payload-enum field subject is observed in place, not copied out.
+  const Expr *subject = stmt.expression().get();
+  while (const auto *group = exprAs<Grouping>(subject))
+    subject = group->expression() ? group->expression().get() : nullptr;
+  const Expr *enclosingSubject =
+      std::exchange(observedSwitchSubject, subject);
   const SemanticType subjectType = analyze(stmt.expression());
+  observedSwitchSubject = enclosingSubject;
   if (!instanceAnalysisActive) {
     const auto *receiver = receiverStateSymbol();
     const auto *subjectPlace = semanticModel.findPlace(*stmt.expression());

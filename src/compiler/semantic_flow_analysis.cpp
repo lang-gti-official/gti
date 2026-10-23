@@ -1876,6 +1876,16 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
         return textDependentValueInfo(std::move(type));
     }
+    // So does moving a view, as a consuming receiver's text field: the moved
+    // view is the same view (L-OWN-02).
+    if (borrowedTextType(type) && call.arguments().size() == 1 &&
+        resolvedIntrinsicKind(call) == IntrinsicKind::Move) {
+      const ExpressionInfo *sourceInfo =
+          semanticModel.findExpression(*call.arguments().front());
+      if (sourceInfo != nullptr && sourceInfo->type == type &&
+          sourceInfo->traits.containsBorrowedState)
+        return ownerDependentTextInfo(std::move(type));
+    }
     // A callee that returns a dynamic argument in a text field of its fresh
     // result gives a value carrying that argument's owner there (L-OWN-02).
     if (textDependentType(type) && resolved != nullptr &&
@@ -2602,9 +2612,12 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
       noteTextFieldFormalUse(expr, *formal);
   // A generic class method's type-parameter field may hold a relayed owner's
   // text in a text instance: any read but the method's relayed return
-  // requires it ownerless there.
-  if (exprAs<Variable>(&expr) != nullptr || exprAs<Get>(&expr) != nullptr)
+  // requires it ownerless there. A payload-enum field read as a value may
+  // carry any of its text payloads away.
+  if (exprAs<Variable>(&expr) != nullptr || exprAs<Get>(&expr) != nullptr) {
     noteConditionalTextFieldRead(expr);
+    notePayloadFieldRead(expr);
+  }
   if (const auto *get = exprAs<Get>(&expr);
       get != nullptr && result != SemanticType::Function) {
     consumeTextDependentValue(get->object());

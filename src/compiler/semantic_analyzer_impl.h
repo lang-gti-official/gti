@@ -2200,6 +2200,14 @@ private:
   contractPayloadBinding(const ExprPtr &subject,
                          const ResolvedPayloadPatternInfo &pattern,
                          const PayloadBindingInfo &payload) const;
+  // In a field-contract scope, the contract formal's or receiver's field
+  // that `expression` names, with that field's type in its open class.
+  [[nodiscard]] std::optional<std::pair<OwnerlessTextField, SemanticType>>
+  contractEnumField(const Expr *expression) const;
+  // A contract formal's or the receiver's payload-enum field read as a value,
+  // rather than observed in place as a switch subject, may let any of its
+  // text payloads outlive the call: each is required ownerless (L-OWN-02).
+  void notePayloadFieldRead(const Expr &expression);
 
   // The sole named owner of a dynamic text argument, designating `field`.
   // Empty when the argument is ownerless or its owner is not a named place.
@@ -4539,6 +4547,9 @@ private:
   // The contextual construction whose own argument storedBorrowDependencies
   // is reading, rather than its converted value.
   const Expr *contextualTextArgument = nullptr;
+  // The switch subject being analyzed, without groupings: a payload-enum
+  // field read there is observed in place (notePayloadFieldRead).
+  const Expr *observedSwitchSubject = nullptr;
   // The lowest stack position the current evaluation has read.
   std::size_t textBorrowReadDepth = std::numeric_limits<std::size_t>::max();
   // Whether a provisional summary grew in the current evaluation.

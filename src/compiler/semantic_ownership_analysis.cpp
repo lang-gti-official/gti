@@ -1532,12 +1532,23 @@ auto SemanticVisitor::Impl::ownerlessTextForwardingField(
     const ExprPtr &expression) const -> std::optional<OwnerlessTextField> {
   if (!expression)
     return std::nullopt;
+  // A move of a consuming receiver's field forwards the text the field holds.
   const Expr *current = expression.get();
-  while (const auto *group = exprAs<Grouping>(current)) {
-    if (!group->expression())
-      return std::nullopt;
-    current = group->expression().get();
+  while (current != nullptr) {
+    if (const auto *group = exprAs<Grouping>(current))
+      current = group->expression() ? group->expression().get() : nullptr;
+    else if (const auto *call = exprAs<Call>(current);
+             call != nullptr && call->arguments().size() == 1 && [&] {
+               const auto intrinsic = intrinsicCandidate(call->callee());
+               return intrinsic &&
+                      intrinsic->record().intrinsic == IntrinsicKind::Move;
+             }())
+      current = call->arguments().front().get();
+    else
+      break;
   }
+  if (current == nullptr)
+    return std::nullopt;
   if (const auto *get = exprAs<Get>(current);
       get != nullptr && get->access().kind != TokenKind::ARROW &&
       get->object()) {
@@ -1804,14 +1815,11 @@ auto SemanticVisitor::Impl::conditionalRelayReturns(
   return entry->second;
 }
 
-auto SemanticVisitor::Impl::contractPayloadBinding(
-    const ExprPtr &subject, const ResolvedPayloadPatternInfo &pattern,
-    const PayloadBindingInfo &payload) const
-    -> std::optional<OwnerlessTextField> {
+auto SemanticVisitor::Impl::contractEnumField(const Expr *current) const
+    -> std::optional<std::pair<OwnerlessTextField, SemanticType>> {
   const FunctionInfo *scope = textFieldContractScope();
-  if (scope == nullptr || payload.name == nullptr || !subject)
+  if (scope == nullptr)
     return std::nullopt;
-  const Expr *current = subject.get();
   while (const auto *group = exprAs<Grouping>(current))
     current = group->expression() ? group->expression().get() : nullptr;
   std::optional<OwnerlessTextField> formal;
@@ -1821,8 +1829,10 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
       get != nullptr && get->access().kind != TokenKind::ARROW &&
       get->object()) {
     formal = textFieldContractFormal(*get->object());
+    // An instance analysis reads its receiver's fields at their types there.
     if (formal && formal->receiver)
-      owner = openClassType(scope->ownerClass);
+      owner = substituteType(openClassType(scope->ownerClass),
+                             instanceTypeSubstitution);
     else if (formal && formal->parameter < scope->parameterTypes.size())
       owner = scope->parameterTypes[formal->parameter];
     name = &get->name();
@@ -1835,7 +1845,8 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
         contractReceiver(scope->bodyDeclaration()->receiverMutability()) &&
         textPublicationOwner(openClassType(scope->ownerClass))) {
       formal = OwnerlessTextField{.receiver = true};
-      owner = openClassType(scope->ownerClass);
+      owner = substituteType(openClassType(scope->ownerClass),
+                             instanceTypeSubstitution);
       name = &variable->name();
     }
   }
@@ -1848,6 +1859,22 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
       member->second.symbol.staticMember ||
       member->second.symbol.bindingKind != SemanticBindingKind::Field)
     return std::nullopt;
+  formal->field = symbolForDeclaration(member->second.symbol.declaration);
+  return std::pair{*formal, substituteType(member->second.symbol.type,
+                                           classSubstitution(owner))};
+}
+
+auto SemanticVisitor::Impl::contractPayloadBinding(
+    const ExprPtr &subject, const ResolvedPayloadPatternInfo &pattern,
+    const PayloadBindingInfo &payload) const
+    -> std::optional<OwnerlessTextField> {
+  const FunctionInfo *scope = textFieldContractScope();
+  const auto field = scope == nullptr || payload.name == nullptr || !subject
+                         ? std::nullopt
+                         : contractEnumField(subject.get());
+  if (!field)
+    return std::nullopt;
+  auto formal = field->first;
   const auto enumeration = enumTypeFor(pattern.type);
   const auto variant = enumeration
                            ? std::find_if(enumeration->enumerators.begin(),
@@ -1869,9 +1896,36 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
   if (type.kind != SemanticType::StringView &&
       type.kind != SemanticType::CString && !conditional)
     return std::nullopt;
-  formal->field = symbolForDeclaration(member->second.symbol.declaration);
-  formal->payload = variant->payloadSymbols[payload.payloadIndex];
+  formal.payload = variant->payloadSymbols[payload.payloadIndex];
   return formal;
+}
+
+auto SemanticVisitor::Impl::notePayloadFieldRead(const Expr &expression)
+    -> void {
+  if (&expression == observedSwitchSubject)
+    return;
+  const auto field = contractEnumField(&expression);
+  const auto enumeration =
+      field ? enumTypeFor(field->second) : std::optional<EnumTypeInfo>{};
+  const FunctionInfo *scope = enumeration ? textFieldContractScope() : nullptr;
+  if (scope == nullptr)
+    return;
+  const bool generic = scope->ownerClass != 0 &&
+                       !classInfo(scope->ownerClass).genericParameters.empty();
+  const auto substitution = enumSubstitution(field->second);
+  for (const auto &variant : enumeration->enumerators)
+    for (std::size_t index = 0; index < variant.payloadSymbols.size() &&
+                                index < variant.payloadTypes.size();
+         ++index) {
+      const auto type = substituteType(variant.payloadTypes[index], substitution);
+      if (type.kind != SemanticType::StringView &&
+          type.kind != SemanticType::CString &&
+          !(generic && type.kind == SemanticType::TypeParameter))
+        continue;
+      auto payload = field->first;
+      payload.payload = variant.payloadSymbols[index];
+      (void)requireOwnerlessTextField(scope->declaration, payload);
+    }
 }
 
 auto SemanticVisitor::Impl::noteConditionalTextFieldRead(const Expr &expression)

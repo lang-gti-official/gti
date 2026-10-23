@@ -1319,6 +1319,37 @@ private:
           if (instruction.receiver)
             visit(*instruction.receiver, true);
         }
+        // A payload-enum field of a formal or the receiver that anything but
+        // a payload extraction uses, a copy, move or borrow of it, may let
+        // any of its text payloads outlive the call (L-OWN-02). A switch
+        // observes its subject in place, in its terminator.
+        if (context.fieldContracts &&
+            !(instruction.kind == MirInstructionKind::Compute &&
+              instruction.operation == MirOperation::PayloadExtract)) {
+          const auto visitField = [&](const MirOperand &operand) {
+            if (operand.kind == MirOperandKind::Value ||
+                operand.kind == MirOperandKind::Constant)
+              return;
+            const auto *loan = operand.kind == MirOperandKind::Loan
+                                   ? context.body.findLoan(operand.loan)
+                                   : nullptr;
+            const auto *place =
+                context.body.findPlace(loan ? loan->source : operand.place);
+            const auto formal =
+                place ? contractPlace(context, *place, true) : std::nullopt;
+            if (!formal || formal->field == 0)
+              return;
+            for (const auto &field : formalTextFields(
+                     context, {.receiver = formal->receiver,
+                               .parameter = formal->parameter}))
+              if (field.field == formal->field && field.payload != 0)
+                neededFields.insert(field);
+          };
+          for (const auto &operand : instruction.operands)
+            visitField(operand);
+          if (instruction.receiver)
+            visitField(*instruction.receiver);
+        }
         // A dependent value relayed as a formal or receiver: its callee
         // must carry a contract that lets none of its fields outlive the
         // call.
