@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.465.3 — Text members through `operator->`
+## 0.465.4 — Text members through `operator->`
 
 - When an `operator->` returns a `std::string_view&`, its members can be
   called through `->`. For a class with `std::string_view& operator->()`,
@@ -25,6 +25,20 @@ for what minor and patch releases mean.
   reference, as in `o->begin()` or `o.value().begin()`, still reports
   `GTI-B0001`. Bind the reference first (`std::string_view& view =
   o.value();`) and iterate `view`.
+
+## 0.465.3 — Moving classes that hold function items
+
+- A generic class whose field holds a function item, such as `class Op<F> {
+  public: F action; Op(F action) : action(action) {} }` instantiated with a
+  function name, can now be moved into another class's field after an
+  initializer that can fail. `Holder(Op<F> op) : v(std::vector<int32_t>()),
+  op(std::move(op))` used to report `error[GTI-B0001]` (an internal compiler
+  error); it now works. If a later initializer or the constructor body fails,
+  each field already built is dropped exactly once.
+- Such a class can also now be chosen by a conditional, as in `Op<F> chosen =
+  pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
+  can be assigned into a field. Each used to report `error[GTI-B0001]`.
+
 
 ## 0.465.2 — Switching over a payload enum returned by reference
 
