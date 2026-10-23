@@ -238,6 +238,7 @@ private:
     loweredProgramStorage.clear();
     functionAnalyses.clear();
     constructorAnalyses.clear();
+    retainedSourceStatements.clear();
     activeDefaultArguments.clear();
     activeDefaultSourceLocation.reset();
     currentSourceFunctionName.clear();
@@ -3522,10 +3523,16 @@ private:
       return std::nullopt;
     }
     if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
-      if (const Stmt *expanded = model.findDeferredExpansion(*expression)) {
+      if (auto expanded = model.shareDeferredExpansion(*expression)) {
+        // A concrete instance owns its selected expansion only until its
+        // semantic delta is released. HIR source pointers must survive that
+        // delta and this lowerer, including nested or inherited expansions.
+        if (retainedSourceStatements.insert(expanded.get()).second)
+          output.program.sourceStatementOwners_.push_back(expanded);
         std::vector<HirStatementId> statements;
-        if (const auto child = lowerStatement(expanded, model, classArguments,
-                                              classValueArguments, body))
+        if (const auto child =
+                lowerStatement(expanded.get(), model, classArguments,
+                               classValueArguments, body))
           statements.push_back(*child);
         // Preserve both endpoint domains. The caller statement can end an
         // existing loan; the checked expansion has its own nested endpoints.
@@ -7011,6 +7018,7 @@ private:
   std::unordered_map<HirConstructorInstanceId,
                      std::unique_ptr<SemanticInstanceAnalysis>>
       constructorAnalyses;
+  std::unordered_set<const Stmt *> retainedSourceStatements;
   std::unordered_set<const Expr *> activeDefaultArguments;
   std::optional<SourceLocationLiteral> activeDefaultSourceLocation;
   // The initializer whose own value is being lowered beneath its contextual

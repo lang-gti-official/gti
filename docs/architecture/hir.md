@@ -115,6 +115,15 @@ both adapter families, enums, and instance symbols.
 `HirLoweringResult::reachable` carries that prefix only when it is smaller and
 passes `verifyHirProgramPlans`; otherwise lowering uses the complete program.
 
+HIR retains shared owners for synthetic statement roots it actually lowers.
+In particular, a concrete semantic delta owns its selected deferred expansions,
+but that delta and the temporary `HirLowerer` may die before MIR uses HIR's raw
+source pointers. The selected root is shared through the semantic query and
+retained once by `HirProgram`; nested expansions retain their separate roots,
+including queries inherited through a model delta. HIR copies and reachable
+prefixes preserve these owners without retaining whole semantic analyses.
+MIR records typed operations and value source spans, not these AST pointers.
+
 ### Entry-unit scope
 
 `HirLoweringScope::entryDeclarations`, set by the frontend from

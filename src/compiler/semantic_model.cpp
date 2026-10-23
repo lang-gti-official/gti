@@ -1188,6 +1188,18 @@ SemanticModel::findDeferredExpansion(const ExpressionStmt &statement) const {
   return inherited;
 }
 
+std::shared_ptr<const Stmt>
+SemanticModel::shareDeferredExpansion(const ExpressionStmt &statement) const {
+  if (const auto found = deferredExpansions.find(&statement);
+      found != deferredExpansions.end())
+    return found->second;
+  auto inherited =
+      base == nullptr ? nullptr : base->shareDeferredExpansion(statement);
+  noteBaseSyntheticSyntax(inherited != nullptr &&
+                          !baseStableSyntheticSyntax(&statement));
+  return inherited;
+}
+
 const Token *SemanticModel::findDeferredDefault(const Expr &expression) const {
   if (const auto found = deferredDefaults.find(&expression);
       found != deferredDefaults.end())

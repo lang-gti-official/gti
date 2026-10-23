@@ -2407,6 +2407,10 @@ public:
   // never as an eager call of the declaration's source-level signature.
   [[nodiscard]] const Stmt *
   findDeferredExpansion(const ExpressionStmt &statement) const;
+  // HIR keeps source pointers after an instance-analysis delta is destroyed.
+  // Retain only a selected expansion's root, not its whole semantic model.
+  [[nodiscard]] std::shared_ptr<const Stmt>
+  shareDeferredExpansion(const ExpressionStmt &statement) const;
   [[nodiscard]] const Token *findDeferredDefault(const Expr &expression) const;
   // The declared attributes of a field or class-like declaration; nullptr
   // when none were recorded.
