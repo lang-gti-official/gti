@@ -329,8 +329,16 @@ to dominate the switch. The backend spells the discriminant, every borrowed
 payload binding and every copied payload field over that one element
 subscription, without copying the enum or checking the index again. Admission
 and the text step accept these places through one shared predicate. A field
-of an element at a runtime index, as in `records[i].state`, has no element
-spelling for any read yet, so such a switch still stops with `GTI-B0001`.
+of an element at a runtime index, as in `records[i].state`, is spelled once
+MIR has checked that element's selection at its own `AddressOf`, which program
+verification requires to dominate every access through the field.
+
+The same predicate admits any read or store of a field below fixed-array
+elements, such as `points[i].x` or `cells[i][j].start.y`, when every index is
+a compile-time in-bounds constant or a run-time index whose checked selection
+MIR completed at an `AddressOf` over the place prefix ending at that index.
+The text spells plain subscripts and the field chain without a second check;
+removing the checked selection refuses the body.
 
 Ordinary field chains projected from a checked class-payload extraction share
 that extraction's address. Admission checks every typed field projection;
@@ -1271,6 +1279,17 @@ projected destination remain outside this fusion vocabulary. The fresh-value
 form serves one further unprojected destination — a bare mutable binding,
 described with the prvalue assignment routes below — where the assignment
 carries no bounds site at all.
+
+Named places fuse a copy or a fresh construction the same way, without a
+bounds site. A global's storage, a lambda's by-value capture, and the referent
+of a by-reference capture are lvalues that the shared place spelling names
+directly, exactly like a bare binding: each is a destination (a captured
+reference only when it grants mutable access) and each can be the copy's
+source. A mutable loan referent, as an overloaded subscript's `mut T&` result
+yields, receives the copy through the loan, as it receives a fresh value; only
+that loan's pure two-phase activation may separate the copy from the store. A
+read-only loan or captured reference is no destination, so its copy keeps no
+declaration and the body is refused.
 
 A fixed-array element place may carry several `Index` projections, and MIR
 describes that whole chained access with one instruction and one bounds site.
