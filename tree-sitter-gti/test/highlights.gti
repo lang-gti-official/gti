@@ -352,3 +352,5 @@ expected<int, int> source_result_highlight() {
   return unexpected(7);
 }
 [[unsatisfied("A gauge reads.")]] concept explained_highlight<T> = std::integral<T>;
+concept integer_highlight<T> = std::meta::is_integral<T>();
+concept sum_highlight<T> = requires(T& left, T& right) { { left + right } -> T; };

@@ -13,19 +13,23 @@ std::string expressionSpelling(const Expr &expression) {
     return "(" + expressionSpelling(*group->expression()) + ")";
   if (const auto *binary = exprAs<Binary>(&expression))
     return "(" + expressionSpelling(*binary->left()) + " " +
-           binary->oper().lexeme + " " + expressionSpelling(*binary->right()) + ")";
+           binary->oper().lexeme + " " + expressionSpelling(*binary->right()) +
+           ")";
   if (const auto *logical = exprAs<Logical>(&expression))
     return "(" + expressionSpelling(*logical->left()) + " " +
-           logical->oper().lexeme + " " + expressionSpelling(*logical->right()) + ")";
+           logical->oper().lexeme + " " +
+           expressionSpelling(*logical->right()) + ")";
   if (const auto *unary = exprAs<Unary>(&expression))
     return unary->oper().lexeme + expressionSpelling(*unary->right());
   if (const auto *get = exprAs<Get>(&expression))
-    return expressionSpelling(*get->object()) + get->access().lexeme + get->name().lexeme;
+    return expressionSpelling(*get->object()) + get->access().lexeme +
+           get->name().lexeme;
   if (const auto *call = exprAs<Call>(&expression)) {
     std::string result = expressionSpelling(*call->callee());
     if (!call->typeArguments().empty()) {
       result += "<";
-      for (std::size_t index = 0; index < call->typeArguments().size(); ++index) {
+      for (std::size_t index = 0; index < call->typeArguments().size();
+           ++index) {
         if (index != 0)
           result += ", ";
         result += typeRefSpelling(call->typeArguments()[index]);

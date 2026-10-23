@@ -1481,8 +1481,8 @@ public:
                     std::vector<Token> bindings,
                     std::optional<Token> unsafeKeyword = std::nullopt)
       : keyword_(std::move(keyword)), receiver_(keyword_),
-        result_(std::move(result)),
-        parameters_(std::move(parameters)), bindings_(std::move(bindings)),
+        result_(std::move(result)), parameters_(std::move(parameters)),
+        bindings_(std::move(bindings)),
         unsafeKeyword_(std::move(unsafeKeyword)),
         expression_(std::move(expression)) {}
 

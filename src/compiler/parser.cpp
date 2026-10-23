@@ -3694,7 +3694,8 @@ private:
       consume(TokenKind::RIGHT_PAREN,
               "Expect ')' after requirement parameters.");
     }
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before expression requirements.");
+    consume(TokenKind::LEFT_BRACE,
+            "Expect '{' before expression requirements.");
     std::vector<std::unique_ptr<MemberRequirement>> result;
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
       std::optional<Token> unsafeKeyword;
@@ -3703,7 +3704,8 @@ private:
       consume(TokenKind::LEFT_BRACE, "Expect '{' before required expression.");
       ExprPtr expression = assignment();
       consume(TokenKind::RIGHT_BRACE, "Expect '}' after required expression.");
-      consume(TokenKind::ARROW, "Expect '->' before exact required result type.");
+      consume(TokenKind::ARROW,
+              "Expect '->' before exact required result type.");
       TypeRef requiredResult = parseType();
       consume(TokenKind::SEMICOLON, "Expect ';' after required result type.");
 
@@ -3711,15 +3713,18 @@ private:
       // expression is checked by the ordinary semantic expression analyzer.
       const auto *call = exprAs<Call>(expression.get());
       const auto *get = call ? exprAs<Get>(call->callee().get()) : nullptr;
-      const auto *receiver = get ? exprAs<Variable>(get->object().get()) : nullptr;
+      const auto *receiver =
+          get ? exprAs<Variable>(get->object().get()) : nullptr;
       bool exactMember = !parameters.empty() && parameters[0].reference &&
-                         receiver && receiver->name().lexeme == bindings[0].lexeme &&
+                         receiver &&
+                         receiver->name().lexeme == bindings[0].lexeme &&
                          call->typeArguments().empty() &&
                          call->arguments().size() + 1 == bindings.size();
       for (std::size_t index = 0;
            exactMember && index < call->arguments().size(); ++index) {
         const auto *argument = exprAs<Variable>(call->arguments()[index].get());
-        exactMember = argument && argument->name().lexeme == bindings[index + 1].lexeme;
+        exactMember =
+            argument && argument->name().lexeme == bindings[index + 1].lexeme;
       }
       if (exactMember) {
         std::vector<Token> arguments;
@@ -3738,8 +3743,10 @@ private:
       }
     }
     if (result.empty())
-      throw error(peek(), "An expression requirement needs at least one check.");
-    consume(TokenKind::RIGHT_BRACE, "Expect '}' after expression requirements.");
+      throw error(peek(),
+                  "An expression requirement needs at least one check.");
+    consume(TokenKind::RIGHT_BRACE,
+            "Expect '}' after expression requirements.");
     return result;
   }
 

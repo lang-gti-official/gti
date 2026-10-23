@@ -642,19 +642,22 @@ void SignaturePrinter::appendConceptApplication(
       result += "requires";
       if (!query.parameters().empty()) {
         result += " (";
-        for (std::size_t index = 0; index < query.parameters().size(); ++index) {
+        for (std::size_t index = 0; index < query.parameters().size();
+             ++index) {
           if (index != 0)
             result += ", ";
           if (query.parameters()[index].referenceMutability)
             result += "mut ";
-          result += semantic_spelling::typeRefSpelling(query.parameters()[index]) +
-                    " " + query.bindings()[index].lexeme;
+          result +=
+              semantic_spelling::typeRefSpelling(query.parameters()[index]) +
+              " " + query.bindings()[index].lexeme;
         }
         result += ")";
       }
       result += query.unsafeKeyword() ? " { unsafe { " : " { { ";
       result += semantic_spelling::expressionSpelling(*query.expression());
-      result += " } -> " + semantic_spelling::typeRefSpelling(query.result()) + "; }";
+      result +=
+          " } -> " + semantic_spelling::typeRefSpelling(query.result()) + "; }";
       return;
     }
     result += "requires (" +
@@ -752,10 +755,12 @@ void SignaturePrinter::appendRequirements(
     if (syntax[index].predicate) {
       result += "(";
       if (const auto *call = exprAs<Call>(syntax[index].predicate.get()))
-        for (std::size_t argument = 0; argument < call->arguments().size(); ++argument) {
+        for (std::size_t argument = 0; argument < call->arguments().size();
+             ++argument) {
           if (argument != 0)
             result += ", ";
-          result += semantic_spelling::expressionSpelling(*call->arguments()[argument]);
+          result += semantic_spelling::expressionSpelling(
+              *call->arguments()[argument]);
         }
       result += ")";
     }

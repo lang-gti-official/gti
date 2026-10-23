@@ -2253,6 +2253,31 @@ synthetic runtime calls. Neither the constant evaluator nor the backend decides
 whether a type supports cloning. `std::clone` and vector element duplication
 remain ordinary source-defined generic bodies and verified-MIR calls.
 
+General expression requirements extend that query mechanism without adding
+runtime expression execution. Their synthetic parameter and exact-result types
+are resolved before an isolated semantic worker checks the ordinary AST. The
+worker uses a speculative model delta, isolated flow/effect/query journals and
+declaration-owned lookup; diagnostics become a failed requirement rather than
+escaping as invalid executable HIR. General queries retain ordinary ownership,
+access and unsafe rules and reject reference or borrow-bearing results. The
+historical direct member shape still uses its exact signature checker.
+
+Direct bound-operand operator/call shapes normalize to `ReadMember` facts with
+the existing operator identity; direct type construction uses an internal
+construction relationship. Only these bounded guaranteed facts admit
+operations in an open generic body. Arbitrary compound expressions are concrete
+filters, not inferred proofs of their subexpressions. The selected concrete
+instance still resolves every executable call/constructor normally. Query
+recursion is bounded to 64 active checks.
+
+Constexpr Boolean-call leaves use existing constant evaluation. Trusted
+reflection fact identity, including unambiguous transparent source wrappers,
+can transport unary or exact relational proof. Opaque predicates only filter
+concrete viability. Calls and expression checks preserve their distinct kind,
+ordered parameter/result type roles and source provenance in AST-free
+`LoweredConceptRequirement` records; neither HIR nor the backend evaluates
+constraints anew.
+
 A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
 application, and exact semantic type arguments. Arguments may be visible
