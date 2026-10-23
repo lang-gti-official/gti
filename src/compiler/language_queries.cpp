@@ -76,6 +76,8 @@ SignaturePrinter::function(const FunctionInfo &info,
   if (info.discardableResult) {
     result += "[[discardable]] ";
   }
+  if (info.deferredEvaluation)
+    result += "[[deferred]] ";
   if (info.threadConfinedCallback) {
     result += "[[thread_confined_callback]] ";
   }
