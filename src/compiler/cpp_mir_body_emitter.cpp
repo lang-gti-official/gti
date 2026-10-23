@@ -28297,8 +28297,8 @@ classSsaLifetimeSlot(const MirProgram &program,
         exactFieldProjectionRows(program, representations, value->info.type,
                                  projection->projections, 0,
                                  projection->type) &&
-        ((!directConstructionProducer &&
-          !failureFreeTransferringConstruction && movable) ||
+        ((!directConstructionProducer && !failureFreeTransferringConstruction &&
+          movable) ||
          projection->type.kind == SemanticType::Class ||
          // A text view is a passive descriptor, copied out like a scalar;
          // the text it views is never the temporary's own storage.
