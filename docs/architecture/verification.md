@@ -1,5 +1,23 @@
 # Compiler Verification
 
+## Dependent reference results (0.466.1)
+
+`view_fields` covers the use-after-free closed in 0.466.1 in
+`testDependentReferenceResults`. On 0.465.2-0.466.0 a reference that a call
+returned into a value over a local owner's text was not that value's
+dependent field: passing it to a function that stores the text, copying or
+moving it out, storing it in a global, binding a reference local and passing
+that, or returning a copy compiled, and the returned copy read freed memory
+at run time. Each of those thirteen shapes is now `GTI-S2045` (`GTI-S2017`
+when the owner is changed while the reference lives), never `GTI-B`. Switching
+on the result in place, through a reference local, or through a reference
+local bound to another, and every escape over literal text, still compile and
+verify. A callee whose returns are not field paths of its origin is refused
+over dynamic text with `GTI-S2045`. The change is semantic only: MIR, the
+optimizer and the C++ backend are unchanged, and the corpus differential
+against 0.466.0 changes no program's status.
+`dependent_reference_results_runtime` runs the accepted forms in every mode.
+
 ## Failure-free passive constructors (RT-12, 0.466.0)
 
 `optimizer_foundation` covers the owned failure closure's passive values in

@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.466.1 — References into values over a local owner's text
+
+- Fixed a use-after-free present since 0.465.2. A reference that a method or
+  function returns into a value holding a local string's text, as in
+  `Word& wordRef() { return this.word; }` called on `Line line =
+  Line(input.view());`, could be passed to a function that stores the text,
+  copied or moved out, stored in a global, bound to a reference local and
+  passed on, or returned as a copy, leaving a view of freed memory. Each now
+  reports `error[GTI-S2045]`, as `line.word` already did. Switching on the
+  result in place, or on a reference local bound to it, still works:
+
+  ```gti
+  Word& word = line.wordRef();
+  switch (word) { case Word::text(value): std::println(value); break; ... }
+  keepWordRef(line.wordRef());   // now error[GTI-S2045]
+  ```
+
 ## 0.466.0 — Views of the caller's string in results and nested values
 
 - A function can now return a value over the text of one of its read-only
