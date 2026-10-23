@@ -2423,18 +2423,23 @@ public:
         output << "};\n";
       }
       writeIndent();
-      // The first alternative is a backend-private disengaged state. Source
-      // payload enums still have exactly their declared closed alternatives;
-      // this state exists only so a transformed failure-capable constructor
-      // can default-create its observation-free native shell, publish fields
-      // in verified MIR order, and destroy an unpublished shell safely.
-      output << "::gti_internal::backend::payload_variant<std::monostate";
+      // Native alternative k is source variant k, so construction, access and
+      // switch cases spell the verified MIR ordinal unshifted. The final
+      // alternative is a backend-private disengaged state. Source payload
+      // enums still have exactly their declared closed alternatives; this
+      // state exists only so a transformed failure-capable constructor can
+      // default-create its observation-free native shell, publish fields in
+      // verified MIR order, and destroy an unpublished shell safely.
+      output << "::gti_internal::backend::payload_variant<";
       for (std::size_t index = 0; index < enumeration.enumerators.size();
            ++index) {
-        output << ", __gti_variant_"
-               << enumeration.enumerators[index].variantIndex;
+        if (enumeration.enumerators[index].variantIndex != index)
+          throw std::logic_error(
+              "payload enum alternatives lost their dense variant order");
+        output << "__gti_variant_"
+               << enumeration.enumerators[index].variantIndex << ", ";
       }
-      output << "> __gti_value;\n";
+      output << "std::monostate> __gti_value;\n";
       writeIndent();
       // A user-provided empty-shell constructor initializes the tag without
       // value-initializing inactive payload bytes. No source value can observe
@@ -9728,7 +9733,7 @@ public:
           throw std::logic_error(
               "payload constant differs from its exact variant");
         emitSemanticType(*type);
-        output << "{std::in_place_index<" << node.variant + 1 << ">";
+        output << "{std::in_place_index<" << node.variant << ">";
         for (std::size_t index = 0; index < node.elements.size(); ++index) {
           output << ", ";
           emitConstant(

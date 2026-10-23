@@ -148,7 +148,7 @@ cleanupValueExpression(const MirProgram &program, const MirDropType &type,
                     ", &::gti_internal::backend::"
                     "__gti_failure_artifact_descriptor_v1); ";
     for (const auto &child : type.aggregate) {
-      const std::string alternative = std::to_string(*child.payloadVariant + 1);
+      const std::string alternative = std::to_string(*child.payloadVariant);
       std::string field = "::gti_internal::backend::payload_get<" +
                           alternative + ">(" + receiver +
                           ".__gti_value).__gti_field_" +
@@ -32951,8 +32951,7 @@ private:
     if (moveObject) {
       output << "std::move(";
     }
-    output << "::gti_internal::backend::payload_get<" << variant->index + 1
-           << ">(";
+    output << "::gti_internal::backend::payload_get<" << variant->index << ">(";
     if (consuming) {
       MirOperand observed = subject;
       observed.kind = MirOperandKind::BorrowRead;
@@ -33349,7 +33348,7 @@ private:
                << row->spelling << ">);\n";
         writeIndent();
         output << target << " = " << row->spelling << "{std::in_place_index<"
-               << *instruction.enumVariant + 1 << ">";
+               << *instruction.enumVariant << ">";
         for (const auto &operand : instruction.operands) {
           output << ", ";
           emitPayloadConstructOperand(facts, instruction, operand);
@@ -33413,8 +33412,8 @@ private:
         }
         // List initialization retains GTI's left-to-right operand order. The
         // result is a prvalue constructed directly in its final native slot.
-        output << enumRow->spelling << "{std::in_place_index<"
-               << variant->index + 1 << ">";
+        output << enumRow->spelling << "{std::in_place_index<" << variant->index
+               << ">";
         for (std::size_t index = 0; index < instruction.operands.size();
              ++index) {
           output << ", ";
@@ -33772,8 +33771,8 @@ private:
             "verified MIR payload operation lost its variant row");
       }
       if (instruction.operation == MirOperation::PayloadConstruct) {
-        output << enumRow->spelling << "{std::in_place_index<"
-               << variant->index + 1 << ">";
+        output << enumRow->spelling << "{std::in_place_index<" << variant->index
+               << ">";
         for (std::size_t index = 0; index < instruction.operands.size();
              ++index) {
           output << ", ";
@@ -40962,7 +40961,14 @@ private:
             emitControlFlowTransfer(block, terminator.target, 0, controlFlow);
             --indentation;
             writeIndent();
-            output << "} else [[unlikely]] {\n";
+            // In a failure-form body this alternate begins with the cold,
+            // noinline incoming-cleanup check, which already marks the edge
+            // cold for native block placement. A synthetic branch weight on
+            // the success flag would instead survive inlining as a claim about
+            // whatever data condition the callee's success reduces to, such as
+            // a payload tag, and native jump threading can move that weight
+            // onto an unrelated data-dependent branch.
+            output << (failureForm ? "} else {\n" : "} else [[unlikely]] {\n");
             ++indentation;
             emitEdgeArguments(block, terminator.elseTarget,
                               terminator.elseArguments, 1, facts);
@@ -41378,11 +41384,10 @@ private:
         const MirSwitchTarget &target = terminator.switchTargets[targetIndex];
         writeIndent();
         if (payloadRow != nullptr) {
-          // Payload records reserve native alternative zero for the
-          // backend-private disengaged constructor shell. Semantic variant
-          // indices remain unchanged and are shifted only at this physical
-          // representation boundary.
-          output << "case " << target.value->value.magnitude + 1 << ":\n";
+          // Payload records give each source variant its own ordinal as the
+          // native alternative index; the backend-private disengaged shell is
+          // the final native alternative and is never a case target.
+          output << "case " << target.value->value.magnitude << ":\n";
         } else {
           output << "case static_cast<" << typeSpelling(target.value->type)
                  << ">(";
@@ -56994,7 +56999,7 @@ initializerScheduleFromAnalysis(const MirProgram &program_,
         }
         std::string spelled = enumRow->spelling;
         spelled += "{std::in_place_index<";
-        spelled += std::to_string(variant->index + 1);
+        spelled += std::to_string(variant->index);
         spelled += ">";
         for (std::size_t index = 0; index < instruction->operands.size();
              ++index) {
