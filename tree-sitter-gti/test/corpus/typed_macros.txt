@@ -1,5 +1,5 @@
 ==================
-Typed statement macros and ordinary calls
+Typed macros and ordinary calls
 ==================
 
 #macro ignore(bool condition) {}
@@ -51,6 +51,112 @@ void run() { checked(true); }
             (primary_expression
               (literal
                 (boolean_literal)))))))))
+
+==================
+Explicit result macros with local returns and generic result types
+==================
+
+#macro int choose(bool enabled, int first, int second) {
+  if (enabled) { return first; }
+  return second;
+}
+[[track_caller]] #macro T generic<T>(bool enabled, T first, T second) {
+  return enabled ? first : second;
+}
+#macro std::optional<T> maybe<T>(T value) { return value; }
+
+---
+
+(source_file
+  (macro_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier))
+      (parameter
+        (type
+          (primitive_type))
+        (identifier))
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)))
+    (block
+      (if_statement
+        (primary_expression
+          (identifier))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier))))))
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier))))))
+  (macro_declaration
+    (function_contract_attribute)
+    (type
+      (user_type
+        (identifier)))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier))
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier))
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (conditional_expression
+            (primary_expression
+              (identifier))
+            (primary_expression
+              (identifier))
+            (primary_expression
+              (identifier)))))))
+  (macro_declaration
+    (type
+      (user_type
+        (scoped_identifier
+          (identifier)
+          (identifier))
+        (type_argument_clause
+          (type
+            (user_type
+              (identifier))))))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier)))))))
 
 ==================
 Generic typed macro defaults, packs, constraints and namespace exports

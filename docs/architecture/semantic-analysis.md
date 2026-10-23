@@ -1872,6 +1872,19 @@ and fields; concrete reanalysis establishes the exact target. Captureless lambda
 parameters may expand a surrounding lexical type pack, with the same concrete
 binding and ownership checks as an ordinary function pack.
 
+Deferred expression discovery preserves the lexical identity of a lambda by
+source unit/path, bracket offset and originating compile-time expansion. Macro
+argument copies retain that origin independently of their fresh hygiene lookup
+domains; concrete enclosing generic arguments and capture types remain part of
+the ordinary lambda `SemanticType`. A successful isolated macro probe publishes
+only callable shape, traits and invocation identity, with speculative capture
+binding identities removed. It publishes no executable expression facts, calls,
+loans, capture initialization or cleanup. Every forced occurrence reuses the
+lexical type identity while ordinary lambda analysis checks its actual capture
+initializers and body in caller flow. Repeated forcing therefore constructs
+separate closure values of one lexical type, and repeated ownership consumption
+is still rejected by the shared place/value-state rules.
+
 A direct by-value or checked-reference generic parameter may acquire a `Confined` callable
 contract when its visible body invokes it or forwards it to another proven
 confined parameter. Each call site records an exact parameter list, result

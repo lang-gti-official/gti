@@ -127,6 +127,7 @@ ConstantFoldingPass::evaluate(const HirValue &value) const {
   case HirValueKind::Assignment:
   case HirValueKind::ArrayInitializer:
   case HirValueKind::Call:
+  case HirValueKind::ScopedResult:
   case HirValueKind::Move:
   case HirValueKind::NativeCallback:
   case HirValueKind::FunctionItem:

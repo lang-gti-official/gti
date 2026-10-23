@@ -16,6 +16,17 @@ expressions; MIR owns their control flow, failure edges and cleanup. Changing
 the source spelling from `[[deferred]]` to `#macro` introduces no second
 executable representation or backend macro interpreter.
 
+Value macros and void macros with local returns use `HirValueKind::ScopedResult`.
+Its `regionBody` owns checked ordinary statements; each local return names that
+value's exact `resultRegion` identity. Nested regions and fresh lambda bodies
+have independent return domains. Structural verification rejects missing,
+forged or cross-region return targets and recursive region edges. Results are
+owned/dependency-free in this profile; borrowed result-origin joins are not
+inferred from backend representation. MIR materializes a typed join result,
+keeps it in failure cleanup during local destruction and then exposes its
+transport value to the enclosing full expression. Void templates with no
+local returns retain the statement-only path and need no result join.
+
 Concrete function instances preserve the semantic owned-pointee accessor
 summary (exact receiver-field identity and private borrow operation), refreshed
 from concrete instance analysis. It is proof metadata, not a synthetic field

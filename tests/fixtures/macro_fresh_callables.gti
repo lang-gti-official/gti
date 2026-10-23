@@ -1,0 +1,54 @@
+mut int calls = 0;
+mut int drops = 0;
+
+class Owner {
+  int value;
+public:
+  Owner(int value) : value(value) {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() { drops += 1; }
+  int read() { return this.value; }
+};
+
+#macro when<F>(bool enabled, F action) {
+  if (enabled) { action(); }
+}
+#macro twice<F>(F action) { action(); action(); }
+#macro relay<F>(F action) { when(true, action); }
+#macro ignore<F>(F action) {}
+
+void observe(int value) { calls += value; }
+void observe(bool value) { if (value) { calls += 1; } }
+void generic<T>(T value) {
+  relay([value]() -> void { observe(value); });
+}
+
+int main() {
+  {
+    Owner skipped{5};
+    ignore([owned = std::move(skipped)]() -> void { calls += owned.read(); });
+    when(false, [owned = std::move(skipped)]() -> void { calls += owned.read(); });
+    if (skipped.read() != 5 || drops != 0 || calls != 0) { return 1; }
+  }
+  if (drops != 1) { return 2; }
+  {
+    Owner consumed{7};
+    when(true, [owned = std::move(consumed)]() -> void { calls += owned.read(); });
+    if (drops != 2 || calls != 7) { return 3; }
+  }
+  if (drops != 2) { return 4; }
+  int count = 2;
+  twice([count]() -> void { calls += count; });
+  relay([]() -> void { calls += 3; });
+  generic(4);
+  generic(true);
+  auto named = []() -> void { calls += 1; };
+  when(true, named);
+  mut int borrowed = 5;
+  when(false, [mut &borrowed]() -> void { borrowed += 100; });
+  borrowed += 1;
+  when(true, [mut &borrowed]() -> void { borrowed += 1; });
+  if (borrowed != 7 || calls != 20 || drops != 2) { return 5; }
+  return 0;
+}

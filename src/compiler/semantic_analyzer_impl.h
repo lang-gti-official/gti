@@ -16,6 +16,7 @@
 #include <chrono>
 #include <deque>
 #include <limits>
+#include <map>
 #include <set>
 #include <span>
 #include <tuple>
@@ -5019,6 +5020,9 @@ private:
     std::size_t declarationOrder = 0;
     std::optional<CallerLocationOrigin> caller;
     std::optional<Token> invocation;
+    // Expression copies retain the lexical identity of caller-written
+    // lambdas independently of their fresh lookup/binding expansion domain.
+    std::optional<std::uint32_t> callableSourceExpansion;
     std::unordered_map<std::string, SemanticType> types;
     std::unordered_map<std::string, CompileTimeValue> values;
   };
@@ -5049,6 +5053,18 @@ private:
   [[nodiscard]] std::pair<std::size_t, std::size_t>
   macroLocalScopeRange(const Token &token) const;
   [[nodiscard]] bool analyzeMacroStatement(const ExpressionStmt &statement);
+  [[nodiscard]] bool
+  analyzeMacroCall(const Call &call, const ExpressionStmt *statement = nullptr);
+  [[nodiscard]] std::unique_ptr<Impl> makeMacroProbe(const Call &call);
+  struct MacroResultRegion {
+    const FunctionDecl *function = nullptr;
+    std::size_t lambdaDepth = 0;
+    SemanticType type = SemanticType::Unknown;
+    std::vector<std::pair<const ReturnStmt *, ScopeStack>> exits;
+  };
+  std::vector<MacroResultRegion> macroResultRegions;
+  [[nodiscard]] bool analyzeMacroReturn(const ReturnStmt &statement);
+  void adoptCallableTypeDiscovery(const Impl &probe, const SemanticType &type);
   [[nodiscard]] bool
   analyzeMacroSelection(const Call &call, const CallableCandidate &selected,
                         const std::vector<SemanticType> &typeArguments,
@@ -6358,6 +6374,16 @@ private:
     std::vector<const Expr *> foreignAddressPlaces;
     std::unordered_map<std::string, const VariableDecl *> externCVariables;
     LambdaId nextLambdaId = 1;
+    struct SourceLambdaIdentity {
+      LambdaId id = 0;
+      const Lambda *declaration = nullptr;
+    };
+    // The enclosing generic arguments remain part of SemanticType. This
+    // registry identifies the lexical lambda, including constexpr copies,
+    // before deferred expression evaluation establishes executable facts.
+    std::map<std::tuple<std::string, std::size_t, std::uint32_t>,
+             SourceLambdaIdentity>
+        sourceLambdaIdentities;
     SemanticLoanId nextSemanticLoanId = 1;
     std::size_t nextPlaceSelectionId = 1;
     std::vector<SemanticType> invalidOrdinaryLayouts;

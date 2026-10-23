@@ -4796,6 +4796,22 @@
           "value": "#macro"
         },
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "return_type",
+              "content": {
+                "type": "SYMBOL",
+                "name": "type"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "FIELD",
           "name": "name",
           "content": {
@@ -9663,6 +9679,10 @@
     [
       "function_declaration",
       "macro_declaration"
+    ],
+    [
+      "macro_declaration",
+      "_qualified_identifier"
     ],
     [
       "generic_argument_profile_clause",

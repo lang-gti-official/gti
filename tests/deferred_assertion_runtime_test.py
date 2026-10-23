@@ -86,7 +86,7 @@ def main():
                             assert 'secondary [GTI-R0017] message="cleanup assertion"' in ran.stderr, ran.stderr
                             continue
                         marker, message = {
-                            1: ("plain", "Assertion failed"),
+                            1: ("plain", "Assertion failed: false"),
                             2: ("formatted", "failure: owned payload"),
                             3: ("debug", "debug failure"),
                             4: ("tracked-caller", "through tracked wrapper"),

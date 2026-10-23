@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.467.0 — Macro results and written expression metadata
+
+- Value macros use `#macro Result NAME(typed parameters)` and ordinary calls.
+  Macro-local `return` statements publish their result without exiting the
+  caller, with checked movement and deterministic local/failure cleanup.
+- Fresh lambda arguments retain lexical callable identity and initialize
+  their captures only where the argument expression is evaluated.
+- `std::expression_text(expression)` in `<std/source_location>` obtains
+  literal-backed written argument text without evaluating the expression.
+  Default assertion messages include their original condition text.
+
 ## 0.466.0 — Typed macros
 
 - Declare namespace-scope statement templates with `#macro NAME(typed

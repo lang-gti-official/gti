@@ -74,16 +74,23 @@ and cannot be delegated to a backend language's default-argument mechanism.
 
 #### Typed statement macros
 
-`#macro` declares a source-defined namespace-scope statement macro with typed
+`#macro` declares a source-defined namespace-scope macro with typed
 **expression parameters**, instead of ordinary eager parameter initialization.
-Its result is implicitly `void`: no return type is written. Calls use ordinary
-qualified or unqualified call syntax, only as a complete expression statement:
+Omitting the result type declares a `void` statement macro. An explicit result
+type uses ordinary C++-familiar prefix spelling. Calls use ordinary qualified
+or unqualified syntax; value macros can participate in expressions:
 
 ```gti
 #macro report_when(bool enabled, std::string_view message) {
   if (enabled) { std::println(message); }
 }
 report_when(verbose, make_message());
+
+#macro int choose(bool enabled, int first, int second) {
+  if (enabled) { return first; }
+  return second;
+}
+int selected = choose(use_cache, cached_value(), expensive_value());
 ```
 
 Generic parameters follow the macro name (`#macro when<T>(bool enabled, T value)`),
@@ -140,7 +147,9 @@ binding not reached at runtime establishes no runtime resource or cleanup.
 The structural slice accepts blocks, ordinary `if`, configuration-selected
 statements, automatic locals, assignments/increments, and ordinary `for`,
 range-`for`, `while` and `do` loops. `break` and `continue` must target a loop
-within that macro; they cannot target a caller's loop. Returns, macro-introduced
+within that macro; they cannot target a caller's loop. A `return` exits only
+the innermost macro result region, never the caller. Every normally completing
+path of a value macro must return a value. Macro-introduced
 `?` propagation, static storage, lambda definitions and generated declarations
 remain excluded. Caller-written expressions retain ordinary effects and
 propagation rules. Use an ordinary helper for the excluded operations.
@@ -151,19 +160,40 @@ caller modifier, member/operator or `noreturn` form. Their bodies are typed
 after concrete substitution, like statement templates; unused templates are
 checked for signature and structural eligibility, not instantiated execution.
 Arguments require exact expression types; write an explicit conversion instead
-of relying on a value-parameter conversion. Fresh callable-valued arguments
-whose type identity would be created only by probing require a prior named
-binding; named callable values and callable invocations with ordinary result
-types retain their existing rules. Admitting fresh callable identities needs
-source-identity-preserving deferred type discovery, not a second closure model.
-They cannot be taken as function items or callbacks, returned as a value, or
-used inside another expression. Expansion has deterministic limits of 64
+of relying on a value-parameter conversion. Fresh lambda arguments preserve
+their lexical callable identity through checking and repeated/nested forcing.
+Their ordinary capture initialization, moves, borrows and cleanup occur only
+at evaluated uses; a disabled use does not initialize a capture. Returns inside
+a caller-written lambda still exit that lambda, not a surrounding macro.
+Macro declarations themselves cannot be taken as function items or callbacks.
+Void calls remain complete expression statements. Expansion has deterministic limits of 64
 nested calls and 4096 expanded bodies in one analysis request; recursive
 macro cycles are rejected without expanding the cycle repeatedly.
 
-These bounds describe statement templates, not implicit laziness for
-ordinary functions or a textual preprocessor. Supporting
-value-producing macros or escaping deferred values requires a further
+Value results use a typed HIR result region and an ordinary MIR result place.
+The selected result is initialized before macro-local cleanup and remains
+owned during that cleanup, including its failure continuations. Only successful
+cleanup publishes the result to the enclosing expression, whose normal
+full-expression lifetime then applies. Returning a macro-local move-only owner
+can move it implicitly; returning a substituted caller owner cannot silently
+consume it and requires a written move. There is no implicit clone.
+
+The current result profile admits owned and dependency-free values, including
+literal-backed text. Reference and tracked-borrowed results are diagnosed;
+extending them requires checked result-origin joins and loan transfer across
+the region boundary, not a backend reference escape. Ordinary references and
+borrowed values remain usable *inside* macros under their existing rules.
+
+`std::expression_text(expression)` from `<std/source_location>` is a library
+macro over a trusted source-metadata capability. It type-checks but never
+evaluates the expression, returning static literal-backed written text with
+interior comments/whitespace preserved. Whole-argument forwarding retains its
+caller text. A synthesized compound expression has no honest single written
+origin and is diagnosed rather than stringified. This is not token pasting or
+arbitrary source rewriting; defaults retain their written declaration text.
+
+These bounds describe checked templates, not implicit laziness for ordinary
+functions or a textual preprocessor. Escaping deferred values require a further
 semantic/IR lifetime contract, not a relaxation in the C++ emitter.
 
 This is the only typed statement-expansion facility. The former

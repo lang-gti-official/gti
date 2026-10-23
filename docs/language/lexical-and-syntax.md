@@ -44,9 +44,10 @@ separate UTF-8 bytes.
 Fixed lexemes, token classes, keywords, literals, operators, and punctuation
 are defined by the incorporated grammar and lexer contract.
 
-`#macro` is a declaration token followed by a name, typed parameter clause and
+`#macro` is a declaration token followed by an optional result type, a name, typed parameter clause and
 braced GTI body; it is not a line-oriented C preprocessor replacement directive.
-The result type is implicitly void, and calls keep ordinary `name(...)` or
+An omitted result type is implicitly void; explicit types use `#macro T name(...)`.
+Calls keep ordinary `name(...)` or
 `namespace::name(...)` syntax. The bounded expansion and evaluation rules are
 defined in [execution semantics](execution.md#typed-statement-macros).
 The old `[[deferred]]` attribute is rejected with migration guidance.
