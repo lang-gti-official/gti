@@ -389,6 +389,80 @@ int main() { int value = 1; return use(value); }
 )"),
            "exact result mismatch");
 
+  const std::string multiOriginSource = R"(
+concept readable_second<L, R> = requires(L& unused, R& receiver) {
+  { receiver.read() } -> int;
+};
+int use<L, R>(L& left, R& right) requires readable_second<L, R> { return 0; }
+struct Missing {};
+int main() { int left = 1; Missing right{}; return use(left, right); }
+)";
+  const auto multiOrigin =
+      check(root, directory, "expression_diagnostic_origin", multiOriginSource);
+  const auto multiFailure = std::find_if(
+      multiOrigin.diagnostics.begin(), multiOrigin.diagnostics.end(),
+      [](const auto &item) { return item.code == "GTI-S2029"; });
+  const auto writtenApplication = multiOriginSource.find(
+      "readable_second<L, R>", multiOriginSource.find("int use"));
+  expect(
+      !multiOrigin.hirValid && multiFailure != multiOrigin.diagnostics.end() &&
+          multiFailure->message == "Generic arguments do not satisfy concept "
+                                   "'readable_second<int32_t, Missing>'." &&
+          multiFailure->primary.start == multiOriginSource.rfind(");") &&
+          std::any_of(multiFailure->related.begin(),
+                      multiFailure->related.end(),
+                      [&](const auto &note) {
+                        return note.span.start == writtenApplication &&
+                               note.message.find("Required application '") == 0;
+                      }) &&
+          std::any_of(multiFailure->related.begin(),
+                      multiFailure->related.end(),
+                      [](const auto &note) {
+                        return note.message.find(
+                                   "Unknown member 'read' on 'Missing'") !=
+                               std::string::npos;
+                      }),
+      "multi-parameter expression failures name the concept without "
+      "falsely blaming an unused first argument");
+
+  const std::string unaryOriginSource = R"(
+concept readable<T> = requires(T& receiver) { { (receiver.read()) } -> int; };
+int use<T>(T& receiver) requires readable<T> { return 0; }
+int main() { int value = 1; return use(value); }
+)";
+  const auto unaryOrigin =
+      check(root, directory, "unary_expression_origin", unaryOriginSource);
+  const auto unaryFailure = std::find_if(
+      unaryOrigin.diagnostics.begin(), unaryOrigin.diagnostics.end(),
+      [](const auto &item) { return item.code == "GTI-S2029"; });
+  expect(
+      !unaryOrigin.hirValid && unaryFailure != unaryOrigin.diagnostics.end() &&
+          unaryFailure->primary.start == unaryOriginSource.rfind("value") &&
+          unaryFailure->message.find("Argument 1 has type 'int32_t'") == 0 &&
+          unaryFailure->message.find("readable<int32_t>") != std::string::npos,
+      "an unambiguous unary receiver retains its actual call-argument span");
+
+  const std::string independentResultSource = R"(
+concept reads_as<T, R> = requires(T& receiver) { { (receiver.read()) } -> R; };
+int use<T, R>(T& receiver, R& result) requires reads_as<T, R> { return 0; }
+struct Reader { int read() { return 1; } };
+int main() { Reader receiver{}; bool result = false; return use(receiver, result); }
+)";
+  const auto independentResult = check(
+      root, directory, "expression_result_origin", independentResultSource);
+  const auto independentFailure =
+      std::find_if(independentResult.diagnostics.begin(),
+                   independentResult.diagnostics.end(),
+                   [](const auto &item) { return item.code == "GTI-S2029"; });
+  expect(
+      !independentResult.hirValid &&
+          independentFailure != independentResult.diagnostics.end() &&
+          independentFailure->primary.start ==
+              independentResultSource.rfind(");") &&
+          independentFailure->message == "Generic arguments do not satisfy "
+                                         "concept 'reads_as<Reader, bool>'.",
+      "an independent required result does not falsely blame a unary receiver");
+
   rejected(check(root, directory, "false_predicate", R"(
 #include <std/meta>
 concept integral_only<T> = std::meta::is_integral<T>();
