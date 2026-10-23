@@ -341,13 +341,9 @@ auto SemanticVisitor::Impl::adoptCallableTypeDiscovery(const Impl &probe,
                 probe.semanticModel.findLambda(identity.id)) {
           LambdaInfo shape = *discovered;
           shape.declaration = identity.declaration;
-          // These symbols belong to a speculative body. Only the selected
-          // type, traits and invocation contract cross the discovery boundary.
-          for (auto &capture : shape.captures) {
-            capture.sourceSymbol = 0;
-            capture.bindingSymbol = 0;
-          }
-          semanticModel.record(*identity.declaration, std::move(shape));
+          // Body/initializer pointers and binding identities never become
+          // executable AST facts merely because a type was discovered.
+          semanticModel.recordLambdaTypeDiscovery(std::move(shape));
         }
       }
       break;
@@ -567,6 +563,22 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
     return true;
   }
   const SemanticType resultType = selection->returnType;
+  if (!containsOpenTypeParameter(resultType)) {
+    const auto traits = typeTraits(resultType);
+    if (resultType.kind == SemanticType::Reference ||
+        traits.containsBorrowedState) {
+      reject("A macro result cannot export a reference or tracked borrowed "
+             "state from its local result region.");
+      return true;
+    }
+    if (resultType != SemanticType::Void && !traits.movable &&
+        !traits.copyable) {
+      reject("A macro result must be movable or copyable to leave its local "
+             "result region; return an owning indirection for an immovable "
+             "payload.");
+      return true;
+    }
+  }
   if (!statement && resultType == SemanticType::Void) {
     reject("A void macro must be invoked as a complete expression statement.");
     return true;
@@ -777,10 +789,9 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
   macroActiveBodies.push_back(activeBody);
   const std::size_t diagnosticStart = diagnostics.size();
   const ScopeStack incoming = scopes;
-  if (statement)
-    semanticModel.recordFullExpression(*statement, statement->expression());
   macroResultRegions.push_back({.function = currentFunctionDeclaration,
                                 .lambdaDepth = lambdaDepth,
+                                .expansion = bodyExpansion,
                                 .type = resultType});
   {
     MacroLookupScope definitionScope(*this, macroLookup.at(bodyExpansion));
@@ -788,6 +799,9 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
   }
   auto resultRegion = std::move(macroResultRegions.back());
   macroResultRegions.pop_back();
+  if (statement &&
+      (resultType != SemanticType::Void || !resultRegion.exits.empty()))
+    semanticModel.recordFullExpression(*statement, statement->expression());
   std::vector<const ReturnStmt *> reachableReturns;
   const FlowSummary resultFlow =
       summarizeFlow(expansion.statement.get(), &reachableReturns);
@@ -863,12 +877,12 @@ auto SemanticVisitor::Impl::analyzeMacroReturn(const ReturnStmt &statement)
     } else if (!recordsDeclarationConversion(*statement.value()) &&
                !isOwnershipAssignable(result, value, statement.value())) {
       const auto *variable = movedVariable(statement.value());
-      const auto *context = variable ? macroContext(variable->name()) : nullptr;
       // A substituted argument is an expression, not an eager by-value
       // parameter. Only the macro's own named locals get implicit return
       // movement; consuming a caller owner requires a written move.
       const auto moved =
-          context && context->definition
+          variable && variable->name().expansion ==
+                          macroResultRegions.back().expansion
               ? analyzeImplicitReturnMove(statement.value(), result, value)
               : ImplicitReturnMoveStatus::NotEligible;
       if (moved == ImplicitReturnMoveStatus::NotEligible)

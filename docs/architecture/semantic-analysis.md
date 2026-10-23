@@ -51,6 +51,19 @@ in [execution semantics](../language/execution.md#typed-statement-macros).
 engine. The syntax revision preserves the existing semantic expansion, HIR
 and verified-MIR contract, including argument probes and caller provenance.
 
+Explicit result macros add a semantic local-result region, not a hidden
+function boundary. Its concrete result type governs return initialization;
+reachable return snapshots are selected by the ordinary flow summary before
+merging caller move states. A fresh lambda or demanded function body has its
+own return domain. Only locals written in that exact expansion are eligible
+for implicit return movement; a forwarded caller expression requires an
+explicit move to sacrifice its owner. Reference/tracked-borrowed and direct
+immovable results are rejected structurally until result dependency joins and
+destination-passing construction respectively supply their missing proof.
+HIR preserves the local return targets; MIR owns successful publication and
+rollback cleanup. Void expansions without a local return retain their existing
+statement-only path.
+
 Member visibility is shared by semantic field/call/constructor/type checks and
 completion filtering. `canAccessMember` uses the lexical class context, the
 selected declaration's access and owner, substituted inheritance paths, and an
@@ -1878,7 +1891,9 @@ argument copies retain that origin independently of their fresh hygiene lookup
 domains; concrete enclosing generic arguments and capture types remain part of
 the ordinary lambda `SemanticType`. A successful isolated macro probe publishes
 only callable shape, traits and invocation identity, with speculative capture
-binding identities removed. It publishes no executable expression facts, calls,
+binding identities and initializer pointers removed. These shapes have an
+ID-only lookup; AST lookup requires an actually analyzed lambda body. Discovery
+publishes no executable expression facts, calls,
 loans, capture initialization or cleanup. Every forced occurrence reuses the
 lexical type identity while ordinary lambda analysis checks its actual capture
 initializers and body in caller flow. Repeated forcing therefore constructs

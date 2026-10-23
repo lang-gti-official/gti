@@ -1349,6 +1349,9 @@ SemanticModel::findLambda(const Lambda &declaration) const {
   if (found != lambdasById.end() && found->second != nullptr) {
     return findLambda(*found->second);
   }
+  if (const auto discovery = lambdaTypeDiscoveries.find(id);
+      discovery != lambdaTypeDiscoveries.end())
+    return &discovery->second;
   const LambdaInfo *inherited =
       base == nullptr ? nullptr : base->findLambda(id);
   noteBaseLambda(inherited);
@@ -2075,6 +2078,7 @@ void SemanticModel::clear() {
   functionDeclarations.clear();
   lambdas.clear();
   lambdasById.clear();
+  lambdaTypeDiscoveries.clear();
   classTypes.clear();
   classTypesById.clear();
   exactClassSpecializations.clear();
@@ -2813,6 +2817,15 @@ void SemanticModel::record(const Lambda &declaration, LambdaInfo info) {
   const auto [found, _] =
       lambdas.insert_or_assign(&declaration, std::move(info));
   lambdasById.insert_or_assign(found->second.id, &declaration);
+}
+
+void SemanticModel::recordLambdaTypeDiscovery(LambdaInfo info) {
+  for (auto &capture : info.captures) {
+    capture.initializer = nullptr;
+    capture.sourceSymbol = 0;
+    capture.bindingSymbol = 0;
+  }
+  lambdaTypeDiscoveries.insert_or_assign(info.id, std::move(info));
 }
 
 void SemanticModel::recordClassType(const ClassDecl &declaration,

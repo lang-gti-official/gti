@@ -578,7 +578,8 @@ int main() {
   negative("#macro wrong() { continue; }", "GTI-S2099", "within that macro");
   negative("#macro wrong() { static int value = 1; }", "GTI-P0001",
            "Block-scope static");
-  negative("[[test]] #macro wrong() {}", "GTI-S2099", "namespace-scope void");
+  negative("[[test]] #macro wrong() {}", "GTI-S2099",
+           "namespace-scope template");
   negative(R"(
 namespace app {
   #macro same(int value) {}

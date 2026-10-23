@@ -104,7 +104,7 @@ int main() {
   std::string_view forwarded = nested((3 /* λ */ + 4));
   std::string_view unicode = std::expression_text("λβ");
   std::string_view from_default = defaulted();
-  std::unique_ptr<int> owner = std::make_unique<int>(7);
+  mut std::unique_ptr<int> owner = std::make_unique<int>(7);
   std::string_view named_owner = std::expression_text(owner);
   std::string_view moved = std::expression_text(std::move(owner));
   std::string_view borrowed = std::expression_text(*owner);
@@ -199,7 +199,8 @@ int main() { std::string_view text = composed(2); return 0; }
         diagnostic.message.find("complete written source expression") !=
             std::string::npos) {
       originDiagnostic = true;
-      expect(diagnostic.primary.source == "expression-text.gti",
+      expect(std::filesystem::path(diagnostic.primary.source).filename() ==
+                 "expression-text.gti",
              "provenance failure should retain its caller source identity");
     }
   expect(originDiagnostic, "synthetic source needs its semantic diagnostic");
@@ -217,7 +218,8 @@ int main() {
   bool exactSpan = false;
   for (const auto &diagnostic : invalid.diagnostics)
     if (diagnostic.primary.start == invalidSource.find("missing_expression"))
-      exactSpan = diagnostic.primary.source == "expression-text.gti" &&
+      exactSpan = std::filesystem::path(diagnostic.primary.source).filename() ==
+                      "expression-text.gti" &&
                   diagnostic.primary.end - diagnostic.primary.start == 18;
   expect(exactSpan, "invalid operands should retain their exact written span");
 
@@ -303,6 +305,75 @@ int main() {
       ordinaryCall,
       "public std spelling must not acquire the trusted capability's meaning");
 }
+
+void testExplicitFallback() {
+  const auto result = analyze(R"gti(
+#include <std/source_location>
+#include <std/memory>
+#include <std/assert>
+constexpr std::string_view fallback = "synthetic condition";
+#macro std::string_view composed(int expression) {
+  return std::expression_text(expression + 1, fallback);
+}
+#macro std::string_view forwarded(int expression) { return composed(expression); }
+#macro std::string_view owner_text<T>(T expression) {
+  return std::expression_text((expression), "owner fallback");
+}
+#macro checked(int expression) { std::assert(expression > 0); }
+int main() {
+  mut int counter = 0;
+  std::string_view exact = std::expression_text(++counter, "unused fallback");
+  std::string_view synthetic = forwarded(++counter);
+  mut std::unique_ptr<int> owner = std::make_unique<int>(7);
+  std::string_view named = owner_text(owner);
+  std::string_view moved = owner_text(std::move(owner));
+  std::string_view borrowed = owner_text(*owner);
+  owner.reset();
+  checked(3);
+  return counter;
+}
+)gti");
+  if (!result.canGenerateCode())
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "explicit constant fallback should admit synthesized source without "
+         "effects");
+  const auto literals = mainLiterals(result);
+  for (const std::string_view expected :
+       {"++counter", "synthetic condition", "owner fallback",
+        "assertion condition"})
+    expect(literals.contains(std::string(expected)),
+           "available written text wins; synthetic source uses only explicit "
+           "fallback");
+
+  const auto dynamic = analyze(R"gti(
+#include <std/source_location>
+std::string_view dynamic() { return "dynamic"; }
+int main() {
+  std::string_view text = std::expression_text(1, dynamic());
+  return 0;
+}
+)gti");
+  bool rejected = false;
+  for (const auto &diagnostic : dynamic.diagnostics)
+    rejected |= diagnostic.code == "GTI-S2019" &&
+                diagnostic.message.find("compile-time literal-backed") !=
+                    std::string::npos;
+  expect(!dynamic.canGenerateCode() && rejected,
+         "dynamic fallback must fail even when exact expression text is "
+         "available");
+
+  const auto invalid = analyze(R"gti(
+#include <std/source_location>
+int main() {
+  std::string_view text = std::expression_text(missing, "explicit fallback");
+  return 0;
+}
+)gti");
+  expect(!invalid.canGenerateCode(),
+         "fallback must not hide a statically invalid operand");
+}
 } // namespace
 
 int main() {
@@ -310,5 +381,6 @@ int main() {
   testLiteralNormalizationAndForwarding();
   testRejections();
   testPublicSpellingHasNoCompilerMeaning();
+  testExplicitFallback();
   return failures == 0 ? 0 : 1;
 }

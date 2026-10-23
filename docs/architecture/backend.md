@@ -8,6 +8,13 @@ compiler-owned, backend-neutral `LoweredProgram`; they do not receive the AST,
 C++. The backend chooses target representation, but it cannot recover missing
 language meaning from an upstream representation or from host C++ behavior.
 
+Typed macro results reach this boundary only as verified ordinary MIR
+initialization, lifecycle, cleanup and join transport. The C++ backend never
+executes a HIR result region or interprets a macro-local return as a native
+function return. Written-expression metadata is normalized to a static text
+literal before MIR; a leaked source-query capability is rejected, not emitted
+as a runtime function or evaluated argument.
+
 Body-template presentation substitutes the family label and indentation with
 two append-only passes, in that order. It does not admit operations or consult
 MIR/semantic state. This avoids repeatedly shifting a large cleanup body for

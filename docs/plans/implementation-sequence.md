@@ -97,6 +97,11 @@ Further goals, not implemented by this slice:
   nominal exceptions for public views. Owned/dependency-free results and local
   returns are implemented. Caller-directed exits and introduced propagation
   remain separate explicit control-flow design work.
+- Direct immovable macro results require final-destination construction through
+  region branches and caller consumption. The current movable/copyable result
+  profile diagnoses this shape rather than requiring a native C++ move or
+  silently relocating a pinned payload. Acceptance must include deleted-move
+  user types and cleanup-failure paths with no intermediate relocation.
 - Constant-context macro calls require the staged verified-MIR evaluation
   profile from L-CONST-01, preserving phase timing and diagnostic/resource
   limits. This slice does not add another AST execution rule.

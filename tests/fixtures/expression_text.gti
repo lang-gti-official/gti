@@ -1,6 +1,7 @@
 #include <std/source_location>
 #include <std/memory>
 #include <std/panic>
+#include <std/string>
 
 int effect() { std::panic("expression text evaluated its argument"); }
 
@@ -16,6 +17,16 @@ int effect() { std::panic("expression text evaluated its argument"); }
 std::string_view ordinary_generic<T>(T value) {
   return std::expression_text(value);
 }
+constexpr std::string_view explicit_fallback = "synthetic condition";
+#macro std::string_view composed_text(int argument) {
+  return std::expression_text(argument + 1, explicit_fallback);
+}
+#macro std::string_view nested_composed_text(int argument) {
+  return composed_text(argument);
+}
+#macro std::string_view composed_owner_text<T>(T argument) {
+  return std::expression_text((argument), "owner fallback");
+}
 
 int main() {
   mut int counter = 0;
@@ -26,7 +37,7 @@ int main() {
   if (std::expression_text("λβ") != "\"λβ\"") { return 4; }
   if (default_text() != "6 /* default */ + 1") { return 5; }
   if (ordinary_generic(4) != "value") { return 6; }
-  std::unique_ptr<int> owner = std::make_unique<int>(7);
+  mut std::unique_ptr<int> owner = std::make_unique<int>(7);
   if (std::expression_text(owner) != "owner") { return 11; }
   std::string_view moved = std::expression_text(std::move(owner));
   if (*owner != 7 || moved != "std::move(owner)") { return 7; }
@@ -38,5 +49,16 @@ int main() {
   if (std::expression_text(
       (1 /* exact */ +
        2)) != "(1 /* exact */ +\n       2)") { return 10; }
+  if (std::expression_text(++counter, "unused fallback") != "++counter") { return 12; }
+  if (nested_composed_text(++counter) != "synthetic condition" || counter != 0) {
+    return 13;
+  }
+  mut std::unique_ptr<int> fallback_owner = std::make_unique<int>(9);
+  if (composed_owner_text(fallback_owner) != "owner fallback") { return 14; }
+  if (composed_owner_text(std::move(fallback_owner)) != "owner fallback" ||
+      *fallback_owner != 9) { return 15; }
+  std::string_view fallback_borrow = composed_owner_text(*fallback_owner);
+  fallback_owner.reset();
+  if (fallback_borrow != "owner fallback") { return 16; }
   return 0;
 }

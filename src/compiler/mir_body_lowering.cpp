@@ -2327,7 +2327,50 @@ private:
     }
   }
 
+  void canonicalizeFullExpressions() {
+    // Nested result regions finish their own expressions before the enclosing
+    // expression. Publication order is therefore not source identity order.
+    // Canonicalize once per completed candidate, repairing the two body-local
+    // reference families rather than weakening the verifier's ordering rule.
+    if (std::is_sorted(output.fullExpressions.begin(),
+                       output.fullExpressions.end(),
+                       [](const auto &left, const auto &right) {
+                         return left.hirExpression < right.hirExpression;
+                       }))
+      return;
+    std::vector<HirFullExpressionId> remap(output.fullExpressions.size() + 1);
+    std::sort(output.fullExpressions.begin(), output.fullExpressions.end(),
+              [](const auto &left, const auto &right) {
+                return left.hirExpression < right.hirExpression;
+              });
+    fullExpressionIds.clear();
+    for (std::size_t index = 0; index < output.fullExpressions.size();
+         ++index) {
+      auto &expression = output.fullExpressions[index];
+      if (expression.id == 0 || expression.id >= remap.size() ||
+          remap[expression.id] != 0) {
+        valid = false;
+        return;
+      }
+      remap[expression.id] = index + 1;
+      expression.id = index + 1;
+      fullExpressionIds.emplace(expression.hirExpression, expression.id);
+    }
+    const auto repair = [&](HirFullExpressionId &id) {
+      if (id >= remap.size() || (id != 0 && remap[id] == 0))
+        valid = false;
+      else
+        id = remap[id];
+    };
+    for (auto &drop : output.dropObligations)
+      repair(drop.fullExpression);
+    for (auto &block : output.blocks)
+      for (auto &instruction : block.instructions)
+        repair(instruction.fullExpressionEnd);
+  }
+
   void finishBodyVerification() {
+    canonicalizeFullExpressions();
     rebuildMirReachability(output);
     valid = rebuildMirValueUses(output) && valid;
     valid = validateSourceProvenance() && valid;
@@ -2350,6 +2393,7 @@ private:
       return;
     }
     MirBody unshared = output;
+    const auto unsharedFullExpressionIds = fullExpressionIds;
     const MirInvokeContinuations continuations = invokeContinuations;
     const MirInstructionId instruction = nextInstruction;
     const bool previouslyValid = valid;
@@ -2359,6 +2403,7 @@ private:
       return;
     }
     output = std::move(unshared);
+    fullExpressionIds = unsharedFullExpressionIds;
     invokeContinuations = continuations;
     nextInstruction = instruction;
     valid = previouslyValid;
