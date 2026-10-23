@@ -1474,6 +1474,23 @@ auto SemanticVisitor::Impl::textFieldContractScope() const
   return function;
 }
 
+auto SemanticVisitor::Impl::instanceFieldContractScope() const
+    -> const FunctionInfo * {
+  if (!instanceAnalysisActive || lambdaDepth != 0 || constructorDepth != 0 ||
+      destructorDepth != 0)
+    return nullptr;
+  const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+  const FunctionInfo *function = currentFunctionInfo();
+  if (function == nullptr || function->ownerClass == 0 ||
+      classInfo(function->ownerClass).genericParameters.empty() ||
+      !textFieldContractFunction(
+          function->declaration, function->bodyDeclaration(),
+          function->virtualMethod || function->overrideMethod,
+          function->ownerClass))
+    return nullptr;
+  return function;
+}
+
 auto SemanticVisitor::Impl::readOnlyTextFieldFormal(
     const FunctionDecl &declaration, std::span<const SemanticType> types,
     std::size_t index) const -> bool {
@@ -1487,8 +1504,14 @@ auto SemanticVisitor::Impl::readOnlyTextFieldFormal(
 auto SemanticVisitor::Impl::textFieldContractFormal(const Expr &object) const
     -> std::optional<OwnerlessTextField> {
   const FunctionInfo *function = textFieldContractScope();
-  if (function == nullptr)
-    return std::nullopt;
+  return function == nullptr ? std::nullopt
+                             : textFieldContractFormal(object, *function);
+}
+
+auto SemanticVisitor::Impl::textFieldContractFormal(
+    const Expr &object, const FunctionInfo &scope) const
+    -> std::optional<OwnerlessTextField> {
+  const FunctionInfo *function = &scope;
   const Expr *current = &object;
   while (const auto *group = exprAs<Grouping>(current)) {
     if (!group->expression())
@@ -1820,11 +1843,10 @@ auto SemanticVisitor::Impl::conditionalRelayReturns(
   return result;
 }
 
-auto SemanticVisitor::Impl::contractEnumField(const Expr *current) const
+auto SemanticVisitor::Impl::contractEnumField(const Expr *current,
+                                             const FunctionInfo &function) const
     -> std::optional<std::pair<OwnerlessTextField, SemanticType>> {
-  const FunctionInfo *scope = textFieldContractScope();
-  if (scope == nullptr)
-    return std::nullopt;
+  const FunctionInfo *scope = &function;
   while (const auto *group = exprAs<Grouping>(current))
     current = group->expression() ? group->expression().get() : nullptr;
   std::optional<OwnerlessTextField> formal;
@@ -1833,7 +1855,7 @@ auto SemanticVisitor::Impl::contractEnumField(const Expr *current) const
   if (const auto *get = exprAs<Get>(current);
       get != nullptr && get->access().kind != TokenKind::ARROW &&
       get->object()) {
-    formal = textFieldContractFormal(*get->object());
+    formal = textFieldContractFormal(*get->object(), function);
     // An instance analysis reads its receiver's fields at their types there.
     if (formal && formal->receiver)
       owner = substituteType(openClassType(scope->ownerClass),
@@ -1876,7 +1898,7 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
   const FunctionInfo *scope = textFieldContractScope();
   const auto field = scope == nullptr || payload.name == nullptr || !subject
                          ? std::nullopt
-                         : contractEnumField(subject.get());
+                         : contractEnumField(subject.get(), *scope);
   if (!field)
     return std::nullopt;
   auto formal = field->first;
@@ -1909,11 +1931,16 @@ auto SemanticVisitor::Impl::notePayloadFieldRead(const Expr &expression)
     -> void {
   if (&expression == observedSwitchSubject)
     return;
-  const auto field = contractEnumField(&expression);
+  // A generic class method's type-parameter field is a payload enum only in
+  // some instances, so those instances' analyses record its requirements.
+  const FunctionInfo *scope = textFieldContractScope();
+  if (scope == nullptr)
+    scope = instanceFieldContractScope();
+  const auto field =
+      scope == nullptr ? std::nullopt : contractEnumField(&expression, *scope);
   const auto enumeration =
       field ? enumTypeFor(field->second) : std::optional<EnumTypeInfo>{};
-  const FunctionInfo *scope = enumeration ? textFieldContractScope() : nullptr;
-  if (scope == nullptr)
+  if (!enumeration)
     return;
   const bool generic = scope->ownerClass != 0 &&
                        !classInfo(scope->ownerClass).genericParameters.empty();

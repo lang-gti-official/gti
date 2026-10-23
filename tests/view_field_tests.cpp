@@ -2230,6 +2230,17 @@ public:
   void keep() && { kept = std::move(this.text); }
   std::string_view take() && { return std::move(this.text); }
 };
+class Cell<T> {
+public:
+  T value;
+  Cell(T value) : value(value) {}
+  T get() { return this.value; }
+  T& ref() { return this.value; }
+  uint64_t copy() {
+    T held = this.value;
+    return 1;
+  }
+};
 )gti";
 
 // A payload-enum field of a contract formal or the receiver is observed in
@@ -2255,7 +2266,13 @@ int main() {
   std::optional<std::string_view> maybe = std::optional<std::string_view>("x");
   std::string_view taken = std::move(relayed).take();
   std::string_view value = std::move(maybe).value();
-  return kept.size() + taken.size() + value.size() == 13 ? 0 : 1;
+  // A type-parameter field is a payload enum only in this instance, whose
+  // analysis records what its MIR derives.
+  Cell<Word> cell = Cell<Word>(Word::text("cell"));
+  Word got = cell.get();
+  Word& held = cell.ref();
+  return kept.size() + taken.size() + value.size() + cell.copy() == 14 ? 0
+                                                                       : 1;
 }
 )gti");
   if (!result.canGenerateCode())
@@ -2280,7 +2297,7 @@ int main() {
     expect(!lang::verifyMirProgram(changed).valid(),
            "MIR derives a payload field use's requirement independently");
   }
-  expect(payloadUses >= 8, "every payload field use requires its payload");
+  expect(payloadUses >= 11, "every payload field use requires its payload");
 
   struct Case {
     const char *body;

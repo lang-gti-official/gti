@@ -2062,6 +2062,10 @@ private:
   // non-generic, non-virtual GTI function or method body, outside lambdas,
   // constructors and destructors.
   [[nodiscard]] const FunctionInfo *textFieldContractScope() const;
+  // In an instance analysis of a generic class's method, the concrete
+  // function: its MIR derives requirements from the instance's field types,
+  // which the open analysis cannot see.
+  [[nodiscard]] const FunctionInfo *instanceFieldContractScope() const;
   // Whether a function can carry a field-level contract, by the same rule.
   // It reads declaration facts only, because looking the function up during
   // analysis would demand its body.
@@ -2079,6 +2083,9 @@ private:
   // when its class can hold a dependent text value.
   [[nodiscard]] std::optional<OwnerlessTextField>
   textFieldContractFormal(const Expr &object) const;
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  textFieldContractFormal(const Expr &object,
+                          const FunctionInfo &function) const;
   // The formal or receiver text field that `expression` reads directly.
   [[nodiscard]] std::optional<OwnerlessTextField>
   ownerlessTextForwardingField(const ExprPtr &expression) const;
@@ -2200,10 +2207,10 @@ private:
   contractPayloadBinding(const ExprPtr &subject,
                          const ResolvedPayloadPatternInfo &pattern,
                          const PayloadBindingInfo &payload) const;
-  // In a field-contract scope, the contract formal's or receiver's field
-  // that `expression` names, with that field's type in its open class.
+  // In the field-contract scope `scope`, the contract formal's or receiver's
+  // field that `expression` names, with that field's type there.
   [[nodiscard]] std::optional<std::pair<OwnerlessTextField, SemanticType>>
-  contractEnumField(const Expr *expression) const;
+  contractEnumField(const Expr *expression, const FunctionInfo &scope) const;
   // A contract formal's or the receiver's payload-enum field read as a value,
   // rather than observed in place as a switch subject, may let any of its
   // text payloads outlive the call: each is required ownerless (L-OWN-02).
