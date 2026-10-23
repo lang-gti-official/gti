@@ -1,5 +1,27 @@
 # Compiler Verification
 
+## Copied dependent payload views (0.465.4)
+
+`view_fields` covers the copy in `testCopiedPayloadBindings`.
+- A switch's by-value binding of a dependent payload is copied into a local,
+  and that local is copied again. Both copies verify and carry the payload's
+  `Stored` loan.
+- Dropping either copy from the loan's carriers is rejected once MIR derives
+  which bindings hold a published owner's text (PR #297); without that rule
+  the mutation still verifies.
+- `view_field_payloads_runtime` runs copies of a local enum's binding and of
+  a `line.word` binding in every mode.
+
+Fourteen probes ran on main's compiler and this change's. Seven reported
+`GTI-B0001` on main and now build and run: the plain copy, a copy chain, a
+`default` arm, a generic enum, a payload enum held in a field, a loop, and a
+two-payload variant. Five source rejections are unchanged: assigning the view
+into an existing binding, storing it, republishing it in a payload or
+constructor, and mutating the owner while a copy is live (`GTI-S2045`,
+`GTI-S2017`). Two already built and still do: `id(value)` with
+`std::string_view& r = value;`, and the carrier program of PR #297's
+`testDerivedCarriers`.
+
 ## Classes holding function items (0.465.3)
 
 `passive_function_item_class_runtime` runs `passive_function_item_classes.gti`.
