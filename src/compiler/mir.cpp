@@ -5393,6 +5393,32 @@ joinLifecycleState(const MirLifecycleState &left,
   return result;
 }
 
+void advanceLifecycleState(MirLifecycleState &state,
+                           const MirLifecycleEvent &event) {
+  switch (event.kind) {
+  case MirLifecycleEventKind::Initialize:
+    state[event.target - 1] = OwnershipStateSet::Available;
+    break;
+  case MirLifecycleEventKind::Move:
+    state[event.source - 1] = OwnershipStateSet::Moved;
+    state[event.target - 1] = OwnershipStateSet::Available;
+    break;
+  case MirLifecycleEventKind::Reparent:
+    state[event.source - 1] = OwnershipStateSet::Uninitialized;
+    state[event.target - 1] = OwnershipStateSet::Available;
+    break;
+  case MirLifecycleEventKind::Replace:
+    state[event.source - 1] = OwnershipStateSet::Moved;
+    if (event.target != 0)
+      state[event.target - 1] = OwnershipStateSet::Available;
+    break;
+  case MirLifecycleEventKind::TransferOut:
+  case MirLifecycleEventKind::Drop:
+    state[event.source - 1] = OwnershipStateSet::Uninitialized;
+    break;
+  }
+}
+
 [[nodiscard]] MirVerificationResult verifyMirLifecycleFlow(const MirBody &body,
                                                            std::size_t owner) {
   if (body.dropObligations.empty()) {
@@ -5460,14 +5486,27 @@ joinLifecycleState(const MirLifecycleState &left,
   }
   std::vector<std::optional<MirLifecycleState>> entries(body.blocks.size());
   entries[body.entry - 1] = initial;
+  // Structural publication owns cleanup flags and retirement. Only an
+  // ambiguous consuming source may additionally ask the exact feasible-path
+  // proof below; it cannot relax initialization, cleanup or loan endpoints.
+  std::function<bool(MirBlockId, MirInstructionId, std::size_t,
+                     MirDropObligationId)>
+      availableOnFeasiblePath;
   const auto applyInstructions =
       [&](const MirBlock &block, MirLifecycleState &state,
           bool validate) -> std::optional<MirVerificationResult> {
+    std::size_t lifecycleIndex = 0;
     const auto require = [&](MirDropObligationId obligation,
                              OwnershipState required, const char *operation,
                              MirInstructionId instruction)
         -> std::optional<MirVerificationResult> {
       if (validate && !state[obligation - 1].definitely(required)) {
+        if (required == OwnershipState::Available &&
+            state[obligation - 1].contains(OwnershipState::Available) &&
+            availableOnFeasiblePath &&
+            availableOnFeasiblePath(block.id, instruction, lifecycleIndex,
+                                    obligation))
+          return std::nullopt;
         return failure(body, owner,
                        std::string(operation) + " requires obligation " +
                            std::to_string(obligation) +
@@ -5479,6 +5518,7 @@ joinLifecycleState(const MirLifecycleState &left,
     };
 
     for (const MirInstruction &instruction : block.instructions) {
+      lifecycleIndex = 0;
       if (validate && instruction.kind == MirInstructionKind::EndBorrow &&
           instruction.loan) {
         const auto *loan = body.findLoan(*instruction.loan);
@@ -5520,7 +5560,6 @@ joinLifecycleState(const MirLifecycleState &left,
                           "initialization", instruction.id)) {
             return *invalid;
           }
-          state[event.target - 1] = OwnershipStateSet::Available;
           break;
         case MirLifecycleEventKind::Move:
           if (auto invalid = require(event.source, OwnershipState::Available,
@@ -5532,8 +5571,6 @@ joinLifecycleState(const MirLifecycleState &left,
                           "move destination", instruction.id)) {
             return *invalid;
           }
-          state[event.source - 1] = OwnershipStateSet::Moved;
-          state[event.target - 1] = OwnershipStateSet::Available;
           break;
         case MirLifecycleEventKind::Reparent:
           if (auto invalid = require(event.source, OwnershipState::Available,
@@ -5545,8 +5582,6 @@ joinLifecycleState(const MirLifecycleState &left,
                           "reparent destination", instruction.id)) {
             return *invalid;
           }
-          state[event.source - 1] = OwnershipStateSet::Uninitialized;
-          state[event.target - 1] = OwnershipStateSet::Available;
           break;
         case MirLifecycleEventKind::Replace:
           if (auto invalid = require(event.source, OwnershipState::Available,
@@ -5559,17 +5594,12 @@ joinLifecycleState(const MirLifecycleState &left,
                            "replacement targets an inactive obligation",
                            block.id, instruction.id);
           }
-          state[event.source - 1] = OwnershipStateSet::Moved;
-          if (event.target != 0) {
-            state[event.target - 1] = OwnershipStateSet::Available;
-          }
           break;
         case MirLifecycleEventKind::TransferOut:
           if (auto invalid = require(event.source, OwnershipState::Available,
                                      "transfer", instruction.id)) {
             return *invalid;
           }
-          state[event.source - 1] = OwnershipStateSet::Uninitialized;
           break;
         case MirLifecycleEventKind::Drop: {
           const OwnershipStateSet before = state[event.source - 1];
@@ -5584,10 +5614,11 @@ joinLifecycleState(const MirLifecycleState &left,
                            "drop conditionality disagrees with path state",
                            block.id, instruction.id);
           }
-          state[event.source - 1] = OwnershipStateSet::Uninitialized;
           break;
         }
         }
+        advanceLifecycleState(state, event);
+        ++lifecycleIndex;
       }
       if (const auto retired = validate && instruction.fullExpressionEnd != 0
                                    ? fullExpressionObligations.find(
@@ -5646,30 +5677,89 @@ joinLifecycleState(const MirLifecycleState &left,
   // First converge every block entry. Validating while the worklist is still
   // incomplete is order-dependent: a conditional drop may initially see only
   // the inactive predecessor and reject before the active predecessor joins.
-  std::queue<MirBlockId> pending;
-  pending.push(body.entry);
-  while (!pending.empty()) {
-    const MirBlockId blockId = pending.front();
-    pending.pop();
-    const MirBlock &block = body.blocks[blockId - 1];
-    MirLifecycleState state = *entries[blockId - 1];
-    (void)applyInstructions(block, state, false);
+  using LifecycleEntries = std::vector<std::optional<MirLifecycleState>>;
+  const auto converge = [&](LifecycleEntries &states, bool feasible) {
+    std::queue<MirBlockId> pending;
+    pending.push(body.entry);
+    while (!pending.empty()) {
+      const MirBlockId blockId = pending.front();
+      pending.pop();
+      const MirBlock &block = body.blocks[blockId - 1];
+      MirLifecycleState state = *states[blockId - 1];
+      (void)applyInstructions(block, state, false);
 
-    for (const MirBlockId successor : successors(block.terminator)) {
-      MirLifecycleState outgoing = state;
-      if (block.terminator.kind == MirTerminatorKind::Invoke &&
-          successor == block.terminator.target) {
-        (void)applyInvokeSuccess(block, outgoing, false);
-      }
-      std::optional<MirLifecycleState> &entry = entries[successor - 1];
-      const MirLifecycleState merged =
-          entry ? joinLifecycleState(*entry, outgoing) : outgoing;
-      if (!entry || *entry != merged) {
-        entry = merged;
-        pending.push(successor);
+      const auto outgoingBlocks =
+          feasible ? ownershipSuccessors(body, block.terminator)
+                   : successors(block.terminator);
+      for (const MirBlockId successor : outgoingBlocks) {
+        MirLifecycleState outgoing = state;
+        if (block.terminator.kind == MirTerminatorKind::Invoke &&
+            successor == block.terminator.target) {
+          (void)applyInvokeSuccess(block, outgoing, false);
+        }
+        std::optional<MirLifecycleState> &entry = states[successor - 1];
+        const MirLifecycleState merged =
+            entry ? joinLifecycleState(*entry, outgoing) : outgoing;
+        if (!entry || *entry != merged) {
+          entry = merged;
+          pending.push(successor);
+        }
       }
     }
-  }
+  };
+  converge(entries, false);
+
+  // Cleanup publication is structural: a conditional temporary still needs
+  // its guarded drop even when a literal makes that drop a runtime no-op.
+  // Keep those checks unchanged. Lazily refine only consuming-source
+  // availability, sharing the ownership verifier's exact literal proof and
+  // the very same obligation transfer/join rules above. Unknown conditions
+  // retain both successors; no semantic flag or backend assumption is used.
+  std::optional<LifecycleEntries> feasibleEntries;
+  struct FeasibleCursor {
+    MirBlockId block = 0;
+    std::size_t instruction = 0;
+    std::size_t event = 0;
+    MirLifecycleState state;
+  } cursor;
+  const auto feasibleAvailable = [&](MirBlockId blockId,
+                                     MirInstructionId instructionId,
+                                     std::size_t eventIndex,
+                                     MirDropObligationId obligation) {
+    if (!feasibleEntries) {
+      feasibleEntries.emplace(body.blocks.size());
+      (*feasibleEntries)[body.entry - 1] = initial;
+      converge(*feasibleEntries, true);
+    }
+    const auto &entry = (*feasibleEntries)[blockId - 1];
+    if (!entry)
+      return false; // Dead/unclassified blocks retain structural validation.
+    if (cursor.block != blockId)
+      cursor = {.block = blockId, .state = *entry};
+    const auto &instructions = body.blocks[blockId - 1].instructions;
+    // Queries follow validation order. Replaying each prefix incrementally
+    // avoids quadratic rescanning when a block consumes many distinct owners.
+    while (cursor.instruction < instructions.size()) {
+      const auto &instruction = instructions[cursor.instruction];
+      const bool target = instruction.id == instructionId;
+      const std::size_t limit =
+          target ? eventIndex : instruction.lifecycle.size();
+      if (limit > instruction.lifecycle.size() || cursor.event > limit)
+        return false;
+      while (cursor.event < limit)
+        advanceLifecycleState(cursor.state,
+                              instruction.lifecycle[cursor.event++]);
+      if (target)
+        return cursor.state[obligation - 1].definitely(
+            OwnershipState::Available);
+      ++cursor.instruction;
+      cursor.event = 0;
+    }
+    return false;
+  };
+  // Keep the callback non-owning: ordinary bodies must not allocate a closure
+  // or build a second dataflow merely because this optional proof is available.
+  availableOnFeasiblePath = std::cref(feasibleAvailable);
 
   // Then validate each reachable block against its final joined entry state.
   for (const MirBlock &block : body.blocks) {

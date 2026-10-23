@@ -94,6 +94,7 @@ validGeneratedIdentity(const LoweredGeneratedItemIdentity &identity) {
   case SymbolKind::Constructor:
   case SymbolKind::Destructor:
   case SymbolKind::Function:
+  case SymbolKind::Macro:
   case SymbolKind::Method:
   case SymbolKind::Operator:
   case SymbolKind::TypeParameter:
