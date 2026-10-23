@@ -15070,10 +15070,71 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
   const MirClassInstance *passive =
       passiveGeneratedCopyClass(program, field.type);
   const MirValue *copied = constructor.body.findValue(binding.loadedValue);
-  return passive != nullptr && !passive->traits.containsBorrowedState &&
-         !field.requiresActiveCleanup && copied != nullptr &&
-         copied->info.type == field.type &&
-         !copied->info.traits.containsBorrowedState;
+  if (passive == nullptr || passive->traits.containsBorrowedState ||
+      field.requiresActiveCleanup || copied == nullptr ||
+      copied->info.type != field.type ||
+      copied->info.traits.containsBorrowedState)
+    return false;
+  // Wherever the copy sits, its records must still be MIR's exact adjacent
+  // Load, Initialize and full-expression boundary in one reachable block, as
+  // the prefix proof requires of a prefix copy.
+  for (const MirBlock &block : constructor.body.blocks) {
+    for (std::size_t index = 0; index + 2 < block.instructions.size();
+         ++index) {
+      if (block.instructions[index].id == binding.loadInstruction)
+        return block.reachable &&
+               block.instructions[index + 1].id ==
+                   binding.initializeInstruction &&
+               block.instructions[index + 2].id == binding.boundaryInstruction;
+    }
+  }
+  return false;
+}
+
+// Hoisting a copy out of the prefix is admitted only when every field
+// initializer that copies a formal (a Copy Load of the formal itself) has its
+// exact copy witness. A copy whose records the witness cannot prove keeps the
+// prefix rule for all of them, so no copy is hoisted past a malformed one.
+[[nodiscard]] bool everyFormalCopyWitnessed(
+    const MirConstructorInstance &constructor,
+    const std::vector<CppMirCopyParameterFieldBinding> &copies) {
+  for (std::size_t index = 0; index < constructor.initializers.size();
+       ++index) {
+    const MirConstructorInitializer &initializer =
+        constructor.initializers[index];
+    if (initializer.kind != ConstructorInitializerTargetKind::Field ||
+        initializer.ownedParameter || initializer.storesReference ||
+        initializer.generatedDefault || initializer.arguments.size() != 1)
+      continue;
+    const bool copiesFormal = std::any_of(
+        constructor.body.values.begin(), constructor.body.values.end(),
+        [&](const MirValue &value) {
+          const MirInstruction *load =
+              value.sourceValue == initializer.arguments.front()
+                  ? findInstruction(constructor.body, value.definition)
+                  : nullptr;
+          const MirPlace *source =
+              load != nullptr && load->kind == MirInstructionKind::Load &&
+                      load->operands.size() == 1 &&
+                      load->operands.front().kind == MirOperandKind::Copy
+                  ? constructor.body.findPlace(load->operands.front().place)
+                  : nullptr;
+          return source != nullptr &&
+                 source->root == MirPlaceRootKind::Binding &&
+                 source->projections.empty() &&
+                 std::find(constructor.parameterBindings.begin(),
+                           constructor.parameterBindings.end(),
+                           source->binding) !=
+                     constructor.parameterBindings.end();
+        });
+    if (copiesFormal &&
+        std::none_of(copies.begin(), copies.end(),
+                     [&](const CppMirCopyParameterFieldBinding &binding) {
+                       return binding.initializer == index;
+                     }))
+      return false;
+  }
+  return true;
 }
 
 [[nodiscard]] bool failureConstructorMovedBoundFieldPrefix(
@@ -15404,13 +15465,15 @@ failureConstructorBoundaryEligible(const MirProgram &program,
       // Base and field proofs compose; neither can replace the other.
       emptyStateFields && storedReferences && storedReferences->empty() &&
       baseParameters && passiveBases && copiedParameters &&
-      std::all_of(copiedParameters->begin(), copiedParameters->end(),
-                  [&](const auto &binding) {
-                    return failureConstructorCopiedFieldPrefix(
-                               program, constructor, *owner, binding) ||
-                           failureConstructorHoistablePassiveCopy(
-                               program, constructor, *owner, binding);
-                  }) &&
+      std::all_of(
+          copiedParameters->begin(), copiedParameters->end(),
+          [&, witnessed = everyFormalCopyWitnessed(
+                  constructor, *copiedParameters)](const auto &binding) {
+            return failureConstructorCopiedFieldPrefix(program, constructor,
+                                                       *owner, binding) ||
+                   (witnessed && failureConstructorHoistablePassiveCopy(
+                                     program, constructor, *owner, binding));
+          }) &&
       bodyStagedOwnedParameterFieldInitializers(program, constructor);
   const bool bodyStagedOptionalParameter =
       storedReferences && storedReferences->empty() && baseParameters &&
