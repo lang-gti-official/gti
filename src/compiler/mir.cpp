@@ -10754,13 +10754,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       // constructor instance. The program verifier additionally requires
       // the exact concrete owner's generated default-constructor status.
       const bool generatedDefault =
-          producer != nullptr && producer->kind == MirInstructionKind::Call &&
-          !producer->functionTarget && !producer->constructorTarget &&
-          !producer->lambdaTarget && !producer->receiver && !producer->loan &&
-          !producer->ownership && producer->operands.empty() &&
-          producer->parameterTypes.empty() &&
-          producer->constructorKind == ConstructorKind::Ordinary &&
-          producer->intrinsic == IntrinsicKind::None;
+          producer != nullptr &&
+          mir_detail::generatedDefaultConstruction(*producer);
       if (place == nullptr || source == nullptr || producer == nullptr ||
           place->access != AccessMode::Mutable ||
           place->sourceValue != input.hirValue ||
@@ -10863,6 +10858,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           producer->constructorKind == ConstructorKind::Ordinary &&
           producer->constructorTarget && !producer->functionTarget &&
           !producer->lambdaTarget && producer->intrinsic == IntrinsicKind::None;
+      const bool generatedDefault =
+          producer != nullptr &&
+          mir_detail::generatedDefaultConstruction(*producer);
       // A consuming method records its receiver capability as a callable
       // invocation; with an exact function target it is still an ordinary
       // call whose result is a fresh value.
@@ -10900,8 +10898,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           producer->info.traits.containsBorrowedState !=
               bool(captureDependency) ||
           !sameCallInputTraits(producer->info.traits, source->info.traits) ||
-          (!ordinaryConstruction && !ordinaryCall && !payloadConstruction &&
-           !callableConstruction &&
+          (!ordinaryConstruction && !generatedDefault && !ordinaryCall &&
+           !payloadConstruction && !callableConstruction &&
            producer->kind != MirInstructionKind::Move)) {
         return false;
       }

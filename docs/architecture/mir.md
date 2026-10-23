@@ -3883,7 +3883,13 @@ An ordinary-call argument may use `ReadTemporaryBorrow` only when its HIR
 input names an exact fresh class/struct producer or a passive payload-enum
 construction, and its selected parameter is read-only `T&`. Lowering
 materializes the producer's exact mutable place, emits `BorrowRead`, and
-attaches one `CallArgument` loan to the `CallInput`. As for receiver inputs,
+attaches one `CallArgument` loan to the `CallInput`;
+a target-free, zero-input ordinary class `Call` can be the generated default
+producer. Body verification recognizes its exact structural shape; independent
+program verification also requires the concrete owner's generated default
+constructor and no missing initializer schedule. This shares the receiver
+producer query and preserves all materialization, call-loan and drop checks.
+As for receiver inputs,
 a linear value uses its value-rooted place. A call evaluated only in a
 conditional arm or a `&&`/`||` operand borrows the one hidden temporary slot
 that carries the producer's conditional drop through the CFG merge. The merge
