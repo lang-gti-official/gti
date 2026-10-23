@@ -15935,6 +15935,346 @@ int main() {
   }
 }
 
+// A class copy or fresh value assigned to a global, through a lambda's
+// by-reference capture, or through the mutable loan an overloaded subscript
+// returns fuses into one store, as for a bare local: the copy declares no C++
+// object of its own. A global and a by-value capture are copy sources too.
+// A read-only loan or a read-only captured reference is no destination.
+void testClassStoresIntoNamedPlaces() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-class-store-named-places.gti", R"(
+#include <std/vector>
+struct Point {
+  int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+};
+mut Point g = Point(1, 2);
+int32_t to_global(Point q) { g = q; return g.x; }
+int32_t fresh_global(int32_t x) { g = Point(x, 4); return g.x; }
+int32_t from_global() { mut Point p = Point(0, 0); p = g; return p.y; }
+int32_t run<F>(mut F f) { return f(); }
+int32_t captured(Point q) {
+  mut Point p = Point(1, 2);
+  int32_t r = run([mut &p, q]() -> int32_t { p = q; return p.x; });
+  return r + p.y;
+}
+int32_t subscript(Point q) {
+  mut std::vector<Point> v = std::vector<Point>();
+  v.push_back(Point(1, 2));
+  v[uint64_t(0)] = q;
+  return v[uint64_t(0)].x;
+}
+int main() {
+  return to_global(Point(5, 4)) + fresh_global(5) + from_global() +
+         captured(Point(5, 4)) + subscript(Point(5, 4)) - 28;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "class stores into named places should construct valid MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto idOf = [&](std::string_view name) {
+    for (const auto &function : frontend.hir.functionInstances())
+      if (function.source && function.source->name().lexeme == name)
+        return function.id;
+    return lang::HirFunctionInstanceId{0};
+  };
+  const lang::MirLambdaInstance *lambda =
+      frontend.mir.lambdaInstances().size() == 1
+          ? &frontend.mir.lambdaInstances().front()
+          : nullptr;
+  const std::vector<std::string> names{"to_global", "fresh_global",
+                                       "from_global", "subscript"};
+  const bool lowered =
+      lambda != nullptr &&
+      std::all_of(names.begin(), names.end(),
+                  [&](const std::string &name) { return idOf(name) != 0; });
+  expect(lowered, "the fixture should lower every store");
+  if (!lowered)
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const auto textOf = [&](const lang::MirProgram &program,
+                          const lang::MirBodyAddress &address) {
+    const lang::CppMirBodyEmitter emitter(program, map);
+    if (emitter.supportsFailureBodyText(address))
+      return emitter.emitFailureBodyText(address, "class-store-v0", 1).text;
+    if (emitter.supportsBodyText(address))
+      return emitter.emitBodyText(address, "class-store-v0", 1).text;
+    return std::string();
+  };
+  const auto functionText = [&](const lang::MirProgram &program,
+                                std::string_view name) {
+    return textOf(program,
+                  {.kind = lang::MirBodyKind::Function, .owner = idOf(name)});
+  };
+  const lang::MirBodyAddress lambdaAddress{.kind = lang::MirBodyKind::Lambda,
+                                           .owner = lambda->id};
+  // The statement written right after the copy's fusion marker.
+  const auto fusedStore = [](const std::string &text) {
+    const std::size_t marker = text.find("fuses into assignment");
+    if (marker == std::string::npos)
+      return std::string();
+    std::size_t line = text.find('\n', marker) + 1;
+    while (text.compare(text.find_first_not_of(' ', line), 2, "//") == 0)
+      line = text.find('\n', line) + 1;
+    const std::size_t start = text.find_first_not_of(' ', line);
+    return text.substr(start, text.find('\n', start) - start);
+  };
+  const std::string global =
+      fusedStore(functionText(frontend.mir, "to_global"));
+  expect(global.rfind("::__gti_program::g = __gti_mir_p_", 0) == 0 &&
+             global.find(".get();") != std::string::npos,
+         "a copy into a global should be one store of the global's storage, "
+         "got: " +
+             global);
+  const std::string source =
+      fusedStore(functionText(frontend.mir, "from_global"));
+  expect(source.find(".get() = ::__gti_program::g;") != std::string::npos,
+         "a global should be read directly as the copy's source, got: " +
+             source);
+  expect(functionText(frontend.mir, "fresh_global")
+                 .find("::__gti_program::g = ::__gti_program::Point(") !=
+             std::string::npos,
+         "a fresh value should be constructed directly into the global");
+  const std::string captureText = textOf(frontend.mir, lambdaAddress);
+  expect(fusedStore(captureText) == "p = q;",
+         "a copy through a by-reference capture should assign the captured "
+         "referent from the by-value capture, got: " +
+             fusedStore(captureText));
+  const std::string subscriptText = functionText(frontend.mir, "subscript");
+  const std::size_t activation = subscriptText.find("activate two-phase loan");
+  const std::size_t store = subscriptText.find(") = __gti_mir_p_", activation);
+  expect(activation != std::string::npos && store != std::string::npos &&
+             subscriptText.rfind("(*__gti_mir_loan_", store) > activation,
+         "a copy through a subscript loan should be stored through the loan "
+         "after its activation");
+
+  // A destination that is not mutable keeps the copy outside the fusion,
+  // where nothing declares it.
+  lang::MirProgram readOnlyLoan = frontend.mir;
+  bool loanChanged = false;
+  for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+           readOnlyLoan.functionInstances()))
+    if (function.id == idOf("subscript"))
+      for (lang::MirLoan &loan : function.body.loans)
+        if (loan.twoPhase) {
+          loan.access = lang::AccessMode::ReadOnly;
+          loanChanged = true;
+        }
+  expect(loanChanged && functionText(readOnlyLoan, "subscript").empty(),
+         "a read-only loan is not a destination the copy may fuse into");
+  lang::MirProgram readOnlyCapture = frontend.mir;
+  bool captureChanged = false;
+  for (auto &instance : const_cast<std::vector<lang::MirLambdaInstance> &>(
+           readOnlyCapture.lambdaInstances()))
+    for (lang::MirPlace &place : instance.body.places)
+      if (place.root == lang::MirPlaceRootKind::Symbol &&
+          place.projections.empty() &&
+          place.type.kind == lang::SemanticType::Reference) {
+        place.type.referenceAccess = lang::AccessMode::ReadOnly;
+        captureChanged = true;
+      }
+  expect(captureChanged && textOf(readOnlyCapture, lambdaAddress).empty(),
+         "a read-only captured reference is not a destination the copy may "
+         "fuse into");
+}
+
+// A field of a fixed-array element selected at a run-time index is read and
+// written only after that element's bound check (issue #203). MIR completes
+// the check at the element's AddressOf before the field access, as it does
+// before copying a whole class element; the access itself carries no second
+// bound. A constant index keeps its static proof and no run-time check.
+// Program verification requires the checked selection to dominate the field
+// access, and the emitter admits the field place only with it.
+void testCheckedArrayElementFieldAccess() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-checked-array-element-field.gti", R"(
+struct Point {
+  mut int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+};
+int32_t read_field(int32_t i) {
+  Point[2] ps = {Point(1, 2), Point(3, 4)};
+  return ps[i].y;
+}
+int32_t write_field(int32_t i) {
+  mut Point[2] ps = {Point(1, 2), Point(3, 4)};
+  ps[i].x = 7;
+  return ps[1].x;
+}
+int32_t copy_element(int32_t i) {
+  Point[2] ps = {Point(1, 2), Point(3, 4)};
+  Point copy = ps[i];
+  return copy.x;
+}
+int32_t constant_field() {
+  Point[2] ps = {Point(1, 2), Point(3, 4)};
+  return ps[1].y;
+}
+int main() {
+  return read_field(1) + write_field(1) + copy_element(1) + constant_field() -
+         18;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "indexed element field accesses should construct valid MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto idOf = [&](std::string_view name) {
+    for (const auto &function : frontend.hir.functionInstances())
+      if (function.source && function.source->name().lexeme == name)
+        return function.id;
+    return lang::HirFunctionInstanceId{0};
+  };
+  const std::vector<std::string> names{"read_field", "write_field",
+                                       "copy_element", "constant_field"};
+  const bool lowered =
+      std::all_of(names.begin(), names.end(),
+                  [&](const std::string &name) { return idOf(name) != 0; });
+  expect(lowered, "the fixture should lower every element access");
+  if (!lowered)
+    return;
+  const auto bodyOf = [&](const lang::MirProgram &program,
+                          std::string_view name) -> const lang::MirBody & {
+    return program.findFunctionInstance(idOf(name))->body;
+  };
+  const auto bound = [](const lang::MirInstruction &instruction) {
+    return std::any_of(instruction.definedFailure.localOrigins.begin(),
+                       instruction.definedFailure.localOrigins.end(),
+                       [](const auto &origin) {
+                         return origin.outcomes ==
+                                std::vector<lang::DefinedFailureOutcome>{
+                                    {lang::DefinedFailureCode::IndexOutOfBounds,
+                                     lang::DefinedFailureDetail::FixedArray}};
+                       });
+  };
+  // MIR: the element's checked AddressOf, then the access with no bound of
+  // its own, whose place extends the checked element place.
+  struct Selection {
+    const lang::MirInstruction *check = nullptr;
+    const lang::MirInstruction *access = nullptr;
+  };
+  const auto selection = [&](const lang::MirBody &body,
+                             lang::MirInstructionKind accessKind) {
+    Selection found;
+    std::size_t checks = 0;
+    for (const lang::MirBlock &block : body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Compute &&
+            instruction.operation == lang::MirOperation::AddressOf &&
+            bound(instruction)) {
+          ++checks;
+          found.check = &instruction;
+          continue;
+        }
+        const lang::MirPlace *checked =
+            found.check == nullptr
+                ? nullptr
+                : body.findPlace(found.check->operands.front().place);
+        const lang::MirPlace *accessed =
+            instruction.kind != accessKind
+                ? nullptr
+                : body.findPlace(instruction.destination
+                                     ? *instruction.destination
+                                     : instruction.operands.front().place);
+        if (found.access == nullptr && checked != nullptr &&
+            accessed != nullptr && !bound(instruction) &&
+            accessed->binding == checked->binding &&
+            accessed->projections.size() >= checked->projections.size() &&
+            std::equal(checked->projections.begin(), checked->projections.end(),
+                       accessed->projections.begin()))
+          found.access = &instruction;
+      }
+    return checks == 1 ? found : Selection{};
+  };
+  const Selection read = selection(bodyOf(frontend.mir, "read_field"),
+                                   lang::MirInstructionKind::Load);
+  const Selection write = selection(bodyOf(frontend.mir, "write_field"),
+                                    lang::MirInstructionKind::Assign);
+  const Selection copy = selection(bodyOf(frontend.mir, "copy_element"),
+                                   lang::MirInstructionKind::Load);
+  expect(read.access != nullptr && write.access != nullptr &&
+             copy.access != nullptr,
+         "each run-time selection should be checked once at its AddressOf "
+         "before the unchecked field read, field store or element copy");
+  const lang::MirBody &constant = bodyOf(frontend.mir, "constant_field");
+  expect(std::none_of(constant.blocks.begin(), constant.blocks.end(),
+                      [](const lang::MirBlock &block) {
+                        return std::any_of(
+                            block.instructions.begin(),
+                            block.instructions.end(),
+                            [](const lang::MirInstruction &instruction) {
+                              return instruction.operation ==
+                                     lang::MirOperation::AddressOf;
+                            });
+                      }),
+         "a constant index needs no run-time selection check");
+
+  // Emission: the bound check, then the plain subscript and field.
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const auto functionText = [&](const lang::MirProgram &program,
+                                std::string_view name) {
+    const lang::CppMirBodyEmitter emitter(program, map);
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = idOf(name)};
+    if (emitter.supportsFailureBodyText(address))
+      return emitter.emitFailureBodyText(address, "element-field-v0", 1).text;
+    if (emitter.supportsBodyText(address))
+      return emitter.emitBodyText(address, "element-field-v0", 1).text;
+    return std::string();
+  };
+  const auto checkedBefore = [](const std::string &text,
+                                const std::string &access) {
+    const std::size_t check = text.find("mir_checked_array_bound_v1(");
+    const std::size_t at = text.find(access);
+    return check != std::string::npos && at != std::string::npos &&
+           check < at &&
+           text.find("mir_checked_array_bound_v1(", check + 1) ==
+               std::string::npos;
+  };
+  expect(checkedBefore(functionText(frontend.mir, "read_field"), ")].y;"),
+         "a field read should follow its element's bound check");
+  expect(checkedBefore(functionText(frontend.mir, "write_field"), ")].x = "),
+         "a field store should follow its element's bound check");
+  expect(checkedBefore(functionText(frontend.mir, "copy_element"),
+                       ".construct(__gti_mir_p_"),
+         "an element copy should follow its element's bound check");
+  const std::string constantText = functionText(frontend.mir, "constant_field");
+  expect(constantText.find("[static_cast<std::size_t>(1)].y;") !=
+                 std::string::npos &&
+             constantText.find("mir_checked_array_bound_v1(") ==
+                 std::string::npos,
+         "a constant element field should be read without a run-time check");
+
+  // Without the checked selection the field place hides a failing access.
+  lang::MirProgram unchecked = frontend.mir;
+  bool changed = false;
+  for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+           unchecked.functionInstances()))
+    if (function.id == idOf("read_field"))
+      for (lang::MirBlock &block : function.body.blocks)
+        for (lang::MirInstruction &instruction : block.instructions)
+          if (instruction.operation == lang::MirOperation::AddressOf) {
+            instruction.definedFailure.localOrigins.clear();
+            changed = true;
+          }
+  const lang::MirVerificationResult verification =
+      lang::verifyMirProgram(unchecked);
+  expect(changed && functionText(unchecked, "read_field").empty() &&
+             std::any_of(verification.errors.begin(), verification.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find(
+                                      "before its checked selection") !=
+                                  std::string::npos;
+                         }),
+         "a run-time element field without its checked selection must fail "
+         "verification and be refused");
+}
+
 // A nested field read of a cleanup-free class value also records the
 // unreferenced intermediate places (`build(1).inner` for `build(1).inner.id`).
 // Those records spell nothing, so the read still uses the value's FieldRead
@@ -16329,6 +16669,8 @@ constexpr NamedTest kTests[] = {
     {"testOwningConstructionFieldView", testOwningConstructionFieldView},
     {"testMovedPlaceFieldView", testMovedPlaceFieldView},
     {"testAssignmentResultFieldView", testAssignmentResultFieldView},
+    {"testClassStoresIntoNamedPlaces", testClassStoresIntoNamedPlaces},
+    {"testCheckedArrayElementFieldAccess", testCheckedArrayElementFieldAccess},
     {"testAssignmentResultWholeValue", testAssignmentResultWholeValue},
     {"testNestedClassResultFieldView", testNestedClassResultFieldView},
     {"testDiscardedCleanupFreeClassResult",
