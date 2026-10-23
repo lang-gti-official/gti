@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.465.5 — Test-target editor diagnostics
+
+- The language server recognizes `kind = "test"` and no longer asks valid
+  annotated suites to define `main`. Test-entry rules still diagnose empty
+  suites, invalid test signatures and conflicting user-written entry points.
+  Changing a target between executable and test refreshes editor diagnostics.
+  Generated test dispatchers stay out of editor source snapshots and symbols.
+
 ## 0.465.4 — Text relays through accessor switch subjects
 
 - A method that returns a payload's text by reference through an accessor
