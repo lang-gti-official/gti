@@ -11,6 +11,23 @@
 namespace lang {
 namespace {
 
+[[nodiscard]] std::string_view
+requirementKindName(LoweredRequirementKind kind) {
+  switch (kind) {
+  case LoweredRequirementKind::Concept:
+    return "concept";
+  case LoweredRequirementKind::Member:
+    return "member";
+  case LoweredRequirementKind::Expression:
+    return "expression";
+  case LoweredRequirementKind::Predicate:
+    return "predicate";
+  case LoweredRequirementKind::Count:
+    return "invalid";
+  }
+  return "invalid";
+}
+
 [[nodiscard]] std::string_view bodyKindName(MirBodyKind kind) {
   switch (kind) {
   case MirBodyKind::Module:
@@ -187,6 +204,40 @@ private:
     for (std::size_t index = 0; index < values.size(); ++index) {
       separator(index);
       output << std::quoted(values[index]);
+    }
+    output << ']';
+  }
+
+  void requirements(const std::vector<LoweredConceptRequirement> &values) {
+    output << '[';
+    for (std::size_t index = 0; index < values.size(); ++index) {
+      separator(index);
+      const auto &value = values[index];
+      output << "{kind=" << requirementKindName(value.kind)
+             << ";concept=" << value.conceptId;
+      if (!value.memberName.empty())
+        output << ";member=" << std::quoted(value.memberName);
+      if (value.mutableReceiver)
+        output << ";mutable-receiver=1";
+      if (value.requiresUnsafe)
+        output << ";requires-unsafe=1";
+      if (value.kind == LoweredRequirementKind::Expression) {
+        output << ";expression-parameters=" << value.expressionParameterCount
+               << ";result-argument=";
+        if (value.resultArgument)
+          output << *value.resultArgument;
+        else
+          output << "none";
+      }
+      output << ";source=";
+      span(value.source);
+      output << ";arguments=[";
+      for (std::size_t argument = 0; argument < value.arguments.size();
+           ++argument) {
+        separator(argument);
+        type(value.arguments[argument]);
+      }
+      output << "]}";
     }
     output << ']';
   }
@@ -581,26 +632,9 @@ private:
     parameters(value.parameters);
     output << ";generics=";
     genericParameters(value.genericParameters);
-    output << ";requirements=[";
-    for (std::size_t index = 0; index < value.requirements.size(); ++index) {
-      separator(index);
-      output << "{concept=" << value.requirements[index].conceptId;
-      if (!value.requirements[index].memberName.empty())
-        output << ";member="
-               << std::quoted(value.requirements[index].memberName);
-      if (value.requirements[index].mutableReceiver)
-        output << ";mutable-receiver=1";
-      if (value.requirements[index].requiresUnsafe)
-        output << ";requires-unsafe=1";
-      output << ";arguments=[";
-      for (std::size_t argument = 0;
-           argument < value.requirements[index].arguments.size(); ++argument) {
-        separator(argument);
-        type(value.requirements[index].arguments[argument]);
-      }
-      output << "]}";
-    }
-    output << "];requirement-expression=[";
+    output << ";requirements=";
+    requirements(value.requirements);
+    output << ";requirement-expression=[";
     for (std::size_t index = 0; index < value.requirementExpression.size();
          ++index) {
       separator(index);
@@ -722,26 +756,9 @@ private:
     genericParameters(value.genericParameters);
     output << ";parameters=";
     parameters(value.parameters);
-    output << ";requirements=[";
-    for (std::size_t index = 0; index < value.requirements.size(); ++index) {
-      separator(index);
-      output << "{concept=" << value.requirements[index].conceptId;
-      if (!value.requirements[index].memberName.empty())
-        output << ";member="
-               << std::quoted(value.requirements[index].memberName);
-      if (value.requirements[index].mutableReceiver)
-        output << ";mutable-receiver=1";
-      if (value.requirements[index].requiresUnsafe)
-        output << ";requires-unsafe=1";
-      output << ";arguments=[";
-      for (std::size_t argument = 0;
-           argument < value.requirements[index].arguments.size(); ++argument) {
-        separator(argument);
-        type(value.requirements[index].arguments[argument]);
-      }
-      output << "]}";
-    }
-    output << "];requirement-expression=[";
+    output << ";requirements=";
+    requirements(value.requirements);
+    output << ";requirement-expression=[";
     for (std::size_t index = 0; index < value.requirementExpression.size();
          ++index) {
       separator(index);
@@ -824,7 +841,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v23\n";
+  output << "lowered-program-v24\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="
