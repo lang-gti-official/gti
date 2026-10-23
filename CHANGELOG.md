@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.465.6 — Text members through `operator->`
+## 0.465.7 — Text members through `operator->`
 
 - When an `operator->` returns a `std::string_view&`, its members can be
   called through `->`. For a class with `std::string_view& operator->()`,
@@ -25,6 +25,19 @@ for what minor and patch releases mean.
   reference, as in `o->begin()` or `o.value().begin()`, still reports
   `GTI-B0001`. Bind the reference first (`std::string_view& view =
   o.value();`) and iterate `view`.
+
+## 0.465.6 — Moving one class and copying another after fallible work
+
+- A constructor can now move one class into a field and copy another into a
+  later field after an initializer that can fail, when both classes have no
+  destructor and their fields are scalars, enums, pointers, text views or
+  classes of the same kind. `Shelved(Pair moved, Pair copied) :
+  ledger(Ledger(31, divisor)), moved(std::move(moved)), copied(copied)` used
+  to report `error[GTI-B0001]` (an internal compiler error) in either
+  declaration order of the two fields; it now works. If a later initializer
+  or the constructor body fails, each field already built is dropped exactly
+  once.
+
 
 ## 0.465.5 — Test-target editor diagnostics
 
