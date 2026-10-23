@@ -2695,7 +2695,18 @@ Phase 2b publishes through payload-enum fields at a path `[field, payload]`:
 - `OwnerlessTextField::payload` names a payload requirement. In a
   field-contract scope, a `switch` binding a text payload of a contract
   formal's or the read-only receiver's enum field requires it
-  (`contractPayloadBinding`); in a generic class, a type-parameter payload
+  (`contractPayloadBinding`), whether the subject names the field
+  (`formal.field`) or calls the formal's accessor for it
+  (`formal.accessor()`, or an implicit `accessor()` on the receiver). An
+  accessor designates a field (`accessorReceiverField`) when it is a
+  read-only, non-virtual method whose every return is `this.field` or a call
+  `this.other()` of another argument-free such accessor; the implicit `field`
+  and `other()` count only in a parameterless body that declares nothing.
+  A text payload bound through any other call whose reference result borrows
+  a contract formal (an accessor returning one of several fields, say) is a
+  whole use of that formal (`callBorrowedTextFormal`). MIR derives a
+  requirement through an accessor only where semantics names its field or
+  records that whole use. In a generic class, a type-parameter payload
   requires it conditionally. A whole use requires every text payload too
   (`textPayloadFields`), and `contractTextPath` filters open requirements for
   an instance. A relay is decided against each designated path.
@@ -2767,7 +2778,10 @@ reference to text records a relay only as a receiver relay: its
 `returnedTextReference` names the receiver's direct text field that each of
 its returns designates. `textReferenceReturnSummary` computes it before
 bodies, from `predeclaredTextFieldSource` over the returns, in a
-field-contract method. At a call, `textReferenceRelay` treats the result as
+field-contract method. A whole switch arm that returns a reference binding of
+one text payload (`payloadReferenceRelayArm`) designates that payload when the
+switch observes `this.field` directly or through such an accessor, so
+`switch (this.slotRef())` relays exactly as `switch (this.slot)` does. At a call, `textReferenceRelay` treats the result as
 a read of that field: it is a dependent text place when the receiver
 designates the field or is a contract formal, `storedBorrowDependencies`
 gives a copy the receiver's owner dependency, and a contract receiver's
