@@ -1000,7 +1000,17 @@ result type) that `analyzeMetaIntrinsicCall`, `metaIntrinsicConstant` and
 `metaQueryConstant` share; enumerator, payload, base and argument queries use
 the same table (`metaEnumeratorFacts` reads `enumTypeFor`, so generic enum
 instances are substituted), and `meta_type_trait<T, N>` carries the boolean
-traits (payload enum, generic instance, reflectable, signed integral).
+traits. Payload-enum and generic-instance queries inspect canonical declaration
+metadata; the lifecycle, relocation, transfer/share and scalar-classification
+selectors delegate the ordinary `satisfiesAtomicConstraint` rules. The private
+`semantic_reflection_traits.h` selector mapping is also consumed when a
+constraint transports an established type fact into an open generic body;
+public wrapper spellings never establish facts. The two-subject
+`meta_type_relation<T, U, N>` query shares the same shape/constant service for
+exact type identity and exact integral-enum underlying representation; the
+latter reuses the ordinary structural `EnumUnderlying` rule. These queries
+fold through the existing constant-substitution path and add no separate
+constant interpreter or executable reflection operation.
 `field_attributes`, `type_attributes`, `enumerator_list`, `payload_list`,
 `payload_type`, `base_list` and `argument_list` are further computed
 compiler types rewritten by `rewriteCompilerType`.

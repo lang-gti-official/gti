@@ -10,6 +10,7 @@
 #include "gti/standard_library.h"
 #include "gti/support.h"
 #include "semantic_diagnostics.h"
+#include "semantic_reflection_traits.h"
 #include "semantic_spelling.h"
 
 #include <cassert>
@@ -804,6 +805,8 @@ private:
     std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
     bool compilerPrivate = false;
+    // Only provisional open-body candidates lack a declaration record.
+    bool requiresUnsafeFact = false;
 
     [[nodiscard]] const CallableDeclaration &record() const {
       assert(declarationRecord != nullptr);
@@ -2981,6 +2984,23 @@ private:
       std::span<const SemanticType> parameters = {},
       bool mutableReceiver = false, bool requiresUnsafe = false,
       bool trustedMemberAccess = false) const;
+  [[nodiscard]] std::optional<ExpandedStructuralRequirement>
+  expressionRequirementFact(const MemberRequirement &query,
+                            std::span<const SemanticType> arguments) const;
+  [[nodiscard]] bool expressionRequirementSatisfied(
+      const MemberRequirement &query, std::span<const SemanticType> arguments,
+      std::string *reason = nullptr,
+      const std::vector<std::string> *lookupScope = nullptr) const;
+  [[nodiscard]] std::unique_ptr<Impl> unevaluatedExpressionWorker() const;
+  [[nodiscard]] bool constraintPredicateSatisfied(
+      const ConceptApplication &application,
+      const std::vector<SemanticType> &arguments, std::string *reason,
+      const std::vector<std::string> *lookupScope = nullptr) const;
+  [[nodiscard]] std::optional<PredicateCapability> predicateCapabilityFor(
+      const ConceptApplication &application,
+      const std::vector<SemanticType> &arguments,
+      const std::vector<std::string> *lookupScope = nullptr) const;
+  mutable std::size_t expressionRequirementDepth = 0;
   void recordMemberRequirementReceiver(const MemberRequirement &query,
                                        const SemanticType &type);
   struct ActiveMemberRequirement {
@@ -4085,6 +4105,20 @@ private:
                         std::vector<std::string> scope);
 
   void resolveConcepts();
+
+  struct ConstraintPredicateDeclaration {
+    const FunctionDecl *syntax = nullptr;
+    SourceUnitId sourceUnit = 0;
+    std::vector<std::string> namespaceScope;
+  };
+
+  // This early declaration index supplies only proof discovery before the
+  // ordinary callable catalog exists. It never selects executable calls.
+  void registerConstraintPredicateDeclarations(
+      const StmtList &statements, std::vector<std::string> scope = {});
+  [[nodiscard]] std::optional<PredicateCapability>
+  constraintPredicateCapability(
+      const Call &call, const std::vector<SemanticType> &typeArguments);
 
   [[nodiscard]] GenericConstraintSet resolveConcept(ConceptId id,
                                                     const Token *use);
@@ -5904,6 +5938,8 @@ private:
     std::unordered_map<const ConceptDecl *, ConceptId> conceptDeclIds;
     std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
         functionGenericParameters;
+    std::unordered_map<std::string, std::vector<ConstraintPredicateDeclaration>>
+        constraintPredicateDeclarations;
     std::unordered_map<const FunctionDecl *, CallableDeclaration *>
         callableDeclarationsBySyntax;
     std::vector<std::unique_ptr<CallableDeclaration>> callableDeclarations;
@@ -6003,6 +6039,7 @@ private:
               classDeclIds.size(),
               conceptDeclIds.size(),
               functionGenericParameters.size(),
+              constraintPredicateDeclarations.size(),
               callableDeclarationsBySyntax.size(),
               callableDeclarations.size(),
               constructorGenericParameters.size(),

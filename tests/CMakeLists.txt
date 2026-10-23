@@ -2740,6 +2740,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_deferred_range.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_defaults.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_class_assertions.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_type_facts.gti"
   )
   set_tests_properties(reflection_runtime PROPERTIES TIMEOUT 900)
   add_test(

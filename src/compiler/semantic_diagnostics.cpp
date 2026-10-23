@@ -324,6 +324,23 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     publish(std::move(diagnostic));
     return;
   }
+  if (failure.expressionFailure) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2029", DiagnosticPhase::Semantics, site,
+        "Generic arguments do not satisfy the required expression or "
+        "compile-time predicate.");
+    const Token &location = failure.leafApplication
+                                ? failure.leafApplication->name.last()
+                                : failure.parameter;
+    diagnostic.related.push_back(
+        {tokenSpan(location), *failure.expressionFailure});
+    diagnostic.hints.emplace_back(
+        "The expression must be valid under its declared access and unsafe "
+        "contract, with the exact required result; a predicate must evaluate "
+        "to true at compile time.");
+    publish(std::move(diagnostic));
+    return;
+  }
   if (failure.structural != StructuralConstraintKind::None) {
     const MemberRequirement *memberQuery =
         failure.leafApplication == nullptr

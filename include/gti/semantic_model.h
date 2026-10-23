@@ -451,8 +451,11 @@ enum class IntrinsicKind {
   MetaTypeAttributeCount,
   MetaTypeHasAttribute,
   // <T, Trait>: 0 payload enum, 1 generic instance, 2 reflectable,
-  // 3 signed integral.
+  // 3 signed integral; further selectors are shared with generic proof
+  // transport in semantic_reflection_traits.h.
   MetaTypeTrait,
+  // <T, U, Relation>: 0 exact type identity, 1 exact enum underlying type.
+  MetaTypeRelation,
   MetaEnumeratorCount,
   MetaEnumeratorName,
   // <E, I>: the enumerator as a constant of E (integral enums).
