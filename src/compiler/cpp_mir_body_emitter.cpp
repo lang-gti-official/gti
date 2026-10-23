@@ -33001,6 +33001,15 @@ private:
         emitStoragePlaceValue(*currentFacts, *place);
         return;
       }
+      // A switch subject reached through a reference result: admission
+      // proved the loan's pointer carrier and its field chain.
+      if (place != nullptr && currentFacts != nullptr &&
+          place->type == operand.type &&
+          place->type.kind == SemanticType::Enum &&
+          place->root == MirPlaceRootKind::Loan) {
+        emitStoragePlaceValue(*currentFacts, *place);
+        return;
+      }
       if (place != nullptr && ((place->root == MirPlaceRootKind::Binding &&
                                 place->projections.empty()) ||
                                (place->root == MirPlaceRootKind::This &&
@@ -50311,12 +50320,22 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         operand.kind == MirOperandKind::BorrowRead && operand.place != 0
             ? body.findPlace(operand.place)
             : nullptr;
+    // An enum reached through a reference result is read through that loan's
+    // pointer; the place admission proves its referent and projection rows.
+    const auto loanPointerEnum = [&](const MirPlace &enumPlace) {
+      const MirLoan *loan = enumPlace.root == MirPlaceRootKind::Loan
+                                ? body.findLoan(enumPlace.loan)
+                                : nullptr;
+      return loan != nullptr &&
+             loanHasCppPointerCarrier(program_, representations_, body, *loan);
+    };
     return place != nullptr && place->type == operand.type &&
            (slotPlace(*place) || directReferenceCarrier(body, *place) ||
             observedEnumElementPlace(body, *place) ||
             (place->type.kind == SemanticType::Enum &&
              (place->root == MirPlaceRootKind::Binding ||
-              place->root == MirPlaceRootKind::This)));
+              place->root == MirPlaceRootKind::This ||
+              loanPointerEnum(*place))));
   };
   const auto lifetimeSlotRow = [&]() {
     return std::any_of(
