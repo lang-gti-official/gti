@@ -83,6 +83,8 @@ class Batches:
             report = json.loads(report_file.read_text())
             if (report.get("head") != head or report.get("scope") != "focused" or
                     report.get("build_type") not in checks.OPTIMIZED or report.get("skipped") or
+                    report.get("platform") != sys.platform or
+                    report.get("smoke") != ["scalar-O0", "scalar-O3", "owners-O0", "owners-O3"] or
                     not set(checks.plan_tests(plan)).issubset(report.get("tests", []))):
                 raise WorkflowError("Focused evidence is incomplete or belongs to another source")
         except (OSError, ValueError, subprocess.CalledProcessError) as error:
