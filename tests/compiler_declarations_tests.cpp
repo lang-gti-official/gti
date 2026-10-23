@@ -5632,12 +5632,18 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!concreteFailure.canGenerateCode() &&
-             hasDiagnostic(concreteFailure.diagnostics,
-                           "does not satisfy concept "
-                           "'signed_value<uint64_t>'"),
-         "concrete arguments should be checked against composed concepts with "
-         "the source concept name in diagnostics");
+  expect(
+      !concreteFailure.canGenerateCode() &&
+          hasDiagnostic(concreteFailure.diagnostics,
+                        "does not satisfy concept "
+                        "'signed_value<uint64_t>'") &&
+          hasRelatedDiagnostic(concreteFailure.diagnostics,
+                               "Required application "
+                               "'signed_value<uint64_t>'.") &&
+          !hasRelatedDiagnostic(concreteFailure.diagnostics, "gti_internal::"),
+      "concrete arguments should be checked against composed concepts with "
+      "owned public application context and no compiler-private leaf "
+      "context in diagnostics");
 
   lang::FrontendResult invalid = lang::Frontend().analyze(
       "invalid-source-concepts.gti", R"(
@@ -6528,9 +6534,14 @@ T invalid_forward<Iterator, Sentinel, std::numeric T>(
   expect(
       !unprovenForward.canGenerateCode() &&
           hasDiagnosticCode(unprovenForward.diagnostics, "GTI-S2029") &&
-          hasDiagnostic(unprovenForward.diagnostics, "'std::input_iterator'"),
+          hasDiagnostic(unprovenForward.diagnostics, "'std::input_iterator'") &&
+          hasRelatedDiagnostic(unprovenForward.diagnostics,
+                               "Required application "
+                               "'std::input_iterator<Iterator>'.") &&
+          !hasRelatedDiagnostic(unprovenForward.diagnostics, "gti_internal::"),
       "generic forwarding should require the outer declaration to prove "
-      "the callee's exact structural contract");
+      "the callee's exact structural contract with owned public application "
+      "context and no compiler-private leaf context");
 
   const std::string generated = gti_test::emitCppText(valid);
   expect(

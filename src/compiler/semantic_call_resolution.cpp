@@ -1843,6 +1843,20 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     return std::nullopt;
   }
 
+  const auto applicationContext = [&] {
+    std::vector<SemanticConstraintContext> context;
+    if (conceptInfo.compilerPrivate)
+      return context;
+    SemanticConstraintContext entry;
+    entry.name = conceptInfo.qualifiedName;
+    entry.arguments = requirement.arguments;
+    if (requirement.syntax != nullptr)
+      entry.location = requirement.syntax->name.last();
+    else
+      entry.location = conceptInfo.declaration->name();
+    context.emplace_back(std::move(entry));
+    return context;
+  };
   const std::size_t count = std::min(requirement.arguments.size(),
                                      conceptInfo.parameterConstraints.size());
   for (std::size_t index = 0; index < count; ++index) {
@@ -1863,19 +1877,7 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
                   ? std::optional<NamePath>{}
                   : std::optional<NamePath>{requirement.syntax->name},
           .application = requirement.syntax,
-          .context =
-              conceptInfo.compilerPrivate
-                  ? std::vector<SemanticConstraintContext>{}
-                  : std::vector<
-                        SemanticConstraintContext>{{conceptInfo.qualifiedName,
-                                                    requirement.arguments,
-                                                    requirement.syntax !=
-                                                            nullptr
-                                                        ? requirement.syntax
-                                                              ->name.last()
-                                                        : conceptInfo
-                                                              .declaration
-                                                              ->name()}},
+          .context = applicationContext(),
           .leafApplication = requirement.syntax,
           .applicationArgumentIndex = index,
           .conceptExplanation = conceptInfo.explanation()};
@@ -1901,19 +1903,7 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
                   : std::optional<NamePath>{requirement.syntax->name},
           .structural = structural.kind,
           .application = requirement.syntax,
-          .context =
-              conceptInfo.compilerPrivate
-                  ? std::vector<SemanticConstraintContext>{}
-                  : std::vector<
-                        SemanticConstraintContext>{{conceptInfo.qualifiedName,
-                                                    requirement.arguments,
-                                                    requirement.syntax !=
-                                                            nullptr
-                                                        ? requirement.syntax
-                                                              ->name.last()
-                                                        : conceptInfo
-                                                              .declaration
-                                                              ->name()}},
+          .context = applicationContext(),
           .leafApplication = requirement.syntax,
           .conceptExplanation = conceptInfo.explanation()};
     }
