@@ -2681,6 +2681,37 @@ Phase 2b publishes through payload-enum fields at a path `[field, payload]`:
   publishable argument type there, and a call relays and forwards nothing
   into it, so a container cannot store a dependent value.
 
+Phase 2c publishes through conversions, constructor field relays and
+returns:
+- A contextual construction's one expression node is both the argument and
+  the converted value. `recordContextualConstruction` notes a dependent
+  conversion, `contextualTextValue` classifies the converted value, and
+  `storedBorrowDependencies` reads the argument's dependency while
+  `contextualTextArgument` names it. `publishTextDependency` does not parent a
+  dependency on a local view carrier's own StoredValue loan, so a value over
+  a view binding depends on the binding's owner.
+- `ConstructorTextInput::sourceField` records a constructor initializer that
+  stores a by-value class formal's text field, as `formal.f` or as a
+  zero-argument accessor whose sole statement returns `this.f`.
+  `relayConstructorTextField` re-roots the argument's dependency at `[f]` to
+  the stored path (`BorrowedFieldOrigin::sourceFields = {f}`). The formal must
+  be mentioned once and the constructor must keep published text.
+- A consuming receiver is a contract receiver (`contractReceiver`): a write
+  into a text field already requires ownerless text, so a moved field holds
+  what the caller published. Moving a view keeps its source's owner
+  dependence, and `ownerlessTextForwardingField` sees through the move.
+- `noteDependentTextReturn` records `FunctionInfo::dependentTextReturn` when
+  a returned value's single dependency designates the referent of one
+  read-only reference formal: an Argument return summary at the text path.
+  `publishTextReturnResult` gives each call that summary. Ownerless returns
+  are alternatives beside it.
+- `notePayloadFieldRead` requires every text payload of a contract formal's
+  or receiver's payload-enum field at any read other than the switch subject
+  being analyzed (`observedSwitchSubject`). An instance analysis reads its
+  receiver at the instance type, so a type-parameter field that is a payload
+  enum there is covered. Before 0.465.0, copying, borrowing or storing such
+  a field let a dependent value's payload escape.
+
 A temporary needs no further model. Its construction publishes as above, and
 its expression is a dependent value that a field read, a relay or a receiver
 consumes, so `fieldSourcedTextResult` classifies a relay of it as it does a

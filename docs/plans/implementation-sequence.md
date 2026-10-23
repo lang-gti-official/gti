@@ -9164,7 +9164,7 @@ prerequisite checkpoints as full acceptance.
       accessors (`std::move(o).value()`) and returning the value. `o->`
       over a `std::string_view` payload is a backend `GTI-B0001` for every
       receiver (an existing gap that this release makes reachable).
-  - *Implemented in 0.464.0 (2c): conversions, field relays and returns.*
+  - *Implemented in 0.465.0 (2c): conversions, field relays and returns.*
     - *Contextual construction.* An implicit conversion's one expression
       node is both the argument and the converted value. It publishes the
       argument's owner as an explicit construction does, so
@@ -9190,13 +9190,19 @@ prerequisite checkpoints as full acceptance.
       `std::nullopt` are admitted, and a returned call of such a function
       relays again. MIR checks the summary's shape and that every return
       either borrows the formal at that path or holds no dynamic text.
+    - *Payload field uses.* In a field-contract function, any use of a
+      formal's or the receiver's payload-enum field other than a `switch`
+      on it (a copy, move, borrow, store or reference return) requires
+      every text payload ownerless, in semantics and in MIR. 0.463.0 let a
+      dependent value's payload escape through such a use.
     - *Still `GTI-S2045`:* returns needing two implicit conversions and
       views of locals (owner decisions), by-value or `mut` reference
       owners, two owner formals, a view of a method's receiver
       (`Doc::first()` returning `Token(this.body.view(), 1)`), a factory
       converting its by-value text formal into a payload path
-      (`std::optional<std::string_view> back(std::string_view v)`), and an
-      implicit conversion inside a constructor initializer (`opt(t)`).
+      (`std::optional<std::string_view> back(std::string_view v)`), an
+      implicit conversion inside a constructor initializer (`opt(t)`), and
+      `std::move(o).value()` and `value_or` over a dependent optional.
 - **Phase 3 (nested borrowing values):** a field whose type is itself
   dependent, as in `struct conflict { Diag diag; }`. It also covers borrowed
   error structs such as `expected<int, conflict>` where `conflict` holds an
