@@ -80,6 +80,7 @@ if(Python3_Interpreter_FOUND)
     deferred_bound_field_runtime
     passive_text_view_class_runtime
     passive_function_item_class_runtime
+    passive_class_move_and_copy_runtime
     view_fields_runtime text_reference_accessors_runtime
     view_field_payloads_runtime view_field_conversions_runtime
     view_field_nesting_runtime
