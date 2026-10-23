@@ -4735,6 +4735,10 @@ private:
 
   SemanticType analyze(const Expr &expr, OccurrenceRole requestedRoles);
 
+  void discardResult(const ExprPtr &expr);
+  // Reports a used result of a built-in assignment to a move-only type.
+  void checkAssignmentResultUse(const Expr &expr, const SemanticType &result);
+
   SemanticType analyze(const ExprPtr &expr);
 
   SemanticType analyze(const ExprPtr &expr, OccurrenceRole roles);
@@ -6107,6 +6111,10 @@ private:
     std::unordered_map<const Expr *, std::vector<const Expr *>>
         defaultArgumentDependencies;
     std::unordered_set<const Expr *> reportedDefaultArgumentCycles;
+    // Expressions whose value is discarded: an expression statement, a
+    // for-loop increment, a comma's left operand, and what a discarded
+    // grouping, comma or conditional evaluates in its place.
+    std::unordered_set<const Expr *> discardedResults;
     std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
     std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
     std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
@@ -6367,6 +6375,8 @@ private:
       &defaultArgumentDependencies = requestSession.defaultArgumentDependencies;
   std::unordered_set<const Expr *> &reportedDefaultArgumentCycles =
       requestSession.reportedDefaultArgumentCycles;
+  std::unordered_set<const Expr *> &discardedResults =
+      requestSession.discardedResults;
   std::unordered_map<std::string, const FunctionDecl *> &externCSymbols =
       requestSession.externCSymbols;
   std::unordered_map<std::string, const VariableDecl *>

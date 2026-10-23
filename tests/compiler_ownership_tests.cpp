@@ -22796,6 +22796,123 @@ int main() {
          "report the live borrow of its root after the join");
 }
 
+// The result of a built-in assignment is a copy of its committed target. A
+// move-only target has no copy, so only a discarded assignment may store one:
+// every use of the result is GTI-S2003 at the assignment operator.
+void testMoveOnlyAssignmentResultUse() {
+  const std::string prelude = R"(
+#include <std/memory>
+#include <std/utility>
+class Tracked {
+public:
+  int32_t x;
+  Tracked(int32_t x) : x(x) {}
+  ~Tracked() {}
+  int32_t get() { return this.x; }
+};
+struct Holder {
+  mut Tracked t;
+  Holder(Tracked t) : t(std::move(t)) {}
+};
+int32_t take(Tracked t) { return t.x; }
+T relay<T>(mut T a, T b) { return (a = std::move(b)); }
+)";
+  const auto analyzeBody = [&](const std::string &name,
+                               const std::string &body) {
+    return lang::Frontend().analyze(name, prelude + body,
+                                    {standardLibraryPrelude()}, {},
+                                    {standardLibraryRoot()});
+  };
+  // Each used result, keyed by the assignment whose operator is reported.
+  const std::vector<std::pair<std::string, std::string>> used{
+      {"int32_t f(mut Tracked p, Tracked q) { Tracked r = (p = std::move(q)); "
+       "return r.x; }",
+       "p = std::move(q)"},
+      {"Tracked f(mut Tracked p, Tracked q) { return (p = std::move(q)); }",
+       "p = std::move(q)"},
+      {"int32_t f(mut Tracked p, Tracked q) { return take(p = std::move(q)); }",
+       "p = std::move(q)"},
+      {"int32_t f(mut Tracked p, Tracked q) { return (p = std::move(q)).get(); "
+       "}",
+       "p = std::move(q)"},
+      {"int32_t f(mut Tracked p, Tracked q) { return (p = std::move(q)).x; }",
+       "p = std::move(q)"},
+      {"int32_t f(mut Tracked a, mut Tracked b, Tracked q) { a = b = "
+       "std::move(q); return a.x; }",
+       "b = std::move(q)"},
+      {"int32_t f(mut Tracked p, Tracked q) { Tracked r = (1, p = "
+       "std::move(q)); return r.x; }",
+       "p = std::move(q)"},
+      {"int32_t f(bool c, mut Tracked p, Tracked q, Tracked r) { Tracked s = c "
+       "? (p = std::move(q)) : std::move(r); return s.x; }",
+       "p = std::move(q)"},
+      {"int32_t f(mut Holder h, Tracked q) { return (h.t = std::move(q)).x; }",
+       "h.t = std::move(q)"},
+      {"int32_t f(Tracked q) { mut Tracked[1] ts = {Tracked(1)}; Tracked r = "
+       "(ts[0] = std::move(q)); return r.x; }",
+       "ts[0] = std::move(q)"},
+      {"Tracked f(mut Tracked& p, Tracked q) { return (p = std::move(q)); }",
+       "p = std::move(q)"},
+      {"int32_t f(mut std::unique_ptr<int32_t> u, std::unique_ptr<int32_t> v) "
+       "{ std::unique_ptr<int32_t> w = (u = std::move(v)); return *w; }",
+       "u = std::move(v)"},
+      {"int32_t f() { return relay(Tracked(1), Tracked(5)).x; }",
+       "a = std::move(b)"}};
+  for (const auto &[body, assignment] : used) {
+    const std::string source = prelude + body;
+    const lang::FrontendResult result =
+        analyzeBody("move-only-result.gti", body);
+    const std::size_t at = source.find(assignment);
+    const std::size_t oper = source.find(" = ", at) + 1;
+    const auto reported =
+        std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                      [](const lang::Diagnostic &diagnostic) {
+                        return diagnostic.code == "GTI-S2003";
+                      });
+    const auto *error = findDiagnosticByCode(result.diagnostics, "GTI-S2003");
+    expect(!result.canGenerateCode() && reported == 1 && error != nullptr &&
+               at != std::string::npos && error->primary.start == oper &&
+               error->primary.end == oper + 1 &&
+               error->message.find("Cannot use the result of an assignment of "
+                                   "move-only type '") != std::string::npos &&
+               error->message.find("it would copy the target") !=
+                   std::string::npos &&
+               hasDiagnosticHint(result.diagnostics,
+                                 "Assign in its own statement") &&
+               error->fixes.empty(),
+           "a used move-only assignment result should report one GTI-S2003 "
+           "at its operator: " +
+               body);
+  }
+
+  // Discarded stores, and every copyable class result, stay valid.
+  const std::vector<std::string> accepted{
+      "int32_t f(mut Tracked p, Tracked q) { p = std::move(q); return p.x; }",
+      "int32_t f(mut Tracked p, Tracked q) { (p = std::move(q)); return p.x; "
+      "}",
+      "int32_t f(mut Tracked p, Tracked q) { int32_t n = ((p = std::move(q)), "
+      "3); return p.x + n; }",
+      "int32_t f(mut Tracked p, Tracked q) { (1, p = std::move(q)); return "
+      "p.x; }",
+      "int32_t f(mut Tracked p) { for (mut int32_t i = 0; i < 2; p = "
+      "Tracked(i)) { i++; } return p.x; }",
+      "int32_t f(bool c, mut Tracked p, Tracked q, Tracked r) { c ? (p = "
+      "std::move(q)) : (p = std::move(r)); return p.x; }",
+      "struct Point { int32_t x; Point(int32_t x) : x(x) {} };\n"
+      "int32_t f(mut Point p, Point q) { Point r = (p = q); return r.x; }"};
+  for (const std::string &body : accepted) {
+    const lang::FrontendResult result =
+        analyzeBody("discarded-result.gti", body);
+    for (const lang::Diagnostic &diagnostic : result.diagnostics)
+      std::cerr << "Unexpected discarded-result diagnostic: "
+                << diagnostic.message << '\n';
+    expect(result.diagnostics.empty(),
+           "a discarded move-only store or a copyable result should be "
+           "accepted: " +
+               body);
+  }
+}
+
 // On a mutable receiver, an accessor pair selects its read-only form for a
 // use that only reads the result, and its `mut` form for one that may mutate.
 void testUseBasedAccessorSelection() {
@@ -23044,6 +23161,7 @@ constexpr NamedTest kTests[] = {
     {"testExpressionJoinsKeepAssignmentPlaces",
      testExpressionJoinsKeepAssignmentPlaces},
     {"testUseBasedAccessorSelection", testUseBasedAccessorSelection},
+    {"testMoveOnlyAssignmentResultUse", testMoveOnlyAssignmentResultUse},
 };
 
 } // namespace

@@ -219,7 +219,13 @@ public:
           const std::vector<TemporaryDrop> incomingTemporaryDrops =
               temporaryDrops;
           for (const HirValueId argument : initializer.arguments) {
-            (void)emitValue(argument);
+            // The initializer reads each argument after all of them run, so
+            // a class assignment's result is copied at its own commit.
+            const HirValue *input = findValue(argument);
+            if (input != nullptr && hasAssignmentResultCopy(*input))
+              (void)assignmentResultValue(*input);
+            else
+              (void)emitValue(argument);
           }
           stageBaseInitializer(initializer, initializerIndex);
           const auto constructorOwnerIterator =
@@ -3570,6 +3576,39 @@ private:
                             std::equal(parentLoan->place.projections.begin(),
                                        parentLoan->place.projections.end(),
                                        loan.place.projections.begin());
+      // A place rooted at the parent loan names its primary referent. A
+      // reference selected under one of the parent's additional owners uses
+      // the owner place the carrier already materialized for that dependency
+      // (the referent of a reference-typed owner); the selection loan keeps
+      // the exact parent link.
+      if (!sameRoot && loan.referenceSelection && parent != semanticLoans.end())
+        if (const MirLoan *carrier = output.findLoan(parent->second))
+          for (const auto &dependency : carrier->additionalDependencies) {
+            const MirPlace *owner = output.findPlace(dependency.source);
+            if (owner == nullptr || owner->key != loan.place)
+              continue;
+            if (resultValue == nullptr ||
+                owner->type == resultValue->info.type) {
+              semanticLoanPlaces.emplace(loan.semanticLoan, dependency.source);
+              return dependency.source;
+            }
+            if (owner->root == MirPlaceRootKind::Binding &&
+                owner->projections.empty() &&
+                owner->type.kind == SemanticType::Reference &&
+                owner->type.arguments.size() == 1 &&
+                owner->type.arguments.front() == resultValue->info.type) {
+              MirPlace referent = *owner;
+              referent.projections.push_back(
+                  {.kind = MirProjectionKind::Dereference});
+              referent.type = resultValue->info.type;
+              referent.traits = resultValue->info.traits;
+              referent.access = loan.access;
+              referent.sourceValue = resultValue->id;
+              const MirPlaceId id = appendPlace(std::move(referent));
+              semanticLoanPlaces.emplace(loan.semanticLoan, id);
+              return id;
+            }
+          }
       if (!sameRoot) {
         valid = false;
         return 0;
@@ -4441,6 +4480,17 @@ private:
               .value = mirValueFor(*value),
               .type = value->info.type};
     }
+    // Consuming a class assignment's whole result consumes the copy of its
+    // committed destination that a projection of the result reads. A
+    // discarded assignment is emitted as a sequenced input, never here.
+    if (hasAssignmentResultCopy(*value)) {
+      const MirValueId result = assignmentResultValue(*value);
+      if (result == 0)
+        return {};
+      return {.kind = MirOperandKind::Value,
+              .value = result,
+              .type = value->info.type};
+    }
     if (emittedValues.contains(id)) {
       const MirLoanId loan = loanForValue(id);
       const MirLoan *borrow = output.findLoan(loan);
@@ -4647,20 +4697,25 @@ private:
   // that copy as one Load placed directly after the Assign, before any later
   // operand runs and before a selected accessor's store loan ends. Only a
   // copyable class without borrowed state or active cleanup has such a copy.
-  [[nodiscard]] MirValueId assignmentResultSnapshot(const HirValue &value) {
-    if (const auto found = assignmentSnapshots.find(value.id);
-        found != assignmentSnapshots.end())
-      return found->second;
+  [[nodiscard]] bool hasAssignmentResultCopy(const HirValue &value) const {
+    if (!isAssignmentExpression(value.kind) ||
+        value.info.type.kind != SemanticType::Class ||
+        !value.info.traits.copyable || value.info.traits.containsBorrowedState)
+      return false;
     const auto owner = std::find_if(program.classInstances().begin(),
                                     program.classInstances().end(),
                                     [&](const HirClassInstance &candidate) {
                                       return candidate.type == value.info.type;
                                     });
-    if (value.info.type.kind != SemanticType::Class ||
-        !value.info.traits.copyable ||
-        value.info.traits.containsBorrowedState ||
-        owner == program.classInstances().end() ||
-        owner->requiresActiveCleanup) {
+    return owner != program.classInstances().end() &&
+           !owner->requiresActiveCleanup;
+  }
+
+  [[nodiscard]] MirValueId assignmentResultSnapshot(const HirValue &value) {
+    if (const auto found = assignmentSnapshots.find(value.id);
+        found != assignmentSnapshots.end())
+      return found->second;
+    if (!hasAssignmentResultCopy(value)) {
       reject(value.id, "assignment result has no copy of its destination");
       return 0;
     }
@@ -4691,9 +4746,14 @@ private:
     info.category = ValueCategory::Value;
     info.access = AccessMode::ReadOnly;
     const MirValueId snapshot = appendValue(value.id, info);
-    // The copy reads the committed destination; the assignment's own
-    // reinitialization event stays on the Assign. A store through a raw
-    // pointer is read back through that same raw place.
+    // The copy reads the committed destination and records that read; the
+    // assignment's own reinitialization event stays on the Assign. A store
+    // through a raw pointer is read back through that same raw place.
+    const MirPlace *committed = output.findPlace(destination);
+    std::optional<OwnershipEvent> read;
+    if (committed != nullptr && committed->key)
+      read = OwnershipEvent{.kind = OwnershipEventKind::Read,
+                            .place = *committed->key};
     (void)appendInstruction({.kind = MirInstructionKind::Load,
                              .hirValue = value.id,
                              .unsafeOperation = value.unsafeOperation,
@@ -4701,7 +4761,8 @@ private:
                              .operands = {{.kind = MirOperandKind::Copy,
                                            .place = destination,
                                            .type = value.info.type}},
-                             .info = info},
+                             .info = info,
+                             .ownership = read},
                             false);
     assignmentSnapshots.emplace(value.id, snapshot);
   }
@@ -4743,6 +4804,89 @@ private:
                                        DefinedFailureDetail::FixedArray}};
       });
     return failure;
+  }
+
+  // The whole result is that copy. When HIR planned a value obligation for
+  // the result (a borrowed receiver keeps it alive), the copy initializes a
+  // hidden temporary carrying that obligation, exactly as a value
+  // conditional's join publishes an arm, and the result leaves it; the
+  // borrow then reads a live temporary rather than the destination.
+  [[nodiscard]] MirValueId assignmentResultValue(const HirValue &value) {
+    if (const auto found = assignmentResults.find(value.id);
+        found != assignmentResults.end())
+      return found->second;
+    const MirValueId copy = assignmentResultSnapshot(value);
+    if (copy == 0 || terminated())
+      return 0;
+    if (!value.dropObligation)
+      return copy;
+    const MirPlaceId temporary = conditionalTemporary(value);
+    const MirDropObligationId obligation =
+        dropObligationForValue(value.id, temporary);
+    if (obligation == 0) {
+      valid = false;
+      return 0;
+    }
+    MirInstruction initialize{
+        .kind = MirInstructionKind::Initialize,
+        .hirValue = value.id,
+        .destination = temporary,
+        .operands = {{.kind = MirOperandKind::Value,
+                      .value = copy,
+                      .type = value.info.type}},
+        .info = ExpressionInfo{.type = value.info.type,
+                               .category = ValueCategory::Place,
+                               .access = AccessMode::Mutable,
+                               .traits = value.info.traits}};
+    appendLifecycle(initialize, {.kind = MirLifecycleEventKind::Initialize,
+                                 .target = obligation});
+    registerTemporary(obligation);
+    (void)appendInstruction(std::move(initialize), false);
+    const bool moveResult = value.info.traits.drop != DropKind::Trivial;
+    ExpressionInfo info = value.info;
+    info.category = ValueCategory::Value;
+    const MirValueId result = appendValue(value.id, info);
+    (void)appendInstruction(
+        {.kind =
+             moveResult ? MirInstructionKind::Move : MirInstructionKind::Load,
+         .hirValue = value.id,
+         .result = result,
+         .operands = {{.kind = moveResult ? MirOperandKind::Move
+                                          : MirOperandKind::Copy,
+                       .place = temporary,
+                       .type = value.info.type}},
+         .info = info},
+        false);
+    assignmentResults.emplace(value.id, result);
+    return result;
+  }
+
+  // HIR stages a class assignment's result passed by value as a copy. The
+  // copy reads the committed destination itself, staged directly after the
+  // Assign and before any later operand runs, exactly as a copied local
+  // argument is. A store through a selected accessor has no destination left
+  // to read once its loan ends.
+  [[nodiscard]] MirOperand
+  assignmentResultCopyOperand(const HirValue &value,
+                              const SemanticType &parameter) {
+    if (emittedValues.contains(value.id)) {
+      reject(value.id, "assignment result was requested after its commit");
+      return {};
+    }
+    assignmentDestinationRequests.insert(value.id);
+    emitValue(value.id);
+    assignmentDestinationRequests.erase(value.id);
+    if (terminated())
+      return {};
+    const auto found = assignmentDestinations.find(value.id);
+    const MirPlaceId place = found == assignmentDestinations.end()
+                                 ? 0
+                                 : clonePlace(found->second, value);
+    if (place == 0) {
+      reject(value.id, "assignment result has no destination to copy");
+      return {};
+    }
+    return {.kind = MirOperandKind::Copy, .place = place, .type = parameter};
   }
 
   // A projected array used as another index's base must finish its checked
@@ -4819,7 +4963,12 @@ private:
       if (value->operation == TokenKind::COMMA && !value->operands.empty()) {
         for (auto operand = value->operands.begin();
              operand != std::prev(value->operands.end()); ++operand) {
-          (void)valueOperand(*operand);
+          // A discarded assignment commits without copying its result.
+          const HirValue *discarded = findValue(*operand);
+          if (discarded != nullptr && isAssignmentExpression(discarded->kind))
+            emitValue(*operand);
+          else
+            (void)valueOperand(*operand);
         }
         emitPlaceDependencies(value->operands.back(), checkedPrefix);
       }
@@ -5049,6 +5198,9 @@ private:
 
   [[nodiscard]] MirOperand copyArgumentOperand(HirValueId id,
                                                const SemanticType &parameter) {
+    if (const HirValue *assignment = findValue(id);
+        assignment != nullptr && isAssignmentExpression(assignment->kind))
+      return assignmentResultCopyOperand(*assignment, parameter);
     emitPlaceDependencies(id, true);
     if (terminated()) {
       return {};
@@ -5206,10 +5358,12 @@ private:
       }
     }
     const MirPlace *materialized = output.findPlace(place);
-    // A conditional result's lifetime is rooted in its join temporary. Its
-    // final Move is a transport identity, not a second materialization.
+    // A conditional result's lifetime is rooted in its join temporary, and an
+    // assignment result's in the temporary holding its copy. The final Move
+    // is a transport identity, not a second materialization.
     const bool conditionalResult =
-        temporary->kind == HirValueKind::Conditional &&
+        (temporary->kind == HirValueKind::Conditional ||
+         isAssignmentExpression(temporary->kind)) &&
         materialized != nullptr &&
         materialized->root == MirPlaceRootKind::Temporary &&
         std::any_of(
@@ -10217,6 +10371,8 @@ private:
       if (assignmentSnapshotRequests.contains(id)) {
         emitAssignmentResultCopy(*value, destination);
       }
+      if (assignmentDestinationRequests.contains(id) && !overloadedBorrowStore)
+        assignmentDestinations.emplace(id, destination);
       emittedValues.insert(id);
       if (overloadedBorrowStore) {
         endConsumedCallResultLoans({value->id}, *value);
@@ -14493,6 +14649,9 @@ private:
   // committed destination that represents that result.
   std::unordered_set<HirValueId> assignmentSnapshotRequests;
   std::unordered_map<HirValueId, MirValueId> assignmentSnapshots;
+  std::unordered_map<HirValueId, MirValueId> assignmentResults;
+  std::unordered_set<HirValueId> assignmentDestinationRequests;
+  std::unordered_map<HirValueId, MirPlaceId> assignmentDestinations;
   // Every extraction observes the same subject representation that selected
   // its arm, including mixed copied/borrowed bindings of passive enums.
   std::unordered_map<HirValueId, MirOperand> payloadSwitchSubjects;
