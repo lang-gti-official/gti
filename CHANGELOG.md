@@ -9,6 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.464.2 — Switching over a payload enum returned by reference
+
+- A `switch` can now match a payload enum that a call returns by reference.
+  For `Shape& shapeRef() { return this.shape; }`, `switch (h.shapeRef())`
+  used to report `error[GTI-B0001]` (an internal compiler error); it now works
+  with by-value and `auto&` bindings, `string_view` payloads (including text
+  owned elsewhere), free functions, nested accessors, `mut auto&` through a
+  mutable accessor, and generic classes.
+- Matching through a reference local, as in `Shape& s = h.shapeRef();
+  switch (s)`, also used to report `error[GTI-B0001]` when the arm bound a
+  payload but did not use `s` again; it now works.
+- A subject that reaches into a temporary owner, such as
+  `switch (Holder(3).shapeRef())`, is now rejected with `error[GTI-S2017]`
+  instead of an internal compiler error, as `Shape& s = Holder(3).shapeRef();`
+  already was. Bind the owner to a local first.
+
 ## 0.464.1 — Several reference bindings from one local payload enum
 
 - A `switch` arm can now bind `auto&` to more than one reference payload of an

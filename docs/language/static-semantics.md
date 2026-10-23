@@ -1594,7 +1594,13 @@ same transport rule as `?` on a result:
   binding requires a copyable payload type, and its copy drops at the arm's
   end exactly like an ordinary local. A move-only active payload can still be
   matched exhaustively by using its tag-only form, such as
-  `case Message::owned:`.
+  `case Message::owned:`. A place reached through a reference, a reference
+  local or a call such as `switch (holder.shapeRef())` that returns one, is
+  observed the same way: the reference stays live until the selected arm has
+  bound its payloads, or for as long as an `auto&` binding derived from it.
+  The place needs the storage a reference bound to it would, so a subject
+  derived from a temporary, such as `switch (Holder(3).shapeRef())`, is
+  rejected with `GTI-S2017`; bind the owner to a local first.
 - A consumed subject, a prvalue or an explicit `std::move(place)`, is consumed
   by the switch. By-value bindings take ownership of their fields by move,
   which admits move-only payloads, and drop at the arm's end unless moved or
