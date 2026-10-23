@@ -1,0 +1,136 @@
+// Class values stored into, and copied out of, places that are not plain
+// locals: a global, a lambda's captures, an element reached through an
+// overloaded subscript, and a field of a fixed-array element selected at a
+// run-time index (issue #203). Each used to stop C++ emission with
+// GTI-B0001. A field read or store below a run-time index checks the bound
+// first: an index out of range fails with GTI-R0007.
+#include <std/string>
+#include <std/vector>
+
+struct Point {
+  mut int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+  int32_t digits() { return this.x * 10 + this.y; }
+};
+
+struct Segment {
+  Point start;
+  int32_t tag;
+  Segment(Point start, int32_t tag) : start(start), tag(tag) {}
+};
+
+struct Polygon {
+  mut Point[2] corners;
+  Polygon() : corners({Point(1, 2), Point(5, 4)}) {}
+};
+
+enum class State { Idle, Busy };
+
+struct Job {
+  State state;
+  int32_t id;
+  Job(State state, int32_t id) : state(state), id(id) {}
+};
+
+mut Point origin = Point(1, 2);
+
+// A copy, a fresh value and a global source.
+int32_t globals(Point q) {
+  origin = q;
+  int32_t copied = origin.digits();
+  origin = Point(q.y, q.x);
+  mut Point local = Point(0, 0);
+  local = origin;
+  return copied * 100 + local.digits();
+}
+
+int32_t run<F>(mut F f) { return f(); }
+
+// A copy and a fresh value through a by-reference capture, and a by-value
+// capture as the source.
+int32_t captures(Point q) {
+  mut Point p = Point(1, 2);
+  int32_t copied = run([mut &p, q]() -> int32_t {
+    p = q;
+    return p.digits();
+  });
+  int32_t fresh = run([mut &p]() -> int32_t {
+    p = Point(7, 8);
+    return p.digits();
+  });
+  int32_t read = run([q]() -> int32_t {
+    mut Point r = Point(0, 0);
+    r = q;
+    return r.digits();
+  });
+  return (copied * 100 + fresh) * 100 + read;
+}
+
+int32_t subscripts(Point q) {
+  mut std::vector<Point> points = std::vector<Point>();
+  points.push_back(Point(1, 2));
+  points.push_back(Point(3, 4));
+  points[uint64_t(0)] = q;
+  points[uint64_t(1)] = origin;
+  return points[uint64_t(0)].digits() * 100 + points[uint64_t(1)].digits();
+}
+
+// Reads, a store, a copy, a return, a receiver and nested chains below a
+// run-time index.
+int32_t elements(int32_t i) {
+  mut Point[2] points = {Point(1, 2), Point(3, 4)};
+  int32_t read = points[i].x * 10 + points[i].y;
+  points[i].x = 9;
+  Point copy = points[i];
+  Segment[2] segments = {Segment(Point(1, 2), 3), Segment(Point(5, 6), 7)};
+  return ((read * 100 + copy.digits()) * 10 + segments[i].start.y) * 10 +
+         segments[i].tag;
+}
+
+Point selected(int32_t i) {
+  Point[2] points = {Point(1, 2), Point(5, 4)};
+  return points[i];
+}
+
+int32_t grid(int32_t i, int32_t j) {
+  Point[2][2] cells = {{Point(1, 2), Point(3, 4)}, {Point(5, 6), Point(7, 8)}};
+  return cells[i][j].x * 10 + cells[j][i].y;
+}
+
+int32_t polygon(int32_t i, Point q) {
+  mut Polygon shape = Polygon();
+  int32_t before = shape.corners[i].digits();
+  shape.corners[1 - i] = q;
+  return before * 100 + shape.corners[1 - i].digits();
+}
+
+int32_t state(int32_t i) {
+  Job[2] jobs = {Job(State::Idle, 1), Job(State::Busy, 2)};
+  switch (jobs[i].state) {
+  case State::Idle:
+    return 10 + jobs[i].id;
+  case State::Busy:
+    return 20 + jobs[i].id;
+  }
+  return 0;
+}
+
+// The index can be out of range; the bound fails before the field is read.
+int32_t checked(int32_t i) {
+  Point[2] points = {Point(1, 2), Point(3, 4)};
+  return points[i].y;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::println(globals(Point(5, 4)));
+  std::println(captures(Point(5, 4)));
+  std::println(subscripts(Point(5, 4)));
+  std::println(elements(1));
+  std::println(selected(1).digits());
+  std::println(grid(1, 0));
+  std::println(polygon(1, Point(7, 8)));
+  std::println(state(1));
+  std::println(checked(argc > 1 ? 2 : 1));
+  return 0;
+}

@@ -156,6 +156,9 @@ while canonical language documents continue to describe actual support.
   — concepts with associated types and operations, supplied for a type by a
   `for concept` block outside it, with exact selection, ADR 020 coherence and
   no remapping.
+- [030: Confined deferred statement helpers](decisions/030-deferred-statement-helpers.md)
+  — typed source-defined conditional APIs without eager argument evaluation,
+  runtime closures or assertion-name compiler magic.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

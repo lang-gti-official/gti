@@ -798,6 +798,18 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testClassStoresIntoNamedPlaces",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCheckedArrayElementFieldAccess",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testAssignmentResultWholeValue",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testNestedClassResultFieldView",
       "suite": "lifecycle"
     },

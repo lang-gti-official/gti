@@ -30,9 +30,9 @@ def main():
         metadata = json.loads(run([gti, "metadata"], cwd=project).stdout)
         expected = {
             "game": {"dev": ["PSYCH_ASSERTIONS", "PSYCH_GAME", "PSYCH_PROJECT"],
-                     "release": ["PSYCH_GAME", "PSYCH_PROJECT"]},
+                     "release": ["NDEBUG", "PSYCH_GAME", "PSYCH_PROJECT"]},
             "unit": {"dev": ["PSYCH_ASSERTIONS", "PSYCH_PROJECT", "PSYCH_TESTS"],
-                     "release": ["PSYCH_PROJECT", "PSYCH_TESTS"]},
+                     "release": ["NDEBUG", "PSYCH_PROJECT", "PSYCH_TESTS"]},
         }
         for target in metadata["targets"]:
             for output in target["outputs"]:

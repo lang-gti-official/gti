@@ -1158,6 +1158,16 @@ add_test(NAME assignment_result_projection_runtime
                  "${PROJECT_SOURCE_DIR}/tests/assignment_result_projection_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(assignment_result_projection_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME class_store_destinations_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/class_store_destinations_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(class_store_destinations_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME assignment_result_whole_value_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/assignment_result_whole_value_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(assignment_result_whole_value_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME declaration_owned_defaults_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/declaration_owned_defaults_runtime_test.py"
@@ -1671,6 +1681,9 @@ add_test(NAME borrow_origin COMMAND gti_borrow_origin_tests)
 add_executable(gti_panic_contract_tests panic_contract_tests.cpp)
 target_link_libraries(gti_panic_contract_tests PRIVATE gti_cpp_backend)
 add_test(NAME panic_contracts COMMAND gti_panic_contract_tests)
+add_executable(gti_deferred_assertion_tests deferred_assertion_tests.cpp)
+target_link_libraries(gti_deferred_assertion_tests PRIVATE gti_cpp_backend)
+add_test(NAME deferred_assertions COMMAND gti_deferred_assertion_tests)
 add_executable(gti_owned_unexpected_pending_cleanup_tests owned_unexpected_pending_cleanup_tests.cpp)
 target_link_libraries(gti_owned_unexpected_pending_cleanup_tests PRIVATE gti_cpp_backend)
 add_test(NAME owned_unexpected_pending_cleanup COMMAND gti_owned_unexpected_pending_cleanup_tests)
@@ -1974,6 +1987,25 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(panic_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME deferred_assertions_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/deferred_assertion_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(deferred_assertions_runtime PROPERTIES TIMEOUT 1200)
+  add_test(NAME deferred_assertions_cost
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/deferred_assertion_cost_test.py"
+      "$<TARGET_FILE:gti>")
+  set_tests_properties(deferred_assertions_cost PROPERTIES TIMEOUT 300)
+  if(TARGET gti_lsp)
+    add_test(NAME deferred_assertions_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/deferred_assertion_lsp_test.py"
+        "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(deferred_assertions_lsp PROPERTIES TIMEOUT 90)
+  endif()
   add_test(
     NAME panic_adoption_runtime
     COMMAND "${Python3_EXECUTABLE}"
