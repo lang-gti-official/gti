@@ -1,0 +1,286 @@
+{
+  "schema": 1,
+  "base": "345d4225a08747fbd28df9059cd05938379126ad",
+  "members": [
+    {
+      "task": "derived-text-carriers",
+      "pr": 297,
+      "head": "b016c280778645fba4711beffc5be6c673fb8421",
+      "plan": {
+        "tier": "T2",
+        "rationale": "MIR verification (TextContracts::verifyDependentTextCarriers) now derives, from L-OWN-02 publications rather than semantic carrier lists, which local bindings hold a local owner's text and requires each to carry a loan retaining that owner. This changes shared MIR ownership verification for every body containing a dependent-text publication; lowering and semantics are unchanged.",
+        "regressions": [
+          "view_fields",
+          "ownerless_text_contracts"
+        ],
+        "owning": [
+          "view_fields",
+          "ownerless_text_contracts"
+        ],
+        "cross_phase": [
+          "view_fields_runtime",
+          "view_field_payloads_runtime",
+          "text_reference_accessors_runtime",
+          "recursive_text_relays_runtime",
+          "passive_text_view_class_runtime",
+          "reference_payload_semantics",
+          "borrow_origin",
+          "optional_compiler_contract"
+        ],
+        "broader": [
+          "complete_borrow_summaries",
+          "mir_census_regression",
+          "lowered_program_corpus_census",
+          "practical_examples",
+          "text_view_iterator_compiler"
+        ],
+        "targets": [
+          "gti_view_field_tests",
+          "gti_ownerless_text_contracts_tests",
+          "gti_optional_compiler_tests",
+          "gti_reference_payload_semantic_tests",
+          "gti_borrow_origin_tests",
+          "gti_complete_borrow_summary_tests",
+          "gti_text_view_iterator_compiler_tests",
+          "gti_lowered_program_census",
+          "gti_compiler_frontend_tests",
+          "gti_compiler_declarations_tests",
+          "gti_compiler_ownership_tests",
+          "gti_compiler_constexpr_tests",
+          "gti_compiler_diagnostics_tests",
+          "gti_compiler_e2e_tests"
+        ],
+        "platforms": [
+          "darwin"
+        ],
+        "reproduction": {
+          "revision": "030a5fbf9a2d8834df8836a6c3fe87047357d4cc",
+          "command": [
+            "env",
+            "MUTATE=1",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-charming-margulis-0b7a1b/64ca7722-2dac-4b6c-b362-20c77ea382ee/scratchpad/dump/dump-base",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-charming-margulis-0b7a1b/64ca7722-2dac-4b6c-b362-20c77ea382ee/scratchpad/probe/derived.gti",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-charming-margulis-0b7a1b/64ca7722-2dac-4b6c-b362-20c77ea382ee/scratchpad/wt"
+          ],
+          "failure": "With main's mir_text_contracts.cpp, verifyMirProgram accepted 12 of the 14 single-carrier drops of the testDerivedCarriers program (a local view left without any loan retaining its owner); the other 2 failed unrelated shape checks.",
+          "log": "sha256:decf73f1bf0f9b0f01a72c0b450f3188feddc0926bf727265fbfe166c684f789"
+        }
+      }
+    },
+    {
+      "task": "arrow-reference-results",
+      "pr": 298,
+      "head": "789f61d0de0e787d56f5a1d0e0f514859670b628",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Shared member-call semantics: required, fixed-array and string-view members are selected on the receiver type of the written member access, which for a checked -> is the selected operator-> referent. HIR lowers a normalized text-view receiver written with -> as that access call's reference result. Affects every -> member call in semantics and the argument lowering of builtin text factories.",
+        "regressions": [
+          "operator_relay_runtime"
+        ],
+        "owning": [
+          "compiler_pipeline",
+          "view_fields"
+        ],
+        "cross_phase": [
+          "optional_compiler_contract",
+          "text_view_iterator_runtime",
+          "text_reference_accessors_runtime",
+          "view_fields_runtime"
+        ],
+        "broader": [
+          "mir_census_regression",
+          "lowered_program_corpus_census",
+          "partitioned_test_protocol",
+          "cpp_mir_body_emitter_corpus"
+        ],
+        "targets": [
+          "gti_tests",
+          "gti_view_field_tests",
+          "gti_optional_compiler_tests",
+          "gti_lowered_program_census",
+          "gti_cpp_mir_body_emitter_corpus_tests"
+        ],
+        "platforms": [
+          "darwin"
+        ],
+        "reproduction": {
+          "revision": "6cacf7354f4b99492abcd1a3695256063be5549d",
+          "command": [
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-ecstatic-fermi-765434/f7f6d002-9738-416e-b846-3c8a4a59cea2/scratchpad/arrow-reference-results/../baseline/gti",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-ecstatic-fermi-765434/f7f6d002-9738-416e-b846-3c8a4a59cea2/scratchpad/arrow-reference-results/../probes/box.gti",
+            "-O1",
+            "-o",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-ecstatic-fermi-765434/f7f6d002-9738-416e-b846-3c8a4a59cea2/scratchpad/arrow-reference-results/../probes/box-orig.exe"
+          ],
+          "failure": "GTI-B0001: verified MIR references an unknown semantic type for b->size() through std::string_view& operator-> (also o->size() on std::optional<std::string_view>)",
+          "log": "sha256:583de6e52f25c20243827fed7956510fdcf7c2fafd612c2ec66f92495f07963b"
+        }
+      }
+    },
+    {
+      "task": "text-view-call-result-carrier",
+      "pr": 307,
+      "head": "24e95ec0bceab51b86d4f85be72bd13636d7af9e",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Changes MIR loan derivation for borrowed-carrier results: a carrier built from a reference an accessor call returned is sourced at that CallResult loan's referent, parented to it and holds exactly its stored dependency; the program verifier admits ownerless text only at that exact referent. Shared ownership/lowering behavior for every by-value carrier taking a reference argument, so T2.",
+        "regressions": [
+          "accessor_text_carrier_runtime",
+          "carrier_shell_references"
+        ],
+        "owning": [
+          "carrier_reference_runtime",
+          "shared_accessor_range_runtime",
+          "cursor_carrier_publication",
+          "ephemeral_carrier_mir",
+          "ephemeral_carrier_receiver_runtime"
+        ],
+        "cross_phase": [
+          "view_fields",
+          "view_fields_runtime",
+          "ownerless_text_contracts",
+          "text_reference_accessors_runtime",
+          "optional_runtime",
+          "operator_relay_runtime",
+          "use_based_accessor_selection_runtime"
+        ],
+        "broader": [
+          "mir_census_regression",
+          "lowered_program_corpus_census",
+          "cpp_mir_body_emitter_census",
+          "cpp_mir_body_emitter_corpus",
+          "cpp_mir_body_emitter_corpus_protocol",
+          "mir_cutover_corpus_oracle"
+        ],
+        "targets": [
+          "gti_carrier_shell_reference_tests",
+          "gti_view_field_tests",
+          "gti_ownerless_text_contracts_tests",
+          "gti_ephemeral_carrier_mir_tests",
+          "gti_lowered_program_census",
+          "gti_cpp_mir_body_emitter_preflight_tests",
+          "gti_cpp_mir_body_emitter_text_tests",
+          "gti_cpp_mir_body_emitter_lifecycle_tests",
+          "gti_cpp_mir_body_emitter_corpus_tests",
+          "gti_compiler_frontend_tests",
+          "gti_compiler_declarations_tests",
+          "gti_compiler_ownership_tests",
+          "gti_compiler_constexpr_tests",
+          "gti_compiler_diagnostics_tests",
+          "gti_compiler_e2e_tests"
+        ],
+        "platforms": [
+          "darwin"
+        ],
+        "reproduction": {
+          "revision": "cf14a66ae7dda6f10b75af7407bb18bc347314a0",
+          "command": [
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-angry-wescoff-011dc9/0b4f2b9e-bc56-4c8f-ab4b-a00050d5f4be/scratchpad/mainside/gti",
+            "tests/fixtures/accessor_text_carriers.gti",
+            "-o",
+            "/dev/null"
+          ],
+          "failure": "GTI-B0001 failed to construct valid MIR: 'stored shell dependency requires an exact carrier-reference construction or publication' (owned text) and 'carrier reference result requires one exact stored dependency' (literal text) for b.get().begin(), o.value().begin(), open(b.get()) and attach(panel.current())",
+          "log": "sha256:9350e2bcdf7b1d4f1a268a955757b844a1ab912c07d94b0e944efac9abb7438a"
+        },
+        "additional_checks": [
+          [
+            "git",
+            "diff",
+            "--check",
+            "9c2ffb6b029c1dc7f82db4174fc4ac1d85ed4b2a...HEAD"
+          ],
+          [
+            "python3",
+            "scripts/clang_format.py",
+            "--check"
+          ],
+          [
+            "python3",
+            "scripts/check_release_version.py",
+            "9c2ffb6b029c1dc7f82db4174fc4ac1d85ed4b2a",
+            "HEAD"
+          ]
+        ]
+      }
+    },
+    {
+      "task": "optional-payload-value-copy",
+      "pr": 302,
+      "head": "ae8be0abcbe0966e5e9116508ab65c992e0161b4",
+      "plan": {
+        "tier": "T2",
+        "rationale": "C++ representation of a shared MIR place family: a value-rooted place over a borrowed PayloadExtract of a cleanup-free payload enum names the active payload inside its subject, not an SSA local. Affects every reference bound to such a payload (std::optional<E>::value/operator*/clone, user accessors, plain auto& bindings); fresh cleanup-free enum temporaries keep the SSA spelling. No layout, ABI, lifecycle or optimizer invariant changes.",
+        "regressions": [
+          "borrowed_payload_pattern_runtime",
+          "cpp_mir_body_emitter_text"
+        ],
+        "owning": [
+          "cpp_mir_body_emitter_preflight",
+          "cpp_mir_body_emitter_lifecycle",
+          "cpp_mir_body_emitter_census"
+        ],
+        "cross_phase": [
+          "optional_runtime",
+          "experimental_optional_runtime",
+          "source_optional_protocol_runtime",
+          "optional_compiler_contract",
+          "optional_empty_prefix",
+          "generic_payload_enum_runtime",
+          "generic_payload_enum_backend",
+          "borrowed_payload_copy",
+          "reference_payload_semantics",
+          "borrow_origin_runtime"
+        ],
+        "broader": [
+          "cpp_mir_body_emitter_corpus",
+          "cpp_mir_body_emitter_corpus_protocol",
+          "lowered_program_corpus_census",
+          "mir_census_regression",
+          "consuming_payload_patterns_runtime",
+          "payload_enum_carrier_runtime",
+          "composed_payload_runtime",
+          "payload_enum_propagation_runtime",
+          "class_payload_enum_runtime",
+          "payload_enum_containment_runtime",
+          "recursive_payload_sum_runtime"
+        ],
+        "targets": [
+          "gti_cpp_mir_body_emitter_preflight_tests",
+          "gti_cpp_mir_body_emitter_text_tests",
+          "gti_cpp_mir_body_emitter_lifecycle_tests",
+          "gti_cpp_mir_body_emitter_corpus_tests",
+          "gti_lowered_program_census",
+          "gti_generic_payload_enum_backend_tests",
+          "gti_borrowed_payload_copy_tests",
+          "gti_optional_compiler_tests",
+          "gti_reference_payload_semantic_tests",
+          "gti_optional_empty_prefix_tests",
+          "gti_tests"
+        ],
+        "platforms": [
+          "darwin"
+        ],
+        "additional_checks": [
+          [
+            "python3",
+            "scripts/clang_format.py",
+            "--check"
+          ]
+        ],
+        "reproduction": {
+          "revision": "8a49a269824889cc5ba4947ad750da2a78b61a7b",
+          "command": [
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-charming-chatterjee-c8374e/25d3179a-28f3-4ab6-bf07-5ac9a39994cf/scratchpad/sidebase/gti",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-charming-chatterjee-c8374e/25d3179a-28f3-4ab6-bf07-5ac9a39994cf/scratchpad/evidence/repro.gti",
+            "-O1",
+            "-o",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-charming-chatterjee-c8374e/25d3179a-28f3-4ab6-bf07-5ac9a39994cf/scratchpad/probe/base_opt"
+          ],
+          "failure": "native C++ compile of optional<Shape>::value() failure form: use of undeclared identifier '__gti_mir_v_1' (auto& payload binding read the borrowed extract as an SSA local); gti built from 8a49a269's cpp_mir_body_emitter.cpp",
+          "log": "sha256:7baf1b4a0fded133040b770e5d13b66f4d1cf020ddb87489810c109d2bdb3b4a"
+        }
+      }
+    }
+  ]
+}
