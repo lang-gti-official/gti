@@ -4908,6 +4908,8 @@ private:
   [[nodiscard]] std::optional<ConstantValue>
   metaIntrinsicConstant(const ResolvedCallInfo &call,
                         const ConstexprInterpreter &context) const;
+  [[nodiscard]] bool metaQueryAcceptsOpenSubject(
+      IntrinsicKind intrinsic, const SemanticType &subject) const;
   [[nodiscard]] std::optional<ConstantValue>
   metaQueryConstant(IntrinsicKind intrinsic, const SemanticType &subject,
                     const std::optional<SemanticType> &attribute,

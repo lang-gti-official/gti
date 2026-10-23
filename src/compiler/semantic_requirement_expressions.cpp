@@ -254,20 +254,27 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
     return reject("A constraint predicate must be a constexpr boolean call.");
   if (const auto capability = predicateCapabilityFor(application, arguments, lookupScope)) {
     if (capability->atomic != GenericConstraintKind::None)
-      return satisfiesAtomicConstraint(capability->arguments.front(),
-                                       capability->atomic) ||
+      return satisfiesConstraint(capability->arguments.front(),
+                                  constraintBit(capability->atomic)) ||
              reject("The compiler-verified type fact is not satisfied.");
     if (capability->structural != StructuralConstraintKind::None)
       return structuralConstraintSatisfied(capability->structural,
                                            capability->arguments) ||
              reject("The compiler-verified type relationship is not satisfied.");
   }
-  if (std::any_of(arguments.begin(), arguments.end(), containsOpenTypeParameter))
-    return reject("This predicate is not established for the open type parameters.");
+  if (expressionRequirementDepth >= constexprCallDepthLimit)
+    return reject("Constraint predicates exceed the 64-query recursion limit.");
+  ++expressionRequirementDepth;
+  struct PopDepth {
+    std::size_t &depth;
+    ~PopDepth() { --depth; }
+  } pop{expressionRequirementDepth};
   auto worker = unevaluatedExpressionWorker();
   if (lookupScope)
     worker->currentNamespace = *lookupScope;
   worker->currentSourceUnit = sourceUnitFor(application.name.last());
+  worker->currentClass.reset();
+  worker->unsafeDepth = 0;
   std::unordered_map<std::string, SemanticType> bindings;
   for (std::size_t index = 0;
        index < application.arguments.size() && index < arguments.size(); ++index)

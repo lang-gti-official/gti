@@ -623,6 +623,14 @@ bridge retains the owner relationship through an ordinary source helper; the
 resulting checked borrow prevents mutation, movement or escape past that owner.
 Address validity, extent and termination remain the caller's unsafe obligations.
 
+## General requirements and reflection
+
+[`173-general-requires.gti`](173-general-requires.gti) defines source concepts
+for exact operator results and construction, composes them with constexpr
+reflection predicates, and uses them in generic algorithms over an unrelated
+user-defined value. It also demonstrates multi-check queries and exact result
+rejection. Requirements execute no user code and do not relax ownership rules.
+
 ## Complete projects
 
 [`annotated-tests/`](annotated-tests/README.md) shows one manifest suite root

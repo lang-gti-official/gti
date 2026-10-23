@@ -2174,7 +2174,9 @@ methods on `type<T>`: `is_copy_constructible`, `is_move_constructible`,
 the same GTI facts used to admit the corresponding operations; in particular,
 construction does not imply assignment, relocation is not permission to move a
 borrowed value, and transfer/share queries do not override an object's live
-loans or thread-affinity rules. Classification also includes
+loans or thread-affinity rules. `is_copyable` reports copy construction and
+copy assignment; the public `std::copyable` concept additionally requires
+movement. Classification also includes
 `is_unsigned_integral`, `is_numeric`, `is_signed_numeric` and
 `is_integral_enum` (which excludes payload enums).
 

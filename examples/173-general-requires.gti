@@ -1,0 +1,76 @@
+// Source-defined contracts combine ordinary expressions with compiler-verified
+// reflection facts. Checking a requirement never executes the expression.
+#include <std/meta>
+
+concept adds_to<L, R, Result> = requires(L& left, R& right) {
+  { left + right } -> Result;
+};
+
+concept default_constructible<T> = requires {
+  { T() } -> T;
+};
+
+concept constructed_from<T, Arg> = requires(Arg& argument) {
+  { T(argument) } -> T;
+};
+
+concept integer_type<T> = std::meta::is_integral<T>();
+concept transferable_value<T> = std::meta::is_transferable<T>();
+
+concept math_value<T> =
+    adds_to<T, T, T> && std::copyable<T> && default_constructible<T>;
+
+struct Distance {
+  int value = 0;
+  Distance operator+(Distance& other) {
+    Distance result{.value = this.value + other.value};
+    return result;
+  }
+};
+
+class Counter {
+  int value;
+public:
+  Counter(int& value) : value(value) {}
+  int read() { return this.value; }
+};
+
+T sum<T>(T& left, T& right) requires math_value<T> {
+  return left + right;
+}
+
+T zero<T>() requires default_constructible<T> {
+  return T();
+}
+
+T construct<T, Arg>(Arg& argument) requires constructed_from<T, Arg> {
+  return T(argument);
+}
+
+T twice<T>(T value) requires integer_type<T> && transferable_value<T> {
+  return value + value;
+}
+
+enum class status : uint8_t { ready = 0, busy = 1 };
+
+int main() {
+  static_assert(std::meta::is_enum_underlying<status, uint8_t>());
+  static_assert(std::meta::is_bitwise_relocatable<Distance>());
+  static_assert(requires(int& left, int& right) {
+    { left + right } -> int;
+    { left == right } -> bool;
+  });
+  static_assert(!(requires(Distance& value) {
+    { value + value } -> bool;
+  }));
+
+  Distance left{.value = 7};
+  Distance right{.value = 9};
+  Distance total = sum(left, right);
+  Distance empty = zero<Distance>();
+  int initial = 12;
+  Counter counter = construct<Counter, int>(initial);
+  return total.value == 16 && empty.value == 0 && counter.read() == 12 &&
+                 twice(initial) == 24
+             ? 0 : 1;
+}

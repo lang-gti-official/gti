@@ -11918,6 +11918,27 @@ metaQueryShape(IntrinsicKind intrinsic) {
 
 } // namespace
 
+auto SemanticVisitor::Impl::metaQueryAcceptsOpenSubject(
+    IntrinsicKind intrinsic, const SemanticType &subject) const -> bool {
+  if (intrinsic != IntrinsicKind::MetaTypeKind ||
+      subject.kind == SemanticType::Unknown ||
+      subject.kind == SemanticType::TypeParameter ||
+      subject.kind == SemanticType::TypePack)
+    return false;
+  if (subject.kind == SemanticType::Enum &&
+      (subject.enumId == 0 || subject.enumId > enums.size()))
+    return false;
+  if (subject.kind == SemanticType::Class) {
+    const auto *owner = classInfo(subject);
+    if (owner == nullptr || owner->compilerType != CompilerTypeKind::None)
+      return false;
+  }
+  // The outer category is independent of nested type/value arguments. Exact
+  // class specializations must retain their primary's class/struct kind.
+  // Unknown/computed projections still have no category proof.
+  return metaTypeKind(subject) != 0;
+}
+
 // The constant a concrete reflection query denotes, or nullopt when the field
 // index is out of range (the caller reports it).
 auto SemanticVisitor::Impl::metaQueryConstant(
@@ -12317,7 +12338,8 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
     resolved.typeArguments.push_back(*attribute);
   }
   semanticModel.record(expr, resolved);
-  if (containsOpenTypeParameter(*subject) ||
+  if ((containsOpenTypeParameter(*subject) &&
+       !metaQueryAcceptsOpenSubject(intrinsic, *subject)) ||
       (attribute && containsOpenTypeParameter(*attribute)) ||
       std::any_of(indices.begin(), indices.end(),
                   [](const CompileTimeValue &index) {
@@ -12372,7 +12394,8 @@ auto SemanticVisitor::Impl::metaIntrinsicConstant(
   }
   const SemanticType subject =
       constexprType(call.typeArguments.front(), context);
-  if (containsOpenTypeParameter(subject)) {
+  if (containsOpenTypeParameter(subject) &&
+      !metaQueryAcceptsOpenSubject(call.intrinsic, subject)) {
     return std::nullopt;
   }
   std::optional<SemanticType> attribute;

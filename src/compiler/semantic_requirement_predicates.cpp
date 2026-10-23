@@ -190,8 +190,16 @@ auto SemanticVisitor::Impl::constraintPredicateCapability(
 
     const auto enclosingUnit = currentSourceUnit;
     auto enclosingNamespace = currentNamespace;
+    const auto enclosingClass = currentClass;
+    auto enclosingTypes = std::move(typeParameterScopes);
+    auto enclosingValues = std::move(valueParameterScopes);
+    auto enclosingPacks = std::move(typePackScopes);
+    typeParameterScopes.clear();
+    valueParameterScopes.clear();
+    typePackScopes.clear();
     currentSourceUnit = selected->sourceUnit;
     currentNamespace = selected->namespaceScope;
+    currentClass.reset();
     typeParameterScopes.emplace_back();
     typePackScopes.emplace_back();
     for (std::size_t index = 0; index < arguments.size(); ++index)
@@ -202,8 +210,10 @@ auto SemanticVisitor::Impl::constraintPredicateCapability(
                       ? inspect(*forwarded, nullptr)
                       : std::nullopt;
     active.pop_back();
-    typePackScopes.pop_back();
-    typeParameterScopes.pop_back();
+    typePackScopes = std::move(enclosingPacks);
+    valueParameterScopes = std::move(enclosingValues);
+    typeParameterScopes = std::move(enclosingTypes);
+    currentClass = enclosingClass;
     currentNamespace = std::move(enclosingNamespace);
     currentSourceUnit = enclosingUnit;
     return result;

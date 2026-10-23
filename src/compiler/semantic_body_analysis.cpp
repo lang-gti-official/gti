@@ -8036,6 +8036,59 @@ auto SemanticVisitor::Impl::analyzeTypeParameterCall(
            "GTI-S2029");
     valid = false;
   }
+  if (valid && targetType.kind == SemanticType::Class) {
+    auto arguments = analyzeContextualCallArguments(expr.arguments());
+    if (expr.arguments().size() == 1 &&
+        analyzeExplicitConversion(expr, expr.arguments().front(),
+                                  arguments.types.front(), targetType,
+                                  expr.paren()))
+      return;
+    analyzeConstructorCall(expr, targetType.classId, targetType.arguments,
+                           targetType.valueArguments, arguments.types,
+                           expr.arguments(), expr.paren());
+    return;
+  }
+  if (valid && targetType.kind == SemanticType::TypeParameter) {
+    std::vector<ExpandedStructuralRequirement> constructions;
+    for (const auto &requirement : activeStructuralRequirements())
+      if (requirement.kind == StructuralConstraintKind::ReadMember &&
+          requirement.memberName == "$construct" &&
+          requirement.arguments.size() == expr.arguments().size() + 2 &&
+          requirement.arguments[0] == targetType &&
+          requirement.arguments[1] == targetType)
+        constructions.push_back(requirement);
+    if (!constructions.empty()) {
+      const auto arguments = analyzeContextualCallArguments(expr.arguments());
+      for (const auto &requirement : constructions) {
+        bool matches = true;
+        for (std::size_t index = 0; index < arguments.types.size(); ++index)
+          matches = matches && callArgumentMatches(
+              requirement.arguments[index + 2], arguments.types[index],
+              expr.arguments()[index]);
+        if (!matches)
+          continue;
+        if (requirement.requiresUnsafe && unsafeDepth == 0) {
+          report(expr.paren(), "The required construction needs an unsafe block.",
+                 "GTI-S2029");
+          currentType = SemanticType::Unknown;
+          return;
+        }
+        const std::span parameters(requirement.arguments.begin() + 2,
+                                    requirement.arguments.end());
+        validateMutableCallArgumentLoans(parameters, expr.arguments(), expr.paren());
+        validateCallPlaceExclusivity(parameters, expr.arguments(), expr.paren());
+        // This is open-body proof only. Concrete reanalysis above selects the
+        // real constructor/conversion before any HIR/MIR executable call exists.
+        currentType = targetType;
+        return;
+      }
+      report(expr.paren(),
+             "The active requirements do not prove this exact construction.",
+             "GTI-S2029");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+  }
   if (!expr.arguments().empty() &&
       exprAs<PackExpansion>(expr.arguments().back().get()) != nullptr) {
     const ContextualCallArguments analysis =
@@ -10206,12 +10259,14 @@ auto SemanticVisitor::Impl::visitLayoutQueryExpr(const LayoutQuery &expr)
 auto SemanticVisitor::Impl::recordMemberRequirementReceiver(
     const MemberRequirement &query, const SemanticType &type) -> void {
   if (query.isExpressionRequirement()) {
+    std::unordered_map<std::string, std::pair<SymbolId, SemanticType>> parameters;
     for (std::size_t index = 0; index < query.parameters().size(); ++index) {
       const auto parameterType = typeOf(query.parameters()[index]);
       const auto &binding = query.bindings()[index];
       const auto symbol = recordToolingSymbol(
           binding, SymbolKind::RequirementParameter,
           qualifiedName(currentNamespace, binding.lexeme), parameterType);
+      parameters.emplace(binding.lexeme, std::pair{symbol, parameterType});
       semanticModel.recordOccurrence(
           {.sourceUnit = sourceUnitFor(binding),
            .span = tokenSpan(binding),
@@ -10221,6 +10276,37 @@ auto SemanticVisitor::Impl::recordMemberRequirementReceiver(
            .name = binding.lexeme,
            .type = parameterType});
     }
+    std::function<void(const Expr &)> recordUses = [&](const Expr &expression) {
+      if (const auto *variable = exprAs<Variable>(&expression)) {
+        const auto found = parameters.find(variable->name().lexeme);
+        if (found != parameters.end())
+          semanticModel.recordOccurrence(
+              {.sourceUnit = sourceUnitFor(variable->name()),
+               .span = tokenSpan(variable->name()),
+               .kind = SemanticOccurrenceKind::Symbol,
+               .symbol = found->second.first,
+               .roles = OccurrenceRole::Reference,
+               .name = variable->name().lexeme,
+               .type = found->second.second});
+      } else if (const auto *binary = exprAs<Binary>(&expression)) {
+        recordUses(*binary->left());
+        recordUses(*binary->right());
+      } else if (const auto *unary = exprAs<Unary>(&expression)) {
+        recordUses(*unary->right());
+      } else if (const auto *group = exprAs<Grouping>(&expression)) {
+        recordUses(*group->expression());
+      } else if (const auto *get = exprAs<Get>(&expression)) {
+        recordUses(*get->object());
+      } else if (const auto *call = exprAs<Call>(&expression)) {
+        recordUses(*call->callee());
+        for (const auto &argument : call->arguments())
+          recordUses(*argument);
+      } else if (const auto *index = exprAs<Index>(&expression)) {
+        recordUses(*index->object());
+        recordUses(*index->index());
+      }
+    };
+    recordUses(*query.expression());
     return;
   }
   const auto symbol = recordToolingSymbol(

@@ -156,7 +156,7 @@ statement spans against the **optimized** MIR's retained HIR identities.
 Each `LoweredBody::sourceLocations` row owns its source path/span and exact
 block/instruction identity; instruction zero identifies a terminator. These
 optional rows are verified and sealed with the lowered contract (current printer
-version 17; debug rows were introduced in version 13), survive destruction of
+version 24; debug rows were introduced in version 13), survive destruction of
 AST/HIR, and are never executable,
 ownership, type, or optimization authority. The default contract has no rows.
 
@@ -186,7 +186,7 @@ remain later slices; this metadata does not bypass MIR verification.
 
 Terminal and caller-tracking contracts are sealed declaration facts, also
 checked against the embedded MIR. The current lowered-program inspection format
-is version 17 and retains both flags and optional source debug locations.
+is version 24 and retains both flags and optional source debug locations.
 The C++ representation
 passes an explicit artifact-local caller-site parameter through supported
 tracked signatures and calls. An
@@ -510,6 +510,17 @@ contains:
 - concrete class, function, constructor, destructor, and lambda instances with
   exact type/value substitutions and source provenance; and
 - exhaustive generated-item identities, payloads, roots, and dependencies.
+
+Generic requirement leaves have explicit `Concept`, `Member`, `Expression`,
+or `Predicate` kinds. A concept keeps its declaration identity; an exact member
+keeps its actual name and receiver-access facts. A general expression instead
+owns ordered synthetic-parameter types, its exact owned result type and any
+explicit expression type arguments, with a checked result index separating
+those groups. Predicate leaves retain their resolved type arguments and source
+provenance, not a fabricated member name. These are static declaration facts:
+the lowered value contains no source expression or AST pointer, and a backend
+must not evaluate predicates or reconstruct expression validity. Semantics
+checks admissibility and concrete instantiation before this boundary.
 
 `verifyLoweredProgram` rejects missing, duplicate, stale, reordered, unrooted,
 or cyclic records and an invalid construction seal. `LoweredProgramPrinter`
