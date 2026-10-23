@@ -1,0 +1,102 @@
+// A constructor moves one passive generated class into a field and copies
+// another into a later field, after initializer work that can fail. The move
+// must stay in the verified body, after that work. The copy may still publish
+// natively: it reads a formal nothing earlier writes, runs no source code and
+// cannot fail, so the copy-only form already publishes it the same way. Work
+// before them, a later sibling or the constructor body can fail, and the
+// owning field built first is then dropped exactly once. The copied field may
+// be declared before or after the moved one, and a scalar moved after a read
+// of its formal mixes with a class copy the same way. Each of these was
+// GTI-B0001.
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+mut int stage = 0;
+
+int32_t divisor_for(int at) { return stage == at ? 0 : 1; }
+
+class Ledger {
+public:
+  int32_t id;
+  Ledger(int32_t id, int32_t divisor) : id(id + 60 / divisor) {}
+  ~Ledger() { std::println("close ledger"); }
+};
+
+class Pair {
+public:
+  int32_t a;
+  int32_t b;
+  Pair(int32_t a, int32_t b) : a(a), b(b) {}
+};
+
+class Name {
+public:
+  std::string_view text;
+  Name(std::string_view text) : text(text) {}
+};
+
+// A fallible owning field precedes the move and the copy; a sibling after
+// them and the body can fail.
+class Shelved {
+public:
+  Ledger ledger;
+  Pair moved;
+  Pair copied;
+  int32_t quotient;
+  mut int32_t extra;
+  Shelved(Pair moved, Pair copied)
+      : ledger(Ledger(31, divisor_for(1))), moved(std::move(moved)),
+        copied(copied), quotient(60 / divisor_for(2)), extra(0) {
+    this.extra = 60 / divisor_for(3);
+  }
+};
+
+// The copied field is declared before the moved one.
+class Reordered {
+public:
+  Ledger ledger;
+  Name copied;
+  Name moved;
+  int32_t quotient;
+  mut int32_t extra;
+  Reordered(Name copied, Name moved)
+      : ledger(Ledger(37, divisor_for(4))), copied(copied),
+        moved(std::move(moved)), quotient(60 / divisor_for(5)), extra(0) {
+    this.extra = 60 / divisor_for(6);
+  }
+};
+
+bool is_odd(int32_t value) { return value % 2 == 1; }
+
+// The scalar moves in the body after a read of its formal; the class copy
+// publishes natively.
+class Gauge {
+public:
+  bool odd;
+  bool flagged;
+  int32_t tag;
+  Pair pair;
+  Gauge(int32_t tag, Pair pair)
+      : odd((tag & 1) == 1), flagged(is_odd(tag)), tag(std::move(tag)),
+        pair(pair) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Gauge gauge = Gauge(7, Pair(3, 4));
+  std::println(gauge.odd && gauge.flagged
+                   ? gauge.tag + gauge.pair.a + gauge.pair.b
+                   : 0);
+
+  Shelved shelved = Shelved(Pair(1, 2), Pair(3, 4));
+  std::println(shelved.moved.a * 1000 + shelved.moved.b * 100 +
+               shelved.copied.a * 10 + shelved.copied.b);
+  std::println(shelved.ledger.id + shelved.quotient + shelved.extra);
+
+  Reordered reordered = Reordered(Name("copy"), Name("moved"));
+  std::println(int32_t(reordered.copied.text.size()) * 10 +
+               int32_t(reordered.moved.text.size()));
+  std::println(reordered.ledger.id + reordered.quotient + reordered.extra);
+  return 0;
+}

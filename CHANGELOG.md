@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.465.5 — Array fields built from constructor parameters
+## 0.465.7 — Array fields built from constructor parameters
 
 - A constructor that initializes a fixed-array field from its by-value
   parameters, as in `Polygon(Point a, Point b) : corners({a, b})`, used to
@@ -21,6 +21,26 @@ for what minor and patch releases mean.
 - The same elements in a local array, such as
   `Point[2] corners = {a, std::move(b)};` or `Point[2][2] g = {{a, b}, {c, d}};`,
   also reported `GTI-B0001` and now work.
+
+## 0.465.6 — Moving one class and copying another after fallible work
+
+- A constructor can now move one class into a field and copy another into a
+  later field after an initializer that can fail, when both classes have no
+  destructor and their fields are scalars, enums, pointers, text views or
+  classes of the same kind. `Shelved(Pair moved, Pair copied) :
+  ledger(Ledger(31, divisor)), moved(std::move(moved)), copied(copied)` used
+  to report `error[GTI-B0001]` (an internal compiler error) in either
+  declaration order of the two fields; it now works. If a later initializer
+  or the constructor body fails, each field already built is dropped exactly
+  once.
+
+## 0.465.5 — Test-target editor diagnostics
+
+- The language server recognizes `kind = "test"` and no longer asks valid
+  annotated suites to define `main`. Test-entry rules still diagnose empty
+  suites, invalid test signatures and conflicting user-written entry points.
+  Changing a target between executable and test refreshes editor diagnostics.
+  Generated test dispatchers stay out of editor source snapshots and symbols.
 
 ## 0.465.4 — Text relays through accessor switch subjects
 

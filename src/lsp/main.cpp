@@ -1762,6 +1762,7 @@ struct ProjectAnalysisInputs {
   lang::SourceManager sources;
   std::vector<lang::Diagnostic> diagnostics;
   bool requireEntryPoint = false;
+  lang::ProgramRequest program;
   std::vector<lang::IncludeSearchRoot> includeSearchRoots;
 };
 
@@ -1843,11 +1844,11 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
   result.warnings = profile->warningPolicy;
   result.packageWarnings = facts.packageWarnings(profile->name);
   result.includeSearchRoots = lang::driver::projectIncludeSearchRoots(facts);
-  for (const auto &target : facts.targets()) {
-    if (canonicalPath(target.root) == canonicalPath(entryPath)) {
-      result.requireEntryPoint = true;
-      break;
-    }
+  if (projectTarget != nullptr &&
+      canonicalPath(projectTarget->root) == canonicalPath(entryPath)) {
+    result.requireEntryPoint = true;
+    result.program.testSuite =
+        projectTarget->kind == lang::driver::ProjectTargetKind::Test;
   }
   return result;
 }
@@ -3155,6 +3156,8 @@ private:
         project.rawPointerAuditLibraryFindings;
     frontendOptions.analyzeRecoveredProgram = true;
     frontendOptions.requireEntryPoint = project.requireEntryPoint;
+    frontendOptions.program = project.program;
+    frontendOptions.synthesizeTestEntry = false;
     // HIR performs the compiler's concrete generic-instance reanalysis. The
     // LSP retains it only so editor diagnostics agree with `gti check` for
     // the open file's own code; MIR remains code-generation work and is not

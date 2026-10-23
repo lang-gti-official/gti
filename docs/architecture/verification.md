@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Array fields from constructor parameters (0.465.5)
+## Array fields from constructor parameters (0.465.7)
 
 `array_field_constructor_elements_runtime` runs
 `array_field_constructor_elements.gti`. Constructors of user-defined structs
@@ -13,7 +13,7 @@ shows each element's value, that copied parameters are still readable, and
 that every counted object is destroyed exactly once, as an element. With an
 argument the first index is out of range and fails with `GTI-R0007` (exit
 status 70). Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and
-ASan/UBSan. The 0.465.4 compiler stops the fixture with `GTI-B0001`.
+ASan/UBSan. The 0.465.6 compiler stops the fixture with `GTI-B0001`.
 
 In `cpp_mir_body_emitter_lifecycle`, `testArrayFieldConstructorElements`
 checks that the constructors spell their parameters inside the field's
@@ -23,10 +23,10 @@ element class without a copy constructor, a moved element whose obligation
 does not leave at the aggregate, a lifecycle-free move of a class with a
 destructor, and a failure site on a moved element each refuse the body.
 
-An emitted-C++ differential against the 0.465.4 emitter, run on every program
+An emitted-C++ differential against the 0.465.6 emitter, run on every program
 under `tests/fixtures`, `tests/coverage` and `examples` at O0 and O3 with one
-`GTI_STDLIB_PATH` (1831 programs, 3662 runs; `namespace-depth-63` excluded
-for its compile time), leaves 2904 runs identical and 740 refused by both
+`GTI_STDLIB_PATH` (1832 programs, 3664 runs; `namespace-depth-63` excluded
+for its compile time), leaves 2906 runs identical and 740 refused by both
 with the same codes. No program is newly refused or changes its refusal, and
 nothing times out. Only the new fixture becomes accepted. Text changes in 8
 programs. Six spell staged element copies inline: `012-fixed-arrays`, three
@@ -34,6 +34,45 @@ programs. Six spell staged element copies inline: `012-fixed-arrays`, three
 `class_array_arguments` and `storage_fixed_array_emplacement` gain a plain
 constructor for a by-value array of passive classes, so their callers drop a
 dead failure branch. The owning runtime tests of all eight pass.
+
+## Passive class moved beside a passive copy (0.465.6)
+
+`passive_class_move_and_copy_runtime` runs `passive_class_move_and_copy.gti`.
+- `Shelved` moves a `Pair` and copies another after a `Ledger` field that can
+  fail. `Reordered` copies a text-view `Name` declared before the moved one.
+  `Gauge` moves a scalar after a read of its formal beside a `Pair` copy.
+- When the ledger itself fails, the object has no ledger to drop. When a later
+  sibling or the body fails, the built ledger is rolled back exactly once, and
+  `main`'s live ledgers close once each. Every failure exits with status 70
+  and the division diagnostic.
+- Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan.
+  The main compiler (`6333da11`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`,
+`testPassiveClassMoveAndCopyAfterFallibleSibling` checks four points:
+- the move is body-staged and the copy is an exact parameter copy, for both
+  `Shelved` and `Gauge`;
+- the failure form admits both;
+- the emitted `Shelved` starts `moved` empty and publishes it after the
+  ledger, while `copied(__gti_mir_arg_1)` stays in the member-initializer list;
+- a copy whose records are reordered fails closed.
+
+Mutation checks:
+- without `failureConstructorHoistablePassiveCopy`, both admissions fail;
+- without its adjacency guard, the reordering forgery is accepted;
+- without `everyFormalCopyWitnessed`, the stripped full-expression forgery of
+  the existing `testMixedConstructorParameterFields` is accepted.
+
+The same stripping forgery applied to the hoisted copy is accepted on main as
+well. That copy has no witness, so it falls back to the existing body-ordered
+copy route.
+
+An `--emit-cpp` differential against main `6333da11`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1,823 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3:
+- 3,644 of 3,646 compilations emit byte-identical C++, and failing pairs
+  report identical diagnostics;
+- only the new fixture changes status, from `GTI-B0001` to success.
 
 ## Classes holding function items (0.465.3)
 
