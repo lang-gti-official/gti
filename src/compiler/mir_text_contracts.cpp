@@ -451,6 +451,20 @@ private:
             ? nullptr
             : context.body.findPlace(loan ? loan->source : subject.place);
     auto formal = place ? contractPlace(context, *place, true) : std::nullopt;
+    // The field that a formal's accessor returns a reference to holds what
+    // `formal.field` holds.
+    if (!formal && place != nullptr) {
+      std::vector<const MirFunctionInstance *> visiting;
+      const MirPlace *receiver = nullptr;
+      const auto field =
+          accessorResultField(context.body, *place, visiting, &receiver);
+      auto owner =
+          field && receiver ? contractPlace(context, *receiver) : std::nullopt;
+      if (owner && owner->field == 0) {
+        owner->field = *field;
+        formal = owner;
+      }
+    }
     const auto *enumeration = program.findPayloadEnum(subject.type);
     if (!formal || formal->field == 0 || enumeration == nullptr ||
         *instruction.enumVariant >= enumeration->variants.size())
@@ -1053,6 +1067,172 @@ private:
                    : nullptr;
       }
     return nullptr;
+  }
+
+  // The statically dispatched call to a non-virtual source accessor whose
+  // returned reference `loan` holds, and that call's receiver operand
+  // (through its CallInput staging).
+  std::pair<const MirInstruction *, const MirOperand *>
+  accessorCall(const MirBody &body, MirLoanId loan) const {
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Call ||
+            instruction.loan != loan)
+          continue;
+        const auto *target =
+            instruction.functionTarget
+                ? program.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (target == nullptr || !instruction.receiver ||
+            instruction.dispatch != CallDispatch::Static ||
+            target->virtualMethod ||
+            target->definitionKind != MirDefinitionKind::Source)
+          return {};
+        const MirOperand *receiver = &*instruction.receiver;
+        if (receiver->kind == MirOperandKind::Value)
+          if (const auto *input = definition(body, receiver->value);
+              input != nullptr &&
+              input->kind == MirInstructionKind::CallInput &&
+              input->operands.size() == 1)
+            receiver = &input->operands.front();
+        return {&instruction, receiver};
+      }
+    return {};
+  }
+
+  // The place `operand` addresses, through the loan holding it.
+  const MirPlace *addressedPlace(const MirBody &body,
+                                 const MirOperand &operand) const {
+    if (operand.kind == MirOperandKind::Value)
+      return nullptr;
+    const auto *loan = operand.kind == MirOperandKind::Loan
+                           ? body.findLoan(operand.loan)
+                           : nullptr;
+    return body.findPlace(loan ? loan->source : operand.place);
+  }
+
+  // The loans an accessor body returns when every return borrows one field of
+  // its own receiver, directly or through forwarding: a read-only,
+  // non-virtual method returning a reference, as semantics'
+  // `accessorReceiverField` admits.
+  std::unordered_set<MirLoanId> accessorReturnLoans(const TextBody &context) {
+    std::unordered_set<MirLoanId> loans;
+    const auto *function = context.fieldContracts;
+    if (function == nullptr || !function->owner || function->staticMember ||
+        function->virtualMethod || function->overrideMethod ||
+        function->receiverMutability != ReceiverMutability::ReadOnly ||
+        function->returnType.kind != SemanticType::Reference)
+      return loans;
+    std::optional<SymbolId> designated;
+    for (const auto &block : context.body.blocks) {
+      const auto &terminator = block.terminator;
+      if (terminator.kind != MirTerminatorKind::Return)
+        continue;
+      if (!terminator.value || terminator.value->kind != MirOperandKind::Loan)
+        return {};
+      std::vector<MirLoanId> chain{terminator.value->loan};
+      for (std::size_t depth = 0; depth < context.body.loans.size(); ++depth) {
+        const auto *forwarded = forwardedLoan(context.body, chain.back());
+        if (forwarded == nullptr)
+          break;
+        chain.push_back(*forwarded);
+      }
+      const auto *record = context.body.findLoan(chain.back());
+      const auto *source =
+          record ? context.body.findPlace(record->source) : nullptr;
+      if (source == nullptr || source->root != MirPlaceRootKind::This ||
+          source->projections.size() != 1 ||
+          source->projections.front().kind != MirProjectionKind::Field ||
+          (designated && *designated != source->projections.front().field))
+        return {};
+      designated = source->projections.front().field;
+      loans.insert(chain.begin(), chain.end());
+    }
+    return designated ? loans : std::unordered_set<MirLoanId>{};
+  }
+
+  // The class type of a formal or the receiver.
+  SemanticType fieldOwnerType(const TextBody &context,
+                              const OwnerlessTextField &formal) const {
+    if (formal.receiver) {
+      const auto owner = context.fieldContracts
+                             ? context.fieldContracts->owner
+                             : std::optional<HirClassInstanceId>{};
+      const auto *instance =
+          owner ? program.findClassInstance(*owner) : nullptr;
+      return instance ? instance->type : SemanticType(SemanticType::Unknown);
+    }
+    SemanticType type = formal.parameter < context.types.size()
+                            ? context.types[formal.parameter]
+                            : SemanticType(SemanticType::Unknown);
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+      type = SemanticType(type.arguments.front());
+    return type;
+  }
+
+  // The field of its own receiver that `place`, rooted at an accessor call's
+  // returned reference in `body`, designates: the accessor's every return
+  // borrows `this.field`, or the result of another such accessor called on
+  // its own receiver.
+  std::optional<SymbolId>
+  accessorResultField(const MirBody &body, const MirPlace &place,
+                      std::vector<const MirFunctionInstance *> &visiting,
+                      const MirPlace **receiver = nullptr) const {
+    if (place.root != MirPlaceRootKind::Loan || !place.projections.empty())
+      return std::nullopt;
+    const auto [call, held] = accessorCall(body, place.loan);
+    const auto *self = held ? addressedPlace(body, *held) : nullptr;
+    const auto *target =
+        call ? program.findFunctionInstance(*call->functionTarget) : nullptr;
+    if (self == nullptr || target == nullptr ||
+        target->returnType.kind != SemanticType::Reference ||
+        std::find(visiting.begin(), visiting.end(), target) != visiting.end())
+      return std::nullopt;
+    if (receiver != nullptr)
+      *receiver = self;
+    visiting.push_back(target);
+    std::optional<SymbolId> result;
+    bool valid = true;
+    bool returned = false;
+    for (const auto &block : target->body.blocks) {
+      const auto &terminator = block.terminator;
+      if (terminator.kind != MirTerminatorKind::Return)
+        continue;
+      returned = true;
+      std::optional<SymbolId> field;
+      MirLoanId loan =
+          terminator.value && terminator.value->kind == MirOperandKind::Loan
+              ? terminator.value->loan
+              : 0;
+      for (std::size_t depth = 0;
+           loan != 0 && depth < target->body.loans.size(); ++depth) {
+        const auto *forwarded = forwardedLoan(target->body, loan);
+        if (forwarded == nullptr)
+          break;
+        loan = *forwarded;
+      }
+      const auto *record = target->body.findLoan(loan);
+      const auto *source =
+          record ? target->body.findPlace(record->source) : nullptr;
+      if (source != nullptr && source->root == MirPlaceRootKind::This &&
+          source->projections.size() == 1 &&
+          source->projections.front().kind == MirProjectionKind::Field) {
+        field = source->projections.front().field;
+      } else if (source != nullptr) {
+        const MirPlace *inner = nullptr;
+        field = accessorResultField(target->body, *source, visiting, &inner);
+        if (inner == nullptr || inner->root != MirPlaceRootKind::This ||
+            !inner->projections.empty())
+          field.reset();
+      }
+      if (!field || (result && *result != *field)) {
+        valid = false;
+        break;
+      }
+      result = field;
+    }
+    visiting.pop_back();
+    return valid && returned ? result : std::nullopt;
   }
 
   // A conditional's result: each branch initializes the same temporary before
@@ -1734,9 +1914,14 @@ private:
         // a payload extraction uses, a copy, move or borrow of it, may let
         // any of its text payloads outlive the call (L-OWN-02). A switch
         // observes its subject in place, in its terminator.
+        // An accessor's returned borrow of its field is its designation:
+        // callers resolve it as the field (`accessorResultField`).
         if (context.fieldContracts &&
             !(instruction.kind == MirInstructionKind::Compute &&
-              instruction.operation == MirOperation::PayloadExtract)) {
+              instruction.operation == MirOperation::PayloadExtract) &&
+            !(instruction.kind == MirInstructionKind::Borrow &&
+              instruction.loan &&
+              accessorReturnLoans(context).contains(*instruction.loan))) {
           const auto visitField = [&](const MirOperand &operand) {
             if (operand.kind == MirOperandKind::Value ||
                 operand.kind == MirOperandKind::Constant)
@@ -1746,8 +1931,24 @@ private:
                                    : nullptr;
             const auto *place =
                 context.body.findPlace(loan ? loan->source : operand.place);
-            const auto formal =
+            auto formal =
                 place ? contractPlace(context, *place, true) : std::nullopt;
+            // The reference an accessor of a formal or the receiver returns
+            // holds what that formal's field holds, as in semantics'
+            // `contractEnumField`.
+            if (!formal && place != nullptr) {
+              std::vector<const MirFunctionInstance *> visiting;
+              const MirPlace *receiver = nullptr;
+              const auto field = accessorResultField(context.body, *place,
+                                                     visiting, &receiver);
+              auto owner = field && receiver ? contractPlace(context, *receiver)
+                                             : std::nullopt;
+              if (owner && owner->field == 0 &&
+                  payloadEnumField(fieldOwnerType(context, *owner), *field)) {
+                owner->field = *field;
+                formal = owner;
+              }
+            }
             if (!formal || formal->field == 0)
               return;
             for (const auto &field :

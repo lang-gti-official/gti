@@ -105,6 +105,52 @@ global, and ASan reported it once the owner reallocated. Passing the field
 by value or by reference, storing it, and passing on a returned reference to
 it escaped the same way. `testPayloadFieldUses` covers each shape.
 
+## Classes holding function items (0.465.3)
+
+`passive_function_item_class_runtime` runs `passive_function_item_classes.gti`.
+Function items reach fields only through generics, so every class is generic
+and instantiated with a function name.
+- `Holder<F>` moves an `Op<F>` into a field after a `std::vector` field;
+  `CopiedHolder<F>` copies it. Both return the called function's 7.
+- `Shelved<F>` moves a `Tagged<F>` (a view, a function item and a rank) after
+  a `Ledger` field that can fail. `Copied<F>` copies one after its own ledger.
+  In each, a later sibling or the body can fail.
+- When the ledger itself fails, the object has no ledger to drop. When a later
+  sibling or the body fails, the built ledger is rolled back exactly once, and
+  `run`'s live ledgers close once each. Every failure exits with status 70 and
+  the division diagnostic.
+- A conditional join of copies and of moves, and a copy assigned into a
+  mutable field, give the expected values.
+- Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan.
+  The main compiler (`6333da11`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`,
+`testPassiveFunctionItemClassAfterFallibleSibling` covers four points:
+- the MIR shape of the moved `Op<F>`: no loans, no value or rollback
+  obligation, and no lifecycle event;
+- failure-form admission, with the field started empty and published once
+  after the vector;
+- the native parameter copy of the copied variant;
+- forgeries: a function item without its function identity, and active
+  cleanup on the field.
+
+Mutation checks:
+- with function items removed from the passive leaf rule, the test fails at
+  failure-form admission;
+- with the `hasFunctionItemShape` guard removed, only the copy-side shapeless
+  forgery fails. The move side is still refused by the empty-state proof,
+  which requires the shape too.
+
+An `--emit-cpp` differential against main `6333da11`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1,823 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3:
+- 3,644 of 3,646 compilations emit byte-identical C++, and failing pairs
+  report identical diagnostics;
+- only the new fixture changes status, from `GTI-B0001` to success.
+No existing program, including the standard library's generic callable
+adapters, changes text. Closure captures and call inputs of a function-item
+class emit the same C++ as before.
+
 ## Class stores into named places and element fields (0.465.1)
 
 `class_store_destinations_runtime` runs `class_store_destinations.gti`.
@@ -145,6 +191,7 @@ on a machine shared with other builds.
 Still `GTI-B0001`, as on main: a constructor initializing a class's
 fixed-array field from its parameters (`Polygon(Point a, Point b) :
 corners({a, b})`).
+
 ## Deferred assertions and statement helpers (0.465.0)
 
 `deferred_assertions` checks the general `[[deferred]]` statement-helper rule
@@ -336,6 +383,30 @@ byte-identical C++, with no text differences. Only example 170 and the new
 - `borrow_origin` now counts `Box<std::string_view>::get()` in
   `borrow_stored_view_return.gti` as a field relay rather than an ownerless
   return, and checks its three stored-view mutations.
+
+## Text relays through accessor switch subjects (0.465.4)
+
+`ownerless_text_contracts` covers `testAccessorSubjectRelays`.
+- `switch (this.wordRef())` relays an `auto&` text payload as
+  `switch (this.word)` does. A view over a local owner passes and prints
+  `line.viaCall()`.
+- `firstCall()` binds the payload by value through the accessor and carries
+  the field's ownerless requirement. MIR rejects it with that requirement
+  cleared (`omits an independently derived requirement`), deriving the field
+  through the accessor's own verified body. With that derivation removed the
+  mutation passes, which is how 0.465.2 compiled a dangling view.
+- At source, `GTI-S2045` rejects `kept = line.firstCall()`,
+  `kept = line.viaCall()`, and a function returning `firstCall()` of a local
+  owner. `GTI-S2017` rejects mutating the owner while a relayed view lives.
+- The same holds for an accessor with an argument (`this.pick(0)`), an
+  implicit `wordAt()`, an implicit `return word;` body, and an accessor that
+  returns one of two fields (a whole use). Each also compiles and verifies
+  over static text, so MIR never derives a requirement semantics omitted.
+- `borrow_origin_runtime` runs `borrowed_enum_reference_subjects.gti` with both
+  relays over owned text in every mode.
+- An accessor that returns another accessor's reference, such as
+  `int& kindOf() { return this.kindRef(); }`, stays a whole receiver use. So a
+  relay through it does not reach text owned elsewhere.
 
 ## Text read through returned references (0.462.0)
 
@@ -9553,6 +9624,29 @@ moves its parameter through two local bindings. The reviewed inventory adds
 exactly one declaration and one body to that example; generated-item counts
 are unchanged. Its C++20/O0 and C++23/O3 executions retain the same cleanup
 observations.
+
+## Validation scope and combined batches
+
+Use the [risk-based batch contract](agent-workflow.md#risk-based-batch-validation)
+for current T1/T2/T3 criteria, exact admission plans, the smoke programs,
+combined full/platform gates, CI routing, evidence and failure ownership.
+Feature-specific sections identify affected coverage; their historical full
+runs do not impose a duplicate whole-compiler campaign on every component
+fix. Focused admission is a ready-for-integration checkpoint. Full acceptance
+belongs to the selected combined compiler, with every component's regression
+and relevant subsystem/tooling/platform/performance obligations preserved.
+
+The owning automation regression `agent_workflow` exercises real disposable
+Git repositories: exact membership and ancestry, original-PR preservation,
+conflict resume, duplicate-batch exclusion, withdrawal/release, stale source
+and missing-platform refusal, complete CTest inventories/results, required
+regression skips, optimized build ownership, and advisory CI classification. Workflow-only
+changes use these tests and their affected tooling gates rather than a full
+GTI semantic suite. CI still runs full native/sanitizer coverage for compiler
+integration candidates as advisory feedback. GitHub Actions never gates local
+validation, integration or completion; preserve exact-source local/managed-runner
+coverage and required platform/performance evidence, and report pending/failed
+CI separately rather than waiting for runner capacity or calling it passed.
 
 ## Development And Completion Cadence
 

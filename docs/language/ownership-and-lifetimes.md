@@ -2608,13 +2608,20 @@ passed to a function or call a method that keeps the payload within the call.
 A function that binds a payload of its formal's or receiver's field in a
 `switch` requires that payload ownerless, unless the binding is a read-only
 reference that the whole arm returns: that relays the payload by reference,
-as an accessor of a text field does. A method returning such an accessor's
-reference composes the relay, and so do overloaded `*` and `->` operators that
-return it. A method that only tests the alternative, without binding the
-payload, requires nothing. Any other use of the field than a `switch` on it,
-such as copying or moving it into a local, passing it by value or by
-reference, storing it, or returning a reference to it, may carry any of its
-payloads away, so it requires every text payload of the field ownerless:
+as an accessor of a text field does. The `switch` may name the field or call
+an accessor that returns a reference to it, a read-only method with no
+arguments whose every return is `this.field` (or another such accessor), as in
+`switch (this.wordRef())`; either form requires or relays the same payload. A
+method returning such an accessor's reference composes the relay, and so do
+overloaded `*` and `->` operators that return it. A method that only tests the
+alternative, without binding the payload, requires nothing, and so does such
+an accessor itself. Any other use of the field than a `switch` on it, such as
+copying or moving it into a local, passing it by value or by reference,
+storing it, or returning a reference to it from a method that is not such an
+accessor, may carry any of its payloads away, so it requires every text payload
+of the field ownerless. A call of the accessor used any other way than as a
+`switch` subject is such a use of the field, and on a value over a local
+owner it is the dependent field itself:
 
 ```gti
 class Line {

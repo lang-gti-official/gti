@@ -2295,10 +2295,19 @@ int main() {
          "ownerless values copy, pass and store their payload fields");
   if (!result.canGenerateCode())
     return;
-  // MIR derives each payload requirement from the field's use; only the
-  // in-place switch of hasText requires nothing.
+  // MIR derives each payload requirement from the field's use; the in-place
+  // switch of hasText requires nothing, and neither do the accessors
+  // `wordRef` and `Cell<Word>::ref`, whose callers read the field they
+  // return (a caller's non-switch use requires its payloads instead).
   std::size_t payloadUses = 0;
   for (const auto &function : result.mir.functionInstances()) {
+    if (function.definitionKind == lang::MirDefinitionKind::Source &&
+        function.owner &&
+        function.returnType.kind == lang::SemanticType::Reference &&
+        function.returnType.arguments.size() == 1 &&
+        function.returnType.arguments.front().kind == lang::SemanticType::Enum)
+      expect(function.ownerlessTextFields.empty(),
+             "a payload-enum field accessor relays its field");
     if (std::none_of(function.ownerlessTextFields.begin(),
                      function.ownerlessTextFields.end(),
                      [](const auto &field) { return field.payload != 0; }))
@@ -2311,7 +2320,8 @@ int main() {
     expect(!lang::verifyMirProgram(changed).valid(),
            "MIR derives a payload field use's requirement independently");
   }
-  expect(payloadUses >= 11, "every payload field use requires its payload");
+  expect(payloadUses == 9, "every payload field use requires its payload: " +
+                               std::to_string(payloadUses));
 
   struct Case {
     const char *body;
