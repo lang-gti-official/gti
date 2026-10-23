@@ -54,7 +54,8 @@ policy below without bypassing that lifecycle.
    retain exact-head results if main advances, reconcile, then obtain fresh
    acceptance without dropping required gates or relabeling previous passes.
    Use the [execution contract](../../../docs/architecture/agent-workflow.md#bounded-output-analysis-and-waiting)
-   for bounded output and waiting on existing validation/CI handles.
+   for bounded output and waiting on existing local/managed-runner validation
+   handles; advisory GitHub CI is not a completion dependency.
 4. Stage only the intended files, review `git diff --cached`, and create a
    focused commit.
 

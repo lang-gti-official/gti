@@ -838,6 +838,7 @@ class BatchLifecycle(unittest.TestCase):
         with self.assertRaisesRegex(Error, "Full combined"):
             self.flow.finish("combined", "Must not merge focused-only batch")
         state = self.bind_full(state)
+        self.flow.protection(True)
         self.assertEqual(self.api.rule["required_status_checks"]["contexts"], [])
         with unittest.mock.patch.object(self.api, "request", wraps=self.api.request) as requests:
             self.flow.finish("combined", "Full combined tests passed; GitHub CI is advisory")
@@ -930,7 +931,7 @@ class BatchLifecycle(unittest.TestCase):
                          "checks": [{"context": "existing", "app_id": 42}]},
                          "required_pull_request_reviews": {"required_approving_review_count": 2}}
         result = self.flow.protection(True, advisory_ci=True)
-        self.assertEqual(result["required_status_checks"], {"strict": True, "contexts": [], "checks": []})
+        self.assertEqual(result["required_status_checks"], {"strict": True, "contexts": []})
         self.assertEqual(result["required_pull_request_reviews"]["required_approving_review_count"], 2)
         self.assertTrue(result["enforce_admins"]["enabled"])
         self.assertFalse(result["allow_force_pushes"]["enabled"])
