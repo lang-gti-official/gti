@@ -10,6 +10,10 @@
       "suite": "frontend"
     },
     {
+      "name": "testAnnotatedSuiteAnalysis",
+      "suite": "frontend"
+    },
+    {
       "name": "testDefiniteReturnAnalysis",
       "suite": "frontend"
     },
