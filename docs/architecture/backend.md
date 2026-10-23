@@ -380,6 +380,16 @@ slot. Only a successful result activates the replacement stage, so
 receiver failure cannot overwrite the old destination, and failed replacement
 cleanup destroys the unpublished result without committing it.
 
+A construction whose only use is the Return publishes inline at the Return
+unless the failure form can fail in between. When an Invoke or a
+defined-failure source lies on a path from the construction to that Return,
+as fallible scope-exit destructors do after a failure-free `expected`
+construction (RT-12), the failure form builds the result in the out-parameter
+at its MIR position, as it does for a result with a `ReturnResult`
+obligation. Its staged inputs are then consumed where MIR consumes them, so a
+later failure finds no input slot still live; a result with no obligation is
+passive and needs no cleanup on that path.
+
 A member or closure receiver moved out of a named binding materializes at its
 `Move`: the backend constructs the receiver's lifetime slot from the binding
 there, and the Receiver `MoveValue` input and the call only alias that slot.

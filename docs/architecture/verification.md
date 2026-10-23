@@ -34,6 +34,13 @@ staging slot (`Wrap(build(raw)).outer.inner.id`). Emitter tests that pinned
 the fallible publication form for passive results now accept the plain form
 (`slot.construct_from(...)`, `slot.construct(...)`) or keep a checked sibling
 that stays fallible, so the failure-form vocabulary keeps its coverage.
+Batch admission then caught a third: `shared_exit_cleanup_runtime` aborted
+with "lifetime slot escaped without Drop" when a destructor failed during
+the scope-exit cleanup of `return unexpected(Err::Late);`. The now
+failure-free `expected` construction was deferred to the Return, leaving its
+staged `unexpected_value` live on the destructor's failure path. The failure
+form now builds a returned construction at its MIR position whenever a
+failure can occur before the Return (`returnConstructCrossesFailure`).
 
 ## Nested dependent values (0.466.0)
 
