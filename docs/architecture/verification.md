@@ -1,5 +1,42 @@
 # Compiler Verification
 
+## Text members through checked `operator->` (0.465.2)
+
+`testArrowNonClassReferents` in the `ownership` suite analyzes a class with
+`std::string_view& operator->()` and a `std::optional<std::string_view>`.
+`label->size()`, `maybe->size()`, `label->end()` and `label->empty()` verify,
+lower to the `StringViewSize` and `StringViewEmpty` intrinsics, and leave no
+MIR value of unknown type, which was the backend's refusal before the fix.
+`->` through an `int&` or `c_string&` result, as a call or a field read, is
+`GTI-S2000`; an unknown `string_view` member or a `size(1)` is `GTI-S2035`;
+none reports `GTI-B`.
+
+`operator_relay_runtime` runs `arrow_text_members.gti` in all eight native
+modes, including the sanitized one. It covers literal-backed and owner-backed
+views behind a user class, a paired read-only/`mut` arrow, a reference
+parameter, `end()`/`rend()` (which take the arrow's view as their first
+argument), `std::optional<std::string_view>`, and a generic `Handle<T>` whose
+`T&` arrow reaches an unrelated `Counter` through a `countable<T>`
+requirement. A second run calls `->size()` on an empty optional and expects
+its `GTI-R0008` failure from `<std/optional>` before the member runs.
+Example 170 adds `maybe->size()`.
+
+The census gains one body for example 170, the `optional<string_view>`
+`operator->` instance: 163 bodies, 110 generated items and 59 concrete
+instance adapters. The unit test fails three expectations against main's
+three changed units, including that main gave `l->size(1)` no diagnostic.
+
+The same-root differential against main at 0.465.1 emitted C++ for 1,852
+programs in `tests/` and `examples/` at `-O0` and `-O3`, excluding
+`namespace-depth-63.gti`. All 2,950 compiles that main accepts emit
+byte-identical C++. Only example 170 and `arrow_text_members.gti` change:
+main refused both with `GTI-B0001`, and both now build.
+
+`maybe->begin()` still reports `GTI-B0001` in MIR construction, as
+`maybe.value().begin()` and `b.get().begin()` did before this change: an
+iterator that stores a view reference returned by a call gets no stored
+dependency for the view's owner. Binding the reference first works.
+
 ## Class stores into named places and element fields (0.465.1)
 
 `class_store_destinations_runtime` runs `class_store_destinations.gti`.

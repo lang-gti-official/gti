@@ -2507,8 +2507,8 @@
     },
     "170-view-fields.gti": {
       "declarations": 1486,
-      "bodies": 162,
-      "generated_items": 109,
+      "bodies": 163,
+      "generated_items": 110,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
@@ -2517,7 +2517,7 @@
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 58
+        "concrete_instance_adapter": 59
       }
     },
     "171-recursive-text-relays.gti": {
@@ -2553,7 +2553,7 @@
   },
   "totals": {
     "declarations": 177200,
-    "bodies": 23432,
-    "generated_items": 14755
+    "bodies": 23433,
+    "generated_items": 14756
   }
 }

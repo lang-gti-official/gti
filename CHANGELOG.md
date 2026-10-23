@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.465.2 — Text members through `operator->`
+
+- When an `operator->` returns a `std::string_view&`, its members can be
+  called through `->`. For a class with `std::string_view& operator->()`,
+  `b->size()` used to report `error[GTI-B0001]` (an internal compiler error);
+  it now calls the view's `size()`. The same holds for `empty()` and for
+  `end()`/`rend()`, and for `std::optional<std::string_view>`, whose
+  `o->size()` now works like `(*o).size()`. On an empty optional, `o->size()`
+  reports its defined `empty_owner_access` failure.
+- A referent without members is reported at the call: `->` through an
+  `int&` or `c_string&` result reports `GTI-S2000`, and an unknown
+  `string_view` member reports `GTI-S2035`.
+- Not yet supported: building a text iterator directly from a returned view
+  reference, as in `o->begin()` or `o.value().begin()`, still reports
+  `GTI-B0001`. Bind the reference first (`std::string_view& view =
+  o.value();`) and iterate `view`.
+
 ## 0.465.1 — Class stores into globals, captures and element fields
 
 - Assigning a class value to a global, through a `[mut &p]` capture, or
