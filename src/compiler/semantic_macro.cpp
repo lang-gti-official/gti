@@ -191,7 +191,7 @@ auto SemanticVisitor::Impl::macroContext(const Token &token) const
 }
 
 auto SemanticVisitor::Impl::macroLocalScopeRange(const Token &token) const
-    -> std::pair<std::size_t, std::size_t> {
+    -> MacroLocalScopeRange {
   const auto *context = macroContext(token);
   // Lambda captures are initialized in the enclosing domain, but the body
   // owns a fresh scope stack. An enclosing argument's numeric bounds must
@@ -204,7 +204,9 @@ auto SemanticVisitor::Impl::macroLocalScopeRange(const Token &token) const
   const std::size_t begin = context && context->definition
                                 ? std::min(end, context->localScopeBegin)
                                 : 0;
-  return {begin, end};
+  return {begin, end,
+          context ? std::span(context->queryScopes)
+                  : std::span<const MacroLookupContext::ScopeOverlay>()};
 }
 
 SemanticVisitor::Impl::MacroLookupScope::MacroLookupScope(
@@ -324,6 +326,38 @@ auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement,
   return stmtAs<EmptyStmt>(&statement);
 }
 
+auto SemanticVisitor::Impl::copyRequestSessionForSpeculativeModel(Impl &probe)
+    -> void {
+  assert(&probe != this);
+  // A speculative model has its own expression order and executes none of
+  // the caller's pending cleanup. Avoid copying those growing caches, but
+  // keep ordinary matched session/model copies unchanged. No semantic work
+  // runs while this guard temporarily removes the caller's expression state.
+  struct RestoreCallerExpressionState {
+    RequestSessionContext &caller;
+    ProgramExpressionCache expressionCache;
+    std::vector<ProgramFullExpressionState> frames;
+
+    explicit RestoreCallerExpressionState(RequestSessionContext &caller)
+        : caller(caller) {
+      static_assert(std::is_nothrow_swappable_v<ProgramExpressionCache>);
+      static_assert(noexcept(frames.swap(caller.fullExpressionStates)));
+      std::swap(expressionCache, caller.programExpressionCache);
+      frames.swap(caller.fullExpressionStates);
+    }
+    RestoreCallerExpressionState(const RestoreCallerExpressionState &) = delete;
+    RestoreCallerExpressionState &
+    operator=(const RestoreCallerExpressionState &) = delete;
+    ~RestoreCallerExpressionState() noexcept {
+      std::swap(expressionCache, caller.programExpressionCache);
+      frames.swap(caller.fullExpressionStates);
+    }
+  } restore(requestSession);
+  // Copying context is value/container cloning, not semantic analysis. Its
+  // active loan identities, flow and counters are retained in the probe.
+  static_cast<RequestSessionContext &>(probe.requestSession) = requestSession;
+} // Restore the caller before creating or executing any probe model.
+
 auto SemanticVisitor::Impl::analyzeMacroStatement(
     const ExpressionStmt &statement) -> bool {
   if (currentFunctionDeclaration && currentFunctionDeclaration->isMacro())
@@ -356,36 +390,7 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
   // but their speculative moves, loans and writes never affect caller flow.
   Impl probe(target, sourceGraph, toolingOccurrences, nullptr, sources,
              rawPointerAudit, requireFunctionDefinitions, trustedBodies);
-  {
-    // A speculative model has its own expression order and executes none of
-    // the caller's pending cleanup. Avoid copying those growing caches, but
-    // keep ordinary matched session/model copies unchanged. No semantic work
-    // runs while this guard temporarily removes the caller's expression state.
-    struct RestoreCallerExpressionState {
-      RequestSessionContext &caller;
-      ProgramExpressionCache expressionCache;
-      std::vector<ProgramFullExpressionState> frames;
-
-      explicit RestoreCallerExpressionState(RequestSessionContext &caller)
-          : caller(caller) {
-        static_assert(std::is_nothrow_swappable_v<ProgramExpressionCache>);
-        static_assert(noexcept(frames.swap(caller.fullExpressionStates)));
-        std::swap(expressionCache, caller.programExpressionCache);
-        frames.swap(caller.fullExpressionStates);
-      }
-      RestoreCallerExpressionState(const RestoreCallerExpressionState &) =
-          delete;
-      RestoreCallerExpressionState &
-      operator=(const RestoreCallerExpressionState &) = delete;
-      ~RestoreCallerExpressionState() noexcept {
-        std::swap(expressionCache, caller.programExpressionCache);
-        frames.swap(caller.fullExpressionStates);
-      }
-    } restore(requestSession);
-    // Copying context is value/container cloning, not semantic analysis. Its
-    // active loan identities, flow and counters are retained in the probe.
-    static_cast<RequestSessionContext &>(probe.requestSession) = requestSession;
-  } // Restore the caller before creating or executing any probe model.
+  copyRequestSessionForSpeculativeModel(probe);
   probe.semanticModel.beginSpeculativeDelta(semanticModel);
   probe.semanticModel.setFunctionDemandSink(nullptr);
   probe.semanticModel.setCallJournal(nullptr);

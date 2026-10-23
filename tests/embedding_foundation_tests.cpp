@@ -256,7 +256,7 @@ void testSemanticAndLoweringRoots() {
   if (lowered.valid()) {
     const std::string serialized =
         lang::LoweredProgramPrinter().print(*lowered.program);
-    expect(serialized.starts_with("lowered-program-v24\n") &&
+    expect(serialized.starts_with("lowered-program-v25\n") &&
                serialized.find("embedding-export symbol=\"game_update_v1\"") !=
                    std::string::npos &&
                lang::MirPrinter()

@@ -366,21 +366,28 @@ lowerRequirements(const std::vector<AppliedConceptRequirement> &requirements) {
   std::vector<LoweredConceptRequirement> result;
   result.reserve(requirements.size());
   for (const AppliedConceptRequirement &requirement : requirements) {
-    result.push_back(
-        {.conceptId = requirement.conceptId,
-         .arguments = requirement.arguments,
-         .memberName =
-             requirement.syntax && requirement.syntax->memberRequirement
-                 ? requirement.syntax->memberRequirement->member().lexeme
-                 : std::string{},
-         .mutableReceiver = requirement.syntax &&
-                            requirement.syntax->memberRequirement &&
-                            requirement.syntax->memberRequirement->receiver()
-                                .referenceMutability.has_value(),
-         .requiresUnsafe =
-             requirement.syntax && requirement.syntax->memberRequirement &&
-             requirement.syntax->memberRequirement->unsafeKeyword()
-                 .has_value()});
+    LoweredConceptRequirement lowered{.conceptId = requirement.conceptId,
+                                      .arguments = requirement.arguments};
+    if (requirement.syntax) {
+      lowered.source = tokenSpan(requirement.syntax->name.last());
+      if (requirement.syntax->predicate) {
+        lowered.kind = LoweredRequirementKind::Predicate;
+      } else if (const auto &query = requirement.syntax->memberRequirement) {
+        lowered.source = tokenSpan(query->keyword());
+        lowered.requiresUnsafe = query->unsafeKeyword().has_value();
+        if (query->isExpressionRequirement()) {
+          lowered.kind = LoweredRequirementKind::Expression;
+          lowered.expressionParameterCount = query->parameters().size();
+          lowered.resultArgument = query->parameters().size();
+        } else {
+          lowered.kind = LoweredRequirementKind::Member;
+          lowered.memberName = query->member().lexeme;
+          lowered.mutableReceiver =
+              query->receiver().referenceMutability.has_value();
+        }
+      }
+    }
+    result.push_back(std::move(lowered));
   }
   return result;
 }

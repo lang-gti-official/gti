@@ -131,7 +131,16 @@ struct LoweredGenericParameter {
                          const LoweredGenericParameter &) = default;
 };
 
+enum class LoweredRequirementKind {
+  Concept,
+  Member,
+  Expression,
+  Predicate,
+  Count,
+};
+
 struct LoweredConceptRequirement {
+  LoweredRequirementKind kind = LoweredRequirementKind::Concept;
   ConceptId conceptId = 0;
   std::vector<SemanticType> arguments;
   // For an unnamed structural leaf, arguments are receiver/result followed by
@@ -140,6 +149,12 @@ struct LoweredConceptRequirement {
   std::string memberName;
   bool mutableReceiver = false;
   bool requiresUnsafe = false;
+  // A general expression's arguments are its ordered synthetic parameter
+  // types, its exact owned result, then explicit expression type arguments.
+  // These are static proven types, never a backend expression to evaluate.
+  std::size_t expressionParameterCount = 0;
+  std::optional<std::size_t> resultArgument;
+  SourceSpan source;
 
   friend bool operator==(const LoweredConceptRequirement &,
                          const LoweredConceptRequirement &) = default;

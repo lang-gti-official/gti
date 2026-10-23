@@ -108,6 +108,7 @@ module.exports = grammar({
     [$.generic_function, $.user_type, $.primary_expression],
     [$.user_type, $.primary_expression],
     [$.expression, $.argument_list],
+    [$.constraint_predicate, $.expression],
     [$.direct_initializer, $.expression],
     [$.constructor_initializer_argument_list, $.expression],
     [$.constructor_declaration, $._qualified_identifier],
@@ -479,6 +480,7 @@ module.exports = grammar({
     constraint_expression: ($) =>
       choice(
         $.concept_application,
+        $.constraint_predicate,
         $.member_requirement_expression,
         seq("(", $.constraint_expression, ")"),
         prec.left(
@@ -498,6 +500,13 @@ module.exports = grammar({
           ),
         ),
       ),
+
+    constraint_predicate: ($) =>
+      prec(1, seq(
+        field("name", $._qualified_identifier),
+        "<", commaSep1(field("argument", $.type)), ">",
+        "(", optional(commaSep1($._expression_not_comma)), ")",
+      )),
 
     requires_clause: ($) =>
       seq(
@@ -1520,12 +1529,16 @@ module.exports = grammar({
 
     member_requirement_expression: ($) =>
       seq(
-        "requires", "(", optional("mut"), field("receiver_type", $.type),
-        field("binding", $.identifier),
-        repeat(seq(",", optional("mut"), field("parameter_type", $.type), field("parameter", $.identifier))),
-        ")", "{", optional(field("unsafe", "unsafe")), "{",
-        field("receiver", $.identifier), ".", field("member", $.identifier),
-        "(", optional(commaSep1(field("argument", $.identifier))), ")", "}", "->", field("result_type", $.type), ";", "}",
+        "requires",
+        optional(seq("(", optional(seq(
+          optional("mut"), field("receiver_type", $.type), field("binding", $.identifier),
+          repeat(seq(",", optional("mut"), field("parameter_type", $.type), field("parameter", $.identifier))),
+        )), ")")),
+        "{", repeat1(seq(
+          optional(field("unsafe", "unsafe")), "{",
+          field("expression", $._expression_not_comma), "}", "->",
+          field("result_type", $.type), ";",
+        )), "}",
       ),
 
     layout_query_expression: ($) =>

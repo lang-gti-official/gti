@@ -74,7 +74,7 @@ void testExampleCorpusEmissionReadiness() {
     lang::TargetInfo target = lang::TargetInfo::host();
     if (source.filename() == "066-managed-threads.gti" ||
         source.filename() == "076-scalar-atomics.gti" ||
-        source.filename() == "173-thread-local-storage.gti") {
+        source.filename() == "175-thread-local-storage.gti") {
       target.executionProfile = lang::ExecutionProfile::Concurrent;
       target.runtimeCapabilities.threads = true;
     }
