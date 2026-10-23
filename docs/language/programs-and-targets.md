@@ -120,7 +120,17 @@ standard-library tests are not automatically run. Qualified names determine
 stable ordering and reporting. One native executable is built for the suite,
 then each test runs in a fresh process with fresh globals and normal hosted
 initialization/cleanup. A panic terminates its child, and later tests continue.
-The command reports every result and returns the first failing child status.
+The command reports every result and returns the first failing child status in
+stable target/name order. `--filter <text>`, optional `--exact`, and repeated
+`--skip <text>` select qualified names; `--list` lists the selection without
+executing it. An empty selection fails unless `--allow-empty` is explicit.
+`--jobs N` bounds parallel isolated tests (default one). Each test has a
+five-minute deadline, overridden by `--timeout Nms|Ns|Nm`; `0` disables it.
+Timeouts kill the child process group and return 124 without guaranteeing source
+cleanup. Normal panic cleanup is unchanged. `--format json` emits versioned JSON
+Lines inventory, launch, completion and summary events on stdout, with build
+progress and diagnostics on stderr. See the [driver contract](../architecture/build-and-driver.md)
+for status and completion accounting.
 
 Annotated suites supply their entry point automatically and cannot also define
 their own hosted `main`. A legacy target with `main` and no annotations still

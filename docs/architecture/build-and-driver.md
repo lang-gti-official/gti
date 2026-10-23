@@ -674,10 +674,57 @@ Annotated test targets compile one suite, then execute each semantically selecte
 `[[test]] void` function in a separate captured child process. The driver retains
 the sorted qualified-name catalog from compilation, including on whole-program
 cache hits; cache schema `gti-build-cache-v4` stores and verifies its digest.
-Test mode is a distinct cache input. CLI presentation reports each function's
-status, elapsed time and captured diagnostics/output, with aggregate counts.
-Panic and signal termination stay confined to that child, and later cases run.
-Legacy test executables with `main` and no annotated functions execute once.
+Test mode is a distinct cache input. The reusable `runTestSuites` driver owns
+selection, the bounded scheduler and result accounting; the CLI owns options
+and presentation. Legacy test executables with `main` and no annotated functions
+execute once, using their target name as their test identity.
+
+`gti test --filter <text>` selects qualified names by case-sensitive substring;
+`--exact` requires equality and a filter. Repeated `--skip <text>` exclusions
+apply after the filter. `--list` builds/discovers the selected suites and lists
+selected tests without launching them. Empty selections fail unless
+`--allow-empty` is explicit, including in list mode. `--jobs N` bounds concurrent
+test children (default one); suite builds remain sequential. Human results and
+the first failing status follow target/declaration order, independent of
+completion order. All selected tests continue after a child failure.
+
+The per-child monotonic deadline defaults to five minutes. `--timeout Nms|Ns|Nm`
+overrides it; `0` explicitly disables it. The POSIX process owner creates a new
+process group, polls all active children, and kills the entire group on timeout
+before reaping the child. The group is also terminated on ordinary completion
+so background descendants do not escape the test lifetime. Descendants that
+explicitly detach into a new session/group are outside this boundary; process
+isolation is not an operating-system sandbox. Timeout status is 124 and forced
+termination does not promise source destructor cleanup. Normal GTI panic cleanup
+is unchanged. Launch setup/exec failure uses a close-on-exec handshake, distinct
+from a program returning 127; signal status is derived from `waitpid`, not
+inferred from an integer exit value. Windows currently rejects bounded isolated
+execution explicitly; the shipped macOS and Linux platforms implement it.
+
+`--format json` emits UTF-8 JSON Lines exclusively on stdout; human build
+progress and diagnostics stay on stderr. Every event has `schema_version: 1`.
+`suite_discovered` records the target and every discovered test with `selected`
+and `skip_reason` (`filtered`, `skipped`, or null). `test_started` records each
+launch attempt; `test_finished` records its target/name, status (`passed`,
+`failed`, `crashed`, `timed_out`, `runner_error`), exit code, optional signal,
+duration, captured output and optional diagnostic. A failed launch is a completed
+runner error. Assertion/panic failures and ordinary nonzero exits are `failed`;
+the runner does not infer an assertion category from status 70. Invalid UTF-8
+output bytes become U+FFFD; valid Unicode and embedded control bytes are escaped
+without allowing extra events. Completion events follow observed completion
+order and are identified by target/name, not line position.
+
+`run_finished` includes discovered, selected, started, completed, passed, failed,
+crashed, timed_out, runner_errors and skipped counts, plus `list_only`, `complete`,
+exit_code and diagnostic. `skipped` includes all discovered-but-unselected tests.
+For execution, complete requires one start/completion per selected identity and
+consistent terminal counts; failure outcomes still constitute completed runs.
+Listing is explicitly complete with zero launches. Invalid catalogs, unexpected
+empty selections and build/resolution failures produce incomplete nonzero
+summaries. Argument parsing errors precede the event protocol. Output-stream
+failure makes the command fail. These records establish runner completion,
+not proof against a compiler silently miscompiling both a test and its checks;
+independent compiler conformance oracles remain necessary.
 
 The frontend validates the attributes and selected-package source identities,
 then generates a dispatcher as ordinary GTI source in the suite's lexical
@@ -699,7 +746,7 @@ that child's output. Successful cases do not enter the panic path. Isolation
 intentionally repeats global initialization and teardown; resources are not
 shared between cases. The initial dispatcher compares qualified-name selectors
 once per child. No test-specific runtime, extra worker thread, or exception
-mechanism is involved. Ordinary non-test builds do not run test discovery or
+mechanism is involved; the parent polls a bounded set of child handles. Ordinary non-test builds do not run test discovery or
 the second semantic pass. Build/run comparisons must retain equivalent process
 isolation rather than compare this workflow with an in-process test harness.
 
