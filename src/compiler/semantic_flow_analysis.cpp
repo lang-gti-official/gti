@@ -1679,6 +1679,12 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                   std::move(type), ValueCategory::Place,
                   resolved->returnType.referenceAccess);
           }
+        if (const auto *unary = exprAs<Unary>(&expr))
+          if (const auto field = operatorTextReferenceRelay(*unary);
+              field && nestedTextClass(type) &&
+              nestedTextRelay(*field).has_value())
+            return textDependentValueInfo(std::move(type), ValueCategory::Place,
+                                          resolved->returnType.referenceAccess);
         return expressionInfo(std::move(type), ValueCategory::Place,
                               resolved->returnType.referenceAccess);
       }
@@ -1783,10 +1789,12 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                                   : AccessMode::ReadOnly);
     }
     // A text field read through a formal or the receiver may hold a relayed
-    // owner's dynamic text, under the function's field contract (L-OWN-02).
+    // owner's dynamic text, under the function's field contract (L-OWN-02);
+    // so may one read under a formal's relayed nested value.
     if (borrowedTextType(type) && member != nullptr &&
         get.access().kind != TokenKind::ARROW && get.object() &&
-        textFieldContractFormal(*get.object()) &&
+        (textFieldContractFormal(*get.object()) ||
+         contractRelayPrefix(get.object().get())) &&
         directTextField(memberObjectType,
                         symbolForDeclaration(member->symbol.declaration)))
       return ownerDependentTextInfo(type, ValueCategory::Place,
@@ -1852,6 +1860,12 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
           return ownerDependentTextInfo(std::move(type), ValueCategory::Place,
                                         resolved->returnType.referenceAccess);
       }
+      // A reference to a nested text class designates the receiver's paths
+      // under the relayed prefix (L-OWN-02 phase 3).
+      if (const auto field = textReferenceRelay(call, *resolved);
+          field && nestedTextClass(type) && nestedTextRelay(*field).has_value())
+        return textDependentValueInfo(std::move(type), ValueCategory::Place,
+                                      resolved->returnType.referenceAccess);
       return expressionInfo(std::move(type), ValueCategory::Place,
                             resolved->returnType.referenceAccess);
     }
@@ -2679,6 +2693,18 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   if (exprAs<Variable>(&expr) != nullptr || exprAs<Get>(&expr) != nullptr) {
     noteConditionalTextFieldRead(expr);
     notePayloadFieldRead(expr);
+  }
+  // A contract formal's relayed nested text value keeps its text under the
+  // formal's prefix only through a field projection (L-OWN-02 phase 3).
+  noteContractRelayUse(expr, result);
+  if (const auto *get = exprAs<Get>(&expr);
+      get != nullptr && result != SemanticType::Function && get->object()) {
+    const Expr *object = get->object().get();
+    while (const auto *group = exprAs<Grouping>(object))
+      object = group->expression() ? group->expression().get() : nullptr;
+    if (const auto found = requestSession.contractRelayUses.find(object);
+        found != requestSession.contractRelayUses.end())
+      found->second.projected = true;
   }
   if (const auto *get = exprAs<Get>(&expr);
       get != nullptr && result != SemanticType::Function) {

@@ -1267,6 +1267,17 @@ auto SemanticVisitor::Impl::textDependentPaths(const Expr &expression) const
         resolved != nullptr && resolved->dependentTextPublication)
       return mapped(resolved->borrowFields);
   }
+  // A reference relay to a nested text class designates the paths under
+  // its prefix (L-OWN-02 phase 3).
+  if (const auto *call = exprAs<Call>(&expression))
+    if (const auto *resolved = semanticModel.findCall(*call))
+      if (const auto relay = textReferenceRelay(*call, *resolved))
+        if (auto nested = nestedTextRelay(*relay))
+          return std::move(*nested);
+  if (const auto *unary = exprAs<Unary>(&expression))
+    if (const auto relay = operatorTextReferenceRelay(*unary))
+      if (auto nested = nestedTextRelay(*relay))
+        return std::move(*nested);
   // A field that paths go through holds their remainder.
   if (const auto *get = exprAs<Get>(&expression)) {
     const auto *place = semanticModel.findPlace(expression);
@@ -1390,16 +1401,11 @@ auto SemanticVisitor::Impl::finalizeTextDependentValues() -> void {
       argumentType = SemanticType(argumentType.arguments.front());
     const auto required = std::find_if(
         relay.paths.begin(), relay.paths.end(), [&](const auto &path) {
-          if (path.empty() || path.size() > 2)
-            return true;
-          const OwnerlessTextField entry{
-              .receiver = relay.calleeFormal.receiver,
-              .parameter = relay.calleeFormal.parameter,
-              .field = path.front(),
-              .payload = path.size() == 2 ? path.back() : 0};
-          return !contractTextPath(argumentType, entry) ||
+          const auto entry =
+              contractPrefix(argumentType, path, relay.calleeFormal);
+          return !entry ||
                  std::binary_search(callee->ownerlessTextFields.begin(),
-                                    callee->ownerlessTextFields.end(), entry);
+                                    callee->ownerlessTextFields.end(), *entry);
         });
     if (required == relay.paths.end()) {
       found->second.consumed = true;
@@ -1447,6 +1453,156 @@ auto SemanticVisitor::Impl::textPublicationOwner(const SemanticType &type) const
   return owner != nullptr && !typeTraits(type).containsBorrowedState &&
          storedReferencePaths(type).empty() && !owner->destructor &&
          owner->bases.empty() && !owner->polymorphic;
+}
+
+auto SemanticVisitor::Impl::holdsText(const SemanticType &type) const -> bool {
+  return type.kind == SemanticType::StringView ||
+         type.kind == SemanticType::CString || nestedTextClass(type);
+}
+
+auto SemanticVisitor::Impl::nestedTextClass(const SemanticType &type,
+                                            std::size_t depth) const -> bool {
+  const ClassInfo *owner =
+      type.kind == SemanticType::Class ? classInfo(type) : nullptr;
+  if (owner == nullptr || depth > 8 || !textPublicationOwner(type))
+    return false;
+  const auto text = [&](const SemanticType &candidate) {
+    return candidate.kind == SemanticType::StringView ||
+           candidate.kind == SemanticType::CString ||
+           (candidate.kind == SemanticType::Class &&
+            nestedTextClass(candidate, depth + 1));
+  };
+  for (const FieldInfo &field : owner->fields) {
+    const auto member =
+        field.declaration == nullptr
+            ? owner->members.end()
+            : owner->members.find(field.declaration->name().lexeme);
+    if (member == owner->members.end() || member->second.symbol.staticMember)
+      continue;
+    const auto fieldType =
+        substituteType(member->second.symbol.type, classSubstitution(type));
+    if (text(fieldType))
+      return true;
+    const auto enumeration = enumTypeFor(fieldType);
+    if (!enumeration || typeTraits(fieldType).containsBorrowedState)
+      continue;
+    const auto substitution = enumSubstitution(fieldType);
+    for (const auto &variant : enumeration->enumerators)
+      for (const auto &payload : variant.payloadTypes)
+        if (text(substituteType(payload, substitution)))
+          return true;
+  }
+  return false;
+}
+
+auto SemanticVisitor::Impl::nestedTextRelay(const FieldSourcedTextResult &relay)
+    const -> std::optional<std::vector<std::vector<SymbolId>>> {
+  const ExpressionInfo *info =
+      relay.origin == nullptr || !*relay.origin
+          ? nullptr
+          : semanticModel.findExpression(**relay.origin);
+  if (info == nullptr || !isTextDependentValue(*info))
+    return std::nullopt;
+  std::vector<SymbolId> prefix{relay.field};
+  if (relay.payload != 0)
+    prefix.push_back(relay.payload);
+  std::vector<std::vector<SymbolId>> paths;
+  for (auto path : textDependentPaths(**relay.origin))
+    if (path.size() > prefix.size() &&
+        std::equal(prefix.begin(), prefix.end(), path.begin())) {
+      path.erase(path.begin(),
+                 path.begin() + static_cast<std::ptrdiff_t>(prefix.size()));
+      paths.push_back(std::move(path));
+    }
+  return paths.empty() ? std::nullopt : std::optional{std::move(paths)};
+}
+
+auto SemanticVisitor::Impl::contractPrefix(const SemanticType &type,
+                                           std::span<const SymbolId> path,
+                                           OwnerlessTextField formal) const
+    -> std::optional<OwnerlessTextField> {
+  const ClassInfo *owner = classInfo(type);
+  if (path.empty() || owner == nullptr ||
+      typeTraits(type).containsBorrowedState)
+    return std::nullopt;
+  formal.field = path.front();
+  formal.payload = 0;
+  if (directTextField(type, path.front()))
+    return path.size() == 1 ? std::optional{formal} : std::nullopt;
+  if (path.size() < 2)
+    return std::nullopt;
+  for (const FieldInfo &field : owner->fields) {
+    const auto member =
+        field.declaration == nullptr
+            ? owner->members.end()
+            : owner->members.find(field.declaration->name().lexeme);
+    if (member == owner->members.end() ||
+        symbolForDeclaration(member->second.symbol.declaration) != path[0])
+      continue;
+    const auto fieldType =
+        substituteType(member->second.symbol.type, classSubstitution(type));
+    const auto enumeration = enumTypeFor(fieldType);
+    if (!enumeration || typeTraits(fieldType).containsBorrowedState)
+      return std::nullopt;
+    for (const auto &variant : enumeration->enumerators)
+      for (std::size_t index = 0; index < variant.payloadSymbols.size() &&
+                                  index < variant.payloadTypes.size();
+           ++index) {
+        if (variant.payloadSymbols[index] != path[1])
+          continue;
+        const auto payload = substituteType(variant.payloadTypes[index],
+                                            enumSubstitution(fieldType));
+        formal.payload = path[1];
+        if (payload.kind == SemanticType::StringView ||
+            payload.kind == SemanticType::CString)
+          return path.size() == 2 ? std::optional{formal} : std::nullopt;
+        return path.size() > 2 && nestedTextClass(payload)
+                   ? std::optional{formal}
+                   : std::nullopt;
+      }
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::contractRelayPrefix(const Expr *object) const
+    -> std::optional<OwnerlessTextField> {
+  while (const auto *group = exprAs<Grouping>(object))
+    object = group->expression() ? group->expression().get() : nullptr;
+  const auto found = object == nullptr
+                         ? requestSession.contractRelayUses.end()
+                         : requestSession.contractRelayUses.find(object);
+  return found == requestSession.contractRelayUses.end()
+             ? std::nullopt
+             : std::optional{found->second.prefix};
+}
+
+auto SemanticVisitor::Impl::noteContractRelayUse(const Expr &expression,
+                                                 const SemanticType &type)
+    -> void {
+  const FunctionInfo *scope = textFieldContractScope();
+  if (scope == nullptr || !nestedTextClass(type))
+    return;
+  std::optional<FieldSourcedTextResult> relay;
+  if (const auto *call = exprAs<Call>(&expression)) {
+    if (const auto *resolved = semanticModel.findCall(*call))
+      relay = textReferenceRelay(*call, *resolved);
+  } else if (const auto *unary = exprAs<Unary>(&expression)) {
+    relay = operatorTextReferenceRelay(*unary);
+  }
+  std::optional<OwnerlessTextField> prefix;
+  if (relay)
+    prefix = fieldSourcedTextFormal(*relay);
+  else if (const auto *get = exprAs<Get>(&expression);
+           get != nullptr && get->access().kind != TokenKind::ARROW)
+    prefix = contractRelayPrefix(get->object().get());
+  if (!prefix)
+    return;
+  const auto [entry, inserted] = requestSession.contractRelayUses.try_emplace(
+      &expression, RequestSessionState::ContractRelayUse{
+                       .function = scope->declaration, .prefix = *prefix});
+  if (inserted)
+    requestSession.contractRelayOrder.push_back(&expression);
 }
 
 auto SemanticVisitor::Impl::textFieldContractFunction(
@@ -1582,6 +1738,10 @@ auto SemanticVisitor::Impl::ownerlessTextForwardingField(
   if (const auto *get = exprAs<Get>(current);
       get != nullptr && get->access().kind != TokenKind::ARROW &&
       get->object()) {
+    // Text read under a contract formal's relayed nested value is the
+    // formal's text under the relay's prefix.
+    if (const auto prefix = contractRelayPrefix(get->object().get()))
+      return prefix;
     auto formal = textFieldContractFormal(*get->object());
     const SemanticType *objectType = semanticModel.findType(*get->object());
     if (!formal || objectType == nullptr)
@@ -1928,7 +2088,8 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
       type.kind == SemanticType::TypeParameter && scope->ownerClass != 0 &&
       !classInfo(scope->ownerClass).genericParameters.empty();
   if (type.kind != SemanticType::StringView &&
-      type.kind != SemanticType::CString && !conditional)
+      type.kind != SemanticType::CString && !conditional &&
+      !nestedTextClass(type))
     return std::nullopt;
   formal.payload = variant->payloadSymbols[payload.payloadIndex];
   return formal;
@@ -1959,7 +2120,7 @@ auto SemanticVisitor::Impl::notePayloadFieldRead(const Expr &expression)
       const auto type =
           substituteType(variant.payloadTypes[index], substitution);
       if (type.kind != SemanticType::StringView &&
-          type.kind != SemanticType::CString &&
+          type.kind != SemanticType::CString && !nestedTextClass(type) &&
           !(generic && type.kind == SemanticType::TypeParameter))
         continue;
       auto payload = field->first;
@@ -2436,10 +2597,25 @@ auto SemanticVisitor::Impl::contractTextPath(
             ? owner->members.end()
             : owner->members.find(field.declaration->name().lexeme);
     if (member != owner->members.end() &&
-        symbolForDeclaration(member->second.symbol.declaration) == entry.field)
-      return directTextPayload(
-          substituteType(member->second.symbol.type, classSubstitution(type)),
-          entry.payload);
+        symbolForDeclaration(member->second.symbol.declaration) ==
+            entry.field) {
+      const auto fieldType =
+          substituteType(member->second.symbol.type, classSubstitution(type));
+      if (directTextPayload(fieldType, entry.payload))
+        return true;
+      // A payload of a nested text class holds text paths too.
+      const auto enumeration = enumTypeFor(fieldType);
+      if (!enumeration)
+        return false;
+      for (const auto &variant : enumeration->enumerators)
+        for (std::size_t index = 0; index < variant.payloadSymbols.size() &&
+                                    index < variant.payloadTypes.size();
+             ++index)
+          if (variant.payloadSymbols[index] == entry.payload)
+            return nestedTextClass(substituteType(variant.payloadTypes[index],
+                                                  enumSubstitution(fieldType)));
+      return false;
+    }
   }
   return false;
 }
@@ -2588,8 +2764,26 @@ auto SemanticVisitor::Impl::relayReturnedTextFormal(
   if (returned != &result || field == 0 || lambdaDepth != 0 ||
       constructorDepth != 0 || destructorDepth != 0)
     return false;
-  const auto index = ownerlessTextForwardingParameter(argument);
+  auto index = ownerlessTextForwardingParameter(argument);
   const auto *function = currentFunctionInfo();
+  // An immutable by-value formal of a nested text class that the
+  // constructor stores whole relays its text paths (L-OWN-02 phase 3).
+  if (!index && constructor != nullptr && function != nullptr &&
+      function->bodyDeclaration() != nullptr)
+    if (const auto *variable = directCallableParameterVariable(argument))
+      if (const Symbol *symbol = resolve(variable->name());
+          symbol != nullptr && symbol->parameterDeclaration != nullptr) {
+        const auto &parameters = function->bodyDeclaration()->parameters();
+        for (std::size_t position = 0;
+             position < parameters.size() &&
+             position < function->parameterTypes.size();
+             ++position)
+          if (&parameters[position] == symbol->parameterDeclaration &&
+              !parameters[position].pack &&
+              parameters[position].mutability != Mutability::Mutable &&
+              nestedTextClass(function->parameterTypes[position]))
+            index = position;
+      }
   if (!index || !function || !function->declaration ||
       function->virtualMethod || function->overrideMethod ||
       function->linkage != LanguageLinkage::Gti ||
@@ -2715,6 +2909,55 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
        ++parameter) {
     const auto kind = resolved.parameterTypes[parameter].kind;
     const ExprPtr *argument = resolvedCallArgument(call, &resolved, parameter);
+    // A formal of a nested text class returned whole in a field nests the
+    // argument's one text path there (L-OWN-02 phase 3).
+    if (kind == SemanticType::Class && argument != nullptr && !provisional &&
+        nestedTextClass(resolved.parameterTypes[parameter])) {
+      const ExpressionInfo *info = semanticModel.findExpression(**argument);
+      const auto paths = info != nullptr && isTextDependentValue(*info)
+                             ? textDependentPaths(**argument)
+                             : std::vector<std::vector<SymbolId>>{};
+      const ClassInfo *result = classInfo(resolved.returnType);
+      if (paths.size() != 1 || result == nullptr)
+        continue;
+      for (const auto &entry : callee.publishedTextFields) {
+        if (entry.parameter != parameter)
+          continue;
+        const bool whole = std::any_of(
+            result->fields.begin(), result->fields.end(),
+            [&](const FieldInfo &field) {
+              const auto member =
+                  field.declaration == nullptr
+                      ? result->members.end()
+                      : result->members.find(field.declaration->name().lexeme);
+              return member != result->members.end() &&
+                     symbolForDeclaration(member->second.symbol.declaration) ==
+                         entry.field &&
+                     substituteType(member->second.symbol.type,
+                                    classSubstitution(resolved.returnType)) ==
+                         resolved.parameterTypes[parameter];
+            });
+        if (!whole)
+          continue;
+        if (!published.empty()) {
+          report(expressionToken(*argument),
+                 "A value can hold dynamic text from one owner; this argument "
+                 "would add a second owner dependency.",
+                 "GTI-S2045");
+          break;
+        }
+        std::vector<SymbolId> path{entry.field};
+        path.insert(path.end(), paths.front().begin(), paths.front().end());
+        published.push_back({.resultFields = std::move(path),
+                             .origin = BorrowOriginKind::Argument,
+                             .parameter = parameter,
+                             .sourceFields = paths.front(),
+                             .access = AccessMode::ReadOnly});
+        consumeTextDependentValue(*argument);
+        break;
+      }
+      continue;
+    }
     // An open formal relays or requires here, so that callers of this generic
     // function see the composition; its text instances decide publication.
     const bool conditionalText = kind == SemanticType::TypeParameter;
@@ -2802,6 +3045,14 @@ auto SemanticVisitor::Impl::recordOwnerlessTextCall(
 }
 
 auto SemanticVisitor::Impl::finalizeOwnerlessTextContracts() -> void {
+  // A relayed nested text value used other than through a field projection
+  // may let any text under the formal's prefix escape (L-OWN-02 phase 3).
+  for (const Expr *expression : requestSession.contractRelayOrder) {
+    auto &use = requestSession.contractRelayUses.at(expression);
+    if (!use.projected && use.function != nullptr)
+      (void)requireOwnerlessTextField(use.function, use.prefix);
+    use.projected = true;
+  }
   finalizeTextFieldContracts();
   const auto required = [&](const auto &use) {
     const auto *target = semanticModel.findFunction(use.callee);
@@ -3195,9 +3446,7 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
       const SymbolId symbol =
           symbolForDeclaration(member->second.symbol.declaration);
       // A field of a publishable class type holds text paths of its own.
-      return directTextField(formalType, symbol) ||
-                     (stored.kind == SemanticType::Class &&
-                      textPublicationOwner(stored))
+      return directTextField(formalType, symbol) || nestedTextClass(stored)
                  ? std::optional{symbol}
                  : std::nullopt;
     };
@@ -3269,8 +3518,7 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
     }
     // A class formal stored whole nests every text path of its argument
     // under the field (L-OWN-02); so does a class field of a formal.
-    if (fieldType.kind == SemanticType::Class &&
-        textPublicationOwner(fieldType)) {
+    if (nestedTextClass(fieldType)) {
       if (const auto index = formalOf(initializer.arguments.front(), fieldType))
         result.push_back({.parameter = *index,
                           .initializer = &initializer,
@@ -3321,8 +3569,7 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
     for (std::size_t index = 0; index < call->arguments().size(); ++index) {
       const auto payloadType =
           substituteType(variant->payloadTypes[index], substitution);
-      const bool nested = payloadType.kind == SemanticType::Class &&
-                          textPublicationOwner(payloadType);
+      const bool nested = nestedTextClass(payloadType);
       if (!textType(payloadType) && !nested)
         continue;
       if (const auto formal = formalOf(call->arguments()[index], payloadType))
@@ -6592,8 +6839,11 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
       !dependencies.empty() && composedCarrierPaths(storedReferencePaths(
                                    semanticModel.typeOf(*expression))))
     return {dependencies.begin(), dependencies.end()};
+  // A direct initialization that publishes re-roots its argument's text
+  // below, rather than being that argument (L-OWN-02).
   if (const auto *construction = semanticModel.findConstruction(*expression);
-      construction != nullptr && construction->directInitialization) {
+      construction != nullptr && construction->directInitialization &&
+      !construction->dependentTextPublication) {
     if (const auto *call = exprAs<Call>(expression.get()))
       return storedBorrowDependencies(call->arguments().front());
     if (const auto *direct = exprAs<DirectInitializer>(expression.get()))
@@ -9587,8 +9837,37 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
   // second group whose source endpoint would retire the shared storage.
   const auto movedCarrier = expression ? retainedLoanSource(expression)
                                        : std::optional<RetainedLoanSource>{};
+  // A construction or call that publishes dependent text re-roots a moved
+  // carrier's paths under its own result: a new value, not the carrier's
+  // continued loan (L-OWN-02).
+  const bool republished = [&] {
+    if (!expression)
+      return false;
+    const Expr *current = expression.get();
+    while (const auto *group = exprAs<Grouping>(current))
+      current = group->expression() ? group->expression().get() : nullptr;
+    if (current == nullptr)
+      return false;
+    if (const auto *construction = semanticModel.findConstruction(*current);
+        construction != nullptr && construction->dependentTextPublication)
+      return true;
+    if (const auto *contextual =
+            semanticModel.findContextualConstruction(*current);
+        contextual != nullptr && contextual->dependentTextPublication)
+      return true;
+    if (const auto *call = exprAs<Call>(current)) {
+      if (const auto *payload = semanticModel.findPayloadConstruction(*call);
+          payload != nullptr && payload->dependentTextPublication)
+        return true;
+      if (const auto *resolved = semanticModel.findCall(*call);
+          resolved != nullptr &&
+          (resolved->dependentTextPublication || resolved->dependentTextReturn))
+        return true;
+    }
+    return false;
+  }();
   const bool namedCarrierTransfer =
-      movedCarrier && movedCarrier->transfer &&
+      !republished && movedCarrier && movedCarrier->transfer &&
       movedCarrier->carrier != nullptr && movedCarrier->loan != 0 &&
       loanFlow.records.contains(movedCarrier->loan);
   if (expression && carrier->type.kind != SemanticType::Reference &&

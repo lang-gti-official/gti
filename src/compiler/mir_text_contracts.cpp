@@ -68,6 +68,34 @@ bool textPublishableClass(const MirProgram &program, const SemanticType &type) {
          instance->destructorStatus == SpecialMemberStatus::Generated;
 }
 
+// A publishable class with a text path under it: a text field, a text
+// payload of a payload-enum field, or such a class in a field or payload,
+// which semantics' nestedTextClass names the same way (L-OWN-02 phase 3).
+bool nestedTextClass(const MirProgram &program, const SemanticType &type,
+                     std::size_t depth = 0) {
+  if (depth > 8 || !textPublishableClass(program, type))
+    return false;
+  const auto instance = std::find_if(
+      program.classInstances().begin(), program.classInstances().end(),
+      [&](const auto &candidate) { return candidate.type == type; });
+  const auto text = [&](const SemanticType &candidate) {
+    return textType(candidate) ||
+           (candidate.kind == SemanticType::Class &&
+            nestedTextClass(program, candidate, depth + 1));
+  };
+  for (const auto &field : instance->declaredFields) {
+    if (text(field.type))
+      return true;
+    if (const MirPayloadEnum *enumeration = program.findPayloadEnum(field.type);
+        enumeration != nullptr && !enumeration->traits.containsBorrowedState)
+      for (const auto &variant : enumeration->variants)
+        for (const auto &payload : variant.payloadTypes)
+          if (text(payload))
+            return true;
+  }
+  return false;
+}
+
 // Whether a function's formal or receiver is read-only: a read-only
 // receiver, a read-only reference, or a by-value formal whose binding place
 // is read-only. Only such a formal takes a relayed value.
@@ -268,6 +296,43 @@ private:
            loan->designatedFields == std::vector<SymbolId>{entry.field} &&
            loan->additionalDependencies.empty() &&
            std::find(call.borrowFields.begin(), call.borrowFields.end(),
+                     expected) != call.borrowFields.end();
+  }
+
+  // A call that publishes a dependent class argument, which its callee
+  // returns whole in a field of its fresh result, nests the argument's path
+  // `held` under that field in its own read-only Stored loan (L-OWN-02
+  // phase 3).
+  bool publishesWholeCallText(const TextBody &context,
+                              const MirInstruction &call, std::size_t parameter,
+                              std::span<const SymbolId> held) const {
+    const auto *target =
+        call.kind == MirInstructionKind::Call && call.functionTarget
+            ? program.findFunctionInstance(*call.functionTarget)
+            : nullptr;
+    const auto *loan = call.loan ? context.body.findLoan(*call.loan) : nullptr;
+    if (target == nullptr || !call.dependentTextPublication || !loan ||
+        held.empty() || parameter >= target->parameterTypes.size() ||
+        target->parameterTypes[parameter].kind != SemanticType::Class ||
+        loan->kind != MirLoanKind::Stored ||
+        loan->access != AccessMode::ReadOnly ||
+        !loan->additionalDependencies.empty() ||
+        loan->designatedFields.size() != held.size() + 1 ||
+        !std::equal(held.begin(), held.end(),
+                    loan->designatedFields.begin() + 1) ||
+        !std::binary_search(
+            target->publishedTextFields.begin(),
+            target->publishedTextFields.end(),
+            PublishedTextField{.parameter = parameter,
+                               .field = loan->designatedFields.front()}))
+      return false;
+    const BorrowedFieldOrigin expected{
+        .resultFields = loan->designatedFields,
+        .origin = BorrowOriginKind::Argument,
+        .parameter = parameter,
+        .sourceFields = TextFieldPath(held.begin(), held.end()),
+        .access = AccessMode::ReadOnly};
+    return std::find(call.borrowFields.begin(), call.borrowFields.end(),
                      expected) != call.borrowFields.end();
   }
 
@@ -536,8 +601,13 @@ private:
     }
     const TextFieldPath path =
         payload == 0 ? TextFieldPath{field} : TextFieldPath{field, payload};
+    // A carrier designating a path through `path` holds a relayed owner's
+    // text under it, as one designating `path` itself does.
     if (const auto designated = dependentDesignationPath(context.body, *held))
-      return *designated == path ? TextSources{} : TextSources{.known = true};
+      return designated->size() >= path.size() &&
+                     std::equal(path.begin(), path.end(), designated->begin())
+                 ? TextSources{}
+                 : TextSources{.known = true};
     const auto *loan = held->kind == MirOperandKind::Loan
                            ? context.body.findLoan(held->loan)
                            : nullptr;
@@ -588,6 +658,11 @@ private:
           context.body.findPlace(loan ? loan->source : operand.place);
       if (!place || !textType(place->type))
         return {};
+      // Text read under a nested text class that a call returned by
+      // reference is what the call's origin holds under the relayed payload.
+      if (place->root == MirPlaceRootKind::Loan && !place->projections.empty())
+        if (auto relayed = classReferenceSources(context, *place))
+          return *relayed;
       // Text read through a reference that a call returned is the text that
       // the callee's returned reference designates.
       if (place->root == MirPlaceRootKind::Loan && place->projections.empty())
@@ -737,6 +812,174 @@ private:
     }
     active.erase({true, operand.value});
     return answer;
+  }
+
+  // The instruction that produces `loan`: a Borrow or a Call.
+  const MirInstruction *loanProducer(const MirBody &body,
+                                     MirLoanId loan) const {
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.loan == loan &&
+            (instruction.kind == MirInstructionKind::Borrow ||
+             instruction.kind == MirInstructionKind::Call))
+          return &instruction;
+    return nullptr;
+  }
+
+  // Whether `operand`, a call's receiver, is the enclosing method's own
+  // receiver.
+  bool ownReceiver(const MirBody &body, const MirOperand &operand) const {
+    const MirOperand *current = &operand;
+    for (std::size_t depth = 0;
+         depth < 4 && current->kind == MirOperandKind::Value; ++depth) {
+      const auto *producer = definition(body, current->value);
+      if (producer == nullptr || producer->operands.size() != 1)
+        return false;
+      current = &producer->operands.front();
+    }
+    const auto *loan = current->kind == MirOperandKind::Loan
+                           ? body.findLoan(current->loan)
+                           : nullptr;
+    const auto *place = body.findPlace(loan ? loan->source : current->place);
+    return place != nullptr && place->root == MirPlaceRootKind::This &&
+           place->projections.empty();
+  }
+
+  // The receiver payload that every reference return of `target` to a
+  // nested text class designates: a payload reference binding of one of
+  // its payload-enum fields, or another such accessor of its own receiver
+  // (L-OWN-02 phase 3).
+  std::optional<OwnerlessTextField>
+  classReferenceRelay(const MirFunctionInstance &target,
+                      std::size_t depth = 0) {
+    const auto &type = target.returnType;
+    if (depth > 4 || type.kind != SemanticType::Reference ||
+        type.arguments.size() != 1 ||
+        !nestedTextClass(program, type.arguments.front()) ||
+        !fieldContractFunction(program, target))
+      return std::nullopt;
+    const TextBody callee{.body = target.body,
+                          .types = target.parameterTypes,
+                          .bindings = target.parameterBindings,
+                          .fieldContracts = &target};
+    std::optional<OwnerlessTextField> result;
+    bool returned = false;
+    for (const auto &block : target.body.blocks) {
+      if (block.terminator.kind != MirTerminatorKind::Return)
+        continue;
+      returned = true;
+      std::optional<OwnerlessTextField> entry;
+      std::optional<MirLoanId> loan = block.terminator.returnLoan;
+      for (std::size_t step = 0; loan && step < 4 && !entry; ++step) {
+        const auto *producer = loanProducer(target.body, *loan);
+        if (producer == nullptr)
+          break;
+        if (producer->kind == MirInstructionKind::Call) {
+          const auto *inner =
+              producer->functionTarget
+                  ? program.findFunctionInstance(*producer->functionTarget)
+                  : nullptr;
+          if (inner != nullptr && producer->receiver &&
+              ownReceiver(target.body, *producer->receiver))
+            entry = classReferenceRelay(*inner, depth + 1);
+          break;
+        }
+        const auto &operand = producer->operands.front();
+        if (operand.kind == MirOperandKind::Loan) {
+          loan = operand.loan;
+          continue;
+        }
+        const auto *place = target.body.findPlace(operand.place);
+        const auto *extract = place && place->root == MirPlaceRootKind::Value &&
+                                      place->projections.empty()
+                                  ? definition(target.body, place->value)
+                                  : nullptr;
+        if (const auto field = extract
+                                   ? contractPayloadExtraction(callee, *extract)
+                                   : std::nullopt;
+            field && field->receiver)
+          entry = field;
+        else if (extract != nullptr &&
+                 extract->kind == MirInstructionKind::Compute &&
+                 extract->operation == MirOperation::PayloadExtract &&
+                 extract->operands.size() == 1 && extract->enumVariant &&
+                 extract->payloadIndex)
+          entry = classPayloadExtraction(callee, *extract);
+        break;
+      }
+      if (!entry || (result && *result != *entry))
+        return std::nullopt;
+      result = entry;
+    }
+    return returned ? result : std::nullopt;
+  }
+
+  // The contract payload of a nested text class that `instruction`, a
+  // payload extraction from a formal's or the receiver's payload-enum field,
+  // extracts.
+  std::optional<OwnerlessTextField>
+  classPayloadExtraction(const TextBody &context,
+                         const MirInstruction &instruction) const {
+    const auto &subject = instruction.operands.front();
+    const auto *loan = subject.kind == MirOperandKind::Loan
+                           ? context.body.findLoan(subject.loan)
+                           : nullptr;
+    const auto *place =
+        subject.kind == MirOperandKind::Value
+            ? nullptr
+            : context.body.findPlace(loan ? loan->source : subject.place);
+    auto formal = place ? contractPlace(context, *place, true) : std::nullopt;
+    const auto *enumeration = program.findPayloadEnum(subject.type);
+    if (!formal || formal->field == 0 || enumeration == nullptr ||
+        *instruction.enumVariant >= enumeration->variants.size())
+      return std::nullopt;
+    const auto &variant = enumeration->variants[*instruction.enumVariant];
+    if (*instruction.payloadIndex >= variant.payloadSymbols.size() ||
+        *instruction.payloadIndex >= variant.payloadTypes.size() ||
+        !nestedTextClass(program,
+                         variant.payloadTypes[*instruction.payloadIndex]))
+      return std::nullopt;
+    formal->payload = variant.payloadSymbols[*instruction.payloadIndex];
+    return formal;
+  }
+
+  // The contract prefix that `place`, rooted at a call's returned reference
+  // to a nested text class, reads under: the call's receiver or argument at
+  // the callee's relayed payload.
+  std::optional<TextSources> classReferenceSources(const TextBody &context,
+                                                   const MirPlace &place) {
+    if (place.root != MirPlaceRootKind::Loan)
+      return std::nullopt;
+    const MirInstruction *call = nullptr;
+    std::optional<MirLoanId> loan = place.loan;
+    for (std::size_t step = 0; loan && step < 4 && call == nullptr; ++step) {
+      const auto *producer = loanProducer(context.body, *loan);
+      if (producer == nullptr)
+        return std::nullopt;
+      if (producer->kind == MirInstructionKind::Call)
+        call = producer;
+      else if (producer->operands.size() == 1 &&
+               producer->operands.front().kind == MirOperandKind::Loan)
+        loan = producer->operands.front().loan;
+      else
+        return std::nullopt;
+    }
+    const auto *target =
+        call != nullptr && call->functionTarget
+            ? program.findFunctionInstance(*call->functionTarget)
+            : nullptr;
+    const auto relay =
+        target != nullptr ? classReferenceRelay(*target) : std::nullopt;
+    if (!relay)
+      return std::nullopt;
+    const MirOperand *origin =
+        relay->receiver ? (call->receiver ? &*call->receiver : nullptr)
+        : relay->parameter < call->operands.size()
+            ? &call->operands[relay->parameter]
+            : nullptr;
+    if (origin == nullptr)
+      return TextSources{};
+    return heldFieldSources(context, *origin, relay->field, relay->payload);
   }
 
   // The text a source call returns, or that its returned reference
@@ -1084,15 +1327,104 @@ private:
                                  std::move(path));
   }
 
+  // The receiver field that every return of `function` moves or loads
+  // whole, as an accessor of a nested value does.
+  std::optional<SymbolId>
+  returnedReceiverField(const MirFunctionInstance &function) const {
+    std::optional<SymbolId> field;
+    for (const auto &block : function.body.blocks) {
+      if (block.terminator.kind != MirTerminatorKind::Return)
+        continue;
+      const auto &value = block.terminator.value;
+      const auto *producer = value && value->kind == MirOperandKind::Value
+                                 ? definition(function.body, value->value)
+                                 : nullptr;
+      if (producer == nullptr || producer->operands.size() != 1 ||
+          (producer->kind != MirInstructionKind::Move &&
+           producer->kind != MirInstructionKind::Load))
+        return std::nullopt;
+      const auto &read = producer->operands.front();
+      const auto *place =
+          read.kind == MirOperandKind::Copy || read.kind == MirOperandKind::Move
+              ? function.body.findPlace(read.place)
+              : nullptr;
+      if (place == nullptr || place->root != MirPlaceRootKind::This ||
+          place->projections.size() != 1 ||
+          place->projections.front().kind != MirProjectionKind::Field ||
+          (field && *field != place->projections.front().field))
+        return std::nullopt;
+      field = place->projections.front().field;
+    }
+    return field;
+  }
+
+  // The class formal and its field that `operand` passes on whole: a read
+  // of `formal.field`, or an accessor of the exact formal returning it.
+  std::optional<std::pair<std::size_t, SymbolId>>
+  classFieldSource(const TextBody &context, const MirOperand &operand) const {
+    const MirOperand *current = &operand;
+    for (std::size_t depth = 0;
+         depth < 4 && current->kind == MirOperandKind::Value; ++depth) {
+      const auto *producer = definition(context.body, current->value);
+      if (producer == nullptr)
+        return std::nullopt;
+      if (producer->kind == MirInstructionKind::Call) {
+        const auto *target =
+            producer->functionTarget
+                ? program.findFunctionInstance(*producer->functionTarget)
+                : nullptr;
+        const auto field =
+            target != nullptr ? returnedReceiverField(*target) : std::nullopt;
+        const auto formal = field && producer->receiver
+                                ? exactClassFormal(context, *producer->receiver)
+                                : std::nullopt;
+        return formal ? std::optional{std::pair{*formal, *field}}
+                      : std::nullopt;
+      }
+      if (producer->operands.size() != 1 ||
+          (producer->kind != MirInstructionKind::CallInput &&
+           producer->kind != MirInstructionKind::Load &&
+           producer->kind != MirInstructionKind::Move))
+        return std::nullopt;
+      current = &producer->operands.front();
+    }
+    const auto *place = current->kind == MirOperandKind::Copy ||
+                                current->kind == MirOperandKind::Move
+                            ? context.body.findPlace(current->place)
+                            : nullptr;
+    if (place == nullptr || place->root != MirPlaceRootKind::Binding ||
+        place->capture != 0 || place->projections.size() != 1 ||
+        place->projections.front().kind != MirProjectionKind::Field)
+      return std::nullopt;
+    const auto found = std::find(context.bindings.begin(),
+                                 context.bindings.end(), place->binding);
+    const auto index =
+        static_cast<std::size_t>(found - context.bindings.begin());
+    if (found == context.bindings.end() || index >= context.types.size() ||
+        context.types[index].kind != SemanticType::Class)
+      return std::nullopt;
+    return std::pair{index, place->projections.front().field};
+  }
+
   // A class formal that `operand` passes on whole, of the stored `type`,
   // alone fills `path`: its argument's text paths nest there.
   void noteWholeRelay(const TextBody &context, const MirOperand &operand,
                       const SemanticType &type, bool exclusive,
                       TextFieldPath path, InitializerTextInputs &inputs,
                       FieldUses &fieldUses) const {
-    const auto formal = exactClassFormal(context, operand);
-    if (!formal || context.types[*formal] != type)
+    if (!nestedTextClass(program, type))
       return;
+    const auto formal = exactClassFormal(context, operand);
+    if (!formal || context.types[*formal] != type) {
+      // A class field of a formal, read directly or through an accessor,
+      // stored whole re-roots the paths through that field.
+      if (const auto source = classFieldSource(context, operand)) {
+        ++fieldUses[{source->first, source->second}];
+        if (exclusive)
+          inputs.fieldRelays.emplace(*source, std::move(path));
+      }
+      return;
+    }
     ++fieldUses[{*formal, 0}];
     if (!exclusive)
       return;
@@ -1429,6 +1761,37 @@ private:
           if (instruction.receiver)
             visitField(*instruction.receiver);
         }
+        // A whole use of a nested text class that a call returned by
+        // reference, a copy of it or a call on it, may let any text under the
+        // relayed payload escape; a field read through it is resolved where
+        // its text is stored (L-OWN-02 phase 3).
+        {
+          const auto visitRelay = [&](const MirOperand &operand) {
+            if (operand.kind == MirOperandKind::Value ||
+                operand.kind == MirOperandKind::Constant)
+              return;
+            const auto *loan = operand.kind == MirOperandKind::Loan
+                                   ? context.body.findLoan(operand.loan)
+                                   : nullptr;
+            const auto *place =
+                context.body.findPlace(loan ? loan->source : operand.place);
+            if (place == nullptr || place->root != MirPlaceRootKind::Loan ||
+                !place->projections.empty() ||
+                !nestedTextClass(program, place->type))
+              return;
+            if (const auto relayed = classReferenceSources(context, *place)) {
+              if (!relayed->known && diagnose)
+                fail(context, owner, &instruction,
+                     "nested text value relayed by reference may escape");
+              neededFields.insert(relayed->fields.begin(),
+                                  relayed->fields.end());
+            }
+          };
+          for (const auto &operand : instruction.operands)
+            visitRelay(operand);
+          if (instruction.receiver)
+            visitRelay(*instruction.receiver);
+        }
         // A dependent value relayed as a formal or receiver: its callee
         // must carry a contract that lets none of its fields outlive the
         // call.
@@ -1446,15 +1809,17 @@ private:
                 .receiver = calleeFormal.receiver,
                 .parameter = calleeFormal.parameter,
                 .field = designated->front(),
-                .payload = designated->size() == 2 ? designated->back() : 0};
+                .payload = designated->size() >= 2 ? (*designated)[1] : 0};
             // A construction re-roots the value's dependency at the path its
             // constructor stores that field, or the whole value, in, under its
             // own loan.
             const bool reRooted =
-                call && call->kind == MirInstructionKind::Construct &&
-                !calleeFormal.receiver &&
-                publishesFieldRelay(context, *call, calleeFormal.parameter,
-                                    *designated);
+                call && !calleeFormal.receiver &&
+                ((call->kind == MirInstructionKind::Construct &&
+                  publishesFieldRelay(context, *call, calleeFormal.parameter,
+                                      *designated)) ||
+                 publishesWholeCallText(context, *call, calleeFormal.parameter,
+                                        *designated));
             // A contract names a text field or a payload-enum field's text
             // payload; a path through a nested class field has no contract.
             SemanticType argument = instruction.info.type;
@@ -1463,7 +1828,7 @@ private:
               argument = SemanticType(argument.arguments.front());
             const bool contracted =
                 designated->size() == 1 ||
-                (designated->size() == 2 &&
+                (designated->size() >= 2 &&
                  payloadEnumField(argument, designated->front()));
             if (reRooted) {
             } else if (!contracted || !target ||
@@ -1518,6 +1883,21 @@ private:
               fail(context, owner, &instruction,
                    "ownerless text argument is missing");
           }
+        // A returned fresh value relays a class formal that its constructor
+        // stores whole in one field (L-OWN-02 phase 3).
+        if (instruction.kind == MirInstructionKind::Construct &&
+            instruction.constructorTarget &&
+            *instruction.constructorTarget != 0 &&
+            *instruction.constructorTarget <= constructorFieldRelays.size() &&
+            returnedFreshValue(context, instruction))
+          for (const auto &[key, path] :
+               constructorFieldRelays[*instruction.constructorTarget - 1])
+            if (key.second == 0 && path.size() == 1 &&
+                key.first < instruction.operands.size())
+              if (const auto formal = exactClassFormal(
+                      context, instruction.operands[key.first]))
+                relayedFormals.insert(
+                    {.parameter = *formal, .field = path.front()});
         // A callee that returns an argument in a text field of its fresh
         // result (L-OWN-02): a dynamic argument is published under the call's
         // own loan, a returned call relays this function's formal, and any

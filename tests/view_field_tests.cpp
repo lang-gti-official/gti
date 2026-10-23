@@ -1923,7 +1923,15 @@ int main() {
   }
   std::unexpected_value<std::string_view> failure = unexpected(input.view());
   total = total + token.text.size() + std::move(failure).error().size();
-  return total == 36 ? 0 : 1;
+  // An explicit construction from a moved failure re-roots its text rather
+  // than continuing the failure's loan.
+  std::unexpected_value<std::string_view> named = unexpected(input.view());
+  expected<int, std::string_view> rebuilt =
+      expected<int, std::string_view>(std::move(named));
+  if (!rebuilt) {
+    total = total + rebuilt.error().size();
+  }
+  return total == 45 ? 0 : 1;
 }
 )gti");
   if (!result.canGenerateCode())
@@ -1961,6 +1969,12 @@ int main() {
            Case{"std::unexpected_value<std::string_view> failure = "
                 "unexpected(owner.view()); kept = std::move(failure).error();",
                 "GTI-S2045"},
+           Case{
+               "std::unexpected_value<std::string_view> failure = "
+               "unexpected(owner.view()); expected<int, std::string_view> "
+               "rebuilt = expected<int, std::string_view>(std::move(failure)); "
+               "kept = rebuilt.error();",
+               "GTI-S2045"},
        })
     expectConversionRejected("", entry.body, entry.code);
   // A conversion of a local owner's view does not leave its body.
@@ -2345,6 +2359,194 @@ int main() {
   }
 }
 
+const std::string kNesting = R"gti(
+#include <std/optional>
+#include <std/string>
+mut std::string_view kept = "";
+class Diag {
+public:
+  std::string_view text;
+  int line;
+  Diag(std::string_view text, int line) : text(text), line(line) {}
+};
+class Report {
+public:
+  Diag diag;
+  int code;
+  Report(Diag diag, int code) : diag(diag), code(code) {}
+};
+class Outer {
+public:
+  Report report;
+  Outer(Report report) : report(report) {}
+};
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+};
+expected<int, Diag> check(std::string& input) {
+  if (input.empty()) {
+    return 0;
+  }
+  return unexpected(Diag(input.view(), 3));
+}
+void keepReport(Report report) { kept = report.diag.text; }
+void keepDeref(std::optional<Token>& maybe) { kept = (*maybe).text; }
+void keepCopy(std::optional<Token>& maybe) {
+  Token token = *maybe;
+  kept = token.text;
+}
+uint64_t width(std::optional<Token>& maybe) { return (*maybe).text.size(); }
+void keepError(expected<int, Diag>& result) { kept = result.error().text; }
+uint64_t errorWidth(expected<int, Diag>& result) {
+  return result.error().text.size();
+}
+)gti";
+
+// A dependent value stored whole in a field or payload of another value
+// nests its text path there (L-OWN-02 phase 3): a user class, an optional of
+// a class and an expected whose error is a class, built and returned over a
+// caller's string, and read through fields and accessor references.
+void testNestedValues() {
+  const auto result = analyzeText(kNesting + R"gti(
+int main() {
+  std::string input{"nested"};
+  Diag diag = Diag(input.view(), 1);
+  Report report = Report(diag, 2);
+  Outer outer = Outer(Report(Diag(input.view(), 3), 4));
+  mut uint64_t total = report.diag.text.size() + outer.report.diag.text.size();
+  std::optional<Token> maybe = Token(input.view(), 5);
+  if (maybe) {
+    total = total + (*maybe).text.size() + maybe.value().text.size() +
+            width(maybe);
+  }
+  expected<int, Diag> failed = unexpected(Diag(input.view(), 6));
+  expected<int, Diag> checked = check(input);
+  if (!failed && !checked) {
+    total = total + failed.error().text.size() + errorWidth(checked);
+  }
+  std::string empty{""};
+  expected<int, Diag> passed = check(empty);
+  Report literal = Report(Diag("literal", 7), 8);
+  keepReport(literal);
+  std::optional<Token> ownerless = Token("ownerless", 9);
+  keepDeref(ownerless);
+  keepCopy(ownerless);
+  return total + uint64_t(passed.value()) == 42 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "nested dependent values keep their owner's text");
+  if (!result.canGenerateCode())
+    return;
+  // MIR recomputes each nested publication's path: a whole value stored in a
+  // field, a class formal returned whole and a class field re-rooted through
+  // its accessor.
+  std::size_t nested = 0;
+  for (const auto &function : result.mir.functionInstances())
+    for (std::size_t block = 0; block < function.body.blocks.size(); ++block)
+      for (std::size_t index = 0;
+           index < function.body.blocks[block].instructions.size(); ++index) {
+        const auto &instruction =
+            function.body.blocks[block].instructions[index];
+        if (!instruction.dependentTextPublication ||
+            instruction.borrowFields.size() != 1 ||
+            instruction.borrowFields.front().resultFields.size() < 2 ||
+            instruction.borrowFields.front().sourceFields.empty())
+          continue;
+        ++nested;
+        auto changed = result.mir;
+        auto *target = const_cast<lang::MirFunctionInstance *>(
+            changed.findFunctionInstance(function.id));
+        target->body.blocks[block]
+            .instructions[index]
+            .borrowFields.front()
+            .resultFields.pop_back();
+        expect(!lang::verifyMirProgram(changed).valid(),
+               "MIR rejects a nested publication missing its leaf");
+      }
+  expect(nested >= 5, "each nesting publishes its whole path");
+  // A function reading text under a formal's nested value requires the
+  // formal's prefix ownerless, as MIR derives.
+  std::size_t prefixes = 0;
+  for (const auto &function : result.mir.functionInstances())
+    if (std::any_of(function.ownerlessTextFields.begin(),
+                    function.ownerlessTextFields.end(),
+                    [](const auto &field) { return field.payload != 0; }) &&
+        function.parameterTypes.size() == 1 &&
+        function.parameterTypes.front().kind == lang::SemanticType::Reference) {
+      ++prefixes;
+      auto changed = result.mir;
+      const_cast<lang::MirFunctionInstance *>(
+          changed.findFunctionInstance(function.id))
+          ->ownerlessTextFields.clear();
+      expect(!lang::verifyMirProgram(changed).valid(),
+             "MIR derives a nested payload's requirement independently");
+    }
+  expect(prefixes >= 3, "keepDeref, keepCopy and keepError require prefixes");
+
+  struct Case {
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{"Report r = Report(Diag(owner.view(), 1), 2); kept = "
+                "r.diag.text;",
+                "GTI-S2045"},
+           Case{"Report r = Report(Diag(owner.view(), 1), 2); Diag d = "
+                "r.diag;",
+                "GTI-S2045"},
+           Case{"Report r = Report(Diag(owner.view(), 1), 2); "
+                "owner.append(\"!\"); uint64_t n = r.diag.text.size();",
+                "GTI-S2017"},
+           Case{"Report r = Report(Diag(owner.view(), 1), 2); keepReport(r);",
+                "GTI-S2045"},
+           Case{"std::optional<Token> o = Token(owner.view(), 1); kept = "
+                "(*o).text;",
+                "GTI-S2045"},
+           Case{"std::optional<Token> o = Token(owner.view(), 1); Token t = "
+                "*o;",
+                "GTI-S2045"},
+           Case{"std::optional<Token> o = Token(owner.view(), 1); "
+                "keepDeref(o);",
+                "GTI-S2045"},
+           Case{"std::optional<Token> o = Token(owner.view(), 1); "
+                "keepCopy(o);",
+                "GTI-S2045"},
+           Case{"std::optional<Token> o = Token(owner.view(), 1); "
+                "std::string_view v = o.value().text; owner.append(\"!\"); "
+                "uint64_t n = v.size();",
+                "GTI-S2017"},
+           Case{"expected<int, Diag> r = check(owner); kept = "
+                "r.error().text;",
+                "GTI-S2045"},
+           Case{"expected<int, Diag> r = check(owner); Diag d = r.error();",
+                "GTI-S2045"},
+           Case{"expected<int, Diag> r = check(owner); keepError(r);",
+                "GTI-S2045"},
+           Case{"expected<int, Diag> r = check(owner); owner.append(\"!\"); "
+                "uint64_t n = r.error().text.size();",
+                "GTI-S2017"},
+       }) {
+    const auto rejected = analyzeText(
+        kNesting + "int run() { mut std::string owner{\"owner\"}; " +
+        entry.body + " return 0; }\nint main() { return run(); }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, entry.code),
+           std::string("a nested dependent value is checked at source: ") +
+               entry.body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + entry.body);
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
@@ -2365,6 +2567,7 @@ constexpr NamedTest kTests[] = {
     {"testFieldRelays", testFieldRelays},
     {"testDependentReturns", testDependentReturns},
     {"testPayloadFieldUses", testPayloadFieldUses},
+    {"testNestedValues", testNestedValues},
 };
 } // namespace
 

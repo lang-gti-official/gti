@@ -7889,9 +7889,12 @@ auto SemanticVisitor::Impl::textReferenceReturnSummary(
   const bool conditional =
       type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
       type.arguments.front().kind == SemanticType::TypeParameter;
+  // A reference to a nested text class relays the paths under it (L-OWN-02
+  // phase 3).
   if (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
       (type.arguments.front().kind != SemanticType::StringView &&
-       type.arguments.front().kind != SemanticType::CString && !conditional) ||
+       type.arguments.front().kind != SemanticType::CString && !conditional &&
+       !nestedTextClass(type.arguments.front())) ||
       function.intrinsic != IntrinsicKind::None ||
       function.declaration == nullptr ||
       function.bodyDeclaration()->body() == nullptr)
@@ -8079,7 +8082,7 @@ auto SemanticVisitor::Impl::payloadReferenceRelayArm(
     const auto type = substituteType(candidate.payloadTypes[*index],
                                      enumSubstitution(fieldType));
     if (type.kind != SemanticType::StringView &&
-        type.kind != SemanticType::CString &&
+        type.kind != SemanticType::CString && !nestedTextClass(type) &&
         !(conditional && type.kind == SemanticType::TypeParameter))
       return std::nullopt;
     return OwnerlessTextField{

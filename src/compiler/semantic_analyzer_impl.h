@@ -2053,6 +2053,26 @@ private:
   // text field: a class without borrowed state, bases or a destructor, so no
   // code outside the creating body reads the field as ownerless text.
   [[nodiscard]] bool textPublicationOwner(const SemanticType &type) const;
+  // A publishable class with a text path under it: a text field, a text
+  // payload of a payload-enum field, or such a class in a field or payload.
+  // A dependent value of it nests its paths (L-OWN-02 phase 3).
+  [[nodiscard]] bool nestedTextClass(const SemanticType &type,
+                                     std::size_t depth = 0) const;
+  // Whether a payload or field of `type` holds text: it is text, or a
+  // nested text class.
+  [[nodiscard]] bool holdsText(const SemanticType &type) const;
+  // Notes `expression` when it is a contract formal's reference relay to a
+  // nested text class, or a field of one, of type `type`.
+  void noteContractRelayUse(const Expr &expression, const SemanticType &type);
+  // The contract prefix that `object`, a noted relay use, reads under.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  contractRelayPrefix(const Expr *object) const;
+  // The field contract naming a dependent path of `type`: its text field,
+  // or its payload-enum field's payload, text or a nested text class with
+  // the rest of the path under it. A path through a class field has none.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  contractPrefix(const SemanticType &type, std::span<const SymbolId> path,
+                 OwnerlessTextField formal) const;
 
   // L-OWN-02 phase 1b: field-level ownerless text contracts. A function
   // states which text fields of its formals and receiver it lets outlive the
@@ -2103,6 +2123,11 @@ private:
     // The field's text payload, for a payload-enum field.
     SymbolId payload = 0;
   };
+  // The paths of a reference relay's dependent origin under the relayed
+  // field or payload, without that prefix: what the returned reference to a
+  // nested text class designates.
+  [[nodiscard]] std::optional<std::vector<std::vector<SymbolId>>>
+  nestedTextRelay(const FieldSourcedTextResult &relay) const;
   [[nodiscard]] std::optional<FieldSourcedTextResult>
   fieldSourcedTextResult(const Call &call,
                          const ResolvedCallInfo &resolved) const;
@@ -6221,6 +6246,16 @@ private:
     std::unordered_map<const Expr *, TextFieldFormalUse> textFieldFormalUses;
     std::vector<TextFieldForwardUse> textFieldForwardUses;
     std::vector<TextDependentRelay> textDependentRelays;
+    // A contract formal's reference relay to a nested text class, or a field
+    // chain under one, and the requirement that any use of it but a field
+    // projection places on the formal (L-OWN-02 phase 3).
+    struct ContractRelayUse {
+      const FunctionDecl *function = nullptr;
+      OwnerlessTextField prefix;
+      bool projected = false;
+    };
+    std::vector<const Expr *> contractRelayOrder;
+    std::unordered_map<const Expr *, ContractRelayUse> contractRelayUses;
     // Per generic class method: the returns that relay its receiver's
     // type-parameter field (conditionalRelayReturns).
     std::unordered_map<const FunctionDecl *, std::unordered_set<const Expr *>>
