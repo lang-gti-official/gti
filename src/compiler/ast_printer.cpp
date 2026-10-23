@@ -137,6 +137,16 @@ void AstPrinter::visitLiteralExpr(const LiteralExpr &expr) {
 }
 
 void AstPrinter::visitMemberRequirementExpr(const MemberRequirement &expr) {
+  if (expr.isExpressionRequirement()) {
+    std::string parameters;
+    for (std::size_t index = 0; index < expr.parameters().size(); ++index)
+      parameters += " " + typeToString(expr.parameters()[index]) + " " +
+                    expr.bindings()[index].lexeme;
+    result =
+        "(requires" + parameters + (expr.unsafeKeyword() ? " unsafe " : " ") +
+        printPtr(expr.expression()) + " " + typeToString(expr.result()) + ")";
+    return;
+  }
   result = "(requires " + typeToString(expr.receiver()) + " " +
            expr.binding().lexeme;
   for (std::size_t index = 0; index < expr.parameters().size(); ++index)
