@@ -16237,16 +16237,20 @@ passiveGeneratedClass(const MirProgram &program, const SemanticType &type,
       }
       // A leaf is passive when its representation copies bitwise and its
       // destruction runs no source cleanup: a scalar, an enum, a raw or null
-      // pointer (a C string is a raw pointer) or a text view. A text view's
-      // dependency on its owner, when it has one, is a MIR loan with no
-      // representation, so it neither changes the copy nor adds cleanup.
+      // pointer (a C string is a raw pointer), a text view or a function item.
+      // A text view's dependency on its owner, when it has one, is a MIR loan
+      // with no representation, so it neither changes the copy nor adds
+      // cleanup. A function item is a stateless identity tag: MIR calls its
+      // function directly, never through the stored object.
       const auto representation = expectedTypeRepresentation(fieldType);
       return representation &&
              (*representation == CppMirTypeRepresentationKind::Scalar ||
               *representation == CppMirTypeRepresentationKind::Enum ||
               *representation == CppMirTypeRepresentationKind::RawPointer ||
               *representation == CppMirTypeRepresentationKind::NullPointer ||
-              *representation == CppMirTypeRepresentationKind::StringView);
+              *representation == CppMirTypeRepresentationKind::StringView ||
+              (*representation == CppMirTypeRepresentationKind::FunctionItem &&
+               fieldType.hasFunctionItemShape()));
     };
     const bool passive = std::all_of(
         instance->declaredFields.begin(), instance->declaredFields.end(),
