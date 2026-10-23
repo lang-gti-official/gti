@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Classes holding function items (0.464.1)
+## Classes holding function items (0.464.2)
 
 `passive_function_item_class_runtime` runs `passive_function_item_classes.gti`.
 Function items reach fields only through generics, so every class is generic
