@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.466.1 — Array fields built from constructor parameters
+## 0.467.1 — Array fields built from constructor parameters
 
 - A constructor that initializes a fixed-array field from its by-value
   parameters, as in `Polygon(Point a, Point b) : corners({a, b})`, used to
@@ -21,6 +21,23 @@ for what minor and patch releases mean.
 - The same elements in a local array, such as
   `Point[2] corners = {a, std::move(b)};` or `Point[2][2] g = {{a, b}, {c, d}};`,
   also reported `GTI-B0001` and now work.
+
+## 0.467.0 — Source-defined requirements and general type facts
+
+- `requires` queries can check ordinary expressions and construction with exact
+  owned results, optional synthetic parameters and multiple checks. Queries
+  execute no code and retain normal access, ownership and unsafe obligations.
+- Concepts and trailing clauses can compose constexpr Boolean calls, including
+  general `std::meta` classification, lifecycle, relocation, transfer/share,
+  exact-type and enum-representation predicates. Existing compiler facts stay
+  authoritative; arbitrary predicates do not invent safety proofs.
+- Prelude numeric/lifecycle/enum concepts now compose reflection queries, and
+  domain arithmetic concepts use source expression requirements. Strict
+  comparison and borrowed-result contracts retain their necessary compiler
+  support. Exact member requirements remain compatible; overload ranking and
+  subsumption are unchanged.
+- Hover signatures, requirement parameter navigation/rename, formatting and
+  Tree-sitter support cover the extended syntax. Example 173 demonstrates it.
 
 ## 0.466.0 — Typed macros
 
