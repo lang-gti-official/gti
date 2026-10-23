@@ -1889,6 +1889,131 @@ int main() {
     expectPayloadRejected(*entry.setup, entry.body, entry.code);
 }
 
+const std::string kCarrierDeclarations = R"gti(
+#include <std/string>
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view name() { return this.text; }
+  std::string_view& ref() { return this.text; }
+  int& kindRef() { return this.kind; }
+};
+enum Word { text(std::string_view value), count(int value) };
+class Line {
+public:
+  Word word;
+  Line(std::string_view text) : word(Word::text(text)) {}
+};
+std::string_view first(Token token) { return token.text; }
+std::string_view id(std::string_view text) { return text; }
+)gti";
+
+// MIR derives which local bindings hold a published owner's text from the
+// publications themselves, not from the carriers semantics recorded
+// (L-OWN-02): copies and moves of the value, reads of its designated field,
+// bound payloads (also through a field's payload enum), relay and formal
+// relay results, and views copied through a returned reference. Each must
+// carry a loan that retains the owner; an int read through the value's
+// reference holds no text.
+void testDerivedCarriers() {
+  const auto result = analyzeText(kCarrierDeclarations + R"gti(
+int main() {
+  std::string input{"carried"};
+  Token token = Token(input.view(), 1);
+  Token copy = token;
+  Token moved = std::move(copy);
+  std::string_view field = moved.text;
+  std::string_view again = field;
+  std::string_view relayed = first(token);
+  std::string_view method = token.name();
+  std::string_view formal = id(field);
+  std::string_view referenced = token.ref();
+  std::string_view temporary = first(Token(input.view(), 2));
+  int kind = token.kindRef();
+  Word word = Word::text(input.view());
+  Line line = Line(input.view());
+  mut uint64_t total = field.size() + again.size() + relayed.size() +
+                       method.size() + formal.size() + referenced.size() +
+                       temporary.size();
+  switch (word) {
+  case Word::text(value): total = total + value.size(); break;
+  case Word::count(value): break;
+  }
+  switch (line.word) {
+  case Word::text(value): total = total + value.size(); break;
+  case Word::count(value): break;
+  }
+  return total + uint64_t(kind) == 64 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "each view of a published owner verifies with its carriers");
+  const auto published = publications(result.mir);
+  if (!result.canGenerateCode() || published.empty())
+    return;
+  const auto function = published.front().function;
+  const auto &loans = result.mir.findFunctionInstance(function)->body.loans;
+  const auto verifyChanged = [&](const auto &change) {
+    auto changed = result.mir;
+    change(const_cast<lang::MirFunctionInstance *>(
+               changed.findFunctionInstance(function))
+               ->body.loans);
+    return lang::verifyMirProgram(changed);
+  };
+  const auto unretained = [](const lang::MirVerificationResult &verified) {
+    return std::any_of(
+        verified.errors.begin(), verified.errors.end(), [](const auto &error) {
+          return error.message.find("does not carry a loan that retains its "
+                                    "owner") != std::string::npos;
+        });
+  };
+  // The first `input.view()` call's own loan names the same owner but
+  // retains no publication.
+  expect(!loans.empty() && loans.front().kind == lang::MirLoanKind::Stored &&
+             loans.front().designatedFields.empty() &&
+             loans.front().carriers.empty(),
+         "the owner's first view has an uncarried loan");
+  // Dropping a binding from a loan it carries, or moving it onto that
+  // unrelated loan, leaves the text it holds unretained.
+  std::size_t carriers = 0;
+  for (std::size_t loan = 1; loan < loans.size(); ++loan)
+    for (std::size_t index = 0; index < loans[loan].carriers.size(); ++index) {
+      ++carriers;
+      const auto binding = loans[loan].carriers[index];
+      expect(unretained(verifyChanged([&](auto &changed) {
+               auto &list = changed[loan].carriers;
+               list.erase(list.begin() + static_cast<std::ptrdiff_t>(index));
+             })),
+             "a binding holding a published owner's text must carry it");
+      expect(unretained(verifyChanged([&](auto &changed) {
+               auto &list = changed[loan].carriers;
+               list.erase(list.begin() + static_cast<std::ptrdiff_t>(index));
+               changed.front().carriers.push_back(binding);
+             })),
+             "another loan on the same owner does not retain a publication");
+    }
+  expect(carriers >= 14, "every binding over the owner is checked");
+  // The view copied through `token.ref()` carries the call's result loan,
+  // which retains the owner only through its stored dependency.
+  const auto relayed =
+      std::find_if(loans.begin(), loans.end(), [](const auto &loan) {
+        return loan.kind == lang::MirLoanKind::CallResult &&
+               loan.storedDependency != 0 && !loan.carriers.empty();
+      });
+  expect(relayed != loans.end(), "a reference relay's view carries its loan");
+  if (relayed != loans.end()) {
+    const auto index = static_cast<std::size_t>(relayed - loans.begin());
+    expect(unretained(verifyChanged(
+               [&](auto &changed) { changed[index].storedDependency = 0; })),
+           "a reference relay's loan retains the owner through its stored "
+           "dependency");
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
@@ -1906,6 +2031,7 @@ constexpr NamedTest kTests[] = {
     {"testTypeParameterFormals", testTypeParameterFormals},
     {"testPayloadPaths", testPayloadPaths},
     {"testOptionalViews", testOptionalViews},
+    {"testDerivedCarriers", testDerivedCarriers},
 };
 } // namespace
 

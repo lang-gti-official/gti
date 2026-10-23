@@ -86,6 +86,25 @@ Do not relabel earlier results or override the helper's identity checks. When
 cost or duration grows materially, explain the cause, evidence obtained and
 remaining work to the user; efficiency does not authorize reduced correctness.
 
+## Sidebar task titles
+
+Each agent keeps its own chat's sidebar title aligned with its current task.
+At task start, use a short, specific description such as `Fix LSP test-target
+diagnostics`; replace it when beginning a different task. Use the client's
+chat-title control (for example, `set_thread_title` targeting the current chat)
+when available. If unsupported, report that limitation in the task update and
+continue; a missing UI control is not an implementation blocker. Do not claim
+an unsuccessful rename succeeded or rename another agent's chat for this rule.
+
+On successful delivery, use `Complete — <task>`. Normal implementation delivery
+includes required validation, PR integration and local-main synchronization;
+explicit PR-only/local-only requests retain their requested boundary. Until
+then, use an honest status when useful, such as `Validating — <task>`,
+`Handed off — <task>`, `Blocked — <task>` or `Cancelled — <task>`, rather than
+`Complete`. Update titles at task/status transitions, not on every poll.
+Sidebar labels aid navigation; PRs, commits and retained evidence remain the
+authoritative work inventory and verification record.
+
 ## Task identity and operations
 
 `scripts/agent_workflow.py` uses Python's standard library and Git. One task
@@ -115,6 +134,7 @@ machines. Nothing locks ordinary editing.
 | `checkpoint <task> [--message <text> --paths <files...>]` | Commit explicitly scoped paths or publish an existing clean commit; create a draft PR on the first meaningful checkpoint. |
 | `reconcile <task>` | Merge current main into the task branch, preserve conflicts for resolution, invalidate old validation and publish. |
 | `verify <task> --checks-file <json>` | Record the attempt, release the lock, execute nonempty argv arrays without a shell inside a build-window `suite` slot, then record passing checks against the published clean head and current remote main. |
+| `verify <task> --focused --checks-file <json>` | For a checked automation-only diff, run owning checks directly and record scope `automation`; refuse compiler changes and remote use. Actual broad workloads still use the window. |
 | `finish <task> --body-file <text> [--pr-only]` | Publish the final PR description, mark ready, verify identities/protection, merge the exact head without bypasses and synchronize local main. PR-only stops ready for review. |
 | `sync <task>` | Confirm merged-head/merge-commit reachability, fast-forward primary main, preserving unrelated local edits, then push `main` and the tags to the `gitea` mirror remote and record the result. |
 | `cleanup <task>` | After confirmed merge/sync, remove a plain clean worktree with no ignored files and delete only unchanged integrated branches. |
@@ -433,12 +453,199 @@ checks never mark the task ready.
 Finish merges through GitHub with `merge_method: merge` and `sha` pinned to
 the validated head, so a branch that moved is refused. The `main` protection
 rule requires a pull request and an up-to-date branch, binds administrators,
-and denies force pushes and deletion. Existing required checks and reviews are
-preserved and enforced by GitHub. Pending/rejected requirements
-leave work unmerged; an agent resumes after they change rather than claiming
-completion. Release workflows run after integration and need not finish before
+and denies force pushes and deletion. Required reviews remain enforced by
+GitHub. GitHub CI is advisory and never delays a locally validated merge or
+task completion. The owner-authorized
+`protection --configure --advisory-ci` clears required status contexts and app
+pins, preserving strict freshness, admin enforcement and review settings. Do
+not force a merge or bypass a server rule. Release workflows run after
+integration and need not finish before
 local installation. VERSION follows normal repository policy; workflow-only
 automation does not change the packaged compiler version.
+
+## Risk-based batch validation
+
+Per-change validation establishes that a patch fixes its motivating problem
+and preserves the affected rules. Integration validation establishes that the
+selected patches work together. Neither an ICE symptom nor a short diff is a
+low-risk classification. The plan names the invariant and its affected users.
+
+| Tier | Changed invariant | Component evidence before admission |
+| --- | --- | --- |
+| T1 | Confined recovery, diagnostic or otherwise narrow behavior | Meaningful regression, owning tests, affected cross-phase checks, compiler smoke |
+| T2 | Shared semantic, generic, ownership or lowering behavior | T1 plus relevant subsystem suites and supported boundaries |
+| T3 | System, layout/ABI/runtime, lifecycle or optimizer invariants | T2 plus explicit platform, runtime/performance and other applicable acceptance gates |
+
+The compiler-smoke execution covers scalar control flow and owning strings in
+a vector at O0/O3. The GTI executable itself is always optimized. Each plan
+also includes `compiler_pipeline`. Shared semantic/IR/representation/runtime
+paths have a script-enforced T2 floor; analysis may always raise the tier.
+Tier selection is reviewable policy, not a proof inferred from filenames.
+
+A regression should fail for the intended reason on a known-bad revision,
+pass with the patch, and pass on the combined candidate. Preserve the original
+command, source identity, failure and log. When historical binaries are
+unavailable or reproduction would be unsafe, state the concrete reason and
+retain existing evidence. Use time/memory bounds for exhaustion cases; never
+reproduce an OOM without a guard. Code-generation fixes also check execution,
+cleanup and relevant source rejections rather than only disappearance of an
+ICE. Existing safety, platform and runtime-performance requirements still apply.
+
+### Component admission
+
+Publish the task as a draft PR, reconcile current main, and configure a separate
+optimized CMake tree. Write a temporary JSON plan, for example:
+
+```json
+{
+  "tier": "T2",
+  "rationale": "Preserve cleanup publication for this newly supported MIR shape",
+  "regressions": ["owning_regression"],
+  "owning": ["owning_suite"],
+  "cross_phase": ["related_runtime"],
+  "broader": ["cpp_mir_body_emitter_lifecycle"],
+  "targets": ["gti_owning_tests", "gti_cpp_mir_body_emitter_lifecycle_tests"],
+  "platforms": ["darwin"],
+  "reproduction": {
+    "revision": "0123456789012345678901234567890123456789",
+    "command": ["old-gti", "repro.gti", "--emit-cpp"],
+    "failure": "GTI-B0001 at the original conditional receiver",
+    "log": "/absolute/path/original-failure.log"
+  }
+}
+```
+
+These test/target names illustrate the schema; select real exact CTest names.
+`cross_phase` may be empty only with a nonempty `unaffected` explanation.
+T2/T3 require `broader`. `reproduction` may instead contain exactly one
+`exception` explanation. Optional `additional_checks` is a list of argv arrays
+for the applicable non-CTest tooling, native/platform or performance gates.
+Optional `platform_tests` maps declared platforms to test names that only apply
+on those hosts (a name appearing there is scoped even when also in `regressions`).
+`platform_checks` similarly maps platforms to extra argv commands. This keeps,
+for example, mandatory macOS native tests out of Linux's required inventory
+without weakening the macOS obligation. Admission itself must run a regression
+on a declared platform. All unscoped tests/checks remain required everywhere.
+Do not include credentials. Every declared gate is executed; plans are not
+permission to omit required checks. `platforms` lists hosts on which the
+combined full campaign must pass; CI's Linux native/sanitizer jobs are additional
+server gates and do not substitute for required macOS evidence.
+
+```sh
+python3 scripts/agent_workflow.py batch enroll my-fix \
+  --plan /tmp/my-fix-checks.json --build /absolute/optimized-tree
+python3 scripts/agent_workflow.py batch status
+```
+
+Admission rebuilds the selected targets plus `gti`/runtime, checks the source
+directory and host optimization in CMakeCache, rejects missing/disabled tests,
+runs the exact selection and smoke, and rejects skipped required results. T1
+selections run directly; T2/T3 subsystem coverage uses the shared suite window.
+Evidence is retained under the common Git directory's
+`gti-agent-workflow/batch-evidence/<task>/<head>/`, including logs and JUnit.
+The admission binds head/base, plan and platform requirements. The original
+failure log is represented by its SHA256 in the portable plan, not uploaded.
+
+The result is **ready for integration**, not fully verified, merged or released.
+An attached PR-body marker makes CI report incomplete integration even if
+someone marks it ready manually; the helper independently refuses direct
+component integration. A changed source must be reconciled, published and admitted
+again. `batch withdraw <task> --reason <text>` clears an unassigned admission
+for normal independent validation; it does not authorize a partial merge.
+Withdrawal requires a draft PR so marking it ready starts independent CI.
+
+### One bounded combined campaign
+
+A designated integrator selects one to eight admitted task names explicitly.
+Collect ready work for at most ten minutes, visible in `batch status`; start
+earlier when useful, including a single ready fix. Do not wait for unfinished
+features or add unadmitted PRs. One active batch at a time prevents agents
+starting duplicate combined campaigns. Other agents keep implementing and
+performing focused checks while that batch runs.
+
+```sh
+python3 scripts/agent_workflow.py batch prepare fixes-oct23 \
+  --tasks first-fix second-fix --worktree /absolute/new-candidate
+python3 scripts/agent_workflow.py batch verify fixes-oct23 \
+  --build /absolute/candidate-release-tree --jobs 4
+python3 scripts/agent_workflow.py finish fixes-oct23 --body-file /tmp/batch-pr.md
+```
+
+Prepare creates a normal task branch/PR and merges exact original commits.
+`.gti-validation/batches/<batch>.json` records the starting main, each original
+task/PR/head, and its plan. Records already integrated into main are immutable.
+Member conflicts stop with the candidate and original branches preserved;
+review the invariant, resolve and commit, then `batch resume <batch>`. The
+membership cannot silently move to a newer PR head. A member's unpublished
+commits also prevent selection.
+
+Full verification rebuilds the whole optimized candidate, executes every
+registered CTest without a selection filter, requires every component's exact
+tests and smoke to be present and passed, and executes additional gates once
+per distinct argv command. Nonrequired platform skips remain explicit evidence;
+they are never reported as passes. A focused or incomplete report cannot stand
+in for a full result. Reports are bound to the clean published head and main
+base; all declared platforms must have evidence for that same pair. Retain an
+old run if main advances, inspect the delta, reconcile near the acceptance
+boundary and obtain the affected/required fresh evidence. Never relabel the
+old run or repeatedly restart it while it is still running.
+
+Remote verification uses `batch verify <batch> --remote-steps-file <plan.json>`
+with the normal remote runner. Configure its separate optimized build first
+in that plan. Include a source-directory suite step whose argv is
+`["python3", "scripts/validation_checks.py", "full", "--build", "{build}",
+"--base", "<exact-current-main-sha>"]`. The remote snapshot carries Git history
+but no `origin/main` ref, so the explicit base SHA is required. The worker owns
+the remote shared window; its complete source identity and structured full
+result are checked before platform evidence is recorded. No installation occurs.
+
+When a combined test fails, retain the report and identify the patch owning
+the violated invariant. That owner repairs it; another agent may help after
+establishing intended behavior, not by weakening unrelated expectations. To
+remove a suspect patch, publish the current source, use
+`batch release <batch> --reason <text>` and prepare a new explicit selection.
+Release closes the unsuccessful batch while preserving its branch/worktree
+and returns its members to the queue. Do not erase conflict work to release it.
+
+Normal `finish` refuses component admissions and requires full platform evidence
+for batches. Required reviews and strict PR freshness still apply; GitHub CI
+does not gate acceptance. An umbrella merge
+preserves all original commits and GitHub marks included original PRs merged;
+confirm their states and run their normal sync/cleanup. The primary checkout,
+backup mirror and release policy remain the normal completion boundary.
+
+### Advisory CI feedback
+
+Draft and admitted component PRs run formatting, version, grammar and workflow
+regressions, without starting native full builds. Their `Validation summary`
+reports **awaiting integration**; helper admission rules, not a GitHub status,
+block direct component merge. Independent or batch candidates become ready for
+review to start additional CI. Compiler changes run the existing full native
+and compiler-sanitizer jobs as advisory feedback. A conservative
+automation-only diff uses the workflow tests plus the inexpensive gates; CMake,
+compiler tests, runtime, packaged scripts, release packaging and unknown paths
+still select full coverage. The helper does not restart CI on an unchanged
+description when retrying a pending merge. Description-only edits do not
+trigger full CI; source pushes and entering/leaving draft are routing events.
+Automation-only local owning checks may use `verify --focused`, which checks
+the actual diff and does not reserve a broad-suite slot. Compiler changes
+cannot use that path. An active `verify` is atomically refused on duplicate
+submission; resume the recorded operation instead.
+
+Owner policy revision (2026-10-23): GitHub runner availability is not a merge,
+development or completion prerequisite. Never wait for queued/running Actions
+or require a passing GitHub check. Keep all mandatory optimized local or
+managed-runner validation, full combined compiler suites, required platform
+and performance evidence, PR freshness and reviews. Record pending/failed CI
+honestly and investigate known failures without mislabeling them as passes or
+hiding local failures. Do not submit duplicate validation to occupy a CI queue.
+
+Apply the explicitly owner-authorized
+`protection --configure --advisory-ci` policy to remove required status contexts
+and app pins; it preserves strict/up-to-date PRs, admin enforcement, review
+requirements, and force-push/deletion restrictions. Do not reintroduce a required
+CI gate or administratively bypass a server rejection. This revises the earlier
+proposal for a required `Validation gate`; local acceptance remains mandatory.
 
 ## Early combined preview
 

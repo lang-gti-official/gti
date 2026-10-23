@@ -156,7 +156,7 @@ statement spans against the **optimized** MIR's retained HIR identities.
 Each `LoweredBody::sourceLocations` row owns its source path/span and exact
 block/instruction identity; instruction zero identifies a terminator. These
 optional rows are verified and sealed with the lowered contract (current printer
-version 17; debug rows were introduced in version 13), survive destruction of
+version 24; debug rows were introduced in version 13), survive destruction of
 AST/HIR, and are never executable,
 ownership, type, or optimization authority. The default contract has no rows.
 
@@ -186,7 +186,7 @@ remain later slices; this metadata does not bypass MIR verification.
 
 Terminal and caller-tracking contracts are sealed declaration facts, also
 checked against the embedded MIR. The current lowered-program inspection format
-is version 17 and retains both flags and optional source debug locations.
+is version 24 and retains both flags and optional source debug locations.
 The C++ representation
 passes an explicit artifact-local caller-site parameter through supported
 tracked signatures and calls. An
@@ -510,6 +510,17 @@ contains:
 - concrete class, function, constructor, destructor, and lambda instances with
   exact type/value substitutions and source provenance; and
 - exhaustive generated-item identities, payloads, roots, and dependencies.
+
+Generic requirement leaves have explicit `Concept`, `Member`, `Expression`,
+or `Predicate` kinds. A concept keeps its declaration identity; an exact member
+keeps its actual name and receiver-access facts. A general expression instead
+owns ordered synthetic-parameter types, its exact owned result type and any
+explicit expression type arguments, with a checked result index separating
+those groups. Predicate leaves retain their resolved type arguments and source
+provenance, not a fabricated member name. These are static declaration facts:
+the lowered value contains no source expression or AST pointer, and a backend
+must not evaluate predicates or reconstruct expression validity. Semantics
+checks admissibility and concrete instantiation before this boundary.
 
 `verifyLoweredProgram` rejects missing, duplicate, stale, reordered, unrooted,
 or cyclic records and an invalid construction seal. `LoweredProgramPrinter`
@@ -2820,6 +2831,23 @@ form the complete first-field prefix. Body admission and the planner's
 initializer list consult that one proof. For a constructor that either form
 can body-stage, passive scalar parameter copies stay in the MIR body schedule
 (`cppMirCopyParameterFieldBindings`), whichever form is selected.
+In the failure form, a native copy outside that first-field prefix may still
+publish beside body-staged moves when it copies a passive generated class
+(`failureConstructorHoistablePassiveCopy`). The copy query already refuses a
+formal that earlier initializer work may write, and the copy itself runs no
+source code and cannot fail, so publishing it ahead of the body schedule is
+unobservable; the copy-only failure form already publishes it that way. Its
+records must still be MIR's adjacent `Load`, `Initialize` and full-expression
+boundary in one reachable block, and every initializer that copies a formal
+must have its exact copy witness, so no copy is hoisted past a reordered or
+malformed one. In
+`Shelved(Pair moved, Pair copied) : ledger(Ledger(31, divisor)),
+moved(std::move(moved)), copied(copied)`, `moved` starts empty and is moved
+after the ledger in MIR order, while `copied(__gti_mir_arg_1)` publishes in
+the member-initializer list, in either declaration order. A borrowed carrier
+keeps the prefix rule, because it publishes a `Stored` loan. The ordinary form
+keeps it too: a class formal's lexical drop keeps its constructor
+conservatively failure-capable, so no class copy reaches that form today.
 The native owned-field proof also refuses a passive scalar sibling that copies
 the very formal a later initializer moves, as in `Copied(int32_t tag) :
 first(tag), second(std::move(tag))`: the native list would move the formal

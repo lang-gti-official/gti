@@ -329,6 +329,7 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(), // MetaTypeAttributeCount
     harmless(), // MetaTypeHasAttribute
     harmless(), // MetaTypeTrait
+    harmless(), // MetaTypeRelation
     harmless(), // MetaEnumeratorCount
     harmless(), // MetaEnumeratorName
     harmless(), // MetaEnumeratorValue
@@ -665,6 +666,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "meta-type-attribute-count",
     "meta-type-has-attribute",
     "meta-type-trait",
+    "meta-type-relation",
     "meta-enumerator-count",
     "meta-enumerator-name",
     "meta-enumerator-value",

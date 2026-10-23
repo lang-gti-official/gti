@@ -1291,9 +1291,72 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
                .name = argumentToken.lexeme});
         }
       }
+      if (requirement.predicate) {
+        std::vector<SemanticType> types;
+        for (const auto &argument : argumentMap)
+          types.push_back(
+              argument.parameter
+                  ? SemanticType::typeParameter(
+                        conceptInfo.parameterIds[*argument.parameter])
+                  : argument.concrete);
+        const auto capability = predicateCapabilityFor(requirement, types);
+        bool unary = false;
+        if (capability && capability->atomic != GenericConstraintKind::None &&
+            capability->arguments.size() == 1) {
+          for (std::size_t index = 0; index < conceptInfo.parameterIds.size();
+               ++index)
+            if (capability->arguments.front() ==
+                SemanticType::typeParameter(conceptInfo.parameterIds[index])) {
+              leafParameterConstraints[requirementIndex][index] |=
+                  constraintBit(capability->atomic);
+              unary = true;
+            }
+        } else if (capability &&
+                   capability->structural != StructuralConstraintKind::None) {
+          RegisteredConcept::StructuralPattern pattern;
+          pattern.kind = capability->structural;
+          for (const auto &type : capability->arguments)
+            pattern.arguments.push_back({.concrete = type});
+          leafStructuralConstraints[requirementIndex].push_back(
+              std::move(pattern));
+        }
+        leafHasStructural[requirementIndex] = !unary;
+        conceptInfo.definitionRequirements.push_back(
+            {.syntax = &requirement,
+             .arguments = std::move(argumentMap),
+             .expressionApplication = requirementIndex});
+        continue;
+      }
       if (requirement.memberRequirement) {
         recordMemberRequirementReceiver(*requirement.memberRequirement,
                                         SemanticType::Unknown);
+        if (requirement.memberRequirement->isExpressionRequirement()) {
+          std::vector<SemanticType> types;
+          for (const auto &argument : argumentMap)
+            types.push_back(
+                argument.parameter
+                    ? SemanticType::typeParameter(
+                          conceptInfo.parameterIds[*argument.parameter])
+                    : argument.concrete);
+          if (auto fact = expressionRequirementFact(
+                  *requirement.memberRequirement, types)) {
+            RegisteredConcept::StructuralPattern pattern;
+            pattern.kind = fact->kind;
+            pattern.memberName = fact->memberName;
+            pattern.mutableReceiver = fact->mutableReceiver;
+            pattern.requiresUnsafe = fact->requiresUnsafe;
+            for (const auto &type : fact->arguments)
+              pattern.arguments.push_back({.concrete = type});
+            leafStructuralConstraints[requirementIndex].push_back(
+                std::move(pattern));
+          }
+          leafHasStructural[requirementIndex] = true;
+          conceptInfo.definitionRequirements.push_back(
+              {.syntax = &requirement,
+               .arguments = std::move(argumentMap),
+               .expressionApplication = requirementIndex});
+          continue;
+        }
         RegisteredConcept::StructuralPattern pattern;
         pattern.kind = StructuralConstraintKind::ReadMember;
         pattern.arguments = argumentMap;
@@ -4660,7 +4723,7 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .neverReturns = function->hasFunctionAttribute("noreturn"),
           .tracksCaller = function->hasFunctionAttribute("track_caller"),
           .discardableResult = function->hasFunctionAttribute("discardable"),
-          .deferredEvaluation = function->hasFunctionAttribute("deferred"),
+          .macroExpansion = function->isMacro(),
           .threadConfinedCallback =
               function->hasFunctionAttribute("thread_confined_callback"),
           .testFunction = function->hasFunctionAttribute("test"),
@@ -7985,29 +8048,8 @@ auto SemanticVisitor::Impl::composedTextReference(const ExprPtr &returned,
     name = &member->name();
   if (name == nullptr)
     return std::nullopt;
-  const ClassInfo &owner = classInfo(function.ownerClass);
-  const auto found = owner.members.find(name->lexeme);
-  if (found == owner.members.end())
-    return std::nullopt;
-  // A read-only receiver selects the read-only overload; exactly one may
-  // take no arguments.
-  const CallableCandidate *selected = nullptr;
-  for (const CallableCandidate &candidate : found->second.symbol.overloads) {
-    if (candidate.staticMember || candidate.parameterPack ||
-        !candidate.parameterTypes.empty() ||
-        candidate.receiverMutability != ReceiverMutability::ReadOnly ||
-        candidate.virtualMethod || candidate.overrideMethod)
-      continue;
-    if (selected != nullptr)
-      return std::nullopt;
-    selected = &candidate;
-  }
-  // Finding the callee is bookkeeping, not a use of its body.
-  const FunctionDemandScope pauseDemand(semanticModel, nullptr);
   const FunctionInfo *callee =
-      selected == nullptr ? nullptr : semanticModel.findFunction(selected->id);
-  if (callee == nullptr && selected != nullptr && instanceBaseModel != nullptr)
-    callee = instanceBaseModel->findFunction(selected->id);
+      readOnlyReceiverAccessor(function.ownerClass, name->lexeme);
   if (callee == nullptr || callee->bodyDeclaration() == nullptr ||
       std::find(textReferenceSummaryStack.begin(),
                 textReferenceSummaryStack.end(),
@@ -8039,10 +8081,18 @@ auto SemanticVisitor::Impl::payloadReferenceRelayArm(
   const Expr *subject = selection.expression().get();
   while (const auto *group = exprAs<Grouping>(subject))
     subject = group->expression() ? group->expression().get() : nullptr;
-  const auto *get = exprAs<Get>(subject);
-  if (name == nullptr || variant == nullptr || get == nullptr ||
-      get->access().kind == TokenKind::ARROW || !get->object() ||
-      exprAs<This>(get->object().get()) == nullptr)
+  // The switch observes `this.field` directly or through a receiver accessor
+  // that returns a reference to that field.
+  std::optional<std::string> field;
+  if (const auto *get = exprAs<Get>(subject);
+      get != nullptr && get->access().kind != TokenKind::ARROW &&
+      get->object() && exprAs<This>(get->object().get()) != nullptr)
+    field = get->name().lexeme;
+  else if (subject != nullptr) {
+    std::vector<const FunctionInfo *> visiting;
+    field = receiverAccessorField(*subject, function.ownerClass, visiting);
+  }
+  if (name == nullptr || variant == nullptr || !field)
     return std::nullopt;
   std::optional<std::size_t> index;
   for (std::size_t position = 0; position < pattern->arguments().size();
@@ -8061,7 +8111,7 @@ auto SemanticVisitor::Impl::payloadReferenceRelayArm(
                                  : openClassType(function.ownerClass);
   const ClassInfo *info = classInfo(owner);
   const auto member = info == nullptr ? decltype(info->members.end()){}
-                                      : info->members.find(get->name().lexeme);
+                                      : info->members.find(*field);
   if (!index || info == nullptr || member == info->members.end() ||
       member->second.symbol.staticMember ||
       member->second.symbol.bindingKind != SemanticBindingKind::Field ||
@@ -8090,6 +8140,130 @@ auto SemanticVisitor::Impl::payloadReferenceRelayArm(
         .payload = candidate.payloadSymbols[*index]};
   }
   return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::readOnlyReceiverAccessor(
+    ClassId ownerClass, const std::string &name) const -> const FunctionInfo * {
+  if (ownerClass == 0)
+    return nullptr;
+  const ClassInfo &owner = classInfo(ownerClass);
+  const auto found = owner.members.find(name);
+  if (found == owner.members.end())
+    return nullptr;
+  // A read-only receiver selects the read-only overload; exactly one may
+  // take no arguments.
+  const CallableCandidate *selected = nullptr;
+  for (const CallableCandidate &candidate : found->second.symbol.overloads) {
+    if (candidate.staticMember || candidate.parameterPack ||
+        !candidate.parameterTypes.empty() ||
+        candidate.receiverMutability != ReceiverMutability::ReadOnly ||
+        candidate.virtualMethod || candidate.overrideMethod)
+      continue;
+    if (selected != nullptr)
+      return nullptr;
+    selected = &candidate;
+  }
+  // Finding the callee is bookkeeping, not a use of its body.
+  const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+  const FunctionInfo *callee =
+      selected == nullptr ? nullptr : semanticModel.findFunction(selected->id);
+  if (callee == nullptr && selected != nullptr && instanceBaseModel != nullptr)
+    callee = instanceBaseModel->findFunction(selected->id);
+  return callee;
+}
+
+auto SemanticVisitor::Impl::accessorReceiverField(
+    const FunctionInfo &accessor,
+    std::vector<const FunctionInfo *> &visiting) const
+    -> std::optional<std::string> {
+  const FunctionDecl *body = accessor.bodyDeclaration();
+  if (accessor.ownerClass == 0 || accessor.staticMember ||
+      accessor.virtualMethod || accessor.overrideMethod || body == nullptr ||
+      body->body() == nullptr ||
+      body->receiverMutability() != ReceiverMutability::ReadOnly ||
+      accessor.returnType.kind != SemanticType::Reference ||
+      std::find(visiting.begin(), visiting.end(), &accessor) != visiting.end())
+    return std::nullopt;
+  std::vector<const ExprPtr *> returns;
+  collectBorrowReturnExpressions(body->body().get(), returns);
+  if (returns.empty())
+    return std::nullopt;
+  // An implicit member name designates the member only where nothing can
+  // shadow it: no parameters, and a body that declares nothing.
+  const auto declarationFree = [](const auto &self, const Stmt *statement) {
+    if (statement == nullptr || stmtAs<ReturnStmt>(statement) != nullptr ||
+        stmtAs<ExpressionStmt>(statement) != nullptr)
+      return true;
+    if (const auto *block = stmtAs<BlockStmt>(statement))
+      return std::all_of(
+          block->statements().begin(), block->statements().end(),
+          [&](const StmtPtr &nested) { return self(self, nested.get()); });
+    if (const auto *branch = stmtAs<IfStmt>(statement))
+      return self(self, branch->thenBranch().get()) &&
+             self(self, branch->elseBranch().get());
+    return false;
+  };
+  const bool implicitMembers =
+      accessor.parameterTypes.empty() &&
+      declarationFree(declarationFree, body->body().get());
+  const ClassInfo &owner = classInfo(accessor.ownerClass);
+  visiting.push_back(&accessor);
+  std::optional<std::string> result;
+  bool valid = true;
+  for (const ExprPtr *returned : returns) {
+    const Expr *current = returned == nullptr ? nullptr : returned->get();
+    while (const auto *group = exprAs<Grouping>(current))
+      current = group->expression() ? group->expression().get() : nullptr;
+    std::optional<std::string> field;
+    const auto *variable = exprAs<Variable>(current);
+    const auto member = variable == nullptr
+                            ? owner.members.end()
+                            : owner.members.find(variable->name().lexeme);
+    if (const auto *get = exprAs<Get>(current);
+        get != nullptr && get->access().kind != TokenKind::ARROW &&
+        get->object() && exprAs<This>(get->object().get()) != nullptr)
+      field = get->name().lexeme;
+    else if (implicitMembers && member != owner.members.end() &&
+             !member->second.symbol.staticMember &&
+             member->second.symbol.bindingKind == SemanticBindingKind::Field)
+      field = variable->name().lexeme;
+    else if (current != nullptr)
+      field = receiverAccessorField(*current, accessor.ownerClass, visiting,
+                                    implicitMembers);
+    if (!field || (result && *result != *field)) {
+      valid = false;
+      break;
+    }
+    result = field;
+  }
+  visiting.pop_back();
+  return valid ? result : std::nullopt;
+}
+
+auto SemanticVisitor::Impl::receiverAccessorField(
+    const Expr &subject, ClassId owner,
+    std::vector<const FunctionInfo *> &visiting, bool implicitMembers) const
+    -> std::optional<std::string> {
+  const Expr *current = &subject;
+  while (const auto *group = exprAs<Grouping>(current))
+    current = group->expression() ? group->expression().get() : nullptr;
+  const auto *call = exprAs<Call>(current);
+  const auto *member =
+      call == nullptr ? nullptr : exprAs<Get>(call->callee().get());
+  const auto *implicit = call == nullptr || !implicitMembers
+                             ? nullptr
+                             : exprAs<Variable>(call->callee().get());
+  if (call == nullptr || !call->arguments().empty() ||
+      !call->typeArguments().empty() ||
+      (implicit == nullptr &&
+       (member == nullptr || member->access().kind == TokenKind::ARROW ||
+        !member->object() || exprAs<This>(member->object().get()) == nullptr)))
+    return std::nullopt;
+  const FunctionInfo *accessor = readOnlyReceiverAccessor(
+      owner,
+      implicit != nullptr ? implicit->name().lexeme : member->name().lexeme);
+  return accessor == nullptr ? std::nullopt
+                             : accessorReceiverField(*accessor, visiting);
 }
 
 auto SemanticVisitor::Impl::globalReturnBorrowPlace(
@@ -9678,7 +9852,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .neverReturns = declaration.neverReturns,
       .tracksCaller = declaration.tracksCaller,
       .discardableResult = declaration.discardableResult,
-      .deferredEvaluation = declaration.deferredEvaluation,
+      .macroExpansion = declaration.macroExpansion,
       .threadConfinedCallback = declaration.threadConfinedCallback,
       .testFunction = declaration.testFunction,
       .cThreadOperation = declaration.cThreadOperation,

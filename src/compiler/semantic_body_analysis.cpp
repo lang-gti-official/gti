@@ -5,11 +5,11 @@
 namespace lang {
 
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
-  deferredLookup.clear();
-  deferredLookupBase = nullptr;
-  deferredExpansionDepth = 0;
-  deferredExpandedBodies = 0;
-  deferredActiveBodies.clear();
+  macroLookup.clear();
+  macroLookupBase = nullptr;
+  macroExpansionDepth = 0;
+  macroExpandedBodies = 0;
+  macroActiveBodies.clear();
   diagnostics.clear();
   catalog.clear();
   valueFlow.clear();
@@ -221,6 +221,7 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   const RegistrationFloor &floor = registrationFloor;
   registerNamespaces(declarations, {});
   registerNamespaceAliases(declarations, {});
+  registerConstraintPredicateDeclarations(declarations, {});
   registerTypeAliases(declarations, {});
   registerEnums(declarations, {});
   registerConcepts(declarations, {});
@@ -1959,6 +1960,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     beginTypeParameterScope(constructorInfo->genericParameters);
     requirementsValid = beginRequirementScope(constructorInfo);
   }
+  if (stmt.requiresClause())
+    recordConstraintPredicateUses(stmt.requiresClause()->requirements());
   const SemanticType ownerType = SemanticType::classType(owner.id);
   const SymbolId symbol = recordToolingSymbol(
       stmt.name(), SymbolKind::Constructor,
@@ -2614,14 +2617,14 @@ auto SemanticVisitor::Impl::visitExternCDecl(const ExternCDecl &stmt) -> void {
 
 auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
     -> void {
-  if (analyzeDeferredStatement(stmt))
+  if (analyzeMacroStatement(stmt))
     return;
-  struct RestoreDeferredStatement {
+  struct RestoreMacroStatement {
     const Call *&slot;
     const Call *previous;
-    ~RestoreDeferredStatement() { slot = previous; }
-  } restoreDeferredStatement{deferredStatementCall, deferredStatementCall};
-  deferredStatementCall = directCall(stmt.expression());
+    ~RestoreMacroStatement() { slot = previous; }
+  } restoreMacroStatement{macroStatementCall, macroStatementCall};
+  macroStatementCall = directCall(stmt.expression());
   semanticModel.recordFullExpression(stmt, stmt.expression());
   discardResult(stmt.expression());
   const SemanticType resultType = analyze(stmt.expression());
@@ -3019,6 +3022,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   const bool staticMethod =
       functionInfo != nullptr && functionInfo->staticMember;
   const bool requirementsValid = beginRequirementScope(functionInfo);
+  if (stmt.requiresClause())
+    recordConstraintPredicateUses(stmt.requiresClause()->requirements());
   // A conversion operator is named by its target, whose tokens are type
   // references of their own, so its occurrence is the `operator` keyword.
   const bool conversionOperator =
@@ -3061,43 +3066,48 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                                          where, {std::move(message)}));
   };
   std::unordered_set<std::string> functionAttributeNames;
+  if (stmt.isMacro()) {
+    const Token &keyword = *stmt.macroKeyword();
+    if (functionInfo == nullptr || functionInfo->ownerClass != 0 ||
+        isEntryPoint || functionInfo->returnType != SemanticType::Void ||
+        stmt.hasCLinkage() || stmt.runtimeBinding() || !stmt.body() ||
+        stmt.isConstexpr() || stmt.unsafeKeyword() || stmt.operatorName() ||
+        stmt.hasFunctionAttribute("noreturn") ||
+        stmt.hasFunctionAttribute("test") ||
+        stmt.hasFunctionAttribute("thread_confined_callback") ||
+        std::any_of(stmt.parameters().begin(), stmt.parameters().end(),
+                    [](const Parameter &parameter) {
+                      return parameter.mutability == Mutability::Mutable ||
+                             parameter.type.reference;
+                    })) {
+      reportContract(keyword,
+                     "A typed macro requires a defined, safe, non-constexpr "
+                     "namespace-scope void statement template with value "
+                     "parameters.");
+    } else if (!validMacroBody(*stmt.body())) {
+      reportContract(keyword,
+                     "A macro body supports automatic locals, expressions, "
+                     "blocks, if and local loops. Break and continue must "
+                     "target a loop within that macro; returns, propagation, "
+                     "lambdas, static storage and generated declarations "
+                     "require an ordinary helper.");
+    }
+    std::unordered_set<std::string> expressionParameters;
+    for (const auto &parameter : stmt.parameters())
+      if (!parameter.name.lexeme.empty() &&
+          !expressionParameters.insert(parameter.name.lexeme).second)
+        reportContract(parameter.name,
+                       "Macro expression parameter names must be unique.");
+  }
   for (const auto &contract : stmt.functionAttributes()) {
     const Token &attribute = contract.name;
     if (attribute.lexeme == "deferred") {
-      if (!functionAttributeNames.insert(attribute.lexeme).second) {
-        reportContract(attribute, "Duplicate function attribute 'deferred'.");
-      } else if (contract.argument || functionInfo == nullptr ||
-                 functionInfo->ownerClass != 0 || isEntryPoint ||
-                 functionInfo->returnType != SemanticType::Void ||
-                 stmt.hasCLinkage() || stmt.runtimeBinding() || !stmt.body() ||
-                 stmt.isConstexpr() || stmt.unsafeKeyword() ||
-                 stmt.operatorName() || stmt.hasFunctionAttribute("noreturn") ||
-                 stmt.hasFunctionAttribute("test") ||
-                 stmt.hasFunctionAttribute("thread_confined_callback") ||
-                 std::any_of(stmt.parameters().begin(), stmt.parameters().end(),
-                             [](const Parameter &parameter) {
-                               return parameter.mutability ==
-                                          Mutability::Mutable ||
-                                      parameter.type.reference;
-                             })) {
-        reportContract(
-            attribute,
-            "A deferred helper requires a defined, safe, non-constexpr "
-            "namespace-scope void function with value parameters.");
-      } else if (!validDeferredBody(*stmt.body())) {
-        reportContract(
-            attribute,
-            "A deferred body supports blocks, ordinary if branches "
-            "and expressions without local binders or direct writes; "
-            "declarations, returns and loops require an ordinary "
-            "helper called from it.");
-      }
-      std::unordered_set<std::string> expressionParameters;
-      for (const auto &parameter : stmt.parameters())
-        if (!parameter.name.lexeme.empty() &&
-            !expressionParameters.insert(parameter.name.lexeme).second)
-          reportContract(parameter.name,
-                         "Deferred expression parameter names must be unique.");
+      reportContract(attribute,
+                     "The [[deferred]] attribute has been removed; use a "
+                     "typed #macro declaration instead.");
+      diagnostics.back().hints.emplace_back(
+          "Write '#macro name(typed parameters) { ... }' without a return "
+          "type.");
       continue;
     }
     if (attribute.lexeme == "test") {
@@ -3468,12 +3478,11 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
              "GTI-S2022");
     }
   }
-  if (!stmt.body() || !requirementsValid ||
-      stmt.hasFunctionAttribute("deferred")) {
-    // A deferred helper is a typed statement template, not a callable value.
+  if (!stmt.body() || !requirementsValid || stmt.isMacro()) {
+    // A typed macro is a statement template, not a callable value.
     // Its signature and body shape are checked here; actual substituted
     // expressions are checked in caller flow at each concrete invocation.
-    if (stmt.body() && stmt.hasFunctionAttribute("deferred")) {
+    if (stmt.body() && stmt.isMacro()) {
       analyzedBodies.insert(&stmt);
       semanticModel.recordAnalyzedFunctionBody(stmt);
     }
@@ -5259,6 +5268,41 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           if (!relay || *relay != *entry ||
               *scope->returnedTextReference != *entry)
             (void)requireOwnerlessTextField(scope->declaration, *entry);
+        } else if (const auto *scope = textFieldContractScope()) {
+          // A text payload reached through a call whose reference result
+          // borrows a contract formal, at a field no accessor rule names, may
+          // be any of that formal's text: binding it is a whole use.
+          const Expr *subject = stmt.expression().get();
+          while (const auto *group = exprAs<Grouping>(subject))
+            subject = group->expression() ? group->expression().get() : nullptr;
+          const auto *call = exprAs<Call>(subject);
+          const ResolvedCallInfo *resolved =
+              call == nullptr ? nullptr : semanticModel.findCall(*call);
+          const auto enumeration = enumTypeFor(pattern.type);
+          const auto variant =
+              enumeration ? std::find_if(enumeration->enumerators.begin(),
+                                         enumeration->enumerators.end(),
+                                         [&](const auto &candidate) {
+                                           return candidate.variantIndex ==
+                                                  pattern.variantIndex;
+                                         })
+                          : decltype(enumeration->enumerators.begin()){};
+          const auto type =
+              enumeration && variant != enumeration->enumerators.end() &&
+                      payload.payloadIndex < variant->payloadTypes.size()
+                  ? substituteType(variant->payloadTypes[payload.payloadIndex],
+                                   enumSubstitution(pattern.type))
+                  : SemanticType(SemanticType::Unknown);
+          const bool text = type.kind == SemanticType::StringView ||
+                            type.kind == SemanticType::CString ||
+                            type.kind == SemanticType::TypeParameter;
+          if (const auto formal =
+                  text && resolved != nullptr &&
+                          resolved->returnType.kind == SemanticType::Reference
+                      ? callBorrowedTextFormal(*call, *resolved)
+                      : std::nullopt;
+              formal && scope != nullptr)
+            noteTextFieldFormalUse(*subject, *formal);
         }
         // The text payload that an observed subject's owner dependency
         // designates holds that owner's dynamic text (L-OWN-02). A by-value
@@ -5783,6 +5827,7 @@ auto SemanticVisitor::Impl::visitConceptDecl(const ConceptDecl &stmt) -> void {
     return;
   }
   const RegisteredConcept &conceptInfo = concepts[found->second - 1];
+  recordConstraintPredicateUses(stmt.requirements());
   attachDeclarationDocumentation(conceptInfo.symbol, stmt);
   semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
                                   .span = tokenSpan(stmt.name()),
@@ -7704,9 +7749,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                 valid;
       }
 
-      if (valid &&
-          analyzeDeferredSelection(expr, resolved, resolvedTypeArguments,
-                                   resolvedValueArguments))
+      if (valid && analyzeMacroSelection(expr, resolved, resolvedTypeArguments,
+                                         resolvedValueArguments))
         return;
 
       const CallReceiverMode receiverMode =
@@ -7958,9 +8002,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
-  if (analyzeDeferredSelection(expr, viable.front().function,
-                               viable.front().typeArguments,
-                               viable.front().valueArguments))
+  if (analyzeMacroSelection(expr, viable.front().function,
+                            viable.front().typeArguments,
+                            viable.front().valueArguments))
     return;
   if (!validateSelectedFunction(viable.front().function, expr.callee(),
                                 expr.paren(), expr.arguments(),
@@ -8000,6 +8044,68 @@ auto SemanticVisitor::Impl::analyzeTypeParameterCall(
            "arguments.",
            "GTI-S2029");
     valid = false;
+  }
+  if (valid && targetType.kind == SemanticType::Class) {
+    // Concrete construction replaces the open type-parameter intrinsic.
+    // Retaining both would publish a callable intrinsic and a constructor
+    // selection for one expression, with incompatible HIR/MIR contracts.
+    semanticModel.suppressInheritedCall(expr);
+    auto arguments = analyzeContextualCallArguments(expr.arguments());
+    if (expr.arguments().size() == 1 &&
+        analyzeExplicitConversion(expr, expr.arguments().front(),
+                                  arguments.types.front(), targetType,
+                                  expr.paren()))
+      return;
+    analyzeConstructorCall(expr, targetType.classId, targetType.arguments,
+                           targetType.valueArguments, arguments.types,
+                           expr.arguments(), expr.paren());
+    return;
+  }
+  if (valid && targetType.kind == SemanticType::TypeParameter) {
+    std::vector<ExpandedStructuralRequirement> constructions;
+    for (const auto &requirement : activeStructuralRequirements())
+      if (requirement.kind == StructuralConstraintKind::ReadMember &&
+          requirement.memberName == "$construct" &&
+          requirement.arguments.size() == expr.arguments().size() + 2 &&
+          requirement.arguments[0] == targetType &&
+          requirement.arguments[1] == targetType)
+        constructions.push_back(requirement);
+    if (!constructions.empty()) {
+      const auto arguments = analyzeContextualCallArguments(expr.arguments());
+      for (const auto &requirement : constructions) {
+        bool matches = true;
+        for (std::size_t index = 0; index < arguments.types.size(); ++index)
+          matches =
+              matches && callArgumentMatches(requirement.arguments[index + 2],
+                                             arguments.types[index],
+                                             expr.arguments()[index]);
+        if (!matches)
+          continue;
+        if (requirement.requiresUnsafe && unsafeDepth == 0) {
+          report(expr.paren(),
+                 "The required construction needs an unsafe block.",
+                 "GTI-S2029");
+          currentType = SemanticType::Unknown;
+          return;
+        }
+        const std::span parameters(requirement.arguments.begin() + 2,
+                                   requirement.arguments.end());
+        validateMutableCallArgumentLoans(parameters, expr.arguments(),
+                                         expr.paren());
+        validateCallPlaceExclusivity(parameters, expr.arguments(),
+                                     expr.paren());
+        // This is open-body proof only. Concrete reanalysis above selects the
+        // real constructor/conversion before any HIR/MIR executable call
+        // exists.
+        currentType = targetType;
+        return;
+      }
+      report(expr.paren(),
+             "The active requirements do not prove this exact construction.",
+             "GTI-S2029");
+      currentType = SemanticType::Unknown;
+      return;
+    }
   }
   if (!expr.arguments().empty() &&
       exprAs<PackExpansion>(expr.arguments().back().get()) != nullptr) {
@@ -8073,18 +8179,6 @@ auto SemanticVisitor::Impl::analyzeTypeParameterCall(
                  "' requires the default-initialization capability.",
              "GTI-S2029");
       valid = false;
-    }
-    // Generic instance analysis substitutes T before revisiting T(). Once
-    // that substitution is a class, resolve the exact zero-argument
-    // constructor like any other class construction. Leaving the generic
-    // intrinsic in place loses the constructor instance from HIR/MIR and
-    // can produce a declaration with no definition after the MIR cutover.
-    if (valid && targetType.kind == SemanticType::Class) {
-      semanticModel.suppressInheritedCall(expr);
-      analyzeConstructorCall(expr, targetType.classId, targetType.arguments,
-                             targetType.valueArguments, {}, expr.arguments(),
-                             expr.paren());
-      return;
     }
     currentType = valid ? targetType : SemanticType::Unknown;
     if (valid) {
@@ -10170,6 +10264,58 @@ auto SemanticVisitor::Impl::visitLayoutQueryExpr(const LayoutQuery &expr)
 
 auto SemanticVisitor::Impl::recordMemberRequirementReceiver(
     const MemberRequirement &query, const SemanticType &type) -> void {
+  if (query.isExpressionRequirement()) {
+    std::unordered_map<std::string, std::pair<SymbolId, SemanticType>>
+        parameters;
+    for (std::size_t index = 0; index < query.parameters().size(); ++index) {
+      const auto parameterType = typeOf(query.parameters()[index]);
+      const auto &binding = query.bindings()[index];
+      const auto symbol = recordToolingSymbol(
+          binding, SymbolKind::RequirementParameter,
+          qualifiedName(currentNamespace, binding.lexeme), parameterType);
+      parameters.emplace(binding.lexeme, std::pair{symbol, parameterType});
+      semanticModel.recordOccurrence(
+          {.sourceUnit = sourceUnitFor(binding),
+           .span = tokenSpan(binding),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = symbol,
+           .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+           .name = binding.lexeme,
+           .type = parameterType});
+    }
+    std::function<void(const Expr &)> recordUses = [&](const Expr &expression) {
+      if (const auto *variable = exprAs<Variable>(&expression)) {
+        const auto found = parameters.find(variable->name().lexeme);
+        if (found != parameters.end())
+          semanticModel.recordOccurrence(
+              {.sourceUnit = sourceUnitFor(variable->name()),
+               .span = tokenSpan(variable->name()),
+               .kind = SemanticOccurrenceKind::Symbol,
+               .symbol = found->second.first,
+               .roles = OccurrenceRole::Reference,
+               .name = variable->name().lexeme,
+               .type = found->second.second});
+      } else if (const auto *binary = exprAs<Binary>(&expression)) {
+        recordUses(*binary->left());
+        recordUses(*binary->right());
+      } else if (const auto *unary = exprAs<Unary>(&expression)) {
+        recordUses(*unary->right());
+      } else if (const auto *group = exprAs<Grouping>(&expression)) {
+        recordUses(*group->expression());
+      } else if (const auto *get = exprAs<Get>(&expression)) {
+        recordUses(*get->object());
+      } else if (const auto *call = exprAs<Call>(&expression)) {
+        recordUses(*call->callee());
+        for (const auto &argument : call->arguments())
+          recordUses(*argument);
+      } else if (const auto *index = exprAs<Index>(&expression)) {
+        recordUses(*index->object());
+        recordUses(*index->index());
+      }
+    };
+    recordUses(*query.expression());
+    return;
+  }
   const auto symbol = recordToolingSymbol(
       query.binding(), SymbolKind::RequirementParameter,
       qualifiedName(currentNamespace, query.binding().lexeme), type);
@@ -10218,6 +10364,36 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
     const MemberRequirement &expr) -> void {
   currentType = SemanticType::Bool;
   const auto before = diagnostics.size();
+  if (expr.isExpressionRequirement()) {
+    std::vector<SemanticType> arguments;
+    for (const auto &parameter : expr.parameters()) {
+      validateType(parameter);
+      recordTypeUse(parameter);
+      arguments.push_back(typeOf(parameter));
+    }
+    validateType(expr.result());
+    recordTypeUse(expr.result());
+    arguments.push_back(typeOf(expr.result()));
+    std::vector<const TypeRef *> extraTypes;
+    collectRequirementTypeArguments(expr.expression().get(), extraTypes);
+    for (const auto *argument : extraTypes) {
+      validateType(*argument);
+      recordTypeUse(*argument);
+      arguments.push_back(typeOf(*argument));
+    }
+    recordMemberRequirementReceiver(expr, SemanticType::Unknown);
+    if (diagnostics.size() != before)
+      return;
+    if (std::any_of(arguments.begin(), arguments.end(),
+                    containsOpenTypeParameter)) {
+      if (analyzingDependentConstantCondition)
+        constantConditionGenericDependency = true;
+      return;
+    }
+    semanticModel.recordConstant(
+        expr, ConstantValue{expressionRequirementSatisfied(expr, arguments)});
+    return;
+  }
   validateType(expr.receiver());
   validateType(expr.result());
   recordTypeUse(expr.receiver());
@@ -14023,7 +14199,7 @@ auto SemanticVisitor::Impl::summarizeFlow(
             .normalReturn = returns ? returned : nullptr};
   }
   if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
-    if (const Stmt *expanded = semanticModel.findDeferredExpansion(*expression))
+    if (const Stmt *expanded = semanticModel.findMacroExpansion(*expression))
       return summarizeFlow(expanded, normalReturns, structural);
     return {.canFallThrough =
                 !expressionNeverReturns(expression->expression().get())};

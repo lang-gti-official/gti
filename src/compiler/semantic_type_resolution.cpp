@@ -22,7 +22,7 @@ auto SemanticVisitor::Impl::nativeFunctionCandidateIsEligible(
   const FunctionDecl &declaration = *candidate.declaration;
   return declaration.body() != nullptr && !declaration.runtimeBinding() &&
          !declaration.hasCLinkage() && !declaration.operatorName() &&
-         !candidate.record().deferredEvaluation;
+         !candidate.record().macroExpansion;
 }
 
 auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
@@ -39,8 +39,7 @@ auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
   const FunctionDecl &declaration = *candidate.declaration;
   return declaration.body() != nullptr && !declaration.runtimeBinding() &&
          !declaration.hasCLinkage() && !declaration.operatorName() &&
-         !candidate.record().deferredEvaluation &&
-         !candidate.record().entryPoint;
+         !candidate.record().macroExpansion && !candidate.record().entryPoint;
 }
 
 auto SemanticVisitor::Impl::nativeFunctionCandidateMatches(
@@ -188,11 +187,11 @@ auto SemanticVisitor::Impl::analyzeFunctionItem(
   if (!symbol.overloads.empty() &&
       std::all_of(symbol.overloads.begin(), symbol.overloads.end(),
                   [](const CallableCandidate &candidate) {
-                    return candidate.record().deferredEvaluation;
+                    return candidate.record().macroExpansion;
                   })) {
     diagnostics.push_back(makeDiagnostic(
-        DiagnosticId::DeferredEvaluation, location,
-        {"Deferred helpers are statement templates, not callable values."}));
+        DiagnosticId::MacroExpansion, location,
+        {"Typed macros are statement templates, not callable values."}));
     return SemanticType::Unknown;
   }
   const CallableCandidate *selected = nullptr;
@@ -1155,7 +1154,7 @@ auto SemanticVisitor::Impl::functionCallArgumentMatch(
     return CallArgumentMatchKind::Mismatch;
   }
   const SemanticType &parameter = function.parameterTypes[index];
-  if (function.record().deferredEvaluation) {
+  if (function.record().macroExpansion) {
     const SemanticType &value = argument.kind == SemanticType::Reference &&
                                         argument.arguments.size() == 1
                                     ? argument.arguments.front()
@@ -4304,7 +4303,7 @@ auto SemanticVisitor::Impl::activeTypePackIdentity(const TypeRef &type) const
                      parameter->kind != SemanticType::TypePack)) {
     return std::nullopt;
   }
-  if (const auto *context = deferredContext(type.name.last());
+  if (const auto *context = macroContext(type.name.last());
       context && context->definition)
     return parameter->kind == SemanticType::TypePack
                ? std::optional(parameter->genericParameterId)
@@ -6677,7 +6676,7 @@ auto SemanticVisitor::Impl::resolveTypeParameter(const NamePath &name) const
   if (name.segments.size() != 1) {
     return std::nullopt;
   }
-  if (const auto *context = deferredContext(name.last());
+  if (const auto *context = macroContext(name.last());
       context && context->definition) {
     const auto found = context->types.find(name.last().lexeme);
     return found == context->types.end() ? std::nullopt
@@ -6695,7 +6694,7 @@ auto SemanticVisitor::Impl::resolveTypeParameter(const NamePath &name) const
 
 auto SemanticVisitor::Impl::resolveValueParameter(const Token &name) const
     -> std::optional<CompileTimeValue> {
-  if (const auto *context = deferredContext(name);
+  if (const auto *context = macroContext(name);
       context && context->definition) {
     const auto found = context->values.find(name.lexeme);
     return found == context->values.end() ? std::nullopt
@@ -7036,16 +7035,32 @@ auto SemanticVisitor::Impl::resolveRequirements(
        applicationIndex < clause->requirements().size(); ++applicationIndex) {
     const ConceptApplication &application =
         clause->requirements()[applicationIndex];
+    if (application.predicate) {
+      AppliedConceptRequirement requirement{.syntax = &application,
+                                            .expression = &clause->expression,
+                                            .expressionApplication =
+                                                applicationIndex,
+                                            .lookupScope = scope};
+      for (const auto &argument : application.arguments) {
+        argumentsToValidate.push_back(&argument);
+        requirement.arguments.push_back(typeOf(argument, scope));
+      }
+      result.push_back(std::move(requirement));
+      continue;
+    }
     if (application.memberRequirement) {
       recordMemberRequirementReceiver(
           *application.memberRequirement,
-          typeOf(application.memberRequirement->receiver(), scope));
+          application.memberRequirement->isExpressionRequirement()
+              ? SemanticType::Unknown
+              : typeOf(application.memberRequirement->receiver(), scope));
       AppliedConceptRequirement requirement{
           .syntax = &application,
           .expression = &clause->expression,
           .expressionApplication = applicationIndex,
           .trustedMemberAccess = isCompilerTrustedRequester(
-              application.memberRequirement->member())};
+              application.memberRequirement->keyword()),
+          .lookupScope = scope};
       for (const auto &argument : application.arguments) {
         argumentsToValidate.push_back(&argument);
         requirement.arguments.push_back(typeOf(argument, scope));

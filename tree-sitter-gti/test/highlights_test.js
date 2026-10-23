@@ -659,6 +659,15 @@ requireCapture(functionContractRow, "noreturn", "attribute");
 requireCapture(functionContractRow, "track_caller", "attribute");
 requireCapture(fixtureLines.findIndex((line) => line.includes("optional_highlight")), "discardable", "attribute");
 requireCapture(functionContractRow, "terminal_highlight", "function");
+const macroRow = fixtureLines.findIndex((line) =>
+  line.includes("#macro macro_highlight"),
+);
+requireCapture(macroRow, "#macro", "keyword.type");
+requireCapture(macroRow, "macro_highlight", "function.macro");
+requireCapture(macroRow, "track_caller", "attribute");
+requireCapture(macroRow, "condition", "variable.parameter");
+requireCapture(macroRow, "Args", "type.parameter");
+requireLocalCapture(macroRow, "macro_highlight", "local.definition.function");
 
 const borrowOriginRow = fixtureLines.findIndex((line) =>
   line.includes("int& borrow_highlight"),
@@ -673,6 +682,16 @@ requireCapture(memberRequirementRow, "requires", "keyword");
 requireCaptureCount(memberRequirementRow, "item", "variable.parameter", 2);
 requireCapture(memberRequirementRow, "snapshot", "function.method");
 requireCapture(memberRequirementRow, "->", "operator");
+const predicateRequirementRow = fixtureLines.findIndex((line) =>
+  line.includes("concept integer_highlight"),
+);
+requireCapture(predicateRequirementRow, "is_integral", "function.call");
+const operatorRequirementRow = fixtureLines.findIndex((line) =>
+  line.includes("concept sum_highlight"),
+);
+requireCapture(operatorRequirementRow, "left", "variable.parameter");
+requireCapture(operatorRequirementRow, "right", "variable.parameter");
+requireCapture(operatorRequirementRow, "+", "operator");
 
 const namespacePathRow = fixtureLines.findIndex((line) =>
   line.includes("namespace qualified_outer::"),

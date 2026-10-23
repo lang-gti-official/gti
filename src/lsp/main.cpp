@@ -1227,6 +1227,9 @@ SemanticClassification classificationForSymbol(const lang::SymbolRecord &symbol,
   case lang::SymbolKind::Function:
     type = Function;
     break;
+  case lang::SymbolKind::Macro:
+    type = Macro;
+    break;
   case lang::SymbolKind::Field:
     type = Property;
     break;
@@ -1697,6 +1700,7 @@ enum class SemanticRequestKind {
   PrepareRename,
   Rename,
   SignatureHelp,
+  MacroExpansion,
 };
 
 struct PendingSemanticRequest {
@@ -1762,6 +1766,7 @@ struct ProjectAnalysisInputs {
   lang::SourceManager sources;
   std::vector<lang::Diagnostic> diagnostics;
   bool requireEntryPoint = false;
+  lang::ProgramRequest program;
   std::vector<lang::IncludeSearchRoot> includeSearchRoots;
 };
 
@@ -1843,11 +1848,11 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
   result.warnings = profile->warningPolicy;
   result.packageWarnings = facts.packageWarnings(profile->name);
   result.includeSearchRoots = lang::driver::projectIncludeSearchRoots(facts);
-  for (const auto &target : facts.targets()) {
-    if (canonicalPath(target.root) == canonicalPath(entryPath)) {
-      result.requireEntryPoint = true;
-      break;
-    }
+  if (projectTarget != nullptr &&
+      canonicalPath(projectTarget->root) == canonicalPath(entryPath)) {
+    result.requireEntryPoint = true;
+    result.program.testSuite =
+        projectTarget->kind == lang::driver::ProjectTargetKind::Test;
   }
   return result;
 }
@@ -1988,6 +1993,8 @@ private:
       semanticFeature(id, params, SemanticRequestKind::Rename);
     } else if (method == "textDocument/signatureHelp") {
       semanticFeature(id, params, SemanticRequestKind::SignatureHelp);
+    } else if (method == "gti/inspectMacroExpansion") {
+      semanticFeature(id, params, SemanticRequestKind::MacroExpansion);
     } else if (method == "textDocument/completion") {
       completion(id, params);
     } else if (method == "textDocument/codeAction") {
@@ -2054,6 +2061,10 @@ private:
         {"referencesProvider", true},
         {"documentHighlightProvider", true},
         {"documentSymbolProvider", true},
+        {"experimental",
+         JsonObject{{"macroExpansionProvider",
+                     JsonObject{{"method", "gti/inspectMacroExpansion"},
+                                {"readOnly", true}}}}},
         {"signatureHelpProvider",
          JsonObject{{"triggerCharacters", JsonArray{"(", ","}},
                     {"retriggerCharacters", JsonArray{","}}}},
@@ -2675,10 +2686,69 @@ private:
     case SemanticRequestKind::SignatureHelp:
       respondSignatureHelp(id, *position, source, snapshot);
       break;
+    case SemanticRequestKind::MacroExpansion:
+      respondMacroExpansion(id, params, uri, *position, source, snapshot);
+      break;
     default:
       sendJson(response(id, nullptr));
       break;
     }
+  }
+
+  void respondMacroExpansion(const JsonValue *id, const JsonValue *params,
+                             const std::string &uri, Position position,
+                             const std::string &source,
+                             const AnalysisSnapshot &snapshot) {
+    std::optional<std::int64_t> version;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto current = analysisGenerations.find(uri);
+      const auto foundVersion = documentVersions.find(uri);
+      const auto requestedVersion =
+          integerMember(member(params, "textDocument"), "version");
+      if (foundVersion != documentVersions.end())
+        version = foundVersion->second;
+      if (current == analysisGenerations.end() ||
+          current->second != snapshot.generation || !documents.contains(uri) ||
+          (requestedVersion && requestedVersion != version)) {
+        sendJson(errorResponse(id, -32801, "Content modified"));
+        return;
+      }
+    }
+    const auto offset = SourcePositionIndex(source).byteOffset(position);
+    if (!offset) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    const auto sourceUnit =
+        snapshot.frontend->sourceGraph.sourceUnitForPath(snapshot.rootPath);
+    const auto info = lang::LanguageQueries().macroExpansion(
+        *snapshot.frontend, sourceUnit, *offset);
+    if (!info) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    const std::string declarationSource =
+        sourceForSpan(info->declaration, snapshot.frontend->sources,
+                      snapshot.rootPath, source);
+    sendJson(response(
+        id,
+        JsonObject{
+            {"uri", uri},
+            {"version", version ? JsonValue(*version) : JsonValue(nullptr)},
+            {"range", rangeJson(source, info->invocation.start,
+                                info->invocation.end - info->invocation.start)},
+            {"declaration",
+             JsonObject{
+                 {"uri", uriForSource(info->declaration.source,
+                                      snapshot.rootPath, uri)},
+                 {"range",
+                  rangeJson(declarationSource, info->declaration.start,
+                            info->declaration.end - info->declaration.start)}}},
+            {"languageId", "gti"},
+            {"readOnly", true},
+            {"text", info->text},
+            {"truncated", info->truncated}}));
   }
 
   void respondSignatureHelp(const JsonValue *id, Position position,
@@ -3155,6 +3225,8 @@ private:
         project.rawPointerAuditLibraryFindings;
     frontendOptions.analyzeRecoveredProgram = true;
     frontendOptions.requireEntryPoint = project.requireEntryPoint;
+    frontendOptions.program = project.program;
+    frontendOptions.synthesizeTestEntry = false;
     // HIR performs the compiler's concrete generic-instance reanalysis. The
     // LSP retains it only so editor diagnostics agree with `gti check` for
     // the open file's own code; MIR remains code-generation work and is not

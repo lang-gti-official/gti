@@ -45,10 +45,16 @@ void run() {
     require(snippet(result, "if") == nullptr, "statement leaked to namespace");
   }
   const auto top = query("|");
-  for (const auto label :
-       {"class", "struct", "enum", "interface", "namespace", "using", "fn"})
+  for (const auto label : {"class", "struct", "enum", "interface", "namespace",
+                           "using", "fn", "macro"})
     require(snippet(top, label) != nullptr, "namespace template missing");
   require(snippet(top, "ctor") == nullptr, "constructor without owner");
+  require(snippet(top, "macro")->snippet ==
+              "#macro ${1:name}(${2:int value}) {\n\t$0\n}",
+          "macro template must use typed parameters and an empty body");
+  for (const auto source : {"ma|", "macro|", "namespace app { ma| }"})
+    require(snippet(query(source), "macro") != nullptr,
+            "macro declaration prefix missing");
   const auto ranked = query("void f() { bool ifelse = true; ifelse|; }");
   require(!ranked.candidates.empty() &&
               ranked.candidates.front().label == "ifelse" &&
@@ -61,6 +67,7 @@ void run() {
                            "mutmethod", "field", "mutfield", "using"})
     require(snippet(member, label) != nullptr, "member template missing");
   require(snippet(member, "namespace") == nullptr, "namespace inside class");
+  require(snippet(member, "macro") == nullptr, "macro inside class");
   require(snippet(member, "ctor")->snippet->starts_with("Widget("),
           "constructor did not use its owner");
   const auto nested = query("class Outer { struct Inner { dt| }; }; ");
@@ -75,6 +82,7 @@ void run() {
        {"if", "ifelse", "for", "foreach", "while", "switch", "unsafe"})
     require(snippet(body, label) != nullptr, "statement template missing");
   require(snippet(body, "class") == nullptr, "declaration leaked to statement");
+  require(snippet(body, "macro") == nullptr, "macro inside a function body");
   require(snippet(query("void f() { if| }"), "if") != nullptr,
           "complete keyword trigger missing");
 
@@ -102,6 +110,14 @@ void run() {
   require(candidate->replacementRange.start == source.find("cl|") &&
               candidate->replacementRange.end == source.size() - 1,
           "replacement failed to include suffix/UTF-8 prefix");
+  const std::string macroSource = "/* 😀 */ ma|cro";
+  const auto macroMiddle = query(macroSource);
+  const auto *macroCandidate = snippet(macroMiddle, "macro");
+  require(macroCandidate != nullptr &&
+              macroCandidate->replacementRange.start ==
+                  macroSource.find("ma|") &&
+              macroCandidate->replacementRange.end == macroSource.size() - 1,
+          "macro replacement failed to include suffix/UTF-8 prefix");
 
   auto cache = std::make_shared<lang::FrontendCache>();
   lang::FrontendWorkMetrics metrics;

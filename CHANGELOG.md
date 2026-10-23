@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.465.4 — Copying a payload view that holds a local owner's text
+## 0.467.1 — Copying a payload view that holds a local owner's text
 
 - In a `switch` over a payload enum whose `string_view` payload views a local
   owner, as in `Word word = Word::text(input.view());`, copying the arm's
@@ -19,6 +19,82 @@ for what minor and patch releases mean.
   published text field does. This also covers copies of copies, a payload
   enum held in a field (`switch (line.word)`), generic enums, `default` arms
   and loops.
+## 0.467.0 — Source-defined requirements and general type facts
+
+- `requires` queries can check ordinary expressions and construction with exact
+  owned results, optional synthetic parameters and multiple checks. Queries
+  execute no code and retain normal access, ownership and unsafe obligations.
+- Concepts and trailing clauses can compose constexpr Boolean calls, including
+  general `std::meta` classification, lifecycle, relocation, transfer/share,
+  exact-type and enum-representation predicates. Existing compiler facts stay
+  authoritative; arbitrary predicates do not invent safety proofs.
+- Prelude numeric/lifecycle/enum concepts now compose reflection queries, and
+  domain arithmetic concepts use source expression requirements. Strict
+  comparison and borrowed-result contracts retain their necessary compiler
+  support. Exact member requirements remain compatible; overload ranking and
+  subsumption are unchanged.
+- Hover signatures, requirement parameter navigation/rename, formatting and
+  Tree-sitter support cover the extended syntax. Example 173 demonstrates it.
+
+## 0.466.0 — Typed macros
+
+- Declare namespace-scope statement templates with `#macro NAME(typed
+  parameters) { ... }` and invoke them with ordinary, optionally qualified
+  `NAME(...)` calls. Generic parameters, typed overloads, defaults, final packs
+  and constraints use existing GTI signature rules.
+- Arguments are checked statically and evaluated where used, with hygienic
+  definition/caller lookup, checked ownership and deterministic cleanup. There
+  is no textual substitution, eager argument frame or escaping runtime thunk.
+- Automatic locals give explicit evaluate-once bindings with ordinary values,
+  references, moves and cleanup. Local mutation and scoped loops are supported;
+  macro-local names cannot capture caller names, and break/continue cannot
+  escape to a caller's loop.
+- `std::assert` and `std::debug_assert` now use this same facility. The previous
+  `[[deferred]]` spelling is removed and diagnosed with migration guidance;
+  macros and ordinary functions cannot share one callable name.
+- Formatter, Tree-sitter, macro semantic highlighting, hover and navigation
+  follow the declaration identity. Example 174 demonstrates application-defined
+  typed macros; example 172 retains the assertion workflow.
+- Diagnostics include nested expansion context. Neovim's read-only
+  `:GTIExpandMacro` view explains the checked expansion and local bindings.
+
+## 0.465.6 — Moving one class and copying another after fallible work
+
+- A constructor can now move one class into a field and copy another into a
+  later field after an initializer that can fail, when both classes have no
+  destructor and their fields are scalars, enums, pointers, text views or
+  classes of the same kind. `Shelved(Pair moved, Pair copied) :
+  ledger(Ledger(31, divisor)), moved(std::move(moved)), copied(copied)` used
+  to report `error[GTI-B0001]` (an internal compiler error) in either
+  declaration order of the two fields; it now works. If a later initializer
+  or the constructor body fails, each field already built is dropped exactly
+  once.
+
+## 0.465.5 — Test-target editor diagnostics
+
+- The language server recognizes `kind = "test"` and no longer asks valid
+  annotated suites to define `main`. Test-entry rules still diagnose empty
+  suites, invalid test signatures and conflicting user-written entry points.
+  Changing a target between executable and test refreshes editor diagnostics.
+  Generated test dispatchers stay out of editor source snapshots and symbols.
+
+## 0.465.4 — Text relays through accessor switch subjects
+
+- A method that returns a payload's text by reference through an accessor
+  subject now relays the receiver's text, as the same method over the field
+  does. For `Word& wordRef() { return this.word; }`,
+  `std::string_view& textRef() { switch (this.wordRef()) { case
+  Word::text(auto& v): return v; ... } }` used to make `line.textRef()` on
+  text owned elsewhere report `error[GTI-S2045]` when passed or printed; it
+  now works, as it does through `switch (this.word)`.
+- Fixed: binding a payload's text by value through an accessor subject did
+  not carry the field's ownerless-text requirement. In 0.465.2,
+  `std::string_view first() { switch (this.wordRef()) { case
+  Word::text(v): return v; ... } }` compiled even when called on text owned
+  by a local that is destroyed before the result is used, leaving a dangling
+  view. It now reports `error[GTI-S2045]`, exactly as through
+  `switch (this.word)`.
+
 ## 0.465.3 — Moving classes that hold function items
 
 - A generic class whose field holds a function item, such as `class Op<F> {

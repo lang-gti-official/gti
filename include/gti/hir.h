@@ -935,8 +935,16 @@ public:
   [[nodiscard]] const std::vector<HirValueId> &
   valueIdsForSource(const Expr &source) const;
 
+  // Reached synthetic statement roots whose descendants HIR references.
+  // Concrete semantic deltas and the HirLowerer may die before MIR lowering.
+  [[nodiscard]] const std::vector<std::shared_ptr<const Stmt>> &
+  sourceStatementOwners() const {
+    return sourceStatementOwners_;
+  }
+
 private:
   std::vector<ForeignStorageInfo> foreignStorage_;
+  std::vector<std::shared_ptr<const Stmt>> sourceStatementOwners_;
   friend class HirLowerer;
 
   bool valid_ = true;
