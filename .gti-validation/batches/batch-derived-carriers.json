@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "base": "9c2ffb6b029c1dc7f82db4174fc4ac1d85ed4b2a",
+  "members": [
+    {
+      "task": "derived-text-carriers",
+      "pr": 297,
+      "head": "b016c280778645fba4711beffc5be6c673fb8421",
+      "plan": {
+        "tier": "T2",
+        "rationale": "MIR verification (TextContracts::verifyDependentTextCarriers) now derives, from L-OWN-02 publications rather than semantic carrier lists, which local bindings hold a local owner's text and requires each to carry a loan retaining that owner. This changes shared MIR ownership verification for every body containing a dependent-text publication; lowering and semantics are unchanged.",
+        "regressions": [
+          "view_fields",
+          "ownerless_text_contracts"
+        ],
+        "owning": [
+          "view_fields",
+          "ownerless_text_contracts"
+        ],
+        "cross_phase": [
+          "view_fields_runtime",
+          "view_field_payloads_runtime",
+          "text_reference_accessors_runtime",
+          "recursive_text_relays_runtime",
+          "passive_text_view_class_runtime",
+          "reference_payload_semantics",
+          "borrow_origin",
+          "optional_compiler_contract"
+        ],
+        "broader": [
+          "complete_borrow_summaries",
+          "mir_census_regression",
+          "lowered_program_corpus_census",
+          "practical_examples",
+          "text_view_iterator_compiler"
+        ],
+        "targets": [
+          "gti_view_field_tests",
+          "gti_ownerless_text_contracts_tests",
+          "gti_optional_compiler_tests",
+          "gti_reference_payload_semantic_tests",
+          "gti_borrow_origin_tests",
+          "gti_complete_borrow_summary_tests",
+          "gti_text_view_iterator_compiler_tests",
+          "gti_lowered_program_census",
+          "gti_compiler_frontend_tests",
+          "gti_compiler_declarations_tests",
+          "gti_compiler_ownership_tests",
+          "gti_compiler_constexpr_tests",
+          "gti_compiler_diagnostics_tests",
+          "gti_compiler_e2e_tests"
+        ],
+        "platforms": [
+          "darwin"
+        ],
+        "reproduction": {
+          "revision": "030a5fbf9a2d8834df8836a6c3fe87047357d4cc",
+          "command": [
+            "env",
+            "MUTATE=1",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-charming-margulis-0b7a1b/64ca7722-2dac-4b6c-b362-20c77ea382ee/scratchpad/dump/dump-base",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-charming-margulis-0b7a1b/64ca7722-2dac-4b6c-b362-20c77ea382ee/scratchpad/probe/derived.gti",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti--claude-worktrees-charming-margulis-0b7a1b/64ca7722-2dac-4b6c-b362-20c77ea382ee/scratchpad/wt"
+          ],
+          "failure": "With main's mir_text_contracts.cpp, verifyMirProgram accepted 12 of the 14 single-carrier drops of the testDerivedCarriers program (a local view left without any loan retaining its owner); the other 2 failed unrelated shape checks.",
+          "log": "sha256:decf73f1bf0f9b0f01a72c0b450f3188feddc0926bf727265fbfe166c684f789"
+        }
+      }
+    }
+  ]
+}
