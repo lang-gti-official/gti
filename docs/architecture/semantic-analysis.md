@@ -21,6 +21,11 @@ flow. Definition and invocation namespace/source/class domains stay distinct.
 Concrete generic context and tracked caller origins accompany body tokens;
 argument tokens retain their own origins. `SemanticModel` owns the checked
 statement expansion for the frontend snapshot and its instance deltas.
+HIR's shared expansion query retains only a selected root, preserving inherited
+synthetic-syntax stability accounting. Returned or copied HIR therefore keeps
+its reached ordinary, nested and concrete-instance expansion descendants alive
+after both the instance-analysis delta and temporary lowerer are destroyed.
+It does not retain the whole semantic model as a lifetime workaround.
 
 HIR lowers that expansion as ordinary statements and does not enqueue an eager
 function instance for the template. Existing MIR branches, calls, ownership

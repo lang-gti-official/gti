@@ -169,7 +169,8 @@
     "169-source-expected.gti": 192,
     "170-view-fields.gti": 162,
     "171-recursive-text-relays.gti": 146,
-    "172-deferred-assertions.gti": 195
+    "172-deferred-assertions.gti": 195,
+    "174-typed-macros.gti": 153
   },
-  "total": 23423
+  "total": 23576
 }

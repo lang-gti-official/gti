@@ -70,6 +70,14 @@ gates, broad optimized regression and successful-path cost measurements.
 
 Further goals, not implemented by this slice:
 
+- When a semantic facility introduces model-local expression-order caches or
+  active full-expression cleanup frames into request context, reconcile its
+  speculative fork with the macro probe: the new model must start with empty
+  caches/frames, while active loan flow, retained dependencies and identity
+  counters are preserved. Detach/restore caller state with nonthrowing RAII
+  before any speculative semantic work, and keep matched ordinary model/session
+  copies intact. The pending TLS integration's cache-fork adaptation is that
+  prerequisite; these cache fields are not imported by the macro syntax slice.
 - Local binders/loops and value results need hygienic binding identities,
   explicit local-exit and full-expression lifetime facts, with replayable MIR
   cleanup and negative escape tests.
