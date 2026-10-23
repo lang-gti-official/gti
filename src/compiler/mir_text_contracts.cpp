@@ -7,8 +7,8 @@
 #include <limits>
 #include <map>
 #include <set>
-#include <tuple>
 #include <span>
+#include <tuple>
 #include <utility>
 
 namespace lang::mir_detail {
@@ -150,8 +150,7 @@ private:
       constructorFieldRelays;
   // (constructor, formal, field) re-rooted under some construction's loan;
   // the body must not also store the field as ownerless text.
-  std::set<std::tuple<std::size_t, std::size_t, SymbolId>>
-      publishedFieldRelays;
+  std::set<std::tuple<std::size_t, std::size_t, SymbolId>> publishedFieldRelays;
   // Derived per function: the formals a returned fresh value holds in a
   // direct text field, which each call then publishes (L-OWN-02).
   std::vector<std::set<PublishedTextField>> relays;
@@ -435,7 +434,8 @@ private:
           (producer->kind == MirInstructionKind::Move ||
            producer->kind == MirInstructionKind::Load) &&
           producer->operands.front().kind != MirOperandKind::Value)
-        if (auto path = dependentDesignationPath(body, producer->operands.front()))
+        if (auto path =
+                dependentDesignationPath(body, producer->operands.front()))
           return path;
     const auto *loan = operand.kind == MirOperandKind::Loan
                            ? body.findLoan(operand.loan)
@@ -1037,18 +1037,15 @@ private:
     if (exclusive && source.known && source.parameters.empty() &&
         source.fields.size() == 1 && !source.fields.begin()->receiver &&
         source.fields.begin()->payload == 0)
-      inputs.fieldRelays.emplace(
-          std::pair{source.fields.begin()->parameter,
-                    source.fields.begin()->field},
-          std::move(path));
+      inputs.fieldRelays.emplace(std::pair{source.fields.begin()->parameter,
+                                           source.fields.begin()->field},
+                                 std::move(path));
   }
 
-  void
-  payloadInitializerTextInputs(const TextBody &context,
-                               const MirConstructorInitializer &initializer,
-                               bool diagnose, InitializerTextInputs &inputs,
-                               std::map<std::size_t, std::size_t> &uses,
-                               FieldUses &fieldUses) {
+  void payloadInitializerTextInputs(
+      const TextBody &context, const MirConstructorInitializer &initializer,
+      bool diagnose, InitializerTextInputs &inputs,
+      std::map<std::size_t, std::size_t> &uses, FieldUses &fieldUses) {
     const auto found = std::find_if(
         context.body.values.begin(), context.body.values.end(),
         [&](const auto &value) {
@@ -1339,9 +1336,9 @@ private:
                 place ? contractPlace(context, *place, true) : std::nullopt;
             if (!formal || formal->field == 0)
               return;
-            for (const auto &field : formalTextFields(
-                     context, {.receiver = formal->receiver,
-                               .parameter = formal->parameter}))
+            for (const auto &field :
+                 formalTextFields(context, {.receiver = formal->receiver,
+                                            .parameter = formal->parameter}))
               if (field.field == formal->field && field.payload != 0)
                 neededFields.insert(field);
           };
@@ -1377,9 +1374,10 @@ private:
                                     designated->front());
             if (reRooted) {
             } else if (!target || !fieldContractFunction(program, *target) ||
-                !readOnlyContractFormal(*target, calleeFormal) ||
-                std::binary_search(target->ownerlessTextFields.begin(),
-                                   target->ownerlessTextFields.end(), field))
+                       !readOnlyContractFormal(*target, calleeFormal) ||
+                       std::binary_search(target->ownerlessTextFields.begin(),
+                                          target->ownerlessTextFields.end(),
+                                          field))
               fail(context, owner, &instruction,
                    "dependent text value is relayed where its text field may "
                    "outlive the call");
@@ -1594,8 +1592,8 @@ auto TextContracts::initializerTextInputs(
     if (initializer.kind == ConstructorInitializerTargetKind::Field &&
         initializer.targetType.kind == SemanticType::Enum &&
         initializer.arguments.size() == 1) {
-      payloadInitializerTextInputs(context, initializer, diagnose, inputs,
-                                   uses, fieldUses);
+      payloadInitializerTextInputs(context, initializer, diagnose, inputs, uses,
+                                   fieldUses);
       continue;
     }
     if (initializer.kind != ConstructorInitializerTargetKind::Field ||
@@ -1632,9 +1630,8 @@ auto TextContracts::initializerTextInputs(
   }
   std::erase_if(inputs.fields,
                 [&](const auto &entry) { return uses[entry.first] != 1; });
-  std::erase_if(inputs.fieldRelays, [&](const auto &entry) {
-    return fieldUses[entry.first] != 1;
-  });
+  std::erase_if(inputs.fieldRelays,
+                [&](const auto &entry) { return fieldUses[entry.first] != 1; });
   return inputs;
 }
 

@@ -9,6 +9,52 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.465.0 — Returning a view of the caller's string
+
+- A function can now return a value over the text of one of its read-only
+  reference parameters, and each call's result views that call's argument:
+
+  ```gti
+  expected<int, std::string_view> parse(std::string& input) {
+    if (input.empty()) {
+      return 0;
+    }
+    return unexpected(input.view());
+  }
+  ```
+
+  This used to report `error[GTI-S2045]`. The caller can read
+  `parsed.error()`, and changing or moving the string while the result is
+  still used reports `error[GTI-S2017]`. The same works for your own classes
+  and enums, as in `Token tokenOf(std::string& input) { return
+  Token(input.view(), 1); }`, and for `std::optional<std::string_view>` with
+  `return std::nullopt;` on another path. A view of a local, a by-value or
+  `mut` parameter, or the method's own receiver still reports
+  `error[GTI-S2045]`.
+- Implicit conversions keep the text's owner, so
+  `std::optional<std::string_view> o = input.view();` and
+  `expected<int, std::string_view> r = unexpected(input.view());` no longer
+  report `error[GTI-S2045]`. A value built over a `std::string_view` local,
+  such as `Token(view, 1)` after `std::string_view view = input.view();`,
+  used to report `error[GTI-B0001]` (an internal compiler error); it now
+  views `input`.
+- A constructor that stores a text field of one of its class parameters, such
+  as `Wrap(Token token) : word(Word::text(token.text)) {}`, now passes the
+  argument's text on instead of requiring a literal, and
+  `std::move(failure).error()` reads an `unexpected_value` over a local
+  string. A consuming method that returns its moved text field, like
+  `std::string_view take() && { return std::move(this.text); }`, works the
+  same way.
+- Copying a payload binding into a local view, as in `std::string_view view =
+  value;` inside `case Word::text(value):`, used to report `error[GTI-B0001]`;
+  it now works.
+- Fixed a 0.463.0 soundness bug that could leave a dangling view. A method
+  that copied an enum field holding a view of a local string, passed it on,
+  stored it or returned a reference to it, as in `void keep() { Word w =
+  this.word; switch (w) { case Word::text(v): kept = v; break; ... } }`,
+  compiled when called on such a value. It now reports `error[GTI-S2045]`;
+  over literal text it still works.
+
 ## 0.464.1 — Several reference bindings from one local payload enum
 
 - A `switch` arm can now bind `auto&` to more than one reference payload of an

@@ -4830,8 +4830,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   const Expr *subject = stmt.expression().get();
   while (const auto *group = exprAs<Grouping>(subject))
     subject = group->expression() ? group->expression().get() : nullptr;
-  const Expr *enclosingSubject =
-      std::exchange(observedSwitchSubject, subject);
+  const Expr *enclosingSubject = std::exchange(observedSwitchSubject, subject);
   const SemanticType subjectType = analyze(stmt.expression());
   observedSwitchSubject = enclosingSubject;
   if (!instanceAnalysisActive) {
@@ -6016,14 +6015,13 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   // the initializer into such a value of the declared type.
   const bool contextualText =
       initializer && contextualTextValue(*initializer, declaredType);
-  const bool ownerDependentValue =
-      !ownerDependentText &&
-      (declaredType.kind == SemanticType::Class ||
-       declaredType.kind == SemanticType::Enum) &&
-      initializerInfo != nullptr &&
-      ((isTextDependentValue(*initializerInfo) &&
-        initializerInfo->type == declaredType) ||
-       contextualText);
+  const bool ownerDependentValue = !ownerDependentText &&
+                                   (declaredType.kind == SemanticType::Class ||
+                                    declaredType.kind == SemanticType::Enum) &&
+                                   initializerInfo != nullptr &&
+                                   ((isTextDependentValue(*initializerInfo) &&
+                                     initializerInfo->type == declaredType) ||
+                                    contextualText);
   // A dependent field of a dependent value has no loan of its own yet: a
   // switch observes it in place.
   const Expr *source = initializer.get();

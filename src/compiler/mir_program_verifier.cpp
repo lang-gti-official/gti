@@ -287,8 +287,9 @@ dependentTextCallPublication(const MirInstruction &instruction,
 
 // A function returning a value that views the referent of one read-only
 // reference formal at one text path of its result (L-OWN-02).
-[[nodiscard]] bool dependentTextReturnSummary(const MirProgram &program,
-                                              const MirFunctionInstance &instance) {
+[[nodiscard]] bool
+dependentTextReturnSummary(const MirProgram &program,
+                           const MirFunctionInstance &instance) {
   if (!instance.dependentTextReturn ||
       instance.returnBorrowOrigin != BorrowOriginKind::Argument ||
       instance.returnBorrowFields.size() != 1 ||
@@ -6177,7 +6178,8 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
       instance.returnBorrowParameter, instance.returnBorrowFields);
   // A dependent text result views the referent of one read-only reference
   // formal at one text path of the result (L-OWN-02).
-  const bool dependentTextResult = dependentTextReturnSummary(program, instance);
+  const bool dependentTextResult =
+      dependentTextReturnSummary(program, instance);
   if (instance.dependentTextReturn && !dependentTextResult)
     return invalidSummary(
         "dependent text result lacks one read-only reference formal at a "
