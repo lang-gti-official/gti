@@ -35,6 +35,18 @@ for what minor and patch releases mean.
 - See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
   and [runnable example 173](examples/173-thread-local-storage.gti).
 
+## 0.465.1 — Class stores into globals, captures and element fields
+
+- Assigning a class value to a global, through a `[mut &p]` capture, or
+  through an overloaded subscript such as `points[uint64_t(0)] = q` used to
+  report `error[GTI-B0001]` (an internal compiler error). These stores now
+  compile and run, whether the value is a copy or a fresh construction, and a
+  global or a captured value can be the copied value (`p = g;`).
+- Reading or writing a field of a fixed-array element selected at a run-time
+  index, as in `points[i].x` or `points[i].x = 7`, and copying such an element
+  (`Point copy = points[i];`) no longer report `GTI-B0001` (issue #203). The
+  index is checked first: one out of range fails with
+  `GTI-R0007 index_out_of_bounds in fixed_array`.
 ## 0.465.0 — Deferred assertions
 
 - `<std/assert>` adds always-on `std::assert` and configuration-controlled
