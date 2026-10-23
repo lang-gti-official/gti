@@ -33,6 +33,21 @@ not a second semantic or test-selection authority.
 
 ## Select Evidence
 
+Select T1/T2/T3 from the invariant changed, using the canonical
+[batch validation contract](../../../docs/architecture/agent-workflow.md#risk-based-batch-validation).
+T1 is confined recovery/diagnostic or otherwise narrow behavior; T2 changes
+semantic/shared compiler behavior; T3 changes system, ABI/runtime or optimizer
+invariants. "ICE" and a small diff do not establish low risk. The script's
+critical-path floor is conservative; review can raise it. T2/T3 plans must
+name relevant broader subsystem checks and all required platforms.
+
+For a fix, retain evidence of the intended original failure and its corrected
+behavior. Use a known-bad revision where practical; unrelated syntax failure
+does not reproduce the bug. If unavailable or unsafe, record the concrete
+limitation and existing evidence. Bound resource-exhaustion reproductions.
+For code generation, also test observable execution/cleanup and applicable
+negative cases so an ICE cannot silently become a miscompile.
+
 - Trace changed behavior through its owning layer. Do not infer GTI semantics
   from emitted C++ or documentation examples.
 - For syntax or language meaning, cover applicable parser/AST, semantics, HIR,
@@ -84,6 +99,11 @@ invalid setup cheaply; they do not replace required broad coverage.
    verification document after focused checks pass. Keep
    `scripts/local_language_audit.py --full` non-gating; turn any bug it finds
    into a minimal deterministic regression in the owning suite.
+   In a batch, perform component regressions, owning/cross-phase checks and
+   relevant subsystem coverage once at admission. The designated batch owner
+   runs full coverage on the combined candidate; component agents do not each
+   repeat that campaign. Full/platform/performance requirements remain part
+   of integration acceptance, with original and combined evidence distinguished.
 4. Run `git diff --check` and inspect the complete scoped diff for unintended
    generated, vendored, user, or semantic changes.
 5. If a check fails, preserve its raw command and output, identify the owning
@@ -107,6 +127,13 @@ checks at any point; cost controls never waive the resulting obligations.
 
 ## Report The Result
 
+Use `batch enroll <task> --plan <json> --build <optimized-tree>` for focused
+handoff. Report "ready for integration; full combined validation pending",
+including the exact source, tier/rationale, tests, before-fix evidence,
+platforms and retained logs. This is a handoff checkpoint, not completed
+integration. An integrated full-suite failure is attributed to the owning
+change; helpers may assist after establishing the intended invariant.
+
 Report:
 
 - scope and changed surfaces;
@@ -119,3 +146,8 @@ Report:
 Do not call a change verified while a required gate is failing or unrun. State
 "partially verified" when environmental limits or task scope leave required
 evidence outstanding.
+
+GitHub CI is advisory, not one of those required acceptance gates. Do not wait
+for Actions to pass before handing off or merging locally validated work.
+Keep local/managed-runner requirements intact and distinguish their evidence
+from pending or failed CI feedback; a known CI failure is not a passing result.
