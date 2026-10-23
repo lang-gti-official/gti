@@ -283,10 +283,10 @@ int main() {
           // by assignment into its already-constructed storage.
           artifact.contents.find(
               "(*this).empty = ::__gti_program::payload_t{"
-              "std::in_place_index<2>}; // direct passive payload field "
+              "std::in_place_index<1>}; // direct passive payload field "
               "publication") != std::string::npos &&
           artifact.contents.find("(*this).valued = ::__gti_program::payload_t{"
-                                 "std::in_place_index<1>, __gti_mir_v_") !=
+                                 "std::in_place_index<0>, __gti_mir_v_") !=
               std::string::npos,
       "production emission executes conversion and payload publication in "
       "constructor MIR without duplicate in-class defaults");
