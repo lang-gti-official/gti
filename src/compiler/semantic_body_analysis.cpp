@@ -4929,6 +4929,23 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   // (L-OWN-02); consuming one is not yet supported.
   if (payloadEnum != nullptr && !consumedSubject)
     consumeTextDependentValue(stmt.expression());
+  // An observed subject reached through a reference result, which names no
+  // place, is read until each arm has bound its payloads, so it needs the
+  // storage a reference bound to it would. A named place is that storage.
+  if (payloadEnum != nullptr && !consumedSubject && subjectInfo != nullptr &&
+      subjectInfo->category == ValueCategory::Place &&
+      semanticModel.findPlace(*stmt.expression()) == nullptr &&
+      !expressionNeverReturns(stmt.expression().get()) &&
+      !hasStableBorrowStorage(stmt.expression())) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2017", DiagnosticPhase::Semantics,
+        expressionToken(stmt.expression()),
+        "Switch subject is derived from temporary storage that does not "
+        "outlive the subject expression.");
+    diagnostic.hints.emplace_back("Bind the subject's owner to a local "
+                                  "variable before matching it.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
   // Snapshot the selected operand's complete external owners before arm-local
   // moves or replacement can change the source binding's current value fact.
   const auto subjectDependencies =
@@ -5185,6 +5202,24 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                                                     armIndex);
       }
     }
+    // Binding an observed subject's payloads reads its place at this arm's
+    // entry, as forming a selection uses its parent authority. A subject
+    // reached through a reference (a reference binding, or a call result that
+    // names no place) uses that reference's authority there; a named owned
+    // place needs none of its carried dependencies to be read.
+    if (!consumedSubject && subjectSource &&
+        std::any_of(payloadPatterns.begin(), payloadPatterns.end(),
+                    [](const auto &entry) {
+                      return std::any_of(entry.second.bindings.begin(),
+                                         entry.second.bindings.end(),
+                                         [](const auto &payload) {
+                                           return payload.name != nullptr;
+                                         });
+                    }))
+      if (const auto *loan = semanticModel.findLoan(subjectSource->loan);
+          loan && (loan->kind == SemanticLoanKind::Reference ||
+                   semanticModel.findPlace(*stmt.expression()) == nullptr))
+        recordSemanticLoanAuthorityUse(subjectSource->loan);
     for (auto &[source, pattern] : payloadPatterns) {
       if (!pattern.bindings.empty() && arm.labels.size() != 1) {
         report(expressionToken(*source),
@@ -5402,10 +5437,17 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
               recordMutableBindingUse(stmt.expression());
             }
             SemanticLoanId parent = 0;
+            // A reference result that names no place reaches the carrier's
+            // storage; that carrier's dependency group is the stored owner
+            // authority a reference local bound to it would inherit.
+            SemanticLoanId inheritedDependency = 0;
             if (const auto source = retainedLoanSource(stmt.expression()))
-              if (const auto *loan = semanticModel.findLoan(source->loan);
-                  loan && loan->kind != SemanticLoanKind::StoredValue)
-                parent = source->loan;
+              if (const auto *loan = semanticModel.findLoan(source->loan)) {
+                if (loan->kind != SemanticLoanKind::StoredValue)
+                  parent = source->loan;
+                else if (semanticModel.findPlace(*stmt.expression()) == nullptr)
+                  inheritedDependency = source->loan;
+              }
             // This pattern borrows physical payload storage, not a stored
             // reference's external owner. A dependency group carried by an
             // owned enum cannot authorize a child loan into that enum's shell.
@@ -5421,9 +5463,11 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                 *carrier, symbol, SemanticLoanKind::Reference, payload.source,
                 place, place.root, place.receiver, access, true, parent);
             if (const auto *ancestor = semanticModel.findLoan(parent);
-                ancestor && ancestor->storedDependency != 0) {
+                ancestor && ancestor->storedDependency != 0)
+              inheritedDependency = ancestor->storedDependency;
+            if (inheritedDependency != 0) {
               auto loan = *semanticModel.findLoan(payload.binding.retainedLoan);
-              loan.storedDependency = ancestor->storedDependency;
+              loan.storedDependency = inheritedDependency;
               semanticModel.recordLoan(std::move(loan));
             }
             // The binding is born at this arm's entry, not at the switch

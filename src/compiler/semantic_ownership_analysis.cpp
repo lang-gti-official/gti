@@ -10128,7 +10128,12 @@ auto SemanticVisitor::Impl::recordSemanticLoanUse(SymbolId carrier) -> void {
   if (retained == loanFlow.carrierLoans.end()) {
     return;
   }
-  std::vector<SemanticLoanId> pending{retained->second};
+  recordSemanticLoanAuthorityUse(retained->second);
+}
+
+auto SemanticVisitor::Impl::recordSemanticLoanAuthorityUse(SemanticLoanId root)
+    -> void {
+  std::vector<SemanticLoanId> pending{root};
   std::unordered_set<SemanticLoanId> visited;
   while (!pending.empty()) {
     const SemanticLoanId loan = pending.back();
