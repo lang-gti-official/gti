@@ -1,0 +1,153 @@
+==================
+General operation and construction requirements
+==================
+concept adds_to<L, R, V> = requires(L& left, R& right) {
+  { left + right } -> V;
+  { left == left } -> bool;
+};
+concept default_constructible<T> = requires { { T() } -> T; };
+concept constructible<T, Arg> = requires(Arg& value) { { T(value) } -> T; };
+---
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (binary_expression
+          (primary_expression
+            (identifier))
+          (primary_expression
+            (identifier)))
+        (type
+          (user_type
+            (identifier)))
+        (binary_expression
+          (primary_expression
+            (identifier))
+          (primary_expression
+            (identifier)))
+        (type
+          (primitive_type)))))
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (call_expression
+          (primary_expression
+            (identifier))
+          (argument_list))
+        (type
+          (user_type
+            (identifier))))))
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (call_expression
+          (primary_expression
+            (identifier))
+          (argument_list
+            (primary_expression
+              (identifier))))
+        (type
+          (user_type
+            (identifier)))))))
+
+==================
+Constexpr reflection predicate composition
+==================
+concept integer<T> = std::meta::is_integral<T>();
+concept arithmetic<T> = std::meta::is_integral<T>() || std::meta::is_floating_point<T>();
+int count<T>(T value) requires std::meta::is_integral<T>() { return 1; }
+---
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (constraint_predicate
+        (scoped_identifier
+          (scoped_identifier
+            (identifier)
+            (identifier))
+          (identifier))
+        (type
+          (user_type
+            (identifier))))))
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (constraint_expression
+        (constraint_predicate
+          (scoped_identifier
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (identifier))
+          (type
+            (user_type
+              (identifier)))))
+      (constraint_expression
+        (constraint_predicate
+          (scoped_identifier
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (identifier))
+          (type
+            (user_type
+              (identifier)))))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (requires_clause
+      (constraint_expression
+        (constraint_predicate
+          (scoped_identifier
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (identifier))
+          (type
+            (user_type
+              (identifier))))))
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal))))))))

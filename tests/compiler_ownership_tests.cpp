@@ -12009,7 +12009,9 @@ int main() {
       !invalidPublicStorage.canGenerateCode() &&
           hasDiagnostic(invalidPublicStorage.diagnostics,
                         "No constructor of 'storage'") &&
-          hasDiagnostic(invalidPublicStorage.diagnostics, "'std::movable'") &&
+          hasDiagnosticCode(invalidPublicStorage.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(invalidPublicStorage.diagnostics,
+                        "'std::movable<fixed_value>'") &&
           hasDiagnostic(invalidPublicStorage.diagnostics,
                         "Function expects 2 arguments but received 3") &&
           hasDiagnostic(invalidPublicStorage.diagnostics,

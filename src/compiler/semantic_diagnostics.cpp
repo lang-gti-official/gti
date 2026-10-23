@@ -193,6 +193,14 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       diagnostic.hints.push_back(std::move(reason));
   };
   const auto publish = [&](Diagnostic diagnostic) {
+    if (failure.expressionFailure && !failure.context.empty()) {
+      diagnostic.message =
+          (failure.applicationArgumentIndex
+               ? "Type '" + typeSpelling(failure.argument) +
+                     "' does not satisfy concept '"
+               : "Generic arguments do not satisfy concept '") +
+          applicationSpelling(failure.context.front()) + "'.";
+    }
     if (failure.callArgument && failure.callArgumentIndex) {
       diagnostic.primary = tokenSpan(*failure.callArgument);
       std::string prefix =
@@ -222,6 +230,13 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       diagnostic.related.push_back(
           {tokenSpan(context.location),
            "Required application '" + applicationSpelling(context) + "'."});
+    }
+    if (failure.expressionFailure) {
+      const Token &location = failure.leafApplication
+                                  ? failure.leafApplication->name.last()
+                                  : failure.parameter;
+      diagnostic.related.push_back(
+          {tokenSpan(location), *failure.expressionFailure});
     }
     appendMemberReason(diagnostic, failure);
     if (failure.conformanceBorrowOperation) {
@@ -321,6 +336,26 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     diagnostic.hints.emplace_back(
         "At least one complete '||' branch must be satisfied; capabilities "
         "from different alternatives are not combined.");
+    publish(std::move(diagnostic));
+    return;
+  }
+  if (failure.expressionFailure &&
+      failure.failed == GenericConstraintKind::None) {
+    const bool unaryPredicate =
+        failure.leafApplication && failure.leafApplication->predicate &&
+        failure.leafApplication->arguments.size() == 1 &&
+        failure.argument != SemanticType::Unknown;
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2029", DiagnosticPhase::Semantics, site,
+        unaryPredicate
+            ? "Type '" + typeSpelling(failure.argument) +
+                  "' does not satisfy the required compile-time predicate."
+            : "Generic arguments do not satisfy the required expression or "
+              "compile-time predicate.");
+    diagnostic.hints.emplace_back(
+        "The expression must be valid under its declared access and unsafe "
+        "contract, with the exact required result; a predicate must evaluate "
+        "to true at compile time.");
     publish(std::move(diagnostic));
     return;
   }
@@ -492,27 +527,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "state. Raw pointers remain nonowning and retain their unsafe "
           "validity "
           "obligations; copying or moving the element is not required.");
-      break;
-    case StructuralConstraintKind::Adds:
-      diagnostic.hints.emplace_back(
-          "The domain type must provide a public read-only "
-          "'T operator+(T&)' returning an owned value of its own type.");
-      break;
-    case StructuralConstraintKind::Subtracts:
-      diagnostic.hints.emplace_back(
-          "The domain type must provide a public read-only "
-          "'T operator-(T&)' returning an owned value of its own type.");
-      break;
-    case StructuralConstraintKind::Negates:
-      diagnostic.hints.emplace_back(
-          "The domain type must provide a public read-only unary "
-          "'T operator-()' returning an owned value of its own type.");
-      break;
-    case StructuralConstraintKind::ScalesBy:
-      diagnostic.hints.emplace_back(
-          "The domain type must provide a public read-only "
-          "'T operator*(Scalar)' returning an owned value of its own type "
-          "for the exact scalar type.");
       break;
     case StructuralConstraintKind::ReadCallable:
     case StructuralConstraintKind::MutCallable:
