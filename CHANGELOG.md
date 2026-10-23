@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.464.2 — Moving classes that hold function items
+## 0.464.3 — Moving classes that hold function items
 
 - A generic class whose field holds a function item, such as `class Op<F> {
   public: F action; Op(F action) : action(action) {} }` instantiated with a
@@ -21,6 +21,21 @@ for what minor and patch releases mean.
 - Such a class can also now be chosen by a conditional, as in `Op<F> chosen =
   pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
   can be assigned into a field. Each used to report `error[GTI-B0001]`.
+
+## 0.464.2 — Using whole assignment results
+
+- The whole result of a class assignment can now be used. For a struct
+  `Point`, `Point r = (p = q);`, `return (p = q);`, a by-value argument such
+  as `take(p = q)`, a method call such as `(p = q).digits()` and a constructor
+  initializer such as `value(a = b)` used to report `error[GTI-B0001]` (an
+  internal compiler error); they now receive a copy of the assigned value, and
+  `p` holds `q` afterwards.
+- The result stays a copy: in `pair(p = q, p = r)` the first argument is still
+  `q`, and a `mut` method called as `(c = d).bump()` changes the copy, not `c`.
+- Using the result of an assignment of a move-only type, as in
+  `Tracked r = (p = std::move(q));` or `(p = std::move(q)).x`, now reports
+  `error[GTI-S2003]` at the `=`: the result would copy the target. Such an
+  assignment is still valid as its own statement.
 
 ## 0.464.1 — Several reference bindings from one local payload enum
 
