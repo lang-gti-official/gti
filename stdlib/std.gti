@@ -3,6 +3,7 @@
 export module std;
 export import std.algorithm;
 export import std.array;
+export import std.assert;
 export import std.atomic;
 export import std.build;
 export import std.charconv;
