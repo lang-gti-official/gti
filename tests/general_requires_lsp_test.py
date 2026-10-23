@@ -62,6 +62,14 @@ def main():
             assert "left + right" in str(contract) and "-> T" in str(contract), contract
             predicate = hover(SOURCE, SOURCE.index("integer_value<T>"))
             assert "std::meta::is_integral<T>()" in str(predicate), predicate
+            callee_position = SOURCE.index("is_integral<T>")
+            callee = hover(SOURCE, callee_position)
+            assert "is_integral" in str(callee) and "bool" in str(callee), callee
+            definition = request("textDocument/definition", {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(SOURCE, callee_position)})
+            location = definition[0] if isinstance(definition, list) else definition
+            assert location["uri"].endswith("/std/meta.gti"), definition
             selected = hover(SOURCE, SOURCE.rindex("twice(left)"))
             assert "is_integral<int32_t>()" in str(selected), selected
             use_position = lsp_position(SOURCE, SOURCE.index("left + right"))

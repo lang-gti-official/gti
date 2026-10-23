@@ -1960,6 +1960,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     beginTypeParameterScope(constructorInfo->genericParameters);
     requirementsValid = beginRequirementScope(constructorInfo);
   }
+  if (stmt.requiresClause())
+    recordConstraintPredicateUses(stmt.requiresClause()->requirements());
   const SemanticType ownerType = SemanticType::classType(owner.id);
   const SymbolId symbol = recordToolingSymbol(
       stmt.name(), SymbolKind::Constructor,
@@ -3020,6 +3022,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   const bool staticMethod =
       functionInfo != nullptr && functionInfo->staticMember;
   const bool requirementsValid = beginRequirementScope(functionInfo);
+  if (stmt.requiresClause())
+    recordConstraintPredicateUses(stmt.requiresClause()->requirements());
   // A conversion operator is named by its target, whose tokens are type
   // references of their own, so its occurrence is the `operator` keyword.
   const bool conversionOperator =
@@ -5818,6 +5822,7 @@ auto SemanticVisitor::Impl::visitConceptDecl(const ConceptDecl &stmt) -> void {
     return;
   }
   const RegisteredConcept &conceptInfo = concepts[found->second - 1];
+  recordConstraintPredicateUses(stmt.requirements());
   attachDeclarationDocumentation(conceptInfo.symbol, stmt);
   semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
                                   .span = tokenSpan(stmt.name()),

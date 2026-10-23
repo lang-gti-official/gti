@@ -4122,6 +4122,8 @@ private:
   void
   registerConstraintPredicateDeclarations(const StmtList &statements,
                                           std::vector<std::string> scope = {});
+  void recordConstraintPredicateUses(
+      const std::vector<ConceptApplication> &requirements);
   [[nodiscard]] std::optional<PredicateCapability>
   constraintPredicateCapability(const Call &call,
                                 const std::vector<SemanticType> &typeArguments);

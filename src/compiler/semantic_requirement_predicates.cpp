@@ -2,6 +2,52 @@
 
 namespace lang {
 
+auto SemanticVisitor::Impl::recordConstraintPredicateUses(
+    const std::vector<ConceptApplication> &requirements) -> void {
+  // Predicate checking may run before ordinary callable registration and in a
+  // detached query worker. The lexical visit records only declaration-owned
+  // editor references once ordinary lookup is available; no executable call
+  // or speculative effect/ownership state crosses back into the main model.
+  for (const auto &requirement : requirements) {
+    const auto *call = exprAs<Call>(requirement.predicate.get());
+    if (!call)
+      continue;
+    const Expr *callee = call->callee().get();
+    while (const auto *group = exprAs<Grouping>(callee))
+      callee = group->expression().get();
+    std::optional<NamePath> path;
+    if (const auto *qualified = exprAs<QualifiedName>(callee)) {
+      if (qualified->ownerType())
+        continue;
+      path = qualified->name();
+    } else if (const auto *variable = exprAs<Variable>(callee)) {
+      path = NamePath(variable->name());
+    }
+    if (!path || compilerPrivatePathDenied(*path))
+      continue;
+    recordQualifiedPathUses(*path);
+    const Symbol *symbol = resolveQualified(*path);
+    if (!symbol || symbol->overloads.size() != 1)
+      continue;
+    const auto &candidate = symbol->overloads.front();
+    if (!candidate.declaration ||
+        !semanticModel.findFunction(*candidate.declaration))
+      continue;
+    const Token &token = path->last();
+    if (token.generated)
+      continue;
+    semanticModel.recordOccurrence(
+        {.sourceUnit = sourceUnitFor(token),
+         .span = tokenSpan(token),
+         .kind = SemanticOccurrenceKind::Function,
+         .symbol = recordFunctionSymbol(*candidate.declaration),
+         .roles = OccurrenceRole::Reference | OccurrenceRole::Call,
+         .name = token.lexeme,
+         .type = candidate.returnType,
+         .function = candidate.declaration});
+  }
+}
+
 auto SemanticVisitor::Impl::registerConstraintPredicateDeclarations(
     const StmtList &statements, std::vector<std::string> scope) -> void {
   assert(!catalog.sealed);

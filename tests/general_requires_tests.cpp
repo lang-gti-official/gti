@@ -388,6 +388,19 @@ int main() { int value = 1; return broken(value); }
            "alternative requirements cannot invent a shared operation",
            "GTI-S2004");
 
+  accepted(check(root, directory, "compound_type_arguments", R"(
+#include <std/meta>
+bool flag<T>() { return std::meta::is_integral<T>(); }
+int number<T>() { return 2; }
+concept selects<T> = requires {
+  { flag<T>() && flag<T>() } -> bool;
+  { flag<T>() ? number<T>() : number<T>() } -> int;
+};
+int selected<T>() requires selects<T> { return 0; }
+int main() { return selected<int>(); }
+)"),
+           "compound requirements retain explicit generic arguments");
+
   const std::string formatting =
       R"(concept sum<T>=requires(T& a,T& b){{a+b}->T;{a==b}->bool;};
 concept ints<T>=std::meta::is_integral<T>();
