@@ -28059,6 +28059,12 @@ classSsaLifetimeSlot(const MirProgram &program,
                   [&](const MirLifecycleEvent &event) {
                     return preparedArgumentTransfer(body, *producer, event);
                   });
+  // A failure-free construction that consumes prepared by-value arguments,
+  // such as a passive record formal (RT-12), has no result obligation: only
+  // the field-chain read below may observe it in its representation slot.
+  const bool failureFreeTransferringConstruction =
+      transferringConstructionProducer &&
+      producer->definedFailure.propagation == FailurePropagationKind::None;
   // A construction that can fail and that the fused assignment does not spell
   // publishes on its success edge before the Assign moves it in. Every
   // construction the fused assignment already spells keeps that route.
@@ -28119,8 +28125,8 @@ classSsaLifetimeSlot(const MirProgram &program,
       value->info.category != ValueCategory::Value || producer == nullptr ||
       (callee == nullptr && !callableClassProducer &&
        !defaultConstructionProducer && !directConstructionProducer &&
-       !raisingAssignedConstruction && !directMoveProducer &&
-       !joinMoveProducer && !copyLoadProducer) ||
+       !failureFreeTransferringConstruction && !raisingAssignedConstruction &&
+       !directMoveProducer && !joinMoveProducer && !copyLoadProducer) ||
       !producer->result || *producer->result != valueId ||
       producer->info.type != value->info.type ||
       (callee != nullptr && callee->returnType != value->info.type) ||
@@ -28145,7 +28151,8 @@ classSsaLifetimeSlot(const MirProgram &program,
   if (classInstance == nullptr ||
       classInstance->destructorStatus != SpecialMemberStatus::Generated ||
       classInstance->destructor || classInstance->requiresActiveCleanup ||
-      ((directConstructionProducer || directMoveProducer || copyLoadProducer) &&
+      ((directConstructionProducer || failureFreeTransferringConstruction ||
+        directMoveProducer || copyLoadProducer) &&
        (classInstance->requiresActiveDropState ||
         classInstance->traits.containsBorrowedState ||
         (value->info.traits.containsBorrowedState &&
@@ -28185,7 +28192,8 @@ classSsaLifetimeSlot(const MirProgram &program,
         exactFieldProjectionRows(program, representations, value->info.type,
                                  projection->projections, 0,
                                  projection->type) &&
-        ((!directConstructionProducer && movable) ||
+        ((!directConstructionProducer &&
+          !failureFreeTransferringConstruction && movable) ||
          projection->type.kind == SemanticType::Class ||
          // A text view is a passive descriptor, copied out like a scalar;
          // the text it views is never the temporary's own storage.
@@ -28296,7 +28304,9 @@ classSsaLifetimeSlot(const MirProgram &program,
           consumer->result ? body.findValue(*consumer->result) : nullptr;
       // A text observer's result is its scalar answer, not the field.
       const bool observed = textObserverOfPlace(*consumer, projection->id);
-      if (!observingCall && (directConstructionProducer || !movable) &&
+      if (!observingCall &&
+          (directConstructionProducer || failureFreeTransferringConstruction ||
+           !movable) &&
           (loaded == nullptr ||
            (!observed && loaded->info.type != projection->type) ||
            classInstance->requiresActiveDropState ||
@@ -28318,8 +28328,9 @@ classSsaLifetimeSlot(const MirProgram &program,
     }
   }
 
-  // A copied place keeps its own copy-load routes for every other consumer.
-  if (copyLoadProducer)
+  // A copied place keeps its own copy-load routes for every other consumer,
+  // and a failure-free transferring construction has no other route here.
+  if (copyLoadProducer || failureFreeTransferringConstruction)
     return {};
 
   // A fresh immovable result can be observed in place above, but none of the
@@ -50580,12 +50591,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // A plain constructor can use that same representation move for an
       // exact passive scalar-field class: its generated move/destructor adds
       // no observable user operation or cleanup outside the MIR schedule.
+      // The move needs no copy constructor, so a move-only class qualifies.
       const auto *passiveParameter =
           address.kind == MirBodyKind::Constructor && !failureForm
-              ? passiveGeneratedCopyClass(program_, place.type)
+              ? passiveGeneratedDestructorClass(program_, place.type)
               : nullptr;
       const bool passiveConstructorParameter =
-          passiveParameter != nullptr &&
+          passiveParameter != nullptr && passiveParameter->traits.movable &&
           passiveParameter->moveConstructor == SpecialMemberStatus::Generated;
       bool copiedBorrowCarrierParameter = false;
       if (address.kind == MirBodyKind::Constructor && !failureForm &&

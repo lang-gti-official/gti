@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.466.0 — Returning a view of the caller's string
+## 0.466.0 — Views of the caller's string in results and nested values
 
 - A function can now return a value over the text of one of its read-only
   reference parameters, and each call's result views that call's argument:
@@ -38,6 +38,13 @@ for what minor and patch releases mean.
   such as `Token(view, 1)` after `std::string_view view = input.view();`,
   used to report `error[GTI-B0001]` (an internal compiler error); it now
   views `input`.
+- A value that holds a class or enum with a view inside now keeps that view's
+  owner too. `Outer(Report(Diag(input.view(), 4), 5))`,
+  `std::optional<Token> maybe = Token(input.view(), 6);` and an
+  `expected<int, Diag> check(std::string& input)` that returns
+  `unexpected(Diag(input.view(), 3))` used to report `error[GTI-S2045]`;
+  reading `outer.report.diag.text`, `(*maybe).text` or
+  `checked.error().text` now works.
 - A constructor that stores a text field of one of its class parameters, such
   as `Wrap(Token token) : word(Word::text(token.text)) {}`, now passes the
   argument's text on instead of requiring a literal, and
@@ -54,6 +61,14 @@ for what minor and patch releases mean.
   this.word; switch (w) { case Word::text(v): kept = v; break; ... } }`,
   compiled when called on such a value. It now reports `error[GTI-S2045]`;
   over literal text it still works.
+- Programs that use `std::vector` run at 0.448.4 speed again. Since 0.449.0 a
+  checked loop over a vector ran about 8 to 10 times slower, and a game-style
+  update loop about 3 times slower, because the optimizer lost what it knew
+  about values returned through `expected`.
+- Functions and constructors that build an `expected`, `unexpected(...)` or
+  your own enum-holding class from numbers, enums or plain records, such as
+  `Slot(int32_t n) : state(slot_state::ready(n)) {}`, are again known not to
+  fail, as in 0.448.4, so their callers no longer check for a failure.
 
 ## 0.465.1 — Class stores into globals, captures and element fields
 
