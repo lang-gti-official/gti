@@ -2317,8 +2317,10 @@ discriminants of a two-alternative enum are 0 and 1. Construction,
 directly. A small passive carrier often travels whole, as one native scalar,
 through call results, matches and `?` propagation. A leading tag, or ordinals
 shifted past a private alternative zero, kept native optimizers from folding a
-later tag test back into the branch that selected the alternative (RT-11); the
-trailing tag and unshifted ordinals are the layout they fold. Constrained-default special members preserve trivial copy/move/assignment and
+later tag test back into the branch that selected the alternative; the
+trailing tag and unshifted ordinals are the layout Clang folds. GCC 15 instead
+loses 6–10% on scalar tag loops with the unshifted ordinals; the RT-11 row in
+the optimization plan records that open tradeoff. Constrained-default special members preserve trivial copy/move/assignment and
 destruction for passive members, including inert byte transport. Ordinary
 integer enums are unchanged. Payload enums are accessed through
 `payload_get<Index>` selected from the sealed variant inventory, under the

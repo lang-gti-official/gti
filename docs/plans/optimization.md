@@ -74,7 +74,7 @@ below retain their technical prerequisites under the revised admission policy:
 | RT-8 slot/drop self-checks | Earlier measurement found no demonstrated value; that is not an architecture admission gate. Before omitting an assertion, identify the exact verifier invariant and every representation caller that establishes it. Do not assume all backend checks are redundant or introduce an unchecked release mode. |
 | RT-9 library algorithms/layout | General source-library architecture, not nominal compiler shortcuts. Sort changes require comparator failure/order and worst-case tests; flat maps require explicit iterator/reference/address and allocation contracts. Design representations to match their invariants and validate workload time/cache/allocation costs before acceptance. The sort slice is delivered in 0.410.1 as bounded iterative introsort; see [RT-9](#rt-9-library-algorithm-and-data-structure-choices). |
 | RT-10 bounded MIR inlining | General optimization architecture may justify this work without a prior workload speedup or proxy. Needs source provenance, argument order, loan/drop/cleanup composition, recursive/native/virtual boundaries, cost limits and independent replay. Validate representative call chains and code-size/compile-time tradeoffs. |
-| RT-11 payload-enum construction and layout | General destination construction, place-based tag observation, a GTI-owned tagged carrier, exact closed-tag-domain proof, passive field publication and guarded native shell retirement are implemented; see the [backend contract](../architecture/backend.md). They preserve MIR Move/Replace/Drop and failure ordering rather than recognizing a public optional spelling. Singleton cleanup forwarding removes unnecessary wrapper sequencing: GCC/Linux paired evidence at `560cafa9` no longer shows the preceding 4.4% string residual. Fresh macOS evidence at `9d11fb6d` also shows no material regression; the string confidence intervals span parity on both platforms. This does not automatically promote `std::experimental::optional` or establish universal performance parity. |
+| RT-11 payload-enum construction and layout | General destination construction, place-based tag observation, a GTI-owned tagged carrier, exact closed-tag-domain proof, passive field publication and guarded native shell retirement are implemented; see the [backend contract](../architecture/backend.md). They preserve MIR Move/Replace/Drop and failure ordering rather than recognizing a public optional spelling. Singleton cleanup forwarding removes unnecessary wrapper sequencing: GCC/Linux paired evidence at `560cafa9` no longer shows the preceding 4.4% string residual. Fresh macOS evidence at `9d11fb6d` also shows no material regression; the string confidence intervals span parity on both platforms. This does not automatically promote `std::experimental::optional` or establish universal performance parity. Native tag folding (2026-10-23): the carrier's tag now follows its storage, source alternatives keep their MIR ordinals with the private empty shell last, and failure-form calls to always-inline small-source callees no longer carry an `[[unlikely]]` weight that native jump threading moved onto payload-tag branches. On Apple Clang a `?` chain over `expected<int32_t, E>` and a user-defined propagation chain reach native `std::expected`/`std::variant` parity (0.46x and 0.76x of their previous time); GCC 15/x86-64 instead loses 6–10% on scalar `has_value()`/`value()` and `?` loops from the unshifted ordinals, so cross-compiler acceptance is open; see the native tag folding evidence below. |
 | RT-12 proofs through the source result class | Making `expected` a source class in 0.449.0 moved its tag tests, accessors and construction into ordinary prelude calls. Owner decision (2026-10-20): accept the resulting optimizer and code-shape losses for the language change and recover them afterwards. Lost today: tag-correlated success postconditions across a result-returning call (`optimizer_result_postconditions`, `optimizer_passive_result_cleanup`, `optimizer_sibling_field_publication`); closed-call return intervals through `std::vector` and `std::detail::prefix_owner` members that now return the source class (`optimizer_object_context`, `optimizer_safety`, `optimizer_safety_native_evidence`); and normal-exit sharing for bodies whose exits construct the result (`shared_exit_cleanup.gti`'s `run` and `probe`). The affected tests mark those controls as recovery-pending rather than dropping them; their negatives still reject. A related cost is that the failure closure proves no constructor that moves a parameter into a payload enum, so the prelude's result constructors and `unexpected()` stay may-raise and every function that builds a result takes the failure ABI. Recovery needs a failure-free proof for passive payload construction, a tag/postcondition summary for payload-enum carriers or bounded inlining of small prelude members (RT-2, RT-10), and exit sharing that carries one constructor input to a single shared construction. Acceptance restores every pending control with its negatives, plus paired runtime evidence on result-heavy string, vector and file workloads. The built-in representation's per-alternative integer facts in `optimization/safety.cpp` (`resultAlternatives`, `placeAlternatives`, `AlternativeFields`, `joinAlternatives`) were removed with it on 2026-10-21; they are a reference design in git history for a payload-enum tag summary, not code to restore. |
 
 RT-11 evidence (2026-10-15): `scripts/benchmark_compare.py` compared the source
@@ -164,6 +164,57 @@ digests and binary identities are retained under
 `/private/tmp/gti-pr178-macos-seed7331`; `/private/tmp/gti-pr178-assessment.log`
 records the paired bootstrap and resource results. Final combined local
 correctness/installed-consumer validation belongs to the integrating PR #180.
+
+RT-11 native tag folding (2026-10-23). Probe set: source `std::optional<int32_t>`/`<std::string>`, `expected<int32_t, E>`
+and `expected<std::string, E>` construct/test/read loops, a user-defined
+three-alternative enum (constructed, switched, stored in a vector, reassigned
+in a class field), a recursive optional return, an owning class payload with a
+source destructor, by-value transport, a three-level `?` chain and the same
+chain spelled with a user-defined two-alternative enum. Each has a GTI tagged
+struct control and native `std::optional`/`std::expected`/`std::variant` and
+struct equivalents with the same overflow checks. Before the change, every
+scalar loop already matched its control and native code instruction for
+instruction; the string, transport, recursion and destructor gaps against
+native code are equally present in the GTI struct controls, so they are not
+payload-enum costs (string allocation through `posix_memalign`,
+`prefix_owner` move assignment, the failure ABI of may-fail recursion, and the
+out-of-line fallible-destructor recipe). The payload-enum gap was the chains:
+a carrier moved whole is one native scalar, and a leading tag or ordinals
+shifted past a private alternative zero kept Clang from folding later tag
+tests into the branch that selected the alternative (`?` chain 2.2x and user
+chain 1.3x slower than native).
+
+Evidence: baseline is `035325734` relinked with only the three changed backend
+TUs reverted (byte-identical emission to the original compiler); the candidate
+is the branch head. Paired, interleaved runs alternate baseline/candidate in
+shuffled order; the statistic is the median per-round ratio with a bootstrap
+95% interval. macOS (Apple Clang 21, C++23, `-O2`, `-falign-loops=64`, 15
+rounds, seed 1337, quiet window): `?` chain 348.2 → 159.5 ms, 0.4598
+[0.4579, 0.4627], native `std::expected` 159.3 ms; user chain 211.0 → 160.0
+ms, 0.7591 [0.7516, 0.7671], native `std::variant` 161.1 ms; vector of enums
+0.9227 [0.9128, 0.9283]; recursive optional 0.9082 [0.8941, 0.9154]. A field
+state machine is 1.0793 [1.0628, 1.0910] with pinned loops but 1.0157
+[1.0123, 1.0215] at default alignment (its loop is shorter; the cost moves
+with placement); the destructor probe is 1.0322 [1.0250, 1.0407]. The other 25
+workloads, including `payload-optional-*`, `payload-borrowed-result` and the
+RT-1/RT-5/RT-7 benchmark sources, stay within 0.987–1.009. `__text` changes
+by at most 212 bytes. Dropping the weight from every failure-form call instead
+cost `payload-borrowed-result/source` about 10%, so only always-inline callees
+lose it.
+
+Linux (ubuntu-8, GCC 15.2, x86-64, 7 rounds) disagrees for scalar loops:
+`opt-int` 1.066 (1.093 pinned), `exp-int` 1.102, the `?` chain 1.069 and
+recursion 1.035 are slower, while string optional/expected loops gain 4–5%
+and the state machine 0.913 at default alignment (1.053 pinned). Variants
+built from the candidate emission attribute the scalar cost to the unshifted
+ordinals: restoring the leading tag leaves it unchanged. GCC folds none of the
+chain (5.2 s against Clang's 0.16 s), so it gains nothing there. Acceptance
+needs either an owner decision on this tradeoff or a follow-up that keeps
+GCC's scalar code shape, for example a compiler-selected ordinal encoding;
+the native GCC equivalents were not measured. Probe sources, harness and raw
+JSON live outside the repository (session scratch); remote logs are
+`run-c3b9d4d7c1344732a774ecda27e0486e` and
+`run-0d1360900d4044709315b5e9e4b3626b`.
 
 Closed-world executable lowering from #176 is already integrated; the old
 whole-stdlib code-size observations must be remeasured, not used as current
