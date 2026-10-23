@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]
   workflow_dispatch:
 
 permissions:
@@ -15,6 +16,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validation-plan:
+    name: Validation plan
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Classify candidate without weakening its merge gate
+        id: plan
+        env:
+          GTI_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          base="${GTI_BASE_SHA}"
+          if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
+            base="$(git rev-parse HEAD^)"
+          fi
+          python3 scripts/validation_checks.py ci-mode \
+            --event "${GITHUB_EVENT_PATH}" --base "${base}" >> "${GITHUB_OUTPUT}"
+
+  automation-tests:
+    name: Workflow regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify workflow, batch, preservation and resource rules
+        run: |
+          python3 tests/agent_workflow_test.py
+          python3 tests/preview_workflow_test.py
+          python3 tests/build_window_test.py
+          python3 tests/bounded_log_test.py
+          python3 tests/release_version_test.py
+          python3 tests/ci_resources_test.py scripts/configure_ci_resources.sh
+
   formatting:
     name: Formatting
     runs-on: ubuntu-latest
@@ -83,11 +119,14 @@ jobs:
   build-and-test:
     name: Native toolchain
     runs-on: ubuntu-latest
+    if: needs.validation-plan.outputs.mode == 'full'
     # The formatting, release-version and Tree-sitter checks finish in a few
     # minutes and a failure in any of them means the commit must change, so
     # the hours this job takes are not spent on that head. The sanitizer job
     # follows this one and inherits the same gates.
     needs:
+      - validation-plan
+      - automation-tests
       - formatting
       - release-version
       - tree-sitter
@@ -95,6 +134,8 @@ jobs:
     steps:
       - name: Check out GTI
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Configure runner resources
         shell: bash
@@ -171,9 +212,17 @@ jobs:
           cmp build/documentation-index.json build/documentation-index-repeat.json
 
       - name: Test
-        run: >-
-          ctest --test-dir build -C Release
-          --parallel "${GTI_TEST_JOBS}" --output-on-failure
+        env:
+          GTI_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          base="${GTI_BASE_SHA}"
+          if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
+            base="$(git rev-parse HEAD^)"
+          fi
+          python3 scripts/build_window.py --kind suite -- \
+            python3 scripts/validation_checks.py full --build build \
+            --base "${base}" --jobs "${GTI_TEST_JOBS}" \
+            --report "${RUNNER_TEMP}/gti-validation.json"
 
       - name: Stage system-LLVM toolchain
         run: >-
@@ -321,3 +370,18 @@ jobs:
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ steps.cache.outputs.cache-primary-key }}
+
+  validation-gate:
+    name: Validation gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [validation-plan, automation-tests, formatting, release-version, tree-sitter, build-and-test, compiler-sanitizers]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require complete integration evidence
+        env:
+          GTI_VALIDATION_MODE: ${{ needs.validation-plan.outputs.mode }}
+          GTI_VALIDATION_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 scripts/validation_checks.py ci-gate \
+            --mode "${GTI_VALIDATION_MODE}" --results "${GTI_VALIDATION_RESULTS}"

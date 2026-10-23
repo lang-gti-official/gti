@@ -77,6 +77,40 @@ Use the owning feature skill and `verify-change` to select real checks with an
 optimized GTI compiler. Provide required runnable examples and their inventory
 updates for language changes. Use `finish-release` for VERSION decisions.
 
+For concurrent fixes, use the canonical
+[risk-based batch contract](../../../docs/architecture/agent-workflow.md#risk-based-batch-validation):
+
+- Enroll a completed published draft with a reviewed T1/T2/T3 plan, original
+  regression evidence, exact owning/cross-phase tests, appropriate broader
+  checks, targets and platform obligations. `batch enroll` rebuilds the
+  optimized compiler, runs those checks plus smoke, and records **ready for
+  integration**. It does not authorize a direct merge.
+- The designated integrator selects at most eight ready tasks explicitly with
+  `batch prepare`. Keep collection to at most ten minutes; never wait for an
+  unfinished feature. A single ready fix may proceed alone. `batch status`
+  exposes queued age and the one active batch. Do not sweep unadmitted PRs in.
+- Resolve source conflicts in the candidate, preserving original commits,
+  then `batch resume`. Run `batch verify` on the combined source for each
+  required platform. This executes the full suite and all members' required
+  tests and rejects missing/skipped regressions. Use the ordinary `finish`
+  only after full evidence and CI admission pass. Never merge `preview`.
+- Diagnose combined failures before changing tests. The owner of the violated
+  invariant repairs its patch, or the integrator releases the batch with a
+  reason and prepares a new explicit selection. Source heads cannot silently
+  change inside a running batch. Preserve each attempt's evidence.
+- `batch withdraw` returns an unassigned component to independent validation;
+  `batch release` closes a published unsuccessful batch while preserving its
+  work and returning its members to the queue. Normal sync/cleanup still
+  applies to all confirmed integrated original PRs after the umbrella merge.
+
+Draft/component CI intentionally blocks direct integration and skips full
+native builds. Mark independent/candidate PRs ready to start their final CI
+campaign. The required `Validation gate` permits no compiler merge until
+full native and sanitizer jobs pass; automation-only diffs use their tested
+workflow path. Retrying `finish` with an unchanged description does not restart
+CI. Activate the published gate with `protection --configure --batch-gate`,
+preserving existing requirements as authorized in `AGENTS.md`.
+
 1. Run `reconcile <task>` to merge current `origin/main` into the task branch
    and push. Resolve any conflicts in this worktree; do not force-push.
 2. Put the proportionate final commands in a temporary JSON file containing

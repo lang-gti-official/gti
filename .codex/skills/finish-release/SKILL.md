@@ -16,6 +16,12 @@ policy below without bypassing that lifecycle.
   asked to leave local. Unfinished implementation checkpoints may be published
   to their task branch and draft PR under agent-workflow.
 - Commit completed in-scope repository changes after local validation.
+- Focused batch admission is a handoff, not a release. Component fixes retain
+  their original PRs and version decisions; the integrator reconciles VERSION
+  and release notes in the combined candidate. Do not tag, install or publish
+  a stable release from an admitted component. Complete the canonical
+  [batch validation contract](../../../docs/architecture/agent-workflow.md#risk-based-batch-validation)
+  and required platform/CI gates before merging the batch and syncing main.
 - Treat a change as release-bearing when repository version policy requires a
   `VERSION` advance, when it changes shipped behavior or packaging, or when the
   user explicitly requests a release.

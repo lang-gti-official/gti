@@ -493,14 +493,17 @@ class Workflow:
             if state["phase"] == expected:
                 self.save(state, phase)
 
-    def protection(self, configure=False):
+    def protection(self, configure=False, batch_gate=False):
         rule = self.api.request("GET", "/branches/main/protection")
         if configure:
             checks = (rule or {}).get("required_status_checks") or {}
+            contexts = list(checks.get("contexts") or [])
+            if batch_gate and "Validation gate" not in contexts:
+                contexts.append("Validation gate")
             reviews = (rule or {}).get("required_pull_request_reviews") or {}
             payload = {
                 # Up-to-date branches only: this closes the fetch/merge race.
-                "required_status_checks": {"strict": True, "contexts": list(checks.get("contexts") or [])},
+                "required_status_checks": {"strict": True, "contexts": contexts},
                 # Admins follow the same rules; nobody bypasses them.
                 "enforce_admins": True,
                 # A pull request is the only way into main; existing review
@@ -518,6 +521,8 @@ class Workflow:
                     ((rule or {}).get("required_conversation_resolution") or {}).get("enabled", False)),
                 "block_creations": False,
                 "lock_branch": False}
+            if checks.get("checks"):
+                payload["required_status_checks"]["checks"] = checks["checks"]
             rule = self.api.request("PUT", "/branches/main/protection", payload)
 
         def enabled(name):
@@ -534,6 +539,11 @@ class Workflow:
         state = self.load(task)
         pr = self.pull(state)
         if not pr.get("merged"):
+            if state.get("admission") or state.get("integration_batch"):
+                raise WorkflowError("Component is ready for integration, not directly mergeable; finish its validated batch or batch withdraw first")
+            if state.get("batch"):
+                from validation_batch import Batches
+                Batches(self).before_finish(state)
             root = self.tree(state)
             clean(root)
             if (root / ".gti-preview.json").exists():
@@ -546,8 +556,11 @@ class Workflow:
                 raise WorkflowError("Current head/base/PR differ from validation; checkpoint, reconcile and verify again")
             if not body.strip():
                 raise WorkflowError("Provide the final reviewable PR description")
-            self.api.request("PATCH", f"/pulls/{state['pr']}",
-                             {"title": state["title"], "body": body})
+            # Body edits are CI routing events. Retrying a merge while checks
+            # run must not cancel and restart that same validation campaign.
+            if pr.get("title") != state["title"] or pr.get("body") != body:
+                self.api.request("PATCH", f"/pulls/{state['pr']}",
+                                 {"title": state["title"], "body": body})
             if pr.get("draft"):
                 self.api.ready(pr)
             if pr_only:
@@ -774,12 +787,21 @@ def main():
     abandon.add_argument("task")
     abandon.add_argument("--reason", required=True)
     sub.add_parser("status").add_argument("task", nargs="?")
-    sub.add_parser("protection").add_argument("--configure", action="store_true")
+    protection = sub.add_parser("protection")
+    protection.add_argument("--configure", action="store_true")
+    protection.add_argument("--batch-gate", action="store_true", help="add the published CI Validation gate without removing existing requirements")
     sub.add_parser("preview", help="optionally submit a detached combined preview job").add_argument(
+        "arguments", nargs=argparse.REMAINDER)
+    sub.add_parser("batch", help="admit focused fixes and validate an explicit combined batch").add_argument(
         "arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     try:
         workflow = Workflow(args.repo)
+        if args.command == "batch":
+            sys.modules.setdefault("agent_workflow", sys.modules[__name__])
+            from validation_batch import main as batch_main
+            print(json.dumps(batch_main(workflow, args.arguments), indent=2))
+            return 0
         if args.command == "preview":
             # Keep one exception/Git helper identity when this file is __main__.
             sys.modules.setdefault("agent_workflow", sys.modules[__name__])
@@ -802,7 +824,9 @@ def main():
             elif args.command == "abandon":
                 result = workflow.abandon(args.task, args.reason)
             elif args.command == "protection":
-                result = workflow.protection(args.configure)
+                if args.batch_gate and not args.configure:
+                    raise WorkflowError("--batch-gate requires --configure after publishing its workflow")
+                result = workflow.protection(args.configure, args.batch_gate)
             else:
                 result = getattr(workflow, args.command)(args.task)
         print(json.dumps(result, indent=2))

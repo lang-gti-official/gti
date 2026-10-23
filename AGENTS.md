@@ -49,6 +49,33 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
 - Explicit requests such as "PR only", "leave local", "do not merge", or
   "review first" override automatic integration. Read-only reviews/discussions
   do not authorize implementation or publication. Installation remains opt-in.
+- Use [risk-based batch validation](docs/architecture/agent-workflow.md#risk-based-batch-validation)
+  for concurrent compiler fixes. T1 confined fixes require a meaningful
+  regression, owning and affected cross-phase checks plus compiler smoke; T2
+  semantic/shared compiler changes add relevant subsystem coverage; T3 system,
+  ABI/runtime and optimizer-invariant changes retain their full/platform
+  obligations. Classify the changed invariant, never the word "ICE" or patch
+  size. Record the original failure where practical, with bounded execution
+  for resource-exhaustion cases and an explicit reason when reproduction is
+  unavailable. Code-generation fixes must check resulting execution, cleanup
+  and rejection behavior where applicable, not just absence of the crash.
+- `batch enroll` records focused admission against the published source;
+  it means **ready for integration**, not merged, released or fully verified.
+  Select at most eight admitted tasks explicitly with `batch prepare` and run
+  `batch verify` once on the combined candidate for each required platform.
+  A designated integration agent owns this campaign and failure attribution;
+  fixes return to the owner of the violated invariant, rather than changing
+  unrelated tests to accommodate a regression. Preserve each original PR and
+  commit. Do not start duplicate per-component full campaigns. Collect ready
+  changes for no more than ten minutes; a lone ready change may form a batch
+  immediately and never waits for unfinished features. See `batch status`.
+- Draft/component PRs run inexpensive CI checks and have a deliberately blocked
+  `Validation gate`; only the validated combined candidate or a withdrawn,
+  independently validated task may merge. Full native and sanitizer CI remain
+  required on compiler integration candidates. Developer-automation-only diffs
+  use the workflow regression gate instead. After publishing this policy, use
+  `protection --configure --batch-gate` to require `Validation gate`, preserving
+  all existing review/status requirements. This activation is owner-authorized.
 - Completed features may enter the opt-in `preview` source branch through
   `python3 scripts/agent_workflow.py preview submit <task> --tests <focused-ctest-names>`
   while their original PRs continue full validation and review. Submission is
@@ -84,6 +111,9 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   local suite slot itself; `verify --remote-steps-file <plan.json>` instead uses
   the configured remote host's window. `build_window.py --status` shows local
   holders and `remote_runner.py status` shows remote holders.
+  T1 batch admission uses exact focused checks directly; T2/T3 admission uses
+  a suite reservation for its broader subsystem checks. Do not expand the
+  shared window or steal reservations to get around a queue.
 - Offload heavy validation with `python3 scripts/remote_runner.py run ...`.
   Select `--runner mini`, `--runner ubuntu-6`, or `--runner ubuntu-8` before the
   subcommand, or set `GTI_REMOTE_RUNNER` for remote lifecycle verification.
