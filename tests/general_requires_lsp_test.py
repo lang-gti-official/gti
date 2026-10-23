@@ -14,6 +14,7 @@ concept sums<T> = requires(T& left, T& right) { { left + right } -> T; };
 concept integer_value<T> = std::meta::is_integral<T>();
 T add<T>(T& left, T& right) requires sums<T> { return left + right; }
 T twice<T>(T value) requires std::meta::is_integral<T>() { return value + value; }
+concept raw_read<T> = requires(T& value) { { unsafe { value.raw() } } -> int; };
 int main() { int left = 3; int right = 4; return add(left, right) == twice(left) + 1 ? 0 : 1; }
 """
 
@@ -72,6 +73,8 @@ def main():
             assert location["uri"].endswith("/std/meta.gti"), definition
             selected = hover(SOURCE, SOURCE.rindex("twice(left)"))
             assert "is_integral<int32_t>()" in str(selected), selected
+            raw_contract = hover(SOURCE, SOURCE.index("raw_read<T>"))
+            assert "unsafe { value.raw() }" in str(raw_contract), raw_contract
             use_position = lsp_position(SOURCE, SOURCE.index("left + right"))
             definition = request("textDocument/definition", {
                 "textDocument": {"uri": uri}, "position": use_position})

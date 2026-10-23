@@ -225,11 +225,14 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
     return std::nullopt;
   };
   const Expr *expression = query.expression().get();
-  while (const auto *group = exprAs<Grouping>(expression))
+  bool requiresUnsafe = query.unsafeKeyword().has_value();
+  while (const auto *group = exprAs<Grouping>(expression)) {
+    requiresUnsafe = requiresUnsafe || group->unsafeKeyword().has_value();
     expression = group->expression().get();
-  ExpandedStructuralRequirement fact{
-      .kind = StructuralConstraintKind::ReadMember,
-      .requiresUnsafe = query.unsafeKeyword().has_value()};
+  }
+  ExpandedStructuralRequirement fact{.kind =
+                                         StructuralConstraintKind::ReadMember,
+                                     .requiresUnsafe = requiresUnsafe};
   std::optional<std::size_t> receiver;
   std::optional<OverloadedOperator> operation;
   std::vector<std::size_t> operands;
