@@ -68,7 +68,7 @@ def main():
                 "position": lsp_position(macros, macros.index("check(7)") + 1)}})
             hover = session.receive_until(lambda message: message.get("id") == 3)["result"]
             assert "#macro" in hover["contents"]["value"], hover
-            assert "int value" in hover["contents"]["value"], hover
+            assert "int32_t value" in hover["contents"]["value"], hover
             session.send({"jsonrpc": "2.0", "id": 4, "method": "textDocument/definition", "params": {
                 "textDocument": {"uri": uri},
                 "position": lsp_position(macros, macros.index("check(7)") + 1)}})
