@@ -5,6 +5,13 @@ Status: Current implementation.
 The frontend converts one entry source and its dependency graph into a
 syntax-preserving `Program`, then hands that owned tree to semantic analysis.
 
+Typed `#macro` declarations remain parser-owned structured syntax, with an
+implicit void result and a retained macro declaration identity. They are not
+text replacement directives consumed by `SourceLoader`. Names, generic
+parameters, exact typed value parameters, defaults, constraints, attributes and
+braced bodies use the ordinary parsed syntax; semantics owns eligibility and
+expansion. Ordinary call syntax carries no separate macro invocation sigil.
+
 ## Source Loading
 
 `SourceLoader` is declared in `include/gti/source_loader.h`; its canonical path,
