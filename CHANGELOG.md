@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.467.0 — Thread-local storage
+## 0.468.0 — Thread-local storage
 
 - `thread_local` defines distinct per-thread storage at namespace scope, in a
   non-generic static data member, or inside an ordinary function. Both
@@ -26,7 +26,7 @@ for what minor and patch releases mean.
   literal-initialized TLS needs no dynamic GTI guard or cleanup registration.
 - Transitive storage-effect checking also protects checked borrows of ordinary
   process globals from hidden conflicting accesses through helpers or callbacks.
-- Generated deferred-expansion syntax remains alive with returned HIR, including
+- Generated typed-macro syntax remains alive with returned HIR, including
   nested expansions in concrete generic functions, fixing a compiler crash
   uncovered by the TLS integration tests.
 - Fresh generated-default class temporaries can be borrowed as ordinary call
@@ -34,8 +34,28 @@ for what minor and patch releases mean.
   required by independent MIR verification.
 - Empty generated construction no longer invents accesses to unrelated persistent
   storage; effectful field and base initialization retain their exact call effects.
+- Calls on proved complete concrete objects retain their exact virtual callee's
+  effects, avoiding false persistent-borrow conflicts without treating readonly
+  methods as pure or weakening checks for aliased receivers.
 - See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
-  and [runnable example 173](examples/173-thread-local-storage.gti).
+  and [runnable example 175](examples/175-thread-local-storage.gti).
+
+## 0.467.0 — Source-defined requirements and general type facts
+
+- `requires` queries can check ordinary expressions and construction with exact
+  owned results, optional synthetic parameters and multiple checks. Queries
+  execute no code and retain normal access, ownership and unsafe obligations.
+- Concepts and trailing clauses can compose constexpr Boolean calls, including
+  general `std::meta` classification, lifecycle, relocation, transfer/share,
+  exact-type and enum-representation predicates. Existing compiler facts stay
+  authoritative; arbitrary predicates do not invent safety proofs.
+- Prelude numeric/lifecycle/enum concepts now compose reflection queries, and
+  domain arithmetic concepts use source expression requirements. Strict
+  comparison and borrowed-result contracts retain their necessary compiler
+  support. Exact member requirements remain compatible; overload ranking and
+  subsumption are unchanged.
+- Hover signatures, requirement parameter navigation/rename, formatting and
+  Tree-sitter support cover the extended syntax. Example 173 demonstrates it.
 
 ## 0.466.0 — Typed macros
 

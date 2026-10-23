@@ -2174,6 +2174,26 @@ is a literal at run time and a constant in constant evaluation. `name()` is
 the declared identifier; `name_of<T>()` is the qualified spelling the
 compiler uses for `T`.
 
+Lifecycle and safety predicates are available both as free functions and as
+methods on `type<T>`: `is_copy_constructible`, `is_move_constructible`,
+`is_copyable`, `is_movable`, `is_relocatable`, `is_bitwise_relocatable`,
+`is_transferable`, `is_shareable` and `is_default_initializable`. These report
+the same GTI facts used to admit the corresponding operations; in particular,
+construction does not imply assignment, relocation is not permission to move a
+borrowed value, and transfer/share queries do not override an object's live
+loans or thread-affinity rules. `is_copyable` reports copy construction and
+copy assignment; the public `std::copyable` concept additionally requires
+movement. Classification also includes
+`is_unsigned_integral`, `is_numeric`, `is_signed_numeric` and
+`is_integral_enum` (which excludes payload enums).
+
+`is_same<T, U>()` tests exact type identity, not conversion or inheritance.
+`is_enum_underlying<E, U>()` is true only for a payload-free enum whose declared
+integer representation is exactly `U`; non-enums and payload enums return
+false. Their metaobject forms are `type<T>().is_same<U>()` and
+`type<E>().has_underlying_type<U>()`. All these answers are frontend-owned
+constants, with no native type-trait evaluation or runtime dispatch.
+
 `field.has_default()` is true when the field's declaration has an
 initializer, and `field.default_value()` is a fresh value of that initializer
 evaluated where the call is, under the field's type exactly as the

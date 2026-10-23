@@ -711,24 +711,42 @@ private:
 
   std::size_t constraintPrimary(ConstraintExpression &expression) {
     if (match({TokenKind::REQUIRES})) {
-      auto requirement = memberRequirement(previous());
-      TypeRef receiver = requirement->receiver();
-      receiver.reference.reset();
-      // The synthetic constraint argument names the referent type. Keep
-      // receiver access on the requirement, not on this non-reference type.
-      receiver.referenceMutability.reset();
-      const std::size_t application = expression.applications.size();
-      std::vector<TypeRef> arguments{std::move(receiver),
-                                     requirement->result()};
-      arguments.insert(arguments.end(), requirement->parameters().begin(),
-                       requirement->parameters().end());
-      expression.applications.push_back(
-          {.name = NamePath{{requirement->member()}},
-           .arguments = std::move(arguments),
-           .memberRequirement = std::move(requirement)});
-      expression.nodes.push_back({.kind = ConstraintExpressionKind::Application,
-                                  .application = application});
-      return expression.nodes.size() - 1;
+      const Token keyword = previous();
+      auto requirements = expressionRequirements(keyword);
+      std::optional<std::size_t> conjunction;
+      for (auto &requirement : requirements) {
+        std::vector<TypeRef> arguments;
+        if (requirement->isExpressionRequirement()) {
+          arguments = requirement->parameters();
+          arguments.push_back(requirement->result());
+          collectRequirementTypes(requirement->expression().get(), arguments);
+        } else {
+          TypeRef receiver = requirement->receiver();
+          receiver.reference.reset();
+          receiver.referenceMutability.reset();
+          arguments = {std::move(receiver), requirement->result()};
+          arguments.insert(arguments.end(), requirement->parameters().begin(),
+                           requirement->parameters().end());
+        }
+        const std::size_t application = expression.applications.size();
+        expression.applications.push_back(
+            {.name = NamePath{{keyword}},
+             .arguments = std::move(arguments),
+             .memberRequirement = std::move(requirement)});
+        expression.nodes.push_back(
+            {.kind = ConstraintExpressionKind::Application,
+             .application = application});
+        const auto leaf = expression.nodes.size() - 1;
+        if (conjunction) {
+          expression.nodes.push_back(
+              {.kind = ConstraintExpressionKind::Conjunction,
+               .left = *conjunction,
+               .right = leaf,
+               .operation = keyword});
+        }
+        conjunction = expression.nodes.size() - 1;
+      }
+      return *conjunction;
     }
     if (match({TokenKind::LEFT_PAREN})) {
       const NestingGuard nesting = enterNesting(previous());
@@ -738,7 +756,12 @@ private:
       return nested;
     }
     const std::size_t application = expression.applications.size();
-    expression.applications.emplace_back(conceptApplication());
+    ConceptApplication leaf = conceptApplication();
+    if (match({TokenKind::LEFT_PAREN})) {
+      auto callee = std::make_unique<QualifiedName>(leaf.name);
+      leaf.predicate = finishCall(std::move(callee), leaf.arguments);
+    }
+    expression.applications.emplace_back(std::move(leaf));
     expression.nodes.push_back({.kind = ConstraintExpressionKind::Application,
                                 .application = application});
     return expression.nodes.size() - 1;
@@ -3673,83 +3696,131 @@ private:
     return arguments;
   }
 
-  std::unique_ptr<MemberRequirement> memberRequirement(Token keyword) {
-    const NestingGuard nesting = enterNesting(keyword);
-    consume(TokenKind::LEFT_PAREN, "Expect '(' after member requirement.");
-    std::optional<Token> receiverAccess;
-    if (match({TokenKind::MUT}))
-      receiverAccess = previous();
-    TypeRef receiver = parseType();
-    if (!receiver.reference ||
-        receiver.reference->kind != TokenKind::AMPERSAND) {
-      throw error(receiver.name.last(),
-                  "Member requirement receiver must be a reference.");
+  void collectRequirementTypes(const Expr *expression,
+                               std::vector<TypeRef> &types) {
+    if (const auto *call = exprAs<Call>(expression)) {
+      types.insert(types.end(), call->typeArguments().begin(),
+                   call->typeArguments().end());
+      collectRequirementTypes(call->callee().get(), types);
+      for (const auto &argument : call->arguments())
+        collectRequirementTypes(argument.get(), types);
+    } else if (const auto *binary = exprAs<Binary>(expression)) {
+      collectRequirementTypes(binary->left().get(), types);
+      collectRequirementTypes(binary->right().get(), types);
+    } else if (const auto *logical = exprAs<Logical>(expression)) {
+      collectRequirementTypes(logical->left().get(), types);
+      collectRequirementTypes(logical->right().get(), types);
+    } else if (const auto *conditional = exprAs<ConditionalExpr>(expression)) {
+      collectRequirementTypes(conditional->condition().get(), types);
+      collectRequirementTypes(conditional->thenExpression().get(), types);
+      collectRequirementTypes(conditional->elseExpression().get(), types);
+    } else if (const auto *conversion = exprAs<Conversion>(expression)) {
+      types.push_back(conversion->targetType());
+      collectRequirementTypes(conversion->value().get(), types);
+    } else if (const auto *qualified = exprAs<QualifiedName>(expression)) {
+      if (qualified->ownerType())
+        types.push_back(*qualified->ownerType());
+    } else if (const auto *index = exprAs<Index>(expression)) {
+      collectRequirementTypes(index->object().get(), types);
+      collectRequirementTypes(index->index().get(), types);
+    } else if (const auto *unary = exprAs<Unary>(expression)) {
+      collectRequirementTypes(unary->right().get(), types);
+    } else if (const auto *group = exprAs<Grouping>(expression)) {
+      collectRequirementTypes(group->expression().get(), types);
+    } else if (const auto *get = exprAs<Get>(expression)) {
+      collectRequirementTypes(get->object().get(), types);
     }
-    receiver.referenceMutability = std::move(receiverAccess);
-    Token binding =
-        consume(TokenKind::IDENTIFIER, "Expect requirement receiver name.");
+  }
+
+  std::vector<std::unique_ptr<MemberRequirement>>
+  expressionRequirements(Token keyword) {
+    const NestingGuard nesting = enterNesting(keyword);
     std::vector<TypeRef> parameters;
     std::vector<Token> bindings;
-    while (match({TokenKind::COMMA})) {
-      std::optional<Token> access;
-      if (match({TokenKind::MUT}))
-        access = previous();
-      TypeRef parameter = parseType();
-      if (access && !parameter.reference)
-        throw error(*access,
-                    "Mutable requirement parameters must be references.");
-      parameter.referenceMutability = access;
-      Token name =
-          consume(TokenKind::IDENTIFIER, "Expect requirement parameter name.");
-      if (name.lexeme == binding.lexeme ||
-          std::any_of(
-              bindings.begin(), bindings.end(),
-              [&](const Token &other) { return other.lexeme == name.lexeme; }))
-        throw error(name, "Duplicate requirement parameter name.");
-      parameters.push_back(std::move(parameter));
-      bindings.push_back(std::move(name));
+    if (match({TokenKind::LEFT_PAREN})) {
+      if (!check(TokenKind::RIGHT_PAREN)) {
+        do {
+          std::optional<Token> access;
+          if (match({TokenKind::MUT}))
+            access = previous();
+          TypeRef parameter = parseType();
+          if (parameter.reference &&
+              parameter.reference->kind == TokenKind::AND)
+            throw error(*parameter.reference,
+                        "Requirement parameters do not support '&&'; use an "
+                        "owned value or a checked '&' reference.");
+          if (access && !parameter.reference)
+            throw error(*access,
+                        "Mutable requirement parameters must be references.");
+          parameter.referenceMutability = access;
+          Token binding = consume(TokenKind::IDENTIFIER,
+                                  "Expect requirement parameter name.");
+          if (std::any_of(bindings.begin(), bindings.end(),
+                          [&](const Token &other) {
+                            return other.lexeme == binding.lexeme;
+                          }))
+            throw error(binding, "Duplicate requirement parameter name.");
+          parameters.push_back(std::move(parameter));
+          bindings.push_back(std::move(binding));
+        } while (match({TokenKind::COMMA}));
+      }
+      consume(TokenKind::RIGHT_PAREN,
+              "Expect ')' after requirement parameters.");
     }
-    consume(TokenKind::RIGHT_PAREN, "Expect ')' after requirement receiver.");
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before member requirement.");
-    std::optional<Token> unsafeKeyword;
-    if (match({TokenKind::UNSAFE}))
-      unsafeKeyword = previous();
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before required member call.");
-    Token use =
-        consume(TokenKind::IDENTIFIER, "Expect requirement receiver name.");
-    if (use.lexeme != binding.lexeme) {
-      throw error(use, "Member requirement must use its declared receiver.");
+    consume(TokenKind::LEFT_BRACE,
+            "Expect '{' before expression requirements.");
+    std::vector<std::unique_ptr<MemberRequirement>> result;
+    while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      std::optional<Token> unsafeKeyword;
+      if (match({TokenKind::UNSAFE}))
+        unsafeKeyword = previous();
+      consume(TokenKind::LEFT_BRACE, "Expect '{' before required expression.");
+      ExprPtr expression = assignment();
+      consume(TokenKind::RIGHT_BRACE, "Expect '}' after required expression.");
+      consume(TokenKind::ARROW,
+              "Expect '->' before exact required result type.");
+      TypeRef requiredResult = parseType();
+      consume(TokenKind::SEMICOLON, "Expect ';' after required result type.");
+
+      // Preserve the earlier exact-member contract as a subset. Every other
+      // expression is checked by the ordinary semantic expression analyzer.
+      const auto *call = exprAs<Call>(expression.get());
+      const auto *get = call ? exprAs<Get>(call->callee().get()) : nullptr;
+      const auto *receiver =
+          get ? exprAs<Variable>(get->object().get()) : nullptr;
+      bool exactMember = !parameters.empty() && parameters[0].reference &&
+                         receiver &&
+                         receiver->name().lexeme == bindings[0].lexeme &&
+                         call->typeArguments().empty() &&
+                         call->arguments().size() + 1 == bindings.size();
+      for (std::size_t index = 0;
+           exactMember && index < call->arguments().size(); ++index) {
+        const auto *argument = exprAs<Variable>(call->arguments()[index].get());
+        exactMember =
+            argument && argument->name().lexeme == bindings[index + 1].lexeme;
+      }
+      if (exactMember) {
+        std::vector<Token> arguments;
+        for (const auto &argument : call->arguments())
+          arguments.push_back(exprAs<Variable>(argument.get())->name());
+        result.push_back(std::make_unique<MemberRequirement>(
+            keyword, parameters[0], bindings[0], receiver->name(), get->name(),
+            std::move(requiredResult),
+            std::vector<TypeRef>(parameters.begin() + 1, parameters.end()),
+            std::vector<Token>(bindings.begin() + 1, bindings.end()),
+            std::move(arguments), std::move(unsafeKeyword)));
+      } else {
+        result.push_back(std::make_unique<MemberRequirement>(
+            keyword, std::move(expression), std::move(requiredResult),
+            parameters, bindings, std::move(unsafeKeyword)));
+      }
     }
-    consume(TokenKind::DOT, "Expect '.' before required member name.");
-    Token member =
-        consume(TokenKind::IDENTIFIER, "Expect required member name.");
-    consume(TokenKind::LEFT_PAREN, "Expect '(' after required member name.");
-    std::vector<Token> arguments;
-    if (!check(TokenKind::RIGHT_PAREN)) {
-      do {
-        Token argument = consume(TokenKind::IDENTIFIER,
-                                 "Expect requirement parameter name.");
-        if (arguments.size() >= bindings.size() ||
-            argument.lexeme != bindings[arguments.size()].lexeme)
-          throw error(argument, "Required call must use each declared "
-                                "parameter once, in declaration order.");
-        arguments.push_back(std::move(argument));
-      } while (match({TokenKind::COMMA}));
-    }
-    if (arguments.size() != bindings.size())
-      throw error(peek(), "Required call must use every declared parameter.");
-    consume(TokenKind::RIGHT_PAREN,
-            "Expect ')' after required member arguments.");
-    consume(TokenKind::RIGHT_BRACE, "Expect '}' after required member call.");
-    consume(TokenKind::ARROW, "Expect '->' before exact required result type.");
-    TypeRef result = parseType();
-    consume(TokenKind::SEMICOLON, "Expect ';' after required result type.");
-    consume(TokenKind::RIGHT_BRACE, "Expect '}' after member requirement.");
-    return std::make_unique<MemberRequirement>(
-        std::move(keyword), std::move(receiver), std::move(binding),
-        std::move(use), std::move(member), std::move(result),
-        std::move(parameters), std::move(bindings), std::move(arguments),
-        std::move(unsafeKeyword));
+    if (result.empty())
+      throw error(peek(),
+                  "An expression requirement needs at least one check.");
+    consume(TokenKind::RIGHT_BRACE,
+            "Expect '}' after expression requirements.");
+    return result;
   }
 
   ExprPtr primary() {
@@ -3763,7 +3834,14 @@ private:
       return std::make_unique<Grouping>(std::move(value), std::move(keyword));
     }
     if (match({TokenKind::REQUIRES})) {
-      return memberRequirement(previous());
+      Token keyword = previous();
+      auto requirements = expressionRequirements(keyword);
+      ExprPtr result = std::move(requirements.front());
+      keyword.kind = TokenKind::AND;
+      for (std::size_t index = 1; index < requirements.size(); ++index)
+        result = std::make_unique<Logical>(std::move(result), keyword,
+                                           std::move(requirements[index]));
+      return result;
     }
     if (match({TokenKind::LEFT_BRACKET})) {
       return lambdaExpression(previous());

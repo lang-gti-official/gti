@@ -330,7 +330,7 @@ profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
 The combined deterministic serialization is currently `mir-v113`/`mir-body-v92`,
-with `lowered-program-v24` declaration metadata. Declaration-bound computed
+with `lowered-program-v25` declaration metadata. Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains
 complete borrowed-dependency-set proofs alongside foreign-storage inventories
@@ -2589,6 +2589,16 @@ accesses at each invocation's live-loan state. Initializer edges retain their
 readiness condition through nested helpers. Captured referents have a distinct
 canonical capture domain from same-thread TLS lookup. Native/raw-pointer
 obligations remain the unsafe boundary; this is not a pointer-provenance solver.
+An exact virtual effect edge requires an independently proved complete owning
+receiver: an unprojected declared storage object, a by-value formal, or a local
+with typed owning initialization. Consumer place types are insufficient evidence;
+formal and persistent declarations must agree, and a reference-valued producer
+cannot be relabeled as owning publication. The receiver must retain its exact
+call-input stage and access mode, and every virtual root must select the same
+source function and concrete instance as the invocation. Missing, ambiguous,
+projected, aliased or construction-phase receiver evidence retains an unknown
+boundary. This closes effects only; dispatch, failure edges, cleanup and argument
+scheduling stay unchanged, and a readonly receiver does not imply a pure callee.
 For an exact persistent-storage reference input, the independently verified
 `CallInput` checkpoint also starts protection before later inputs execute.
 Its unique consuming invocation (or an interrupted invocation's terminal

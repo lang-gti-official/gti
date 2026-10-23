@@ -120,6 +120,15 @@ GTI call targets require a structural ambient-effects proof when a persistent
 borrow remains live. Native calls and raw pointers retain their existing unsafe
 obligations; the compiler does not infer arbitrary native pointer retention.
 
+A virtual call on a proved exact, complete class object uses the selected final
+overrider's transitive effects. This is an effect proof, not a change to virtual
+dispatch or a claim that read-only methods cannot mutate other storage. The
+current proof accepts direct unprojected owning local or program-storage objects;
+it does not infer a dynamic type from a reference, pointer, field, base subobject,
+capture or instance receiver. Calls without an exact target remain conservative
+while a persistent borrow is live. Extending exact receiver provenance is a
+general dispatch-analysis goal, not an exception for a particular TLS type.
+
 Checked scoped/joined borrowing can lend a TLS referent while its owning thread
 and loan remain alive and the referent permits the selected access. This is not
 a blanket ban on cross-thread references. An independently created worker's
@@ -137,7 +146,7 @@ unspecialized source `SymbolId`; until that inventory is represented and
 verified, both shapes are rejected instead of sharing a slot across instances.
 `thread_local` does not add thread-specific-storage keys, detach, arbitrary
 foreign-thread entry or async suspension. Runnable example:
-[`173-thread-local-storage.gti`](../../examples/173-thread-local-storage.gti).
+[`175-thread-local-storage.gti`](../../examples/175-thread-local-storage.gti).
 
 ## C-Style Scheduling Hint
 

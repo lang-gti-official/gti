@@ -296,6 +296,167 @@ void modify() { value = 2; }
       "a checked loan proves that the same TLS slot is already initialized");
 }
 
+void exactWholeObjectVirtualEffects() {
+  const std::string readers = R"(
+class Base {
+public:
+  virtual int read() { return 1; }
+};
+class Reader : public Base {
+public:
+  int read() override { return 2; }
+};
+class Leaf : public Reader {};
+)";
+  for (const std::string storage : {"", "thread_local "}) {
+    const bool concurrent = !storage.empty();
+    const std::string prefix =
+        storage + "mut int guarded = 1; " + storage + "mut int other = 2; ";
+    const auto accepted = [&](const std::string &source,
+                              std::string_view reason) {
+      const auto result = analyze(source, concurrent, true);
+      if (!result.canGenerateCode())
+        for (const auto &diagnostic : result.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(result.canGenerateCode(), reason);
+    };
+    const auto rejected = [&](const std::string &source, bool exactEffects,
+                              std::string_view reason) {
+      const auto result = analyze(source, concurrent, true);
+      const bool conflict =
+          std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                      [&](const auto &diagnostic) {
+                        return diagnostic.code == "GTI-S2045" &&
+                               (!exactEffects ||
+                                diagnostic.message.find("overlapping path") !=
+                                    std::string::npos);
+                      });
+      expect(!result.semanticValid && conflict && !code(result, "GTI-B0001"),
+             reason);
+    };
+    const std::string declared =
+        prefix + readers + storage + "Reader reader{}; ";
+    accepted(declared + "int main() { return reader.read() - 2; }",
+             "a persistent whole-object receiver may invoke its exact harmless "
+             "virtual target without conflicting with its own readonly input");
+    accepted(declared + "int main() { int& held = guarded; "
+                        "return reader.read() + held; }",
+             "known virtual effects preserve an unrelated persistent loan");
+    accepted(prefix + readers +
+                 "int main() { Reader local{}; "
+                 "int& held = guarded; return local.read() + held; }",
+             "the physical receiver proof applies equally to owning locals");
+    accepted(prefix + readers +
+                 "int invoke(Reader value) { int& held = guarded; "
+                 "return value.read() + held; } "
+                 "int main() { return invoke(Reader{}); }",
+             "a by-value class formal owns an exact complete receiver rather "
+             "than an arbitrary reference to a derived object");
+    accepted(
+        prefix + readers + storage +
+            "Leaf leaf{}; "
+            "int main() { int& held = guarded; return leaf.read() + held; }",
+        "an inherited final overrider keeps its exact selected declaration");
+    accepted(prefix + R"(
+interface ReaderContract { int read(); };
+class InterfaceReader : public ReaderContract {
+public:
+  int read() override { return 2; }
+};
+)" + storage + R"(
+InterfaceReader reader{};
+int main() { int& held = guarded; return reader.read() + held; }
+)",
+             "a direct concrete interface implementation retains its exact "
+             "target even when the virtual root has no executable body");
+    accepted(declared +
+                 "class Holder { int kept = reader.read(); "
+                 "public: int value() { return this.kept; } }; "
+                 "int main() { Holder held{}; return held.value() - 2; }",
+             "field initialization may call an independent complete object's "
+             "virtual method without treating constructor this as complete");
+    accepted(prefix + R"(
+class BaseCall { public: virtual int operator()() { return 1; } };
+class ReaderCall : public BaseCall {
+public:
+  int operator()() override { return 2; }
+};
+)" + storage + R"(
+ReaderCall callable{};
+int main() { int& held = guarded; return callable() + held; }
+)",
+             "an exact virtual operator receiver uses the same physical "
+             "object and slot proof as an ordinary member call");
+
+    const std::string effectful = prefix + R"(
+void change() { guarded = 9; }
+class Base {
+public:
+  virtual int read() { return 1; }
+};
+class Reader : public Base {
+public:
+  int read() override { change(); return 2; }
+};
+)" + storage + "Reader reader{}; ";
+    rejected(effectful + "int main() { int& held = guarded; "
+                         "return reader.read() + held; }",
+             true,
+             "an exact readonly virtual target still closes hidden helper "
+             "writes and rejects the actual overlapping persistent path");
+    rejected(prefix + R"(
+void change() { guarded = 9; }
+class BaseCall { public: virtual int operator()() { return 1; } };
+class ReaderCall : public BaseCall {
+public:
+  int operator()() override { change(); return 2; }
+};
+)" + storage + R"(
+ReaderCall callable{};
+int main() { int& held = guarded; return callable() + held; }
+)",
+             true,
+             "an exact readonly virtual operator still closes its actual "
+             "hidden persistent mutation rather than promising effect freedom");
+    rejected(effectful + "int main() { Base& view = reader; "
+                         "int& held = guarded; return view.read() + held; }",
+             false,
+             "a base reference must never replace its mutating override with "
+             "the harmless statically selected base body");
+    rejected(prefix + R"(
+class Base { public: virtual int read() { return 1; } };
+class Reader : public Base {
+public:
+  Reader() {
+    int& held = guarded;
+    int result = this.read();
+    if (result == held) {}
+  }
+  int read() override { return 2; }
+};
+int main() { Reader reader{}; return 0; }
+)",
+             false,
+             "under-construction this does not establish a complete dynamic "
+             "class or erase the unresolved virtual boundary");
+    rejected(prefix + R"(
+void change();
+class Reader {
+public:
+  mut int value = 1;
+  virtual int read() { change(); return this.value; }
+};
+)" + storage + R"(
+mut Reader reader{};
+void change() { reader.value = 9; }
+int main() { return reader.read(); }
+)",
+             true,
+             "a virtual readonly receiver's call-scoped protection rejects a "
+             "hidden reentrant write to that same complete object");
+  }
+}
+
 void orderedInputProtection() {
   const std::string prefix =
       "thread_local mut int value = 1; int modify() { value = 2; return 3; } ";
@@ -634,6 +795,131 @@ int selected<uint64_t Mode>() {
   }
 }
 
+void persistentClassAliasBoundaries() {
+  for (const std::string storage : {"", "thread_local "}) {
+    const std::string prefix = R"(
+class Meter {
+public:
+  mut int count;
+  Meter(int value) : count(value) {}
+  int read() { return this.count; }
+  void set() mut { this.count = 9; }
+};
+)" + storage + R"(mut Meter meter{1};
+void direct() { meter.count = 9; }
+void forwarded() { direct(); }
+void method() { meter.set(); }
+void reference() { mut Meter& alias = meter; alias.count = 9; }
+void scalar_reference() { mut int& alias = meter.count; alias = 9; }
+void assign(mut int& value) { value = 9; }
+void reborrow() { mut Meter& alias = meter; assign(alias.count); }
+int initialize() { direct(); return 0; }
+class Trigger { public: int value = initialize(); Trigger() {} };
+void initializer() { Trigger value{}; }
+)";
+    for (const std::string mutation :
+         {"direct", "forwarded", "method", "reference", "scalar_reference",
+          "reborrow", "initializer"}) {
+      const auto result = analyze(
+          prefix +
+              "int inspect(Meter& borrowed) { int before = "
+              "borrowed.read(); " +
+              mutation +
+              "(); return before + borrowed.read(); } int main() { return "
+              "inspect(meter); }",
+          !storage.empty(), true);
+      expect(!result.semanticValid && code(result, "GTI-S2045") &&
+                 !code(result, "GTI-B0001"),
+             "safe persistent class references reject hidden alias mutation "
+             "through all optimizer-control paths");
+    }
+    positive(prefix +
+                 "int inspect(int snapshot) { direct(); return snapshot; } "
+                 "int main() { return inspect(meter.read()); }",
+             "copying a scalar before the call ends its storage borrow before "
+             "a later hidden mutation",
+             !storage.empty());
+  }
+}
+
+void requirementProbeIsolation() {
+  const std::string prefix = R"(
+thread_local mut int value = 1;
+thread_local mut int other = 2;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); } };
+bool inspect(Cleanup& input) { return true; }
+bool with_flag(Cleanup& input, bool flag) { return flag; }
+)";
+  const auto queryOnly =
+      analyze(prefix + "int main() { int& borrowed = value; bool checked = "
+                       "requires { { inspect(Cleanup()) } -> bool; }; "
+                       "return checked ? borrowed : 0; }",
+              true, true);
+  if (!queryOnly.canGenerateCode())
+    for (const auto &diagnostic : queryOnly.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(queryOnly.canGenerateCode(),
+         "an unevaluated requirement does not publish speculative temporary "
+         "cleanup into its caller's persistent effects");
+
+  for (const bool nested : {true, false}) {
+    const std::string selected =
+        prefix + R"(
+int selected<uint64_t Mode>() {
+  if constexpr (Mode == 0) {
+    int first = 0;
+    int second = 1;
+    int third = 2;
+    bool checked = requires { { inspect(Cleanup()) } -> bool; };
+    return checked ? first + second + third : 0;
+  } else {
+)" +
+        (nested
+             ? "bool seen = with_flag(Cleanup(), requires { "
+               "{ inspect(Cleanup()) } -> bool; }); return seen ? 1 : 0; "
+             : "bool checked = requires { { inspect(Cleanup()) } -> bool; }; "
+               "bool seen = inspect(Cleanup()); "
+               "return checked && seen ? 1 : 0; ") +
+        "} }";
+    for (const bool reverse : {false, true}) {
+      const std::string calls =
+          reverse ? "int first = selected<1>(); int second = selected<0>(); "
+                  : "int first = selected<0>(); int second = selected<1>(); ";
+      const auto source = [&](std::string_view owner) {
+        return selected + "int main() { int& borrowed = " + std::string(owner) +
+               "; " + calls + "return borrowed + first + second; }";
+      };
+      const std::string rejectedSource = source("value");
+      const auto rejected = analyze(rejectedSource, true, true);
+      const auto mutation = rejectedSource.find("selected<1>()");
+      const bool exactConflict = std::any_of(
+          rejected.diagnostics.begin(), rejected.diagnostics.end(),
+          [&](const auto &diagnostic) {
+            return diagnostic.code == "GTI-S2045" &&
+                   diagnostic.message.find("overlapping path") !=
+                       std::string::npos &&
+                   diagnostic.primary.start >= mutation &&
+                   diagnostic.primary.end <=
+                       mutation + std::string_view("selected<1>()").size();
+          });
+      expect(!rejected.semanticValid && exactConflict &&
+                 !code(rejected, "GTI-B0001"),
+             nested ? "a requires probe inside a live caller expression "
+                      "preserves that expression's real temporary cleanup"
+                    : "an unevaluated requirement cannot suppress later real "
+                      "cleanup in either concrete query order");
+      const auto allowed = analyze(source("other"), true, true);
+      if (!allowed.canGenerateCode())
+        for (const auto &diagnostic : allowed.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(allowed.canGenerateCode(),
+             "requirement probes preserve disjoint-owner effects in both "
+             "concrete query orders without importing caller cleanup frames");
+    }
+  }
+}
+
 void deferredProbeIsolation() {
   const std::string prefix = R"(
 thread_local mut int value = 1;
@@ -718,11 +1004,14 @@ int selected<uint64_t Mode>() {
 int main() {
   storageAndMetadata();
   lifetimeAndEffects();
+  exactWholeObjectVirtualEffects();
+  persistentClassAliasBoundaries();
   orderedInputProtection();
   fullExpressionCleanup();
   invalidDeclarations();
   instanceCleanupCache();
   instanceTextRelayEffects();
+  requirementProbeIsolation();
   deferredProbeIsolation();
   return failures ? 1 : 0;
 }

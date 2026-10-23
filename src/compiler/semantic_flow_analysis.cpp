@@ -732,6 +732,74 @@ auto SemanticVisitor::Impl::recordProgramConstructionEffects(
   return false;
 }
 
+auto SemanticVisitor::Impl::hasExactWholeObjectVirtualTarget(
+    const ResolvedCallInfo &resolved, const SemanticPlace &receiver) -> bool {
+  if (resolved.dispatch != CallDispatch::Virtual ||
+      (resolved.receiverMode != CallReceiverMode::ReadOnlyPlace &&
+       resolved.receiverMode != CallReceiverMode::MutablePlace) ||
+      resolved.retainedReceiverProjection || receiver.root == nullptr ||
+      receiver.receiver || !receiver.projections.empty() ||
+      receiver.root->lambdaCapture ||
+      receiver.root->type.kind != SemanticType::Class ||
+      receiver.root->valueState != ValueState::Available)
+    return false;
+  switch (receiver.root->bindingKind) {
+  case SemanticBindingKind::GlobalVariable:
+  case SemanticBindingKind::StaticField:
+  case SemanticBindingKind::LocalVariable:
+  case SemanticBindingKind::Parameter:
+    break;
+  default:
+    return false;
+  }
+  // This is the physical owning object's type, not loanPlace(receiver).
+  // A reference, raw pointer, base projection, capture, or constructor `this`
+  // cannot acquire an exact dynamic type merely from its borrowed origin.
+  const auto &type = receiver.root->type;
+  if (!isConcreteExactSpecializationType(type))
+    return false;
+  const auto *owner = classInfo(type);
+  const auto *selected = semanticModel.findFunction(resolved.function);
+  const auto symbol = receiver.rootIdentity != 0
+                          ? receiver.rootIdentity
+                          : toolingSymbolFor(*receiver.root);
+  if (owner == nullptr || owner->abstract ||
+      owner->kind == ClassKind::Interface ||
+      owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+      symbol == 0 || semanticModel.findForeignStorage(symbol) != nullptr ||
+      selected == nullptr || !selected->virtualMethod ||
+      selected->virtualRoots.empty() || selected->declaration == nullptr ||
+      selected->bodyDeclaration()->body() == nullptr ||
+      selected->linkage != LanguageLinkage::Gti)
+    return false;
+  bool found = false;
+  for (const auto &[_, member] : owner->members) {
+    const auto concrete = substituteSymbol(member.symbol, type);
+    for (const auto &candidate : concrete.overloads) {
+      if (!candidate.virtualMethod ||
+          std::none_of(candidate.virtualRoots.begin(),
+                       candidate.virtualRoots.end(), [&](FunctionId root) {
+                         return std::find(selected->virtualRoots.begin(),
+                                          selected->virtualRoots.end(),
+                                          root) != selected->virtualRoots.end();
+                       }))
+        continue;
+      // The physical object fixes its dynamic class. Ordinary member lookup
+      // must already select its unique final overrider; do not replace a
+      // base-typed declaration or remap any declared borrow/callable contract.
+      if (candidate.pureVirtual || candidate.staticMember ||
+          candidate.id != resolved.function ||
+          candidate.dispatchOwner != resolved.dispatchOwner ||
+          candidate.returnType != resolved.returnType ||
+          candidate.parameterTypes != resolved.parameterTypes ||
+          candidate.receiverMutability != selected->receiverMutability)
+        return false;
+      found = true;
+    }
+  }
+  return found;
+}
+
 auto SemanticVisitor::Impl::recordProgramOperatorTargetEffects(
     const Expr &expression, const ResolvedOperatorInfo &operation) -> void {
   if (!currentProgramEffectOwner.valid()) {
@@ -743,8 +811,37 @@ auto SemanticVisitor::Impl::recordProgramOperatorTargetEffects(
   if (target != nullptr && target->linkage != LanguageLinkage::Gti) {
     return;
   }
-  if (operation.dispatch != CallDispatch::Static || target == nullptr ||
-      !target->genericParameters.empty()) {
+  const ExprPtr *receiver = explicitConversionReceiver(expression, operation);
+  if (!receiver) {
+    if (const auto *call = exprAs<Call>(&expression))
+      receiver = &call->callee();
+    else if (const auto *binary = exprAs<Binary>(&expression))
+      receiver = &binary->left();
+    else if (const auto *index = exprAs<Index>(&expression))
+      receiver = &index->object();
+    else if (const auto *index = exprAs<IndexSet>(&expression))
+      receiver = &index->object();
+    else if (const auto *set = exprAs<DereferenceSet>(&expression))
+      receiver = &set->object();
+    else if (const auto *unary = exprAs<Unary>(&expression))
+      receiver = &unary->right();
+    else if (const auto *postfix = exprAs<Postfix>(&expression))
+      receiver = &postfix->expression();
+    else if (const auto *member = exprAs<Get>(&expression))
+      receiver = &member->object();
+  }
+  const bool exactVirtual = operation.dispatch == CallDispatch::Virtual &&
+                            receiver &&
+                            hasExactWholeObjectVirtualTarget(
+                                {.function = operation.function,
+                                 .returnType = operation.returnType,
+                                 .parameterTypes = operation.parameterTypes,
+                                 .dispatch = operation.dispatch,
+                                 .dispatchOwner = operation.dispatchOwner,
+                                 .receiverMode = operation.receiverMode},
+                                semanticPlace(*receiver));
+  if ((operation.dispatch != CallDispatch::Static && !exactVirtual) ||
+      target == nullptr || !target->genericParameters.empty()) {
     addUnknownProgramEffect(
         expression,
         "an overloaded operation has no closed static GTI target set");
@@ -1537,7 +1634,13 @@ auto SemanticVisitor::Impl::recordProgramCallEffectTargets(
   if (target != nullptr && target->linkage != LanguageLinkage::Gti) {
     return;
   }
-  if (resolved->dispatch != CallDispatch::Static || target == nullptr) {
+  const auto *member = exprAs<Get>(call->callee().get());
+  const bool exactVirtual =
+      resolved->dispatch == CallDispatch::Virtual && member &&
+      hasExactWholeObjectVirtualTarget(*resolved,
+                                       semanticPlace(member->object()));
+  if ((resolved->dispatch != CallDispatch::Static && !exactVirtual) ||
+      target == nullptr) {
     addUnknownProgramEffect(expression,
                             "a GTI call has no closed static target");
     return;
@@ -3330,6 +3433,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::MetaTypeAttributeCount:
         case IntrinsicKind::MetaTypeHasAttribute:
         case IntrinsicKind::MetaTypeTrait:
+        case IntrinsicKind::MetaTypeRelation:
         case IntrinsicKind::MetaEnumeratorCount:
         case IntrinsicKind::MetaEnumeratorName:
         case IntrinsicKind::MetaEnumeratorValue:
@@ -6216,9 +6320,11 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
   if (const Symbol *test = resolveGeneratedTestReference(NamePath(name)))
     return test;
   const auto *context = macroContext(name);
-  const auto [begin, end] = macroLocalScopeRange(name);
-  for (std::size_t index = end; index > begin; --index) {
+  const auto localScopes = macroLocalScopeRange(name);
+  for (std::size_t index = scopes.size(); index > 0; --index) {
     const auto &scope = scopes[index - 1];
+    if (!localScopes.contains(index - 1, scope))
+      continue;
     if (const auto found = scope.find(name.lexeme); found != scope.end()) {
       return &found->second;
     }
@@ -6252,9 +6358,11 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
 }
 
 auto SemanticVisitor::Impl::resolveMutable(const Token &name) -> Symbol * {
-  const auto [begin, end] = macroLocalScopeRange(name);
-  for (std::size_t index = end; index > begin; --index) {
+  const auto localScopes = macroLocalScopeRange(name);
+  for (std::size_t index = scopes.size(); index > 0; --index) {
     auto &scope = scopes[index - 1];
+    if (!localScopes.contains(index - 1, scope))
+      continue;
     if (const auto found = scope.find(name.lexeme); found != scope.end()) {
       return &found->second;
     }
@@ -12808,6 +12916,24 @@ auto SemanticVisitor::Impl::constraintImplies(GenericConstraintSet actual,
   if (hasConstraint(actual, required)) {
     return true;
   }
+  // Classification predicates carry the same primitive category facts as a
+  // source composition of the corresponding public concepts. These are type
+  // facts, not assumptions about arbitrary user-defined arithmetic.
+  if (required == GenericConstraintKind::Numeric &&
+      (hasConstraint(actual, GenericConstraintKind::Integral) ||
+       hasConstraint(actual, GenericConstraintKind::SignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::UnsignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::SignedNumeric) ||
+       hasConstraint(actual, GenericConstraintKind::FloatingPoint)))
+    return true;
+  if (required == GenericConstraintKind::Integral &&
+      (hasConstraint(actual, GenericConstraintKind::SignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::UnsignedIntegral)))
+    return true;
+  if (required == GenericConstraintKind::SignedNumeric &&
+      (hasConstraint(actual, GenericConstraintKind::SignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::FloatingPoint)))
+    return true;
   if (required == GenericConstraintKind::Relocatable &&
       hasConstraint(actual, GenericConstraintKind::BitwiseRelocatable)) {
     return true;

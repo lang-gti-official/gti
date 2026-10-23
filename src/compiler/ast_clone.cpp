@@ -312,6 +312,11 @@ private:
     }
     case ExprKind::MemberRequirement: {
       const auto &node = static_cast<const MemberRequirement &>(expression);
+      if (node.isExpressionRequirement())
+        return std::make_unique<MemberRequirement>(
+            tok(node.keyword()), expr(node.expression()), type(node.result()),
+            types(node.parameters()), toks(node.bindings()),
+            tok(node.unsafeKeyword()));
       return std::make_unique<MemberRequirement>(
           tok(node.keyword()), type(node.receiver()), tok(node.binding()),
           tok(node.receiverUse()), tok(node.member()), type(node.result()),

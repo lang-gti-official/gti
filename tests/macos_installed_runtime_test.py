@@ -120,7 +120,7 @@ def main():
                  standard, optimization, "-o", executable], environment, cwd=root)
             run_program(executable, "2\n", environment, root)
         local_state = root / "installed-thread-local-storage.gti"
-        local_state.write_text((examples / "173-thread-local-storage.gti").read_text())
+        local_state.write_text((examples / "175-thread-local-storage.gti").read_text())
         for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
             executable = root / ("installed-thread-local-" + standard)
             run([cli, local_state, "--execution-profile", "concurrent", "--std",

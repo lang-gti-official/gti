@@ -67,7 +67,7 @@ def census(gti: Path, root: Path) -> dict[str, int | None]:
                     *(
                         ["--execution-profile", "concurrent"]
                         if source.name
-                        in {"066-managed-threads.gti", "076-scalar-atomics.gti", "173-thread-local-storage.gti"}
+                        in {"066-managed-threads.gti", "076-scalar-atomics.gti", "175-thread-local-storage.gti"}
                         else []
                     ),
                     str(source),

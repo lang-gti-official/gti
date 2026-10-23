@@ -458,6 +458,420 @@ int main() { int32_t& borrowed = first; execute(); return borrowed; }
            "persistent loan and is rejected before MIR");
   }
 }
+void referenceRootDoesNotAcquireExactVirtualType(bool localAlias) {
+  const std::string source =
+      R"(
+class Source {
+public:
+  virtual int32_t read() { return 1; }
+};
+class Reader : public Source {
+public:
+  int32_t read() override { return 3; }
+};
+Source& relay(Source& input) { return input; }
+int32_t owned_copy(Source& input) {
+  Source copy = relay(input);
+  return copy.read();
+}
+)" +
+      std::string(
+          localAlias
+              ? R"(int32_t inspect(Source& input) {
+  Source& alias = relay(input);
+  return alias.read();
+}
+)"
+              : "int32_t inspect(Source& input) { return input.read(); }\n") +
+      "int main() { Reader local{}; return inspect(local) + owned_copy(local); "
+      "}\n";
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/reference-virtual.gti", source);
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(), "dynamic reference dispatch is valid "
+                                     "without a conflicting persistent loan");
+  if (!frontend.canGenerateCode())
+    return;
+  std::optional<lang::MirBodyAddress> caller;
+  lang::MirInstructionId callId = 0;
+  for (const auto address : lang::enumerateMirBodyAddresses(frontend.mir))
+    for (const auto &block : lang::findMirBody(frontend.mir, address)->blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.dispatch == lang::CallDispatch::Virtual) {
+          const auto *body = lang::findMirBody(frontend.mir, address);
+          const auto *value = instruction.receiver
+                                  ? body->findValue(instruction.receiver->value)
+                                  : nullptr;
+          const auto *stageBlock =
+              value ? body->findBlock(value->definitionBlock) : nullptr;
+          bool owned = false;
+          if (stageBlock)
+            for (const auto &stage : stageBlock->instructions)
+              if (stage.id == value->definition && stage.operands.size() == 1) {
+                const auto *place =
+                    body->findPlace(stage.operands.front().place);
+                owned = place &&
+                        place->root == lang::MirPlaceRootKind::Binding &&
+                        place->projections.empty() &&
+                        place->type.kind == lang::SemanticType::Class;
+              }
+          const auto targets =
+              lang::mirInvocationTargets(frontend.mir, *body, instruction);
+          if (owned) {
+            expect(!targets.boundary && targets.addresses.size() == 1,
+                   "explicit Load/Copy publishes an exact owning class from a "
+                   "reference");
+            continue;
+          }
+          expect(targets.boundary,
+                 "a base reference is not its declared class's exact object");
+          caller = address;
+          callId = instruction.id;
+        }
+  expect(caller && callId, "fixture owns one dynamic reference receiver");
+  if (!caller || !callId)
+    return;
+  for (int mutation = 0; mutation != (localAlias ? 3 : 2); ++mutation) {
+    auto forged = frontend.mir;
+    auto *body = lang::findMirBody(forged, *caller);
+    lang::MirInstruction *call = nullptr;
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == callId)
+          call = &instruction;
+    const auto *value = call && call->receiver
+                            ? body->findValue(call->receiver->value)
+                            : nullptr;
+    auto *block = value ? body->findBlock(value->definitionBlock) : nullptr;
+    lang::MirInstruction *stage = nullptr;
+    if (block)
+      for (auto &instruction : block->instructions)
+        if (instruction.id == value->definition)
+          stage = &instruction;
+    if (!stage || stage->operands.size() != 1) {
+      expect(false, "reference fixture has one exact receiver stage");
+      continue;
+    }
+    auto &place = body->places.at(stage->operands.front().place - 1);
+    expect(place.root == lang::MirPlaceRootKind::Binding &&
+               place.projections.size() == 1 &&
+               place.projections.front().kind ==
+                   lang::MirProjectionKind::Dereference,
+           "reference receiver retains its physical dereference");
+    place.projections.clear();
+    if (mutation != 0)
+      for (auto &view : body->places)
+        if (view.root == lang::MirPlaceRootKind::Binding &&
+            view.binding == place.binding && view.projections.empty())
+          view.type = place.type;
+    if (mutation == 2) {
+      // A borrowed reference-returning call has an SSA Value too. Omitting
+      // the source compiler's explicit Load/Copy must not publish an object.
+      lang::MirValueId borrowedValue = 0;
+      for (const auto &candidate : body->values)
+        if (candidate.info.type == place.type &&
+            candidate.info.category == lang::ValueCategory::Place)
+          borrowedValue = candidate.id;
+      bool replaced = false;
+      for (auto &candidateBlock : body->blocks)
+        for (auto &instruction : candidateBlock.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Initialize ||
+              !instruction.destination)
+            continue;
+          const auto *destination = body->findPlace(*instruction.destination);
+          if (!destination ||
+              destination->root != lang::MirPlaceRootKind::Binding ||
+              destination->binding != place.binding ||
+              !destination->projections.empty())
+            continue;
+          expect(instruction.operands.size() == 1 &&
+                     instruction.operands.front().kind ==
+                         lang::MirOperandKind::Loan,
+                 "reference alias originally publishes one exact Loan address");
+          instruction.operands = {{.kind = lang::MirOperandKind::Value,
+                                   .value = borrowedValue,
+                                   .type = place.type}};
+          replaced = true;
+        }
+      expect(borrowedValue != 0 && replaced,
+             "local alias control has an actual borrowed SSA call result");
+    }
+    expect(lang::mirInvocationTargets(forged, *body, *call).boundary,
+           "stripping reference indirection cannot manufacture exact dynamic "
+           "type");
+    expect(!lang::verifyMirProgram(forged).valid(),
+           "declared formal or typed local publication rejects a forged class "
+           "root");
+  }
+}
+
+void exactWholeObjectVirtualEffects(std::string_view storage) {
+  const std::string source = std::string(storage) + R"( mut int32_t first = 1;
+)" + std::string(storage) + R"( mut int32_t second = 2;
+class Source {
+public:
+  virtual int32_t read() { return 1; }
+  virtual int32_t other() { return 0; }
+};
+class Reader : public Source {
+public:
+  int32_t read() override { second = 9; return 3; }
+  int32_t other() override { return 0; }
+};
+class Sibling : public Source {
+public:
+  int32_t read() override { return 4; }
+};
+Reader reader{};
+Sibling sibling{};
+int32_t read_owned(Reader input) {
+  Reader local{};
+  return input.read() + local.read();
+}
+class UsesDefault {
+  int32_t kept = reader.read();
+public:
+  UsesDefault() {}
+  int32_t read() { return this.kept; }
+};
+int main() {
+  int32_t& held = first;
+  UsesDefault selected{};
+  return held + selected.read() + read_owned(reader);
+}
+)";
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/exact-virtual.gti", source);
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "whole-object virtual declaration defaults preserve disjoint effects");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(
+      lang::verifyMirProgram(frontend.mir).valid(),
+      "whole-object virtual effects independently verify before optimization");
+  std::optional<lang::MirBodyAddress> caller;
+  lang::MirInstructionId callId = 0;
+  for (const auto address : lang::enumerateMirBodyAddresses(frontend.mir))
+    for (const auto &block : lang::findMirBody(frontend.mir, address)->blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            instruction.dispatch != lang::CallDispatch::Virtual)
+          continue;
+        const auto targets = lang::mirInvocationTargets(
+            frontend.mir, *lang::findMirBody(frontend.mir, address),
+            instruction);
+        expect(
+            !targets.boundary && targets.addresses.size() == 1 &&
+                targets.addresses.front().kind == lang::MirBodyKind::Function &&
+                instruction.functionTarget &&
+                targets.addresses.front().owner == *instruction.functionTarget,
+            "exact virtual effect edge preserves selected concrete identity");
+        expect(instruction.definedFailure.propagation ==
+                   lang::FailurePropagationKind::VirtualCall,
+               "effect proof does not erase dynamic failure propagation");
+        const auto *value = instruction.receiver
+                                ? lang::findMirBody(frontend.mir, address)
+                                      ->findValue(instruction.receiver->value)
+                                : nullptr;
+        const auto *stageBlock = value
+                                     ? lang::findMirBody(frontend.mir, address)
+                                           ->findBlock(value->definitionBlock)
+                                     : nullptr;
+        if (stageBlock)
+          for (const auto &stage : stageBlock->instructions) {
+            if (stage.id != value->definition || stage.operands.size() != 1)
+              continue;
+            const auto *place = lang::findMirBody(frontend.mir, address)
+                                    ->findPlace(stage.operands.front().place);
+            if (place && place->root == lang::MirPlaceRootKind::Symbol &&
+                place->symbol == symbol(frontend, "reader")) {
+              caller = address;
+              callId = instruction.id;
+            }
+          }
+      }
+  expect(caller && callId != 0,
+         "fixture contains the constructor-default virtual call");
+  if (!caller || callId == 0)
+    return;
+
+  const auto first = symbol(frontend, "first");
+  const auto second = symbol(frontend, "second");
+  auto conflicting = frontend.mir;
+  bool changed = false;
+  for (const auto address : lang::enumerateMirBodyAddresses(conflicting)) {
+    if (address.kind != lang::MirBodyKind::Function)
+      continue;
+    auto *body = lang::findMirBody(conflicting, address);
+    for (auto &place : body->places)
+      if (place.root == lang::MirPlaceRootKind::Symbol &&
+          place.symbol == second) {
+        place.symbol = first;
+        if (place.key && place.key->root == second)
+          place.key->root = first;
+        changed = true;
+      }
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::EnsureThreadLocal &&
+            instruction.threadLocalStorage == second) {
+          instruction.threadLocalStorage = first;
+          instruction.bodyTarget = lang::MirBodyAddress{
+              .kind = lang::MirBodyKind::ThreadLocalInitializer,
+              .owner = first};
+        }
+  }
+  expect(changed, "virtual override contains an actual persistent write");
+  const auto conflict = lang::verifyMirProgram(conflicting);
+  expect(!conflict.valid() &&
+             std::any_of(conflict.errors.begin(), conflict.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find(
+                                      "ambient source call or cleanup") !=
+                                  std::string::npos;
+                         }),
+         "exact readonly virtual call retains conflicting transitive writes");
+
+  for (int mutation = 0; mutation != 13; ++mutation) {
+    auto forged = frontend.mir;
+    auto *body = lang::findMirBody(forged, *caller);
+    lang::MirInstruction *call = nullptr;
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == callId)
+          call = &instruction;
+    if (!call || !call->receiver || !call->functionTarget) {
+      expect(false, "virtual mutation has exact fixture identities");
+      continue;
+    }
+    const auto *value = body->findValue(call->receiver->value);
+    auto *block = value ? body->findBlock(value->definitionBlock) : nullptr;
+    lang::MirInstruction *stage = nullptr;
+    if (block)
+      for (auto &input : block->instructions)
+        if (input.id == value->definition)
+          stage = &input;
+    if (!stage || stage->operands.size() != 1) {
+      expect(false, "virtual fixture contains one staged receiver borrow");
+      continue;
+    }
+    auto &place = body->places.at(stage->operands.front().place - 1);
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        forged.findFunctionInstance(*call->functionTarget));
+    if (!function) {
+      expect(false, "virtual fixture retains the selected function instance");
+      continue;
+    }
+    switch (mutation) {
+    case 0:
+      ++stage->callSite;
+      break;
+    case 1:
+      stage->callInputRole = lang::MirCallInputRole::Argument;
+      break;
+    case 2:
+      place.capture = 1;
+      break;
+    case 3:
+      place.projections.push_back(
+          {.kind = lang::MirProjectionKind::Dereference});
+      break;
+    case 4:
+      function->virtualRoots.clear();
+      break;
+    case 5:
+      function->definitionKind = lang::MirDefinitionKind::Declaration;
+      break;
+    case 6: {
+      // Coherently retarget the declaration and dispatch owner to the base.
+      // The actual Reader still has its writing override: a harmless base
+      // summary cannot stand in for that dynamic effect.
+      const auto root = function->virtualRoots.front();
+      bool substituted = false;
+      for (const auto &candidate : forged.functionInstances())
+        if (candidate.declaration == root && candidate.owner &&
+            !candidate.overrideMethod) {
+          call->functionTarget = candidate.id;
+          call->dispatchOwner =
+              forged.findClassInstance(*candidate.owner)->type;
+          substituted = true;
+          break;
+        }
+      expect(substituted, "fixture exposes a coherent base declaration");
+      break;
+    }
+    case 7: {
+      bool substituted = false;
+      for (const auto &candidate : forged.functionInstances())
+        if (candidate.owner && candidate.owner != function->owner &&
+            candidate.overrideMethod &&
+            candidate.virtualRoots == function->virtualRoots) {
+          call->functionTarget = candidate.id;
+          call->dispatchOwner =
+              forged.findClassInstance(*candidate.owner)->type;
+          substituted = true;
+          break;
+        }
+      expect(substituted, "fixture exposes a sibling's harmless override");
+      break;
+    }
+    case 8: {
+      bool substituted = false;
+      for (const auto &candidate : forged.functionInstances())
+        if (candidate.id != function->id &&
+            candidate.owner == function->owner && candidate.virtualMethod &&
+            candidate.virtualRoots != function->virtualRoots) {
+          function->virtualRoots = candidate.virtualRoots;
+          substituted = true;
+          break;
+        }
+      expect(substituted, "fixture exposes an unrelated virtual slot");
+      break;
+    }
+    case 9: {
+      const auto root = function->virtualRoots.front();
+      bool substituted = false;
+      for (const auto &candidate : forged.functionInstances())
+        if (candidate.declaration == root && candidate.owner &&
+            !candidate.overrideMethod) {
+          const auto type = forged.findClassInstance(*candidate.owner)->type;
+          place.type = type;
+          stage->info.type = type;
+          stage->operands.front().type = type;
+          call->receiver->type = type;
+          body->values.at(call->receiver->value - 1).info.type = type;
+          call->functionTarget = candidate.id;
+          call->dispatchOwner = type;
+          substituted = true;
+          break;
+        }
+      expect(substituted,
+             "consumer type can be forged independently of storage");
+      break;
+    }
+    case 10:
+      place.root = lang::MirPlaceRootKind::This;
+      place.symbol = 0;
+      place.binding = 0;
+      break;
+    case 11:
+      place.foreignStorage = true;
+      break;
+    case 12:
+      stage->result.reset();
+      break;
+    }
+    expect(
+        lang::mirInvocationTargets(forged, *body, *call).boundary,
+        "incoherent/open virtual evidence cannot grant an exact effect edge");
+    expect(!lang::verifyMirProgram(forged).valid(),
+           "independent program verification rejects forged virtual evidence");
+  }
+}
 } // namespace
 
 int main() {
@@ -478,5 +892,9 @@ int main() {
   generatedDefaultHasExactEmptyTargets("");
   generatedDefaultSchedulesRetainEffects("thread_local");
   generatedDefaultSchedulesRetainEffects("");
+  exactWholeObjectVirtualEffects("thread_local");
+  exactWholeObjectVirtualEffects("");
+  referenceRootDoesNotAcquireExactVirtualType(false);
+  referenceRootDoesNotAcquireExactVirtualType(true);
   return passed ? 0 : 1;
 }

@@ -238,7 +238,7 @@ void testDetachedDeterministicProgram() {
   const std::string secondText = lang::LoweredProgramPrinter().print(*second);
   expect(firstText == secondText,
          "independent frontend snapshots should lower deterministically");
-  expect(firstText.find("lowered-program-v24") == 0 &&
+  expect(firstText.find("lowered-program-v25") == 0 &&
              firstText.find("\nmir\n") != std::string::npos,
          "the deterministic printer should serialize the complete contract");
   const gti_test::LoweredProgramInventory inventory =
@@ -1338,6 +1338,190 @@ int main() { Box<1> first{}; Box<2> second{}; Box<3> third{}; return 0; }
   }
 }
 
+void testGeneralRequirementMetadata() {
+  auto frontend = lang::Frontend().analyze("lowered-requirements.gti", R"(
+constexpr bool accepted<T>() { return true; }
+concept selected<T> = accepted<T>();
+void named<T>() requires selected<T> {}
+void predicate<T>() requires accepted<T>() {}
+void expression<T>() requires requires(T& value) {
+  { value + value } -> T;
+} {}
+void nullary<T>() requires requires { { T() } -> T; } {}
+class Reader {
+public:
+  int32_t read() { return 7; }
+};
+void member<T>() requires requires(T& value) {
+  { value.read() } -> int32_t;
+} {}
+class Box {
+public:
+  Box<T>(T value) requires requires(T& input) { { input + input } -> T; } {}
+};
+int main() {
+  named<int32_t>();
+  predicate<int32_t>();
+  expression<int32_t>();
+  nullary<int32_t>();
+  member<Reader>();
+  Box box = Box(1);
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "general requirement metadata fixture is semantically valid");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << "  requirement fixture: " << diagnostic.code << ": "
+                << diagnostic.message << '\n';
+    return;
+  }
+  auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(),
+         "concept/member/expression/predicate requirements cross the lowered "
+         "boundary without AST pointers or fabricated member names");
+  if (!built.valid()) {
+    for (const auto &issue : built.issues)
+      std::cerr << "  requirement boundary: " << issue.detail << '\n';
+    return;
+  }
+  const auto &program = *built.program;
+  const auto *named =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "named");
+  const auto *member =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "member");
+  const auto *expression =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "expression");
+  const auto *nullary =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "nullary");
+  const auto *predicate =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "predicate");
+  expect(named && member && expression && nullary && predicate,
+         "all requirement declaration rows are retained");
+  if (!named || !member || !expression || !nullary || !predicate)
+    return;
+  expect(
+      named->requirements.size() == 1 &&
+          named->requirements[0].kind ==
+              lang::LoweredRequirementKind::Concept &&
+          named->requirements[0].conceptId != 0 &&
+          member->requirements.size() == 1 &&
+          member->requirements[0].kind ==
+              lang::LoweredRequirementKind::Member &&
+          member->requirements[0].memberName == "read",
+      "named concept and exact member leaves keep their distinct identities");
+  expect(expression->requirements.size() == 1 &&
+             expression->requirements[0].kind ==
+                 lang::LoweredRequirementKind::Expression &&
+             expression->requirements[0].expressionParameterCount == 1 &&
+             expression->requirements[0].resultArgument == 1 &&
+             expression->requirements[0].arguments.size() == 2 &&
+             expression->requirements[0].memberName.empty() &&
+             nullary->requirements.size() == 1 &&
+             nullary->requirements[0].resultArgument == 0 &&
+             nullary->requirements[0].expressionParameterCount == 0 &&
+             predicate->requirements.size() == 1 &&
+             predicate->requirements[0].kind ==
+                 lang::LoweredRequirementKind::Predicate &&
+             !predicate->requirements[0].resultArgument &&
+             predicate->requirements[0].memberName.empty(),
+         "general expressions retain exact result slots and predicates never "
+         "masquerade as member requirements");
+  const auto text = lang::LoweredProgramPrinter().print(program);
+  expect(text.find("kind=expression;concept=0;expression-parameters=1;result-"
+                   "argument=1") != std::string::npos &&
+             text.find("kind=predicate;concept=0") != std::string::npos,
+         "deterministic serialization exposes the explicit requirement kinds");
+
+  std::size_t checkedFunctions = 0;
+  std::size_t checkedConstructors = 0;
+  for (std::size_t row = 0; row < program.declarations().size(); ++row) {
+    const auto &declaration = program.declarations()[row];
+    const auto *function =
+        std::get_if<lang::LoweredFunctionDeclaration>(&declaration.payload);
+    const auto *constructor =
+        std::get_if<lang::LoweredConstructorDeclaration>(&declaration.payload);
+    const auto *requirements = function      ? &function->requirements
+                               : constructor ? &constructor->requirements
+                                             : nullptr;
+    if (!requirements || requirements->empty())
+      continue;
+    if (function)
+      ++checkedFunctions;
+    else
+      ++checkedConstructors;
+    for (int mutation = 0; mutation < 7; ++mutation) {
+      auto forged = program;
+      auto &payload =
+          lang::LoweredProgramTestAccess::declarations(forged)[row].payload;
+      auto &requirement =
+          function ? std::get<lang::LoweredFunctionDeclaration>(payload)
+                         .requirements[0]
+                   : std::get<lang::LoweredConstructorDeclaration>(payload)
+                         .requirements[0];
+      if (mutation == 0)
+        requirement.kind = lang::LoweredRequirementKind::Count;
+      else if (mutation == 1)
+        requirement.resultArgument = requirement.arguments.size();
+      else if (mutation == 2)
+        requirement.expressionParameterCount = requirement.arguments.size() + 1;
+      else if (mutation == 3)
+        requirement.arguments.push_back(lang::SemanticType::Unknown);
+      else if (mutation == 4)
+        requirement.conceptId = requirement.conceptId == 0 ? 999999 : 0;
+      else if (mutation == 5) {
+        requirement.kind = lang::LoweredRequirementKind::Expression;
+        requirement.resultArgument.reset();
+      } else {
+        requirement.kind = lang::LoweredRequirementKind::Predicate;
+        requirement.requiresUnsafe = true;
+      }
+      expect(
+          hasIssue(lang::verifyLoweredProgram(forged),
+                   lang::LoweredProgramIssueKind::InvalidDeclarationInventory),
+          "invalid requirement kinds, mixed payloads, result slots and "
+          "unresolved types are rejected before backend consumption");
+    }
+    if ((*requirements)[0].kind == lang::LoweredRequirementKind::Expression ||
+        (*requirements)[0].kind == lang::LoweredRequirementKind::Predicate) {
+      auto forged = program;
+      auto &payload =
+          lang::LoweredProgramTestAccess::declarations(forged)[row].payload;
+      auto &requirement =
+          function ? std::get<lang::LoweredFunctionDeclaration>(payload)
+                         .requirements[0]
+                   : std::get<lang::LoweredConstructorDeclaration>(payload)
+                         .requirements[0];
+      requirement.source = {};
+      expect(
+          hasIssue(lang::verifyLoweredProgram(forged),
+                   lang::LoweredProgramIssueKind::InvalidDeclarationInventory),
+          "general requirement leaves must retain source provenance");
+    }
+    if ((*requirements)[0].kind == lang::LoweredRequirementKind::Expression) {
+      auto forged = program;
+      auto &payload =
+          lang::LoweredProgramTestAccess::declarations(forged)[row].payload;
+      auto &requirement =
+          function ? std::get<lang::LoweredFunctionDeclaration>(payload)
+                         .requirements[0]
+                   : std::get<lang::LoweredConstructorDeclaration>(payload)
+                         .requirements[0];
+      auto &result = requirement.arguments[*requirement.resultArgument];
+      result = lang::SemanticType::referenceTo(result);
+      expect(
+          hasIssue(lang::verifyLoweredProgram(forged),
+                   lang::LoweredProgramIssueKind::InvalidDeclarationInventory),
+          "general expression result slots must not silently become borrows");
+    }
+  }
+  expect(checkedFunctions >= 5 && checkedConstructors >= 1,
+         "requirement mutation coverage includes functions and constructors");
+}
+
 void testClassDefinitionFamilyIdentity() {
   const auto frontend = lang::Frontend().analyze("definition-family.gti", R"(
 class Record<T, E> { public: int kind() { return 1; } };
@@ -1401,6 +1585,7 @@ int main() {
   testConcreteBranchSymbols();
   testConcreteLambdaPacks();
   testConcreteClassAliases();
+  testGeneralRequirementMetadata();
   testClassDefinitionFamilyIdentity();
   if (failures != 0) {
     std::cerr << failures << " lowered-program test(s) failed\n";
