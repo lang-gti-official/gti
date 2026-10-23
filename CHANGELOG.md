@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.466.1 — Text members through `operator->`
+## 0.467.1 — Text members through `operator->`
 
 - When an `operator->` returns a `std::string_view&`, its members can be
   called through `->`. For a class with `std::string_view& operator->()`,
@@ -25,6 +25,24 @@ for what minor and patch releases mean.
   reference, as in `o->begin()` or `o.value().begin()`, still reports
   `GTI-B0001`. Bind the reference first (`std::string_view& view =
   o.value();`) and iterate `view`.
+
+## 0.467.0 — Source-defined requirements and general type facts
+
+- `requires` queries can check ordinary expressions and construction with exact
+  owned results, optional synthetic parameters and multiple checks. Queries
+  execute no code and retain normal access, ownership and unsafe obligations.
+- Concepts and trailing clauses can compose constexpr Boolean calls, including
+  general `std::meta` classification, lifecycle, relocation, transfer/share,
+  exact-type and enum-representation predicates. Existing compiler facts stay
+  authoritative; arbitrary predicates do not invent safety proofs.
+- Prelude numeric/lifecycle/enum concepts now compose reflection queries, and
+  domain arithmetic concepts use source expression requirements. Strict
+  comparison and borrowed-result contracts retain their necessary compiler
+  support. Exact member requirements remain compatible; overload ranking and
+  subsumption are unchanged.
+- Hover signatures, requirement parameter navigation/rename, formatting and
+  Tree-sitter support cover the extended syntax. Example 173 demonstrates it.
+
 
 ## 0.466.0 — Typed macros
 

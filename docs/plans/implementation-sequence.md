@@ -74,6 +74,13 @@ native standard/optimization/sanitizer parity, disabled type diagnostics,
 ownership/loan/caller-origin rejection tests, editor/profile/module/example
 gates, broad optimized regression and successful-path cost measurements.
 
+Remaining expression-vocabulary integration: admit directly written requirement
+queries in macro bodies once expansion treats synthetic query parameters as
+lexical binders, rather than substituting same-spelled macro formals. Acceptance
+must cover shadowing, nested queries, lambdas and unevaluated ownership effects.
+Caller-supplied query arguments already retain their independent lookup domain;
+this is not a reason to relax macro hygiene or query isolation.
+
 Further goals, not implemented by this slice:
 
 - When a semantic facility introduces model-local expression-order caches or
