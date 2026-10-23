@@ -26,6 +26,7 @@ bool meta_field_has_attribute<T, A, uint64_t I>();
 uint64_t meta_type_attribute_count<T>();
 bool meta_type_has_attribute<T, A>();
 bool meta_type_trait<T, uint64_t Trait>();
+bool meta_type_relation<T, U, uint64_t Relation>();
 uint64_t meta_enumerator_count<E>();
 std::string_view meta_enumerator_name<E, uint64_t I>();
 E meta_enumerator_value<E, uint64_t I>();
@@ -167,8 +168,8 @@ public:
   constexpr bool is_interface() { return gti_internal::meta_type_kind<T>() == uint64_t(3); }
   constexpr bool is_union() { return gti_internal::meta_type_kind<T>() == uint64_t(4); }
   constexpr bool is_enum() { return gti_internal::meta_type_kind<T>() == uint64_t(5); }
-  constexpr bool is_integral() { return gti_internal::meta_type_kind<T>() == uint64_t(6); }
-  constexpr bool is_floating_point() { return gti_internal::meta_type_kind<T>() == uint64_t(7); }
+  constexpr bool is_integral() { return gti_internal::meta_type_trait<T, 17>(); }
+  constexpr bool is_floating_point() { return gti_internal::meta_type_trait<T, 18>(); }
   constexpr bool is_bool() { return gti_internal::meta_type_kind<T>() == uint64_t(8); }
   constexpr bool is_char() { return gti_internal::meta_type_kind<T>() == uint64_t(9); }
   constexpr bool is_text() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
@@ -196,6 +197,25 @@ public:
   constexpr bool is_reflectable() { return gti_internal::meta_type_trait<T, 2>(); }
   /// Whether `T` is a signed fixed-width integer type.
   constexpr bool is_signed_integral() { return gti_internal::meta_type_trait<T, 3>(); }
+  /// Exact GTI lifecycle and safety facts; these do not authorize a move,
+  /// raw-memory operation, lifetime extension or cross-thread access.
+  constexpr bool is_copy_constructible() { return gti_internal::meta_type_trait<T, 4>(); }
+  constexpr bool is_move_constructible() { return gti_internal::meta_type_trait<T, 5>(); }
+  constexpr bool is_copyable() { return gti_internal::meta_type_trait<T, 6>(); }
+  constexpr bool is_movable() { return gti_internal::meta_type_trait<T, 7>(); }
+  constexpr bool is_relocatable() { return gti_internal::meta_type_trait<T, 8>(); }
+  constexpr bool is_bitwise_relocatable() { return gti_internal::meta_type_trait<T, 9>(); }
+  constexpr bool is_transferable() { return gti_internal::meta_type_trait<T, 10>(); }
+  constexpr bool is_shareable() { return gti_internal::meta_type_trait<T, 11>(); }
+  constexpr bool is_default_initializable() { return gti_internal::meta_type_trait<T, 12>(); }
+  constexpr bool is_integral_enum() { return gti_internal::meta_type_trait<T, 13>(); }
+  constexpr bool is_unsigned_integral() { return gti_internal::meta_type_trait<T, 14>(); }
+  constexpr bool is_numeric() { return gti_internal::meta_type_trait<T, 15>(); }
+  constexpr bool is_signed_numeric() { return gti_internal::meta_type_trait<T, 16>(); }
+  /// Exact type identity, not conversion compatibility.
+  constexpr bool is_same<U>() { return gti_internal::meta_type_relation<T, U, 0>(); }
+  /// Exact declared integral-enum representation, false for other types.
+  constexpr bool has_underlying_type<U>() { return gti_internal::meta_type_relation<T, U, 1>(); }
   /// The number of enumerators when `T` is an enum, else 0.
   constexpr uint64_t enumerator_count() { return gti_internal::meta_enumerator_count<T>(); }
   /// The enumerators of `T`, as a `list` of `enumerator` metaobjects.
@@ -420,14 +440,35 @@ constexpr std::string_view primary_name_of<T>() { return gti_internal::meta_type
 constexpr bool is_struct<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(1); }
 constexpr bool is_class<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(2); }
 constexpr bool is_enum<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(5); }
-constexpr bool is_integral<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(6); }
-constexpr bool is_floating_point<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(7); }
+constexpr bool is_integral<T>() { return gti_internal::meta_type_trait<T, 17>(); }
+constexpr bool is_floating_point<T>() { return gti_internal::meta_type_trait<T, 18>(); }
 constexpr bool is_bool<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(8); }
 constexpr bool is_text<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
 constexpr bool is_payload_enum<T>() { return gti_internal::meta_type_trait<T, 0>(); }
 constexpr bool is_generic_instance<T>() { return gti_internal::meta_type_trait<T, 1>(); }
 constexpr bool is_reflectable<T>() { return gti_internal::meta_type_trait<T, 2>(); }
 constexpr bool is_signed_integral<T>() { return gti_internal::meta_type_trait<T, 3>(); }
+
+/// Query GTI's selected lifecycle and structural safety facts. These queries
+/// describe a type; ordinary expression-level ownership, borrowing and unsafe
+/// checks still apply when an operation is performed.
+constexpr bool is_copy_constructible<T>() { return gti_internal::meta_type_trait<T, 4>(); }
+constexpr bool is_move_constructible<T>() { return gti_internal::meta_type_trait<T, 5>(); }
+constexpr bool is_copyable<T>() { return gti_internal::meta_type_trait<T, 6>(); }
+constexpr bool is_movable<T>() { return gti_internal::meta_type_trait<T, 7>(); }
+constexpr bool is_relocatable<T>() { return gti_internal::meta_type_trait<T, 8>(); }
+constexpr bool is_bitwise_relocatable<T>() { return gti_internal::meta_type_trait<T, 9>(); }
+constexpr bool is_transferable<T>() { return gti_internal::meta_type_trait<T, 10>(); }
+constexpr bool is_shareable<T>() { return gti_internal::meta_type_trait<T, 11>(); }
+constexpr bool is_default_initializable<T>() { return gti_internal::meta_type_trait<T, 12>(); }
+constexpr bool is_integral_enum<T>() { return gti_internal::meta_type_trait<T, 13>(); }
+constexpr bool is_unsigned_integral<T>() { return gti_internal::meta_type_trait<T, 14>(); }
+constexpr bool is_numeric<T>() { return gti_internal::meta_type_trait<T, 15>(); }
+constexpr bool is_signed_numeric<T>() { return gti_internal::meta_type_trait<T, 16>(); }
+/// Exact type identity, without widening, implicit conversion or inheritance.
+constexpr bool is_same<T, U>() { return gti_internal::meta_type_relation<T, U, 0>(); }
+/// Whether E is a payload-free enum with exactly U as its declared domain.
+constexpr bool is_enum_underlying<E, U>() { return gti_internal::meta_type_relation<E, U, 1>(); }
 
 }
 }

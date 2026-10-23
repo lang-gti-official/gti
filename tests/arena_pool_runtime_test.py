@@ -66,7 +66,7 @@ int main() {
 """,
         (
             "GTI-S2029",
-            "does not satisfy generic constraint 'gti_internal::movable_sparse_element'",
+            "Type 'pinned' does not satisfy concept 'std::movable<pinned>'",
             "Required application 'std::movable<pinned>'",
         ),
     ),
