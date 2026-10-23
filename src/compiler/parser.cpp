@@ -4507,12 +4507,12 @@ private:
         if (allowClasses &&
             (check(TokenKind::HASH_IF) || check(TokenKind::HASH_IFDEF) ||
              check(TokenKind::HASH_IFNDEF) || check(TokenKind::HASH_ERROR) ||
-             check(TokenKind::AT) || check(TokenKind::CLASS) ||
-             check(TokenKind::CONCEPT) || check(TokenKind::ENUM) ||
-             check(TokenKind::EXTERN) || check(TokenKind::STRUCT) ||
-             check(TokenKind::INTERFACE) || check(TokenKind::UNION) ||
-             check(TokenKind::NAMESPACE) || check(TokenKind::USING) ||
-             isConformanceStart())) {
+             check(TokenKind::HASH_MACRO) || check(TokenKind::AT) ||
+             check(TokenKind::CLASS) || check(TokenKind::CONCEPT) ||
+             check(TokenKind::ENUM) || check(TokenKind::EXTERN) ||
+             check(TokenKind::STRUCT) || check(TokenKind::INTERFACE) ||
+             check(TokenKind::UNION) || check(TokenKind::NAMESPACE) ||
+             check(TokenKind::USING) || isConformanceStart())) {
           return;
         }
         if (allowStatements &&

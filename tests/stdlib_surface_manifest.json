@@ -2936,6 +2936,7 @@
         "tests/deferred_assertion_runtime_test.py",
         "tests/deferred_assertion_lsp_test.py",
         "examples/172-deferred-assertions.gti",
+        "examples/174-typed-macros.gti",
         "stdlib/std/assert.gti"
       ]
     },

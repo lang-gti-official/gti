@@ -1,4 +1,5 @@
 #include "cpp_backend_test_support.h"
+#include "gti/lexer.h"
 #include "gti/mir_verifier.h"
 
 #include <filesystem>
@@ -225,6 +226,53 @@ void migrationAndOverloadDiagnostics() {
   }
 }
 
+void parserMacroRecovery() {
+  for (const bool nested : {false, true}) {
+    const std::string source =
+        std::string(nested ? "namespace recovered {\n" : "") +
+        "?\n#macro retained(bool value) {}\n" + (nested ? "}\n" : "") +
+        "int main() { return 0; }\n";
+    lang::Lexer lexer;
+    lang::Parser parser(lexer.scan(source, "macro-recovery.gti"), source);
+    const auto parsed = parser.parse();
+    check(parser.hadError(),
+          "the preceding malformed declaration is diagnosed");
+    const lang::StmtList *declarations = &parsed.declarations();
+    if (nested && !declarations->empty()) {
+      const auto *scope =
+          lang::stmtAs<lang::NamespaceDecl>(declarations->front().get());
+      check(scope != nullptr,
+            "declaration recovery preserves the containing namespace");
+      declarations = scope ? &scope->declarations() : nullptr;
+    }
+    const auto *macro =
+        declarations && !declarations->empty()
+            ? lang::stmtAs<lang::FunctionDecl>(declarations->front().get())
+            : nullptr;
+    check(macro && macro->isMacro() && macro->name().lexeme == "retained",
+          "declaration recovery retains a following typed macro");
+    if (macro && macro->isMacro()) {
+      check(macro->macroKeyword()->lexeme == "#macro" &&
+                !macro->macroKeyword()->generated &&
+                macro->macroKeyword()->position == source.find("#macro"),
+            "recovered macros retain the real keyword identity and span");
+      check(macro->returnType().name.last().kind == lang::TokenKind::VOID &&
+                macro->returnType().name.last().generated,
+            "a recovered macro keeps its implicit return token generated");
+    }
+  }
+  for (std::string_view source :
+       {"int main() { #macro local() {} return 0; }",
+        "class Owner { #macro member() {} };",
+        "class Owner { [[track_caller]] #macro member() {} };"}) {
+    lang::Lexer lexer;
+    lang::Parser parser(lexer.scan(std::string(source)), source);
+    (void)parser.parse();
+    check(parser.hadError(),
+          "macro declaration recovery does not admit block or class macros");
+  }
+}
+
 void negative(std::string_view source, std::string_view code,
               std::string_view fragment) {
   auto result = analyze(source);
@@ -251,6 +299,7 @@ int main() {
   disabledTypeChecks();
   typedMacroSyntax();
   migrationAndOverloadDiagnostics();
+  parserMacroRecovery();
   negative("[[deferred]] void old(bool condition) {}", "GTI-S2099", "#macro");
   negative("#macro wrong(bool condition) { return; }", "GTI-S2099",
            "declarations, returns and loops");
