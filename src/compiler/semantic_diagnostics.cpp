@@ -194,9 +194,12 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
   };
   const auto publish = [&](Diagnostic diagnostic) {
     if (failure.expressionFailure && !failure.context.empty()) {
-      diagnostic.message = "Type '" + typeSpelling(failure.argument) +
-                           "' does not satisfy concept '" +
-                           applicationSpelling(failure.context.front()) + "'.";
+      diagnostic.message =
+          (failure.applicationArgumentIndex
+               ? "Type '" + typeSpelling(failure.argument) +
+                     "' does not satisfy concept '"
+               : "Generic arguments do not satisfy concept '") +
+          applicationSpelling(failure.context.front()) + "'.";
     }
     if (failure.callArgument && failure.callArgumentIndex) {
       diagnostic.primary = tokenSpan(*failure.callArgument);

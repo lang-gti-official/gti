@@ -1718,10 +1718,38 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
               &reason,
               requirement.lookupScope ? &*requirement.lookupScope : nullptr))
         return std::nullopt;
+      const auto &query = *requirement.syntax->memberRequirement;
+      const auto operation =
+          expressionRequirementFact(query, requirement.arguments);
+      // An arbitrary expression may ignore its first synthetic parameter,
+      // mention several types, or fail only because of its required result.
+      // Retain an input origin only for a supported operation whose sole
+      // synthetic parameter is its actual borrowed receiver, and whose result
+      // cannot introduce an independent generic subject.
+      bool unaryReceiver = false;
+      if (query.parameters().size() == 1 && requirement.arguments.size() == 2 &&
+          operation && operation->memberName != "$construct") {
+        const auto &result = query.result();
+        const bool fixedBuiltinResult =
+            result.name.segments.size() == 1 &&
+            isTypeKeywordToken(result.name.last().kind) &&
+            result.name.last().kind != TokenKind::AUTO &&
+            result.arguments.empty() && !result.qualifiedOwner &&
+            result.pointers.empty() && result.arrayExtents.empty() &&
+            !result.reference && !result.isNativeFunction() &&
+            !result.isFunctionSignature() && !result.packExpansion &&
+            !result.genericValueExpression;
+        TypeRef receiverSubject = query.parameters().front();
+        receiverSubject.reference.reset();
+        receiverSubject.referenceMutability.reset();
+        unaryReceiver =
+            fixedBuiltinResult ||
+            typeRefSpelling(receiverSubject) == typeRefSpelling(result);
+      }
       return ConstraintFailure{
           .parameter = requirement.syntax->memberRequirement->keyword(),
           .argument =
-              requirement.arguments.empty() ? SemanticType::Unknown
+              !unaryReceiver ? SemanticType::Unknown
               : requirement.arguments.front().kind == SemanticType::Reference &&
                       requirement.arguments.front().arguments.size() == 1
                   ? requirement.arguments.front().arguments.front()
@@ -1729,9 +1757,7 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
           .application = requirement.syntax,
           .leafApplication = requirement.syntax,
           .applicationArgumentIndex =
-              requirement.syntax->memberRequirement->parameters().empty()
-                  ? std::nullopt
-                  : std::optional<std::size_t>(0),
+              unaryReceiver ? std::optional<std::size_t>(0) : std::nullopt,
           .expressionFailure = std::move(reason)};
     }
     const auto &member = requirement.syntax->memberRequirement->member();
@@ -1926,7 +1952,8 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
         failure->constraintName = requirement.syntax->name;
         failure->application = requirement.syntax;
         failure->parameter =
-            requirement.syntax->arguments.empty()
+            (failure->expressionFailure && !outerArgument) ||
+                    requirement.syntax->arguments.empty()
                 ? requirement.syntax->name.last()
                 : requirement.syntax->arguments.front().name.last();
       }
