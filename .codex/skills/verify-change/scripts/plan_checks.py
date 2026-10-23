@@ -11,6 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "scripts"))
+from validation_checks import SHARED, ci_mode
+
 
 @dataclass(frozen=True)
 class Check:
@@ -156,7 +159,8 @@ def candidate_checks(paths: list[str], groups: dict[str, list[str]]) -> list[Che
         and not under(path, "tree-sitter-gti/src/parser.c", "build/", "build-")
         for path in paths
     )
-    needs_build = any(
+    automation_only = ci_mode({}, paths) == "automation"
+    needs_build = not automation_only and any(
         name in groups
         for name in (
             "compiler/frontend",
@@ -248,6 +252,8 @@ def candidate_checks(paths: list[str], groups: dict[str, list[str]]) -> list[Che
     if any(
         path in {
             "scripts/agent_workflow.py",
+            "scripts/validation_batch.py",
+            "scripts/validation_checks.py",
             "scripts/build_window.py",
             "tests/agent_workflow_test.py",
             "tests/build_window_test.py",
@@ -257,11 +263,11 @@ def candidate_checks(paths: list[str], groups: dict[str, list[str]]) -> list[Che
         checks.append(
             Check(
                 "agent-workflow",
-                "ctest --test-dir build --output-on-failure -R '^(agent_workflow|build_window)$'",
-                "the agent task lifecycle helper, the build window, or their regressions changed",
+                "python3 tests/agent_workflow_test.py",
+                "workflow/batch lifecycle, CI admission and evidence integrity changed",
             )
         )
-    if "build/release" in groups:
+    if "build/release" in groups and not automation_only:
         checks.append(
             Check(
                 "build-release",
@@ -324,9 +330,13 @@ def main() -> int:
         "changed_files": paths,
         "surfaces": groups,
         "candidate_checks": [check.__dict__ for check in checks],
+        "risk_floor": "T2" if any(path.startswith(SHARED) for path in paths) else "review required",
+        "ci_mode": ci_mode({}, paths),
         "advisory": (
             "Candidate checks are a lower bound. Inspect the diff and "
-            "docs/architecture/verification.md before omitting or adding gates."
+            "docs/architecture/verification.md before omitting or adding gates. "
+            "Classify the invariant, not the symptom. Admit component coverage "
+            "with a reviewed batch plan; run full acceptance on the combined candidate."
         ),
     }
 
