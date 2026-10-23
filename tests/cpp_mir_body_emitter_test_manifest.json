@@ -326,6 +326,10 @@
       "suite": "text"
     },
     {
+      "name": "testPassiveClassMoveAndCopyAfterFallibleSibling",
+      "suite": "text"
+    },
+    {
       "name": "testMovedChainReturnConstruction",
       "suite": "text"
     },
