@@ -44,7 +44,8 @@ def names(value, label, required=True):
 
 def validate_plan(plan, paths=()):
     fields = {"tier", "rationale", "regressions", "owning", "cross_phase", "broader",
-              "unaffected", "targets", "reproduction", "platforms", "additional_checks"}
+              "unaffected", "targets", "reproduction", "platforms", "additional_checks",
+              "platform_tests", "platform_checks"}
     if not isinstance(plan, dict) or set(plan) - fields or plan.get("tier") not in TIERS:
         raise ValueError("Use a T1/T2/T3 validation plan with known fields")
     if not isinstance(plan.get("rationale"), str) or not plan["rationale"].strip():
@@ -74,6 +75,15 @@ def validate_plan(plan, paths=()):
     commands(plan.get("additional_checks", []), allow_empty=True)
     if set(plan["platforms"]) - {"darwin", "linux", "win32"}:
         raise ValueError("Platform obligations use darwin, linux or win32")
+    for field in ("platform_tests", "platform_checks"):
+        rows = plan.get(field, {})
+        if not isinstance(rows, dict) or set(rows) - set(plan["platforms"]):
+            raise ValueError("Platform gates must belong to a declared platform")
+        for value in rows.values():
+            if field == "platform_tests":
+                names(value, "platform_tests")
+            else:
+                commands(value)
     return plan
 
 
@@ -85,9 +95,15 @@ def commands(value, allow_empty=False):
     return value
 
 
-def plan_tests(plan):
-    return sorted({SMOKE, *(name for key in ("regressions", "owning", "cross_phase", "broader")
-                           for name in plan.get(key, []))})
+def plan_tests(plan, platform=None):
+    scoped = plan.get("platform_tests", {})
+    scoped_names = {name for rows in scoped.values() for name in rows}
+    common = {name for key in ("regressions", "owning", "cross_phase", "broader") for name in plan.get(key, [])}
+    return sorted({SMOKE, *(common - scoped_names), *scoped.get(platform or sys.platform, [])})
+
+
+def extra_checks(plan, platform=None):
+    return [*plan.get("additional_checks", []), *plan.get("platform_checks", {}).get(platform or sys.platform, [])]
 
 
 def component_body(body, record=None):
@@ -177,18 +193,20 @@ int main() {
 int main() {
   mut std::vector<std::string> values{};
   values.push_back(std::string("smoke"));
-  std::string copy = values[0].clone();
+  std::string copy = values[std::size_t(0)].clone();
   return int(copy.size()) == 5 ? 0 : 1;
 }
 """,
     }
-    env = dict(os.environ, GTI_STDLIB_PATH=str(root / "stdlib"))
+    env = dict(os.environ, GTI_STDLIB_PATH=str(root / "stdlib"),
+               GTI_RUNTIME_INCLUDE=str(root / "runtime/include"),
+               GTI_RUNTIME_LIBRARY=str(build / ("gti_runtime.lib" if os.name == "nt" else "libgti_runtime.a")))
     with tempfile.TemporaryDirectory(prefix="gti-compiler-smoke-") as directory:
         for name, source in programs.items():
             path = Path(directory) / (name + ".gti")
             path.write_text(source)
             for level in ("0", "3"):
-                output = Path(directory) / (name + "-O" + level)
+                output = Path(directory) / (name + "-O" + level + (".exe" if os.name == "nt" else ""))
                 compiler = build / ("gti.exe" if os.name == "nt" else "gti")
                 subprocess.run([str(compiler), str(path), "-O" + level, "-o", str(output)],
                                env=env, check=True, timeout=120, stdout=log, stderr=subprocess.STDOUT)
@@ -203,11 +221,9 @@ def manifests(root, base, head):
     for path in paths:
         if not path.endswith(".json") or not path.startswith(BATCH_DIRECTORY):
             raise ValueError("Unexpected batch record path")
-        try:
-            git(root, "cat-file", "-e", base + ":" + path)
-        except subprocess.CalledProcessError:
-            pass
-        else:
+        existed = subprocess.run(["git", "-C", str(root), "cat-file", "-e", base + ":" + path],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+        if existed:
             raise ValueError("Integrated batch records are immutable; use a new batch identity")
         record = json.loads(git(root, "show", head + ":" + path))
         if record.get("schema") != 1 or not isinstance(record.get("members"), list) or not 1 <= len(record["members"]) <= 8:
@@ -287,12 +303,12 @@ def main(argv=None):
         if args.command == "focused":
             plan = validate_plan(json.loads(Path(args.plan).read_text()))
             required = set(plan_tests(plan))
-            report = run(root, Path(args.build).resolve(), required, False, plan["targets"], plan.get("additional_checks", []), args.jobs, log, junit)
+            report = run(root, Path(args.build).resolve(), required, False, plan["targets"], extra_checks(plan), args.jobs, log, junit)
         else:
             members = manifests(root, args.base, "HEAD")
             required = {SMOKE, *(name for member in members for name in plan_tests(member["plan"]))}
             report = run(root, Path(args.build).resolve(), required, True,
-                         extra=[command for member in members for command in member["plan"].get("additional_checks", [])],
+                         extra=[command for member in members for command in extra_checks(member["plan"])],
                          jobs=args.jobs, log=log, junit=junit)
     finally:
         if log:
