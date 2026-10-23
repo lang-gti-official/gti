@@ -2372,7 +2372,15 @@ A `MirBody` owns:
   write of `p` in the same full-expression cannot change. Only a copyable
   class without borrowed state or active cleanup has such a copy; lowering
   refuses a projection of any other assignment result rather than aliasing the
-  destination;
+  destination. The copy `Load` records its own `Read` of the destination. The
+  whole result is the same copy: an initialization, return or constructor field
+  initializer consumes the `Load` (a constructor initializer, which reads its
+  arguments after evaluating them all, takes the copy at the commit). When HIR
+  planned a value obligation for the result, as for a temporary method receiver,
+  the copy initializes a hidden temporary that carries the obligation, as a
+  value conditional's join does, and the result moves out of it. A by-value
+  argument, which HIR stages as `CopyValue`, copies a place carrying the
+  destination's key directly after the `Assign` instead;
 - explicit initialize, assign, modify, move, borrow, call, construct, drop, and
   end-borrow instructions, plus carried read/move/reinitialize ownership events;
 - for the bounded ordinary-invocation slices, one non-removable,

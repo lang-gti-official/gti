@@ -4021,6 +4021,22 @@ private:
             instanceProvider->requiresActiveCleanupFor(type));
   }
 
+  [[nodiscard]] static bool classAssignmentResult(const HirValue &value) {
+    switch (value.kind) {
+    case HirValueKind::Assignment:
+    case HirValueKind::MemberSet:
+    case HirValueKind::IndexSet:
+    case HirValueKind::DereferenceSet:
+    case HirValueKind::PlaceSet:
+      return value.info.type.kind == SemanticType::Class &&
+             value.info.category == ValueCategory::Value &&
+             value.info.traits.copyable &&
+             !value.info.traits.containsBorrowedState;
+    default:
+      return false;
+    }
+  }
+
   [[nodiscard]] std::optional<std::vector<HirCallArgument>> orderedArguments(
       const std::vector<HirValueId> &arguments,
       const std::vector<SemanticType> &parameterTypes, const HirBody &body,
@@ -4091,6 +4107,10 @@ private:
         return std::nullopt;
       } else if (input->info.category == ValueCategory::Place &&
                  input->info.traits.copyable) {
+        kind = HirCallInputKind::CopyValue;
+      } else if (classAssignmentResult(*input)) {
+        // The result of a built-in class assignment is a copy of its
+        // committed destination; passing it by value stages that copy.
         kind = HirCallInputKind::CopyValue;
       } else if (input->info.category == ValueCategory::Value &&
                  input->info.traits.movable &&
