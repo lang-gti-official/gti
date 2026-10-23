@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 import importlib.util
 import json
@@ -397,16 +397,19 @@ class Workflow:
         self.save(state, "active")
         return self.checkpoint(task)
 
-    def verify(self, task, checks, remote=False):
+    def verify(self, task, checks, remote=False, focused=False):
         """Record the attempt under the lock, run the checks in a build-window suite slot, then record the result.
 
         The metadata lock is held only while task records change, so a peer's
         `start`, `status`, `checkpoint` or `cleanup` never waits on validation.
-        Local checks hold one `suite` slot. Remote plans acquire their build/
-        suite slots on the configured host through remote_runner, not here.
+        Local broad checks hold one `suite` slot; checked automation-only
+        owning checks may run directly. Remote plans acquire their build/suite
+        slots on the configured host through remote_runner, not here.
         """
         with self.lock():
             state = self.load(task)
+            if state["phase"] == "verifying":
+                raise WorkflowError("Verification is already running; resume its existing session or remote run instead of submitting a duplicate")
             if state["phase"] in {"merged", "synced", "completed", "abandoned"} or (state.get("pr") and self.pull(state)["state"] != "open"):
                 raise WorkflowError("Task is integrated or closed; do not validate it as new work")
             root = self.tree(state)
@@ -417,6 +420,11 @@ class Workflow:
                 raise WorkflowError("main advanced; reconcile before verification")
             if state.get("published_head") != head:
                 raise WorkflowError("Checkpoint the current head before verification")
+            if focused:
+                from validation_checks import ci_mode
+                paths = git(root, "diff", "--name-only", base, head).splitlines()
+                if remote or ci_mode({}, paths) != "automation":
+                    raise WorkflowError("Focused helper verification is only for local automation-only changes; compiler components use batch enroll")
             runner = load_remote_runner() if remote else None
             if remote:
                 try:
@@ -463,8 +471,9 @@ class Workflow:
                 remote_evidence = {"directory": str(destination), "id": report["id"],
                                    "snapshot_sha256": report["source"]["snapshot_sha256"]}
             else:
-                with self.window.acquire("suite", [sys.executable, __file__, "verify", task],
-                                     worktree=str(root), checks=checks):
+                window = (nullcontext() if focused else self.window.acquire(
+                    "suite", [sys.executable, __file__, "verify", task], worktree=str(root), checks=checks))
+                with window:
                     for command in checks:
                         result = subprocess.run(command, cwd=root, check=False)
                         if result.returncode:
@@ -481,6 +490,8 @@ class Workflow:
                 self.save(state, "active")
                 raise WorkflowError("Head or main changed during validation; reconcile and verify again")
             state["verified"] = {"head": head, "base": base, "checks": checks, "at": self.now()}
+            if focused:
+                state["verified"]["scope"] = "automation"
             if remote_evidence is not None:
                 state["verified"]["remote"] = remote_evidence
             self.save(state, "ready")
@@ -493,14 +504,17 @@ class Workflow:
             if state["phase"] == expected:
                 self.save(state, phase)
 
-    def protection(self, configure=False):
+    def protection(self, configure=False, advisory_ci=False):
         rule = self.api.request("GET", "/branches/main/protection")
         if configure:
             checks = (rule or {}).get("required_status_checks") or {}
+            # Explicit owner policy: GitHub CI is advisory. Keep strict PR
+            # freshness and review protection without requiring runner capacity.
+            contexts = [] if advisory_ci else list(checks.get("contexts") or [])
             reviews = (rule or {}).get("required_pull_request_reviews") or {}
             payload = {
                 # Up-to-date branches only: this closes the fetch/merge race.
-                "required_status_checks": {"strict": True, "contexts": list(checks.get("contexts") or [])},
+                "required_status_checks": {"strict": True, "contexts": contexts},
                 # Admins follow the same rules; nobody bypasses them.
                 "enforce_admins": True,
                 # A pull request is the only way into main; existing review
@@ -518,6 +532,10 @@ class Workflow:
                     ((rule or {}).get("required_conversation_resolution") or {}).get("enabled", False)),
                 "block_creations": False,
                 "lock_branch": False}
+            # GitHub accepts contexts OR checks, not both. Empty contexts
+            # clear all required checks, including app-pinned entries.
+            if checks.get("checks") and not advisory_ci:
+                payload["required_status_checks"]["checks"] = checks["checks"]
             rule = self.api.request("PUT", "/branches/main/protection", payload)
 
         def enabled(name):
@@ -534,6 +552,11 @@ class Workflow:
         state = self.load(task)
         pr = self.pull(state)
         if not pr.get("merged"):
+            if state.get("admission") or state.get("integration_batch"):
+                raise WorkflowError("Component is ready for integration, not directly mergeable; finish its validated batch or batch withdraw first")
+            if state.get("batch"):
+                from validation_batch import Batches
+                Batches(self).before_finish(state)
             root = self.tree(state)
             clean(root)
             if (root / ".gti-preview.json").exists():
@@ -546,8 +569,11 @@ class Workflow:
                 raise WorkflowError("Current head/base/PR differ from validation; checkpoint, reconcile and verify again")
             if not body.strip():
                 raise WorkflowError("Provide the final reviewable PR description")
-            self.api.request("PATCH", f"/pulls/{state['pr']}",
-                             {"title": state["title"], "body": body})
+            # Body edits are CI routing events. Retrying a merge while checks
+            # run must not cancel and restart that same validation campaign.
+            if pr.get("title") != state["title"] or pr.get("body") != body:
+                self.api.request("PATCH", f"/pulls/{state['pr']}",
+                                 {"title": state["title"], "body": body})
             if pr.get("draft"):
                 self.api.ready(pr)
             if pr_only:
@@ -763,6 +789,7 @@ def main():
         sub.add_parser(name).add_argument("task")
     verify = sub.add_parser("verify")
     verify.add_argument("task")
+    verify.add_argument("--focused", action="store_true", help="run automation-only owning checks without a broad-suite reservation")
     verification = verify.add_mutually_exclusive_group(required=True)
     verification.add_argument("--checks-file")
     verification.add_argument("--remote-steps-file", help="remote_runner exact-argv plan; uses the remote build window")
@@ -774,12 +801,21 @@ def main():
     abandon.add_argument("task")
     abandon.add_argument("--reason", required=True)
     sub.add_parser("status").add_argument("task", nargs="?")
-    sub.add_parser("protection").add_argument("--configure", action="store_true")
+    protection = sub.add_parser("protection")
+    protection.add_argument("--configure", action="store_true")
+    protection.add_argument("--advisory-ci", action="store_true", help="remove required GitHub CI contexts while preserving PR freshness and reviews (owner-authorized)")
     sub.add_parser("preview", help="optionally submit a detached combined preview job").add_argument(
+        "arguments", nargs=argparse.REMAINDER)
+    sub.add_parser("batch", help="admit focused fixes and validate an explicit combined batch").add_argument(
         "arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     try:
         workflow = Workflow(args.repo)
+        if args.command == "batch":
+            sys.modules.setdefault("agent_workflow", sys.modules[__name__])
+            from validation_batch import main as batch_main
+            print(json.dumps(batch_main(workflow, args.arguments), indent=2))
+            return 0
         if args.command == "preview":
             # Keep one exception/Git helper identity when this file is __main__.
             sys.modules.setdefault("agent_workflow", sys.modules[__name__])
@@ -789,7 +825,7 @@ def main():
         if args.command == "verify":
             # verify takes the metadata lock itself, only around record changes.
             result = workflow.verify(args.task, json.loads(Path(args.remote_steps_file or args.checks_file).read_text()),
-                                     remote=bool(args.remote_steps_file))
+                                     remote=bool(args.remote_steps_file), focused=args.focused)
             print(json.dumps(result, indent=2))
             return 0
         with workflow.lock():
@@ -802,7 +838,9 @@ def main():
             elif args.command == "abandon":
                 result = workflow.abandon(args.task, args.reason)
             elif args.command == "protection":
-                result = workflow.protection(args.configure)
+                if args.advisory_ci and not args.configure:
+                    raise WorkflowError("--advisory-ci requires --configure and owner authorization")
+                result = workflow.protection(args.configure, args.advisory_ci)
             else:
                 result = getattr(workflow, args.command)(args.task)
         print(json.dumps(result, indent=2))
