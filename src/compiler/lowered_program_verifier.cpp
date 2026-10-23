@@ -152,6 +152,44 @@ validClassPatternBindings(const LoweredClassDeclaration &declaration) {
   return true;
 }
 
+[[nodiscard]] bool
+validRequirement(const LoweredConceptRequirement &requirement) {
+  if (ordinal(requirement.kind) >= ordinal(LoweredRequirementKind::Count) ||
+      !resolvedTypes(requirement.arguments))
+    return false;
+  switch (requirement.kind) {
+  case LoweredRequirementKind::Concept:
+    return requirement.conceptId != 0 && requirement.memberName.empty() &&
+           !requirement.mutableReceiver && !requirement.requiresUnsafe &&
+           requirement.expressionParameterCount == 0 &&
+           !requirement.resultArgument;
+  case LoweredRequirementKind::Member:
+    return requirement.conceptId == 0 && !requirement.memberName.empty() &&
+           requirement.arguments.size() >= 2 &&
+           requirement.expressionParameterCount == 0 &&
+           !requirement.resultArgument;
+  case LoweredRequirementKind::Expression:
+    return requirement.conceptId == 0 && requirement.memberName.empty() &&
+           !requirement.mutableReceiver && requirement.resultArgument &&
+           *requirement.resultArgument ==
+               requirement.expressionParameterCount &&
+           *requirement.resultArgument < requirement.arguments.size() &&
+           requirement.arguments[*requirement.resultArgument].kind !=
+               SemanticType::Reference &&
+           !requirement.source.source.empty() &&
+           requirement.source.start < requirement.source.end;
+  case LoweredRequirementKind::Predicate:
+    return requirement.conceptId == 0 && requirement.memberName.empty() &&
+           !requirement.mutableReceiver && !requirement.requiresUnsafe &&
+           requirement.expressionParameterCount == 0 &&
+           !requirement.resultArgument && !requirement.source.source.empty() &&
+           requirement.source.start < requirement.source.end;
+  case LoweredRequirementKind::Count:
+    return false;
+  }
+  return false;
+}
+
 [[nodiscard]] bool validRequirementExpression(
     const std::vector<LoweredConceptRequirement> &requirements,
     const std::vector<LoweredConstraintExpressionNode> &nodes, std::size_t root,
@@ -444,15 +482,7 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     }
     if (std::any_of(payload->requirements.begin(), payload->requirements.end(),
                     [](const LoweredConceptRequirement &requirement) {
-                      return (requirement.memberName.empty()
-                                  ? requirement.conceptId == 0 ||
-                                        requirement.mutableReceiver ||
-                                        requirement.requiresUnsafe
-                                  : requirement.conceptId != 0 ||
-                                        requirement.arguments.size() < 2) ||
-                             !std::all_of(requirement.arguments.begin(),
-                                          requirement.arguments.end(),
-                                          resolvedType);
+                      return !validRequirement(requirement);
                     }) ||
         !validRequirementExpression(
             payload->requirements, payload->requirementExpression,
@@ -507,15 +537,7 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     }
     if (std::any_of(payload->requirements.begin(), payload->requirements.end(),
                     [](const LoweredConceptRequirement &requirement) {
-                      return (requirement.memberName.empty()
-                                  ? requirement.conceptId == 0 ||
-                                        requirement.mutableReceiver ||
-                                        requirement.requiresUnsafe
-                                  : requirement.conceptId != 0 ||
-                                        requirement.arguments.size() < 2) ||
-                             !std::all_of(requirement.arguments.begin(),
-                                          requirement.arguments.end(),
-                                          resolvedType);
+                      return !validRequirement(requirement);
                     }) ||
         !validRequirementExpression(
             payload->requirements, payload->requirementExpression,

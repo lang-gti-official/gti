@@ -445,6 +445,188 @@ struct Player {
          "a split attribute line is joined with its declaration");
 }
 
+void checkTypeFacts(const std::filesystem::path &root,
+                    const std::filesystem::path &directory) {
+  for (const auto trustedBodies : {lang::TrustedBodyAnalysis::Complete,
+                                   lang::TrustedBodyAnalysis::Reachable}) {
+    const auto result =
+        analyze(root, root / "tests/fixtures/reflection_type_facts.gti",
+                lang::FrontendPhase::Hir, trustedBodies);
+    expect(result.diagnostics.empty() && result.hirValid,
+           "general reflection lifecycle, classification, safety and exact "
+           "type-relation facts match GTI semantics");
+    for (const auto &diagnostic : result.diagnostics) {
+      std::cerr << "  type facts: " << diagnostic.code << ": "
+                << diagnostic.message << '\n';
+    }
+  }
+
+  const std::string malformed = R"(#include <std/meta>
+int main() {
+  auto invalid = gti_internal::meta_type_relation<int32_t, int32_t, 99>();
+  return 0;
+}
+)";
+  const auto result =
+      analyzeSource(root, directory, "invalid-type-relation.gti", malformed);
+  const auto error =
+      std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
+                   [](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.code == "GTI-S2058" &&
+                            diagnostic.message.find("Compiler-private name") !=
+                                std::string::npos;
+                   });
+  expect(error != result.diagnostics.end(),
+         "application source cannot invoke private reflection relations");
+  if (error != result.diagnostics.end()) {
+    expect(std::filesystem::path(error->primary.source).filename() ==
+                   "invalid-type-relation.gti" &&
+               error->primary.start == malformed.find("gti_internal") &&
+               error->primary.end ==
+                   error->primary.start +
+                       std::string_view("gti_internal").size() &&
+               !error->related.empty() && !error->hints.empty(),
+           "a private reflection relation retains the access diagnostic's "
+           "source span, declaration and public-facility hint");
+  }
+
+  const auto forwarded = analyzeSource(
+      root, directory, "predicate-fact-forwarding.gti", R"(#include <std/meta>
+namespace queries {
+  namespace reflected = std::meta;
+  using Boolean = bool;
+  constexpr bool can_copy<T>() {
+    return reflected::is_copy_constructible<T>();
+  }
+  constexpr bool copied_again<U>() { return can_copy<U>(); }
+  constexpr Boolean aliased_result<T>() { return can_copy<T>(); }
+  constexpr bool can_transfer<T>() { return reflected::is_transferable<T>(); }
+  constexpr bool representation<E, U>() {
+    return reflected::is_enum_underlying<E, U>();
+  }
+}
+concept snapshot<T> = queries::copied_again<T>();
+concept snapshot_alias<Boolean> = queries::aliased_result<Boolean>();
+concept portable<T> = queries::can_transfer<T>();
+concept represented_by<E, U> = queries::representation<E, U>();
+T copy_value<T>(T& value) requires snapshot<T> { return value; }
+T alias_copy<T>(T& value) requires snapshot_alias<T> { return value; }
+void needs_transfer<std::transferable T>(T& value) {}
+void relay<T>(T& value) requires portable<T> { needs_transfer<T>(value); }
+U underlying<E, U>(E value) requires represented_by<E, U> {
+  return std::to_underlying<U, E>(value);
+}
+enum class Code : uint16_t { none = 0, failed = 1 };
+int main() {
+  int32_t value = 7;
+  relay(value);
+  return copy_value(value) - alias_copy(value) +
+         int(underlying<Code, uint16_t>(Code::none));
+}
+)");
+  expect(forwarded.diagnostics.empty() && forwarded.hirValid,
+         "transparent source predicates preserve exact trusted facts through "
+         "namespace aliases, renamed type parameters and ordered relations");
+  for (const auto &diagnostic : forwarded.diagnostics) {
+    std::cerr << "  forwarded predicate: " << diagnostic.code << ": "
+              << diagnostic.message << '\n';
+  }
+
+  const auto opaque =
+      analyzeSource(root, directory, "opaque-predicate-does-not-prove.gti", R"(
+namespace lookalike {
+  constexpr bool is_transferable<T>() { return true; }
+}
+concept claimed<T> = lookalike::is_transferable<T>();
+void needs_transfer<std::transferable T>(T& value) {}
+void relay<T>(T& value) requires claimed<T> { needs_transfer<T>(value); }
+struct RawAddress { int32_t* address = nullptr; };
+int main() { RawAddress value{}; relay(value); return 0; }
+)");
+  expect(hasCode(opaque, "GTI-S2029"),
+         "an arbitrary true predicate with a familiar public name cannot "
+         "invent a transfer safety fact");
+
+  const auto wrongSubject =
+      analyzeSource(root, directory, "predicate-wrong-subject.gti", R"(
+constexpr bool copyable_int<T>() {
+  return std::meta::is_copy_constructible<int32_t>();
+}
+concept claimed<T> = copyable_int<T>();
+void needs_copy<std::copy_constructible T>() {}
+void relay<T>() requires claimed<T> { needs_copy<T>(); }
+class MoveOnly {
+public:
+  MoveOnly() {}
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+int main() { relay<MoveOnly>(); return 0; }
+)");
+  expect(hasCode(wrongSubject, "GTI-S2029"),
+         "proof of a different type cannot be rebound to a wrapper's generic "
+         "parameter by matching its position or spelling");
+
+  const auto shadowedAlias =
+      analyzeSource(root, directory, "predicate-alias-shadowing.gti", R"(
+namespace declaration_scope {
+  using Subject = int32_t;
+  constexpr bool can_copy<T>() {
+    return std::meta::is_copy_constructible<Subject>();
+  }
+}
+concept claimed<Subject> = declaration_scope::can_copy<Subject>();
+void needs_copy<std::copy_constructible T>() {}
+void relay<Subject>() requires claimed<Subject> { needs_copy<Subject>(); }
+class MoveOnly {
+public:
+  MoveOnly() {}
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+int main() { relay<MoveOnly>(); return 0; }
+)");
+  expect(hasCode(shadowedAlias, "GTI-S2029"),
+         "a caller generic parameter cannot shadow an unrelated type alias "
+         "inside the predicate declaration's lexical scope");
+
+  const auto outerShape =
+      analyzeSource(root, directory, "reflection-known-outer-shape.gti", R"(
+#include <std/meta>
+struct Envelope<T> { T value; };
+class Opaque<T> {};
+constexpr int32_t classify<T>() {
+  static_assert(std::meta::is_struct<Envelope<T>>());
+  static_assert(std::meta::is_class<Opaque<T>>());
+  static_assert(!std::meta::is_class<T*>());
+  if constexpr (std::meta::is_class<T>()) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+constexpr int32_t projected<T>() {
+  if constexpr (std::meta::is_struct<std::meta::field_type<Envelope<T>, 0>>()) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+static_assert(classify<Opaque<int32_t>>() == 1);
+static_assert(classify<int32_t>() == 2);
+static_assert(projected<int32_t>() == 2);
+static_assert(projected<Envelope<int32_t>>() == 1);
+int main() { return 0; }
+)");
+  expect(outerShape.diagnostics.empty() && outerShape.hirValid,
+         "known outer nominal/pointer categories fold with nested open "
+         "arguments while a bare T remains dependent until substitution");
+  for (const auto &diagnostic : outerShape.diagnostics) {
+    std::cerr << "  outer shape: " << diagnostic.code << ": "
+              << diagnostic.message << '\n';
+  }
+}
+
 void checkPhase3(const std::filesystem::path &root,
                  const std::filesystem::path &directory) {
   // GitHub #5: the owner argument must be the described type (or derive
@@ -768,6 +950,7 @@ int main() {
   checkFormatter();
   checkAttributes(root, directory);
   checkAttributeFormatter();
+  checkTypeFacts(root, directory);
   checkPhase3(root, directory);
   checkDefaults(root, directory);
   checkClassAssertions(root, directory);

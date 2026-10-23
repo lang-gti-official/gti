@@ -88,9 +88,18 @@
 (concept_application
   name: (identifier) @type)
 (member_requirement_expression
-  binding: (identifier) @variable.parameter
-  receiver: (identifier) @variable.parameter
-  member: (identifier) @function.method)
+  binding: (identifier) @variable.parameter)
+(member_requirement_expression
+  parameter: (identifier) @variable.parameter)
+(member_requirement_expression
+  expression: (call_expression
+    function: (member_expression
+      object: (primary_expression (identifier) @variable.parameter)
+      member: (identifier) @function.method)))
+(constraint_predicate
+  name: (identifier) @function.call)
+(constraint_predicate
+  name: (scoped_identifier name: (identifier) @function.call))
 (concept_application
   name: (scoped_identifier
     name: (identifier) @type))
