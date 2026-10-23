@@ -1708,6 +1708,20 @@ representation fact of either the derived or the base class is cleared.
 
 ## Annotated test suites
 
+`test_runner` independently exercises driver selection/listing/empty/duplicate
+catalog rules, bounded overlapping children, timeout progress, exact signal versus
+ordinary status (including 127 and 143), failed exec, moved process ownership and
+background descendant termination on both completion and timeout. It uses native
+host children, so its outcome does not depend on GTI-generated checks.
+`test_report` parses serialized events with Python's JSON implementation,
+including control bytes, valid/invalid UTF-8, hostile output, all status variants,
+large counts and non-C numeric locales.
+`test_command_controls` uses an optimized host compiler to exercise fresh/cached
+suite selection, exact filters/skips/listing, no-selection refusal/override,
+parallel assertions/crashes/timeouts, later-test continuation, legacy executables,
+invalid options and incomplete build-failure reports at GTI O0/O3. It checks
+inventory/start/completion identity equality and exact terminal counts externally.
+
 `annotated_test_suites` checks the runnable `examples/annotated-tests` project
 at O0/C++20 and O3/C++23, included test declarations, independent global state,
 automatic per-function reports, cache reuse and corrupted-catalog recovery.

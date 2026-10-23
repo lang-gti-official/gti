@@ -524,6 +524,8 @@ add_library(
   "src/driver/manifest.cpp"
   "src/driver/native_toolchain.cpp"
   "src/driver/process.cpp"
+  "src/driver/test_runner.cpp"
+  "src/driver/test_report.cpp"
   "src/driver/project.cpp"
   "src/driver/project_facts.cpp"
   "src/driver/workspace.cpp"

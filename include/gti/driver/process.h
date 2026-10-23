@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <chrono>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -22,14 +23,22 @@ struct ProcessInvocationOptions {
   // Environment entries override inherited values. Build scripting currently
   // does not claim sandboxing; inheritance is intentional and documented.
   std::vector<std::pair<std::string, std::string>> environment;
+  // Deadlines are measured from launch, including time spent waiting behind
+  // another child. Zero/unset means no deadline.
+  std::optional<std::chrono::milliseconds> timeout;
+  bool isolateProcessGroup = false;
 };
 
 struct ProcessResult {
   int exitCode = 127;
   std::string output;
   std::optional<std::string> driverDiagnostic;
+  std::optional<int> signal;
+  bool timedOut = false;
 
-  [[nodiscard]] bool succeeded() const { return exitCode == 0; }
+  [[nodiscard]] bool succeeded() const {
+    return exitCode == 0 && !driverDiagnostic && !timedOut;
+  }
 };
 
 [[nodiscard]] ProcessResult
@@ -53,6 +62,8 @@ public:
   [[nodiscard]] bool running() const;
 
   [[nodiscard]] ProcessResult wait();
+  // Returns a completed result once, or nullopt while the child is running.
+  [[nodiscard]] std::optional<ProcessResult> poll();
 
 private:
   friend StartedProcess startProcess(const std::vector<std::string> &arguments,
@@ -65,6 +76,8 @@ private:
   bool captureSuccessfulOutput = false;
   std::string description;
   std::optional<ProcessResult> startFailure;
+  std::optional<std::chrono::steady_clock::time_point> deadline;
+  bool isolatedProcessGroup = false;
 };
 
 // Starts a concurrent child with merged stdout/stderr capture. Inherit mode
