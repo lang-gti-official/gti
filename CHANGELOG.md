@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.465.1 — Moving classes that hold function items
+## 0.465.2 — Moving classes that hold function items
 
 - A generic class whose field holds a function item, such as `class Op<F> {
   public: F action; Op(F action) : action(action) {} }` instantiated with a
@@ -22,6 +22,18 @@ for what minor and patch releases mean.
   pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
   can be assigned into a field. Each used to report `error[GTI-B0001]`.
 
+## 0.465.1 — Class stores into globals, captures and element fields
+
+- Assigning a class value to a global, through a `[mut &p]` capture, or
+  through an overloaded subscript such as `points[uint64_t(0)] = q` used to
+  report `error[GTI-B0001]` (an internal compiler error). These stores now
+  compile and run, whether the value is a copy or a fresh construction, and a
+  global or a captured value can be the copied value (`p = g;`).
+- Reading or writing a field of a fixed-array element selected at a run-time
+  index, as in `points[i].x` or `points[i].x = 7`, and copying such an element
+  (`Point copy = points[i];`) no longer report `GTI-B0001` (issue #203). The
+  index is checked first: one out of range fails with
+  `GTI-R0007 index_out_of_bounds in fixed_array`.
 ## 0.465.0 — Deferred assertions
 
 - `<std/assert>` adds always-on `std::assert` and configuration-controlled
