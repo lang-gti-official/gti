@@ -34,6 +34,15 @@ See [execution semantics](execution.md#410-defined-runtime-failure) for cleanup,
 message truncation and containment.
 
 Formatting and stdout convenience APIs adopt this facility as described below.
+
+`<std/assert>` also builds `std::assert` and `std::debug_assert` in source on
+this panic facility. They use general deferred statement helpers, so a
+successful assertion does not evaluate or format its optional message.
+Disabled debug assertions evaluate no arguments, while retaining static
+argument/body checking. Their terminal path has the same bounded snapshot,
+caller attribution, deterministic cleanup and thread containment as panic;
+there is no separate native `abort` or unwinding policy. See the
+[standard-library contract](standard-library.md).
 General concept-failure diagnostics can explain declared constraints, but
 literal-format validation is not introduced by panic. Unsupported static
 argument types are rejected by the source-defined `std::formattable` protocol
