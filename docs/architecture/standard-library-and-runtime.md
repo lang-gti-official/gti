@@ -320,8 +320,10 @@ compiler must not recognize public wrapper names such as `std::vector` or
 `std::make_unique` as shortcuts for container or ownership behavior.
 
 The implicit prelude is deliberately limited to language-wide vocabulary,
-shared compiler-capability declarations, `std::move`, and the minimal hosted
-output surface. Header-owned policy is not ambient: the `std::unique_ptr`
+shared compiler-capability declarations, source concepts over general
+`std::meta` type facts, `std::move`, and the minimal hosted output surface.
+The reflection vocabulary bootstraps those concepts; higher-level header-owned
+policy is not ambient: the `std::unique_ptr`
 family and its private owner/storage capabilities are declared by
 `<std/memory>`, checked one-slot optional storage is declared by
 `<std/optional>`, the private file-descriptor bridge is declared by
@@ -359,8 +361,8 @@ writes and scalar dynamic-code-unit writes cross the host boundary. Public
 grammar and checked member-signature protocol; compile-time unsupported-type
 diagnostics arise from ordinary constraints, not recognition of public names.
 The primary formatter's integral-enum default is ordinary source policy over
-two trusted classification constraints and one private value-extraction
-intrinsic. Semantics proves enum identity and exact underlying integer type;
+general reflection predicates and one private value-extraction intrinsic.
+Semantics proves enum identity and exact underlying integer type;
 HIR preserves the selected operation and MIR retains integral-enum declaration
 metadata to verify extraction. The production backend emits that verified MIR
 operation as a representation cast. No public formatter, concept, enum, or
@@ -793,15 +795,18 @@ nested in a class argument, such as a model whose inline eligibility depends on
 its captures, the emission planner adds a nested closure-identity selector so
 each verified body stays distinct.
 
-The same identity boundary applies to generic constraints. The prelude binds
-private unary and structural concept declarations to compiler facts, and
-compiler-trusted standard-library units compose them into public source
-concepts such as `std::input_iterator`, `std::sentinel_for`, and
-`std::accumulates_into`, plus the unary `std::transferable` and
-`std::shareable` type facts. Semantics recognizes only the selected private
-declaration and its exact type relationship. It does not recognize those public
-names or `std::accumulate`, and application source cannot name the underlying
-`gti_internal` capability.
+The same identity boundary applies to generic constraints. Classification,
+lifecycle, relocation and transfer/share facts are general constexpr
+`std::meta` queries over identity-bound compiler operations. The prelude defines
+its public concepts with those queries and ordinary expression requirements;
+it does not maintain duplicate private concept declarations for migrated facts.
+The compiler retains structural truth, not library composition policy. Strict
+comparison-signature, checked-borrow iterator, and complete callable
+access/escape contracts still use private structural concepts where the general
+source vocabulary cannot express the full rule. Public concepts such as `std::input_iterator`,
+`std::sentinel_for` and `std::accumulates_into` remain source composition.
+Semantics recognizes only trusted declaration identities and exact facts,
+never those public names or `std::accumulate`.
 
 ## Package Build-Program Boundary
 
