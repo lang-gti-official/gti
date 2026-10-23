@@ -3901,6 +3901,12 @@ producer. Body verification recognizes its exact structural shape; independent
 program verification also requires the concrete owner's generated default
 constructor and no missing initializer schedule. This shares the receiver
 producer query and preserves all materialization, call-loan and drop checks.
+The shared invocation-target query uses that same shape and concrete lifecycle
+proof to classify this producer as executing no source body, rather than an
+unknown call that could access unrelated persistent storage. A required explicit
+or implicit field initializer, or inherited-base initializer, instead has an
+exact concrete constructor schedule whose transitive effects remain checked.
+Missing or forged generated-constructor authority cannot suppress those effects.
 As for receiver inputs,
 a linear value uses its value-rooted place. A call evaluated only in a
 conditional arm or a `&&`/`||` operand borrows the one hidden temporary slot
