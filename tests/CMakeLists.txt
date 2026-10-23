@@ -17,6 +17,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 add_executable(gti_code_snippet_tests code_snippet_tests.cpp)
 target_link_libraries(gti_code_snippet_tests PRIVATE gti_compiler)
 add_test(NAME code_snippets COMMAND gti_code_snippet_tests)
+add_executable(gti_macro_expansion_query_tests macro_expansion_query_tests.cpp)
+target_link_libraries(gti_macro_expansion_query_tests PRIVATE gti_compiler)
+add_test(NAME macro_expansion_queries COMMAND gti_macro_expansion_query_tests)
 if(TARGET gti_lsp)
   add_test(NAME lsp_code_snippets
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_code_snippets_test.py"
@@ -936,6 +939,15 @@ set_tests_properties(instance_reuse PROPERTIES TIMEOUT 900)
 add_executable(gti_reflection_tests "${PROJECT_SOURCE_DIR}/tests/reflection_tests.cpp")
 target_link_libraries(gti_reflection_tests PRIVATE gti_compiler)
 add_test(NAME reflection_semantics COMMAND gti_reflection_tests)
+add_executable(gti_general_requires_tests general_requires_tests.cpp)
+target_link_libraries(gti_general_requires_tests PRIVATE gti_compiler)
+add_test(NAME general_requires_semantics
+  COMMAND gti_general_requires_tests "${PROJECT_SOURCE_DIR}")
+set_tests_properties(general_requires_semantics PROPERTIES TIMEOUT 120)
+add_test(NAME general_requires_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/173-general-requires.gti" --include-o1)
+set_tests_properties(general_requires_runtime PROPERTIES TIMEOUT 180)
 add_executable(gti_callable_return_type_tests "${PROJECT_SOURCE_DIR}/tests/callable_return_type_tests.cpp")
 target_link_libraries(gti_callable_return_type_tests PRIVATE gti_cpp_backend)
 add_test(NAME callable_return_type COMMAND gti_callable_return_type_tests)
@@ -2745,6 +2757,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_deferred_range.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_defaults.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_class_assertions.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_type_facts.gti"
   )
   set_tests_properties(reflection_runtime PROPERTIES TIMEOUT 900)
   add_test(
@@ -4901,6 +4914,11 @@ if(Python3_Interpreter_FOUND)
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/generic_contract_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME general_requires_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/general_requires_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(general_requires_lsp PROPERTIES TIMEOUT 60)
     add_test(
       NAME source_text_lsp
       COMMAND "${Python3_EXECUTABLE}"

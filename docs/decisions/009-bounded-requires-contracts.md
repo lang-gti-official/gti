@@ -2,6 +2,25 @@
 
 Status: Accepted
 
+Implementation revision (2026-10-23): unevaluated expression/construction
+requirements and constexpr Boolean-call leaves are now supported. This
+explicitly supersedes the expression-probing exclusion below: ordinary GTI
+semantics checks the expression in an isolated query, never the native backend.
+Direct operator/call/construction shapes supply bounded provisional generic
+facts; arbitrary compound expressions and opaque constexpr predicates are
+concrete validity filters, not inferred inner proofs. Exact-owned non-borrowed
+results remain the first-slice boundary. The historical exact member signature
+shape retains its stricter matching contract. No overload ranking, subsumption,
+specialization or SFINAE is added. See [the current
+contract](../language/concepts.md#unevaluated-expression-requirements).
+
+General `std::meta` predicates now expose classification, exact type/enum
+relationships and lifecycle/transfer facts. Public concepts compose these and
+source expression requirements; obsolete duplicate private concept declarations
+are removed. The compiler retains the facts source cannot safely establish.
+Strict comparison-signature and borrowed-result structural contracts remain
+private until corresponding general metadata/lifetime predicates exist.
+
 Implementation revision (2026-10-11): the original nullary read-only leaf below
 has been generalized to exact argument-bearing read-only or mutable instance
 methods, including checked reference parameters, dependent compound types and
@@ -94,6 +113,6 @@ resolve real operations again for concrete generic instances. The first
 `T`; heterogeneous accumulation needs a new reviewed relationship rather than
 implicit conversion or native expression probing.
 
-General expression requirements, associated types, specialization,
-subsumption, negation, or constraint-based ranking remain separate language
-decisions. This ADR does not authorize them.
+The original exclusions are revised by the implementation revisions above.
+Specialization, subsumption, constraint-level negation and constraint-based
+ranking remain excluded.

@@ -55,6 +55,8 @@ completionSnippets(const SyntaxCompletionContext &context,
     add("interface", "Interface with a read-only method requirement",
         "interface ${1:Name} {\n\tvoid ${2:method_name}(${3});\n\t$0\n};");
     add("fn", "Free function", "${1:void} ${2:function_name}(${3}) {\n\t$0\n}");
+    add("macro", "Typed statement macro",
+        "#macro ${1:name}(${2:int value}) {\n\t$0\n}");
   }
   if (ordinaryOwner && context.owner) {
     add("ctor", "Constructor for " + context.owner->lexeme,

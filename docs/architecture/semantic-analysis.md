@@ -2,10 +2,13 @@
 
 Status: Current implementation.
 
-## Deferred statement expansion
+## Typed statement macro expansion
 
-`semantic_deferred.cpp` owns `[[deferred]]` helpers independently of public
-library names. Signature selection and argument diagnostics use an isolated
+`semantic_macro.cpp` owns typed `#macro` expansion independently of public
+library names. The declaration's macro identity, not an attribute or public
+spelling, selects that path. Macro/function overload mixtures at one qualified
+name are rejected; macro-only overload sets use ordinary exact selection.
+Signature selection and argument diagnostics use an isolated
 semantic probe; its speculative flow, loans and syntax never enter caller
 execution. The probe forks request context separately from semantic facts,
 reads existing facts through a model delta and owns a copy of active loan
@@ -18,13 +21,35 @@ flow. Definition and invocation namespace/source/class domains stay distinct.
 Concrete generic context and tracked caller origins accompany body tokens;
 argument tokens retain their own origins. `SemanticModel` owns the checked
 statement expansion for the frontend snapshot and its instance deltas.
+Expansion lookup contexts also bound lexical frames: body tokens may see
+locals introduced by their own expansion, while substituted arguments are
+capped at their invocation's pre-expansion scope. A syntax-only lexical walk
+identifies expression-parameter uses not shadowed by local binders before
+cloning; ordinary symbols and typed places establish actual binding identity.
+Caller-written lambda capture initializers retain those enclosing bounds;
+their bodies use their own scope stack, and a nested macro captures that
+fresh domain. Recursive-template detection likewise distinguishes a nested
+callable body from a definition-expansion cycle; global expansion budgets
+remain in force across both.
+Assignments to expression parameters become ordinary place assignments to the
+supplied expression, retaining its assignability, access and loan checks.
+Automatic locals, moves and macro-owned loop exits therefore reuse ordinary
+ownership flow and cleanup rather than an alternate macro lifetime system.
+HIR's shared expansion query retains only a selected root, preserving inherited
+synthetic-syntax stability accounting. Returned or copied HIR therefore keeps
+its reached ordinary, nested and concrete-instance expansion descendants alive
+after both the instance-analysis delta and temporary lowerer are destroyed.
+It does not retain the whole semantic model as a lifetime workaround.
 
 HIR lowers that expansion as ordinary statements and does not enqueue an eager
 function instance for the template. Existing MIR branches, calls, ownership
 events, failure edges and cleanup are the only executable representation.
 There is no new runtime thunk, backend interpretation or public assertion-name
 recognition. The confined structural profile and resource limits are specified
-in [execution semantics](../language/execution.md#deferred-statement-helpers).
+in [execution semantics](../language/execution.md#typed-statement-macros).
+`[[deferred]]` is removed rather than routed through a second compatibility
+engine. The syntax revision preserves the existing semantic expansion, HIR
+and verified-MIR contract, including argument probes and caller provenance.
 
 Member visibility is shared by semantic field/call/constructor/type checks and
 completion filtering. `canAccessMember` uses the lexical class context, the
@@ -1000,7 +1025,37 @@ result type) that `analyzeMetaIntrinsicCall`, `metaIntrinsicConstant` and
 `metaQueryConstant` share; enumerator, payload, base and argument queries use
 the same table (`metaEnumeratorFacts` reads `enumTypeFor`, so generic enum
 instances are substituted), and `meta_type_trait<T, N>` carries the boolean
-traits (payload enum, generic instance, reflectable, signed integral).
+traits. Payload-enum and generic-instance queries inspect canonical declaration
+metadata; the lifecycle, relocation, transfer/share and scalar-classification
+selectors delegate the ordinary `satisfiesAtomicConstraint` rules. The private
+`semantic_reflection_traits.h` selector mapping is also consumed when a
+constraint transports an established type fact into an open generic body;
+public wrapper spellings never establish facts. The two-subject
+`meta_type_relation<T, U, N>` query shares the same shape/constant service for
+exact type identity and exact integral-enum underlying representation; the
+latter reuses the ordinary structural `EnumUnderlying` rule. These queries
+fold through the existing constant-substitution path and add no separate
+constant interpreter or executable reflection operation.
+
+The category query can fold a known outer nominal/array/reference/pointer
+shape even when nested arguments remain open, because those arguments cannot
+change that category. Bare type/pack parameters and deferred compiler-computed
+type projections remain dependent. Both direct analysis and constant execution
+use the same `metaQueryConstant` answer; partial kind knowledge does not infer
+layout, lifecycle eligibility or the contents of a generic argument.
+
+An early namespace-function declaration index belongs to the same request-local
+`SemanticCatalog`, including its sealed shape and snapshot/copy contract. It
+exists because concepts are resolved before ordinary callable registration.
+Proof discovery follows only a unique visible, safe, no-value-argument
+`constexpr bool` source wrapper whose single return expression is another such
+call, terminating at an identity-bound reflection fact query. Namespace aliases
+and declaration visibility use the ordinary lookup policy; wrapper arguments
+are resolved in the caller, then declaration lookup hides the caller's generic
+and class scopes. Cycles, ambiguity and opaque computations supply no implied
+type fact. This index never selects executable calls or interprets an arbitrary
+predicate; concrete predicate validation and constant execution remain the
+ordinary semantic/constexpr path.
 `field_attributes`, `type_attributes`, `enumerator_list`, `payload_list`,
 `payload_type`, `base_list` and `argument_list` are further computed
 compiler types rewritten by `rewriteCompilerType`.
@@ -2222,6 +2277,31 @@ ordinary boolean HIR/MIR literals, never
 synthetic runtime calls. Neither the constant evaluator nor the backend decides
 whether a type supports cloning. `std::clone` and vector element duplication
 remain ordinary source-defined generic bodies and verified-MIR calls.
+
+General expression requirements extend that query mechanism without adding
+runtime expression execution. Their synthetic parameter and exact-result types
+are resolved before an isolated semantic worker checks the ordinary AST. The
+worker uses a speculative model delta, isolated flow/effect/query journals and
+declaration-owned lookup; diagnostics become a failed requirement rather than
+escaping as invalid executable HIR. General queries retain ordinary ownership,
+access and unsafe rules and reject reference or borrow-bearing results. The
+historical direct member shape still uses its exact signature checker.
+
+Direct bound-operand operator/call shapes normalize to `ReadMember` facts with
+the existing operator identity; direct type construction uses an internal
+construction relationship. Only these bounded guaranteed facts admit
+operations in an open generic body. Arbitrary compound expressions are concrete
+filters, not inferred proofs of their subexpressions. The selected concrete
+instance still resolves every executable call/constructor normally. Query
+recursion is bounded to 64 active checks.
+
+Constexpr Boolean-call leaves use existing constant evaluation. Trusted
+reflection fact identity, including unambiguous transparent source wrappers,
+can transport unary or exact relational proof. Opaque predicates only filter
+concrete viability. Calls and expression checks preserve their distinct kind,
+ordered parameter/result type roles and source provenance in AST-free
+`LoweredConceptRequirement` records; neither HIR nor the backend evaluates
+constraints anew.
 
 A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
