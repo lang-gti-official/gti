@@ -20,6 +20,9 @@ struct TestRunOptions {
   // Observers consume each captured output before it is released. Callers
   // needing output again in result.cases keep the default true.
   bool retainOutput = true;
+  // Human CLI legacy targets retain their existing stdout/stderr streams.
+  // Structured reports and reusable callers capture output by default.
+  bool inheritLegacyOutput = false;
   std::size_t jobs = 1;
   std::chrono::milliseconds timeout{300000};
   std::vector<std::pair<std::string, std::string>> environment;

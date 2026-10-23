@@ -134,7 +134,9 @@ for status and completion accounting.
 
 Annotated suites supply their entry point automatically and cannot also define
 their own hosted `main`. A legacy target with `main` and no annotations still
-runs once as before. A root with neither form is diagnosed before native
+runs once as before, with inherited stdout/stderr in human mode and captured
+output in JSON mode. Parallel legacy targets can interleave their inherited
+streams. A root with neither form is diagnosed before native
 compilation. Ordinary executable/fragment compilation does not discover or
 invoke tests merely because a function is annotated.
 

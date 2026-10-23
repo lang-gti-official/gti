@@ -10,6 +10,7 @@
 #include <utility>
 #if !defined(_WIN32)
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -18,7 +19,6 @@ namespace {
 enum class Fault { None, SeekEnd, SeekStart, Tell, Read, TruncatedRead, Close };
 Fault armed = Fault::None;
 bool injected = false;
-std::FILE *failedRead = nullptr;
 
 bool inject(Fault fault) {
   if (armed != fault)
@@ -40,7 +40,6 @@ template <class Function> Function original(const char *name) {
 constexpr bool seekNoexcept = noexcept(std::fseek(nullptr, 0, 0));
 constexpr bool tellNoexcept = noexcept(std::ftell(nullptr));
 constexpr bool readNoexcept = noexcept(std::fread(nullptr, 0, 0, nullptr));
-constexpr bool errorNoexcept = noexcept(std::ferror(nullptr));
 constexpr bool closeNoexcept = noexcept(std::fclose(nullptr));
 } // namespace
 
@@ -72,23 +71,33 @@ extern "C" std::size_t fread(void *destination, std::size_t size,
     return real(destination, size, count, stream);
   }
   if (armed == Fault::Read && size == 1 && count > 3) {
-    // Model libc returning useful bytes and setting its error indicator in
-    // the same fread call. The wrapper's ferror projection supplies that flag.
+    // Return a useful prefix, then force libc itself to set the FILE error
+    // indicator. A projected ferror() symbol is insufficient when libc headers
+    // inline that query (as optimized glibc builds may do).
     const auto partial = real(destination, size, 3, stream);
-    failedRead = stream;
+    if (partial != 3 || std::fseek(stream, 0, SEEK_END) != 0)
+      std::abort();
+    // Seeking to the end leaves no buffered input to satisfy the next read.
+    // Replace the underlying descriptor with a valid write-only descriptor so
+    // the next real fread reaches the kernel and fails with EBADF.
+    const int writeOnly = open("/dev/null", O_WRONLY);
+    if (writeOnly == -1 || dup2(writeOnly, fileno(stream)) == -1)
+      std::abort();
+    close(writeOnly);
+    errno = 0;
+    const auto rejected =
+        real(static_cast<char *>(destination) + partial, 1, 1, stream);
+    const int readError = errno;
+    if (rejected != 0 || std::ferror(stream) == 0 || readError != EBADF)
+      std::abort();
     inject(Fault::Read);
+    errno = readError;
     return partial;
   }
   return real(destination, size, count, stream);
 }
-extern "C" int ferror(std::FILE *stream) noexcept(errorNoexcept) {
-  static auto real = original<decltype(&::ferror)>("ferror");
-  return stream == failedRead ? 1 : real(stream);
-}
 extern "C" int fclose(std::FILE *stream) noexcept(closeNoexcept) {
   static auto real = original<decltype(&::fclose)>("fclose");
-  if (stream == failedRead)
-    failedRead = nullptr;
   const bool fail = armed == Fault::Close;
   const auto result = real(stream);
   if (fail) {
