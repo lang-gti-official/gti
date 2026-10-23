@@ -5021,7 +5021,7 @@ private:
   std::unordered_set<const Expr *> macroProbeArguments;
   std::size_t macroExpansionDepth = 0;
   std::size_t macroExpandedBodies = 0;
-  std::vector<const FunctionDecl *> macroActiveBodies;
+  std::vector<std::pair<const FunctionDecl *, std::size_t>> macroActiveBodies;
   [[nodiscard]] const MacroLookupContext *
   macroContext(const Token &token) const;
   [[nodiscard]] std::pair<std::size_t, std::size_t>

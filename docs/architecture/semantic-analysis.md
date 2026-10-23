@@ -26,6 +26,11 @@ locals introduced by their own expansion, while substituted arguments are
 capped at their invocation's pre-expansion scope. A syntax-only lexical walk
 identifies expression-parameter uses not shadowed by local binders before
 cloning; ordinary symbols and typed places establish actual binding identity.
+Caller-written lambda capture initializers retain those enclosing bounds;
+their bodies use their own scope stack, and a nested macro captures that
+fresh domain. Recursive-template detection likewise distinguishes a nested
+callable body from a definition-expansion cycle; global expansion budgets
+remain in force across both.
 Assignments to expression parameters become ordinary place assignments to the
 supplied expression, retaining its assignability, access and loan checks.
 Automatic locals, moves and macro-owned loop exits therefore reuse ordinary

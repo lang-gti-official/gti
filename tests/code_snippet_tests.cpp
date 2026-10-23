@@ -45,9 +45,8 @@ void run() {
     require(snippet(result, "if") == nullptr, "statement leaked to namespace");
   }
   const auto top = query("|");
-  for (const auto label :
-       {"class", "struct", "enum", "interface", "namespace", "using", "fn",
-        "macro"})
+  for (const auto label : {"class", "struct", "enum", "interface", "namespace",
+                           "using", "fn", "macro"})
     require(snippet(top, label) != nullptr, "namespace template missing");
   require(snippet(top, "ctor") == nullptr, "constructor without owner");
   require(snippet(top, "macro")->snippet ==
