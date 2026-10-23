@@ -9,6 +9,24 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.465.0 — Deferred assertions
+
+- `<std/assert>` adds always-on `std::assert` and configuration-controlled
+  `std::debug_assert`, with raw/formatted panic messages, external caller
+  locations and deterministic cleanup. Successful assertions skip message
+  evaluation; disabled debug assertions skip every argument, including moves,
+  while still checking their types and body constraints.
+- `[[deferred]]` makes the same confined statement-helper facility available to
+  application APIs. Its typed expression parameters are evaluated where used
+  in source-defined branches, through ordinary checked HIR/MIR. It introduces
+  no escaping thunk, heap allocation or compiler recognition of assertion names.
+- Default release projects define `NDEBUG`; dev projects leave it inactive.
+  Explicit profile `defines` replace that default. Direct compilation can use
+  `-D NDEBUG` at any optimization level. `std::assert` remains enabled.
+- Example 172 demonstrates both APIs, skipped owning moves and an unrelated
+  user-defined deferred helper. The first profile is statement-only, with
+  branch/expression bodies and no local binders, loops or callback conversion.
+
 ## 0.464.2 — Using whole assignment results
 
 - The whole result of a class assignment can now be used. For a struct
