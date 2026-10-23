@@ -345,8 +345,7 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
         makeDiagnostic(DiagnosticId::MacroExpansion, call->paren(), {message}));
   };
   if (macroExpansionDepth >= 64 || macroExpandedBodies >= 4096) {
-    reject(
-        "Deferred expansion exceeds the 64-call or 4096-body resource limit.");
+    reject("Macro expansion exceeds the 64-call or 4096-body resource limit.");
     return true;
   }
   // Resolve and type-check the complete written call in an isolated semantic
@@ -488,15 +487,18 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
                         : actual ? *actual
                                  : SemanticType::Unknown;
     if (value != SemanticType::Unknown && value != expected) {
-      reject("Deferred arguments require exact expression types; write the "
+      reject("Macro arguments require exact expression types; write the "
              "conversion explicitly at the call site.");
       return true;
     }
   }
   const FunctionDecl &definition = *function->bodyDeclaration();
+  // A caller-written lambda has its own execution body. The same macro in
+  // that body is not a recursive expansion of the enclosing macro template.
+  const auto activeBody = std::pair{&definition, lambdaDepth};
   if (std::find(macroActiveBodies.begin(), macroActiveBodies.end(),
-                &definition) != macroActiveBodies.end()) {
-    reject("Deferred expansion reaches its recursion resource limit; statement "
+                activeBody) != macroActiveBodies.end()) {
+    reject("Macro expansion reaches its recursion resource limit; statement "
            "templates cannot expand a recursive helper cycle.");
     return true;
   }
@@ -590,6 +592,14 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
         MacroLookupContext domain = context    ? *context
                                     : fallback ? *fallback
                                                : caller;
+        // Syntax carried through an enclosing expansion may now be inside
+        // its argument's lambda body. Capture this invocation's fresh stack,
+        // not the numeric bounds of the discarded enclosing callable stack.
+        if (domain.lexicalLambdaDepth != lambdaDepth) {
+          domain.localScopeBegin = 0;
+          domain.localScopeEnd.reset();
+        }
+        domain.lexicalLambdaDepth = lambdaDepth;
         domain.localScopeEnd = std::min(
             domain.localScopeEnd.value_or(scopes.size()), scopes.size());
         macroLookup.emplace(entry->second, std::move(domain));
@@ -694,7 +704,7 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
   }
   ++macroExpansionDepth;
   ++macroExpandedBodies;
-  macroActiveBodies.push_back(&definition);
+  macroActiveBodies.push_back(activeBody);
   const std::size_t diagnosticStart = diagnostics.size();
   {
     MacroLookupScope definitionScope(*this, macroLookup.at(bodyExpansion));

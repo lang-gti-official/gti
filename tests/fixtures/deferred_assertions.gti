@@ -61,6 +61,12 @@ namespace application {
 
   #macro repeat(int value) { record(value); record(value); }
 
+  #macro hygienic(int value) {
+    int saved = 99;
+    std::assert(saved == 99);
+    record(value);
+  }
+
   #macro once(bool enabled, int value) {
     if (enabled) {
       int saved = value;
@@ -139,6 +145,12 @@ int main() {
   int saved = 17;
   application::once(true, saved);
   if (saved != 17 || Observations::recorded != 34) { return 10; }
+  std::assert([]() -> bool {
+    int saved = 23;
+    application::hygienic(saved);
+    return Observations::recorded == 23;
+  }());
+  if (Observations::recorded != 23) { return 16; }
   application::once(false, Observations::local_evaluations++);
   if (Observations::local_evaluations != 0) { return 11; }
   application::once(true, Observations::local_evaluations++);

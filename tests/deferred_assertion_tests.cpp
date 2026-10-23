@@ -365,6 +365,7 @@ namespace application {
       { { { int count = 2; return count == 2; } } }
     }(1));
     library::check_lambda([]() -> bool {
+      std::assert(true);
       { { { int own_local = 1; return own_local == 1; } } }
     }());
     mut int output = 0;
