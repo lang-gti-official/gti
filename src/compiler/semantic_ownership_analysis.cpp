@@ -5821,6 +5821,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "meta_type_trait") {
       return IntrinsicKind::MetaTypeTrait;
     }
+    if (name == "meta_type_relation") {
+      return IntrinsicKind::MetaTypeRelation;
+    }
     if (name == "meta_enumerator_count") {
       return IntrinsicKind::MetaEnumeratorCount;
     }
@@ -11875,6 +11878,9 @@ metaQueryShape(IntrinsicKind intrinsic) {
     return MetaQueryShape{.types = 2, .result = SemanticType::Bool};
   case IntrinsicKind::MetaTypeTrait:
     return MetaQueryShape{.indices = 1, .result = SemanticType::Bool};
+  case IntrinsicKind::MetaTypeRelation:
+    return MetaQueryShape{
+        .types = 2, .indices = 1, .result = SemanticType::Bool};
   case IntrinsicKind::MetaEnumeratorCount:
     return MetaQueryShape{};
   case IntrinsicKind::MetaEnumeratorName:
@@ -11928,6 +11934,9 @@ auto SemanticVisitor::Impl::metaQueryConstant(
     if (!index) {
       return std::nullopt;
     }
+    if (const auto constraint = metaTypeTraitConstraint(*index)) {
+      return ConstantValue{satisfiesAtomicConstraint(subject, *constraint)};
+    }
     switch (*index) {
     case 0:
       return ConstantValue{
@@ -11938,14 +11947,25 @@ auto SemanticVisitor::Impl::metaQueryConstant(
           (subject.kind == SemanticType::Class ||
            subject.kind == SemanticType::Enum) &&
           (!subject.arguments.empty() || !subject.valueArguments.empty())};
-    case 2:
-      return ConstantValue{isReflectableType(subject)};
-    case 3:
-      return ConstantValue{isSignedInteger(subject)};
     default:
       return std::nullopt;
     }
   }
+  case IntrinsicKind::MetaTypeRelation:
+    if (!attribute || !index) {
+      return std::nullopt;
+    }
+    switch (*index) {
+    case 0:
+      return ConstantValue{subject == *attribute};
+    case 1: {
+      const std::array<SemanticType, 2> arguments{subject, *attribute};
+      return ConstantValue{structuralConstraintSatisfied(
+          StructuralConstraintKind::EnumUnderlying, arguments)};
+    }
+    default:
+      return std::nullopt;
+    }
   case IntrinsicKind::MetaEnumeratorCount:
     return unsignedConstant(metaEnumeratorCount(subject));
   case IntrinsicKind::MetaBaseCount: {
@@ -12172,6 +12192,9 @@ auto SemanticVisitor::Impl::metaQueryFailure(
   }
   case IntrinsicKind::MetaTypeTrait:
     return {"GTI-S2019", "Unknown reflection trait selector " +
+                             std::to_string(index.value_or(0)) + "."};
+  case IntrinsicKind::MetaTypeRelation:
+    return {"GTI-S2019", "Unknown reflection type-relation selector " +
                              std::to_string(index.value_or(0)) + "."};
   case IntrinsicKind::MetaMethodName:
   case IntrinsicKind::MetaMethodTrait:

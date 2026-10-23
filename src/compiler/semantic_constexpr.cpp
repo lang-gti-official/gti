@@ -92,6 +92,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   copy.classDeclIds = other.classDeclIds;
   copy.conceptDeclIds = other.conceptDeclIds;
   copy.functionGenericParameters = other.functionGenericParameters;
+  copy.constraintPredicateDeclarations = other.constraintPredicateDeclarations;
   for (const auto &declaration : other.callableDeclarations) {
     auto owned = std::make_unique<CallableDeclaration>(*declaration);
     copy.callableDeclarationsBySyntax.insert_or_assign(owned->syntax,
@@ -146,6 +147,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   copy.classDeclIds = classDeclIds;
   copy.conceptDeclIds = conceptDeclIds;
   copy.functionGenericParameters = functionGenericParameters;
+  copy.constraintPredicateDeclarations = constraintPredicateDeclarations;
   for (const auto &declaration : callableDeclarations) {
     (void)copy.registerCallable(*declaration);
   }

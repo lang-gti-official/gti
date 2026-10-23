@@ -1228,7 +1228,25 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
     -> std::vector<ExpandedStructuralRequirement> {
   const auto expandLeaf = [&](const AppliedConceptRequirement &requirement) {
     std::vector<ExpandedStructuralRequirement> result;
+    if (requirement.syntax && requirement.syntax->predicate) {
+      const auto capability = predicateCapabilityFor(
+          *requirement.syntax, requirement.arguments,
+          requirement.lookupScope ? &*requirement.lookupScope : nullptr);
+      if (capability && capability->structural != StructuralConstraintKind::None)
+        result.push_back({.kind = capability->structural,
+                          .arguments = capability->arguments,
+                          .application = requirement.syntax});
+      return result;
+    }
     if (requirement.syntax && requirement.syntax->memberRequirement) {
+      if (requirement.syntax->memberRequirement->isExpressionRequirement()) {
+        if (auto fact = expressionRequirementFact(
+                *requirement.syntax->memberRequirement, requirement.arguments)) {
+          fact->application = requirement.syntax;
+          result.push_back(std::move(*fact));
+        }
+        return result;
+      }
       result.push_back(
           {.kind = StructuralConstraintKind::ReadMember,
            .arguments = requirement.arguments,
@@ -1375,6 +1393,16 @@ auto SemanticVisitor::Impl::activeAtomicConstraints(
     const auto atomicForLeaf =
         [&](const AppliedConceptRequirement &requirement) {
           GenericConstraintSet leaf = 0;
+          if (requirement.syntax && requirement.syntax->predicate) {
+            const auto capability = predicateCapabilityFor(
+                *requirement.syntax, requirement.arguments,
+                requirement.lookupScope ? &*requirement.lookupScope : nullptr);
+            return capability && capability->atomic != GenericConstraintKind::None &&
+                           capability->arguments.size() == 1 &&
+                           capability->arguments.front() == type
+                       ? constraintBit(capability->atomic)
+                       : leaf;
+          }
           if (requirement.conceptId == 0 ||
               requirement.conceptId > concepts.size()) {
             return leaf;
@@ -1572,6 +1600,17 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
                 requirementAt(requirements, expression, left.application);
             const AppliedConceptRequirement *rightRequirement =
                 requirementAt(active, activeExpression, right.application);
+            if (leftRequirement && rightRequirement &&
+                ((leftRequirement->syntax &&
+                  (leftRequirement->syntax->predicate ||
+                   (leftRequirement->syntax->memberRequirement &&
+                    leftRequirement->syntax->memberRequirement->isExpressionRequirement()))) ||
+                 (rightRequirement->syntax &&
+                  (rightRequirement->syntax->predicate ||
+                   (rightRequirement->syntax->memberRequirement &&
+                    rightRequirement->syntax->memberRequirement->isExpressionRequirement())))))
+              return leftRequirement->syntax == rightRequirement->syntax &&
+                     leftRequirement->arguments == rightRequirement->arguments;
             return leftRequirement != nullptr && rightRequirement != nullptr &&
                    leftRequirement->conceptId == rightRequirement->conceptId &&
                    (!leftRequirement->syntax ||
@@ -1638,7 +1677,35 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
 auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     const AppliedConceptRequirement &requirement) const
     -> std::optional<ConstraintFailure> {
+  if (requirement.syntax && requirement.syntax->predicate) {
+    std::string reason;
+    if (constraintPredicateSatisfied(
+            *requirement.syntax, requirement.arguments, &reason,
+            requirement.lookupScope ? &*requirement.lookupScope : nullptr))
+      return std::nullopt;
+    return ConstraintFailure{
+        .parameter = requirement.syntax->name.last(),
+        .argument = requirement.arguments.empty() ? SemanticType::Unknown
+                                                  : requirement.arguments.front(),
+        .application = requirement.syntax,
+        .leafApplication = requirement.syntax,
+        .expressionFailure = std::move(reason)};
+  }
   if (requirement.syntax && requirement.syntax->memberRequirement) {
+    if (requirement.syntax->memberRequirement->isExpressionRequirement()) {
+      std::string reason;
+      if (expressionRequirementSatisfied(
+              *requirement.syntax->memberRequirement, requirement.arguments,
+              &reason, requirement.lookupScope ? &*requirement.lookupScope : nullptr))
+        return std::nullopt;
+      return ConstraintFailure{
+          .parameter = requirement.syntax->memberRequirement->keyword(),
+          .argument = requirement.arguments.empty() ? SemanticType::Unknown
+                                                    : requirement.arguments.front(),
+          .application = requirement.syntax,
+          .leafApplication = requirement.syntax,
+          .expressionFailure = std::move(reason)};
+    }
     const auto &member = requirement.syntax->memberRequirement->member();
     SemanticMemberRequirementFailure memberFailure;
     if (requirement.arguments.size() >= 2 &&
@@ -1767,7 +1834,8 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
           .conceptId = pattern.conceptId,
           .syntax = pattern.syntax,
           .expression = conceptInfo.definitionExpression,
-          .expressionApplication = pattern.expressionApplication};
+          .expressionApplication = pattern.expressionApplication,
+          .lookupScope = conceptInfo.namespaceScope};
       bool valid = true;
       for (const RegisteredConcept::StructuralPattern::Argument &argument :
            pattern.arguments) {
@@ -6247,6 +6315,31 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       // member operator expression synthesized by this table.
       break;
     case StructuralConstraintKind::ReadMember:
+      if (requirement.memberName == operatorFunctionName(kind) &&
+          requirement.arguments.size() == argumentTypes.size() + 2 &&
+          requirement.arguments[0] == receiverType) {
+        bool same = true;
+        for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+          SemanticType parameter = requirement.arguments[index + 2];
+          if (parameter.kind == SemanticType::Reference &&
+              parameter.arguments.size() == 1) {
+            SemanticType value = parameter.arguments.front();
+            parameter = std::move(value);
+          }
+          same = same && parameter == argumentTypes[index];
+        }
+        if (same) {
+          candidate.returnType = requirement.arguments[1];
+          candidate.parameterTypes.assign(requirement.arguments.begin() + 2,
+                                           requirement.arguments.end());
+          candidate.receiverMutability = requirement.mutableReceiver
+                                             ? ReceiverMutability::Mutable
+                                             : ReceiverMutability::ReadOnly;
+          candidate.requiresUnsafeFact = requirement.requiresUnsafe;
+          matches = true;
+        }
+      }
+      break;
     case StructuralConstraintKind::None:
       break;
     }
@@ -6294,7 +6387,8 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
         unique.begin(), unique.end(), [&](const CallableCandidate &existing) {
           return existing.returnType == candidate.returnType &&
                  existing.parameterTypes == candidate.parameterTypes &&
-                 existing.receiverMutability == candidate.receiverMutability;
+                 existing.receiverMutability == candidate.receiverMutability &&
+                 existing.requiresUnsafeFact == candidate.requiresUnsafeFact;
         });
     if (!duplicate) {
       unique.emplace_back(std::move(candidate));
@@ -6362,6 +6456,10 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
   }
 
   const CallableCandidate &selected = viable.front();
+  if (selected.requiresUnsafeFact && unsafeDepth == 0) {
+    report(token, "The required operator needs an unsafe block.", "GTI-S2029");
+    return std::nullopt;
+  }
   const AccessMode receiverAccess =
       receiverAllowsMutation(selected.receiverMutability)
           ? AccessMode::Mutable

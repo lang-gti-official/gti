@@ -221,6 +221,7 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   const RegistrationFloor &floor = registrationFloor;
   registerNamespaces(declarations, {});
   registerNamespaceAliases(declarations, {});
+  registerConstraintPredicateDeclarations(declarations, {});
   registerTypeAliases(declarations, {});
   registerEnums(declarations, {});
   registerConcepts(declarations, {});
@@ -10204,6 +10205,24 @@ auto SemanticVisitor::Impl::visitLayoutQueryExpr(const LayoutQuery &expr)
 
 auto SemanticVisitor::Impl::recordMemberRequirementReceiver(
     const MemberRequirement &query, const SemanticType &type) -> void {
+  if (query.isExpressionRequirement()) {
+    for (std::size_t index = 0; index < query.parameters().size(); ++index) {
+      const auto parameterType = typeOf(query.parameters()[index]);
+      const auto &binding = query.bindings()[index];
+      const auto symbol = recordToolingSymbol(
+          binding, SymbolKind::RequirementParameter,
+          qualifiedName(currentNamespace, binding.lexeme), parameterType);
+      semanticModel.recordOccurrence(
+          {.sourceUnit = sourceUnitFor(binding),
+           .span = tokenSpan(binding),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = symbol,
+           .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+           .name = binding.lexeme,
+           .type = parameterType});
+    }
+    return;
+  }
   const auto symbol = recordToolingSymbol(
       query.binding(), SymbolKind::RequirementParameter,
       qualifiedName(currentNamespace, query.binding().lexeme), type);
@@ -10252,6 +10271,28 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
     const MemberRequirement &expr) -> void {
   currentType = SemanticType::Bool;
   const auto before = diagnostics.size();
+  if (expr.isExpressionRequirement()) {
+    std::vector<SemanticType> arguments;
+    for (const auto &parameter : expr.parameters()) {
+      validateType(parameter);
+      recordTypeUse(parameter);
+      arguments.push_back(typeOf(parameter));
+    }
+    validateType(expr.result());
+    recordTypeUse(expr.result());
+    arguments.push_back(typeOf(expr.result()));
+    recordMemberRequirementReceiver(expr, SemanticType::Unknown);
+    if (diagnostics.size() != before)
+      return;
+    if (std::any_of(arguments.begin(), arguments.end(), containsOpenTypeParameter)) {
+      if (analyzingDependentConstantCondition)
+        constantConditionGenericDependency = true;
+      return;
+    }
+    semanticModel.recordConstant(
+        expr, ConstantValue{expressionRequirementSatisfied(expr, arguments)});
+    return;
+  }
   validateType(expr.receiver());
   validateType(expr.result());
   recordTypeUse(expr.receiver());

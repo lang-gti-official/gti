@@ -2339,6 +2339,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::MetaTypeAttributeCount:
         case IntrinsicKind::MetaTypeHasAttribute:
         case IntrinsicKind::MetaTypeTrait:
+        case IntrinsicKind::MetaTypeRelation:
         case IntrinsicKind::MetaEnumeratorCount:
         case IntrinsicKind::MetaEnumeratorName:
         case IntrinsicKind::MetaEnumeratorValue:

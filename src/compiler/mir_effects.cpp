@@ -329,6 +329,7 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(), // MetaTypeAttributeCount
     harmless(), // MetaTypeHasAttribute
     harmless(), // MetaTypeTrait
+    harmless(), // MetaTypeRelation
     harmless(), // MetaEnumeratorCount
     harmless(), // MetaEnumeratorName
     harmless(), // MetaEnumeratorValue
