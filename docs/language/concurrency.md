@@ -137,7 +137,7 @@ unspecialized source `SymbolId`; until that inventory is represented and
 verified, both shapes are rejected instead of sharing a slot across instances.
 `thread_local` does not add thread-specific-storage keys, detach, arbitrary
 foreign-thread entry or async suspension. Runnable example:
-[`172-thread-local-storage.gti`](../../examples/172-thread-local-storage.gti).
+[`173-thread-local-storage.gti`](../../examples/173-thread-local-storage.gti).
 
 ## C-Style Scheduling Hint
 

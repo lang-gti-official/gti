@@ -114,7 +114,7 @@ function-contract-attributes = function-contract-attribute
                               { function-contract-attribute } ;
 function-contract-attribute = "[[" function-contract-name
                               { "," function-contract-name } "]]" ;
-function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | "thread_confined_callback"
+function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | "deferred" | "thread_confined_callback"
                        | "borrowed_from" "(" ( IDENTIFIER | "this" ) ")" ;
 (* test: defined, safe, non-generic namespace-scope void functions with no
    parameters or attribute arguments. Explicit test targets discover these
@@ -126,6 +126,11 @@ function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | 
    direct calls. Neither changes the declared result type.
    discardable permits ignoring a non-void function or method result; it
    does not change evaluation, failure, cleanup, borrowing or the result type.
+   deferred declares a confined void statement template with expression
+   parameters, not an eager callable. Concrete invocations substitute and
+   check each argument where the body uses it. Blocks, ordinary branches and
+   expressions without local binders/direct writes form the current profile;
+   no callable-value, member, constexpr or foreign form is admitted.
    borrowed_from selects one checked reference parameter, the single external
    dependency of a by-value carrier parameter, or a non-static
    receiver as the returned reference's owner. Safe returns must preserve it.

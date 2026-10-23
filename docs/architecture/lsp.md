@@ -60,10 +60,44 @@ sibling receivers do not advertise inaccessible protected members. Hover and
 navigation retain the original declaration identity, and `GTI-S2007` retains
 use/declaration spans through ordinary snapshot and UTF-16 conversion.
 
+## Code Snippet Completions
+
+`LanguageQueries::complete` combines semantic candidates with a small static
+syntax-template catalog in `src/compiler/language_snippets.cpp`. The real parser
+records the completion marker's declaration, ordinary class/struct member, or
+statement boundary and its enclosing type name. The frontend retains this
+editor-only value, including on parsed-unit cache hits; it contains no semantic
+IDs or AST pointers. The catalog does not infer scopes from text, resolve names,
+or add syntax. No additional parse or dependency load is needed for snippets.
+
+Declaration templates cover classes (including a generic skeleton), structs,
+interfaces, scoped enums, namespaces, aliases and free functions. Ordinary
+class/struct member templates add owner-named constructors and cleanup bodies,
+read-only/mutable methods and initialized fields. Statement templates cover
+conditionals, indexed/borrowed-range loops, switches and unsafe blocks. Labels
+are prefix-filtered, and exact semantic candidates rank ahead of templates.
+
+The lexer recognizes complete keyword triggers only in completion-marker
+scans. Ordinary lexing/parsing is unchanged, and completion markers are excluded
+from comments, strings and character literals, including unterminated forms.
+Expressions, member/qualified-name lookups, inactive code and unresolvable
+source configurations do not receive syntax templates. The edit replaces the
+whole current word, including a suffix after the cursor; the protocol layer
+converts that compiler byte range to UTF-16.
+
+Templates use LSP snippet items (`kind = 15`, `insertTextFormat = 2`) with tab
+stops and linked placeholders, and are offered only when the client advertises
+`completionItem.snippetSupport`. The compiler query opts into templates only for
+these clients, preserving the plain client's full semantic candidate budget and
+ranking. Existing semantic-call completions keep their
+plain-text fallback. Generation rejection, cancellation, dirty overlays and
+close/reopen use the existing completion worker; snippets introduce no separate
+cache, worker, edit command or client-specific snippet format.
+
 ## Semantic Source Of Truth
 
 Source modules use the same manifest module maps, source graph, export
-publication, and re-export traversal as compilation. Completion only presents
+publication, and re-export traversal as compilation. Symbol completion only presents
 the candidates supplied by semantic lookup; hover and definition use resolved
 occurrences. An inferred value of a private type can still present its ordinary
 public members without exposing that type's name as a namespace candidate.

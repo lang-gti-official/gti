@@ -2,6 +2,30 @@
 
 Status: Current implementation.
 
+## Deferred statement expansion
+
+`semantic_deferred.cpp` owns `[[deferred]]` helpers independently of public
+library names. Signature selection and argument diagnostics use an isolated
+semantic probe; its speculative flow, loans and syntax never enter caller
+execution. The probe forks request context separately from semantic facts,
+reads existing facts through a model delta and owns a copy of active loan
+identities; it does not deep-copy the growing whole-program expression model.
+The source signature is retained only as a tooling occurrence, not an eager
+call in executable effect/transport inventories. The actual body is
+cloned with compiler-owned argument/pack substitutions and separate expansion
+lookup contexts, then analyzed in the caller's ordinary place/ownership/loan
+flow. Definition and invocation namespace/source/class domains stay distinct.
+Concrete generic context and tracked caller origins accompany body tokens;
+argument tokens retain their own origins. `SemanticModel` owns the checked
+statement expansion for the frontend snapshot and its instance deltas.
+
+HIR lowers that expansion as ordinary statements and does not enqueue an eager
+function instance for the template. Existing MIR branches, calls, ownership
+events, failure edges and cleanup are the only executable representation.
+There is no new runtime thunk, backend interpretation or public assertion-name
+recognition. The confined structural profile and resource limits are specified
+in [execution semantics](../language/execution.md#deferred-statement-helpers).
+
 Member visibility is shared by semantic field/call/constructor/type checks and
 completion filtering. `canAccessMember` uses the lexical class context, the
 selected declaration's access and owner, substituted inheritance paths, and an
@@ -2490,7 +2514,10 @@ exact constructor parameter-to-field bindings. Field-wise return summaries
 identify the result field, receiver or parameter, source field path and access
 mode; body analysis validates that inferred summary against actual returned
 origins. Selected reference accessors do not inherit an unrelated first field's
-permission. Concrete generic reanalysis substitutes these same facts.
+permission. Forming a reference selection in a switch arm records a use of its
+parent authority and that parent's ancestors, so the carrier's dependency
+stays live while the arm forms its selections even when it never reads a
+selected binding. Concrete generic reanalysis substitutes these same facts.
 Lifecycle traits reject copying any exclusive path, and transfer preserves all
 parents until the final child/carrier endpoint. Custom destruction,
 when present, extends the dependency endpoint through cleanup; it does not

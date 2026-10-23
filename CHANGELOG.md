@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.464.0 — Thread-local storage
+## 0.466.0 — Thread-local storage
 
 - `thread_local` defines distinct per-thread storage at namespace scope, in a
   non-generic static data member, or inside an ordinary function. Both
@@ -27,7 +27,46 @@ for what minor and patch releases mean.
 - Transitive storage-effect checking also protects checked borrows of ordinary
   process globals from hidden conflicting accesses through helpers or callbacks.
 - See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
-  and [runnable example 172](examples/172-thread-local-storage.gti).
+  and [runnable example 173](examples/173-thread-local-storage.gti).
+
+## 0.465.0 — Deferred assertions
+
+- `<std/assert>` adds always-on `std::assert` and configuration-controlled
+  `std::debug_assert`, with raw/formatted panic messages, external caller
+  locations and deterministic cleanup. Successful assertions skip message
+  evaluation; disabled debug assertions skip every argument, including moves,
+  while still checking their types and body constraints.
+- `[[deferred]]` makes the same confined statement-helper facility available to
+  application APIs. Its typed expression parameters are evaluated where used
+  in source-defined branches, through ordinary checked HIR/MIR. It introduces
+  no escaping thunk, heap allocation or compiler recognition of assertion names.
+- Default release projects define `NDEBUG`; dev projects leave it inactive.
+  Explicit profile `defines` replace that default. Direct compilation can use
+  `-D NDEBUG` at any optimization level. `std::assert` remains enabled.
+- Example 172 demonstrates both APIs, skipped owning moves and an unrelated
+  user-defined deferred helper. The first profile is statement-only, with
+  branch/expression bodies and no local binders, loops or callback conversion.
+
+## 0.464.1 — Several reference bindings from one local payload enum
+
+- A `switch` arm can now bind `auto&` to more than one reference payload of an
+  enum held in a local. For `enum Pair { both(int& first, int& second), none
+  };`, `case Pair::both(auto& first, auto& second):` used to report
+  `error[GTI-B0001]` (an internal compiler error); it now works. This includes
+  three or more references, references to the same owner, enums built from
+  reference parameters, `mut auto&` bindings whose writes reach their own
+  owners, generic enums, and an enum field of a local class.
+- An `auto&` binding that the arm never reads, as in `case Slot::item(auto&
+  value): return 3;`, also used to report `error[GTI-B0001]`; it now works.
+
+## 0.464.0 — Editor code snippets
+
+- Completion offers class, generic-class, struct, interface, enum, namespace
+  and type-alias templates at declaration boundaries, plus functions, owner-named
+  constructors/destructors, methods, fields and common statement templates in
+  their appropriate contexts. Snippet-capable editors provide editable tab stops
+  and linked class names; clients without snippet support retain plain symbol
+  completions. Templates are not offered in expressions, comments or literals.
 
 ## 0.463.0 — Optional and expected views of a local owner
 

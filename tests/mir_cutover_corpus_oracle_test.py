@@ -96,7 +96,7 @@ def build_and_run(gti: Path, root: Path, scratch: Path, source: Path,
         str(source),
         *(
             ["--execution-profile", "concurrent"]
-            if source.name in {"066-managed-threads.gti", "076-scalar-atomics.gti", "172-thread-local-storage.gti"}
+            if source.name in {"066-managed-threads.gti", "076-scalar-atomics.gti", "173-thread-local-storage.gti"}
             else []
         ),
         f"-{optimization}",
