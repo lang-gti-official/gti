@@ -12194,6 +12194,20 @@ struct CompleteBorrowResultPathView {
   AccessMode access;
 };
 
+[[nodiscard]] std::optional<std::vector<MirStoredCarrierReference>>
+completeBorrowResultReferenceInventory(const MirProgram &program,
+                                       const SemanticType &type,
+                                       bool directReference) {
+  if (!directReference)
+    return findStoredCarrierReferenceInventory(program, type);
+  std::optional<std::vector<MirStoredCarrierReference>> result;
+  result.emplace();
+  MirStoredCarrierReference path{};
+  path.reference = type;
+  result->emplace_back(std::move(path));
+  return result;
+}
+
 template <typename Dependency, typename ResultPath>
 [[nodiscard]] bool completeBorrowResultHasTypedShape(
     const MirProgram &program, const SemanticType &type,
@@ -12202,12 +12216,12 @@ template <typename Dependency, typename ResultPath>
   const bool reference =
       type.kind == SemanticType::Reference && type.arguments.size() == 1;
   const auto references =
-      reference ? std::optional{std::vector<MirStoredCarrierReference>{
-                      {.reference = type}}}
-                : findStoredCarrierReferenceInventory(program, type);
-  const auto alternatives =
-      reference ? std::optional{std::vector<BorrowAlternativePath>{}}
-                : findStoredCarrierAlternativeInventory(program, type);
+      completeBorrowResultReferenceInventory(program, type, reference);
+  std::optional<std::vector<BorrowAlternativePath>> alternatives;
+  if (reference)
+    alternatives.emplace();
+  else
+    alternatives = findStoredCarrierAlternativeInventory(program, type);
   if (!references || !alternatives ||
       (alternatives->empty() != possibleAlternatives.empty()))
     return false;
@@ -12407,10 +12421,8 @@ projectCompleteBorrowPayloadSet(const MirProgram &program,
                   path) == result.possibleAlternatives.end())
       result.possibleAlternatives.push_back(std::move(path));
   }
-  const auto inventory =
-      referenceField ? std::optional{std::vector<MirStoredCarrierReference>{
-                           {.reference = fieldType}}}
-                     : findStoredCarrierReferenceInventory(program, fieldType);
+  const auto inventory = completeBorrowResultReferenceInventory(
+      program, fieldType, referenceField);
   if (!inventory)
     return std::nullopt;
   if (inventory->empty() && result.possibleAlternatives.empty()) {
@@ -12489,11 +12501,9 @@ constructedCompleteBorrowFact(const MirProgram &program, const MirBody &body,
                                       ? HirCallInputKind::MutableBorrow
                                       : HirCallInputKind::ReadBorrow)))
       return std::nullopt;
-    const auto inventory =
-        type.kind == SemanticType::Reference && type.arguments.size() == 1
-            ? std::optional{std::vector<MirStoredCarrierReference>{
-                  {.reference = type}}}
-            : findStoredCarrierReferenceInventory(program, type);
+    const auto inventory = completeBorrowResultReferenceInventory(
+        program, type,
+        type.kind == SemanticType::Reference && type.arguments.size() == 1);
     if (!inventory)
       return std::nullopt;
     // A complete concrete reference-free field cannot contribute external
@@ -14101,11 +14111,9 @@ completeBorrowSourcePath(const MirProgram &program,
 completeBorrowMappingIsWellFormed(const MirProgram &program,
                                   const MirFunctionInstance &function,
                                   const BorrowedFieldOrigin &mapping) {
-  const auto resultInventory =
-      function.returnType.kind == SemanticType::Reference
-          ? std::optional{std::vector<MirStoredCarrierReference>{
-                {.reference = function.returnType}}}
-          : findStoredCarrierReferenceInventory(program, function.returnType);
+  const auto resultInventory = completeBorrowResultReferenceInventory(
+      program, function.returnType,
+      function.returnType.kind == SemanticType::Reference);
   if (!resultInventory)
     return false;
   const auto result = std::find_if(
@@ -14674,15 +14682,20 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
         *extract->enumVariant >= enumeration->variants.size())
       return reject("selected reference lacks its exact typed alternative");
     const auto &variant = enumeration->variants[*extract->enumVariant];
+    const auto expectedConditions = [&] {
+      std::vector<BorrowDependencyCondition> conditions;
+      BorrowDependencyCondition condition{};
+      condition.enumeration = enumeration->type;
+      condition.variant = *extract->enumVariant;
+      conditions.emplace_back(std::move(condition));
+      return conditions;
+    };
     if (*extract->payloadIndex >= variant.payloadTypes.size() ||
         *extract->payloadIndex >= variant.payloadSymbols.size() ||
         selection.fields !=
             std::vector<SymbolId>{
                 variant.payloadSymbols[*extract->payloadIndex]} ||
-        selection.conditions !=
-            std::vector<BorrowDependencyCondition>{
-                {.enumeration = enumeration->type,
-                 .variant = *extract->enumVariant}} ||
+        selection.conditions != expectedConditions() ||
         selection.reference != variant.payloadTypes[*extract->payloadIndex] ||
         selection.reference.kind != SemanticType::Reference ||
         selection.reference.arguments.size() != 1 ||
