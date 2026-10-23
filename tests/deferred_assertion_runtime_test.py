@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deferred source APIs: evaluation, ownership, panic, attribution and cleanup."""
+"""Typed macro APIs: evaluation, ownership, panic, attribution and cleanup."""
 
 import argparse
 import os
@@ -14,7 +14,10 @@ def main():
     parser.add_argument("--quick", action="store_true")
     args = parser.parse_args()
     root = pathlib.Path(__file__).resolve().parents[1]
-    example = root / "examples" / "172-deferred-assertions.gti"
+    examples = {
+        root / "examples" / "172-deferred-assertions.gti": "Deferred assertions passed\n",
+        root / "examples" / "174-typed-macros.gti": "Typed macros passed\n",
+    }
     fixtures = root / "tests" / "fixtures"
     failures = fixtures / "deferred_assertion_failures.gti"
     lines = failures.read_text().splitlines()
@@ -41,7 +44,7 @@ def main():
         for name, standard, level, native in modes:
             for disabled in (False, True):
                 flags = ["-D", "NDEBUG"] if disabled else []
-                for source in (fixtures / "deferred_assertions.gti", failures, example):
+                for source in (fixtures / "deferred_assertions.gti", failures, *examples):
                     binary = pathlib.Path(temporary) / f"{name}-{disabled}-{source.stem}"
                     command = [str(args.compiler.resolve()), str(source),
                                "--std", standard, level, *flags, "--keep-cpp",
@@ -51,13 +54,13 @@ def main():
                                            env=environment, timeout=180)
                     assert built.returncode == 0, (command, built.stdout, built.stderr)
                     assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
-                    modes_to_run = range(11) if source == failures else (0,)
+                    modes_to_run = range(15) if source == failures else (0,)
                     for mode in modes_to_run:
                         ran = subprocess.run([str(binary), *(["x"] * mode)],
                                              capture_output=True, text=True,
                                              env=environment, timeout=20)
                         if source != failures:
-                            expected = "Deferred assertions passed\n" if source == example else ""
+                            expected = examples.get(source, "")
                             assert (ran.returncode, ran.stdout, ran.stderr) == (0, expected, ""), (
                                 name, disabled, source, ran.returncode, ran.stdout, ran.stderr)
                             continue
@@ -66,7 +69,11 @@ def main():
                                    "inner\nouter\n")
                         if mode == 10:
                             cleanup = "condition\npattern\nfirst\nsecond\n" + cleanup
-                        if mode == 0 or (mode == 3 and disabled):
+                        if mode in (11, 12):
+                            cleanup = "macro\n" + cleanup
+                        if mode in (13, 14):
+                            cleanup = "iteration\n" * 3 + cleanup
+                        if mode in (0, 12, 14) or (mode == 3 and disabled):
                             assert (ran.returncode, ran.stdout, ran.stderr) == (0, "", cleanup), (
                                 name, disabled, mode, ran)
                             continue
@@ -88,6 +95,8 @@ def main():
                             8: ("worker", "worker assertion"),
                             9: ("worker", "worker assertion"),
                             10: ("ordered", "ordered 1 then 2"),
+                            11: ("macro-local-panic", "macro local failure"),
+                            13: ("macro-loop-panic", "macro loop failure"),
                         }[mode]
                         expected = (cleanup + f'{site(marker)}: runtime error[GTI-R0017]: '
                                     f'panic: "{message}"\n')

@@ -34,7 +34,7 @@ for what minor and patch releases mean.
   field of the class holds a local owner's text; this was an internal
   compiler error (`GTI-B0001`).
 
-## 0.466.0 — Views of the caller's string in results and nested values
+## 0.467.0 — Views of the caller's string in results and nested values
 
 - A function can now return a value over the text of one of its read-only
   reference parameters, and each call's result views that call's argument:
@@ -95,6 +95,28 @@ for what minor and patch releases mean.
   your own enum-holding class from numbers, enums or plain records, such as
   `Slot(int32_t n) : state(slot_state::ready(n)) {}`, are again known not to
   fail, as in 0.448.4, so their callers no longer check for a failure.
+
+## 0.466.0 — Typed macros
+
+- Declare namespace-scope statement templates with `#macro NAME(typed
+  parameters) { ... }` and invoke them with ordinary, optionally qualified
+  `NAME(...)` calls. Generic parameters, typed overloads, defaults, final packs
+  and constraints use existing GTI signature rules.
+- Arguments are checked statically and evaluated where used, with hygienic
+  definition/caller lookup, checked ownership and deterministic cleanup. There
+  is no textual substitution, eager argument frame or escaping runtime thunk.
+- Automatic locals give explicit evaluate-once bindings with ordinary values,
+  references, moves and cleanup. Local mutation and scoped loops are supported;
+  macro-local names cannot capture caller names, and break/continue cannot
+  escape to a caller's loop.
+- `std::assert` and `std::debug_assert` now use this same facility. The previous
+  `[[deferred]]` spelling is removed and diagnosed with migration guidance;
+  macros and ordinary functions cannot share one callable name.
+- Formatter, Tree-sitter, macro semantic highlighting, hover and navigation
+  follow the declaration identity. Example 174 demonstrates application-defined
+  typed macros; example 172 retains the assertion workflow.
+- Diagnostics include nested expansion context. Neovim's read-only
+  `:GTIExpandMacro` view explains the checked expansion and local bindings.
 
 ## 0.465.6 — Moving one class and copying another after fallible work
 
