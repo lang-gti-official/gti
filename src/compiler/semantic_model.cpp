@@ -1179,6 +1179,18 @@ SemanticModel::findMacroExpansion(const ExpressionStmt &statement) const {
   return inherited;
 }
 
+std::shared_ptr<const Stmt>
+SemanticModel::shareMacroExpansion(const ExpressionStmt &statement) const {
+  if (const auto found = macroExpansions.find(&statement);
+      found != macroExpansions.end())
+    return found->second;
+  auto inherited =
+      base == nullptr ? nullptr : base->shareMacroExpansion(statement);
+  noteBaseSyntheticSyntax(inherited != nullptr &&
+                          !baseStableSyntheticSyntax(&statement));
+  return inherited;
+}
+
 const Token *SemanticModel::findMacroDefault(const Expr &expression) const {
   if (const auto found = macroDefaults.find(&expression);
       found != macroDefaults.end())

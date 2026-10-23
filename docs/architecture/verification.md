@@ -53,6 +53,10 @@ instances, and rejection of an erased tracked-caller origin. Syntax regressions
 cover exact macro-only overloads, generic/default parameters, qualified calls,
 caller-tracked declarations, incomplete parser recovery, rejected mixed
 macro/function names in both declaration orders and legacy migration diagnostics.
+The ownership regression copies HIR out of a destroyed `FrontendResult` and
+temporary lowerer, then traverses reached nested/instance expansion roots and
+their constructor-call descendants. Its ordinary and concrete generic cases
+must retain the exact sources without retaining whole semantic models.
 
 `deferred_assertions_runtime` runs the success/failure fixtures and runnable
 examples 172 and 174 with C++20/C++23 at O0/O1/O3, disabled elision, ASan/UBSan, and native
