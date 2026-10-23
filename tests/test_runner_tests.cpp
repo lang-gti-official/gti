@@ -29,6 +29,19 @@ int main(int argc, char **argv) {
 #else
   if (argc == 2) {
     const std::string mode = argv[1];
+    if (mode == "inherit-streams") {
+      const auto result = invokeProcess(
+          {std::filesystem::absolute(argv[0]).string(), "write-streams"},
+          {.outputMode = ProcessOutputMode::Inherit,
+           .timeout = 2s,
+           .isolateProcessGroup = true});
+      return result.succeeded() && result.output.empty() ? 0 : 1;
+    }
+    if (mode == "write-streams") {
+      std::cout << "child stdout\n";
+      std::cerr << "child stderr\n";
+      return 0;
+    }
     if (mode.starts_with("large")) {
       std::cout << std::string(128 * 1024, 'x');
       return 0;
@@ -79,6 +92,25 @@ int main(int argc, char **argv) {
     return 0;
   }
   const auto executable = std::filesystem::absolute(argv[0]);
+  const auto inherited =
+      invokeProcess({executable.string(), "inherit-streams"},
+                    {.captureSuccessfulOutput = true, .timeout = 3s});
+  check(inherited.succeeded() &&
+            inherited.output == "child stdout\nchild stderr\n",
+        "bounded inherited children must write through the parent's streams "
+        "without storing captured output");
+  const auto inheritedTimeout =
+      invokeProcess({executable.string(), "a_slow"},
+                    {.outputMode = ProcessOutputMode::Inherit,
+                     .timeout = 30ms,
+                     .isolateProcessGroup = true});
+  check(inheritedTimeout.timedOut && inheritedTimeout.exitCode == 124 &&
+            inheritedTimeout.output.empty(),
+        "inherited children must retain deadline enforcement");
+  check(invokeProcess({"/gti-test-missing-executable"},
+                      {.outputMode = ProcessOutputMode::Inherit, .timeout = 1s})
+            .driverDiagnostic.has_value(),
+        "inherited children must preserve launch diagnostics");
   check(invokeProcess({executable.string(), "closed-streams"},
                       {.captureSuccessfulOutput = true,
                        .timeout = 3s,

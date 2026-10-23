@@ -3592,7 +3592,9 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   for (const auto &plan : resolution.plans) {
     if (options.verbose)
       reportProjectPlan(plan, ProjectCommand::Test);
-    std::cerr << "Building test " << plan.targetName() << '\n';
+    std::cerr << terminalStyle.code(std::cerr, Style::Note) << "Building test"
+              << terminalStyle.code(std::cerr, Style::Reset) << ' '
+              << plan.targetName() << '\n';
     DiagnosticSummary buildSummary;
     std::vector<std::string> testCases;
     const int buildStatus =
@@ -3610,6 +3612,7 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   }
   auto execution = options.test;
   execution.retainOutput = false;
+  execution.inheritLegacyOutput = !options.testJson;
   execution.jobs = options.jobs.value_or(1);
   execution.environment = programColorEnvironment();
   lang::driver::TestRunObserver observer;
@@ -3622,7 +3625,9 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
         if (test.selected)
           std::cout << target << ": " << test.name << '\n';
     } else
-      std::cerr << "Testing " << target << '\n';
+      std::cerr << terminalStyle.code(std::cerr, Style::Note) << "Testing"
+                << terminalStyle.code(std::cerr, Style::Reset) << ' ' << target
+                << '\n';
   };
   if (options.testJson) {
     observer.started = [&](std::string_view target, std::string_view name) {
@@ -3634,6 +3639,23 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   } else {
     observer.finished = [&](const lang::driver::TestCaseReport &report) {
       const bool passed = report.status == lang::driver::TestCaseStatus::Passed;
+      const auto suite =
+          std::find_if(suites.begin(), suites.end(), [&](const auto &s) {
+            return s.target == report.target;
+          });
+      if (suite != suites.end() && suite->tests.empty()) {
+        if (report.diagnostic)
+          std::cerr << *report.diagnostic << '\n';
+        std::cerr << terminalStyle.code(std::cerr,
+                                        passed ? Style::Success : Style::Error)
+                  << (passed ? "Passed" : "Failed")
+                  << terminalStyle.code(std::cerr, Style::Reset) << ' '
+                  << report.target;
+        if (!passed)
+          std::cerr << " (exit code " << report.exitCode << ')';
+        std::cerr << '\n';
+        return;
+      }
       std::cerr << "  [" << report.target << "] " << report.name << " ... "
                 << terminalStyle.code(std::cerr,
                                       passed ? Style::Success : Style::Error)
@@ -3650,12 +3672,6 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
       }
       if (report.diagnostic)
         std::cerr << "    " << *report.diagnostic << '\n';
-      const auto suite =
-          std::find_if(suites.begin(), suites.end(), [&](const auto &s) {
-            return s.target == report.target;
-          });
-      if (suite != suites.end() && suite->tests.empty())
-        std::cerr << (passed ? "Passed " : "Failed ") << report.target << '\n';
     };
   }
   TestInterruptScope interrupts;
@@ -3666,11 +3682,14 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   const auto &summary = result.summary;
   if (summary.diagnostic)
     std::cerr << "gti: " << *summary.diagnostic << '\n';
-  std::cerr << "Test result: " << summary.passed << " passed";
+  std::cerr << "Test result: " << terminalStyle.code(std::cerr, Style::Success)
+            << summary.passed << " passed"
+            << terminalStyle.code(std::cerr, Style::Reset);
   const auto failures = summary.failed + summary.crashed + summary.timedOut +
                         summary.runnerErrors;
   if (failures)
-    std::cerr << ", " << failures << " failed";
+    std::cerr << ", " << terminalStyle.code(std::cerr, Style::Error) << failures
+              << " failed" << terminalStyle.code(std::cerr, Style::Reset);
   if (summary.skipped)
     std::cerr << ", " << summary.skipped << " skipped";
   if (summary.listOnly)

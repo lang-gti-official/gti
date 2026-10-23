@@ -678,6 +678,12 @@ Test mode is a distinct cache input. The reusable `runTestSuites` driver owns
 selection, the bounded scheduler and result accounting; the CLI owns options
 and presentation. Legacy test executables with `main` and no annotated functions
 execute once, using their target name as their test identity.
+In human mode these legacy programs inherit stdout and stderr, preserving their
+stream routing and existing coloured Passed/Failed target status. Their streams
+may interleave with concurrent children when `--jobs` exceeds one. JSON mode
+captures legacy output so stdout remains a stream of report events. Reusable
+driver callers capture both forms by default; `inheritLegacyOutput` opts into
+the human CLI policy without changing deadlines or process-group ownership.
 
 `gti test --filter <text>` selects qualified names by case-sensitive substring;
 `--exact` requires equality and a filter. Repeated `--skip <text>` exclusions

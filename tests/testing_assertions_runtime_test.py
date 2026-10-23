@@ -2,6 +2,7 @@
 """Independent assertion oracles cover values, caller locations and cleanup."""
 import os
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -24,7 +25,8 @@ def main():
         "string-escaped": (None, '"a\\n\\\"\\\\"', '"a\\t\\\"\\\\"'),
         "approx": ("approx-site", "Expected approximately equal values", "actual: 1",
                    "expected: 2", "absolute tolerance:", "relative tolerance:"),
-        "nan": (None, "Expected approximately equal values", "actual: nan"),
+        "nan": (None, "Expected approximately equal values", "expected: 1",
+                "absolute tolerance: 0.01", "relative tolerance: 0"),
         "infinity": (None, "Expected approximately equal values", "actual: -inf"),
         "tolerance": (None, "requires finite nonnegative tolerances"),
         "elements": ("elements-site", "first difference at index 0", "actual: 7", "expected: 9"),
@@ -53,9 +55,12 @@ def main():
                 message = json.loads(failed.stderr.split("panic: ", 1)[1].strip())
                 for fragment in fragments:
                     assert fragment in message, (mode, fragment, failed.stderr)
-                if marker:
+                if mode == "nan":
+                    actual = next(line for line in message.splitlines() if line.startswith("  actual: "))
+                    assert re.fullmatch(r"  actual: [+-]?nan", actual), (mode, failed.stderr)
+                if marker or mode == "nan":
                     line = next(index for index, source in enumerate(fixture.read_text().splitlines(), 1)
-                                if f"// {marker}" in source)
+                                if (f"// {marker}" in source if marker else '== "nan"' in source))
                     assert f"{fixture.name}:{line}:" in failed.stderr, (mode, line, failed.stderr)
         for name, statement in {
             "mixed-types": "int a = 1; bool b = true; std::testing::check_eq(a, b);",

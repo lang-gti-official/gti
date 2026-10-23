@@ -45,7 +45,7 @@ struct ProcessResult {
 invokeProcess(const std::vector<std::string> &arguments,
               ProcessInvocationOptions options = {});
 
-// A capture-mode child process that runs concurrently with the caller. The
+// A child process that runs concurrently with the caller. The
 // handle is single-use: wait() reaps the child and returns its result exactly
 // once. Destroying an unwaited started process waits for it first so a child
 // can never outlive its capture buffer.
@@ -83,9 +83,8 @@ private:
   bool isolatedProcessGroup = false;
 };
 
-// Starts a concurrent child with merged stdout/stderr capture. Inherit mode
-// is not supported: concurrent children sharing the caller's terminal would
-// interleave nondeterministically.
+// Starts a concurrent child with merged stdout/stderr capture, or inherited
+// streams on POSIX. Inherited streams can interleave with concurrent children.
 [[nodiscard]] StartedProcess
 startProcess(const std::vector<std::string> &arguments,
              ProcessInvocationOptions options = {});

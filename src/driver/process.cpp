@@ -298,10 +298,6 @@ ProcessResult invokeCaptured(const std::vector<std::string> &arguments,
 ProcessResult invokeProcess(const std::vector<std::string> &arguments,
                             ProcessInvocationOptions options) {
   if (options.timeout || options.isolateProcessGroup) {
-    if (options.outputMode != ProcessOutputMode::Capture)
-      return {.exitCode = 127,
-              .driverDiagnostic =
-                  "gti: bounded processes require captured output"};
     return startProcess(arguments, std::move(options)).wait();
   }
   if (arguments.empty() || arguments.front().empty()) {
@@ -435,8 +431,9 @@ std::optional<ProcessResult> StartedProcess::poll() {
                    : WIFEXITED(status)   ? WEXITSTATUS(status)
                    : WIFSIGNALED(status) ? 128 + WTERMSIG(status)
                                          : 127;
-  auto result =
-      finishCapturedProcess(captureFile, code, captureSuccessfulOutput);
+  auto result = captureFile ? finishCapturedProcess(captureFile, code,
+                                                    captureSuccessfulOutput)
+                            : ProcessResult{.exitCode = code};
   if (WIFSIGNALED(status))
     result.signal = WTERMSIG(status);
   result.timedOut = expired;
@@ -453,12 +450,10 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
   const auto maximumTimeout =
       std::chrono::duration_cast<std::chrono::milliseconds>(
           std::chrono::steady_clock::duration::max() / 2);
-  if (options.outputMode != ProcessOutputMode::Capture ||
-      (options.timeout &&
-       (options.timeout->count() < 0 || *options.timeout > maximumTimeout))) {
+  if (options.timeout &&
+      (options.timeout->count() < 0 || *options.timeout > maximumTimeout)) {
     started.startFailure = ProcessResult{
-        .exitCode = 127,
-        .driverDiagnostic = "gti: invalid captured process options or timeout"};
+        .exitCode = 127, .driverDiagnostic = "gti: invalid process timeout"};
     return started;
   }
   if (options.timeout && options.timeout->count() > 0)
@@ -471,11 +466,13 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
     return started;
   }
 #if defined(_WIN32)
-  if (options.workingDirectory || !options.environment.empty() ||
+  if (options.outputMode == ProcessOutputMode::Inherit ||
+      options.workingDirectory || !options.environment.empty() ||
       options.timeout || options.isolateProcessGroup) {
     started.startFailure = ProcessResult{
         .exitCode = 127,
-        .driverDiagnostic = "gti: bounded, isolated, working-directory and "
+        .driverDiagnostic = "gti: asynchronous inherited, bounded, isolated, "
+                            "working-directory and "
                             "environment processes are "
                             "not supported on Windows yet"};
     return started;
@@ -483,8 +480,10 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
 #endif
 
   std::vector<char *> process = processArguments(arguments);
-  std::FILE *capture = std::tmpfile();
-  if (capture == nullptr) {
+  std::FILE *capture = options.outputMode == ProcessOutputMode::Capture
+                           ? std::tmpfile()
+                           : nullptr;
+  if (options.outputMode == ProcessOutputMode::Capture && capture == nullptr) {
     started.startFailure = ProcessResult{
         .exitCode = 74,
         .driverDiagnostic = "gti: failed to create " + options.description +
@@ -495,14 +494,15 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
   // Keep private descriptors above stdio even if the caller closed a stream;
   // dup2 below must never overwrite the launch handshake. Captures belonging to
   // other active children must not survive a later child's exec either.
-  if (fileno(capture) < 3) {
+  if (capture && fileno(capture) < 3) {
     const int replacement = fcntl(fileno(capture), F_DUPFD_CLOEXEC, 3);
     std::fclose(capture);
     capture = replacement == -1 ? nullptr : fdopen(replacement, "w+b");
     if (!capture && replacement != -1)
       close(replacement);
   }
-  if (!capture || fcntl(fileno(capture), F_SETFD, FD_CLOEXEC) == -1) {
+  if (options.outputMode == ProcessOutputMode::Capture &&
+      (!capture || fcntl(fileno(capture), F_SETFD, FD_CLOEXEC) == -1)) {
     if (capture)
       std::fclose(capture);
     started.startFailure = ProcessResult{
@@ -564,7 +564,8 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
   // that deliberately returns 127. No shell or output parsing is involved.
   int errors[2];
   if (pipe(errors) == -1) {
-    std::fclose(capture);
+    if (capture)
+      std::fclose(capture);
     started.startFailure = ProcessResult{
         .exitCode = 127,
         .driverDiagnostic = "gti: failed to create process launch handshake"};
@@ -582,7 +583,8 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
       fcntl(errors[1], F_SETFD, FD_CLOEXEC) == -1) {
     close(errors[0]);
     close(errors[1]);
-    std::fclose(capture);
+    if (capture)
+      std::fclose(capture);
     started.startFailure =
         ProcessResult{.exitCode = 127,
                       .driverDiagnostic =
@@ -594,7 +596,8 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
     const int forkError = errno;
     close(errors[0]);
     close(errors[1]);
-    std::fclose(capture);
+    if (capture)
+      std::fclose(capture);
     started.startFailure = ProcessResult{
         .exitCode = 127,
         .driverDiagnostic = "gti: failed to start " + options.description +
@@ -613,17 +616,18 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
     };
     if (options.isolateProcessGroup && setpgid(0, 0) == -1)
       failLaunch(errno);
-    const int descriptor = fileno(capture);
-    if (descriptor == -1 || dup2(descriptor, STDOUT_FILENO) == -1 ||
-        dup2(descriptor, STDERR_FILENO) == -1) {
-      const int redirectError = errno;
-      std::fprintf(stderr, "gti: failed to redirect %s output: %s\n",
-                   options.description.c_str(), std::strerror(redirectError));
-      std::fflush(stderr);
-      failLaunch(redirectError);
-    }
-    if (descriptor > STDERR_FILENO) {
-      close(descriptor);
+    if (capture) {
+      const int descriptor = fileno(capture);
+      if (descriptor == -1 || dup2(descriptor, STDOUT_FILENO) == -1 ||
+          dup2(descriptor, STDERR_FILENO) == -1) {
+        const int redirectError = errno;
+        std::fprintf(stderr, "gti: failed to redirect %s output: %s\n",
+                     options.description.c_str(), std::strerror(redirectError));
+        std::fflush(stderr);
+        failLaunch(redirectError);
+      }
+      if (descriptor > STDERR_FILENO)
+        close(descriptor);
     }
     if (!applyChildOptions(options)) {
       failLaunch(errno);

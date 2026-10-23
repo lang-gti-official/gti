@@ -101,7 +101,10 @@ TestRunResult runTestSuites(std::span<const TestSuiteCommand> suites,
       ++summary.started;
       const auto began = std::chrono::steady_clock::now();
       auto process = startProcess(
-          arguments, {.captureSuccessfulOutput = true,
+          arguments, {.outputMode = item.legacy && options.inheritLegacyOutput
+                                        ? ProcessOutputMode::Inherit
+                                        : ProcessOutputMode::Capture,
+                      .captureSuccessfulOutput = true,
                       .description = "test case '" + item.name + "'",
                       .environment = options.environment,
                       .timeout = options.timeout,
