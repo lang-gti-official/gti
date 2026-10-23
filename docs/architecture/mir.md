@@ -2049,6 +2049,11 @@ owner's text. `TextContracts` derives those bindings in every body
   holding place records the place's texts. A loan's referent also holds the
   text of each publication its stored-dependency chain reaches, so a view
   copied through a returned reference holds it.
+- Holding is typed. A view, or a reference to one, holds owner text only
+  as a whole, and a class or payload-enum value only at a designated path.
+  An `int` read through a dependent value's `int&` accessor holds none,
+  although that accessor's loan has the publication as its stored
+  dependency.
 - Each local binding that holds a publication's text must carry a loan that
   retains it: the publication's loan, a loan whose stored-dependency chain
   reaches it, or a relay call's own read-only `Stored` loan on the same owner

@@ -982,9 +982,23 @@ private:
     std::map<MirLoanId, HeldTexts> referents;
     std::map<HirBindingId, const MirInstruction *> writers;
     bool changed = true;
-    const auto add = [&](HeldTexts &target, const HeldTexts &held) {
+    // A view, or a reference to one, holds owner text only as a whole; a
+    // class or payload-enum value only at a designated path. Other types,
+    // such as an int read through a carrier's reference, hold none.
+    const auto holds = [&](const SemanticType &type, const HeldText &text) {
+      const auto &held =
+          type.kind == SemanticType::Reference && type.arguments.size() == 1
+              ? type.arguments.front()
+              : type;
+      return text.path.empty() ? textType(held)
+                               : held.kind == SemanticType::Class ||
+                                     held.kind == SemanticType::Enum;
+    };
+    const auto add = [&](HeldTexts &target, const HeldTexts &held,
+                         const SemanticType &type) {
       for (const auto &text : held)
-        changed = target.insert(text).second || changed;
+        if (holds(type, text))
+          changed = target.insert(text).second || changed;
     };
     // A loan's referent also holds the owner text of each publication its
     // stored dependency chain reaches: a reference to a dependent view or
@@ -1032,6 +1046,8 @@ private:
                             .substitutes = text.substitutes});
         held = std::move(inner);
       }
+      std::erase_if(
+          held, [&](const HeldText &text) { return !holds(place.type, text); });
       return held;
     };
     const auto operandTexts = [&](const MirOperand &operand) {
@@ -1115,7 +1131,7 @@ private:
       }
       if (reference) {
         if (call.loan)
-          add(referents[*call.loan], held);
+          add(referents[*call.loan], held, type);
         return held;
       }
       const auto *own = call.loan ? body.findLoan(*call.loan) : nullptr;
@@ -1157,7 +1173,8 @@ private:
           case MirInstructionKind::Borrow:
             if (single && instruction.loan)
               add(referents[*instruction.loan],
-                  operandTexts(instruction.operands[0]));
+                  operandTexts(instruction.operands[0]),
+                  instruction.operands[0].type);
             break;
           case MirInstructionKind::Compute:
             if (instruction.operation == MirOperation::Identity) {
@@ -1200,17 +1217,18 @@ private:
           if (produced.empty())
             continue;
           if (instruction.result)
-            add(values[*instruction.result], produced);
+            add(values[*instruction.result], produced, instruction.info.type);
           const auto *destination =
               instruction.destination ? body.findPlace(*instruction.destination)
                                       : nullptr;
           if (!destination || !destination->projections.empty())
             continue;
           if (destination->root == MirPlaceRootKind::Binding) {
-            add(bindings[destination->binding], produced);
+            add(bindings[destination->binding], produced, destination->type);
             writers.emplace(destination->binding, &instruction);
           } else if (destination->root == MirPlaceRootKind::Temporary) {
-            add(temporaries[destination->temporary], produced);
+            add(temporaries[destination->temporary], produced,
+                destination->type);
           }
         }
         // A block parameter holds what each incoming argument holds.
@@ -1221,7 +1239,8 @@ private:
                                       index < successor->parameters.size();
                ++index)
             add(values[successor->parameters[index].value],
-                operandTexts(arguments[index]));
+                operandTexts(arguments[index]),
+                successor->parameters[index].type);
         };
         edge(block.terminator.target, block.terminator.targetArguments);
         edge(block.terminator.elseTarget, block.terminator.elseArguments);
