@@ -21428,7 +21428,7 @@ int main() {
   expect(rejects([](auto &, auto &, auto &, auto &producer) {
            producer.parameterTypes.push_back(lang::SemanticType::UInt64);
            producer.operands.push_back(
-               {.kind = lang::MirOperandKind::Literal,
+               {.kind = lang::MirOperandKind::Constant,
                 .literal = lang::Literal{std::uint64_t(1)},
                 .type = lang::SemanticType::UInt64});
          }),
