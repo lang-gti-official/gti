@@ -770,15 +770,17 @@ class ValidationChecks(unittest.TestCase):
         self.assertEqual(validation.extra_checks(plan, "linux"), [["common-check"], ["linux-check"]])
 
 
-class BatchLifecycle(Lifecycle):
-    # Inherit the existing real-Git fixture but do not duplicate all lifecycle
-    # tests under a second class in the default suite.
+class BatchLifecycle(unittest.TestCase):
+    setUp = Lifecycle.setUp
+    tearDown = Lifecycle.tearDown
+
     def fake_focused(self, command, **kwargs):
         root = Path(kwargs["cwd"])
         report_path = Path(command[command.index("--report") + 1])
         plan = json.loads(Path(command[command.index("--plan") + 1]).read_text())
         report_path.write_text(json.dumps({"head": git(root, "rev-parse", "HEAD"),
-            "scope": "focused", "build_type": "Release", "tests": validation.plan_tests(plan), "skipped": []}))
+            "scope": "focused", "build_type": "Release", "tests": validation.plan_tests(plan), "skipped": [],
+            "platform": sys.platform, "smoke": ["scalar-O0", "scalar-O3", "owners-O0", "owners-O3"]}))
 
     def component(self, name, file=None, content=None, plan=None):
         tree = self.root / name
@@ -993,11 +995,4 @@ class BatchLifecycle(Lifecycle):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        unittest.main()
-    # BatchLifecycle reuses fixture helpers, not the parent's full test list.
-    suite = unittest.defaultTestLoader.loadTestsFromTestCase(Lifecycle)
-    suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(ValidationChecks))
-    suite.addTests(BatchLifecycle(name) for name in sorted(BatchLifecycle.__dict__) if name.startswith("test_batch_"))
-    result = unittest.TextTestRunner(verbosity=1).run(suite)
-    raise SystemExit(not result.wasSuccessful())
+    unittest.main()
