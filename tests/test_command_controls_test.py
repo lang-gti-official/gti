@@ -112,7 +112,7 @@ extern "C" { int raise(int signal); int usleep(uint32_t duration); }
         events = run(expected=23)
         assert events[-1]["discovered"] == events[-1]["completed"] == 1
         assert next(e for e in events if e["event"] == "test_finished")["status"] == "failed"
-        source.write_text('#include <std/string>\nint main() {\n'
+        source.write_text('#include <std/string>\n#include <std/panic>\nint main() {\n'
                           '  std::println("legacy-stdout");\n'
                           '  std::panic("legacy-stderr");\n}\n')
         human = run(expected=70, structured=False)
