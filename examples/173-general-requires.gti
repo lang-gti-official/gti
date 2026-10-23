@@ -87,7 +87,39 @@ T twice<T>(T value) requires integer_type<T> && transferable_value<T> {
 
 enum class status : uint8_t { ready = 0, busy = 1 };
 
+namespace query_hygiene {
+  mut int observed = 0;
+  #macro inspect(bool query) {
+    bool subject = false;
+    if (query) { observed += 1; }
+  }
+  #macro nested(bool query) {
+    bool subject = false;
+    inspect(query);
+  }
+  int check() {
+    int subject = 7;
+    // The macro's later bool local must not capture this caller's int local.
+    inspect(requires { { subject + subject } -> int; });
+    inspect(requires { { subject } -> bool; }); // false, no increment
+    inspect(requires(int& subject) { { subject + subject } -> int; });
+    nested(requires { { subject + subject } -> int; });
+    nested(requires(int& subject) { { subject + subject } -> int; });
+    inspect(requires(int& value) {
+      { (requires { { value + value } -> int; }) } -> bool;
+    });
+    inspect(requires {
+      { ([]() -> int { int subject = 2; return subject; })() } -> int;
+    });
+    inspect(requires(int& value) {
+      { ([&value]() -> int { return value; })() } -> int;
+    });
+    return observed == 7 ? 0 : 1;
+  }
+}
+
 int main() {
+  if (query_hygiene::check() != 0) { return 4; }
   {
     DefaultResource resource = default_from_fact<DefaultResource>();
     DefaultHolder<DefaultResource> holder{};

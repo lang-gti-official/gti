@@ -5114,9 +5114,11 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
   if (const Symbol *test = resolveGeneratedTestReference(NamePath(name)))
     return test;
   const auto *context = macroContext(name);
-  const auto [begin, end] = macroLocalScopeRange(name);
-  for (std::size_t index = end; index > begin; --index) {
+  const auto localScopes = macroLocalScopeRange(name);
+  for (std::size_t index = scopes.size(); index > 0; --index) {
     const auto &scope = scopes[index - 1];
+    if (!localScopes.contains(index - 1, scope))
+      continue;
     if (const auto found = scope.find(name.lexeme); found != scope.end()) {
       return &found->second;
     }
@@ -5150,9 +5152,11 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
 }
 
 auto SemanticVisitor::Impl::resolveMutable(const Token &name) -> Symbol * {
-  const auto [begin, end] = macroLocalScopeRange(name);
-  for (std::size_t index = end; index > begin; --index) {
+  const auto localScopes = macroLocalScopeRange(name);
+  for (std::size_t index = scopes.size(); index > 0; --index) {
     auto &scope = scopes[index - 1];
+    if (!localScopes.contains(index - 1, scope))
+      continue;
     if (const auto found = scope.find(name.lexeme); found != scope.end()) {
       return &found->second;
     }

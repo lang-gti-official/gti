@@ -269,6 +269,13 @@ permits unsafe operations in that query and retains the unsafe obligation when
 the resulting operation is used in a generic body. An enclosing unsafe block
 does not silently authorize an ordinary requirement.
 
+A requirement expression supplied as a typed-macro argument keeps the caller's
+lexical lookup domain. Synthetic query parameters are local to the query; they
+do not expose intervening macro-local variables or leak into a separately
+analysed function or lambda scope.
+The current typed-macro body profile does not yet admit a directly written
+requirement expression; a caller may supply the query as a Boolean argument.
+
 For an open generic body, direct bound-operand operator/call requirements with
 a reference receiver and direct `T(arguments...)` construction requirements
 supply exact provisional

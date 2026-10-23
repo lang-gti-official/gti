@@ -84,6 +84,11 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
       std::make_unique<Impl>(target, sourceGraph, false, nullptr, sources,
                              RawPointerAuditMode::Off, false, trustedBodies);
   static_cast<RequestSessionContext &>(worker->requestSession) = requestSession;
+  worker->macroLookupBase = this;
+  worker->nextExpansion = nextExpansion;
+  worker->macroExpansionDepth = macroExpansionDepth;
+  worker->macroExpandedBodies = macroExpandedBodies;
+  worker->macroActiveBodies = macroActiveBodies;
   worker->semanticModel.beginSpeculativeDelta(semanticModel);
   worker->semanticModel.setFunctionDemandSink(nullptr);
   worker->semanticModel.setCallJournal(nullptr);
@@ -346,6 +351,30 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
   worker->prepareRequirementLookup(lookupScope, sourceUnitFor(query.keyword()));
   worker->typeParameterScopes.push_back(std::move(bindings));
   worker->beginScope();
+  if (!query.parameters().empty() && macroContext(query.keyword())) {
+    // Caller syntax retains its independent macro lookup domain. Admit only
+    // the query's newly introduced frame in addition to that domain's original
+    // caller range, never the macro-local frames between them. Frame identity
+    // prevents this permission from surviving a fresh callable scope stack.
+    auto &scope = worker->scopes.back();
+    scope.identity = std::make_shared<ScopeIdentity>();
+    const MacroLookupContext::ScopeOverlay overlay{worker->scopes.size() - 1,
+                                                   scope.identity};
+    AstCloneOptions inspection;
+    inspection.token = [&](const Token &token) {
+      if (const auto *context = worker->macroContext(token)) {
+        MacroLookupContext local = *context;
+        if (std::none_of(local.queryScopes.begin(), local.queryScopes.end(),
+                         [&](const auto &entry) {
+                           return entry.identity == overlay.identity;
+                         }))
+          local.queryScopes.push_back(overlay);
+        worker->macroLookup.insert_or_assign(token.expansion, std::move(local));
+      }
+      return token;
+    };
+    (void)cloneExpr(*query.expression(), 0, inspection);
+  }
   worker->unsafeDepth = query.unsafeKeyword() ? 1 : 0;
   worker->valueFlow.extendBody(worker->catalog);
   for (std::size_t index = 0; index < query.parameters().size(); ++index) {
