@@ -2551,8 +2551,8 @@
       }
     },
     "174-typed-macros.gti": {
-      "declarations": 1485,
-      "bodies": 153,
+      "declarations": 1491,
+      "bodies": 156,
       "generated_items": 95,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2567,8 +2567,8 @@
     }
   },
   "totals": {
-    "declarations": 178685,
-    "bodies": 23585,
+    "declarations": 178691,
+    "bodies": 23588,
     "generated_items": 14850
   }
 }
