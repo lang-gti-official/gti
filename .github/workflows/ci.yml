@@ -48,7 +48,7 @@ jobs:
           python3 tests/preview_workflow_test.py
           python3 tests/build_window_test.py
           python3 tests/bounded_log_test.py
-          python3 tests/release_version_test.py
+          python3 tests/release_version_test.py scripts/check_release_version.py
           python3 tests/ci_resources_test.py scripts/configure_ci_resources.sh
 
   formatting:

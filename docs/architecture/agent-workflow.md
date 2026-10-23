@@ -497,6 +497,12 @@ These test/target names illustrate the schema; select real exact CTest names.
 T2/T3 require `broader`. `reproduction` may instead contain exactly one
 `exception` explanation. Optional `additional_checks` is a list of argv arrays
 for the applicable non-CTest tooling, native/platform or performance gates.
+Optional `platform_tests` maps declared platforms to test names that only apply
+on those hosts (a name appearing there is scoped even when also in `regressions`).
+`platform_checks` similarly maps platforms to extra argv commands. This keeps,
+for example, mandatory macOS native tests out of Linux's required inventory
+without weakening the macOS obligation. Admission itself must run a regression
+on a declared platform. All unscoped tests/checks remain required everywhere.
 Do not include credentials. Every declared gate is executed; plans are not
 permission to omit required checks. `platforms` lists hosts on which the
 combined full campaign must pass; CI's Linux native/sanitizer jobs are additional

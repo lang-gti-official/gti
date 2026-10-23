@@ -353,6 +353,14 @@ class Lifecycle(unittest.TestCase):
         with self.assertRaisesRegex(Error, "protection --configure"):
             self.flow.protection()
 
+    def test_finish_retry_does_not_rewrite_unchanged_ci_routing_body(self):
+        self.ready()
+        with unittest.mock.patch.object(self.api, "request", wraps=self.api.request) as request:
+            self.flow.finish("task", "Stable review description", pr_only=True)
+            self.flow.finish("task", "Stable review description", pr_only=True)
+        edits = [call for call in request.call_args_list if call.args[:2] == ("PATCH", "/pulls/1")]
+        self.assertEqual(len(edits), 1)
+
     def test_sync_reports_a_missing_or_failing_mirror_without_blocking(self):
         git(self.primary, "remote", "remove", module.MIRROR_REMOTE)
         self.ready()
@@ -609,6 +617,8 @@ class Lifecycle(unittest.TestCase):
                 time.sleep(0.02)
             self.assertEqual(len(self.flow.window.holders("suite")), 1)
             self.assertEqual(self.flow.load("task")["phase"], "verifying")
+            with self.assertRaisesRegex(Error, "already running"):
+                self.flow.verify("task", [[sys.executable, "-c", "raise SystemExit(99)"]])
             records = {s["task"]: s for s in self.flow.status()}
             self.assertEqual(records["task"]["phase"], "verifying")
             (other / "other.txt").write_text("peer\n")
@@ -746,6 +756,19 @@ class ValidationChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             validation.admission("automation", results)
 
+    def test_platform_scoped_gates_keep_other_hosts_obligations(self):
+        plan = batch_plan(platforms=["darwin", "linux"],
+                          platform_tests={"darwin": ["native_mac"], "linux": ["native_linux"]},
+                          additional_checks=[["common-check"]],
+                          platform_checks={"darwin": [["mac-check"]], "linux": [["linux-check"]]})
+        validation.validate_plan(plan)
+        self.assertIn("native_mac", validation.plan_tests(plan, "darwin"))
+        self.assertNotIn("native_mac", validation.plan_tests(plan, "linux"))
+        self.assertIn("native_linux", validation.plan_tests(plan, "linux"))
+        self.assertIn("regression", validation.plan_tests(plan, "linux"))
+        self.assertEqual(validation.extra_checks(plan, "darwin"), [["common-check"], ["mac-check"]])
+        self.assertEqual(validation.extra_checks(plan, "linux"), [["common-check"], ["linux-check"]])
+
 
 class BatchLifecycle(Lifecycle):
     # Inherit the existing real-Git fixture but do not duplicate all lifecycle
@@ -799,7 +822,7 @@ class BatchLifecycle(Lifecycle):
         with self.assertRaisesRegex(Error, "Full combined"):
             self.flow.finish("combined", "Must not merge focused-only batch")
         state = self.bind_full(state)
-        self.flow.protection(True)
+        self.flow.protection(True, batch_gate=True)
         self.flow.finish("combined", "Full combined tests passed")
         self.assertTrue(all(self.flow.ancestor(head, git(self.primary, "rev-parse", "HEAD")) for head in heads))
         self.assertEqual(self.flow.load("combined")["phase"], "synced")
@@ -888,8 +911,90 @@ class BatchLifecycle(Lifecycle):
         self.assertEqual(result["required_status_checks"]["checks"], [{"context": "existing", "app_id": 42}])
         self.assertEqual(result["required_pull_request_reviews"]["required_approving_review_count"], 2)
 
+    def test_batch_manifest_requires_ancestry_and_becomes_immutable(self):
+        state = self.combined()
+        root = self.root / "combined"
+        head = git(root, "rev-parse", "HEAD")
+        rows = validation.manifests(root, state["batch"]["base"], head)
+        self.assertEqual([row["task"] for row in rows], ["one", "two"])
+        path = root / state["batch"]["manifest"]
+        document = json.loads(path.read_text())
+        document["members"][0]["head"] = "0" * 40
+        path.write_text(json.dumps(document))
+        git(root, "add", state["batch"]["manifest"])
+        git(root, "commit", "-m", "forge unrelated source identity")
+        with self.assertRaises(ValueError):
+            validation.manifests(root, head, "HEAD")
+        with self.assertRaises(subprocess.CalledProcessError):
+            validation.manifests(root, state["batch"]["base"], "HEAD")
+
+    def test_batch_unpublished_member_source_cannot_be_silently_left_behind(self):
+        self.component("one")
+        root = self.root / "one"
+        (root / "one.txt").write_text("unpublished improvement")
+        git(root, "add", "one.txt")
+        git(root, "commit", "-m", "local source")
+        with self.assertRaisesRegex(Error, "unpublished commits"):
+            Batches(self.flow).prepare("combined", ["one"], self.root / "combined")
+        self.assertTrue((root / "one.txt").exists())
+
+    def test_batch_full_runner_executes_unrelated_canary_as_well_as_required_checks(self):
+        root = self.primary
+        (root / "scripts").mkdir()
+        (root / "scripts/build_window.py").write_bytes((ROOT / "scripts/build_window.py").read_bytes())
+        canary = root / "unrelated-ran"
+        cmake = ('cmake_minimum_required(VERSION 3.20)\nproject(FakeCompiler NONE)\n'
+                 'enable_testing()\nadd_custom_target(gti)\nadd_custom_target(gti_runtime)\n'
+                 'add_test(NAME compiler_pipeline COMMAND "' + sys.executable + '" -c "pass")\n'
+                 'add_test(NAME regression COMMAND "' + sys.executable + '" -c "pass")\n'
+                 'add_test(NAME unrelated COMMAND "' + sys.executable + '" -c '
+                 '"import pathlib; pathlib.Path(r\'' + str(canary) + '\').touch()")\n')
+        (root / "CMakeLists.txt").write_text(cmake)
+        build = root / "build"
+        subprocess.run(["cmake", "-S", str(root), "-B", str(build), "-DCMAKE_BUILD_TYPE=Release"],
+                       check=True, capture_output=True)
+        with (root / "full.log").open("w") as log, unittest.mock.patch.object(validation, "smoke", return_value=["scalar-O0", "scalar-O3", "owners-O0", "owners-O3"]):
+            report = validation.run(root, build, {"compiler_pipeline", "regression"}, True, log=log, junit=root / "full.xml")
+        self.assertTrue(canary.exists())
+        self.assertEqual(report["tests"], ["compiler_pipeline", "regression", "unrelated"])
+        self.assertTrue((root / "full.xml").is_file())
+
+    def test_batch_remote_acceptance_requires_fixed_full_runner_and_real_summary(self):
+        state = self.combined()
+        base = git(self.primary, "rev-parse", "origin/main")
+        head = git(self.root / "combined", "rev-parse", "HEAD")
+        report = {"head": head, "scope": "full", "build_type": "Release", "platform": sys.platform,
+                  "tests": validation.plan_tests(batch_plan()), "skipped": [],
+                  "smoke": ["scalar-O0", "scalar-O3", "owners-O0", "owners-O3"]}
+        directory = self.root / "remote-results"
+        directory.mkdir()
+
+        def verified(task, steps, remote=False):
+            self.assertTrue(remote)
+            state = self.flow.load(task)
+            state["verified"] = {"head": head, "base": base, "checks": steps,
+                                 "remote": {"directory": str(directory)}}
+            self.flow.save(state, "ready")
+            (directory / "full.log").write_text("GTI_VALIDATION_RESULT=" + json.dumps(report) + "\n")
+            return state
+
+        def plan(arguments):
+            return [{"name": "combined", "kind": "suite", "cwd": "source", "argv":
+                     ["python3", "scripts/validation_checks.py", "full", "--build", "{build}", *arguments]}]
+
+        batches = Batches(self.flow)
+        with unittest.mock.patch.object(self.flow, "verify", side_effect=verified) as execute:
+            for arguments in ([], ["--base", base, "--base", head], ["--base", head], ["--base", base, "-R", "only-one"]):
+                with self.assertRaisesRegex(Error, "Remote batch plans"):
+                    batches.verify("combined", remote_steps=plan(arguments))
+            execute.assert_not_called()
+            batches.verify("combined", remote_steps=plan(["--base", base]))
+        self.assertEqual(self.flow.load("combined")["batch_verified"][sys.platform], {"head": head, "base": base})
+
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        unittest.main()
     # BatchLifecycle reuses fixture helpers, not the parent's full test list.
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(Lifecycle)
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(ValidationChecks))

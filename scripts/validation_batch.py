@@ -9,6 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 from datetime import datetime, timezone
 
@@ -59,6 +60,8 @@ class Batches:
                 checks.validate_plan(plan, paths)
             except ValueError as error:
                 raise WorkflowError(str(error)) from error
+            if sys.platform not in plan["platforms"] or not set(plan["regressions"]) & set(checks.plan_tests(plan)):
+                raise WorkflowError("Admission must run on a declared platform with its regression enabled")
             if "revision" in plan["reproduction"] and not self.flow.ancestor(plan["reproduction"]["revision"], head):
                 raise WorkflowError("The original-failure revision is not an ancestor of this fix")
             state.pop("verified", None)
@@ -99,7 +102,14 @@ class Batches:
                 log = Path(reproduction["log"])
                 if not log.is_file():
                     raise WorkflowError("Retain the original failure log before admission")
-                reproduction["log"] = "sha256:" + hashlib.sha256(log.read_bytes()).hexdigest()
+                digest = hashlib.sha256()
+                with log.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                retained = directory / "original-failure.log"
+                if log.resolve() != retained.resolve():
+                    shutil.copyfile(log, retained)
+                reproduction["log"] = "sha256:" + digest.hexdigest()
             state["admission"] = {"head": head, "base": base, "plan": portable,
                                   "report": str(report_file), "at": self.flow.now()}
             self.flow.api.request("PATCH", f"/pulls/{state['pr']}", {
@@ -128,37 +138,42 @@ class Batches:
         # retains the reservation and checkout, so a second agent cannot start
         # a duplicate full campaign while conflicts await resolution.
         with self.flow.lock():
-            active = self.status()["active"]
-            if any(row["task"] != task for row in active):
+            snapshots = [self.flow.load(name) for name in selected]
+        members = []
+        main = self.flow.fetch()
+        # Network reads/fetches for up to eight PRs must not hold the shared
+        # metadata lock and block unrelated checkpoints for their duration.
+        for member in snapshots:
+            name = member["task"]
+            admission = member.get("admission", {})
+            pr = self.flow.pull(member)
+            head = pr["head"]["sha"]
+            if (member.get("integration_batch") not in {None, task} or not admission or
+                    member["phase"] != "ready-for-integration" or member.get("published_head") != head or
+                    admission.get("head") != head or pr["state"] != "open" or not pr.get("draft") or
+                    self.flow.ancestor(head, main)):
+                raise WorkflowError(f"{name} is no longer an eligible exact published component")
+            member_root = self.flow.tree(member)
+            clean(member_root)
+            if git(member_root, "rev-parse", "HEAD") != head:
+                raise WorkflowError("Component acquired unpublished commits; checkpoint and re-enroll it")
+            git(self.flow.repo, "fetch", "origin", member["branch"])
+            if git(self.flow.repo, "rev-parse", "FETCH_HEAD") != head:
+                raise WorkflowError("Component branch changed during selection")
+            members.append({"task": name, "pr": member["pr"], "head": head, "plan": admission["plan"]})
+        with self.flow.lock():
+            if any(row["task"] != task for row in self.status()["active"]):
                 raise WorkflowError("Another integration batch is active; keep components ready and inspect batch status")
-            existing = self.flow.file(task).exists()
-            state = self.flow.load(task) if existing else None
+            for before in snapshots:
+                if self.flow.load(before["task"]) != before:
+                    raise WorkflowError("Component admission changed during preparation; retry explicit selection")
+            state = self.flow.load(task) if self.flow.file(task).exists() else None
             if state and (state.get("batch", {}).get("tasks") != selected or state["worktree"] != str(Path(worktree).resolve())):
                 raise WorkflowError("Resume a batch with its original member list and worktree")
-            members = []
-            main = self.flow.fetch()
-            for name in selected:
-                member = self.flow.load(name)
-                admission = member.get("admission", {})
-                pr = self.flow.pull(member)
-                head = pr["head"]["sha"]
-                if (member.get("integration_batch") not in {None, task} or not admission or
-                        member["phase"] != "ready-for-integration" or member.get("published_head") != head or
-                        admission.get("head") != head or pr["state"] != "open" or not pr.get("draft") or
-                        self.flow.ancestor(head, main)):
-                    raise WorkflowError(f"{name} is no longer an eligible exact published component")
-                member_root = self.flow.tree(member)
-                clean(member_root)
-                if git(member_root, "rev-parse", "HEAD") != head:
-                    raise WorkflowError("Component acquired unpublished commits; checkpoint and re-enroll it")
-                git(self.flow.repo, "fetch", "origin", member["branch"])
-                if git(self.flow.repo, "rev-parse", "FETCH_HEAD") != head:
-                    raise WorkflowError("Component branch changed during selection")
-                members.append({"task": name, "pr": member["pr"], "head": head, "plan": admission["plan"]})
             if state is None:
                 state = self.flow.start(task, "Integrate validated compiler fixes: " + ", ".join(selected),
                                         worktree, "codex/" + task)
-                state["batch"] = {"tasks": selected, "members": members, "base": main,
+                state["batch"] = {"tasks": selected, "members": members, "base": state["base"],
                                   "manifest": checks.BATCH_DIRECTORY + task + ".json"}
                 self.flow.save(state, "preparing-batch")
             elif state["batch"]["members"] != members:
@@ -187,6 +202,9 @@ class Batches:
                 self.flow.save(state, "batch-conflict")
                 raise WorkflowError(f"Resolve and commit {member['task']}'s conflict in {root}, then batch resume {task}; no work was discarded")
         destination = root / batch["manifest"]
+        if (not destination.resolve().is_relative_to(root) or destination.is_symlink() or
+                any(parent.is_symlink() for parent in destination.parents if parent != root and root in parent.parents)):
+            raise WorkflowError("Batch records must be ordinary paths inside their candidate")
         destination.parent.mkdir(parents=True, exist_ok=True)
         manifest = {"schema": 1, "base": batch["base"], "members": batch["members"]}
         contents = json.dumps(manifest, indent=2) + "\n"
@@ -201,6 +219,8 @@ class Batches:
         state = self.flow.load(task)
         if not state.get("batch"):
             raise WorkflowError("Only a prepared batch can use full batch verification")
+        if state["phase"] == "verifying":
+            raise WorkflowError("This batch already has a verification operation; resume its recorded session/run instead of submitting another")
         self.validate_members(state)
         if remote_steps is not None:
             # The worker owns its host's suite window. Require the fixed full
@@ -208,18 +228,26 @@ class Batches:
             rows = remote_steps.get("steps", remote_steps) if isinstance(remote_steps, dict) else remote_steps
             candidates = [row.get("argv", row.get("command")) for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
             base = self.flow.fetch()
-            if not any(isinstance(command, list) and len(command) >= 4 and command[1:3] == ["scripts/validation_checks.py", "full"]
-                       and "--base" in command and command[command.index("--base") + 1:command.index("--base") + 2] == [base]
-                       for command in candidates):
+            def full_command(command):
+                if not isinstance(command, list) or command[1:3] != ["scripts/validation_checks.py", "full"]:
+                    return False
+                arguments = command[3:]
+                keys = arguments[::2]
+                if len(arguments) % 2 or len(set(keys)) != len(keys) or set(keys) - {"--build", "--jobs", "--base"}:
+                    return False
+                values = dict(zip(keys, arguments[1::2]))
+                return values.get("--base") == base and bool(values.get("--build"))
+            if not any(full_command(command) for command in candidates):
                 raise WorkflowError("Remote batch plans must execute scripts/validation_checks.py full --base <current-main-sha>")
             verified = self.flow.verify(task, remote_steps, remote=True)
             # Remote run logs contain the fixed runner's structured summary.
             directory = Path(verified["verified"]["remote"]["directory"])
             summaries = []
             for log in directory.rglob("*.log"):
-                for line in log.read_text(errors="replace").splitlines():
-                    if line.startswith("GTI_VALIDATION_RESULT="):
-                        summaries.append(json.loads(line.partition("=")[2]))
+                with log.open(errors="replace") as stream:
+                    for line in stream:
+                        if line.startswith("GTI_VALIDATION_RESULT="):
+                            summaries.append(json.loads(line.partition("=")[2]))
             if len(summaries) != 1:
                 raise WorkflowError("Remote full-suite summary is missing or ambiguous")
             report = summaries[0]
@@ -239,7 +267,7 @@ class Batches:
 
     def accept_report(self, task, state, report):
         proof = state["verified"]
-        required = {name for member in state["batch"]["members"] for name in checks.plan_tests(member["plan"])}
+        required = {name for member in state["batch"]["members"] for name in checks.plan_tests(member["plan"], report.get("platform"))}
         if (report.get("head") != proof["head"] or report.get("scope") != "full" or
                 report.get("build_type") not in checks.OPTIMIZED or not report.get("tests") or
                 not required.issubset(report["tests"]) or required.intersection(report.get("skipped", [])) or
@@ -258,9 +286,14 @@ class Batches:
         if manifest != {"schema": 1, "base": state["batch"]["base"], "members": state["batch"]["members"]}:
             raise WorkflowError("Committed batch membership differs from the selected records")
         for member in state["batch"]["members"]:
-            pr = self.flow.pull(self.flow.load(member["task"]))
+            selected = self.flow.load(member["task"])
+            pr = self.flow.pull(selected)
             if pr["head"]["sha"] != member["head"] or pr["state"] != "open":
                 raise WorkflowError("Component PR changed or closed after batch preparation")
+            member_root = self.flow.tree(selected)
+            clean(member_root)
+            if git(member_root, "rev-parse", "HEAD") != member["head"]:
+                raise WorkflowError("Component acquired unpublished commits after batch preparation")
             if not self.flow.ancestor(member["head"], git(root, "rev-parse", "HEAD")):
                 raise WorkflowError("Batch no longer contains a selected source commit")
 
@@ -271,6 +304,11 @@ class Batches:
         identity = {key: proof[key] for key in ("head", "base")} if proof else None
         if not proof or any(state.get("batch_verified", {}).get(platform) != identity for platform in required):
             raise WorkflowError("Full combined validation is missing for a required platform or current head/base")
+        rule = self.flow.protection()
+        contexts = set(rule["required_status_checks"].get("contexts", []))
+        contexts.update(check["context"] for check in rule["required_status_checks"].get("checks", []))
+        if "Validation gate" not in contexts:
+            raise WorkflowError("Activate the published Validation gate before merging batches: protection --configure --batch-gate")
 
     def release(self, task, reason):
         with self.flow.lock():

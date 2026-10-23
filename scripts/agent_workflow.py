@@ -407,6 +407,8 @@ class Workflow:
         """
         with self.lock():
             state = self.load(task)
+            if state["phase"] == "verifying":
+                raise WorkflowError("Verification is already running; resume its existing session or remote run instead of submitting a duplicate")
             if state["phase"] in {"merged", "synced", "completed", "abandoned"} or (state.get("pr") and self.pull(state)["state"] != "open"):
                 raise WorkflowError("Task is integrated or closed; do not validate it as new work")
             root = self.tree(state)
