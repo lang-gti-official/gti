@@ -532,9 +532,9 @@ class Workflow:
                     ((rule or {}).get("required_conversation_resolution") or {}).get("enabled", False)),
                 "block_creations": False,
                 "lock_branch": False}
-            if advisory_ci:
-                payload["required_status_checks"]["checks"] = []
-            elif checks.get("checks"):
+            # GitHub accepts contexts OR checks, not both. Empty contexts
+            # clear all required checks, including app-pinned entries.
+            if checks.get("checks") and not advisory_ci:
                 payload["required_status_checks"]["checks"] = checks["checks"]
             rule = self.api.request("PUT", "/branches/main/protection", payload)
 
