@@ -2445,6 +2445,20 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
           relayConstructorTextField(
               constructedType, *selected.constructor->declaration, input,
               *argument, textOrigins, contextualConstruction);
+        // A fresh value this function returns relays a class formal its
+        // constructor stores whole in a field (L-OWN-02 phase 3).
+        if (input.wholeValue && input.payload == 0 && !potentialPackView &&
+            index < arguments.size() && construction != nullptr &&
+            initializer->target.name.segments.size() == 1)
+          if (const ClassInfo *owner = classInfo(constructedType)) {
+            const auto member =
+                owner->members.find(initializer->target.name.last().lexeme);
+            if (member != owner->members.end())
+              (void)relayReturnedTextFormal(
+                  *construction, constructedType,
+                  selected.constructor->declaration, *argument,
+                  toolingSymbolFor(member->second.symbol));
+          }
         continue;
       }
       const bool conditionalText =

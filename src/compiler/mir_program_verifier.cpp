@@ -246,10 +246,20 @@ dependentTextCallPublication(const MirInstruction &instruction,
       instruction.borrowFields.size() != 1)
     return false;
   const auto &mapping = instruction.borrowFields.front();
+  // A class formal returned whole nests the argument's path under the field
+  // (L-OWN-02 phase 3); a text formal fills the field itself.
+  const bool whole =
+      !mapping.sourceFields.empty() &&
+      mapping.parameter < target.parameterTypes.size() &&
+      target.parameterTypes[mapping.parameter].kind == SemanticType::Class &&
+      mapping.resultFields.size() == mapping.sourceFields.size() + 1 &&
+      std::equal(mapping.sourceFields.begin(), mapping.sourceFields.end(),
+                 mapping.resultFields.begin() + 1);
   return mapping.origin == BorrowOriginKind::Argument &&
          mapping.parameter == instruction.borrowArgument &&
-         mapping.globalRoot == 0 && mapping.sourceFields.empty() &&
-         mapping.resultFields.size() == 1 &&
+         mapping.globalRoot == 0 &&
+         (whole ||
+          (mapping.sourceFields.empty() && mapping.resultFields.size() == 1)) &&
          mapping.access == AccessMode::ReadOnly &&
          mapping.resultConditions.empty() && mapping.sourceConditions.empty() &&
          std::binary_search(

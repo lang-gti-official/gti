@@ -6095,8 +6095,12 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     else
       break;
   }
+  // So does a reference relay to a nested text class: a dependent place
+  // other than a named value is observed, not copied out.
   if (ownerDependentValue && !contextualText &&
-      exprAs<Get>(source) != nullptr) {
+      (exprAs<Get>(source) != nullptr ||
+       (exprAs<Variable>(source) == nullptr &&
+        initializerInfo->category == ValueCategory::Place))) {
     consumeTextDependentValue(initializer);
     report(expressionToken(initializer),
            "This field holds dynamic text from a local owner; a switch on "
