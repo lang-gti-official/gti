@@ -546,6 +546,8 @@ private:
                   SemanticType returnType,
                   std::vector<SemanticType> parameterTypes,
                   std::optional<SourceSpan> site = std::nullopt) {
+    if (declaration.deferredEvaluation)
+      return 0;
     if (constantClosure &&
         (declaration.declaration == nullptr ||
          !declaration.declaration->isConstexpr() ||
@@ -3446,6 +3448,18 @@ private:
       return std::nullopt;
     }
     if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
+      if (const Stmt *expanded = model.findDeferredExpansion(*expression)) {
+        std::vector<HirStatementId> statements;
+        if (const auto child = lowerStatement(expanded, model, classArguments,
+                                              classValueArguments, body))
+          statements.push_back(*child);
+        // Preserve both endpoint domains. The caller statement can end an
+        // existing loan; the checked expansion has its own nested endpoints.
+        return appendStatement({.kind = HirStatementKind::Block,
+                                .source = statement,
+                                .statements = std::move(statements)},
+                               body);
+      }
       return appendStatement(
           {.kind = HirStatementKind::Expression,
            .source = statement,
@@ -4018,6 +4032,22 @@ private:
             instanceProvider->requiresActiveCleanupFor(type));
   }
 
+  [[nodiscard]] static bool classAssignmentResult(const HirValue &value) {
+    switch (value.kind) {
+    case HirValueKind::Assignment:
+    case HirValueKind::MemberSet:
+    case HirValueKind::IndexSet:
+    case HirValueKind::DereferenceSet:
+    case HirValueKind::PlaceSet:
+      return value.info.type.kind == SemanticType::Class &&
+             value.info.category == ValueCategory::Value &&
+             value.info.traits.copyable &&
+             !value.info.traits.containsBorrowedState;
+    default:
+      return false;
+    }
+  }
+
   [[nodiscard]] std::optional<std::vector<HirCallArgument>> orderedArguments(
       const std::vector<HirValueId> &arguments,
       const std::vector<SemanticType> &parameterTypes, const HirBody &body,
@@ -4088,6 +4118,10 @@ private:
         return std::nullopt;
       } else if (input->info.category == ValueCategory::Place &&
                  input->info.traits.copyable) {
+        kind = HirCallInputKind::CopyValue;
+      } else if (classAssignmentResult(*input)) {
+        // The result of a built-in class assignment is a copy of its
+        // committed destination; passing it by value stages that copy.
         kind = HirCallInputKind::CopyValue;
       } else if (input->info.category == ValueCategory::Value &&
                  input->info.traits.movable &&
@@ -5195,6 +5229,11 @@ private:
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
     ensurePlaceDomain(body);
+    if (const Token *caller = model.findDeferredDefault(expression);
+        caller && !activeDefaultArguments.contains(&expression))
+      return lowerDefaultArgument(&expression, model, classArguments,
+                                  classValueArguments, body,
+                                  sourceLocationAt(*caller));
     if (contextualConstructionInner != &expression) {
       if (const ResolvedConstructionInfo *construction =
               model.findContextualConstruction(expression)) {
