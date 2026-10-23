@@ -1153,6 +1153,11 @@ add_test(NAME passive_function_item_class_runtime
                  "${PROJECT_SOURCE_DIR}/tests/passive_function_item_class_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(passive_function_item_class_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME passive_class_move_and_copy_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/passive_class_move_and_copy_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(passive_class_move_and_copy_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME view_fields_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/view_fields_runtime_test.py"
@@ -4784,6 +4789,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(lsp_configuration PROPERTIES TIMEOUT 120)
+    add_test(
+      NAME lsp_test_target
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_test_target_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(lsp_test_target PROPERTIES TIMEOUT 90)
     find_program(GTI_NEOVIM_EXECUTABLE nvim)
     if(GTI_NEOVIM_EXECUTABLE)
       add_test(
