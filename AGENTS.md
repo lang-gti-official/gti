@@ -40,6 +40,14 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
 
 ## Implementation Task Lifecycle
 
+- At the start of each new task, rename your own chat's sidebar title to a
+  short, specific description of the current work; update it when the task
+  changes. Use the available chat-title control (for example,
+  `set_thread_title`, targeting the current chat). On successful completion,
+  rename it `Complete — <task>`. Pending validation, a handoff, a blocker or
+  cancellation is not completion: use an accurate status instead. If this
+  client has no title control, state that limitation in the task update and
+  continue; never claim the sidebar was renamed or rename another agent's chat.
 - Apply [agent-workflow](.codex/skills/agent-workflow/SKILL.md) to implementation
   tasks. The owner's standing authorization is to publish task checkpoints,
   open/update the task PR, merge validated in-scope work through that PR, sync
