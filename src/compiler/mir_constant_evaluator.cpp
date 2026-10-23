@@ -1865,11 +1865,15 @@ private:
          std::optional<Location> receiverOrigin = {},
          std::optional<Location> *referenceResult = nullptr) {
     const auto *function = program.findFunctionInstance(id);
+    // A constant view holds its own text, so a by-value view's runtime
+    // borrow summary, such as a relayed text field (L-OWN-02), does not
+    // constrain its evaluation.
     if (function == nullptr || !function->constexprFunction ||
         function->requiresUnsafe || function->virtualMethod ||
         function->definitionKind != MirDefinitionKind::Source ||
         (function->returnBorrowOrigin != BorrowOriginKind::None &&
-         function->returnType.kind != SemanticType::Reference) ||
+         function->returnType.kind != SemanticType::Reference &&
+         function->returnType != SemanticType::StringView) ||
         function->entryKind != ProgramEntryKind::None ||
         function->linkage != LanguageLinkage::Gti ||
         (!observedStorageType(function->returnType) &&
