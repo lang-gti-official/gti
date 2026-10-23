@@ -1,6 +1,7 @@
 #include "gti/language_queries.h"
 
 #include "gti/lexer.h"
+#include "language_snippets.h"
 #include "semantic_spelling.h"
 
 #include <algorithm>
@@ -1303,12 +1304,29 @@ public:
     options.cache = input.cache;
     options.sourceGenerations = input.sourceGenerations;
     options.sourceDigests = input.sourceDigests;
-    FrontendResult snapshot = Frontend(options).analyze(
+    const FrontendResult snapshot = Frontend(options).analyze(
         input.entryPath, input.source, input.preludePaths,
         input.sourceOverrides, input.standardLibraryRoots,
         input.packageSourceRoots);
     const std::optional<SemanticCompletionContext> &context =
         snapshot.semantics.completionContext();
+    const SourceUnit *completionUnit =
+        snapshot.sourceGraph.findUnit(snapshot.sourceGraph.entryUnit());
+    const bool inactiveSyntax =
+        input.includeSnippets && snapshot.syntaxCompletion && completionUnit &&
+        std::any_of(
+            completionUnit->inactiveSpans.begin(),
+            completionUnit->inactiveSpans.end(), [&](const SourceSpan &span) {
+              return span.start <= snapshot.syntaxCompletion->token.position &&
+                     snapshot.syntaxCompletion->token.position < span.end;
+            });
+    if (input.includeSnippets && snapshot.sourceValid &&
+        snapshot.syntaxCompletion && !inactiveSyntax) {
+      result.candidates =
+          completionSnippets(*snapshot.syntaxCompletion, input.source);
+      for (CompletionCandidate &candidate : result.candidates)
+        candidate.sortText = completionSortText(99999, candidate.label);
+    }
     if (!context) {
       return result;
     }
@@ -1321,6 +1339,9 @@ public:
       std::size_t score = 0;
     };
     std::vector<RankedCandidate> ranked;
+    for (CompletionCandidate &candidate : result.candidates)
+      ranked.push_back({.candidate = std::move(candidate), .score = 99999});
+    result.candidates.clear();
     std::unordered_set<std::string> seen;
     for (const SemanticCompletionCandidateRecord &record :
          context->candidates) {
@@ -2101,6 +2122,8 @@ private:
       return 3;
     case CompletionCandidateKind::Namespace:
       return 4;
+    case CompletionCandidateKind::Snippet:
+      return 5;
     }
     return 5;
   }

@@ -369,6 +369,7 @@ add_library(
   "src/compiler/hir_model.cpp"
   "src/compiler/hir_lowering.cpp"
   "src/compiler/language_queries.cpp"
+  "src/compiler/language_snippets.cpp"
   "src/compiler/lexer.cpp"
   "src/compiler/loaded_lexical_unit.cpp"
   "src/compiler/lowered_program.cpp"

@@ -95,6 +95,11 @@ public:
     return diagnostics;
   }
 
+  [[nodiscard]] const std::optional<SyntaxCompletionContext> &
+  completionContext() const {
+    return syntaxCompletion;
+  }
+
 private:
   // Resolution belongs to SourceLoader. Retain the directive through parsing
   // so only this source-unit boundary can consume it: an import embedded in a
@@ -121,6 +126,7 @@ private:
     currentClassName.reset();
     currentClassKind.reset();
     consumedCompletion = false;
+    syntaxCompletion.reset();
     generatedNameCounter = 0;
     missingTokenError = false;
   }
@@ -130,6 +136,7 @@ private:
   // without re-deriving structure from punctuation.
   StmtPtr declaration() {
     const NestingGuard nesting = enterNesting(peek());
+    captureSyntaxCompletion(SyntaxCompletionKind::Declaration);
     const Token start = peek();
     StmtPtr result = declarationWithoutExtent();
     stampExtent(result, start);
@@ -2489,6 +2496,13 @@ private:
   }
 
   StmtPtr item(ItemContext context) {
+    if (context != ItemContext::MutableFieldGroup) {
+      captureSyntaxCompletion(context == ItemContext::Declaration
+                                  ? SyntaxCompletionKind::Declaration
+                              : context == ItemContext::ClassMember
+                                  ? SyntaxCompletionKind::ClassMember
+                                  : SyntaxCompletionKind::Statement);
+    }
     const Token start = peek();
     StmtPtr result = itemWithoutExtent(context);
     stampExtent(result, start);
@@ -2906,6 +2920,7 @@ private:
 
   StmtPtr statement() {
     const NestingGuard nesting = enterNesting(peek());
+    captureSyntaxCompletion(SyntaxCompletionKind::Statement);
     if (match({TokenKind::UNSAFE})) {
       Token keyword = previous();
       consume(TokenKind::LEFT_BRACE, "Expect '{' after 'unsafe'.");
@@ -4484,6 +4499,16 @@ private:
     }
   }
 
+  void captureSyntaxCompletion(SyntaxCompletionKind kind) {
+    if (peek().completion) {
+      syntaxCompletion = SyntaxCompletionContext{.kind = kind,
+                                                 .token = peek(),
+                                                 .owner = currentClassName,
+                                                 .ownerKind = currentClassKind};
+    }
+  }
+
+  std::optional<SyntaxCompletionContext> syntaxCompletion;
   std::vector<Token> tokens;
   std::string_view source;
   std::vector<ParseDiagnostic> diagnostics;
@@ -4521,6 +4546,11 @@ bool Parser::hadError() const { return impl->hadError(); }
 
 const std::vector<ParseDiagnostic> &Parser::errors() const {
   return impl->errors();
+}
+
+const std::optional<SyntaxCompletionContext> &
+Parser::completionContext() const {
+  return impl->completionContext();
 }
 
 } // namespace lang
