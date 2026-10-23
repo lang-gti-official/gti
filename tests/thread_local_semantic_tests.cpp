@@ -560,6 +560,79 @@ int selected<uint64_t Mode>() {
              "TLS loans in either query order");
   }
 }
+void instanceTextRelayEffects() {
+  // Match the payload-field and composed reference-accessor shape exercised by
+  // view_field_payloads.gti. The copied view must keep the TLS string's origin,
+  // not just its local carrier or the reference accessor's result shell.
+  const std::string prefix = R"(
+#include <std/panic>
+#include <std/string>
+thread_local mut std::string value{"owned text"};
+thread_local mut std::string other{"other text"};
+void modify() { value.append("!"); }
+enum Slot<T> { full(T value), empty };
+class Holder<T> {
+public:
+  Slot<T> slot;
+  Holder(T value) : slot(Slot<T>::full(std::move(value))) {}
+  T& get() {
+    switch (this.slot) {
+    case Slot<T>::full(auto& value): return value;
+    case Slot<T>::empty: std::panic("empty holder");
+    }
+  }
+  T& again() { return this.get(); }
+};
+int selected<uint64_t Mode>() {
+  if constexpr (Mode == 0) {
+    int first = 0;
+    int second = 1;
+    int third = 2;
+    return first + second + third;
+  } else {
+    modify();
+    return 1;
+  }
+}
+)";
+  for (const bool reverse : {false, true}) {
+    const std::string calls =
+        reverse ? "int first = selected<1>(); int second = selected<0>(); "
+                : "int first = selected<0>(); int second = selected<1>(); ";
+    const auto source = [&](std::string_view owner) {
+      return prefix +
+             "int main() { Holder<std::string_view> held = "
+             "Holder<std::string_view>(" +
+             std::string(owner) +
+             ".view()); std::string_view borrowed = held.again(); " + calls +
+             "return borrowed.empty() ? first : second; }";
+    };
+    const std::string rejectedSource = source("value");
+    const auto rejected = analyze(rejectedSource, true, true);
+    const auto mutation = rejectedSource.find("selected<1>()");
+    const bool exactConflict = std::any_of(
+        rejected.diagnostics.begin(), rejected.diagnostics.end(),
+        [&](const auto &diagnostic) {
+          return diagnostic.code == "GTI-S2045" &&
+                 diagnostic.message.find("overlapping path") !=
+                     std::string::npos &&
+                 diagnostic.primary.start >= mutation &&
+                 diagnostic.primary.end <=
+                     mutation + std::string_view("selected<1>()").size();
+        });
+    expect(!rejected.semanticValid && exactConflict &&
+               !code(rejected, "GTI-B0001"),
+           "payload/accessor text relays retain their TLS owner against "
+           "hidden concrete mutation in either query order");
+    const auto allowed = analyze(source("other"), true, true);
+    if (!allowed.canGenerateCode())
+      for (const auto &diagnostic : allowed.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(allowed.canGenerateCode(),
+           "the same payload/accessor relay permits disjoint TLS mutation "
+           "through both concrete query orders");
+  }
+}
 } // namespace
 
 int main() {
@@ -569,5 +642,6 @@ int main() {
   fullExpressionCleanup();
   invalidDeclarations();
   instanceCleanupCache();
+  instanceTextRelayEffects();
   return failures ? 1 : 0;
 }
