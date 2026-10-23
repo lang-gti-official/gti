@@ -2111,6 +2111,11 @@ private:
                               OwnerlessTextField formal);
   // A returned reference that a call borrowed from a contract formal or the
   // receiver lets that whole formal escape: a whole use (L-OWN-02).
+  // The contract formal (or read-only receiver) whose storage a call's
+  // reference result borrows.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  callBorrowedTextFormal(const Call &call,
+                         const ResolvedCallInfo &resolved) const;
   void noteReturnedFormalReference(const Expr &returned);
   // A read, in a generic class method, of a type-parameter field of the
   // read-only receiver or of a contract formal: the field may hold a relayed
@@ -4527,6 +4532,23 @@ private:
                            const FunctionInfo &function,
                            const SemanticType &ownerType,
                            bool conditional) const;
+  // The one read-only, argument-free, non-virtual method `name` of `owner`:
+  // the overload a call `this.name()` on a read-only receiver selects.
+  [[nodiscard]] const FunctionInfo *
+  readOnlyReceiverAccessor(ClassId owner, const std::string &name) const;
+  // The receiver field that `accessor` returns a reference to: every return
+  // is `this.field`, or a call `this.other()` of another such accessor, or,
+  // in a body that declares nothing, the implicit `field` or `other()`.
+  [[nodiscard]] std::optional<std::string>
+  accessorReceiverField(const FunctionInfo &accessor,
+                        std::vector<const FunctionInfo *> &visiting) const;
+  // The receiver field that `subject`, a call `this.accessor()` in a method
+  // of `owner`, designates; also an implicit `accessor()` where
+  // `implicitMembers` says no local can shadow the name.
+  [[nodiscard]] std::optional<std::string>
+  receiverAccessorField(const Expr &subject, ClassId owner,
+                        std::vector<const FunctionInfo *> &visiting,
+                        bool implicitMembers = false) const;
 
   [[nodiscard]] std::optional<BorrowOriginPlace>
   globalReturnBorrowPlace(const FunctionInfo &function);

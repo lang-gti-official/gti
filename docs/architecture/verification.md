@@ -302,6 +302,30 @@ byte-identical C++, with no text differences. Only example 170 and the new
   `borrow_stored_view_return.gti` as a field relay rather than an ownerless
   return, and checks its three stored-view mutations.
 
+## Text relays through accessor switch subjects (0.465.4)
+
+`ownerless_text_contracts` covers `testAccessorSubjectRelays`.
+- `switch (this.wordRef())` relays an `auto&` text payload as
+  `switch (this.word)` does. A view over a local owner passes and prints
+  `line.viaCall()`.
+- `firstCall()` binds the payload by value through the accessor and carries
+  the field's ownerless requirement. MIR rejects it with that requirement
+  cleared (`omits an independently derived requirement`), deriving the field
+  through the accessor's own verified body. With that derivation removed the
+  mutation passes, which is how 0.465.2 compiled a dangling view.
+- At source, `GTI-S2045` rejects `kept = line.firstCall()`,
+  `kept = line.viaCall()`, and a function returning `firstCall()` of a local
+  owner. `GTI-S2017` rejects mutating the owner while a relayed view lives.
+- The same holds for an accessor with an argument (`this.pick(0)`), an
+  implicit `wordAt()`, an implicit `return word;` body, and an accessor that
+  returns one of two fields (a whole use). Each also compiles and verifies
+  over static text, so MIR never derives a requirement semantics omitted.
+- `borrow_origin_runtime` runs `borrowed_enum_reference_subjects.gti` with both
+  relays over owned text in every mode.
+- An accessor that returns another accessor's reference, such as
+  `int& kindOf() { return this.kindRef(); }`, stays a whole receiver use. So a
+  relay through it does not reach text owned elsewhere.
+
 ## Text read through returned references (0.462.0)
 
 `ownerless_text_contracts` covers the accessors in
