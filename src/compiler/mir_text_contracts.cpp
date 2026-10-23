@@ -36,6 +36,19 @@ struct TextSources {
 // A text field, or a text payload reached through a payload-enum field.
 using TextFieldPath = std::vector<SymbolId>;
 
+// Dynamic text that a value or local binding holds (L-OWN-02): the owner text
+// of `loan`, a read-only Stored loan that a publication designates, at `path`
+// within the value (empty for a view, and for a reference's referent). A
+// relay call's own Stored loan on the same owner may retain it instead.
+struct HeldText {
+  MirLoanId loan = 0;
+  TextFieldPath path;
+  std::set<MirLoanId> substitutes;
+
+  friend auto operator<=>(const HeldText &, const HeldText &) = default;
+};
+using HeldTexts = std::set<HeldText>;
+
 struct TextBody {
   const MirBody &body;
   std::span<const SemanticType> types;
@@ -336,6 +349,20 @@ private:
             ? nullptr
             : context.body.findPlace(loan ? loan->source : subject.place);
     auto formal = place ? contractPlace(context, *place, true) : std::nullopt;
+    // The field that a formal's accessor returns a reference to holds what
+    // `formal.field` holds.
+    if (!formal && place != nullptr) {
+      std::vector<const MirFunctionInstance *> visiting;
+      const MirPlace *receiver = nullptr;
+      const auto field =
+          accessorResultField(context.body, *place, visiting, &receiver);
+      auto owner =
+          field && receiver ? contractPlace(context, *receiver) : std::nullopt;
+      if (owner && owner->field == 0) {
+        owner->field = *field;
+        formal = owner;
+      }
+    }
     const auto *enumeration = program.findPayloadEnum(subject.type);
     if (!formal || formal->field == 0 || enumeration == nullptr ||
         *instruction.enumVariant >= enumeration->variants.size())
@@ -746,6 +773,113 @@ private:
     return nullptr;
   }
 
+  // The statically dispatched call to a non-virtual source accessor whose
+  // returned reference `loan` holds, and that call's receiver operand
+  // (through its CallInput staging).
+  std::pair<const MirInstruction *, const MirOperand *>
+  accessorCall(const MirBody &body, MirLoanId loan) const {
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Call ||
+            instruction.loan != loan)
+          continue;
+        const auto *target =
+            instruction.functionTarget
+                ? program.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (target == nullptr || !instruction.receiver ||
+            instruction.dispatch != CallDispatch::Static ||
+            target->virtualMethod ||
+            target->definitionKind != MirDefinitionKind::Source)
+          return {};
+        const MirOperand *receiver = &*instruction.receiver;
+        if (receiver->kind == MirOperandKind::Value)
+          if (const auto *input = definition(body, receiver->value);
+              input != nullptr &&
+              input->kind == MirInstructionKind::CallInput &&
+              input->operands.size() == 1)
+            receiver = &input->operands.front();
+        return {&instruction, receiver};
+      }
+    return {};
+  }
+
+  // The place `operand` addresses, through the loan holding it.
+  const MirPlace *addressedPlace(const MirBody &body,
+                                 const MirOperand &operand) const {
+    if (operand.kind == MirOperandKind::Value)
+      return nullptr;
+    const auto *loan = operand.kind == MirOperandKind::Loan
+                           ? body.findLoan(operand.loan)
+                           : nullptr;
+    return body.findPlace(loan ? loan->source : operand.place);
+  }
+
+  // The field of its own receiver that `place`, rooted at an accessor call's
+  // returned reference in `body`, designates: the accessor's every return
+  // borrows `this.field`, or the result of another such accessor called on
+  // its own receiver.
+  std::optional<SymbolId>
+  accessorResultField(const MirBody &body, const MirPlace &place,
+                      std::vector<const MirFunctionInstance *> &visiting,
+                      const MirPlace **receiver = nullptr) const {
+    if (place.root != MirPlaceRootKind::Loan || !place.projections.empty())
+      return std::nullopt;
+    const auto [call, held] = accessorCall(body, place.loan);
+    const auto *self = held ? addressedPlace(body, *held) : nullptr;
+    const auto *target =
+        call ? program.findFunctionInstance(*call->functionTarget) : nullptr;
+    if (self == nullptr || target == nullptr ||
+        target->returnType.kind != SemanticType::Reference ||
+        std::find(visiting.begin(), visiting.end(), target) != visiting.end())
+      return std::nullopt;
+    if (receiver != nullptr)
+      *receiver = self;
+    visiting.push_back(target);
+    std::optional<SymbolId> result;
+    bool valid = true;
+    bool returned = false;
+    for (const auto &block : target->body.blocks) {
+      const auto &terminator = block.terminator;
+      if (terminator.kind != MirTerminatorKind::Return)
+        continue;
+      returned = true;
+      std::optional<SymbolId> field;
+      MirLoanId loan =
+          terminator.value && terminator.value->kind == MirOperandKind::Loan
+              ? terminator.value->loan
+              : 0;
+      for (std::size_t depth = 0;
+           loan != 0 && depth < target->body.loans.size(); ++depth) {
+        const auto *forwarded = forwardedLoan(target->body, loan);
+        if (forwarded == nullptr)
+          break;
+        loan = *forwarded;
+      }
+      const auto *record = target->body.findLoan(loan);
+      const auto *source =
+          record ? target->body.findPlace(record->source) : nullptr;
+      if (source != nullptr && source->root == MirPlaceRootKind::This &&
+          source->projections.size() == 1 &&
+          source->projections.front().kind == MirProjectionKind::Field) {
+        field = source->projections.front().field;
+      } else if (source != nullptr) {
+        const MirPlace *inner = nullptr;
+        field = accessorResultField(target->body, *source, visiting, &inner);
+        if (inner == nullptr || inner->root != MirPlaceRootKind::This ||
+            !inner->projections.empty())
+          field.reset();
+      }
+      if (!field || (result && *result != *field)) {
+        valid = false;
+        break;
+      }
+      result = field;
+    }
+    visiting.pop_back();
+    return valid && returned ? result : std::nullopt;
+  }
+
   // A conditional's result: each branch initializes the same temporary before
   // the read. It is known when every initializing operand is; any other write,
   // or a mutable borrow of the temporary, leaves it unknown.
@@ -921,6 +1055,344 @@ private:
     readDepth = std::min(outerReadDepth, readDepth);
     activeTemporaries = std::move(temporaries);
     return summary.sources;
+  }
+
+  // The read-only Stored loan that `instruction` publishes at a direct text
+  // field or payload path of its result: a construction, payload
+  // construction or call over a local owner's dynamic text (L-OWN-02).
+  const MirLoan *textPublicationLoan(const MirBody &body,
+                                     const MirInstruction &instruction) const {
+    const auto *loan = instruction.loan && instruction.result
+                           ? body.findLoan(*instruction.loan)
+                           : nullptr;
+    if (!loan || loan->kind != MirLoanKind::Stored ||
+        loan->access != AccessMode::ReadOnly || loan->designatedFields.empty())
+      return nullptr;
+    const auto &type = instruction.info.type;
+    const auto &path = loan->designatedFields;
+    return (type.kind == SemanticType::Enum && path.size() == 1 &&
+            directTextPayload(program, type, path.front())) ||
+                   (type.kind == SemanticType::Class &&
+                    directTextPath(program, type, path))
+               ? loan
+               : nullptr;
+  }
+
+  // Which local bindings hold a published owner's dynamic text (L-OWN-02),
+  // derived from each publication through copies, moves, field reads,
+  // payload extraction, calls returning a formal's text or text field,
+  // borrows and loads through returned references; never from the loans'
+  // carrier lists, which semantics chose. Each such binding must carry a
+  // loan that keeps the owner borrowed: the publication's loan, a loan whose
+  // stored dependency chain reaches it, or the relaying call's own Stored
+  // loan on that owner.
+  void verifyDependentTextCarriers(const TextBody &context, std::size_t owner) {
+    const MirBody &body = context.body;
+    std::set<MirLoanId> published;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (const auto *loan = textPublicationLoan(body, instruction))
+          published.insert(loan->id);
+    if (published.empty())
+      return;
+    std::map<MirValueId, HeldTexts> values;
+    std::map<HirBindingId, HeldTexts> bindings;
+    std::map<MirTemporaryId, HeldTexts> temporaries;
+    // What the referent of a loan from a Borrow or a reference-returning
+    // call holds.
+    std::map<MirLoanId, HeldTexts> referents;
+    std::map<HirBindingId, const MirInstruction *> writers;
+    bool changed = true;
+    // A view, or a reference to one, holds owner text only as a whole; a
+    // class or payload-enum value only at a designated path. Other types,
+    // such as an int read through a carrier's reference, hold none.
+    const auto holds = [&](const SemanticType &type, const HeldText &text) {
+      const auto &held =
+          type.kind == SemanticType::Reference && type.arguments.size() == 1
+              ? type.arguments.front()
+              : type;
+      return text.path.empty() ? textType(held)
+                               : held.kind == SemanticType::Class ||
+                                     held.kind == SemanticType::Enum;
+    };
+    const auto add = [&](HeldTexts &target, const HeldTexts &held,
+                         const SemanticType &type) {
+      for (const auto &text : held)
+        if (holds(type, text))
+          changed = target.insert(text).second || changed;
+    };
+    // A loan's referent also holds the owner text of each publication its
+    // stored dependency chain reaches: a reference to a dependent view or
+    // to a carrier's designated field.
+    const auto referentTexts = [&](MirLoanId id) {
+      HeldTexts held;
+      if (const auto found = referents.find(id); found != referents.end())
+        held = found->second;
+      const auto *loan = body.findLoan(id);
+      for (std::size_t depth = 0;
+           loan && loan->storedDependency != 0 && depth <= body.loans.size();
+           ++depth) {
+        if (published.contains(loan->storedDependency))
+          held.insert({.loan = loan->storedDependency});
+        loan = body.findLoan(loan->storedDependency);
+      }
+      return held;
+    };
+    // A reference binding's texts are its referent's, so a dereference
+    // keeps them; a field keeps those designated within it.
+    const auto placeTexts = [&](const MirPlace &place) {
+      HeldTexts held;
+      const auto copy = [&](const auto &map, const auto &key) {
+        if (const auto found = map.find(key); found != map.end())
+          held = found->second;
+      };
+      if (place.root == MirPlaceRootKind::Binding)
+        copy(bindings, place.binding);
+      else if (place.root == MirPlaceRootKind::Temporary)
+        copy(temporaries, place.temporary);
+      else if (place.root == MirPlaceRootKind::Value)
+        copy(values, place.value);
+      else if (place.root == MirPlaceRootKind::Loan)
+        held = referentTexts(place.loan);
+      for (const auto &projection : place.projections) {
+        if (projection.kind == MirProjectionKind::Dereference)
+          continue;
+        HeldTexts inner;
+        if (projection.kind == MirProjectionKind::Field)
+          for (const auto &text : held)
+            if (!text.path.empty() && text.path.front() == projection.field)
+              inner.insert({.loan = text.loan,
+                            .path = TextFieldPath(text.path.begin() + 1,
+                                                  text.path.end()),
+                            .substitutes = text.substitutes});
+        held = std::move(inner);
+      }
+      std::erase_if(
+          held, [&](const HeldText &text) { return !holds(place.type, text); });
+      return held;
+    };
+    const auto operandTexts = [&](const MirOperand &operand) {
+      HeldTexts held;
+      const auto *place = body.findPlace(operand.place);
+      switch (operand.kind) {
+      case MirOperandKind::Value:
+        if (const auto found = values.find(operand.value);
+            found != values.end())
+          held = found->second;
+        break;
+      case MirOperandKind::Loan:
+        held = referentTexts(operand.loan);
+        if (place)
+          for (const auto &text : placeTexts(*place))
+            held.insert(text);
+        break;
+      case MirOperandKind::Copy:
+      case MirOperandKind::Move:
+      case MirOperandKind::BorrowRead:
+      case MirOperandKind::BorrowWrite:
+        if (place)
+          held = placeTexts(*place);
+        break;
+      case MirOperandKind::Address:
+      case MirOperandKind::Constant:
+        break;
+      }
+      return held;
+    };
+    // The publication and a relay's own Stored loan name the same owner.
+    const auto sameOwner = [&](const MirLoan &relay, const MirLoan &loan) {
+      const auto *first = body.findPlace(relay.source);
+      const auto *second = body.findPlace(loan.source);
+      return first && second && relay.access == loan.access &&
+             relay.additionalDependencies.empty() &&
+             loan.additionalDependencies.empty() &&
+             first->root == second->root && first->binding == second->binding &&
+             first->symbol == second->symbol &&
+             first->capture == second->capture &&
+             first->temporary == second->temporary &&
+             first->value == second->value && first->loan == second->loan &&
+             first->projections == second->projections;
+    };
+    // What a source call's text result, or the referent of its returned
+    // reference to text, holds: the callee's body-derived returns mapped
+    // through the call's arguments and receiver.
+    const auto callTexts = [&](const MirInstruction &call) {
+      HeldTexts held;
+      const auto *target =
+          call.functionTarget
+              ? program.findFunctionInstance(*call.functionTarget)
+              : nullptr;
+      if (!target || target->definitionKind != MirDefinitionKind::Source)
+        return held;
+      const auto &type = target->returnType;
+      const bool reference = type.kind == SemanticType::Reference &&
+                             type.arguments.size() == 1 &&
+                             textType(type.arguments.front());
+      if (!textType(type) && !reference)
+        return held;
+      const auto returned = returnSources(*target);
+      for (const auto parameter : returned.parameters)
+        if (parameter < call.operands.size())
+          for (const auto &text : operandTexts(call.operands[parameter]))
+            if (text.path.empty())
+              held.insert(text);
+      for (const auto &field : returned.fields) {
+        const MirOperand *origin =
+            field.receiver ? (call.receiver ? &*call.receiver : nullptr)
+            : field.parameter < call.operands.size()
+                ? &call.operands[field.parameter]
+                : nullptr;
+        const TextFieldPath path =
+            field.payload == 0 ? TextFieldPath{field.field}
+                               : TextFieldPath{field.field, field.payload};
+        if (origin)
+          for (const auto &text : operandTexts(*origin))
+            if (text.path == path)
+              held.insert({.loan = text.loan, .substitutes = text.substitutes});
+      }
+      if (reference) {
+        if (call.loan)
+          add(referents[*call.loan], held, type);
+        return held;
+      }
+      const auto *own = call.loan ? body.findLoan(*call.loan) : nullptr;
+      if (!own || own->kind != MirLoanKind::Stored ||
+          !own->designatedFields.empty())
+        return held;
+      HeldTexts relayed;
+      for (auto text : held) {
+        if (const auto *loan = body.findLoan(text.loan);
+            loan && sameOwner(*own, *loan))
+          text.substitutes.insert(own->id);
+        relayed.insert(std::move(text));
+      }
+      return relayed;
+    };
+    while (changed) {
+      changed = false;
+      for (const auto &block : body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.tombstone)
+            continue;
+          HeldTexts produced;
+          if (const auto *loan = textPublicationLoan(body, instruction))
+            produced.insert({.loan = loan->id, .path = loan->designatedFields});
+          const bool single = instruction.operands.size() == 1;
+          const auto forward = [&] {
+            if (single)
+              for (const auto &text : operandTexts(instruction.operands[0]))
+                produced.insert(text);
+          };
+          switch (instruction.kind) {
+          case MirInstructionKind::Load:
+          case MirInstructionKind::Move:
+          case MirInstructionKind::CallInput:
+          case MirInstructionKind::Initialize:
+          case MirInstructionKind::Assign:
+            forward();
+            break;
+          case MirInstructionKind::Borrow:
+            if (single && instruction.loan)
+              add(referents[*instruction.loan],
+                  operandTexts(instruction.operands[0]),
+                  instruction.operands[0].type);
+            break;
+          case MirInstructionKind::Compute:
+            if (instruction.operation == MirOperation::Identity) {
+              forward();
+            } else if (instruction.operation == MirOperation::PayloadExtract &&
+                       single && instruction.enumVariant &&
+                       instruction.payloadIndex) {
+              const auto &subject = instruction.operands[0];
+              const auto *enumeration = program.findPayloadEnum(
+                  subject.type.kind == SemanticType::Reference &&
+                          subject.type.arguments.size() == 1
+                      ? subject.type.arguments.front()
+                      : subject.type);
+              const auto *variant =
+                  enumeration && *instruction.enumVariant <
+                                     enumeration->variants.size()
+                      ? &enumeration->variants[*instruction.enumVariant]
+                      : nullptr;
+              if (variant &&
+                  *instruction.payloadIndex < variant->payloadSymbols.size()) {
+                const TextFieldPath payload{
+                    variant->payloadSymbols[*instruction.payloadIndex]};
+                for (const auto &text : operandTexts(subject))
+                  if (text.path == payload)
+                    produced.insert(
+                        {.loan = text.loan, .substitutes = text.substitutes});
+              }
+            }
+            break;
+          case MirInstructionKind::Call:
+            if (instruction.intrinsic == IntrinsicKind::Move)
+              forward();
+            else
+              for (const auto &text : callTexts(instruction))
+                produced.insert(text);
+            break;
+          default:
+            break;
+          }
+          if (produced.empty())
+            continue;
+          if (instruction.result)
+            add(values[*instruction.result], produced, instruction.info.type);
+          const auto *destination =
+              instruction.destination ? body.findPlace(*instruction.destination)
+                                      : nullptr;
+          if (!destination || !destination->projections.empty())
+            continue;
+          if (destination->root == MirPlaceRootKind::Binding) {
+            add(bindings[destination->binding], produced, destination->type);
+            writers.emplace(destination->binding, &instruction);
+          } else if (destination->root == MirPlaceRootKind::Temporary) {
+            add(temporaries[destination->temporary], produced,
+                destination->type);
+          }
+        }
+        // A block parameter holds what each incoming argument holds.
+        const auto edge = [&](MirBlockId target,
+                              const std::vector<MirOperand> &arguments) {
+          const auto *successor = body.findBlock(target);
+          for (std::size_t index = 0; successor && index < arguments.size() &&
+                                      index < successor->parameters.size();
+               ++index)
+            add(values[successor->parameters[index].value],
+                operandTexts(arguments[index]),
+                successor->parameters[index].type);
+        };
+        edge(block.terminator.target, block.terminator.targetArguments);
+        edge(block.terminator.elseTarget, block.terminator.elseArguments);
+        for (const auto &target : block.terminator.switchTargets)
+          edge(target.target, target.arguments);
+      }
+    }
+    for (const auto &[binding, held] : bindings)
+      for (const auto &text : held) {
+        const auto retains = [&](const MirLoan &candidate) {
+          if (std::find(candidate.carriers.begin(), candidate.carriers.end(),
+                        binding) == candidate.carriers.end())
+            return false;
+          const MirLoan *loan = &candidate;
+          for (std::size_t depth = 0; loan && depth <= body.loans.size();
+               ++depth) {
+            if (loan->id == text.loan || text.substitutes.contains(loan->id))
+              return true;
+            loan = loan->storedDependency != 0
+                       ? body.findLoan(loan->storedDependency)
+                       : nullptr;
+          }
+          return false;
+        };
+        if (std::none_of(body.loans.begin(), body.loans.end(), retains)) {
+          fail(context, owner, writers[binding],
+               "local binding holding dependent text does not carry a loan "
+               "that retains its owner");
+          break;
+        }
+      }
   }
 
   // The payload construction that is a constructor field initializer's
@@ -1533,6 +2005,7 @@ MirVerificationResult TextContracts::verify() {
   for (const auto &function : program.functionInstances()) {
     const TextBody context = functionContext(function);
     (void)scan(context, function.id, true);
+    verifyDependentTextCarriers(context, function.id);
     // A function's relays are what its returns derive (L-OWN-02); a caller
     // publishes nothing a callee does not derive, and a derived relay must be
     // declared or the caller would treat that text as ownerless.
@@ -1620,9 +2093,14 @@ MirVerificationResult TextContracts::verify() {
     }
   }
   (void)scan({program.module(), {}, {}}, 0, true);
+  verifyDependentTextCarriers({program.module(), {}, {}}, 0);
   for (const auto &instance : program.classInstances()) {
     (void)scan({instance.fieldInitializers, {}, {}}, instance.id, true);
     (void)scan({instance.staticFieldInitializers, {}, {}}, instance.id, true);
+    verifyDependentTextCarriers({instance.fieldInitializers, {}, {}},
+                                instance.id);
+    verifyDependentTextCarriers({instance.staticFieldInitializers, {}, {}},
+                                instance.id);
   }
   std::vector<std::set<std::size_t>> constructorBodyNeeds;
   for (const auto &constructor : program.constructorInstances()) {
@@ -1633,6 +2111,7 @@ MirVerificationResult TextContracts::verify() {
                                &constructorPublishedFields[constructor.id - 1],
                            .constructor = &constructor};
     const auto needed = scan(context, constructor.id, true);
+    verifyDependentTextCarriers(context, constructor.id);
     if (!std::includes(constructorRequirements[constructor.id - 1].begin(),
                        constructorRequirements[constructor.id - 1].end(),
                        needed.begin(), needed.end()))
@@ -1641,15 +2120,21 @@ MirVerificationResult TextContracts::verify() {
            "contract");
     constructorBodyNeeds.push_back(needed);
   }
-  for (const auto &destructor : program.destructorInstances())
+  for (const auto &destructor : program.destructorInstances()) {
     (void)scan({destructor.body, {}, {}}, destructor.owner, true);
-  for (const auto &lambda : program.lambdaInstances())
+    verifyDependentTextCarriers({destructor.body, {}, {}}, destructor.owner);
+  }
+  for (const auto &lambda : program.lambdaInstances()) {
+    verifyDependentTextCarriers(
+        {lambda.body, lambda.parameterTypes, lambda.parameterBindings},
+        lambda.id);
     if (!scan({lambda.body, lambda.parameterTypes, lambda.parameterBindings},
               lambda.id, true)
              .empty())
       fail({lambda.body, lambda.parameterTypes, lambda.parameterBindings},
            lambda.id, nullptr,
            "lambda requires an unrepresented ownerless text input contract");
+  }
   for (const auto &[constructor, index] : publishedFormals)
     if (constructorBodyNeeds[constructor - 1].contains(index)) {
       const auto &instance = program.constructorInstances()[constructor - 1];

@@ -40,6 +40,14 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
 
 ## Implementation Task Lifecycle
 
+- At the start of each new task, rename your own chat's sidebar title to a
+  short, specific description of the current work; update it when the task
+  changes. Use the available chat-title control (for example,
+  `set_thread_title`, targeting the current chat). On successful completion,
+  rename it `Complete — <task>`. Pending validation, a handoff, a blocker or
+  cancellation is not completion: use an accurate status instead. If this
+  client has no title control, state that limitation in the task update and
+  continue; never claim the sidebar was renamed or rename another agent's chat.
 - Apply [agent-workflow](.codex/skills/agent-workflow/SKILL.md) to implementation
   tasks. The owner's standing authorization is to publish task checkpoints,
   open/update the task PR, merge validated in-scope work through that PR, sync
@@ -49,6 +57,36 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
 - Explicit requests such as "PR only", "leave local", "do not merge", or
   "review first" override automatic integration. Read-only reviews/discussions
   do not authorize implementation or publication. Installation remains opt-in.
+- Use [risk-based batch validation](docs/architecture/agent-workflow.md#risk-based-batch-validation)
+  for concurrent compiler fixes. T1 confined fixes require a meaningful
+  regression, owning and affected cross-phase checks plus compiler smoke; T2
+  semantic/shared compiler changes add relevant subsystem coverage; T3 system,
+  ABI/runtime and optimizer-invariant changes retain their full/platform
+  obligations. Classify the changed invariant, never the word "ICE" or patch
+  size. Record the original failure where practical, with bounded execution
+  for resource-exhaustion cases and an explicit reason when reproduction is
+  unavailable. Code-generation fixes must check resulting execution, cleanup
+  and rejection behavior where applicable, not just absence of the crash.
+- `batch enroll` records focused admission against the published source;
+  it means **ready for integration**, not merged, released or fully verified.
+  Select at most eight admitted tasks explicitly with `batch prepare` and run
+  `batch verify` once on the combined candidate for each required platform.
+  A designated integration agent owns this campaign and failure attribution;
+  fixes return to the owner of the violated invariant, rather than changing
+  unrelated tests to accommodate a regression. Preserve each original PR and
+  commit. Do not start duplicate per-component full campaigns. Collect ready
+  changes for no more than ten minutes; a lone ready change may form a batch
+  immediately and never waits for unfinished features. See `batch status`.
+- GitHub CI is advisory, not a development, validation, merge or completion
+  gate. Never wait for queued/running Actions or require a passing GitHub check
+  before integration. Keep required exact-source local/managed-runner validation,
+  full combined compiler coverage, platform/performance checks and reviews.
+  Draft/component CI runs inexpensive checks; ready compiler candidates also
+  run native/sanitizer feedback without blocking their locally validated merge.
+  Use `protection --configure --advisory-ci` to remove required GitHub check
+  contexts/app pins while preserving PR-only/up-to-date/admin/review protection.
+  This policy change is owner-authorized. Report pending/failed CI honestly;
+  investigate known failures without calling them passes or hiding local failures.
 - Completed features may enter the opt-in `preview` source branch through
   `python3 scripts/agent_workflow.py preview submit <task> --tests <focused-ctest-names>`
   while their original PRs continue full validation and review. Submission is
@@ -81,9 +119,15 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   by every worktree and session on the machine, so concurrent agents stop
   stacking full suites on each other. Focused tests (`ctest -R '^name$'`, one
   harness fixture) and single-file compiles run directly. `verify` takes a
-  local suite slot itself; `verify --remote-steps-file <plan.json>` instead uses
+  local suite slot itself; `verify --focused` instead permits automation-only
+  owning checks directly after checking the source diff. Compiler components
+  use structured `batch enroll`, not this exception.
+  `verify --remote-steps-file <plan.json>` instead uses
   the configured remote host's window. `build_window.py --status` shows local
   holders and `remote_runner.py status` shows remote holders.
+  T1 batch admission uses exact focused checks directly; T2/T3 admission uses
+  a suite reservation for its broader subsystem checks. Do not expand the
+  shared window or steal reservations to get around a queue.
 - Offload heavy validation with `python3 scripts/remote_runner.py run ...`.
   Select `--runner mini`, `--runner ubuntu-6`, or `--runner ubuntu-8` before the
   subcommand, or set `GTI_REMOTE_RUNNER` for remote lifecycle verification.
@@ -97,7 +141,8 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   clones or builds on any runner.
 - Use `scripts/agent_workflow.py` for lifecycle operations. Reconcile upstream,
   validate the resulting head/base, and merge only through GitHub PRs. Respect
-  required checks/reviews. No direct pushes to `main`, rewritten shared history,
+  required local validation and reviews; GitHub CI is advisory. No direct
+  pushes to `main`, rewritten shared history,
   or administrative bypasses. The owner authorizes the helper's `protection
   --configure` to establish this PR-only/up-to-date rule; preserve existing
   review and status requirements.

@@ -1,14 +1,14 @@
 # Compiler Verification
 
-## Copied dependent payload views (0.465.4)
+## Copied dependent payload views (0.467.1)
 
 `view_fields` covers the copy in `testCopiedPayloadBindings`.
 - A switch's by-value binding of a dependent payload is copied into a local,
   and that local is copied again. Both copies verify and carry the payload's
   `Stored` loan.
-- Dropping either copy from the loan's carriers is rejected once MIR derives
-  which bindings hold a published owner's text (PR #297); without that rule
-  the mutation still verifies.
+- Dropping either copy from the loan's carriers is rejected: MIR derives
+  that each copy holds the owner's text (`verifyDependentTextCarriers`), so
+  it must carry a loan that retains the owner.
 - `view_field_payloads_runtime` runs copies of a local enum's binding and of
   a `line.word` binding in every mode.
 
@@ -21,6 +21,88 @@ constructor, and mutating the owner while a copy is live (`GTI-S2045`,
 `GTI-S2017`). Two already built and still do: `id(value)` with
 `std::string_view& r = value;`, and the carrier program of PR #297's
 `testDerivedCarriers`.
+## Derived dependent-text carriers (internal)
+
+`view_fields` `testDerivedCarriers` publishes one local owner through a class
+construction, a payload construction and a constructor that stores a
+payload-enum field. Fourteen local bindings then hold its text:
+- the value, a copy and a move;
+- a designated field read and a copy of that view;
+- a relay `first(token)`, a method relay `token.name()` and a formal relay
+  `id(field)`;
+- a view copied through `token.ref()`;
+- a relayed temporary `first(Token(input.view(), 2))`;
+- the payload enum and the nested-path class;
+- two bound payloads, one of them through `line.word`.
+
+The program verifies. MIR rejects each of these mutations with "local binding
+holding dependent text does not carry a loan that retains its owner":
+- dropping any binding from a loan it carries;
+- moving the binding onto the uncarried loan of the owner's first `view()`
+  call;
+- clearing the stored dependency of `token.ref()`'s result loan.
+
+The same mutations run against main at 0.465.0, its `mir_text_contracts.cpp`
+linked into this build:
+- 12 of the 14 drops, 13 of the 14 moves and the cleared dependency verified;
+- the rest failed unrelated shape checks.
+
+`ownerless_text_contracts` `testTextReferenceRelays` now expects MIR to reject
+the copied view without its carrier, and the relay loan without its stored
+dependency. Before, its comment recorded both as semantic decisions.
+
+An `int` read through a dependent value's `int&` accessor also verifies. An
+earlier draft of the rule rejected it, because that accessor's loan has the
+publication as its stored dependency; holding is now typed.
+
+A same-root differential compares this head's compiler with the same build
+linked against main's `mir_text_contracts.cpp`, its only compiled difference.
+Both use one `GTI_STDLIB_PATH`. Against main at 0.465.3 it emitted C++ at -O0
+and -O3 for all 1,853 programs under `tests/` and `examples/`, which is 3,706
+compiles per compiler. `namespace-depth-63`, which times out with both
+compilers, is excluded. Every exit status, refusal code set and emitted C++
+byte matched: both compilers accepted 2,956 compiles and refused 750. Main's
+next change before integration, batched validation, changed no compiled
+source.
+
+## Passive class moved beside a passive copy (0.465.6)
+
+`passive_class_move_and_copy_runtime` runs `passive_class_move_and_copy.gti`.
+- `Shelved` moves a `Pair` and copies another after a `Ledger` field that can
+  fail. `Reordered` copies a text-view `Name` declared before the moved one.
+  `Gauge` moves a scalar after a read of its formal beside a `Pair` copy.
+- When the ledger itself fails, the object has no ledger to drop. When a later
+  sibling or the body fails, the built ledger is rolled back exactly once, and
+  `main`'s live ledgers close once each. Every failure exits with status 70
+  and the division diagnostic.
+- Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan.
+  The main compiler (`6333da11`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`,
+`testPassiveClassMoveAndCopyAfterFallibleSibling` checks four points:
+- the move is body-staged and the copy is an exact parameter copy, for both
+  `Shelved` and `Gauge`;
+- the failure form admits both;
+- the emitted `Shelved` starts `moved` empty and publishes it after the
+  ledger, while `copied(__gti_mir_arg_1)` stays in the member-initializer list;
+- a copy whose records are reordered fails closed.
+
+Mutation checks:
+- without `failureConstructorHoistablePassiveCopy`, both admissions fail;
+- without its adjacency guard, the reordering forgery is accepted;
+- without `everyFormalCopyWitnessed`, the stripped full-expression forgery of
+  the existing `testMixedConstructorParameterFields` is accepted.
+
+The same stripping forgery applied to the hoisted copy is accepted on main as
+well. That copy has no witness, so it falls back to the existing body-ordered
+copy route.
+
+An `--emit-cpp` differential against main `6333da11`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1,823 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3:
+- 3,644 of 3,646 compilations emit byte-identical C++, and failing pairs
+  report identical diagnostics;
+- only the new fixture changes status, from `GTI-B0001` to success.
 
 ## Classes holding function items (0.465.3)
 
@@ -108,39 +190,63 @@ on a machine shared with other builds.
 Still `GTI-B0001`, as on main: a constructor initializing a class's
 fixed-array field from its parameters (`Polygon(Point a, Point b) :
 corners({a, b})`).
-## Deferred assertions and statement helpers (0.465.0)
 
-`deferred_assertions` checks the general `[[deferred]]` statement-helper rule
+## Typed macros and assertions
+
+The existing `deferred_assertions*` gate names are retained for continuity after
+the public syntax migration to `#macro`; no old attribute support remains.
+`deferred_assertions` checks the general typed statement macro rule
 with unrelated application types: conditional/repeated moves, live loans,
 disabled formatter errors, exact argument types, unsafe obligations, invalid
 signatures/bodies, recursion limits and callable-identity boundaries. It also
 checks HIR expansion, independent MIR verification, the absence of eager helper
-instances, and rejection of an erased tracked-caller origin.
+instances, and rejection of an erased tracked-caller origin. Syntax regressions
+cover exact macro-only overloads, generic/default parameters, qualified calls,
+caller-tracked declarations, incomplete parser recovery, rejected mixed
+macro/function names in both declaration orders and legacy migration diagnostics.
+Local binding regressions cover evaluate-once initialization, same-spelled
+caller/definition names, local shadowing, named references, explicit owner
+moves, automatic storage and scoped loops. Invalid ownership and escape paths
+must fail through ordinary semantic rules, not be hidden by macro expansion.
+Generic owning-local tests also independently mutate verified MIR: changing a
+skipped move's literal condition to true or to a dynamic call result must fail
+source-availability checking, even after repairing the SSA use index. Flipping
+a published drop's conditionality must still fail structural cleanup validation.
+Feasible source availability does not replace structural cleanup publication.
+The ownership regression copies HIR out of a destroyed `FrontendResult` and
+temporary lowerer, then traverses reached nested/instance expansion roots and
+their constructor-call descendants. Its ordinary and concrete generic cases
+must retain the exact sources without retaining whole semantic models.
 
 `deferred_assertions_runtime` runs the success/failure fixtures and runnable
-example 172 with C++20/C++23 at O0/O1/O3, disabled elision, ASan/UBSan, and native
+examples 172 and 174 with C++20/C++23 at O0/O1/O3, disabled elision, ASan/UBSan, and native
 `-DNDEBUG`, each with source `NDEBUG` enabled and disabled. It checks forcing
 count/order, skipped moves and message construction, lookup/access hygiene,
 caller defaults and nested wrappers, reverse cleanup, panic during cleanup,
-and managed-thread propagation. The example is identified by its selected
-path, not a numeric-prefix convention, so renumbering cannot change the expected
+managed-thread propagation, and owning local cleanup on normal scope exit,
+panic, break and continue. Examples are identified by their selected
+paths, not a numeric-prefix convention, so renumbering cannot change the expected
 output policy.
 
 `deferred_assertions_lsp` covers unsaved/incomplete text, UTF-16 spans, static
-argument errors and hover contracts. Project-model and scoped-configuration
+argument errors, macro hover/definition identity, qualified overload selection
+and recovery from the removed attribute. `macro_expansion_queries` checks
+bounded deterministic inspection, hygiene labels and exact local rename identity;
+the LSP and Neovim gates cover the read-only `:GTIExpandMacro` request and stale
+buffer rejection. Project-model and scoped-configuration
 checks cover default release `NDEBUG`, explicit profile overrides and frontend
 versus native flags. The module/surface gates, both corpus censuses, pinned
 Tree-sitter corpus and shipped-source parsing cover the new header, module,
-attribute and example inventories.
+declaration and example inventories.
 
 `deferred_assertions_cost` compares the same complete-state workload with
 handwritten control flow. Zero observed successful-path allocations and cold
 message calls are correctness gates; `--measure` adds two warmups and nine
 interleaved samples, native/generated size, build time and child peak memory.
-Timing samples are reported rather than gated on noisy shared hosts. Deferred
+Timing samples are reported rather than gated on noisy shared hosts. Macro
 source expansion still has a compile-time cost; runtime parity does not imply
 compilation-cost parity. The current structural/forcing bounds are recorded in
-[execution](../language/execution.md#deferred-statement-helpers) and
+[execution](../language/execution.md#typed-statement-macros) and
 [ADR 030](../decisions/030-deferred-statement-helpers.md).
 
 ## Whole assignment results (0.464.2)
@@ -244,8 +350,9 @@ remain regression coverage for the shared completion and lexical paths.
   and storing `result.value()` are `GTI-S2045`. Appending to the owner while
   a copied view lives is `GTI-S2017`. Before the dereference relay was
   classified, `std::string_view view = *maybe;` followed by an append
-  compiled into a dangling view. MIR still does not check binding carriers,
-  so only these source rules prevent that.
+  compiled into a dangling view. At 0.463.0 MIR did not yet check binding
+  carriers, so only these source rules prevented that; see
+  [Derived dependent-text carriers](#derived-dependent-text-carriers-internal).
 - `testTypeParameterFormals`: `std::vector<Token>::push_back` of a literal
   value verifies (`GTI-B0001` in 0.462.0), MIR rejects its instance with the
   whole-formal requirement cleared, and pushing a value over a local owner
@@ -299,6 +406,30 @@ byte-identical C++, with no text differences. Only example 170 and the new
 - `borrow_origin` now counts `Box<std::string_view>::get()` in
   `borrow_stored_view_return.gti` as a field relay rather than an ownerless
   return, and checks its three stored-view mutations.
+
+## Text relays through accessor switch subjects (0.465.4)
+
+`ownerless_text_contracts` covers `testAccessorSubjectRelays`.
+- `switch (this.wordRef())` relays an `auto&` text payload as
+  `switch (this.word)` does. A view over a local owner passes and prints
+  `line.viaCall()`.
+- `firstCall()` binds the payload by value through the accessor and carries
+  the field's ownerless requirement. MIR rejects it with that requirement
+  cleared (`omits an independently derived requirement`), deriving the field
+  through the accessor's own verified body. With that derivation removed the
+  mutation passes, which is how 0.465.2 compiled a dangling view.
+- At source, `GTI-S2045` rejects `kept = line.firstCall()`,
+  `kept = line.viaCall()`, and a function returning `firstCall()` of a local
+  owner. `GTI-S2017` rejects mutating the owner while a relayed view lives.
+- The same holds for an accessor with an argument (`this.pick(0)`), an
+  implicit `wordAt()`, an implicit `return word;` body, and an accessor that
+  returns one of two fields (a whole use). Each also compiles and verifies
+  over static text, so MIR never derives a requirement semantics omitted.
+- `borrow_origin_runtime` runs `borrowed_enum_reference_subjects.gti` with both
+  relays over owned text in every mode.
+- An accessor that returns another accessor's reference, such as
+  `int& kindOf() { return this.kindRef(); }`, stays a whole receiver use. So a
+  relay through it does not reach text owned elsewhere.
 
 ## Text read through returned references (0.462.0)
 
@@ -9516,6 +9647,29 @@ moves its parameter through two local bindings. The reviewed inventory adds
 exactly one declaration and one body to that example; generated-item counts
 are unchanged. Its C++20/O0 and C++23/O3 executions retain the same cleanup
 observations.
+
+## Validation scope and combined batches
+
+Use the [risk-based batch contract](agent-workflow.md#risk-based-batch-validation)
+for current T1/T2/T3 criteria, exact admission plans, the smoke programs,
+combined full/platform gates, CI routing, evidence and failure ownership.
+Feature-specific sections identify affected coverage; their historical full
+runs do not impose a duplicate whole-compiler campaign on every component
+fix. Focused admission is a ready-for-integration checkpoint. Full acceptance
+belongs to the selected combined compiler, with every component's regression
+and relevant subsystem/tooling/platform/performance obligations preserved.
+
+The owning automation regression `agent_workflow` exercises real disposable
+Git repositories: exact membership and ancestry, original-PR preservation,
+conflict resume, duplicate-batch exclusion, withdrawal/release, stale source
+and missing-platform refusal, complete CTest inventories/results, required
+regression skips, optimized build ownership, and advisory CI classification. Workflow-only
+changes use these tests and their affected tooling gates rather than a full
+GTI semantic suite. CI still runs full native/sanitizer coverage for compiler
+integration candidates as advisory feedback. GitHub Actions never gates local
+validation, integration or completion; preserve exact-source local/managed-runner
+coverage and required platform/performance evidence, and report pending/failed
+CI separately rather than waiting for runner capacity or calling it passed.
 
 ## Development And Completion Cadence
 

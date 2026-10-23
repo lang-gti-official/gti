@@ -246,7 +246,9 @@ is a teaching helper, not a production server.
 | `169-source-expected.gti` | global source-defined `expected`, value/void/reference results, constexpr, `?`, borrowing mapper captures, error mapping and checked extraction from a temporary result |
 | `170-view-fields.gti` | a class and a struct whose text fields view a local string, a copy sharing that dependency, a field read yielding a view of the same owner, a temporary token read within its expression, a factory whose token views its argument's owner, reads through a returned text reference and a generic holder's accessor, an optional whose payload views the string, and an ownerless token that keeps its method calls |
 | `171-recursive-text-relays.gti` | recursive and mutually recursive functions relaying a view parameter, a recursion relaying a value's text field, a recursive method relaying the receiver's field, and an ownerless result from a literal argument |
-| `172-deferred-assertions.gti` | source-defined always-on/debug assertions, lazy formatted messages, skipped owning moves, and an application-defined deferred helper |
+| `172-deferred-assertions.gti` | source-defined always-on/debug assertions, lazy formatted messages, skipped owning moves, and an application-defined typed macro |
+| `173-general-requires.gti` | exact expression/construction requirements, constexpr reflection predicates and source concept composition over an unrelated domain type |
+| `174-typed-macros.gti` | ordinary calls to typed `#macro` declarations, exact overloads, generic/default expression parameters, conditional/repeated evaluation, hygienic body lookup, and skipped owner movement |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
@@ -622,6 +624,14 @@ text and zero-terminated views from an unrelated inline byte owner. The unsafe
 bridge retains the owner relationship through an ordinary source helper; the
 resulting checked borrow prevents mutation, movement or escape past that owner.
 Address validity, extent and termination remain the caller's unsafe obligations.
+
+## General requirements and reflection
+
+[`173-general-requires.gti`](173-general-requires.gti) defines source concepts
+for exact operator results and construction, composes them with constexpr
+reflection predicates, and uses them in generic algorithms over an unrelated
+user-defined value. It also demonstrates multi-check queries and exact result
+rejection. Requirements execute no user code and do not relax ownership rules.
 
 ## Complete projects
 

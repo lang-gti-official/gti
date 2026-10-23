@@ -97,6 +97,7 @@ module.exports = grammar({
   supertypes: ($) => [$.declaration, $.statement, $.expression],
 
   conflicts: ($) => [
+    [$.function_declaration, $.macro_declaration],
     [$.generic_argument_profile_clause, $.generic_parameter],
     [$.generic_argument_profile_clause, $._qualified_identifier],
     [$.extern_c_variable_declaration, $.extern_c_function_prototype],
@@ -106,6 +107,7 @@ module.exports = grammar({
     [$.generic_function, $.user_type, $.primary_expression],
     [$.user_type, $.primary_expression],
     [$.expression, $.argument_list],
+    [$.constraint_predicate, $.expression],
     [$.direct_initializer, $.expression],
     [$.constructor_initializer_argument_list, $.expression],
     [$.constructor_declaration, $._qualified_identifier],
@@ -178,6 +180,7 @@ module.exports = grammar({
         $.type_alias_declaration,
         $.enum_declaration,
         $.class_declaration,
+        $.macro_declaration,
         $.function_declaration,
         $.static_variable_declaration,
         $.variable_declaration,
@@ -476,6 +479,7 @@ module.exports = grammar({
     constraint_expression: ($) =>
       choice(
         $.concept_application,
+        $.constraint_predicate,
         $.member_requirement_expression,
         seq("(", $.constraint_expression, ")"),
         prec.left(
@@ -495,6 +499,13 @@ module.exports = grammar({
           ),
         ),
       ),
+
+    constraint_predicate: ($) =>
+      prec(1, seq(
+        field("name", $._qualified_identifier),
+        "<", commaSep1(field("argument", $.type)), ">",
+        "(", optional(commaSep1($._expression_not_comma)), ")",
+      )),
 
     requires_clause: ($) =>
       seq(
@@ -822,11 +833,22 @@ module.exports = grammar({
         $._function_declaration_body,
       ),
 
+    macro_declaration: ($) =>
+      seq(
+        repeat(field("attribute", $.function_contract_attribute)),
+        "#macro",
+        field("name", $.identifier),
+        optional(field("type_parameters", $.generic_parameter_clause)),
+        field("parameters", $.parameter_clause),
+        optional(field("constraints", $.requires_clause)),
+        field("body", $.block),
+      ),
+
     function_contract_attribute: ($) =>
       seq(
         "[[",
-        choice("test", "noreturn", "track_caller", "discardable", "deferred", "thread_confined_callback", $.borrow_origin_attribute),
-        repeat(seq(",", choice("test", "noreturn", "track_caller", "discardable", "deferred", "thread_confined_callback", $.borrow_origin_attribute))),
+        choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", $.borrow_origin_attribute),
+        repeat(seq(",", choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", $.borrow_origin_attribute))),
         "]]",
       ),
 
@@ -1491,12 +1513,16 @@ module.exports = grammar({
 
     member_requirement_expression: ($) =>
       seq(
-        "requires", "(", optional("mut"), field("receiver_type", $.type),
-        field("binding", $.identifier),
-        repeat(seq(",", optional("mut"), field("parameter_type", $.type), field("parameter", $.identifier))),
-        ")", "{", optional(field("unsafe", "unsafe")), "{",
-        field("receiver", $.identifier), ".", field("member", $.identifier),
-        "(", optional(commaSep1(field("argument", $.identifier))), ")", "}", "->", field("result_type", $.type), ";", "}",
+        "requires",
+        optional(seq("(", optional(seq(
+          optional("mut"), field("receiver_type", $.type), field("binding", $.identifier),
+          repeat(seq(",", optional("mut"), field("parameter_type", $.type), field("parameter", $.identifier))),
+        )), ")")),
+        "{", repeat1(seq(
+          optional(field("unsafe", "unsafe")), "{",
+          field("expression", $._expression_not_comma), "}", "->",
+          field("result_type", $.type), ";",
+        )), "}",
       ),
 
     layout_query_expression: ($) =>

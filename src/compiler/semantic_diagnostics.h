@@ -70,6 +70,9 @@ struct SemanticConstraintFailure {
   std::optional<Token> callArgument;
   SemanticType callArgumentType = SemanticType::Unknown;
   std::optional<Token> candidate;
+  // A failed unevaluated expression or constexpr predicate, diagnosed by the
+  // ordinary frontend in an isolated query rather than by native compilation.
+  std::optional<std::string> expressionFailure;
   // A concept with a body that no conformance block supplies for these
   // arguments.
   bool missingConformance = false;

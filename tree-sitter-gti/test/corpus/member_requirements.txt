@@ -17,8 +17,12 @@ bool supported = requires (Widget& item) { { item.clone() } -> Widget; };
             (identifier))
           (reference_declarator))
         (identifier)
-        (identifier)
-        (identifier)
+        (call_expression
+          (member_expression
+            (primary_expression
+              (identifier))
+            (identifier))
+          (argument_list))
         (type
           (user_type
             (identifier))))))
@@ -34,8 +38,12 @@ bool supported = requires (Widget& item) { { item.clone() } -> Widget; };
               (identifier))
             (reference_declarator))
           (identifier)
-          (identifier)
-          (identifier)
+          (call_expression
+            (member_expression
+              (primary_expression
+                (identifier))
+              (identifier))
+            (argument_list))
           (type
             (user_type
               (identifier))))))))
@@ -54,14 +62,28 @@ concept writes<T> = requires(mut T& writer, int& value, mut int& output) {
     (identifier)
     (constraint_expression
       (member_requirement_expression
-        (type (user_type (identifier)) (reference_declarator))
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
         (identifier)
-        (type (primitive_type) (reference_declarator))
+        (type
+          (primitive_type)
+          (reference_declarator))
         (identifier)
-        (type (primitive_type) (reference_declarator))
+        (type
+          (primitive_type)
+          (reference_declarator))
         (identifier)
-        (identifier)
-        (identifier)
-        (identifier)
-        (identifier)
-        (type (primitive_type))))))
+        (call_expression
+          (member_expression
+            (primary_expression
+              (identifier))
+            (identifier))
+          (argument_list
+            (primary_expression
+              (identifier))
+            (primary_expression
+              (identifier))))
+        (type
+          (primitive_type))))))

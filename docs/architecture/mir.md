@@ -880,6 +880,18 @@ without rejecting an intermediate worklist state before its other predecessor
 arrives; transfer states remain derived from MIR operations, not asserted event
 results.
 
+Lifecycle cleanup publication still uses the complete structural CFG: guarded
+temporary drops and their exact conditionality must remain valid even when a
+literal makes one a runtime no-op. Only an ambiguous consuming source's
+`Available` precondition can additionally use feasible lifecycle availability.
+This lazily reuses the same literal-successor proof, lifecycle event transfers,
+invoke-success initialization and join lattice. Unknown branches remain joined;
+unclassified/dead blocks retain structural validation. Destination initialization,
+drop conditionality, loan retirement, full-expression/lexical boundaries and
+terminal obligations are never relaxed by that refinement. Ordinary bodies
+need no second dataflow or allocated callback; a queried block's event prefix is
+advanced incrementally rather than rescanned for every consuming source.
+
 Checked indexed swap is a sealed intrinsic over one mutable fixed-array
 reference and two staged `uint64_t` indices. Source prefix storage instead
 uses general object-lifetime operations; it is not another intrinsic operand
@@ -1898,9 +1910,10 @@ that field. The text is the caller's, ownerless or under the method's field
 contract, so the borrow needs no stored dependency in the body. Over a
 receiver that carries a `Stored` loan designating that field, a view copied
 through the reference carries the call's result loan, whose stored
-dependency is that owner loan. Which bindings carry it is a semantic
-decision here, as for a view copied from a field read: MIR checks the loan's
-shape, not its carriers. A method that returns another call's text reference
+dependency is that owner loan. MIR derives that the view holds the owner's
+text and requires the binding to carry a loan that retains it, as for a view
+copied from a field read (see the derived-carrier rule below). A method that
+returns another call's text reference
 publishes a `Return` loan that reborrows the call's result loan.
 `TextContracts` follows that reborrow to the call, and the verifier's carrier
 shell rule takes the expected stored dependency exactly from the forwarded
@@ -1926,6 +1939,11 @@ a non-generic source function or method, or a method of a generic class's
 instance), `TextContracts` independently derives `ownerlessTextFields`:
 - a formal's or the receiver's text-field projection is a field source, not
   ownerless text;
+- so is a text payload extracted from a formal's enum field reached through
+  that formal's accessor: a statically dispatched, non-virtual source call
+  whose every return borrows `this.field`, or another such accessor's result
+  on its own receiver (`accessorResultField`, read from the callee's verified
+  body);
 - field sources that reach ownerless storage or a `None`-summary text return
   become requirements;
 - each other use of the whole formal or receiver requires all of its text
@@ -2031,6 +2049,43 @@ place whose object carries a `Stored` loan designating the field: a carrier
 binding of that loan, or the construction's own result value. A write into
 such a field still requires ownerless text. A temporary's field view, whose
 value has no unprojected place, takes its record type from that value.
+
+That exclusion, `dependentDesignationPath` and the relay-result check read
+carrier lists, so a list must not omit a binding that holds a published
+owner's text. `TextContracts` derives those bindings in every body
+(`verifyDependentTextCarriers`) from the publications, never from carriers:
+- A publication is a read-only `Stored` loan that a value-producing
+  instruction designates at a direct text field or payload path of the value's
+  type (`textPublicationLoan`): a publishing construction, payload
+  construction or call. Its value holds the loan's owner text at that path.
+- `Load`, `Move`, `CallInput`, `Initialize`, `Assign`, `Identity`,
+  `std::move`, block parameters and hidden temporaries pass what they read
+  on. A field projection keeps what is designated within the field, so
+  reading the whole designated path yields a view of the owner. A
+  `PayloadExtract` of the designated payload binds such a view, also through
+  a payload-enum field.
+- A source call's text result holds what the callee's body-derived returns
+  (`returnSources`) map through its arguments and receiver: a returned text
+  formal, or a formal's or the receiver's returned field. A call returning a
+  reference to text records that for its loan's referent, and a `Borrow` of a
+  holding place records the place's texts. A loan's referent also holds the
+  text of each publication its stored-dependency chain reaches, so a view
+  copied through a returned reference holds it.
+- Holding is typed. A view, or a reference to one, holds owner text only
+  as a whole, and a class or payload-enum value only at a designated path.
+  An `int` read through a dependent value's `int&` accessor holds none,
+  although that accessor's loan has the publication as its stored
+  dependency.
+- Each local binding that holds a publication's text must carry a loan that
+  retains it: the publication's loan, a loan whose stored-dependency chain
+  reaches it, or a relay call's own read-only `Stored` loan on the same owner
+  place, which carries a relayed temporary's text past its full expression.
+  Another loan on the owner does not retain a publication. A reference result
+  observed within its full expression, which no binding holds, is not
+  covered.
+
+The rule changes no lowering. It makes the carrier lists that semantics
+records evidence MIR checks, rather than a semantic decision MIR trusts.
 
 Plain and fallible reference returns share the exact runtime-alias selection
 for a reference parameter's entry loan. If a local alias stores an accessor's

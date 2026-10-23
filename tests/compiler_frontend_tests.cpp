@@ -3277,10 +3277,56 @@ void testAnnotatedFunctionContracts() {
   }
 }
 
+void testAnnotatedSuiteAnalysis() {
+  const std::string source = "namespace app { [[test]] void addition() {} }\n";
+  auto cache = std::make_shared<lang::FrontendCache>();
+  for (const bool synthesize : {false, true, false, true}) {
+    lang::FrontendOptions options;
+    options.program.testSuite = true;
+    options.stopAfter = lang::FrontendPhase::Semantics;
+    options.requireEntryPoint = true;
+    options.synthesizeTestEntry = synthesize;
+    options.cache = cache;
+    const auto result = lang::Frontend(options).analyze(
+        "suite-analysis.gti", source,
+        {standardLibraryPrelude(), standardLibraryRoot() / "std/string.gti",
+         standardLibraryRoot() / "std/vector.gti"},
+        {}, {standardLibraryRoot()});
+    expect(result.semanticValid && result.diagnostics.empty() &&
+               result.testCases == std::vector<std::string>{"app::addition"},
+           "source-only and generated test analysis retain validated cases "
+           "when alternating with a shared syntax cache");
+    const auto *entry =
+        result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+    expect(entry != nullptr, "test analysis retains its source entry unit");
+    if (entry == nullptr) {
+      continue;
+    }
+    const auto *text = result.sources.find(entry->path.string());
+    expect(text != nullptr && ((*text == source) != synthesize),
+           "source-only test analysis preserves the exact written text");
+    expect(result.semantics
+                   .executableEntryDiagnostic(entry->id, entry->path.string())
+                   .has_value() != synthesize,
+           "only artifact requests synthesize a hosted main");
+  }
+  lang::FrontendOptions executable;
+  executable.stopAfter = lang::FrontendPhase::Semantics;
+  executable.requireEntryPoint = true;
+  executable.synthesizeTestEntry = false;
+  const auto missing =
+      lang::Frontend(executable).analyze("missing-main.gti", source);
+  expect(
+      !missing.semanticValid &&
+          hasDiagnosticCode(missing.diagnostics, "GTI-S2094"),
+      "source-only test dispatch policy never exempts an ordinary executable");
+}
+
 constexpr NamedTest kTests[] = {
     {"testConcreteCallableSemanticFailure",
      testConcreteCallableSemanticFailure},
     {"testAnnotatedFunctionContracts", testAnnotatedFunctionContracts},
+    {"testAnnotatedSuiteAnalysis", testAnnotatedSuiteAnalysis},
     {"testDefiniteReturnAnalysis", testDefiniteReturnAnalysis},
     {"testSourceUnitDependencyGraph", testSourceUnitDependencyGraph},
     {"testSourceModuleInterfaces", testSourceModuleInterfaces},

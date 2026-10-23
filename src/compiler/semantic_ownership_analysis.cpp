@@ -1801,16 +1801,55 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
     current = group->expression() ? group->expression().get() : nullptr;
   std::optional<OwnerlessTextField> formal;
   SemanticType owner = SemanticType::Unknown;
-  const Token *name = nullptr;
-  if (const auto *get = exprAs<Get>(current);
-      get != nullptr && get->access().kind != TokenKind::ARROW &&
-      get->object()) {
-    formal = textFieldContractFormal(*get->object());
+  std::optional<std::string> name;
+  const auto formalOwner = [&](const Expr &object) {
+    formal = textFieldContractFormal(object);
     if (formal && formal->receiver)
       owner = openClassType(scope->ownerClass);
     else if (formal && formal->parameter < scope->parameterTypes.size())
       owner = scope->parameterTypes[formal->parameter];
-    name = &get->name();
+  };
+  const auto *call = exprAs<Call>(current);
+  const auto *accessor =
+      call == nullptr ? nullptr : exprAs<Get>(call->callee().get());
+  if (const auto *get = exprAs<Get>(current);
+      get != nullptr && get->access().kind != TokenKind::ARROW &&
+      get->object()) {
+    formalOwner(*get->object());
+    name = get->name().lexeme;
+  } else if (call != nullptr && call->arguments().empty() &&
+             call->typeArguments().empty() &&
+             (accessor == nullptr
+                  ? exprAs<Variable>(call->callee().get()) != nullptr
+                  : accessor->access().kind != TokenKind::ARROW &&
+                        accessor->object() != nullptr)) {
+    // A formal's accessor that returns a reference to one of its fields
+    // designates that field, as `formal.field` does. An implicit `accessor()`
+    // is the receiver's.
+    const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+    const FunctionInfo *callee =
+        resolved == nullptr ? nullptr
+                            : semanticModel.findFunction(resolved->function);
+    if (callee == nullptr && resolved != nullptr &&
+        instanceBaseModel != nullptr)
+      callee = instanceBaseModel->findFunction(resolved->function);
+    if (accessor != nullptr) {
+      formalOwner(*accessor->object());
+    } else if (callee != nullptr && scope->ownerClass != 0 &&
+               callee->ownerClass == scope->ownerClass &&
+               !callee->staticMember && !scope->staticMember &&
+               scope->bodyDeclaration()->receiverMutability() ==
+                   ReceiverMutability::ReadOnly &&
+               textPublicationOwner(openClassType(scope->ownerClass))) {
+      formal = OwnerlessTextField{.receiver = true};
+      owner = openClassType(scope->ownerClass);
+    }
+    std::vector<const FunctionInfo *> visiting;
+    if (formal && resolved != nullptr &&
+        resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+        callee != nullptr)
+      name = accessorReceiverField(*callee, visiting);
   } else if (const auto *variable = exprAs<Variable>(current)) {
     // An implicit receiver field, like `this.field`.
     const Symbol *symbol = resolve(variable->name());
@@ -1822,14 +1861,14 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
         textPublicationOwner(openClassType(scope->ownerClass))) {
       formal = OwnerlessTextField{.receiver = true};
       owner = openClassType(scope->ownerClass);
-      name = &variable->name();
+      name = variable->name().lexeme;
     }
   }
   if (owner.kind == SemanticType::Reference && owner.arguments.size() == 1)
     owner = SemanticType(owner.arguments.front());
-  const ClassInfo *info = formal ? classInfo(owner) : nullptr;
+  const ClassInfo *info = formal && name ? classInfo(owner) : nullptr;
   const auto member = info == nullptr ? decltype(info->members.end()){}
-                                      : info->members.find(name->lexeme);
+                                      : info->members.find(*name);
   if (info == nullptr || member == info->members.end() ||
       member->second.symbol.staticMember ||
       member->second.symbol.bindingKind != SemanticBindingKind::Field)
@@ -1869,6 +1908,33 @@ auto SemanticVisitor::Impl::noteConditionalTextFieldRead(const Expr &expression)
   (void)requireOwnerlessTextField(scope->declaration, *field);
 }
 
+auto SemanticVisitor::Impl::callBorrowedTextFormal(
+    const Call &call, const ResolvedCallInfo &resolved) const
+    -> std::optional<OwnerlessTextField> {
+  if (resolved.borrowOrigin == BorrowOriginKind::Receiver) {
+    const auto *member = exprAs<Get>(call.callee().get());
+    if (member == nullptr) {
+      // An implicit receiver call borrows this method's receiver.
+      const FunctionInfo *scope = textFieldContractScope();
+      if (scope != nullptr && scope->ownerClass != 0 && !scope->staticMember &&
+          scope->bodyDeclaration()->receiverMutability() ==
+              ReceiverMutability::ReadOnly &&
+          textPublicationOwner(openClassType(scope->ownerClass)))
+        return OwnerlessTextField{.receiver = true};
+    } else if (member->access().kind != TokenKind::ARROW && member->object()) {
+      return textFieldContractFormal(*member->object());
+    }
+  } else if (resolved.borrowOrigin == BorrowOriginKind::Argument &&
+             resolved.borrowArgument <
+                 resolvedCallArgumentCount(call, &resolved)) {
+    const ExprPtr *argument =
+        resolvedCallArgument(call, &resolved, resolved.borrowArgument);
+    if (argument != nullptr && *argument)
+      return textFieldContractFormal(**argument);
+  }
+  return std::nullopt;
+}
+
 auto SemanticVisitor::Impl::noteReturnedFormalReference(const Expr &returned)
     -> void {
   const Expr *current = &returned;
@@ -1880,28 +1946,8 @@ auto SemanticVisitor::Impl::noteReturnedFormalReference(const Expr &returned)
   if (resolved == nullptr ||
       resolved->returnType.kind != SemanticType::Reference)
     return;
-  std::optional<OwnerlessTextField> formal;
-  if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
-    const auto *member = exprAs<Get>(call->callee().get());
-    if (member == nullptr) {
-      // An implicit receiver call borrows this method's receiver.
-      const FunctionInfo *scope = textFieldContractScope();
-      if (scope != nullptr && scope->ownerClass != 0 && !scope->staticMember &&
-          scope->bodyDeclaration()->receiverMutability() ==
-              ReceiverMutability::ReadOnly &&
-          textPublicationOwner(openClassType(scope->ownerClass)))
-        formal = OwnerlessTextField{.receiver = true};
-    } else if (member->access().kind != TokenKind::ARROW && member->object()) {
-      formal = textFieldContractFormal(*member->object());
-    }
-  } else if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
-             resolved->borrowArgument <
-                 resolvedCallArgumentCount(*call, resolved)) {
-    const ExprPtr *argument =
-        resolvedCallArgument(*call, resolved, resolved->borrowArgument);
-    if (argument != nullptr && *argument)
-      formal = textFieldContractFormal(**argument);
-  }
+  const std::optional<OwnerlessTextField> formal =
+      callBorrowedTextFormal(*call, *resolved);
   // A method that returns its receiver accessor's relay composes that relay:
   // the reference designates the relayed field or payload, not the whole
   // receiver.
@@ -3435,8 +3481,8 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
     state->idleCatalogs.pop_back();
   }
   worker->semanticModel = semanticModel;
-  worker->deferredLookup = deferredLookup;
-  worker->deferredLookupBase = deferredLookupBase;
+  worker->macroLookup = macroLookup;
+  worker->macroLookupBase = macroLookupBase;
   worker->nextExpansion = nextExpansion;
   worker->valueFlow = valueFlow;
   for (const auto *definition : constexprDefinitionsAnalyzed)
@@ -5774,6 +5820,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     if (name == "meta_type_trait") {
       return IntrinsicKind::MetaTypeTrait;
+    }
+    if (name == "meta_type_relation") {
+      return IntrinsicKind::MetaTypeRelation;
     }
     if (name == "meta_enumerator_count") {
       return IntrinsicKind::MetaEnumeratorCount;
@@ -11829,6 +11878,9 @@ metaQueryShape(IntrinsicKind intrinsic) {
     return MetaQueryShape{.types = 2, .result = SemanticType::Bool};
   case IntrinsicKind::MetaTypeTrait:
     return MetaQueryShape{.indices = 1, .result = SemanticType::Bool};
+  case IntrinsicKind::MetaTypeRelation:
+    return MetaQueryShape{
+        .types = 2, .indices = 1, .result = SemanticType::Bool};
   case IntrinsicKind::MetaEnumeratorCount:
     return MetaQueryShape{};
   case IntrinsicKind::MetaEnumeratorName:
@@ -11866,6 +11918,27 @@ metaQueryShape(IntrinsicKind intrinsic) {
 
 } // namespace
 
+auto SemanticVisitor::Impl::metaQueryAcceptsOpenSubject(
+    IntrinsicKind intrinsic, const SemanticType &subject) const -> bool {
+  if (intrinsic != IntrinsicKind::MetaTypeKind ||
+      subject.kind == SemanticType::Unknown ||
+      subject.kind == SemanticType::TypeParameter ||
+      subject.kind == SemanticType::TypePack)
+    return false;
+  if (subject.kind == SemanticType::Enum &&
+      (subject.enumId == 0 || subject.enumId > enums.size()))
+    return false;
+  if (subject.kind == SemanticType::Class) {
+    const auto *owner = classInfo(subject);
+    if (owner == nullptr || owner->compilerType != CompilerTypeKind::None)
+      return false;
+  }
+  // The outer category is independent of nested type/value arguments. Exact
+  // class specializations must retain their primary's class/struct kind.
+  // Unknown/computed projections still have no category proof.
+  return metaTypeKind(subject) != 0;
+}
+
 // The constant a concrete reflection query denotes, or nullopt when the field
 // index is out of range (the caller reports it).
 auto SemanticVisitor::Impl::metaQueryConstant(
@@ -11882,6 +11955,9 @@ auto SemanticVisitor::Impl::metaQueryConstant(
     if (!index) {
       return std::nullopt;
     }
+    if (const auto constraint = metaTypeTraitConstraint(*index)) {
+      return ConstantValue{satisfiesAtomicConstraint(subject, *constraint)};
+    }
     switch (*index) {
     case 0:
       return ConstantValue{
@@ -11892,14 +11968,25 @@ auto SemanticVisitor::Impl::metaQueryConstant(
           (subject.kind == SemanticType::Class ||
            subject.kind == SemanticType::Enum) &&
           (!subject.arguments.empty() || !subject.valueArguments.empty())};
-    case 2:
-      return ConstantValue{isReflectableType(subject)};
-    case 3:
-      return ConstantValue{isSignedInteger(subject)};
     default:
       return std::nullopt;
     }
   }
+  case IntrinsicKind::MetaTypeRelation:
+    if (!attribute || !index) {
+      return std::nullopt;
+    }
+    switch (*index) {
+    case 0:
+      return ConstantValue{subject == *attribute};
+    case 1: {
+      const std::array<SemanticType, 2> arguments{subject, *attribute};
+      return ConstantValue{structuralConstraintSatisfied(
+          StructuralConstraintKind::EnumUnderlying, arguments)};
+    }
+    default:
+      return std::nullopt;
+    }
   case IntrinsicKind::MetaEnumeratorCount:
     return unsignedConstant(metaEnumeratorCount(subject));
   case IntrinsicKind::MetaBaseCount: {
@@ -12127,6 +12214,9 @@ auto SemanticVisitor::Impl::metaQueryFailure(
   case IntrinsicKind::MetaTypeTrait:
     return {"GTI-S2019", "Unknown reflection trait selector " +
                              std::to_string(index.value_or(0)) + "."};
+  case IntrinsicKind::MetaTypeRelation:
+    return {"GTI-S2019", "Unknown reflection type-relation selector " +
+                             std::to_string(index.value_or(0)) + "."};
   case IntrinsicKind::MetaMethodName:
   case IntrinsicKind::MetaMethodTrait:
   case IntrinsicKind::MetaMethodParameterCount:
@@ -12248,7 +12338,8 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
     resolved.typeArguments.push_back(*attribute);
   }
   semanticModel.record(expr, resolved);
-  if (containsOpenTypeParameter(*subject) ||
+  if ((containsOpenTypeParameter(*subject) &&
+       !metaQueryAcceptsOpenSubject(intrinsic, *subject)) ||
       (attribute && containsOpenTypeParameter(*attribute)) ||
       std::any_of(indices.begin(), indices.end(),
                   [](const CompileTimeValue &index) {
@@ -12303,7 +12394,8 @@ auto SemanticVisitor::Impl::metaIntrinsicConstant(
   }
   const SemanticType subject =
       constexprType(call.typeArguments.front(), context);
-  if (containsOpenTypeParameter(subject)) {
+  if (containsOpenTypeParameter(subject) &&
+      !metaQueryAcceptsOpenSubject(call.intrinsic, subject)) {
     return std::nullopt;
   }
   std::optional<SemanticType> attribute;
