@@ -806,6 +806,22 @@ any such copy remains live is rejected. A mutable range traversing a borrowed
 carrier additionally retains its receiver's physical lifetime and underlying
 stored dependency; neither can end while the iterator remains live.
 
+A carrier may be built straight from a reference that a call returns, without
+binding that reference first. For `std::string_view& Box::get()`,
+`box.get().begin()` is a text iterator over the returned view, as is
+`maybe.value().begin()` for a `std::optional<std::string_view>`, and a
+function `Cursor open(std::string_view& view)` may receive `box.get()`. An
+unrelated user carrier follows the same rule: `attach(panel.current())` may
+build a `Dial` that holds the `Gauge&` which `Panel::current()` returns. The
+carrier stores a reference to the returned referent itself, so the call's
+result stays borrowed until the carrier's last use, exactly as for
+`std::string_view& view = box.get(); view.begin()`. The carrier also retains
+the external owner of the text the returned view holds, if any; literal text
+has none. Changing that owner, or the accessor's receiver, while the carrier
+lives is rejected (`GTI-S2017`). Constructing a carrier class directly from
+such a result, as in `Cursor(box.get())`, is not yet implemented and stops in
+MIR construction; calling a function that constructs it works.
+
 Nesting uses the same rule, rather than an exception for a particular library
 type. For example, `std::pair<Iterator<int>, bool>` may carry one iterator and
 an insertion flag, and another nominal wrapper may contain that pair. The

@@ -9,6 +9,28 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.466.2 — Iterators and carriers from returned references
+
+- A text iterator can now be built directly from a view that a call returns
+  by reference. For `std::string_view& Box::get()`, `box.get().begin()`,
+  `box.get().rbegin()` and `maybe.value().begin()` on a
+  `std::optional<std::string_view>` used to report `error[GTI-B0001]` (an
+  internal compiler error); they now work, whether the view holds literal text
+  or text owned by a `std::string`. So does `for (auto c : box.get())` over a
+  literal-backed view, and `std::string_view& view = box.get();
+  view.begin()` when the view holds literal text.
+- The same holds for user carriers built by a function: `Cursor open(
+  std::string_view& view) { return Cursor(view); }` can now be called as
+  `open(box.get())`, and `attach(panel.current())` can build a carrier from a
+  `Gauge&` that `Panel::current()` returns. Each used to report
+  `error[GTI-B0001]`.
+- The returned reference stays borrowed while the iterator or carrier lives:
+  changing the text's owner, or assigning the accessor's receiver, is still
+  rejected with `error[GTI-S2017]`.
+- Not yet supported: constructing a carrier class directly from a returned
+  reference, as in `Cursor(box.get())`, still reports `GTI-B0001`. Call a
+  function that constructs it, as `open(box.get())` does.
+
 ## 0.466.1 — Text members through `operator->`
 
 - When an `operator->` returns a `std::string_view&`, its members can be
@@ -47,7 +69,6 @@ for what minor and patch releases mean.
   typed macros; example 172 retains the assertion workflow.
 - Diagnostics include nested expansion context. Neovim's read-only
   `:GTIExpandMacro` view explains the checked expansion and local bindings.
-
 
 ## 0.465.6 — Moving one class and copying another after fallible work
 

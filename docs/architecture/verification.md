@@ -1,5 +1,47 @@
 # Compiler Verification
 
+## Carriers of returned references (0.466.2)
+
+`accessor_text_carrier_runtime` runs `accessor_text_carriers.gti` in all
+eight native modes, including the sanitized one. It builds text iterators
+directly from `Box::get()`'s returned `std::string_view&` over literal and
+`std::string`-owned text (`begin()`, `rbegin()`, a counted walk to `end()`),
+through a bound reference to literal text, and in a range-for over a
+literal-backed view. It calls `Cursor open(std::string_view&)` on a returned
+view, iterates `std::optional<std::string_view>::value()`, and builds an
+unrelated user carrier, `attach(panel.current())`, from a returned `Gauge&`.
+Main (`cf14a66a`) stops it with `GTI-B0001`.
+
+`checkAccessorReturnedTextCarriers` in `carrier_shell_references` checks the
+MIR shape: every such carrier's `Stored` loan is sourced at its accessor's
+`CallResult` loan with no projection, has that loan as parent, and holds the
+same stored dependency. Mutations:
+- removing an owner-backed carrier's stored dependency is rejected with
+  "carrier shell loan does not preserve its exact stored dependency";
+- removing a literal-backed carrier's parent, or moving its source to the
+  accessor's owner, is rejected with "carrier reference result requires one
+  exact stored dependency";
+- changing the text's owner, assigning the accessor's receiver, or changing
+  the owner behind `std::optional<std::string_view>::value()` while the
+  iterator lives is `GTI-S2017` alone.
+
+Moving an owner-backed carrier's source to the accessor's owner still
+verifies. That owner contains the referent and the stored dependency is
+unchanged, so it is a conservative source rather than a forged one. With the
+verifier's ownerless-accessor clause disabled, every literal-backed form fails
+again with that same message and the owner-backed forms still build.
+
+A `gti` linked with PR #298's three semantic and HIR units on top of this
+change builds and runs `maybe->begin()`, `viewed->rbegin()` and
+`label->begin()` through a user `operator->` at `-O0`, `-O3` and with
+ASan/UBSan, keeps `GTI-S2017` for an owner change, and still passes #298's
+`arrow_text_members.gti`.
+
+Not covered: constructing a carrier class directly from a returned reference
+(`Cursor(box.get())`) still stops in MIR construction, with "carrier reference
+result requires one exact stored dependency" for literal text and "dependent
+text value is relayed where its text field may outlive" for owned text.
+
 ## Derived dependent-text carriers (internal)
 
 `view_fields` `testDerivedCarriers` publishes one local owner through a class
