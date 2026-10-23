@@ -610,6 +610,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testMoveOnlyAssignmentResultUse",
+      "suite": "ownership"
+    },
+    {
       "name": "testFixedWidthIntegers",
       "suite": "constexpr"
     },

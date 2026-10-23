@@ -1573,10 +1573,14 @@ touches it, and it declares and spells nothing. The copy `Load` that MIR uses
 for a class assignment's result, as in `(p = q).x`, copy-constructs the slot
 from the committed destination the same way; it requires a copyable class with
 a generated destructor and no active drop state or borrowed state, takes no
-other consumer, and keeps every other copy-load route unchanged. The
-constructor form also requires exact target, owner, result, parameter, and
-operand metadata; a trivial scalar copy load; and no active cleanup,
-lifecycle, borrowed-state, or drop obligation. A text view field
+other consumer, and keeps every other copy-load route unchanged. Whole uses of
+that result need no backend rule of their own: an initialization, return or
+constructor field initializer spells the copy `Load` as any copy load, a
+receiver borrows the hidden temporary as a joined temporary, and a by-value
+argument is an ordinary copied argument staged before any later argument
+runs. The constructor form also requires exact target, owner, result,
+parameter, and operand metadata; a trivial scalar copy load; and no active
+cleanup, lifecycle, borrowed-state, or drop obligation. A text view field
 (`std::string_view` or `c_string`) is read the same way: the view is a passive
 descriptor whose text is never the temporary's own storage. A construction that
 publishes a local owner's text (`L-OWN-02`) holds borrowed state only as that

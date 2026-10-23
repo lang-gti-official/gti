@@ -751,6 +751,7 @@ private:
     bool neverReturns = false;
     bool tracksCaller = false;
     bool discardableResult = false;
+    bool deferredEvaluation = false;
     bool threadConfinedCallback = false;
     bool testFunction = false;
     CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
@@ -1865,8 +1866,8 @@ private:
                         const SemanticType &type,
                         bool initializerSemanticallyValid);
 
-  [[nodiscard]] static std::optional<bool>
-  constantBoolean(const ExprPtr &expression);
+  [[nodiscard]] std::optional<bool>
+  constantBoolean(const ExprPtr &expression) const;
 
   [[nodiscard]] bool expressionNeverReturns(const Expr *expression) const;
 
@@ -4735,6 +4736,10 @@ private:
 
   SemanticType analyze(const Expr &expr, OccurrenceRole requestedRoles);
 
+  void discardResult(const ExprPtr &expr);
+  // Reports a used result of a built-in assignment to a move-only type.
+  void checkAssignmentResultUse(const Expr &expr, const SemanticType &result);
+
   SemanticType analyze(const ExprPtr &expr);
 
   SemanticType analyze(const ExprPtr &expr, OccurrenceRole roles);
@@ -4970,6 +4975,51 @@ private:
   std::uint32_t nextExpansion = 0;
   std::vector<StmtPtr> expansionArena;
   std::vector<std::shared_ptr<const Expr>> synthesizedExpressions;
+  // Deferred statement helpers borrow no closure environment. Each expansion
+  // retains definition-site lookup for its body and caller-site lookup for
+  // substituted arguments. Flow/loans remain those of the calling body.
+  struct DeferredLookupContext {
+    std::vector<std::string> namespaceScope;
+    SourceUnitId sourceUnit = 0;
+    std::optional<ClassId> ownerClass;
+    bool staticMember = false;
+    bool definition = false;
+    std::size_t declarationOrder = 0;
+    std::optional<CallerLocationOrigin> caller;
+    std::optional<Token> invocation;
+    std::unordered_map<std::string, SemanticType> types;
+    std::unordered_map<std::string, CompileTimeValue> values;
+  };
+  std::unordered_map<std::uint32_t, DeferredLookupContext> deferredLookup;
+  // A speculative worker is confined to the lifetime of its caller. Read
+  // earlier expansion domains through that caller instead of repeatedly
+  // copying the growing domain map; newly expanded syntax stays local.
+  const Impl *deferredLookupBase = nullptr;
+  struct DeferredLookupScope {
+    Impl &owner;
+    std::vector<std::string> namespaceScope;
+    SourceUnitId sourceUnit;
+    std::optional<ClassId> ownerClass;
+    bool staticMember;
+    std::size_t declarationOrder;
+    DeferredLookupScope(Impl &owner, const DeferredLookupContext &context);
+    ~DeferredLookupScope();
+  };
+  bool deferredProbe = false;
+  const Call *deferredProbeCall = nullptr;
+  const Call *deferredStatementCall = nullptr;
+  std::unordered_set<const Expr *> deferredProbeArguments;
+  std::size_t deferredExpansionDepth = 0;
+  std::size_t deferredExpandedBodies = 0;
+  std::vector<const FunctionDecl *> deferredActiveBodies;
+  [[nodiscard]] const DeferredLookupContext *
+  deferredContext(const Token &token) const;
+  [[nodiscard]] bool analyzeDeferredStatement(const ExpressionStmt &statement);
+  [[nodiscard]] bool
+  analyzeDeferredSelection(const Call &call, const CallableCandidate &selected,
+                           const std::vector<SemanticType> &typeArguments,
+                           const std::vector<CompileTimeValue> &valueArguments);
+  [[nodiscard]] bool validDeferredBody(const Stmt &statement) const;
   static constexpr std::size_t kConstexprForElementLimit = 1024;
   static constexpr std::size_t kConstexprForBodyLimit = 4096;
   // Bodies expanded by `constexpr for` inside the declaration being analysed.
@@ -6015,7 +6065,10 @@ private:
   // R-STRUCT-02 moves catalog and flow algorithms behind narrower services.
   // They do not introduce another owner: every binding refers into this one
   // object, and resetRequestState() is its only public-entry reset operation.
-  struct RequestSessionState {
+  // Mutable request context can be forked independently of the persistent
+  // semantic facts. Speculative expression checks use a model delta rather
+  // than copying every earlier expression in the caller's program.
+  struct RequestSessionContext {
     struct OwnerlessTextCallUse {
       const FunctionDecl *caller = nullptr;
       FunctionId callee = 0;
@@ -6083,7 +6136,6 @@ private:
     };
 
     std::vector<SemanticDiagnostic> diagnostics;
-    SemanticModel semanticModel;
     SemanticCatalog catalog;
     std::vector<OwnerlessTextCallUse> ownerlessTextCallUses;
     std::vector<OwnerlessTextCallableUse> ownerlessTextCallableUses;
@@ -6107,6 +6159,10 @@ private:
     std::unordered_map<const Expr *, std::vector<const Expr *>>
         defaultArgumentDependencies;
     std::unordered_set<const Expr *> reportedDefaultArgumentCycles;
+    // Expressions whose value is discarded: an expression statement, a
+    // for-loop increment, a comma's left operand, and what a discarded
+    // grouping, comma or conditional evaluates in its place.
+    std::unordered_set<const Expr *> discardedResults;
     std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
     std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
     std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
@@ -6296,6 +6352,9 @@ private:
     std::vector<std::uint8_t> cAbiRecordStates;
     std::vector<bool> unionShapes;
     std::vector<std::uint8_t> unionStates;
+  };
+  struct RequestSessionState : RequestSessionContext {
+    SemanticModel semanticModel;
   } requestSession;
 
   std::vector<SemanticDiagnostic> &diagnostics = requestSession.diagnostics;
@@ -6367,6 +6426,8 @@ private:
       &defaultArgumentDependencies = requestSession.defaultArgumentDependencies;
   std::unordered_set<const Expr *> &reportedDefaultArgumentCycles =
       requestSession.reportedDefaultArgumentCycles;
+  std::unordered_set<const Expr *> &discardedResults =
+      requestSession.discardedResults;
   std::unordered_map<std::string, const FunctionDecl *> &externCSymbols =
       requestSession.externCSymbols;
   std::unordered_map<std::string, const VariableDecl *>
@@ -6493,6 +6554,15 @@ private:
     return concreteReanalysis() || symbol.variableDeclaration == nullptr ||
            symbol.declarationOrder == 0 ||
            symbol.declarationOrder < currentDeclarationOrder;
+  }
+  [[nodiscard]] bool symbolVisibleAt(const Symbol &symbol,
+                                     const Token &token) const {
+    const auto *context = deferredContext(token);
+    return !context ? symbolVisibleNow(symbol)
+                    : concreteReanalysis() ||
+                          symbol.variableDeclaration == nullptr ||
+                          symbol.declarationOrder == 0 ||
+                          symbol.declarationOrder < context->declarationOrder;
   }
 
   // The resumable lexical pass over the program's declarations.

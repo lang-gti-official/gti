@@ -9,6 +9,14 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+`GTI-S2124` reports invalid deferred invocation shapes and deterministic
+expansion-budget exhaustion. `GTI-S2099` diagnoses an ineligible `[[deferred]]`
+signature or body at its attribute. Concrete body failures retain the owning
+ordinary diagnostic code; when they originate in the helper body, the written
+invocation is primary and the expanded body site is related. No automatic edit
+changes ownership, forces an expression, or silently converts an eager API to
+a deferred one. The LSP publishes the same compiler records.
+
 `GTI-S2082` follows payload-enum alternatives, including those inside the
 source `expected` class, as well as fixed arrays when detecting a recursive
 by-value class layout. It anchors the field's written type and retains the
@@ -274,6 +282,16 @@ related spans, and what intentional alternatives remain through hints:
   or move assignment rather than reporting identical types as a mismatch. It
   suggests explicit movement only when move assignment exists. Constants are
   never advised to add the forbidden `mut constexpr` combination.
+- A used result of a valid built-in assignment of a move-only type is
+  `GTI-S2003` at the assignment operator: the result would copy the target.
+  Semantic analysis records the discarded positions (an expression statement,
+  a for-loop increment, a comma's left operand, and what a discarded grouping,
+  comma or conditional yields) before analysing them, and one check after any
+  plain `=` store of a binding, field, element, dereference or place reports
+  every other use. The hint directs the assignment into its own statement; no
+  fix-it is offered, because where the target is next read requires
+  programmer intent. An assignment that already reported its own diagnostic,
+  and an open type parameter before instantiation, report nothing more.
 
 These options are advisory, not ownership-changing fix-its. The LSP publishes
 the same compiler-owned notes and hints; it does not reconstruct explanations

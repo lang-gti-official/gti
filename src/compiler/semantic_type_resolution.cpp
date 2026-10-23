@@ -21,7 +21,8 @@ auto SemanticVisitor::Impl::nativeFunctionCandidateIsEligible(
   }
   const FunctionDecl &declaration = *candidate.declaration;
   return declaration.body() != nullptr && !declaration.runtimeBinding() &&
-         !declaration.hasCLinkage() && !declaration.operatorName();
+         !declaration.hasCLinkage() && !declaration.operatorName() &&
+         !candidate.record().deferredEvaluation;
 }
 
 auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
@@ -38,6 +39,7 @@ auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
   const FunctionDecl &declaration = *candidate.declaration;
   return declaration.body() != nullptr && !declaration.runtimeBinding() &&
          !declaration.hasCLinkage() && !declaration.operatorName() &&
+         !candidate.record().deferredEvaluation &&
          !candidate.record().entryPoint;
 }
 
@@ -183,6 +185,16 @@ auto SemanticVisitor::Impl::analyzeNativeFunctionItem(
 auto SemanticVisitor::Impl::analyzeFunctionItem(
     const Expr &expression, const Symbol &symbol,
     const SemanticType &expectedType, const Token &location) -> SemanticType {
+  if (!symbol.overloads.empty() &&
+      std::all_of(symbol.overloads.begin(), symbol.overloads.end(),
+                  [](const CallableCandidate &candidate) {
+                    return candidate.record().deferredEvaluation;
+                  })) {
+    diagnostics.push_back(makeDiagnostic(
+        DiagnosticId::DeferredEvaluation, location,
+        {"Deferred helpers are statement templates, not callable values."}));
+    return SemanticType::Unknown;
+  }
   const CallableCandidate *selected = nullptr;
   for (const CallableCandidate &candidate : symbol.overloads) {
     const bool exactContext =
@@ -1143,6 +1155,20 @@ auto SemanticVisitor::Impl::functionCallArgumentMatch(
     return CallArgumentMatchKind::Mismatch;
   }
   const SemanticType &parameter = function.parameterTypes[index];
+  if (function.record().deferredEvaluation) {
+    const SemanticType &value = argument.kind == SemanticType::Reference &&
+                                        argument.arguments.size() == 1
+                                    ? argument.arguments.front()
+                                    : argument;
+    // Expression parameters are not an eager copy/move boundary. Their
+    // actual uses in the expansion perform ordinary ownership checking.
+    return parameter == value || parameter == SemanticType::Unknown ||
+                   value == SemanticType::Unknown ||
+                   (value.kind == SemanticType::TypePack &&
+                    forwardedPackArgumentMatches(parameter, value))
+               ? CallArgumentMatchKind::Exact
+               : CallArgumentMatchKind::Mismatch;
+  }
   if (contextualCallArgumentPotentiallyMatches(parameter, argument, expression,
                                                deferred)) {
     return CallArgumentMatchKind::Exact;
@@ -4278,6 +4304,11 @@ auto SemanticVisitor::Impl::activeTypePackIdentity(const TypeRef &type) const
                      parameter->kind != SemanticType::TypePack)) {
     return std::nullopt;
   }
+  if (const auto *context = deferredContext(type.name.last());
+      context && context->definition)
+    return parameter->kind == SemanticType::TypePack
+               ? std::optional(parameter->genericParameterId)
+               : std::nullopt;
   // The nearest lexical declaration owns whether a name is a pack; its
   // substituted value may retain another declaration's canonical pack ID.
   // Keep those identities separate, and do not see through a non-pack shadow.
@@ -6646,6 +6677,12 @@ auto SemanticVisitor::Impl::resolveTypeParameter(const NamePath &name) const
   if (name.segments.size() != 1) {
     return std::nullopt;
   }
+  if (const auto *context = deferredContext(name.last());
+      context && context->definition) {
+    const auto found = context->types.find(name.last().lexeme);
+    return found == context->types.end() ? std::nullopt
+                                         : std::optional(found->second);
+  }
   for (auto scope = typeParameterScopes.rbegin();
        scope != typeParameterScopes.rend(); ++scope) {
     if (const auto found = scope->find(name.last().lexeme);
@@ -6658,6 +6695,12 @@ auto SemanticVisitor::Impl::resolveTypeParameter(const NamePath &name) const
 
 auto SemanticVisitor::Impl::resolveValueParameter(const Token &name) const
     -> std::optional<CompileTimeValue> {
+  if (const auto *context = deferredContext(name);
+      context && context->definition) {
+    const auto found = context->values.find(name.lexeme);
+    return found == context->values.end() ? std::nullopt
+                                          : std::optional(found->second);
+  }
   for (auto scope = valueParameterScopes.rbegin();
        scope != valueParameterScopes.rend(); ++scope) {
     if (const auto found = scope->find(name.lexeme); found != scope->end()) {

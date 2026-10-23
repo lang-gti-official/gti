@@ -108,6 +108,15 @@
     "arguments": 1
   },
   {
+    "id": "DeferredEvaluation",
+    "code": "GTI-S2124",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "deferred-evaluation",
+    "format": "{0}",
+    "arguments": 1
+  },
+  {
     "id": "OutOfClassDefinition",
     "code": "GTI-S2120",
     "phase": "Semantics",
