@@ -802,6 +802,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testAssignmentResultWholeValue",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testNestedClassResultFieldView",
       "suite": "lifecycle"
     },
