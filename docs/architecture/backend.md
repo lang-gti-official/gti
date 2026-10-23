@@ -2793,6 +2793,19 @@ form the complete first-field prefix. Body admission and the planner's
 initializer list consult that one proof. For a constructor that either form
 can body-stage, passive scalar parameter copies stay in the MIR body schedule
 (`cppMirCopyParameterFieldBindings`), whichever form is selected.
+In the failure form, a native copy outside that first-field prefix may still
+publish beside body-staged moves when it copies a passive generated class
+(`failureConstructorHoistablePassiveCopy`). The copy query already refuses a
+formal that earlier initializer work may write, and the copy itself runs no
+source code and cannot fail, so publishing it ahead of the body schedule is
+unobservable; the copy-only failure form already publishes it that way. In
+`Shelved(Pair moved, Pair copied) : ledger(Ledger(31, divisor)),
+moved(std::move(moved)), copied(copied)`, `moved` starts empty and is moved
+after the ledger in MIR order, while `copied(__gti_mir_arg_1)` publishes in
+the member-initializer list, in either declaration order. A borrowed carrier
+keeps the prefix rule, because it publishes a `Stored` loan. The ordinary form
+keeps it too: a class formal's lexical drop keeps its constructor
+conservatively failure-capable, so no class copy reaches that form today.
 The native owned-field proof also refuses a passive scalar sibling that copies
 the very formal a later initializer moves, as in `Copied(int32_t tag) :
 first(tag), second(std::move(tag))`: the native list would move the formal

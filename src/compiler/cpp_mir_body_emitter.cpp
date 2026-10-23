@@ -15051,6 +15051,31 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
   return true;
 }
 
+// A copy of a passive generated class need not be in the prefix. The copy
+// query already refuses a formal that earlier initializer work may write
+// (formalMayChangeBefore). The copy itself runs no source code and cannot
+// fail, so it may be published natively ahead of a body-staged schedule
+// wherever its field is declared, as the copy-only form already publishes it.
+// A borrowed carrier keeps the prefix rule, because it must publish its loan.
+[[nodiscard]] bool failureConstructorHoistablePassiveCopy(
+    const MirProgram &program, const MirConstructorInstance &constructor,
+    const MirClassInstance &owner,
+    const CppMirCopyParameterFieldBinding &binding) {
+  if (binding.initializer >= owner.declaredFields.size() ||
+      owner.declaredFields[binding.initializer].symbol != binding.field ||
+      !owner.bases.empty() || !owner.structuralBases.empty() ||
+      binding.initializeInstruction == 0)
+    return false;
+  const MirClassFieldInfo &field = owner.declaredFields[binding.initializer];
+  const MirClassInstance *passive =
+      passiveGeneratedCopyClass(program, field.type);
+  const MirValue *copied = constructor.body.findValue(binding.loadedValue);
+  return passive != nullptr && !passive->traits.containsBorrowedState &&
+         !field.requiresActiveCleanup && copied != nullptr &&
+         copied->info.type == field.type &&
+         !copied->info.traits.containsBorrowedState;
+}
+
 [[nodiscard]] bool failureConstructorMovedBoundFieldPrefix(
     const MirProgram &program, const MirConstructorInstance &constructor,
     const MirClassInstance &owner,
@@ -15382,7 +15407,9 @@ failureConstructorBoundaryEligible(const MirProgram &program,
       std::all_of(copiedParameters->begin(), copiedParameters->end(),
                   [&](const auto &binding) {
                     return failureConstructorCopiedFieldPrefix(
-                        program, constructor, *owner, binding);
+                               program, constructor, *owner, binding) ||
+                           failureConstructorHoistablePassiveCopy(
+                               program, constructor, *owner, binding);
                   }) &&
       bodyStagedOwnedParameterFieldInitializers(program, constructor);
   const bool bodyStagedOptionalParameter =

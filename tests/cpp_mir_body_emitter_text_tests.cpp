@@ -2448,6 +2448,143 @@ int main() {
          "a class with an actively cleaned field is not a passive copy");
 }
 
+void testPassiveClassMoveAndCopyAfterFallibleSibling() {
+  // One passive class moves and another is copied after a fallible field.
+  // The move stays in the verified body. The copy is not part of the native
+  // first-field prefix, but copying an unwritten formal of a passive class
+  // runs no source code and cannot fail, so it still publishes natively.
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-passive-class-move-and-copy.gti", R"(
+#include <std/utility>
+
+class Ledger {
+public:
+  int32_t id;
+  Ledger(int32_t id, int32_t divisor) : id(id + 60 / divisor) {}
+  ~Ledger() {}
+};
+
+class Pair {
+public:
+  int32_t a;
+  int32_t b;
+  Pair(int32_t a, int32_t b) : a(a), b(b) {}
+};
+
+class Shelved {
+public:
+  Ledger ledger;
+  Pair moved;
+  Pair copied;
+  Shelved(Pair moved, Pair copied, int32_t divisor)
+      : ledger(Ledger(31, divisor)), moved(std::move(moved)), copied(copied) {}
+};
+
+bool is_odd(int32_t value) { return value % 2 == 1; }
+
+class Gauge {
+public:
+  bool flagged;
+  int32_t tag;
+  Pair pair;
+  Gauge(int32_t tag, Pair pair)
+      : flagged(is_odd(tag)), tag(std::move(tag)), pair(pair) {}
+};
+
+int main() {
+  Shelved shelved = Shelved(Pair(1, 2), Pair(3, 4), 1);
+  Gauge gauge = Gauge(7, Pair(5, 6));
+  return shelved.moved.a + shelved.copied.b + gauge.pair.a - 10 +
+         (gauge.flagged ? gauge.tag - 7 : 1);
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the passive move-and-copy fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirConstructorInstance *shelved = nullptr;
+  const lang::MirConstructorInstance *gauge = nullptr;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    const auto owned = std::count_if(
+        constructor.initializers.begin(), constructor.initializers.end(),
+        [](const lang::MirConstructorInitializer &initializer) {
+          return initializer.ownedParameter.has_value();
+        });
+    if (owned != 1)
+      continue;
+    if (constructor.parameterTypes.size() == 3)
+      shelved = &constructor;
+    else if (constructor.parameterTypes.size() == 2 &&
+             constructor.parameterTypes.front() == lang::SemanticType::Int32)
+      gauge = &constructor;
+  }
+  expect(shelved != nullptr && gauge != nullptr,
+         "both mixed constructors are found");
+  if (shelved == nullptr || gauge == nullptr) {
+    return;
+  }
+  const auto copiesField = [&](const lang::MirConstructorInstance &constructor,
+                               std::size_t initializer) {
+    const auto bindings =
+        lang::cppMirCopyParameterFieldBindings(frontend.mir, constructor);
+    return bindings &&
+           std::any_of(
+               bindings->begin(), bindings->end(),
+               [&](const lang::CppMirCopyParameterFieldBinding &binding) {
+                 return binding.initializer == initializer;
+               });
+  };
+  expect(shelved->mayRaiseDefinedFailure &&
+             !shelved->body.failureRecords.empty() &&
+             !lang::cppMirOwnedParameterFieldBindings(frontend.mir, *shelved) &&
+             copiesField(*shelved, 2),
+         "the move after fallible work is body-staged and the later copy is "
+         "an exact parameter copy");
+  // A class formal's lexical drop keeps Gauge conservatively failure-capable,
+  // so its drop-free scalar move, staged after a read of its formal, also
+  // takes the failure form beside the native class copy.
+  expect(gauge->mayRaiseDefinedFailure && copiesField(*gauge, 2) &&
+             !lang::cppMirOwnedParameterFieldBindings(frontend.mir, *gauge),
+         "the scalar move after a read is body-staged beside the class copy");
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  for (const auto *constructor : {shelved, gauge}) {
+    expect(lang::CppMirBodyEmitter(frontend.mir, map)
+               .supportsFailureBodyText({.kind = lang::MirBodyKind::Constructor,
+                                         .owner = constructor->id}),
+           "the failure form admits the body-staged move beside the native "
+           "copy");
+  }
+
+  std::string text;
+  try {
+    text = gti_test::emitCpp(frontend).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("a passive move beside a passive copy after a "
+                              "fallible sibling should emit: ") +
+                      error.what());
+    return;
+  }
+  const std::size_t start = text.find(
+      "Shelved::Shelved(::gti_internal::backend::mir_failure_constructor_tag_"
+      "v1<");
+  const std::size_t end =
+      start == std::string::npos ? start : text.find("\n  }\n", start);
+  const std::string body = end == std::string::npos
+                               ? std::string()
+                               : text.substr(start, end - start);
+  const std::size_t ledger = body.find("::__gti_program::Ledger(");
+  const std::size_t publication = body.find(" = std::move(__gti_mir_v_");
+  expect(body.find("moved(::gti_internal::backend::mir_empty_state_v1<std::"
+                   "remove_cv_t<decltype(moved)>>())") != std::string::npos &&
+             body.find("copied(__gti_mir_arg_1)") != std::string::npos &&
+             ledger != std::string::npos && publication != std::string::npos &&
+             ledger < publication,
+         "the moved field starts empty and is published after the ledger, "
+         "while the copied field publishes natively");
+}
+
 void testMovedChainReturnConstruction() {
   // A failure-free body returns a class constructed from a moved scalar. The
   // Move and its call input stage into the construction and never
@@ -9424,6 +9561,8 @@ constexpr NamedTest kTests[] = {
     {"testMovedViewAfterFormalRead", testMovedViewAfterFormalRead},
     {"testPassiveTextViewClassAfterFallibleSibling",
      testPassiveTextViewClassAfterFallibleSibling},
+    {"testPassiveClassMoveAndCopyAfterFallibleSibling",
+     testPassiveClassMoveAndCopyAfterFallibleSibling},
     {"testMovedChainReturnConstruction", testMovedChainReturnConstruction},
     {"testMovedPassiveFieldInPlainConstructor",
      testMovedPassiveFieldInPlainConstructor},
