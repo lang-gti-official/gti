@@ -8023,8 +8023,8 @@ int main() {
   expect(!failedConstraint.canGenerateCode() &&
              hasDiagnosticCode(failedConstraint.diagnostics, "GTI-S2029") &&
              hasDiagnostic(failedConstraint.diagnostics,
-                           "does not satisfy generic constraint "
-                           "'std::integral'"),
+                           "Type 'bool' does not satisfy concept "
+                           "'std::integral<bool>'"),
          "constructor constraints should be evaluated after exact argument "
          "inference and before candidate admission");
 
