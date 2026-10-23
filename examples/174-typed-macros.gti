@@ -9,6 +9,9 @@ struct Sample {
 
 struct Observations {
   static mut int value = 0;
+  static mut int text_values = 0;
+  static mut int bounds = 0;
+  static mut int steps = 0;
 };
 
 namespace application {
@@ -34,6 +37,46 @@ namespace application {
   #macro consume_when(bool enabled, std::string value) {
     if (enabled) { consume(value); }
   }
+
+  // An ordinary local deliberately evaluates an expression exactly once.
+  // Its written name cannot capture an equally named caller argument.
+  #macro record_twice_once(bool enabled, int value) {
+    if (enabled) {
+      int saved = value;
+      record(saved + saved);
+    }
+  }
+
+  #macro inspect_twice(Sample value) {
+    Sample& saved = value;
+    inspect(saved);
+    inspect(saved);
+  }
+
+  std::string fresh_text() {
+    Observations::text_values++;
+    return std::string("evaluated once");
+  }
+
+  #macro keep_text_once(bool enabled, std::string value) {
+    if (enabled) {
+      std::string saved = value;
+      std::assert(saved.view() == "evaluated once");
+      std::assert(!saved.empty());
+    } // The macro owns and deterministically destroys this one string.
+  }
+
+  int next_bound() { Observations::bounds++; return 6; }
+  void step() { Observations::steps++; }
+
+  #macro bounded_steps(int count) {
+    int limit = count;
+    for (mut int index = 0; index < limit; ++index) {
+      if (index == 1) { continue; }
+      if (index == 3) { break; }
+      step();
+    }
+  }
 }
 
 int main() {
@@ -58,6 +101,22 @@ int main() {
   std::string owner{"still owned"};
   application::consume_when(false, std::move(owner));
   std::assert(owner.view() == "still owned");
+
+  int saved = 9;
+  application::record_twice_once(true, saved);
+  std::assert(saved == 9 && Observations::value == 18);
+  application::record_twice_once(false, evaluations++);
+  application::record_twice_once(true, evaluations++);
+  std::assert(evaluations == 3 && Observations::value == 4);
+
+  // A named checked borrow and an owning value use ordinary GTI lifetimes.
+  application::inspect_twice(sample);
+  application::keep_text_once(false, application::fresh_text());
+  std::assert(Observations::text_values == 0);
+  application::keep_text_once(true, application::fresh_text());
+  std::assert(Observations::text_values == 1);
+  application::bounded_steps(application::next_bound());
+  std::assert(Observations::bounds == 1 && Observations::steps == 2);
   std::assert(record == 99);
   std::println("Typed macros passed");
   return 0;

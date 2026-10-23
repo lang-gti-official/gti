@@ -19,6 +19,15 @@ invocation is primary and the expanded body site is related. No automatic edit
 changes ownership, forces an expression, or silently converts an eager API to
 a macro. The LSP publishes the same compiler records.
 
+Expansion failures retain a bounded, deduplicated trace naming the nested macro
+invocations and their declarations. An error in a substituted argument keeps
+that argument's written primary source span; body failures relate the original
+body site before anchoring the diagnostic at the written invocation. The trace
+does not replace ordinary diagnostic codes or infer origins from macro names.
+Editors may inspect a retained expansion through the read-only
+[`gti/inspectMacroExpansion` workflow](lsp.md#read-only-macro-expansion-inspection);
+that explanatory view has no authority to repair or execute an invalid body.
+
 `GTI-S2082` follows payload-enum alternatives, including those inside the
 source `expected` class, as well as fixed arrays when detecting a recursive
 by-value class layout. It anchors the field's written type and retains the

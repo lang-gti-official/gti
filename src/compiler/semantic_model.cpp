@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cassert>
 #include <iterator>
+#include <unordered_set>
 #include <utility>
 
 namespace lang {
@@ -1198,6 +1199,22 @@ const Token *SemanticModel::findMacroDefault(const Expr &expression) const {
   return base == nullptr ? nullptr : base->findMacroDefault(expression);
 }
 
+std::vector<MacroExpansionSite> SemanticModel::macroExpansionSites() const {
+  std::vector<MacroExpansionSite> sites;
+  std::unordered_set<const ExpressionStmt *> seen;
+  for (const SemanticModel *model = this; model != nullptr; model = model->base)
+    for (const auto &[invocation, body] : model->macroExpansions) {
+      if (!seen.insert(invocation).second || !body)
+        continue;
+      const auto declaration = model->macroDeclarations.find(invocation);
+      sites.push_back({invocation, body.get(),
+                       declaration == model->macroDeclarations.end()
+                           ? nullptr
+                           : declaration->second});
+    }
+  return sites;
+}
+
 [[nodiscard]] const std::vector<ResolvedDeclarationAttribute> *
 SemanticModel::findDeclarationAttributes(const Stmt &declaration) const {
   const auto found = declarationAttributes.find(&declaration);
@@ -2020,6 +2037,7 @@ void SemanticModel::clear() {
   constexprBranches.clear();
   constexprForExpansions.clear();
   macroExpansions.clear();
+  macroDeclarations.clear();
   macroDefaults.clear();
   declarationAttributes.clear();
   expressionAliases.clear();
@@ -2624,8 +2642,10 @@ void SemanticModel::recordConstexprForExpansion(
 }
 
 void SemanticModel::recordMacroExpansion(const ExpressionStmt &statement,
-                                         StmtPtr body) {
+                                         StmtPtr body,
+                                         const FunctionDecl &declaration) {
   macroExpansions.insert_or_assign(&statement, std::move(body));
+  macroDeclarations.insert_or_assign(&statement, &declaration);
 }
 
 void SemanticModel::recordMacroDefault(const Expr &expression, Token caller) {

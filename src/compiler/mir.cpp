@@ -5655,7 +5655,11 @@ joinLifecycleState(const MirLifecycleState &left,
     MirLifecycleState state = *entries[blockId - 1];
     (void)applyInstructions(block, state, false);
 
-    for (const MirBlockId successor : successors(block.terminator)) {
+    // Lifecycle availability must follow the same exact typed-literal
+    // feasibility proof as ownership. A structurally retained `if (false)`
+    // arm cannot consume an owner before a later executable move.
+    for (const MirBlockId successor :
+         ownershipSuccessors(body, block.terminator)) {
       MirLifecycleState outgoing = state;
       if (block.terminator.kind == MirTerminatorKind::Invoke &&
           successor == block.terminator.target) {

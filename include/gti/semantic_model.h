@@ -2228,6 +2228,14 @@ enum class StaticAssertResult {
   Deferred,
 };
 
+// Snapshot-scoped source facts for read-only macro inspection. These pointers
+// never escape the owning frontend snapshot or become executable authority.
+struct MacroExpansionSite {
+  const ExpressionStmt *invocation = nullptr;
+  const Stmt *body = nullptr;
+  const FunctionDecl *declaration = nullptr;
+};
+
 class SemanticModel {
 public:
   // Own semantic-generated constructor syntax for the lifetime of every
@@ -2399,6 +2407,7 @@ public:
   // Retain only a selected expansion's root, not its whole semantic model.
   [[nodiscard]] std::shared_ptr<const Stmt>
   shareMacroExpansion(const ExpressionStmt &statement) const;
+  [[nodiscard]] std::vector<MacroExpansionSite> macroExpansionSites() const;
   [[nodiscard]] const Token *findMacroDefault(const Expr &expression) const;
   // The declared attributes of a field or class-like declaration; nullptr
   // when none were recorded.
@@ -2846,7 +2855,8 @@ private:
   void
   recordConstexprForExpansion(const ConstexprForStmt &statement,
                               std::optional<ConstexprForExpansion> expansion);
-  void recordMacroExpansion(const ExpressionStmt &statement, StmtPtr body);
+  void recordMacroExpansion(const ExpressionStmt &statement, StmtPtr body,
+                            const FunctionDecl &declaration);
   void recordMacroDefault(const Expr &expression, Token caller);
   void recordDeclarationAttributes(
       const Stmt &declaration,
@@ -3074,6 +3084,8 @@ private:
                      std::optional<ConstexprForExpansion>>
       constexprForExpansions;
   std::unordered_map<const ExpressionStmt *, StmtPtr> macroExpansions;
+  std::unordered_map<const ExpressionStmt *, const FunctionDecl *>
+      macroDeclarations;
   std::unordered_map<const Expr *, Token> macroDefaults;
   std::unordered_map<const Stmt *, std::vector<ResolvedDeclarationAttribute>>
       declarationAttributes;

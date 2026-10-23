@@ -3,6 +3,142 @@
 // The single typed statement-expansion engine, selected by #macro syntax.
 
 namespace lang {
+namespace {
+
+void macroRelated(Diagnostic &diagnostic, SourceSpan span,
+                  std::string message) {
+  if (std::any_of(diagnostic.related.begin(), diagnostic.related.end(),
+                  [&](const auto &related) {
+                    return related.span.source == span.source &&
+                           related.span.start == span.start &&
+                           related.span.end == span.end &&
+                           related.message == message;
+                  }))
+    return;
+  if (diagnostic.related.size() < 128) {
+    diagnostic.related.push_back({span, std::move(message)});
+    return;
+  }
+  constexpr std::string_view truncated =
+      "Additional macro expansion context was truncated at 128 related sites.";
+  if (std::find(diagnostic.hints.begin(), diagnostic.hints.end(), truncated) ==
+      diagnostic.hints.end())
+    diagnostic.hints.emplace_back(truncated);
+}
+
+// Resolve only the syntactic shadowing of expression parameters. Actual local
+// identities, types, places, loans and cleanup remain ordinary semantic facts.
+// This pass prevents substitution from replacing uses of a macro-local binder.
+struct MacroParameterUses {
+  std::vector<std::unordered_set<std::string>> scopes{{}};
+  std::unordered_set<const Expr *> unbound;
+  std::function<const StmtList *(const ConditionalStmt &)> activeBranch;
+
+  bool bound(std::string_view name) const {
+    return std::any_of(scopes.rbegin(), scopes.rend(), [&](const auto &scope) {
+      return scope.contains(std::string(name));
+    });
+  }
+
+  void expression(const ExprPtr &value) {
+    if (!value)
+      return;
+    AstCloneOptions inspection;
+    inspection.expression = [&](const Expr &node) -> ExprPtr {
+      if (const auto *variable = exprAs<Variable>(&node);
+          variable && !bound(variable->name().lexeme))
+        unbound.insert(&node);
+      if (const auto *assignment = exprAs<Assign>(&node);
+          assignment && assignment->path().segments.size() == 1 &&
+          !bound(assignment->name().lexeme))
+        unbound.insert(&node);
+      if (const auto *pack = exprAs<PackExpansion>(&node);
+          pack && !bound(pack->name().lexeme))
+        unbound.insert(&node);
+      return nullptr;
+    };
+    (void)cloneExpr(*value, 0, inspection);
+  }
+
+  void scoped(const StmtPtr &value) {
+    scopes.emplace_back();
+    statement(value.get());
+    scopes.pop_back();
+  }
+
+  void statement(const Stmt *value) {
+    if (!value)
+      return;
+    switch (value->stmtKind()) {
+    case StmtKind::BlockStmt: {
+      scopes.emplace_back();
+      for (const auto &child :
+           static_cast<const BlockStmt &>(*value).statements())
+        statement(child.get());
+      scopes.pop_back();
+      break;
+    }
+    case StmtKind::VariableDecl: {
+      const auto &local = static_cast<const VariableDecl &>(*value);
+      // Ordinary GTI initializes before introducing the new binding.
+      expression(local.initializer());
+      scopes.back().insert(local.name().lexeme);
+      break;
+    }
+    case StmtKind::StructuredBindingDecl: {
+      const auto &local = static_cast<const StructuredBindingDecl &>(*value);
+      expression(local.initializer());
+      for (const auto &binding : local.bindings())
+        scopes.back().insert(binding.name().lexeme);
+      break;
+    }
+    case StmtKind::ExpressionStmt:
+      expression(static_cast<const ExpressionStmt &>(*value).expression());
+      break;
+    case StmtKind::IfStmt: {
+      const auto &branch = static_cast<const IfStmt &>(*value);
+      expression(branch.condition());
+      scoped(branch.thenBranch());
+      scoped(branch.elseBranch());
+      break;
+    }
+    case StmtKind::ForStmt: {
+      const auto &loop = static_cast<const ForStmt &>(*value);
+      scopes.emplace_back();
+      statement(loop.initializer().get());
+      expression(loop.condition());
+      expression(loop.increment());
+      scoped(loop.body());
+      scopes.pop_back();
+      break;
+    }
+    case StmtKind::WhileStmt: {
+      const auto &loop = static_cast<const WhileStmt &>(*value);
+      expression(loop.condition());
+      scoped(loop.body());
+      break;
+    }
+    case StmtKind::DoWhileStmt: {
+      const auto &loop = static_cast<const DoWhileStmt &>(*value);
+      scoped(loop.body());
+      expression(loop.condition());
+      break;
+    }
+    case StmtKind::RangeForStmt:
+      statement(static_cast<const RangeForStmt &>(*value).lowered().get());
+      break;
+    case StmtKind::ConditionalStmt:
+      if (const auto *selected =
+              activeBranch(static_cast<const ConditionalStmt &>(*value)))
+        for (const auto &child : *selected)
+          statement(child.get());
+      break;
+    default:
+      break; // Eligibility validation rejects unsupported statement families.
+    }
+  }
+};
+} // namespace
 
 auto SemanticVisitor::Impl::analyzeMacroSelection(
     const Call &call, const CallableCandidate &selected,
@@ -51,6 +187,23 @@ auto SemanticVisitor::Impl::macroContext(const Token &token) const
   return macroLookupBase ? macroLookupBase->macroContext(token) : nullptr;
 }
 
+auto SemanticVisitor::Impl::macroLocalScopeRange(const Token &token) const
+    -> std::pair<std::size_t, std::size_t> {
+  const auto *context = macroContext(token);
+  // Lambda captures are initialized in the enclosing domain, but the body
+  // owns a fresh scope stack. An enclosing argument's numeric bounds must
+  // neither hide lambda locals nor grant access to discarded outer frames.
+  if (context && context->lexicalLambdaDepth != lambdaDepth)
+    return {0, scopes.size()};
+  const std::size_t end = context && context->localScopeEnd
+                              ? std::min(scopes.size(), *context->localScopeEnd)
+                              : scopes.size();
+  const std::size_t begin = context && context->definition
+                                ? std::min(end, context->localScopeBegin)
+                                : 0;
+  return {begin, end};
+}
+
 SemanticVisitor::Impl::MacroLookupScope::MacroLookupScope(
     Impl &owner, const MacroLookupContext &context)
     : owner(owner), namespaceScope(std::move(owner.currentNamespace)),
@@ -72,7 +225,8 @@ SemanticVisitor::Impl::MacroLookupScope::~MacroLookupScope() {
   owner.currentDeclarationOrder = declarationOrder;
 }
 
-auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement) const
+auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement,
+                                           std::size_t ownLoopDepth) const
     -> bool {
   const auto expressionAllowed = [](const Expr &expression) {
     bool allowed = true;
@@ -81,36 +235,38 @@ auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement) const
       switch (node.exprKind()) {
       case ExprKind::Lambda:
       case ExprKind::MemberRequirement:
-      case ExprKind::Assign:
-      case ExprKind::PlaceSet:
-      case ExprKind::Set:
-      case ExprKind::IndexSet:
-      case ExprKind::DereferenceSet:
-      case ExprKind::Postfix:
       case ExprKind::PackFold:
         allowed = false;
         break;
       case ExprKind::Unary: {
         const auto kind = static_cast<const Unary &>(node).oper().kind;
-        if (kind == TokenKind::PLUS_PLUS || kind == TokenKind::MINUS_MINUS)
+        // Caller-written propagation retains its ordinary meaning, but a void
+        // template cannot silently introduce a return from its caller.
+        if (kind == TokenKind::QUESTION)
           allowed = false;
         break;
       }
       case ExprKind::ArrayInitializer:
+      case ExprKind::Assign:
       case ExprKind::Binary:
       case ExprKind::Call:
       case ExprKind::ConditionalExpr:
       case ExprKind::Conversion:
       case ExprKind::DirectInitializer:
+      case ExprKind::DereferenceSet:
       case ExprKind::Get:
       case ExprKind::Grouping:
       case ExprKind::Index:
+      case ExprKind::IndexSet:
       case ExprKind::LayoutQuery:
       case ExprKind::LiteralExpr:
       case ExprKind::Logical:
       case ExprKind::PackExpansion:
+      case ExprKind::PlaceSet:
+      case ExprKind::Postfix:
       case ExprKind::QualifiedName:
       case ExprKind::This:
+      case ExprKind::Set:
       case ExprKind::Variable:
         break;
       }
@@ -123,21 +279,45 @@ auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement) const
     return !block->isUnsafe() &&
            std::all_of(block->statements().begin(), block->statements().end(),
                        [&](const StmtPtr &child) {
-                         return child && validMacroBody(*child);
+                         return child && validMacroBody(*child, ownLoopDepth);
                        });
   if (const auto *branch = stmtAs<IfStmt>(&statement))
     return !branch->isConstexpr() && expressionAllowed(*branch->condition()) &&
-           branch->thenBranch() && validMacroBody(*branch->thenBranch()) &&
-           (!branch->elseBranch() || validMacroBody(*branch->elseBranch()));
+           branch->thenBranch() &&
+           validMacroBody(*branch->thenBranch(), ownLoopDepth) &&
+           (!branch->elseBranch() ||
+            validMacroBody(*branch->elseBranch(), ownLoopDepth));
   if (const auto *branch = stmtAs<ConditionalStmt>(&statement)) {
     const StmtList *active = branch->activeBranch(target);
-    return !active || std::all_of(active->begin(), active->end(),
-                                  [&](const StmtPtr &child) {
-                                    return child && validMacroBody(*child);
-                                  });
+    return !active ||
+           std::all_of(active->begin(), active->end(),
+                       [&](const StmtPtr &child) {
+                         return child && validMacroBody(*child, ownLoopDepth);
+                       });
   }
   if (const auto *expression = stmtAs<ExpressionStmt>(&statement))
     return expressionAllowed(*expression->expression());
+  if (const auto *local = stmtAs<VariableDecl>(&statement))
+    return !local->isStatic() &&
+           (!local->initializer() || expressionAllowed(*local->initializer()));
+  if (const auto *local = stmtAs<StructuredBindingDecl>(&statement))
+    return expressionAllowed(*local->initializer());
+  if (const auto *loop = stmtAs<ForStmt>(&statement))
+    return (!loop->initializer() ||
+            validMacroBody(*loop->initializer(), ownLoopDepth)) &&
+           (!loop->condition() || expressionAllowed(*loop->condition())) &&
+           (!loop->increment() || expressionAllowed(*loop->increment())) &&
+           loop->body() && validMacroBody(*loop->body(), ownLoopDepth + 1);
+  if (const auto *loop = stmtAs<WhileStmt>(&statement))
+    return expressionAllowed(*loop->condition()) && loop->body() &&
+           validMacroBody(*loop->body(), ownLoopDepth + 1);
+  if (const auto *loop = stmtAs<DoWhileStmt>(&statement))
+    return expressionAllowed(*loop->condition()) && loop->body() &&
+           validMacroBody(*loop->body(), ownLoopDepth + 1);
+  if (const auto *loop = stmtAs<RangeForStmt>(&statement))
+    return loop->lowered() && validMacroBody(*loop->lowered(), ownLoopDepth);
+  if (stmtAs<LoopControlStmt>(&statement))
+    return ownLoopDepth != 0;
   return stmtAs<EmptyStmt>(&statement);
 }
 
@@ -246,6 +426,15 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
   probe.designatedMoves = designatedMoves;
   probe.analyze(*call);
   if (hasErrorDiagnostics(probe.diagnostics)) {
+    for (auto &diagnostic : probe.diagnostics) {
+      macroRelated(diagnostic, tokenSpan(statement.expressionStart()),
+                   "While checking this macro invocation.");
+      if (symbol->overloads.size() == 1 &&
+          symbol->overloads.front().declaration)
+        macroRelated(diagnostic,
+                     tokenSpan(symbol->overloads.front().declaration->name()),
+                     "The macro is declared here.");
+    }
     diagnostics.insert(diagnostics.end(), probe.diagnostics.begin(),
                        probe.diagnostics.end());
     return true;
@@ -331,7 +520,14 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
                             .declarationOrder = currentDeclarationOrder};
   if (const auto *parent = macroContext(expressionToken(*call)))
     caller = *parent;
-  Token invocation = expressionToken(*call);
+  if (caller.lexicalLambdaDepth != lambdaDepth) {
+    caller.localScopeBegin = 0;
+    caller.localScopeEnd.reset();
+  }
+  caller.lexicalLambdaDepth = lambdaDepth;
+  caller.localScopeEnd =
+      std::min(caller.localScopeEnd.value_or(scopes.size()), scopes.size());
+  Token invocation = statement.expressionStart();
   if (caller.definition && caller.invocation)
     invocation = *caller.invocation;
   CallerLocationOrigin origin;
@@ -351,6 +547,8 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
       MacroLookupContext{.namespaceScope = function->namespaceScope,
                          .sourceUnit = function->sourceUnit,
                          .definition = true,
+                         .localScopeBegin = scopes.size(),
+                         .lexicalLambdaDepth = lambdaDepth,
                          .declarationOrder =
                              declarationOrders.contains(&definition)
                                  ? declarationOrders.at(&definition)
@@ -389,9 +587,12 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
       if (inserted) {
         entry->second = ++nextExpansion;
         const auto *context = macroContext(token);
-        macroLookup.emplace(entry->second, context    ? *context
-                                           : fallback ? *fallback
-                                                      : caller);
+        MacroLookupContext domain = context    ? *context
+                                    : fallback ? *fallback
+                                               : caller;
+        domain.localScopeEnd = std::min(
+            domain.localScopeEnd.value_or(scopes.size()), scopes.size());
+        macroLookup.emplace(entry->second, std::move(domain));
       }
       copy.expansion = entry->second;
       return copy;
@@ -417,8 +618,32 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
       return true;
     }
   }
+  MacroParameterUses parameterUses;
+  parameterUses.activeBranch = [&](const ConditionalStmt &branch) {
+    return branch.activeBranch(target);
+  };
+  parameterUses.statement(definition.body().get());
   AstCloneOptions options;
   options.expression = [&](const Expr &expression) -> ExprPtr {
+    if (!parameterUses.unbound.contains(&expression))
+      return nullptr;
+    if (const auto *assignment = exprAs<Assign>(&expression)) {
+      const auto argument = arguments.find(assignment->name().lexeme);
+      if (argument == arguments.end())
+        return nullptr;
+      Token operation = assignment->oper();
+      operation.expansion = bodyExpansion;
+      const bool defaulted =
+          defaultArguments.contains(assignment->name().lexeme);
+      ExprPtr target =
+          cloneArgument(*argument->second,
+                        defaulted ? &macroLookup.at(bodyExpansion) : nullptr);
+      if (defaulted)
+        semanticModel.recordMacroDefault(*target, invocation);
+      return std::make_unique<PlaceSet>(
+          std::move(target), std::move(operation),
+          cloneExpr(*assignment->value(), bodyExpansion, options));
+    }
     const auto *variable = exprAs<Variable>(&expression);
     if (!variable)
       return nullptr;
@@ -434,6 +659,8 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
     return value;
   };
   options.pack = [&](const PackExpansion &pack) -> std::optional<ExprList> {
+    if (!parameterUses.unbound.contains(&pack))
+      return std::nullopt;
     const auto found = packs.find(pack.name().lexeme);
     if (found == packs.end())
       return std::nullopt;
@@ -469,7 +696,10 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
   ++macroExpandedBodies;
   macroActiveBodies.push_back(&definition);
   const std::size_t diagnosticStart = diagnostics.size();
-  analyze(expansion.statement);
+  {
+    MacroLookupScope definitionScope(*this, macroLookup.at(bodyExpansion));
+    analyze(expansion.statement);
+  }
   macroActiveBodies.pop_back();
   --macroExpansionDepth;
   for (std::size_t index = diagnosticStart; index < diagnostics.size();
@@ -479,12 +709,19 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
         diagnostic.primary.source == definition.extent()->source &&
         diagnostic.primary.start >= definition.extent()->start &&
         diagnostic.primary.end <= definition.extent()->end) {
-      diagnostic.related.push_back(
-          {diagnostic.primary, "In the expanded macro body."});
-      diagnostic.primary = tokenSpan(expressionToken(*call));
+      macroRelated(diagnostic, diagnostic.primary,
+                   "In the body of macro '" + definition.name().lexeme + "'.");
+      diagnostic.primary = tokenSpan(statement.expressionStart());
     }
+    const std::string name =
+        qualifiedName(function->namespaceScope, definition.name().lexeme);
+    macroRelated(diagnostic, tokenSpan(statement.expressionStart()),
+                 "While expanding macro '" + name + "' here.");
+    macroRelated(diagnostic, tokenSpan(definition.name()),
+                 "Macro '" + name + "' is declared here.");
   }
-  semanticModel.recordMacroExpansion(statement, std::move(expansion.statement));
+  semanticModel.recordMacroExpansion(statement, std::move(expansion.statement),
+                                     definition);
   currentType = SemanticType::Void;
   return true;
 }

@@ -3081,10 +3081,11 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                      "parameters.");
     } else if (!validMacroBody(*stmt.body())) {
       reportContract(keyword,
-                     "A macro body supports blocks, ordinary if branches "
-                     "and expressions without local binders or direct writes; "
-                     "declarations, returns and loops require an ordinary "
-                     "helper called from it.");
+                     "A macro body supports automatic locals, expressions, "
+                     "blocks, if and local loops. Break and continue must "
+                     "target a loop within that macro; returns, propagation, "
+                     "lambdas, static storage and generated declarations "
+                     "require an ordinary helper.");
     }
     std::unordered_set<std::string> expressionParameters;
     for (const auto &parameter : stmt.parameters())
