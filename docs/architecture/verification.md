@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Whole assignment results (0.464.1)
+## Whole assignment results (0.464.2)
 
 `assignment_result_whole_value_runtime` runs
 `assignment_result_whole_value.gti`. User-defined structs use a class
@@ -42,11 +42,14 @@ for both compilers, covered 1821 programs in `tests/fixtures`, `tests/coverage`
 and `examples` at O0 and O3. Only the new fixture changed, from `GTI-B0001` to
 success at both levels. Every other program emits byte-identical C++, and the
 736 pairs that fail with both compilers report identical diagnostics. The
-summed emission time was 2253.7 s before and 2243.2 s after. On the head the
+summed emission time was 2253.7 s before and 2243.2 s after. Before merging
+main's 0.464.1 (PR #283, payload-enum selections from local carriers), the
 compiler suites behind `compiler_pipeline` (ownership, diagnostics,
 declarations, constexpr, e2e), the emitter `lifecycle`, `text`, `preflight`,
 `corpus` and `census` gates, `mir_field_determinism`,
-`borrowing_capture_semantics` and 12 assignment runtime gates pass.
+`borrowing_capture_semantics` and 12 assignment runtime gates pass. The
+recorded validation repeats that selection, with `borrow_origin` and
+`borrow_origin_runtime`, on the reconciled head.
 
 Still `GTI-B0001`, as on main: a store inside a staged receiver or callee
 window, including `(p = q).with(p = r)`, a lambda call `f(p = q)`, and even

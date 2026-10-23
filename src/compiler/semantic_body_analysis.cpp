@@ -5302,6 +5302,9 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                   .confinedToRegion = false;
               semanticModel.recordBorrowDependencySet(*payload.source,
                                                       extractedDependencies);
+              // Forming the selection uses its parent authority in the arm,
+              // even when the binding is never read afterwards.
+              recordSemanticLoanUse(symbol);
             }
           }
         } else if (payload.binding.type.kind == SemanticType::Reference) {
