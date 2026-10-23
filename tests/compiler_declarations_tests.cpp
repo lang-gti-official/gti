@@ -6480,7 +6480,8 @@ int main() {
       !rejectedGenericClass.canGenerateCode() &&
           hasDiagnosticCode(rejectedGenericClass.diagnostics, "GTI-S2029") &&
           hasDiagnostic(rejectedGenericClass.diagnostics,
-                        "does not satisfy generic constraint 'std::numeric'"),
+                        "Type 'bool' does not satisfy concept "
+                        "'std::numeric<bool>'"),
       "a single non-generic member overload must check requirements after "
       "substituting its generic class arguments");
 
