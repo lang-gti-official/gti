@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.465.3 — Array fields built from constructor parameters
+## 0.465.4 — Array fields built from constructor parameters
 
 - A constructor that initializes a fixed-array field from its by-value
   parameters, as in `Polygon(Point a, Point b) : corners({a, b})`, used to
@@ -21,6 +21,19 @@ for what minor and patch releases mean.
 - The same elements in a local array, such as
   `Point[2] corners = {a, std::move(b)};` or `Point[2][2] g = {{a, b}, {c, d}};`,
   also reported `GTI-B0001` and now work.
+## 0.465.3 — Moving classes that hold function items
+
+- A generic class whose field holds a function item, such as `class Op<F> {
+  public: F action; Op(F action) : action(action) {} }` instantiated with a
+  function name, can now be moved into another class's field after an
+  initializer that can fail. `Holder(Op<F> op) : v(std::vector<int32_t>()),
+  op(std::move(op))` used to report `error[GTI-B0001]` (an internal compiler
+  error); it now works. If a later initializer or the constructor body fails,
+  each field already built is dropped exactly once.
+- Such a class can also now be chosen by a conditional, as in `Op<F> chosen =
+  pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
+  can be assigned into a field. Each used to report `error[GTI-B0001]`.
+
 ## 0.465.2 — Switching over a payload enum returned by reference
 
 - A `switch` can now match a payload enum that a call returns by reference.

@@ -2733,10 +2733,14 @@ destruction, plus generated copy construction where a route copies it, no
 active cleanup or drop state, no state-bearing base, and only passive fields.
 A passive field copies bitwise and its destruction runs no source cleanup: a
 scalar, an enum, a raw or null pointer (a `c_string` is a raw pointer), a text
-view, a fixed array of passive fields, or a passive generated class. The rule
-names representations, not library types. A text view's dependency on its
-owner, when it has one, exists only as a MIR loan, which has no
-representation, so it changes neither the copy nor the destruction. A class
+view, a function item with its function identity, a fixed array of passive
+fields, or a passive generated class. The rule names representations, not
+library types. A function item is a stateless identity tag
+(`function_item<id, R>` natively): MIR calls the named function directly,
+never through the stored object, so a generic `Op<F>` instantiated with a
+function name copies and moves like any passive class. A text view's
+dependency on its owner, when it has one, exists only as a MIR loan, which has
+no representation, so it changes neither the copy nor the destruction. A class
 that only holds text views is therefore passive and not a borrowed carrier.
 Semantics keeps ownerless text in such a by-value field of another class, and
 MIR records no loan, value or rollback obligation for moving it. So
