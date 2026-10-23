@@ -907,6 +907,10 @@ class BatchLifecycle(unittest.TestCase):
     def test_batch_withdrawal_and_release_preserve_published_work(self):
         self.component("one")
         batches = Batches(self.flow)
+        self.api.prs[0]["draft"] = False
+        with self.assertRaisesRegex(Error, "Return the component PR to draft"):
+            batches.withdraw("one", "independent validation")
+        self.api.prs[0]["draft"] = True
         batches.withdraw("one", "standalone validation selected")
         state = self.flow.load("one")
         self.assertNotIn("admission", state)
