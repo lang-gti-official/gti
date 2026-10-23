@@ -1,0 +1,173 @@
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+// A user-defined result class and payload enum, unrelated to any library
+// type: per-alternative postconditions must cross the calls that build the
+// result and the boolean tag tests that observe it.
+enum gate_state { open(int32_t level), shut(int32_t reason) };
+
+class Refusal {
+public:
+  int32_t reason = 0;
+  Refusal(int32_t reason) : reason(reason) {}
+};
+
+class Gate {
+  mut gate_state state;
+public:
+  Gate(int32_t level) : state(gate_state::open(level)) {}
+  Gate(Refusal refusal) : state(gate_state::shut(refusal.reason)) {}
+  bool passed() {
+    switch (this.state) {
+    case gate_state::open: return true;
+    case gate_state::shut: return false;
+    }
+  }
+  bool refused() { return !this.passed(); }
+};
+
+// A payload with a source destructor keeps its result's cleanup active.
+class Noisy {
+  mut int* target = nullptr;
+public:
+  Noisy(mut int* target) : target(target) {}
+  ~Noisy() { unsafe { opaque_pointer_effect(this.target); } }
+};
+
+enum noisy_state { held(Noisy value), empty(int32_t code) };
+
+class NoisyGate {
+  mut noisy_state state;
+public:
+  NoisyGate(Noisy value) : state(noisy_state::held(std::move(value))) {}
+  bool passed() {
+    switch (this.state) {
+    case noisy_state::held: return true;
+    case noisy_state::empty: return false;
+    }
+  }
+};
+
+class Ticket {
+public:
+  mut int count = 0;
+  NoisyGate noisy() mut {
+    this.count = 7;
+    return NoisyGate(Noisy(&this.count));
+  }
+  Gate publish(bool accepted) mut {
+    if (!accepted) {
+      this.count = 2147483647;
+      return Gate(Refusal(1));
+    }
+    this.count = 7;
+    return Gate(3);
+  }
+};
+
+Gate relay(mut Ticket& ticket, bool accepted) {
+  return ticket.publish(accepted);
+}
+
+// One exit returns a gate whose alternative this body cannot know, so it
+// contributes its postcondition to every alternative.
+Gate mixed(mut Ticket& ticket, bool accepted, Gate fallback) {
+  if (accepted) {
+    ticket.count = 7;
+    return Gate(3);
+  }
+  ticket.count = 2147483647;
+  return fallback;
+}
+
+gate_state classify(mut Ticket& ticket, bool accepted) {
+  if (accepted) {
+    ticket.count = 7;
+    return gate_state::open(1);
+  }
+  ticket.count = 2147483647;
+  return gate_state::shut(2);
+}
+
+int accepted_gate(mut Ticket& ticket) {
+  auto gate = relay(ticket, true);
+  if (!gate.passed()) return 0;
+  return ticket.count + 1;
+}
+
+int refused_gate(mut Ticket& ticket) {
+  auto gate = ticket.publish(true);
+  if (gate.refused()) return 0;
+  return ticket.count + 1;
+}
+
+int switched_gate(mut Ticket& ticket) {
+  auto state = classify(ticket, true);
+  switch (state) {
+  case gate_state::open: return ticket.count + 1;
+  case gate_state::shut: return 0;
+  }
+}
+
+int bad_failed_gate(mut Ticket& ticket) {
+  auto gate = relay(ticket, false);
+  if (gate.passed()) return 0;
+  return ticket.count + 1;
+}
+
+int bad_reassigned_gate(mut Ticket& ticket) {
+  auto gate = relay(ticket, true);
+  ticket.count = 2147483647;
+  if (!gate.passed()) return 0;
+  return ticket.count + 1;
+}
+
+int bad_later_gate(mut Ticket& ticket) {
+  auto first = relay(ticket, true);
+  auto second = relay(ticket, false);
+  if (!first.passed()) return 0;
+  return ticket.count + 1;
+}
+
+int bad_native_gate(mut Ticket& ticket) {
+  auto gate = relay(ticket, true);
+  unsafe { opaque_pointer_effect(&ticket.count); }
+  if (!gate.passed()) return 0;
+  return ticket.count + 1;
+}
+
+int bad_mixed_gate(mut Ticket& ticket) {
+  auto gate = mixed(ticket, false, Gate(3));
+  if (!gate.passed()) return 0;
+  return ticket.count + 1;
+}
+
+int bad_switched_gate(mut Ticket& ticket) {
+  auto state = classify(ticket, false);
+  switch (state) {
+  case gate_state::open: return 0;
+  case gate_state::shut: return ticket.count + 1;
+  }
+}
+
+int bad_active_gate(mut Ticket& ticket) {
+  {
+    auto gate = ticket.noisy();
+    if (!gate.passed()) return 0;
+  }
+  return ticket.count + 1;
+}
+
+int main() {
+  mut Ticket ticket{};
+  if (false) return bad_failed_gate(ticket);
+  if (false) return bad_reassigned_gate(ticket);
+  if (false) return bad_later_gate(ticket);
+  if (false) return bad_native_gate(ticket);
+  if (false) return bad_mixed_gate(ticket);
+  if (false) return bad_switched_gate(ticket);
+  if (false) return bad_active_gate(ticket);
+  return accepted_gate(ticket) == 8 && refused_gate(ticket) == 8 &&
+                 switched_gate(ticket) == 8
+             ? 0
+             : 1;
+}
