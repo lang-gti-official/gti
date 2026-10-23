@@ -58,7 +58,7 @@ def main():
             assert not change(6, valid)
             macros = ("#include <std/assert>\n"
                       "namespace application {\n"
-                      "  #macro check(int value) { std::assert(value == 7); }\n"
+                      "  /*😀*/ #macro check(int value) { std::assert(value == 7); }\n"
                       "  #macro check(bool value) { std::assert(value); }\n"
                       "}\n"
                       "int main() { /*😀*/ application::check(7); return 0; }\n")
@@ -84,6 +84,24 @@ def main():
                 position = lsp_position(macros, offset)
                 token = tokens[(position["line"], position["character"])]
                 assert token_types[token["type"]] == "macro", (position, token, token_types)
+            keyword = lsp_position(macros, macros.index("#macro"))
+            keyword_token = tokens[(keyword["line"], keyword["character"])]
+            assert token_types[keyword_token["type"]] == "keyword", keyword_token
+            assert keyword_token["length"] == len("#macro"), keyword_token
+            assert not any(line == keyword["line"] and keyword["character"] < column
+                           < keyword["character"] + len("#macro")
+                           for line, column in tokens), tokens
+            # The implicit generated void type must not become a written type
+            # occurrence over any part of the real six-byte declaration token.
+            for index in range(len("#macro")):
+                request_id = 6 + index
+                session.send({"jsonrpc": "2.0", "id": request_id,
+                              "method": "textDocument/hover", "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(macros, macros.index("#macro") + index)}})
+                result = session.receive_until(
+                    lambda message: message.get("id") == request_id)["result"]
+                assert result is None, (index, result)
             wrong_type = macros.replace("check(7)", 'check("wrong")')
             diagnostics = change(8, wrong_type)
             error = next(item for item in diagnostics if item["code"] == "GTI-S2012")
