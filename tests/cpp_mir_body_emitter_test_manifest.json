@@ -322,6 +322,10 @@
       "suite": "text"
     },
     {
+      "name": "testPassiveFunctionItemClassAfterFallibleSibling",
+      "suite": "text"
+    },
+    {
       "name": "testPassiveClassMoveAndCopyAfterFallibleSibling",
       "suite": "text"
     },
@@ -799,6 +803,18 @@
     },
     {
       "name": "testAssignmentResultFieldView",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testClassStoresIntoNamedPlaces",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCheckedArrayElementFieldAccess",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testAssignmentResultWholeValue",
       "suite": "lifecycle"
     },
     {

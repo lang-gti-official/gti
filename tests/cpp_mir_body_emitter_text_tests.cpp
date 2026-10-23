@@ -2448,6 +2448,238 @@ int main() {
          "a class with an actively cleaned field is not a passive copy");
 }
 
+void testPassiveFunctionItemClassAfterFallibleSibling() {
+  // A generic class instantiated with a function name holds a function item:
+  // a stateless identity tag that copies bitwise and runs no cleanup, called
+  // directly by MIR rather than through the stored object. Like a class of
+  // scalar fields, it moves after a fallible field in the verified
+  // failure-form body and copies through the native parameter copy.
+  const auto program = [](std::string_view initializer) {
+    return std::string(R"(
+#include <std/utility>
+#include <std/vector>
+
+int32_t seven() { return 7; }
+
+class Op<F> {
+public:
+  F action;
+  Op(F action) : action(action) {}
+};
+
+class Holder<F> {
+public:
+  std::vector<int32_t> v;
+  Op<F> op;
+  Holder(Op<F> op) : v(std::vector<int32_t>()), )") +
+           std::string(initializer) + R"( {}
+};
+
+int32_t run<F>(F action) {
+  Holder<F> holder = Holder<F>(Op<F>(action));
+  int32_t called = holder.op.action();
+  return called;
+}
+
+int main() { return run(seven); }
+)";
+  };
+  const auto named = [](const lang::FrontendResult &frontend,
+                        const lang::SemanticType &type, std::string_view name) {
+    const auto *info = type.kind == lang::SemanticType::Class
+                           ? frontend.semantics.findClassType(type.classId)
+                           : nullptr;
+    return info != nullptr && info->declaration != nullptr &&
+           info->declaration->name().lexeme == name;
+  };
+  const auto holderConstructor = [&](const lang::FrontendResult &frontend) {
+    const lang::MirConstructorInstance *found = nullptr;
+    for (const lang::MirConstructorInstance &constructor :
+         frontend.mir.constructorInstances()) {
+      const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+      if (owner != nullptr && named(frontend, owner->type, "Holder") &&
+          constructor.parameterTypes.size() == 1) {
+        found = &constructor;
+      }
+    }
+    return found;
+  };
+  // A copy of the program whose Op instance is forged.
+  const auto forgedOp = [&](const lang::FrontendResult &frontend,
+                            const auto &forge) {
+    lang::MirProgram mutated = frontend.mir;
+    auto &instances = const_cast<std::vector<lang::MirClassInstance> &>(
+        mutated.classInstances());
+    bool forged = false;
+    for (lang::MirClassInstance &instance : instances) {
+      if (named(frontend, instance.type, "Op") &&
+          instance.declaredFields.size() == 1 &&
+          instance.declaredFields.front().type.kind ==
+              lang::SemanticType::FunctionItem) {
+        forge(instance);
+        forged = true;
+      }
+    }
+    return std::pair{std::move(mutated), forged};
+  };
+  // The out-of-class definition of the failure form, not its in-class
+  // declaration or the ordinary overload.
+  const auto failureBody = [](const std::string &text) {
+    for (std::size_t start = text.find("_Holder::__gti_type_");
+         start != std::string::npos;
+         start = text.find("_Holder::__gti_type_", start + 1)) {
+      const std::size_t line = text.find('\n', start);
+      if (text.substr(start, line - start)
+              .find("(::gti_internal::backend::mir_failure_constructor_tag_"
+                    "v1<") == std::string::npos) {
+        continue;
+      }
+      const std::size_t end = text.find("\n  }\n", start);
+      return end == std::string::npos ? std::string()
+                                      : text.substr(start, end - start);
+    }
+    return std::string();
+  };
+  const auto count = [](const std::string &body, std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = body.find(needle); at != std::string::npos;
+         at = body.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+
+  const lang::FrontendResult moved =
+      analyzeWithStandardLibrary("cpp-mir-passive-function-item-class-move.gti",
+                                 program("op(std::move(op))"));
+  expect(moved.canGenerateCode(),
+         "the moved function-item class fixture should pass the frontend");
+  if (!moved.canGenerateCode()) {
+    return;
+  }
+  const lang::MirConstructorInstance *move = holderConstructor(moved);
+  expect(move != nullptr && move->mayRaiseDefinedFailure &&
+             !move->body.failureRecords.empty() &&
+             !lang::cppMirOwnedParameterFieldBindings(moved.mir, *move),
+         "a class move recorded after fallible work is not a native "
+         "publication");
+  if (move == nullptr) {
+    return;
+  }
+  const lang::SemanticType &opType = move->parameterTypes.front();
+  bool lifecycleFree = true;
+  for (const lang::MirBlock &block : move->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if ((instruction.kind == lang::MirInstructionKind::Move ||
+           instruction.kind == lang::MirInstructionKind::Initialize) &&
+          instruction.info.type == opType) {
+        lifecycleFree = lifecycleFree && instruction.lifecycle.empty();
+      }
+    }
+  }
+  expect(move->body.loans.empty() && lifecycleFree &&
+             std::none_of(move->body.dropObligations.begin(),
+                          move->body.dropObligations.end(),
+                          [&](const lang::MirDropObligation &drop) {
+                            return drop.dropType.type == opType &&
+                                   (drop.kind !=
+                                        lang::MirDropObligationKind::Binding ||
+                                    drop.dropType.requiresActiveCleanup);
+                          }),
+         "MIR records no loan, value or rollback obligation and no lifecycle "
+         "event for the moved function-item class");
+
+  const lang::CppMirBodyEmissionMap movedMap(buildRows(moved, moved.mir));
+  const lang::MirBodyAddress moveAddress{.kind = lang::MirBodyKind::Constructor,
+                                         .owner = move->id};
+  expect(lang::CppMirBodyEmitter(moved.mir, movedMap)
+             .supportsFailureBodyText(moveAddress),
+         "the failure form keeps the function-item class move in its body");
+  std::string movedText;
+  try {
+    movedText = gti_test::emitCpp(moved).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("a function-item class moved after a fallible "
+                              "sibling should emit: ") +
+                      error.what());
+    return;
+  }
+  const std::string moveBody = failureBody(movedText);
+  const std::size_t vector = moveBody.find(
+      "vector<std::int32_t>(::gti_internal::backend::mir_failure_constructor_"
+      "tag_v1<");
+  const std::size_t publication = moveBody.find(" = std::move(__gti_mir_v_");
+  expect(count(moveBody, "op(::gti_internal::backend::mir_empty_state_v1<"
+                         "std::remove_cv_t<decltype(op)>>())") == 1 &&
+             count(moveBody, " = std::move(__gti_mir_v_") == 1 &&
+             vector != std::string::npos && publication != std::string::npos &&
+             vector < publication,
+         "the moved function-item class field starts empty and is published "
+         "once, after the fallible vector");
+
+  // Only a shaped function item is a passive leaf, and active cleanup still
+  // leaves the passive route.
+  const auto refuses = [&](const auto &forge) {
+    auto [mutated, forged] = forgedOp(moved, forge);
+    return forged && !lang::CppMirBodyEmitter(mutated, movedMap)
+                          .supportsFailureBodyText(moveAddress);
+  };
+  expect(refuses([](lang::MirClassInstance &instance) {
+           instance.declaredFields.front().type.functionId = 0;
+         }),
+         "a function item without its function identity is not passive");
+  expect(refuses([](lang::MirClassInstance &instance) {
+           instance.declaredFields.front().requiresActiveCleanup = true;
+         }),
+         "a function-item field with active cleanup makes the class "
+         "non-passive");
+
+  const lang::FrontendResult copied = analyzeWithStandardLibrary(
+      "cpp-mir-passive-function-item-class-copy.gti", program("op(op)"));
+  expect(copied.canGenerateCode(),
+         "the copied function-item class fixture should pass the frontend");
+  if (!copied.canGenerateCode()) {
+    return;
+  }
+  const lang::MirConstructorInstance *copy = holderConstructor(copied);
+  const auto copiesOp = [&](const lang::MirProgram &mir) {
+    const auto bindings = lang::cppMirCopyParameterFieldBindings(mir, *copy);
+    return bindings &&
+           std::any_of(
+               bindings->begin(), bindings->end(),
+               [](const lang::CppMirCopyParameterFieldBinding &binding) {
+                 return binding.initializer == 1;
+               });
+  };
+  expect(copy != nullptr && copy->mayRaiseDefinedFailure &&
+             copiesOp(copied.mir),
+         "the passive function-item class copy is an exact parameter copy");
+  if (copy == nullptr) {
+    return;
+  }
+  std::string copiedText;
+  try {
+    copiedText = gti_test::emitCpp(copied).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("a function-item class copied after a "
+                              "fallible sibling should emit: ") +
+                      error.what());
+    return;
+  }
+  const std::string copyBody = failureBody(copiedText);
+  expect(count(copyBody, "op(__gti_mir_arg_0)") == 1 &&
+             copyBody.find("mir_lifetime_slot<") == std::string::npos,
+         "the copied function-item class field publishes through the native "
+         "parameter copy");
+  auto [shapeless, forged] =
+      forgedOp(copied, [](lang::MirClassInstance &instance) {
+        instance.declaredFields.front().type.functionId = 0;
+      });
+  expect(forged && !copiesOp(shapeless),
+         "a class holding a function item without its identity is not a "
+         "passive copy");
+}
+
 void testPassiveClassMoveAndCopyAfterFallibleSibling() {
   // One passive class moves and another is copied after a fallible field.
   // The move stays in the verified body. The copy is not part of the native
@@ -9593,6 +9825,8 @@ constexpr NamedTest kTests[] = {
     {"testMovedViewAfterFormalRead", testMovedViewAfterFormalRead},
     {"testPassiveTextViewClassAfterFallibleSibling",
      testPassiveTextViewClassAfterFallibleSibling},
+    {"testPassiveFunctionItemClassAfterFallibleSibling",
+     testPassiveFunctionItemClassAfterFallibleSibling},
     {"testPassiveClassMoveAndCopyAfterFallibleSibling",
      testPassiveClassMoveAndCopyAfterFallibleSibling},
     {"testMovedChainReturnConstruction", testMovedChainReturnConstruction},

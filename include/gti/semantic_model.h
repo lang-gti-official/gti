@@ -882,6 +882,7 @@ struct FunctionInfo {
   bool neverReturns = false;
   bool tracksCaller = false;
   bool discardableResult = false;
+  bool deferredEvaluation = false;
   bool threadConfinedCallback = false;
   bool testFunction = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
@@ -2388,6 +2389,12 @@ public:
   // deferred it to concrete instances or when it was never analysed.
   [[nodiscard]] const ConstexprForExpansion *
   findConstexprForExpansion(const ConstexprForStmt &statement) const;
+
+  // A confined deferred call is executed as its checked statement expansion,
+  // never as an eager call of the declaration's source-level signature.
+  [[nodiscard]] const Stmt *
+  findDeferredExpansion(const ExpressionStmt &statement) const;
+  [[nodiscard]] const Token *findDeferredDefault(const Expr &expression) const;
   // The declared attributes of a field or class-like declaration; nullptr
   // when none were recorded.
   [[nodiscard]] const std::vector<ResolvedDeclarationAttribute> *
@@ -2694,6 +2701,11 @@ private:
   void beginInstanceDelta(const SemanticModel &baseModel,
                           SymbolId reservedIdentityCeiling = 0);
 
+  // Speculative expression analysis stays in the caller's body: preserve its
+  // loan identities locally instead of restarting them as an instance does.
+  // Other facts are read through the immutable base; all writes stay local.
+  void beginSpeculativeDelta(const SemanticModel &baseModel);
+
   // Re-points an instance delta at a relocated base (the analyzer restores
   // its model after each instance analysis; the delta must follow it).
   void rebase(const SemanticModel *baseModel);
@@ -2829,6 +2841,8 @@ private:
   void
   recordConstexprForExpansion(const ConstexprForStmt &statement,
                               std::optional<ConstexprForExpansion> expansion);
+  void recordDeferredExpansion(const ExpressionStmt &statement, StmtPtr body);
+  void recordDeferredDefault(const Expr &expression, Token caller);
   void recordDeclarationAttributes(
       const Stmt &declaration,
       std::vector<ResolvedDeclarationAttribute> attributes);
@@ -3054,6 +3068,8 @@ private:
   std::unordered_map<const ConstexprForStmt *,
                      std::optional<ConstexprForExpansion>>
       constexprForExpansions;
+  std::unordered_map<const ExpressionStmt *, StmtPtr> deferredExpansions;
+  std::unordered_map<const Expr *, Token> deferredDefaults;
   std::unordered_map<const Stmt *, std::vector<ResolvedDeclarationAttribute>>
       declarationAttributes;
   std::unordered_map<const Expr *, std::shared_ptr<const Expr>>

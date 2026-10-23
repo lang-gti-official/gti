@@ -5,6 +5,11 @@
 namespace lang {
 
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
+  deferredLookup.clear();
+  deferredLookupBase = nullptr;
+  deferredExpansionDepth = 0;
+  deferredExpandedBodies = 0;
+  deferredActiveBodies.clear();
   diagnostics.clear();
   catalog.clear();
   valueFlow.clear();
@@ -2609,7 +2614,16 @@ auto SemanticVisitor::Impl::visitExternCDecl(const ExternCDecl &stmt) -> void {
 
 auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
     -> void {
+  if (analyzeDeferredStatement(stmt))
+    return;
+  struct RestoreDeferredStatement {
+    const Call *&slot;
+    const Call *previous;
+    ~RestoreDeferredStatement() { slot = previous; }
+  } restoreDeferredStatement{deferredStatementCall, deferredStatementCall};
+  deferredStatementCall = directCall(stmt.expression());
   semanticModel.recordFullExpression(stmt, stmt.expression());
+  discardResult(stmt.expression());
   const SemanticType resultType = analyze(stmt.expression());
   consumeTextDependentValue(stmt.expression());
   const Call *call = directCall(stmt.expression());
@@ -2690,6 +2704,7 @@ auto SemanticVisitor::Impl::visitForStmt(const ForStmt &stmt) -> void {
 
   ScopeStack afterIteration = beforeLoop;
   semanticModel.recordFullExpression(stmt, stmt.increment());
+  discardResult(stmt.increment());
   if (!incrementInputs.empty()) {
     scopes = mergedValueStates(beforeLoop, incrementInputs);
     analyze(stmt.increment());
@@ -3048,6 +3063,43 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   std::unordered_set<std::string> functionAttributeNames;
   for (const auto &contract : stmt.functionAttributes()) {
     const Token &attribute = contract.name;
+    if (attribute.lexeme == "deferred") {
+      if (!functionAttributeNames.insert(attribute.lexeme).second) {
+        reportContract(attribute, "Duplicate function attribute 'deferred'.");
+      } else if (contract.argument || functionInfo == nullptr ||
+                 functionInfo->ownerClass != 0 || isEntryPoint ||
+                 functionInfo->returnType != SemanticType::Void ||
+                 stmt.hasCLinkage() || stmt.runtimeBinding() || !stmt.body() ||
+                 stmt.isConstexpr() || stmt.unsafeKeyword() ||
+                 stmt.operatorName() || stmt.hasFunctionAttribute("noreturn") ||
+                 stmt.hasFunctionAttribute("test") ||
+                 stmt.hasFunctionAttribute("thread_confined_callback") ||
+                 std::any_of(stmt.parameters().begin(), stmt.parameters().end(),
+                             [](const Parameter &parameter) {
+                               return parameter.mutability ==
+                                          Mutability::Mutable ||
+                                      parameter.type.reference;
+                             })) {
+        reportContract(
+            attribute,
+            "A deferred helper requires a defined, safe, non-constexpr "
+            "namespace-scope void function with value parameters.");
+      } else if (!validDeferredBody(*stmt.body())) {
+        reportContract(
+            attribute,
+            "A deferred body supports blocks, ordinary if branches "
+            "and expressions without local binders or direct writes; "
+            "declarations, returns and loops require an ordinary "
+            "helper called from it.");
+      }
+      std::unordered_set<std::string> expressionParameters;
+      for (const auto &parameter : stmt.parameters())
+        if (!parameter.name.lexeme.empty() &&
+            !expressionParameters.insert(parameter.name.lexeme).second)
+          reportContract(parameter.name,
+                         "Deferred expression parameter names must be unique.");
+      continue;
+    }
     if (attribute.lexeme == "test") {
       if (!functionAttributeNames.insert(attribute.lexeme).second) {
         reportContract(attribute, "Duplicate function attribute 'test'.");
@@ -3416,7 +3468,15 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
              "GTI-S2022");
     }
   }
-  if (!stmt.body() || !requirementsValid) {
+  if (!stmt.body() || !requirementsValid ||
+      stmt.hasFunctionAttribute("deferred")) {
+    // A deferred helper is a typed statement template, not a callable value.
+    // Its signature and body shape are checked here; actual substituted
+    // expressions are checked in caller flow at each concrete invocation.
+    if (stmt.body() && stmt.hasFunctionAttribute("deferred")) {
+      analyzedBodies.insert(&stmt);
+      semanticModel.recordAnalyzedFunctionBody(stmt);
+    }
     endRequirementScope();
     endTypeParameterScope();
     return;
@@ -4866,6 +4926,23 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   // (L-OWN-02); consuming one is not yet supported.
   if (payloadEnum != nullptr && !consumedSubject)
     consumeTextDependentValue(stmt.expression());
+  // An observed subject reached through a reference result, which names no
+  // place, is read until each arm has bound its payloads, so it needs the
+  // storage a reference bound to it would. A named place is that storage.
+  if (payloadEnum != nullptr && !consumedSubject && subjectInfo != nullptr &&
+      subjectInfo->category == ValueCategory::Place &&
+      semanticModel.findPlace(*stmt.expression()) == nullptr &&
+      !expressionNeverReturns(stmt.expression().get()) &&
+      !hasStableBorrowStorage(stmt.expression())) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2017", DiagnosticPhase::Semantics,
+        expressionToken(stmt.expression()),
+        "Switch subject is derived from temporary storage that does not "
+        "outlive the subject expression.");
+    diagnostic.hints.emplace_back("Bind the subject's owner to a local "
+                                  "variable before matching it.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
   // Snapshot the selected operand's complete external owners before arm-local
   // moves or replacement can change the source binding's current value fact.
   const auto subjectDependencies =
@@ -5122,6 +5199,24 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                                                     armIndex);
       }
     }
+    // Binding an observed subject's payloads reads its place at this arm's
+    // entry, as forming a selection uses its parent authority. A subject
+    // reached through a reference (a reference binding, or a call result that
+    // names no place) uses that reference's authority there; a named owned
+    // place needs none of its carried dependencies to be read.
+    if (!consumedSubject && subjectSource &&
+        std::any_of(payloadPatterns.begin(), payloadPatterns.end(),
+                    [](const auto &entry) {
+                      return std::any_of(entry.second.bindings.begin(),
+                                         entry.second.bindings.end(),
+                                         [](const auto &payload) {
+                                           return payload.name != nullptr;
+                                         });
+                    }))
+      if (const auto *loan = semanticModel.findLoan(subjectSource->loan);
+          loan && (loan->kind == SemanticLoanKind::Reference ||
+                   semanticModel.findPlace(*stmt.expression()) == nullptr))
+        recordSemanticLoanAuthorityUse(subjectSource->loan);
     for (auto &[source, pattern] : payloadPatterns) {
       if (!pattern.bindings.empty() && arm.labels.size() != 1) {
         report(expressionToken(*source),
@@ -5300,6 +5395,9 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                   .confinedToRegion = false;
               semanticModel.recordBorrowDependencySet(*payload.source,
                                                       extractedDependencies);
+              // Forming the selection uses its parent authority in the arm,
+              // even when the binding is never read afterwards.
+              recordSemanticLoanUse(symbol);
             }
           }
         } else if (payload.binding.type.kind == SemanticType::Reference) {
@@ -5336,10 +5434,17 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
               recordMutableBindingUse(stmt.expression());
             }
             SemanticLoanId parent = 0;
+            // A reference result that names no place reaches the carrier's
+            // storage; that carrier's dependency group is the stored owner
+            // authority a reference local bound to it would inherit.
+            SemanticLoanId inheritedDependency = 0;
             if (const auto source = retainedLoanSource(stmt.expression()))
-              if (const auto *loan = semanticModel.findLoan(source->loan);
-                  loan && loan->kind != SemanticLoanKind::StoredValue)
-                parent = source->loan;
+              if (const auto *loan = semanticModel.findLoan(source->loan)) {
+                if (loan->kind != SemanticLoanKind::StoredValue)
+                  parent = source->loan;
+                else if (semanticModel.findPlace(*stmt.expression()) == nullptr)
+                  inheritedDependency = source->loan;
+              }
             // This pattern borrows physical payload storage, not a stored
             // reference's external owner. A dependency group carried by an
             // owned enum cannot authorize a child loan into that enum's shell.
@@ -5355,9 +5460,11 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                 *carrier, symbol, SemanticLoanKind::Reference, payload.source,
                 place, place.root, place.receiver, access, true, parent);
             if (const auto *ancestor = semanticModel.findLoan(parent);
-                ancestor && ancestor->storedDependency != 0) {
+                ancestor && ancestor->storedDependency != 0)
+              inheritedDependency = ancestor->storedDependency;
+            if (inheritedDependency != 0) {
               auto loan = *semanticModel.findLoan(payload.binding.retainedLoan);
-              loan.storedDependency = ancestor->storedDependency;
+              loan.storedDependency = inheritedDependency;
               semanticModel.recordLoan(std::move(loan));
             }
             // The binding is born at this arm's entry, not at the switch
@@ -6701,6 +6808,11 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
 }
 
 auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
+  if (expr.oper().kind == TokenKind::COMMA) {
+    discardResult(expr.left());
+    if (discardedResults.contains(&expr))
+      discardResult(expr.right());
+  }
   const auto [leftType, rightType] = analyzeBinaryOperands(expr);
   validateSequencedTransientLoans(expr.left(), expr.right(), expr.oper());
 
@@ -7591,6 +7703,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                 valid;
       }
 
+      if (valid &&
+          analyzeDeferredSelection(expr, resolved, resolvedTypeArguments,
+                                   resolvedValueArguments))
+        return;
+
       const CallReceiverMode receiverMode =
           callReceiverMode(expr.callee(), resolved);
       valid = validateSelectedFunction(resolved, expr.callee(), expr.paren(),
@@ -7840,6 +7957,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
+  if (analyzeDeferredSelection(expr, viable.front().function,
+                               viable.front().typeArguments,
+                               viable.front().valueArguments))
+    return;
   if (!validateSelectedFunction(viable.front().function, expr.callee(),
                                 expr.paren(), expr.arguments(),
                                 viable.front().receiverMode)) {
@@ -8136,6 +8257,10 @@ auto SemanticVisitor::Impl::analyzeAliasConversion(
 
 auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
     -> void {
+  if (discardedResults.contains(&expr)) {
+    discardResult(expr.thenExpression());
+    discardResult(expr.elseExpression());
+  }
   // Each arm is the conditional's value and has its use. An arm keeps that
   // use even when the other arm's type is expected of it.
   const std::optional<ResultUse> use = resultUseFor(expr);
@@ -8957,6 +9082,8 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
 }
 
 auto SemanticVisitor::Impl::visitGroupingExpr(const Grouping &expr) -> void {
+  if (discardedResults.contains(&expr))
+    discardResult(expr.expression());
   if (expr.unsafeKeyword())
     enterUnsafeRegion(*expr.unsafeKeyword(), true);
   {
@@ -13744,8 +13871,15 @@ auto SemanticVisitor::Impl::constexprBindingValue(
   return converted.value;
 }
 
-auto SemanticVisitor::Impl::constantBoolean(const ExprPtr &expression)
+auto SemanticVisitor::Impl::constantBoolean(const ExprPtr &expression) const
     -> std::optional<bool> {
+  // Reuse already-proved semantic constants; this does not execute source
+  // or make ordinary if branches into unchecked constexpr branches. Both
+  // arms are still checked, while only a feasible arm contributes moves.
+  if (expression)
+    if (const auto constant = semanticModel.findConstant(*expression))
+      if (const auto *value = std::get_if<bool>(&*constant))
+        return *value;
   if (const auto *literal = exprAs<LiteralExpr>(expression.get())) {
     if (const bool *value = std::get_if<bool>(&literal->value())) {
       return *value;
@@ -13754,6 +13888,12 @@ auto SemanticVisitor::Impl::constantBoolean(const ExprPtr &expression)
   }
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {
     return constantBoolean(grouping->expression());
+  }
+  if (const auto *unary = exprAs<Unary>(expression.get());
+      unary && unary->oper().kind == TokenKind::BANG &&
+      semanticModel.findOperator(*unary) == nullptr) {
+    if (const auto value = constantBoolean(unary->right()))
+      return !*value;
   }
   return std::nullopt;
 }
@@ -13882,6 +14022,8 @@ auto SemanticVisitor::Impl::summarizeFlow(
             .normalReturn = returns ? returned : nullptr};
   }
   if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
+    if (const Stmt *expanded = semanticModel.findDeferredExpansion(*expression))
+      return summarizeFlow(expanded, normalReturns, structural);
     return {.canFallThrough =
                 !expressionNeverReturns(expression->expression().get())};
   }

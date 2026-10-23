@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Passive class moved beside a passive copy (0.464.1)
+## Passive class moved beside a passive copy (0.465.4)
 
 `passive_class_move_and_copy_runtime` runs `passive_class_move_and_copy.gti`.
 - `Shelved` moves a `Pair` and copies another after a `Ledger` field that can
@@ -38,6 +38,189 @@ An `--emit-cpp` differential against main `6333da11`, with one
 - 3,644 of 3,646 compilations emit byte-identical C++, and failing pairs
   report identical diagnostics;
 - only the new fixture changes status, from `GTI-B0001` to success.
+
+## Classes holding function items (0.465.3)
+
+`passive_function_item_class_runtime` runs `passive_function_item_classes.gti`.
+Function items reach fields only through generics, so every class is generic
+and instantiated with a function name.
+- `Holder<F>` moves an `Op<F>` into a field after a `std::vector` field;
+  `CopiedHolder<F>` copies it. Both return the called function's 7.
+- `Shelved<F>` moves a `Tagged<F>` (a view, a function item and a rank) after
+  a `Ledger` field that can fail. `Copied<F>` copies one after its own ledger.
+  In each, a later sibling or the body can fail.
+- When the ledger itself fails, the object has no ledger to drop. When a later
+  sibling or the body fails, the built ledger is rolled back exactly once, and
+  `run`'s live ledgers close once each. Every failure exits with status 70 and
+  the division diagnostic.
+- A conditional join of copies and of moves, and a copy assigned into a
+  mutable field, give the expected values.
+- Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan.
+  The main compiler (`6333da11`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`,
+`testPassiveFunctionItemClassAfterFallibleSibling` covers four points:
+- the MIR shape of the moved `Op<F>`: no loans, no value or rollback
+  obligation, and no lifecycle event;
+- failure-form admission, with the field started empty and published once
+  after the vector;
+- the native parameter copy of the copied variant;
+- forgeries: a function item without its function identity, and active
+  cleanup on the field.
+
+Mutation checks:
+- with function items removed from the passive leaf rule, the test fails at
+  failure-form admission;
+- with the `hasFunctionItemShape` guard removed, only the copy-side shapeless
+  forgery fails. The move side is still refused by the empty-state proof,
+  which requires the shape too.
+
+An `--emit-cpp` differential against main `6333da11`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1,823 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3:
+- 3,644 of 3,646 compilations emit byte-identical C++, and failing pairs
+  report identical diagnostics;
+- only the new fixture changes status, from `GTI-B0001` to success.
+No existing program, including the standard library's generic callable
+adapters, changes text. Closure captures and call inputs of a function-item
+class emit the same C++ as before.
+
+## Class stores into named places and element fields (0.465.1)
+
+`class_store_destinations_runtime` runs `class_store_destinations.gti`.
+User-defined structs are copied into, and constructed directly into, a
+class-typed global and the referent of a `[mut &p]` capture, and copied from a
+global and from a by-value capture; copied and read back through
+`std::vector`'s mutable subscript, including from a global; and read, stored,
+copied, returned and used as a receiver through a fixed-array element selected
+at a run-time index, including `segments[i].start.y`, `cells[i][j].x`, a
+class's array field `shape.corners[i]` and an enum switch on `jobs[i].state`.
+A run-time index out of range fails with `GTI-R0007` (exit status 70) before
+the field is read, after every earlier line. Each result is checked in
+C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan. The 0.464.0 compiler stops
+the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_lifecycle`, `testClassStoresIntoNamedPlaces` checks
+the emitted single store for a copy into a global (`g = p.get()`), a global as
+the source, a fresh construction into the global, a copy through a
+by-reference capture from a by-value capture (`p = q;`) and a copy through the
+subscript's two-phase loan after its activation; a read-only loan or captured
+reference refuses the body. `testCheckedArrayElementFieldAccess` checks that a
+field read, a field store and a whole class element copy at a run-time index
+follow exactly one checked `AddressOf` of the element and carry no bound of
+their own, that a constant index has none, and that the text checks the bound
+once before the plain subscript; clearing the check's origin fails program
+verification ("field access reads a fixed-array element before its checked
+selection") and refuses the body.
+
+A differential `--emit-cpp` against main `6333da11`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1821 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3. Only the new
+fixture changed, from `GTI-B0001` to success. Every other program emits
+byte-identical C++, so constant-index element fields keep their check-free
+spelling, and the 736 pairs that fail with both compilers report identical
+diagnostics. The summed emission time was 3197.9 s before and 3203.6 s after,
+on a machine shared with other builds.
+
+Still `GTI-B0001`, as on main: a constructor initializing a class's
+fixed-array field from its parameters (`Polygon(Point a, Point b) :
+corners({a, b})`).
+## Deferred assertions and statement helpers (0.465.0)
+
+`deferred_assertions` checks the general `[[deferred]]` statement-helper rule
+with unrelated application types: conditional/repeated moves, live loans,
+disabled formatter errors, exact argument types, unsafe obligations, invalid
+signatures/bodies, recursion limits and callable-identity boundaries. It also
+checks HIR expansion, independent MIR verification, the absence of eager helper
+instances, and rejection of an erased tracked-caller origin.
+
+`deferred_assertions_runtime` runs the success/failure fixtures and runnable
+example 172 with C++20/C++23 at O0/O1/O3, disabled elision, ASan/UBSan, and native
+`-DNDEBUG`, each with source `NDEBUG` enabled and disabled. It checks forcing
+count/order, skipped moves and message construction, lookup/access hygiene,
+caller defaults and nested wrappers, reverse cleanup, panic during cleanup,
+and managed-thread propagation. The example is identified by its selected
+path, not a numeric-prefix convention, so renumbering cannot change the expected
+output policy.
+
+`deferred_assertions_lsp` covers unsaved/incomplete text, UTF-16 spans, static
+argument errors and hover contracts. Project-model and scoped-configuration
+checks cover default release `NDEBUG`, explicit profile overrides and frontend
+versus native flags. The module/surface gates, both corpus censuses, pinned
+Tree-sitter corpus and shipped-source parsing cover the new header, module,
+attribute and example inventories.
+
+`deferred_assertions_cost` compares the same complete-state workload with
+handwritten control flow. Zero observed successful-path allocations and cold
+message calls are correctness gates; `--measure` adds two warmups and nine
+interleaved samples, native/generated size, build time and child peak memory.
+Timing samples are reported rather than gated on noisy shared hosts. Deferred
+source expansion still has a compile-time cost; runtime parity does not imply
+compilation-cost parity. The current structural/forcing bounds are recorded in
+[execution](../language/execution.md#deferred-statement-helpers) and
+[ADR 030](../decisions/030-deferred-statement-helpers.md).
+
+## Whole assignment results (0.464.2)
+
+`assignment_result_whole_value_runtime` runs
+`assignment_result_whole_value.gti`. User-defined structs use a class
+assignment's whole result as a binding initializer (`Point r = (p = q);`), a
+return, by-value arguments, a method receiver, a constructor field initializer
+(`start(a = b)`), the right operand of a chained assignment (`a = b = q`), with
+field, constant-index element and reference-parameter destinations, from a
+generic function, from a `mut` method returning `(this.last = q)`, and in a
+loop whose right operand is a call result. `pair(p = q, p = r)` prints 54787:
+the first argument keeps `q` although the second assigns `p` again.
+`(c = d).bump()` prints 65: the `mut` method bumps the copy to 6 while `c`
+keeps 5. A checked addition after a copy overflows on request and exits with
+status 70 after every earlier line. Each result is checked in C++20/C++23 at
+O0/O1/O3, no-elide and ASan/UBSan. The 0.464.0 compiler stops the fixture with
+`GTI-B0001`.
+
+In `cpp_mir_body_emitter_lifecycle`, `testAssignmentResultWholeValue` checks
+that an initialization, a return and a constructor field initializer consume
+the copy `Load` directly after the `Assign`, which records a `Read` of the
+destination's key; that each of two by-value arguments is a `CopyValue` stage
+of a place carrying the destination's key directly after its `Assign`; and
+that a receiver borrows the copy from a hidden temporary whose `Initialize`
+arms the result's value obligation. Clearing that lifecycle event fails MIR
+verification. The emitted text constructs every copy from the destination
+after the store, stages the first argument before the second store, and calls
+the receiver through the temporary's slot before ending it.
+`testAssignmentResultFieldView` now expects the move-only read to be rejected
+by semantics. In `compiler_pipeline`, `testMoveOnlyAssignmentResultUse`
+reports exactly one `GTI-S2003` at the `=` of a used move-only result, with
+its hint and no fix-it, for initialization, return, by-value argument,
+receiver, field read, chained assignment, a comma's right operand, a
+conditional arm, field, element and reference destinations, `std::unique_ptr`
+and a generic instance; it accepts statements, groupings, a comma's left
+operand, a discarded comma, a for-loop increment, discarded conditional arms
+and a copyable class's result.
+
+A differential `--emit-cpp` against main `6333da11`, with one `GTI_STDLIB_PATH`
+for both compilers, covered 1821 programs in `tests/fixtures`, `tests/coverage`
+and `examples` at O0 and O3. Only the new fixture changed, from `GTI-B0001` to
+success at both levels. Every other program emits byte-identical C++, and the
+736 pairs that fail with both compilers report identical diagnostics. The
+summed emission time was 2253.7 s before and 2243.2 s after. Before merging
+main's 0.464.1 (PR #283, payload-enum selections from local carriers), the
+compiler suites behind `compiler_pipeline` (ownership, diagnostics,
+declarations, constexpr, e2e), the emitter `lifecycle`, `text`, `preflight`,
+`corpus` and `census` gates, `mir_field_determinism`,
+`borrowing_capture_semantics` and 12 assignment runtime gates pass. The
+recorded validation repeats that selection, with `borrow_origin` and
+`borrow_origin_runtime`, on the reconciled head.
+
+Still `GTI-B0001`, as on main: a store inside a staged receiver or callee
+window, including `(p = q).with(p = r)`, a lambda call `f(p = q)`, and even
+`f(n = 5)` for a scalar; a discarded move-only store as a comma's left operand
+or in conditional arms (`((p = std::move(q)), 3)`); a whole-value use other
+than a by-value argument, or a field read, of a class with borrowed state or
+active cleanup; and array and payload-enum assignment results. A by-value
+argument of a copyable class with active cleanup takes the same `CopyValue`
+stage but is unverified, since no such class was found (`std::string` is
+move-only). Borrowing an assignment result as a read-only reference argument,
+`read(p = q)`, is rejected by semantics with `GTI-S2017`.
 
 ## Editor code snippets
 
