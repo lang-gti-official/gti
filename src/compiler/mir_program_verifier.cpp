@@ -8184,6 +8184,46 @@ verifyMirPayloadEnums(const MirProgram &program) {
   return result;
 }
 
+// Whether the checked `AddressOf` of the first `length` projections of
+// `place` completes on an `Invoke` whose successful edge dominates `block`.
+[[nodiscard]] bool checkedSelectionDominates(const MirBody &body,
+                                             const MirDominanceInfo &dominance,
+                                             const MirPlace &place,
+                                             std::size_t length,
+                                             MirBlockId block) {
+  return std::any_of(
+      body.blocks.begin(), body.blocks.end(), [&](const MirBlock &candidate) {
+        const MirTerminator &edge = candidate.terminator;
+        if (edge.kind != MirTerminatorKind::Invoke)
+          return false;
+        const auto check = std::find_if(
+            candidate.instructions.begin(), candidate.instructions.end(),
+            [&](const MirInstruction &instruction) {
+              return instruction.id == edge.invokeInstruction;
+            });
+        const MirPlace *selected =
+            check != candidate.instructions.end() && !check->tombstone &&
+                    check->kind == MirInstructionKind::Compute &&
+                    check->operation == MirOperation::AddressOf &&
+                    !check->definedFailure.localOrigins.empty() &&
+                    check->operands.size() == 1 &&
+                    check->operands.front().kind == MirOperandKind::Address
+                ? body.findPlace(check->operands.front().place)
+                : nullptr;
+        return selected != nullptr && selected->root == place.root &&
+               selected->binding == place.binding &&
+               selected->symbol == place.symbol &&
+               selected->capture == place.capture &&
+               selected->temporary == place.temporary &&
+               selected->value == place.value && selected->loan == place.loan &&
+               selected->projections.size() == length &&
+               std::equal(selected->projections.begin(),
+                          selected->projections.end(),
+                          place.projections.begin()) &&
+               dominance.dominates(edge.target, block);
+      });
+}
+
 // A switch that read-borrows its subject observes the enum in place, so no
 // Load performs the bounds check of a fixed-array element that the subject
 // place selects. Each such selection completes first, at the checked
@@ -8222,46 +8262,11 @@ verifyMirCheckedSwitchSubjects(const MirProgram &program) {
       if (!*dominance || !(*dominance)->isReachable(block.id)) {
         continue;
       }
-      const auto checkedPrefix = [&](std::size_t length) {
-        return std::any_of(
-            body->blocks.begin(), body->blocks.end(),
-            [&](const MirBlock &candidate) {
-              const MirTerminator &edge = candidate.terminator;
-              if (edge.kind != MirTerminatorKind::Invoke)
-                return false;
-              const auto check = std::find_if(
-                  candidate.instructions.begin(), candidate.instructions.end(),
-                  [&](const MirInstruction &instruction) {
-                    return instruction.id == edge.invokeInstruction;
-                  });
-              const MirPlace *selected =
-                  check != candidate.instructions.end() && !check->tombstone &&
-                          check->kind == MirInstructionKind::Compute &&
-                          check->operation == MirOperation::AddressOf &&
-                          !check->definedFailure.localOrigins.empty() &&
-                          check->operands.size() == 1 &&
-                          check->operands.front().kind ==
-                              MirOperandKind::Address
-                      ? body->findPlace(check->operands.front().place)
-                      : nullptr;
-              return selected != nullptr && selected->root == subject->root &&
-                     selected->binding == subject->binding &&
-                     selected->symbol == subject->symbol &&
-                     selected->capture == subject->capture &&
-                     selected->temporary == subject->temporary &&
-                     selected->value == subject->value &&
-                     selected->loan == subject->loan &&
-                     selected->projections.size() == length &&
-                     std::equal(selected->projections.begin(),
-                                selected->projections.end(),
-                                subject->projections.begin()) &&
-                     (*dominance)->dominates(edge.target, block.id);
-            });
-      };
       for (std::size_t length = 1; length <= subject->projections.size();
            ++length) {
         if (subject->projections[length - 1].kind == MirProjectionKind::Index &&
-            !checkedPrefix(length)) {
+            !checkedSelectionDominates(*body, **dominance, *subject, length,
+                                       block.id)) {
           result.errors.push_back(
               {.bodyKind = address.kind,
                .owner = address.owner,
@@ -8269,6 +8274,76 @@ verifyMirCheckedSwitchSubjects(const MirProgram &program) {
                .message = "switch subject reads a fixed-array element before "
                           "its checked selection"});
           break;
+        }
+      }
+    }
+  }
+  return result;
+}
+
+// A field read or store below a fixed-array element selected at a run-time
+// index has no instruction of its own that checks the bound: the field
+// projection hides the element. As for a read-borrowed switch subject, the
+// selection completes first, at the checked `AddressOf` of the place prefix
+// that ends in its `Index`, whose successful edge dominates the access. A
+// constant index keeps its static bound proof, and an `Index` followed only by
+// further indices is checked by the chained access itself.
+[[nodiscard]] MirVerificationResult
+verifyMirCheckedElementFields(const MirProgram &program) {
+  MirVerificationResult result;
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
+    const MirBody *body = findMirBody(program, address);
+    if (body == nullptr) {
+      continue;
+    }
+    std::optional<std::optional<MirDominanceInfo>> dominance;
+    for (const MirBlock &block : body->blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.tombstone)
+          continue;
+        std::vector<MirPlaceId> places;
+        if (instruction.destination)
+          places.push_back(*instruction.destination);
+        if (instruction.receiver && instruction.receiver->place != 0)
+          places.push_back(instruction.receiver->place);
+        for (const MirOperand &operand : instruction.operands)
+          if (operand.place != 0)
+            places.push_back(operand.place);
+        for (const MirPlaceId id : places) {
+          const MirPlace *place = body->findPlace(id);
+          if (place == nullptr)
+            continue;
+          for (std::size_t index = 0; index < place->projections.size();
+               ++index) {
+            const MirPlaceProjection &selection = place->projections[index];
+            if (selection.kind != MirProjectionKind::Index ||
+                selection.constantIndex ||
+                std::none_of(place->projections.begin() +
+                                 static_cast<std::ptrdiff_t>(index) + 1,
+                             place->projections.end(),
+                             [](const MirPlaceProjection &projection) {
+                               return projection.kind ==
+                                      MirProjectionKind::Field;
+                             }))
+              continue;
+            if (!dominance)
+              dominance = computeMirDominance(*body);
+            // Control-flow verification reports a body without dominance; an
+            // access that never executes reads no element.
+            if (!*dominance || !(*dominance)->isReachable(block.id))
+              break;
+            if (!checkedSelectionDominates(*body, **dominance, *place,
+                                           index + 1, block.id)) {
+              result.errors.push_back(
+                  {.bodyKind = address.kind,
+                   .owner = address.owner,
+                   .block = block.id,
+                   .instruction = instruction.id,
+                   .message = "field access reads a fixed-array element "
+                              "before its checked selection"});
+              break;
+            }
+          }
         }
       }
     }
@@ -17489,6 +17564,7 @@ verifyMirProgramContracts(const MirProgram &program) {
   }
   appendVerification(result, verifyMirPayloadEnums(program));
   appendVerification(result, verifyMirCheckedSwitchSubjects(program));
+  appendVerification(result, verifyMirCheckedElementFields(program));
   for (std::size_t index = 0; index < program.classInstances().size();
        ++index) {
     const MirClassInstance &instance = program.classInstances()[index];

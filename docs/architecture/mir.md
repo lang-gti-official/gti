@@ -2893,6 +2893,18 @@ a read-borrowed switch subject's place, that the successful edge of the checked
 `AddressOf` over the place prefix ending at that index dominates the reachable
 switch.
 
+A field projection performs no bounds check either, so a field read or store
+below an element selected at a run-time index, as in `points[i].x` or
+`points[i].x = 7`, finishes that selection at its checked `AddressOf` before
+the access, and the field `Load` or `Assign` carries no second bounds origin. A
+whole class element copy (`Point copy = points[i];`) uses the same prefix,
+because its consumer constructs the copy from the element place; a scalar
+element `Load` keeps its own checked read. A constant index keeps its static
+bound proof and no run-time check. Program verification requires, for every
+run-time `Index` that a field projection follows in an instruction's place,
+that the successful edge of the checked `AddressOf` over the place prefix
+ending at that index dominates the instruction.
+
 A consuming switch first initializes its hidden subject binding from the
 subject value, reparenting the subject's temporary obligation into the
 binding's obligation, and registers that binding with the enclosing scope's
