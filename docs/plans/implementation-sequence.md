@@ -43,7 +43,7 @@ integration follows the current GitHub workflow. Reproduce a remaining
 composition against current main before treating a past rejection as a new
 compiler task.
 
-## Deferred assertion foundation (0.464.0)
+## Deferred assertion foundation (0.465.0)
 
 The implementation provides source-defined `std::assert` and
 `std::debug_assert`, plus general `[[deferred]]` void statement helpers.

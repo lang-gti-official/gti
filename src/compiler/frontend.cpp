@@ -396,6 +396,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
           options.cache ? options.cache->lookupParsed(key) : std::nullopt;
       if (cached) {
         unitDeclarations = std::move(cached->declarations);
+        if (cached->completionContext) {
+          result.syntaxCompletion = cached->completionContext;
+        }
         appendParserDiagnostics(result.diagnostics, cached->diagnostics,
                                 result.sourceGraph, unitId);
         syntaxValid = syntaxValid && !cached->hadError;
@@ -415,15 +418,20 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                                    ? std::string_view{}
                                                    : std::string_view{*source});
         Program parsed = parser.parse();
+        if (parser.completionContext()) {
+          result.syntaxCompletion = parser.completionContext();
+        }
         appendParserDiagnostics(result.diagnostics, parser.errors(),
                                 result.sourceGraph, unitId);
         syntaxValid = syntaxValid && !parser.hadError();
         unitDeclarations = parsed.takeDeclarations();
         if (options.cache) {
-          options.cache->storeParsed(key, estimatedInputBytes,
-                                     {.declarations = unitDeclarations,
-                                      .diagnostics = parser.errors(),
-                                      .hadError = parser.hadError()});
+          options.cache->storeParsed(
+              key, estimatedInputBytes,
+              {.declarations = unitDeclarations,
+               .diagnostics = parser.errors(),
+               .hadError = parser.hadError(),
+               .completionContext = parser.completionContext()});
         }
       }
       unit->declarationCount = unitDeclarations.size();

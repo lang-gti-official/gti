@@ -63,19 +63,30 @@ std::vector<Token> Lexer::scan(std::string sourceText, std::string sourceName) {
 std::vector<Token> Lexer::scanForCompletion(std::string sourceText,
                                             std::size_t byteOffset,
                                             std::string sourceName) {
+  collectCompletionExclusions = true;
   std::vector<Token> result =
       scan(std::move(sourceText), std::move(sourceName));
+  collectCompletionExclusions = false;
   if (byteOffset > source.size()) {
     return result;
+  }
+  for (const auto &[begin, end] : completionExclusions) {
+    if (byteOffset >= begin && byteOffset < end) {
+      return result;
+    }
   }
 
   for (Token &token : result) {
     const std::size_t end = token.position + token.lexeme.size();
-    if (token.kind != TokenKind::IDENTIFIER || byteOffset < token.position ||
-        byteOffset > end) {
+    if (token.lexeme.empty() || !isAlpha(token.lexeme.front()) ||
+        byteOffset < token.position || byteOffset > end) {
       continue;
     }
     token.lexeme = source.substr(token.position, byteOffset - token.position);
+    // Keyword-prefix completion is editor syntax, not an identifier admitted
+    // to ordinary parsing. This also makes a complete `class`/`if` trigger
+    // work.
+    token.kind = TokenKind::IDENTIFIER;
     token.completion = true;
     return result;
   }
@@ -105,6 +116,7 @@ void Lexer::reset(std::string sourceName) {
   this->sourceName = std::move(sourceName);
   tokens.clear();
   diagnostics.clear();
+  completionExclusions.clear();
   start = 0;
   current = 0;
   line = 1;
@@ -313,6 +325,8 @@ void Lexer::lineComment() {
   while (peek() != '\n' && !isAtEnd()) {
     advance();
   }
+  if (collectCompletionExclusions)
+    completionExclusions.emplace_back(start, current + 1);
 
   if (!documentation) {
     pendingDocumentationMarkdown.reset();
@@ -344,6 +358,8 @@ void Lexer::blockComment() {
     if (peek() == '*' && peekNext() == '/') {
       advance();
       advance();
+      if (collectCompletionExclusions)
+        completionExclusions.emplace_back(start, current);
       return;
     }
     if (advance() == '\n') {
@@ -353,6 +369,8 @@ void Lexer::blockComment() {
 
   report("GTI-L0011", "Unterminated block comment.", start,
          std::min(start + 2, source.size()));
+  if (collectCompletionExclusions)
+    completionExclusions.emplace_back(start, current + 1);
 }
 
 void Lexer::directive() {
@@ -407,6 +425,8 @@ void Lexer::string() {
   if (isAtEnd()) {
     report("GTI-L0004", "Unterminated string.", start,
            std::min(start + 1, source.size()));
+    if (collectCompletionExclusions)
+      completionExclusions.emplace_back(start, current + 1);
     return;
   }
 
@@ -414,6 +434,8 @@ void Lexer::string() {
 
   const std::string_view encoded(source.data() + start + 1,
                                  current - start - 2);
+  if (collectCompletionExclusions)
+    completionExclusions.emplace_back(start + 1, current);
   std::string value;
   value.reserve(encoded.size());
   for (std::size_t index = 0; index < encoded.size(); ++index) {
@@ -448,10 +470,14 @@ void Lexer::character() {
     report("GTI-L0009", "Unterminated character literal.", start,
            std::max(current, std::min(start + 1, source.size())));
     addToken(TokenKind::CHARACTER_LITERAL, CharacterLiteral{});
+    if (collectCompletionExclusions)
+      completionExclusions.emplace_back(start, current + 1);
     return;
   }
 
   advance();
+  if (collectCompletionExclusions)
+    completionExclusions.emplace_back(start + 1, current);
   if (value.size() != 1) {
     report("GTI-L0010",
            "A character literal must contain exactly one 8-bit code unit.",

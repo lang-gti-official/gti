@@ -1480,6 +1480,8 @@ JsonValue semanticTokensJson(const std::vector<SemanticToken> &tokens) {
 
 int completionItemKind(lang::CompletionCandidateKind kind) {
   switch (kind) {
+  case lang::CompletionCandidateKind::Snippet:
+    return 15;
   case lang::CompletionCandidateKind::Method:
     return 2;
   case lang::CompletionCandidateKind::Function:
@@ -1521,6 +1523,9 @@ JsonValue completionListJson(const lang::CompletionResult &completion,
   JsonArray items;
   items.reserve(completion.candidates.size());
   for (const lang::CompletionCandidate &candidate : completion.candidates) {
+    if (candidate.kind == lang::CompletionCandidateKind::Snippet &&
+        !snippetSupport)
+      continue;
     JsonObject item{{"label", candidate.label},
                     {"kind", completionItemKind(candidate.kind)},
                     {"filterText", candidate.label},
@@ -3523,6 +3528,7 @@ private:
                 {.entryPath = request.entryPath,
                  .source = request.source,
                  .byteOffset = request.byteOffset,
+                 .includeSnippets = request.snippetSupport,
                  .target = project.configuration.target(),
                  .configurationFlags =
                      project.configuration.configurationFlags(),

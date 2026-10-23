@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.464.0 — Deferred assertions
+## 0.465.0 — Deferred assertions
 
 - `<std/assert>` adds always-on `std::assert` and configuration-controlled
   `std::debug_assert`, with raw/formatted panic messages, external caller
@@ -26,6 +26,15 @@ for what minor and patch releases mean.
 - Example 172 demonstrates both APIs, skipped owning moves and an unrelated
   user-defined deferred helper. The first profile is statement-only, with
   branch/expression bodies and no local binders, loops or callback conversion.
+
+## 0.464.0 — Editor code snippets
+
+- Completion offers class, generic-class, struct, interface, enum, namespace
+  and type-alias templates at declaration boundaries, plus functions, owner-named
+  constructors/destructors, methods, fields and common statement templates in
+  their appropriate contexts. Snippet-capable editors provide editable tab stops
+  and linked class names; clients without snippet support retain plain symbol
+  completions. Templates are not offered in expressions, comments or literals.
 
 ## 0.463.0 — Optional and expected views of a local owner
 
