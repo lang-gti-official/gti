@@ -990,7 +990,11 @@ canonical containment follows place-valued reference forwarding while still
 checking the selected variant/field. A shared local child may reborrow a shared
 parent without gaining mutable access; parent activity, CFG containment,
 non-escape and child-before-parent endpoints remain mandatory and independently
-verified.
+verified. A payload borrowed through a reference parameter is such a child of
+the parameter's entry loan. Returning it publishes a fresh parentless Return
+loan from the child and retires the child at that boundary, as a returned
+payload selection does. The child is never reclassified in place, because its
+own `Borrow` still reads the entry loan.
 
 Native emission tail-forwards a cleanup recipe only when its verified schedule
 contains one possible action: a class with no source destructor and exactly one
