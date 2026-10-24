@@ -21,24 +21,26 @@ void expect(bool condition, std::string_view message) {
     ++failures;
   }
 }
-// Results are ordinary prelude classes, recognized by declared identity.
-bool isExpectedClass(const lang::FrontendResult &result,
-                     const lang::SemanticType &type) {
+// A result carrier is any class holding a closed payload enum; the prelude's
+// result class and an unrelated user-defined one share the profile. The
+// payload enum's own cleanup fact says whether its drop stays active.
+const lang::MirPayloadEnum *resultPayload(const lang::FrontendResult &result,
+                                          const lang::SemanticType &type) {
   if (type.kind != lang::SemanticType::Class)
-    return false;
-  const auto *info = result.semantics.findClassType(type.classId);
-  return info && info->qualifiedName == "expected";
+    return nullptr;
+  for (const auto &owner : result.mir.classInstances())
+    if (owner.type == type)
+      for (const auto &field : owner.declaredFields)
+        if (const auto *payload = result.mir.findPayloadEnum(field.type))
+          return payload;
+  return nullptr;
 }
 
-// `recoveryPending` names positive controls whose discharge waits on RT-12
-// (proofs through the source result class, docs/plans/optimization.md). They
-// stay reached, censused controls; only their discharge is not yet required.
-void checkAddressFixture(
-    std::string_view filename,
-    std::initializer_list<std::string_view> positiveNames,
-    std::size_t negativeCount, bool rawReads = true, bool requireOpaque = true,
-    bool inspectResultDrops = false,
-    std::initializer_list<std::string_view> recoveryPending = {}) {
+void checkAddressFixture(std::string_view filename,
+                         std::initializer_list<std::string_view> positiveNames,
+                         std::size_t negativeCount, bool rawReads = true,
+                         bool requireOpaque = true,
+                         bool inspectResultDrops = false) {
   const lang::OptimizationPipeline pipeline;
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     ("fixtures/" + std::string(filename));
@@ -83,14 +85,13 @@ void checkAddressFixture(
       for (const auto &block :
            lang::findMirBody(addresses.mir, address)->blocks)
         for (const auto &instruction : block.instructions) {
-          if (instruction.kind != lang::MirInstructionKind::Drop ||
-              !isExpectedClass(addresses, instruction.info.type))
+          const auto *payload =
+              instruction.kind == lang::MirInstructionKind::Drop
+                  ? resultPayload(addresses, instruction.info.type)
+                  : nullptr;
+          if (payload == nullptr)
             continue;
-          bool userDestructor = false;
-          for (const auto &part : instruction.info.type.arguments)
-            for (const auto &owner : addresses.mir.classInstances())
-              if (owner.type == part && owner.destructor)
-                userDestructor = true;
+          const bool userDestructor = payload->requiresActiveCleanup;
           const bool structural =
               lang::isMirStructuralValueDrop(addresses.mir, instruction);
           const auto effect = lang::effects(addresses.mir, instruction);
@@ -100,12 +101,6 @@ void checkAddressFixture(
                    "result cleanup with a source destructor remains active");
           } else {
             ++passive;
-            // RT-12 (docs/plans/optimization.md): dropping a passive source
-            // result class is not yet a structural value drop for the
-            // optimizer's effect model, which conservatively treats its
-            // generated destructor as user code. It stays a counted control.
-            if (!structural)
-              continue;
             expect(structural && !effect.invokesUserCode &&
                        !effect.writesUnknownMemory && !effect.invokesRuntime &&
                        !effect.removableWhenUnused && effect.dropsValue,
@@ -167,11 +162,6 @@ void checkAddressFixture(
         }
       expect(rawReads ? rawLoads > 0 : loads > 0,
              "value evidence must not erase the original memory reads");
-      const bool pending =
-          std::find(recoveryPending.begin(), recoveryPending.end(), name) !=
-          recoveryPending.end();
-      if (pending)
-        continue;
       if (discharges !=
           (positive && level != lang::OptimizationLevel::O0 ? 1 : 0))
         std::cerr << "address control " << name << " discharges=" << discharges
@@ -449,16 +439,16 @@ int main() {
                       {"indexed_borrow", "initialized_indexed_borrow"}, 2,
                       false);
   checkAddressFixture("optimizer_result_postconditions.gti",
-                      {"accepted_ticket", "denied_ticket"}, 5, false, false,
-                      false, {"accepted_ticket", "denied_ticket"});
+                      {"accepted_ticket", "denied_ticket"}, 5, false, false);
   checkAddressFixture("optimizer_passive_result_cleanup.gti",
                       {"after_local_result", "after_record_result"}, 1, false,
-                      false, true,
-                      {"after_local_result", "after_record_result"});
+                      false, true);
+  checkAddressFixture("optimizer_payload_result_postconditions.gti",
+                      {"accepted_gate", "refused_gate", "switched_gate"}, 7,
+                      false, false, true);
   checkAddressFixture("optimizer_pointer_field_contents.gti", {"observe"}, 6);
   checkAddressFixture("optimizer_sibling_field_publication.gti",
-                      {"sibling_publication"}, 4, false, false, false,
-                      {"sibling_publication"});
+                      {"sibling_publication"}, 4, false, false);
   checkAddressFixture("optimizer_checked_address_store.gti",
                       {"checked_write", "checked_compound"}, 4);
   checkAddressFixture("optimizer_typed_scalar_stores.gti",
