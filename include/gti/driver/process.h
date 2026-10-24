@@ -49,6 +49,9 @@ invokeProcess(const std::vector<std::string> &arguments,
 // handle is single-use: wait() reaps the child and returns its result exactly
 // once. Destroying an unwaited started process waits for it first so a child
 // can never outlive its capture buffer.
+// The caller must retain exclusive wait ownership: other reapers and SIGCHLD
+// auto-reaping are unsupported. Lost ownership reports a driver error without
+// signalling the released numeric identity.
 class StartedProcess final {
 public:
   StartedProcess(const StartedProcess &) = delete;

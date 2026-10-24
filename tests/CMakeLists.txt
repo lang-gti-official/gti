@@ -481,6 +481,10 @@ add_executable(gti_process_capture_failure_tests process_capture_failure_tests.c
 target_link_libraries(gti_process_capture_failure_tests PRIVATE gti_driver ${CMAKE_DL_LIBS})
 add_test(NAME process_capture_failure COMMAND gti_process_capture_failure_tests)
 set_tests_properties(process_capture_failure PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+add_executable(gti_process_group_identity_tests process_group_identity_tests.cpp)
+target_link_libraries(gti_process_group_identity_tests PRIVATE gti_driver ${CMAKE_DL_LIBS})
+add_test(NAME process_group_identity COMMAND gti_process_group_identity_tests)
+set_tests_properties(process_group_identity PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
 add_test(NAME source_debug_info
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_debug_info_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(source_debug_info PROPERTIES TIMEOUT 180)

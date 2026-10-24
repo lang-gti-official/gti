@@ -701,8 +701,13 @@ through the default `retainOutput` option. Metadata remains in declaration order
 The per-child monotonic deadline defaults to five minutes. `--timeout Nms|Ns|Nm`
 overrides it; `0` explicitly disables it. The POSIX process owner creates a new
 process group, polls all active children, and kills the entire group on timeout
-before reaping the child. The group is also terminated on ordinary completion
-so background descendants do not escape the test lifetime. Descendants that
+before reaping the child. On ordinary completion `waitid(WNOWAIT)` observes the
+exit without releasing the child's identity; group cleanup then precedes the
+final reap, so a recycled PID cannot receive that cleanup signal. The caller
+must retain exclusive wait ownership; external reaping or SIGCHLD auto-reaping
+is unsupported, and observed lost ownership fails without signalling the
+released numeric ID. The group is also terminated on ordinary completion so
+background descendants do not escape the test lifetime. Descendants that
 explicitly detach into a new session/group are outside this boundary; process
 isolation is not an operating-system sandbox. Timeout status is 124 and forced
 termination does not promise source destructor cleanup. Normal GTI panic cleanup

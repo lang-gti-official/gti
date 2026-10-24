@@ -104,6 +104,17 @@ ProcessResult finishCapturedProcess(std::FILE *capture, int status,
 }
 
 #if !defined(_WIN32)
+int observeChildExit(pid_t child, siginfo_t &info) {
+  int result;
+  do {
+    // Darwin leaves info unchanged when WNOHANG finds no exited child.
+    info = {};
+    result = waitid(P_PID, static_cast<id_t>(child), &info,
+                    WEXITED | WNOHANG | WNOWAIT);
+  } while (result == -1 && errno == EINTR);
+  return result;
+}
+
 bool applyChildOptions(const ProcessInvocationOptions &options) {
   if (options.workingDirectory &&
       chdir(options.workingDirectory->c_str()) == -1) {
@@ -351,10 +362,15 @@ bool StartedProcess::running() const { return child != -1; }
 
 void StartedProcess::terminate() {
 #if !defined(_WIN32)
-  if (child != -1)
+  if (child != -1) {
+    siginfo_t info{};
+    if (observeChildExit(static_cast<pid_t>(child), info) == -1 &&
+        errno == ECHILD)
+      return;
     kill(isolatedProcessGroup ? -static_cast<pid_t>(child)
                               : static_cast<pid_t>(child),
          SIGKILL);
+  }
 #endif
 }
 
@@ -396,30 +412,32 @@ std::optional<ProcessResult> StartedProcess::poll() {
 #else
   const pid_t waitedChild = static_cast<pid_t>(child);
   int status = 0;
-  pid_t observed;
-  do {
-    observed = waitpid(waitedChild, &status, WNOHANG);
-  } while (observed == -1 && errno == EINTR);
-  bool expired = false;
-  if (observed == 0 && deadline &&
-      std::chrono::steady_clock::now() >= *deadline) {
-    expired = true;
-    kill(isolatedProcessGroup ? -waitedChild : waitedChild, SIGKILL);
+  siginfo_t info{};
+  const int observation = observeChildExit(waitedChild, info);
+  const int observationError = observation == -1 ? errno : 0;
+  const bool pending = observation == 0 && info.si_pid == 0;
+  const bool expired =
+      pending && deadline && std::chrono::steady_clock::now() >= *deadline;
+  if (pending && !expired)
+    return std::nullopt;
+  // Keep the child waitable until its group is gone: reaping first releases
+  // its numeric identity, so a subsequent group signal could hit a reused PID.
+  // ECHILD means another reaper already took ownership; do not signal that ID.
+  pid_t observed = -1;
+  int waitError = observationError;
+  if (observationError != ECHILD) {
+    if (isolatedProcessGroup || expired || observationError != 0)
+      kill(isolatedProcessGroup ? -waitedChild : waitedChild, SIGKILL);
     do {
       observed = waitpid(waitedChild, &status, 0);
     } while (observed == -1 && errno == EINTR);
+    if (observed == -1 && waitError == 0)
+      waitError = errno;
   }
-  if (observed == 0)
-    return std::nullopt;
-  const int waitError = errno;
-  // A completed test must not leave background descendants running in its
-  // group.
-  if (isolatedProcessGroup)
-    kill(-waitedChild, SIGKILL);
   child = -1;
   auto *captureFile = static_cast<std::FILE *>(capture);
   capture = nullptr;
-  if (observed == -1) {
+  if (observed == -1 || observationError != 0) {
     if (captureFile)
       std::fclose(captureFile);
     return ProcessResult{.exitCode = 127,
