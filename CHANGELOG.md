@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.467.2 — Array fields built from constructor parameters
+## 0.467.3 — Array fields built from constructor parameters
 
 - A constructor that initializes a fixed-array field from its by-value
   parameters, as in `Polygon(Point a, Point b) : corners({a, b})`, used to
@@ -22,6 +22,16 @@ for what minor and patch releases mean.
   `Point[2] corners = {a, std::move(b)};` or `Point[2][2] g = {{a, b}, {c, d}};`,
   also reported `GTI-B0001` and now work.
 
+## 0.467.2 — Copying a payload view that holds a local owner's text
+
+- In a `switch` over a payload enum whose `string_view` payload views a local
+  owner, as in `Word word = Word::text(input.view());`, copying the arm's
+  binding into a local (`case Word::text(value): std::string_view v = value;`)
+  used to report `error[GTI-B0001]` (an internal compiler error). The copy now
+  compiles and keeps `input` borrowed while it is live, as a copy of a class's
+  published text field does. This also covers copies of copies, a payload
+  enum held in a field (`switch (line.word)`), generic enums, `default` arms
+  and loops.
 ## 0.467.1 — Text members through `operator->`
 
 - When an `operator->` returns a `std::string_view&`, its members can be

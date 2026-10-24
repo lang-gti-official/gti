@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Array fields from constructor parameters (0.467.2)
+## Array fields from constructor parameters (0.467.3)
 
 `array_field_constructor_elements_runtime` runs
 `array_field_constructor_elements.gti`. Constructors of user-defined structs
@@ -13,7 +13,7 @@ shows each element's value, that copied parameters are still readable, and
 that every counted object is destroyed exactly once, as an element. With an
 argument the first index is out of range and fails with `GTI-R0007` (exit
 status 70). Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and
-ASan/UBSan. The 0.467.1 compiler stops the fixture with `GTI-B0001`.
+ASan/UBSan. The 0.467.2 compiler stops the fixture with `GTI-B0001`.
 
 In `cpp_mir_body_emitter_lifecycle`, `testArrayFieldConstructorElements`
 checks that the constructors spell their parameters inside the field's
@@ -35,6 +35,27 @@ programs. Six spell staged element copies inline: `012-fixed-arrays`, three
 constructor for a by-value array of passive classes, so their callers drop a
 dead failure branch. The owning runtime tests of all eight pass.
 
+## Copied dependent payload views (0.467.2)
+
+`view_fields` covers the copy in `testCopiedPayloadBindings`.
+- A switch's by-value binding of a dependent payload is copied into a local,
+  and that local is copied again. Both copies verify and carry the payload's
+  `Stored` loan.
+- Dropping either copy from the loan's carriers is rejected: MIR derives
+  that each copy holds the owner's text (`verifyDependentTextCarriers`), so
+  it must carry a loan that retains the owner.
+- `view_field_payloads_runtime` runs copies of a local enum's binding and of
+  a `line.word` binding in every mode.
+
+Fourteen probes ran on main's compiler and this change's. Seven reported
+`GTI-B0001` on main and now build and run: the plain copy, a copy chain, a
+`default` arm, a generic enum, a payload enum held in a field, a loop, and a
+two-payload variant. Five source rejections are unchanged: assigning the view
+into an existing binding, storing it, republishing it in a payload or
+constructor, and mutating the owner while a copy is live (`GTI-S2045`,
+`GTI-S2017`). Two already built and still do: `id(value)` with
+`std::string_view& r = value;`, and the carrier program of PR #297's
+`testDerivedCarriers`.
 ## Text members through checked `operator->` (0.467.1)
 
 `testArrowNonClassReferents` in the `ownership` suite analyzes a class with
