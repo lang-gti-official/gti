@@ -1,0 +1,83 @@
+// Dependent values nested in fields and payloads of other values
+// (L-OWN-02, phase 3).
+#include <std/optional>
+#include <std/string>
+
+mut std::string_view kept = "";
+
+class Diag {
+public:
+  std::string_view text;
+  int line;
+  Diag(std::string_view text, int line) : text(text), line(line) {}
+};
+
+// A report holds a diagnostic whole: its text path nests under `diag`.
+class Report {
+public:
+  Diag diag;
+  int code;
+  Report(Diag diag, int code) : diag(diag), code(code) {}
+};
+
+class Outer {
+public:
+  Report report;
+  Outer(Report report) : report(report) {}
+};
+
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+};
+
+// A failure that views the caller's string.
+expected<int, Diag> check(std::string& input) {
+  if (input.empty()) {
+    return 0;
+  }
+  return unexpected(Diag(input.view(), 3));
+}
+
+uint64_t width(std::optional<Token>& maybe) { return (*maybe).text.size(); }
+
+void keepDeref(std::optional<Token>& maybe) { kept = (*maybe).text; }
+
+int main() {
+  std::string input{"nested text"};
+  Diag diag = Diag(input.view(), 1);
+  Report report = Report(diag, 2);
+  std::println(report.diag.text);
+  Outer outer = Outer(Report(Diag(input.view(), 4), 5));
+  std::println(outer.report.diag.text);
+  std::println(outer.report.diag.line);
+  // An optional of a class keeps the token's text.
+  std::optional<Token> maybe = Token(input.view(), 6);
+  if (maybe) {
+    std::println((*maybe).text);
+    std::println(maybe.value().kind);
+    std::println(width(maybe));
+  }
+  // An expected whose error is a class, built and returned over the
+  // caller's string.
+  expected<int, Diag> failed = unexpected(Diag(input.view(), 7));
+  if (!failed) {
+    std::println(failed.error().text);
+  }
+  std::string source{"bad input"};
+  expected<int, Diag> checked = check(source);
+  if (!checked) {
+    std::println(checked.error().text);
+    std::println(checked.error().line);
+  }
+  std::string empty{""};
+  expected<int, Diag> passed = check(empty);
+  std::println(passed.value());
+  // Over literal text the nested value is ownerless and may be stored.
+  std::optional<Token> literal = Token("literal", 8);
+  keepDeref(literal);
+  std::println(kept);
+  return 0;
+}

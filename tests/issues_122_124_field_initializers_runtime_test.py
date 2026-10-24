@@ -85,11 +85,11 @@ def main() -> int:
             # assignment, which the emitter proves with a static_assert.
             r"static_assert\(std::is_trivially_move_assignable_v<"
             r"::__gti_program::payload_t>\);\s*"
-            r"\(\*this\)\.empty = ::__gti_program::payload_t\{std::in_place_index<2>\};",
+            r"\(\*this\)\.empty = ::__gti_program::payload_t\{std::in_place_index<1>\};",
             r"static_assert\(std::is_trivially_move_assignable_v<"
             r"::__gti_program::payload_t>\);\s*"
             r"\(\*this\)\.valued = "
-            r"::__gti_program::payload_t\{std::in_place_index<1>, __gti_mir_v_\d+\};",
+            r"::__gti_program::payload_t\{std::in_place_index<0>, __gti_mir_v_\d+\};",
         ))
         if any(re.search(pattern, generated) is None for pattern in schedules):
             sys.stderr.write(
