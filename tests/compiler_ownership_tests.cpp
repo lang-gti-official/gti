@@ -1445,7 +1445,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v91\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v93\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3641,7 +3641,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v113 ") &&
+  expect(mirDump.starts_with("mir-v114 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -18756,7 +18756,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v113 ") &&
+             mirDump.starts_with("mir-v114 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -21418,6 +21418,137 @@ int main() {
          "belongs to a class outside the temporary's own hierarchy");
 }
 
+void testGeneratedDefaultTemporaryArgumentBorrows() {
+  const auto frontend = lang::Frontend().analyze(
+      "generated-default-temporary-arguments.gti", R"gti(
+struct Implicit {};
+struct Defaulted { Defaulted() = default; };
+struct Cleanup { ~Cleanup() {} };
+bool inspect(Implicit& value) { return true; }
+bool inspect(Defaulted& value) { return true; }
+bool inspect(Cleanup& value) { return true; }
+void observe(bool value) {}
+int main() {
+  observe(inspect(Implicit()));
+  observe(inspect(Defaulted()));
+  observe(inspect(Cleanup()));
+  return 0;
+}
+)gti");
+  if (!frontend.canGenerateCode())
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "implicit/defaulted passive and cleanup-owning temporary arguments "
+         "use the ordinary generated-default producer");
+  if (!frontend.canGenerateCode())
+    return;
+
+  lang::HirFunctionInstanceId mainId = 0;
+  for (const auto &instance : frontend.hir.functionInstances())
+    if (instance.source && instance.source->name().lexeme == "main")
+      mainId = instance.id;
+  const auto *main = frontend.mir.findFunctionInstance(mainId);
+  expect(main != nullptr, "generated temporary fixture retains its main body");
+  if (!main)
+    return;
+
+  std::size_t stages = 0;
+  for (const auto &block : main->body.blocks)
+    for (const auto &input : block.instructions) {
+      if (input.kind != lang::MirInstructionKind::CallInput ||
+          input.callInputRole != lang::MirCallInputRole::Argument ||
+          input.callInputKind != lang::HirCallInputKind::ReadTemporaryBorrow)
+        continue;
+      const auto *place = main->body.findPlace(input.operands.front().place);
+      const auto materialization =
+          place ? lang::findMirTemporaryMaterialization(main->body, *place,
+                                                        input.hirValue)
+                : lang::MirTemporaryMaterialization{};
+      expect(materialization && materialization.producer &&
+                 materialization.producer->kind ==
+                     lang::MirInstructionKind::Call &&
+                 !materialization.producer->functionTarget &&
+                 !materialization.producer->constructorTarget &&
+                 materialization.producer->operands.empty(),
+             "each default temporary retains its exact target-free producer");
+      ++stages;
+    }
+  expect(stages == 3, "all three generated temporary argument loans survive");
+  expect(!gti_test::emitCppText(frontend).empty(),
+         "generated temporary arguments use the verified native lifetime path");
+
+  const auto rejects = [&](auto mutation) {
+    auto program = frontend.mir;
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        program.findFunctionInstance(mainId));
+    if (!function)
+      return false;
+    for (auto &block : function->body.blocks)
+      for (auto &input : block.instructions) {
+        if (input.kind != lang::MirInstructionKind::CallInput ||
+            input.callInputRole != lang::MirCallInputRole::Argument ||
+            input.callInputKind != lang::HirCallInputKind::ReadTemporaryBorrow)
+          continue;
+        const auto *place =
+            function->body.findPlace(input.operands.front().place);
+        const auto materialization =
+            place ? lang::findMirTemporaryMaterialization(
+                        function->body, *place, input.hirValue)
+                  : lang::MirTemporaryMaterialization{};
+        if (!materialization)
+          return false;
+        auto *producer =
+            const_cast<lang::MirInstruction *>(materialization.producer);
+        mutation(program, function->body, input, *producer);
+        return !lang::verifyMirProgram(program).valid();
+      }
+    return false;
+  };
+  expect(rejects([](auto &, auto &, auto &, auto &producer) {
+           producer.info.type = lang::SemanticType::UInt64;
+         }),
+         "a target-free producer cannot substitute another result type");
+  expect(rejects([](auto &, auto &, auto &, auto &producer) {
+           producer.parameterTypes.push_back(lang::SemanticType::UInt64);
+           producer.operands.push_back(
+               {.kind = lang::MirOperandKind::Constant,
+                .literal = lang::Literal{std::uint64_t(1)},
+                .type = lang::SemanticType::UInt64});
+         }),
+         "generated default construction cannot acquire runtime inputs");
+  expect(rejects([](auto &program, auto &, auto &, auto &producer) {
+           auto &owners = const_cast<std::vector<lang::MirClassInstance> &>(
+               program.classInstances());
+           for (auto &owner : owners)
+             if (owner.type == producer.info.type)
+               owner.defaultConstructor = lang::SpecialMemberStatus::Declared;
+         }),
+         "a target-free call cannot impersonate a nongenerated constructor");
+  expect(rejects([](auto &program, auto &, auto &, auto &producer) {
+           auto &owners = const_cast<std::vector<lang::MirClassInstance> &>(
+               program.classInstances());
+           for (auto &owner : owners)
+             if (owner.type == producer.info.type)
+               owner.generatedDefaultRequiresSchedule = true;
+         }),
+         "a target-free call cannot omit a required initializer schedule");
+  expect(rejects([](auto &, auto &body, auto &input, auto &) {
+           auto *loan = const_cast<lang::MirLoan *>(body.findLoan(*input.loan));
+           loan->access = lang::AccessMode::Mutable;
+         }),
+         "generated default arguments do not relax read-only call-loan access");
+  expect(rejects([](auto &, auto &body, auto &input, auto &) {
+           for (auto &drop : body.dropObligations)
+             if (drop.kind == lang::MirDropObligationKind::Value &&
+                 drop.value == input.hirValue)
+               drop.hirFullExpression = 0;
+         }),
+         "generated default arguments still require exact full-expression "
+         "materialization and drop authority");
+}
+
 void testTemporaryArgumentBorrows() {
   const std::string source = R"(
 class Report {
@@ -23237,6 +23368,8 @@ constexpr NamedTest kTests[] = {
      testEphemeralBorrowedCarrierReceivers},
     {"testMutableTemporaryReceivers", testMutableTemporaryReceivers},
     {"testVirtualTemporaryReceivers", testVirtualTemporaryReceivers},
+    {"testGeneratedDefaultTemporaryArgumentBorrows",
+     testGeneratedDefaultTemporaryArgumentBorrows},
     {"testTemporaryArgumentBorrows", testTemporaryArgumentBorrows},
     {"testConditionalTemporaryArgumentBorrows",
      testConditionalTemporaryArgumentBorrows},

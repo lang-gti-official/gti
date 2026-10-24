@@ -64,6 +64,8 @@ def main():
                 "-pthread", "-I", root / "runtime/src",
                 "-I", root / "runtime/include",
                 root / "runtime/src/cthread_state.cpp",
+                root / "runtime/src/thread.cpp",
+                root / "runtime/src/failure.cpp",
                 root / "tests/runtime_cthread_tests.cpp", "-o", binary,
             ])
             check(binary, environment=environment)

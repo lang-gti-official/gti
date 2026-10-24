@@ -1,5 +1,8 @@
 #include "semantic_analyzer_impl.h"
 
+#include <type_traits>
+#include <utility>
+
 // The single typed statement-expansion engine, selected by #macro syntax.
 
 namespace lang {
@@ -328,6 +331,38 @@ auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement,
   return stmtAs<EmptyStmt>(&statement);
 }
 
+auto SemanticVisitor::Impl::copyRequestSessionForSpeculativeModel(Impl &probe)
+    -> void {
+  assert(&probe != this);
+  // A speculative model has its own expression order and executes none of
+  // the caller's pending cleanup. Avoid copying those growing caches, but
+  // keep ordinary matched session/model copies unchanged. No semantic work
+  // runs while this guard temporarily removes the caller's expression state.
+  struct RestoreCallerExpressionState {
+    RequestSessionContext &caller;
+    ProgramExpressionCache expressionCache;
+    std::vector<ProgramFullExpressionState> frames;
+
+    explicit RestoreCallerExpressionState(RequestSessionContext &caller)
+        : caller(caller) {
+      static_assert(std::is_nothrow_swappable_v<ProgramExpressionCache>);
+      static_assert(noexcept(frames.swap(caller.fullExpressionStates)));
+      std::swap(expressionCache, caller.programExpressionCache);
+      frames.swap(caller.fullExpressionStates);
+    }
+    RestoreCallerExpressionState(const RestoreCallerExpressionState &) = delete;
+    RestoreCallerExpressionState &
+    operator=(const RestoreCallerExpressionState &) = delete;
+    ~RestoreCallerExpressionState() noexcept {
+      std::swap(expressionCache, caller.programExpressionCache);
+      frames.swap(caller.fullExpressionStates);
+    }
+  } restore(requestSession);
+  // Copying context is value/container cloning, not semantic analysis. Its
+  // active loan identities, flow and counters are retained in the probe.
+  static_cast<RequestSessionContext &>(probe.requestSession) = requestSession;
+} // Restore the caller before creating or executing any probe model.
+
 auto SemanticVisitor::Impl::adoptCallableTypeDiscovery(const Impl &probe,
                                                        const SemanticType &type)
     -> void {
@@ -368,7 +403,7 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
       target, sourceGraph, toolingOccurrences, nullptr, sources,
       rawPointerAudit, requireFunctionDefinitions, trustedBodies);
   Impl &probe = *result;
-  static_cast<RequestSessionContext &>(probe.requestSession) = requestSession;
+  copyRequestSessionForSpeculativeModel(probe);
   // Constraint queries may select another typed macro before this probe has
   // entered any expansion body. Preserve their independent recursion budget.
   probe.expressionRequirementDepth = expressionRequirementDepth;
@@ -445,12 +480,6 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
   return result;
 }
 
-auto SemanticVisitor::Impl::analyzeMacroStatement(
-    const ExpressionStmt &statement) -> bool {
-  const Call *call = directCall(statement.expression());
-  return call && analyzeMacroCall(*call, &statement);
-}
-
 auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
                                              const ExpressionStmt *statement)
     -> bool {
@@ -513,6 +542,9 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
       selection ? semanticModel.findFunction(selection->function) : nullptr;
   if (!function || !function->declaration || !function->macroExpansion)
     return false;
+  // A selected source contract is meaningful even when its open generic
+  // expansion is deferred. It is not an eager executable call boundary.
+  semanticModel.recordMacroDeclaration(*call, *function->declaration);
   // A successful probe publishes only lexical callable identity and type
   // shape. Captures, loans, body facts and executable journals are established
   // afresh if/when an expanded occurrence evaluates the caller expression.
@@ -815,9 +847,6 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
   }
   auto resultRegion = std::move(macroResultRegions.back());
   macroResultRegions.pop_back();
-  if (statement &&
-      (resultType != SemanticType::Void || !resultRegion.exits.empty()))
-    semanticModel.recordFullExpression(*statement, statement->expression());
   std::vector<const ReturnStmt *> reachableReturns;
   const FlowSummary resultFlow =
       summarizeFlow(expansion.statement.get(), &reachableReturns);
@@ -859,12 +888,6 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
                                        definition);
   semanticModel.recordMacroExpansion(*call, std::move(expansion.statement),
                                      definition);
-  if (statement && resultType != SemanticType::Void &&
-      !statement->discardAttribute() && !function->discardableResult)
-    report(call->paren(),
-           "The result of this value macro must be used or "
-           "explicitly discarded with [[discard]].",
-           "GTI-S2009");
   currentType = resultType;
   return true;
 }

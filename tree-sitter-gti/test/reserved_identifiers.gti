@@ -33,7 +33,6 @@ int short = 1;
 int signed = 1;
 int static_cast = 1;
 int template = 1;
-int thread_local = 1;
 int throw = 1;
 int try = 1;
 int typedef = 1;

@@ -204,7 +204,7 @@ MirLoweringResult
 MirLowerer::lowerProgram(const HirProgram &source,
                          const FailureMetadata &failureMetadata,
                          const MirDefinedFailureEffects &definedFailureEffects,
-                         bool includeProgramInitialization) {
+                         bool includeHostedStartup) {
   MirLoweringResult result;
   if (!source.valid()) {
     result.program.valid_ = false;
@@ -242,20 +242,17 @@ MirLowerer::lowerProgram(const HirProgram &source,
     }
     result.program.payloadEnums_.push_back(std::move(lowered));
   }
-  if (includeProgramInitialization) {
-    result.program.moduleBody =
-        lowerBody(source, failureMetadata, source.module(), MirBodyKind::Module,
-                  SemanticType::Void, {}, definedFailureEffects, valid,
-                  result.errors, 0, false, nullptr, nullptr, nullptr, nullptr,
-                  &source.programInitializationPlan(),
-                  &result.program.programInitialization);
-  } else {
-    HirBody provisionalModule;
-    provisionalModule.placeDomain = source.module().placeDomain;
-    result.program.moduleBody = lowerBody(
-        source, failureMetadata, provisionalModule, MirBodyKind::Module,
-        SemanticType::Void, {}, definedFailureEffects, valid, result.errors, 0);
-  }
+  // Failure-effect bootstrapping still verifies exact storage identities and
+  // initializer effects. Retain the real module in every round: an empty
+  // provisional module would turn owning global receivers into unproved
+  // dynamic calls, even when their declaration fixes the complete type.
+  // Only the hosted entry wrapper waits for the derived failure contracts.
+  result.program.moduleBody =
+      lowerBody(source, failureMetadata, source.module(), MirBodyKind::Module,
+                SemanticType::Void, {}, definedFailureEffects, valid,
+                result.errors, 0, false, nullptr, nullptr, nullptr, nullptr,
+                &source.programInitializationPlan(),
+                &result.program.programInitialization);
 
   result.program.classes.reserve(source.classInstances().size());
   for (const HirClassInstance &instance : source.classInstances()) {
@@ -602,7 +599,30 @@ MirLowerer::lowerProgram(const HirProgram &source,
                           source, instance.source->bracket().source));
     result.program.lambdas.push_back(std::move(lowered));
   }
-  if (includeProgramInitialization) {
+  for (const HirThreadLocalStorage &storage : source.threadLocalStorage()) {
+    MirThreadLocalStorage lowered{.symbol = storage.symbol,
+                                  .sourceUnit = storage.sourceUnit,
+                                  .type = storage.type,
+                                  .traits = storage.traits,
+                                  .access = storage.access,
+                                  .requiresActiveCleanup =
+                                      storage.requiresActiveCleanup,
+                                  .dataInitializer = storage.dataInitializer};
+    lowered.initializer =
+        lowerBody(source, failureMetadata, storage.initializer,
+                  MirBodyKind::ThreadLocalInitializer, storage.type, {},
+                  definedFailureEffects, valid, result.errors, storage.symbol);
+    const auto cleanup = mirUniqueCleanupType(result.program, storage.type);
+    if (!cleanup && storage.requiresActiveCleanup) {
+      valid = false;
+    } else if (cleanup) {
+      lowered.cleanup = *cleanup;
+    } else {
+      lowered.cleanup.type = storage.type;
+    }
+    result.program.threadLocalStorage_.push_back(std::move(lowered));
+  }
+  if (includeHostedStartup) {
     valid =
         lowerHostedStartup(source, failureMetadata, result.program) && valid;
   }
@@ -684,7 +704,9 @@ MirLowerer::lowerProgram(const HirProgram &source,
       effectSummaries.constructors.size() ==
           result.program.constructors.size() &&
       effectSummaries.destructors.size() == result.program.destructors.size() &&
-      effectSummaries.lambdas.size() == result.program.lambdas.size();
+      effectSummaries.lambdas.size() == result.program.lambdas.size() &&
+      effectSummaries.threadLocalInitializers.size() ==
+          result.program.threadLocalStorage_.size();
   if (completeEffects) {
     for (std::size_t index = 0; index < result.program.functions.size();
          ++index) {
@@ -706,6 +728,10 @@ MirLowerer::lowerProgram(const HirProgram &source,
       result.program.lambdas[index].effectSummary =
           effectSummaries.lambdas[index];
     }
+    for (std::size_t index = 0;
+         index < result.program.threadLocalStorage_.size(); ++index)
+      result.program.threadLocalStorage_[index].effectSummary =
+          effectSummaries.threadLocalInitializers[index];
   }
   result.program.valid_ = result.program.valid_ && completeEffects;
   return result;

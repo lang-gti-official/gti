@@ -26,6 +26,13 @@ struct MirVerificationResult {
 [[nodiscard]] MirVerificationResult verifyMirBody(const MirBody &body,
                                                   std::size_t owner = 0);
 
+// The exact type of a canonical concrete parameter-pack element. Complete
+// projections additionally prove their physical type, read-only carrier
+// access, traits and initial availability; longer paths retain the element's
+// type for the independent remaining projection checks.
+[[nodiscard]] const SemanticType *
+mirConcretePackElementType(const MirBody &body, const MirPlace &place);
+
 // Identity-only projection containment using the same carrier/value forwarding
 // as loan verification. This is not a liveness or access permission proof.
 [[nodiscard]] bool mirCanonicalPlaceContains(const MirBody &body,

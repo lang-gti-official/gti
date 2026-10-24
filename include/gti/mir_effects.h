@@ -73,8 +73,8 @@ exactMirInvocationSummary(const MirProgram &program, const MirBody &body,
                           const MirInstruction &instruction);
 
 // The exact source bodies an invocation, drop or cleanup instruction runs.
-// `boundary` marks dynamic dispatch, callbacks, native or unknown definitions
-// and polymorphic cleanup: code outside the program's exact source bodies.
+// `boundary` marks unresolved dynamic dispatch, callbacks, native or unknown
+// definitions and polymorphic cleanup: code outside the program's exact bodies.
 struct MirInvocationTargets {
   bool boundary = false;
   std::vector<MirBodyAddress> addresses;

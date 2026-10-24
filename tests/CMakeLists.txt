@@ -1,3 +1,16 @@
+add_executable(gti_thread_local_syntax_tests thread_local_syntax_tests.cpp)
+target_link_libraries(gti_thread_local_syntax_tests PRIVATE gti_compiler)
+add_test(NAME thread_local_syntax COMMAND gti_thread_local_syntax_tests)
+add_executable(gti_thread_local_semantic_tests thread_local_semantic_tests.cpp)
+target_link_libraries(gti_thread_local_semantic_tests PRIVATE gti_compiler)
+add_test(NAME thread_local_semantic COMMAND gti_thread_local_semantic_tests)
+if(TARGET gti_lsp)
+  add_test(NAME thread_local_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/thread_local_lsp_test.py"
+      $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(thread_local_lsp PROPERTIES TIMEOUT 90)
+endif()
+
 add_executable(gti_foreign_variable_borrow_tests foreign_variable_borrow_tests.cpp)
 target_link_libraries(gti_foreign_variable_borrow_tests PRIVATE gti_compiler)
 add_test(NAME foreign_variable_borrow COMMAND gti_foreign_variable_borrow_tests)
@@ -338,6 +351,11 @@ target_include_directories(
 target_compile_features("gti_runtime_thread_tests" PRIVATE cxx_std_23)
 target_link_libraries("gti_runtime_thread_tests" PRIVATE gti_runtime)
 add_test(NAME managed_thread_runtime COMMAND gti_runtime_thread_tests)
+
+add_executable(gti_runtime_thread_local_tests runtime_thread_local_tests.cpp)
+target_compile_features(gti_runtime_thread_local_tests PRIVATE cxx_std_23)
+target_link_libraries(gti_runtime_thread_local_tests PRIVATE gti_runtime)
+add_test(NAME thread_local_runtime_registry COMMAND gti_runtime_thread_local_tests)
 
 add_executable(gti_runtime_scoped_thread_tests runtime_scoped_thread_tests.cpp)
 target_include_directories(gti_runtime_scoped_thread_tests PRIVATE
@@ -925,7 +943,10 @@ add_test(NAME optimizer_object_context COMMAND gti_optimizer_object_context_test
 add_test(NAME optimizer_object_context_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/optimizer_object_context_runtime_test.py"
     $<TARGET_FILE:gti>)
-set_tests_properties(optimizer_object_context_runtime PROPERTIES TIMEOUT 300)
+# Keep the full 57-fixture/eight-mode matrix: all 456 compile/run cases.
+# GNU 15.2 Linux completed 435 cases at the old 300s aggregate bound. Allow
+# its sanitized tail without changing per-case compile/execution deadlines.
+set_tests_properties(optimizer_object_context_runtime PROPERTIES TIMEOUT 600)
 add_test(NAME optimizer_raw_context_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/optimizer_raw_context_runtime_test.py"
     $<TARGET_FILE:gti>)
@@ -983,6 +1004,13 @@ add_executable("gti_mir_shared_failure_cleanup_tests"
 target_link_libraries("gti_mir_shared_failure_cleanup_tests" PRIVATE gti_compiler)
 add_test(NAME mir_shared_failure_cleanup
          COMMAND gti_mir_shared_failure_cleanup_tests)
+
+add_executable(gti_mir_thread_local_tests mir_thread_local_tests.cpp)
+target_link_libraries(gti_mir_thread_local_tests PRIVATE gti_compiler)
+add_test(NAME mir_thread_local COMMAND gti_mir_thread_local_tests)
+add_executable(gti_mir_persistent_storage_tests mir_persistent_storage_tests.cpp)
+target_link_libraries(gti_mir_persistent_storage_tests PRIVATE gti_compiler)
+add_test(NAME mir_persistent_storage COMMAND gti_mir_persistent_storage_tests)
 
 add_executable("gti_mir_program_initialization_tests"
                "${PROJECT_SOURCE_DIR}/tests/mir_program_initialization_tests.cpp")
@@ -4766,6 +4794,11 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>"
     )
     set_tests_properties(managed_thread_end_to_end PROPERTIES TIMEOUT 300)
+    add_test(NAME thread_local_end_to_end
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/thread_local_runtime_test.py"
+        "$<TARGET_FILE:gti>")
+    set_tests_properties(thread_local_end_to_end PROPERTIES TIMEOUT 900)
     add_test(
       NAME managed_thread_tsan
       COMMAND "${Python3_EXECUTABLE}"

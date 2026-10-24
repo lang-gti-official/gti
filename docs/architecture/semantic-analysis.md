@@ -13,6 +13,14 @@ semantic probe; its speculative flow, loans and syntax never enter caller
 execution. The probe forks request context separately from semantic facts,
 reads existing facts through a model delta and owns a copy of active loan
 identities; it does not deep-copy the growing whole-program expression model.
+The expression-order cache and active full-expression cleanup frames are local
+to a semantic-model snapshot. A probe starts with both empty: the context fork
+temporarily detaches those two members while cloning the remaining request
+state, then restores the caller before creating or executing the model delta.
+The restoration is nonthrowing, including when the context copy fails. Active
+loan flow, retained dependencies and identity counters are still copied.
+Ordinary matched model/session clones retain their caches; a speculative fork
+must neither reuse another model's expression indices nor consume its cleanup.
 The source signature is retained only as a tooling occurrence, not an eager
 call in executable effect/transport inventories. The actual body is
 cloned with compiler-owned argument/pack substitutions and separate expansion
@@ -1297,8 +1305,12 @@ operation before publishing any result.
 Registration mutates `SemanticCatalog` in the ordered prepasses above. It owns
 namespace and visibility indexes, aliases, concepts, classes, enums,
 inheritance/member tables, exact specializations, native declarations, generic
-parameter identities, and one stable `CallableDeclaration` per source
-function. `FunctionInfo` publication is one explicit projection from that
+parameter identities, trusted compiler-type declaration identities, and one
+stable `CallableDeclaration` per source function. The compiler-type registry
+travels with every catalog copy/snapshot and is cleared with each new request;
+isolated effect, constexpr and speculative workers must not reconstruct these
+identities from public names or inherit them from a previous request.
+`FunctionInfo` publication is one explicit projection from that
 record. Overload resolution copies only a bounded `CallableCandidate` view for
 type substitution, receiver/access, dispatch, borrow-result, and viability
 state. The catalog is sealed before body visitation; body namespace value state
@@ -1388,13 +1400,93 @@ HIR. This proof does not infer safety from a backend or from `findConstant()`.
 
 Closed generic calls use request-local concrete effect queries keyed by the
 declaration, concrete owner, and type/value substitutions. A reused isolated
-semantic instance worker analyzes only initializer-reachable selected bodies;
-discarded `if constexpr` arms do not contribute effects. Nongeneric bridge
+semantic instance worker closes queries selected by actual source-owner effect
+edges and pending persistent-storage obligations, including obligations inside
+a selected generic body whose caller has no live persistent loan. Merely
+registering a query in a speculative cache is not a root; discarded
+`if constexpr` arms do not contribute effects. Nongeneric bridge
 calls retain their graph edges, and source constructor/destructor/field effects
 use the same exact instance identity. Query expansion is bounded by 64 generic
 ancestry steps and 16,384 analyzed distinct instances, with located `GTI-S2105`
-diagnostics. Open substitutions, dynamic dispatch, and protocol/combinator paths
+diagnostics. Exhaustion leaves an uncertified exact query, not an empty summary;
+ordinary discovery owns its canonical diagnostic when it independently reaches
+the limit, and retained query errors otherwise gate the exact provider result.
+Failed required constants have no executable initializer and are excluded from
+effect-root selection without suppressing independent executable obligations.
+Open substitutions, dynamic dispatch, and protocol/combinator paths
 without exact selected generic arguments remain conservatively unknown.
+
+Instance-local effect owners are exported under the selecting query and local
+owner identity. Borrow-check targets, failure conditions, and graph edges use
+the same mapping, preserving cycles and conditional cleanup without mixing
+specializations that reuse a lambda or default-argument source identity. A
+primary symbolic pack fold retains its dependent storage obligation for concrete
+reanalysis; this does not waive an unresolved effect in a selected instance.
+Ordinary name, type, access and unsafe-call checks still apply to the primary.
+
+Effect-query analysis does not replace ordinary concrete-instance diagnostic
+publication. An invalid selected body is a distinct, non-certified outcome:
+its exact instance key and source errors are retained, rather than treating it
+as an empty effect summary or a genuinely open call. The ordinary instance
+provider supplies the diagnostics to HIR's existing instantiation-context and
+library-reanchoring path. If later analysis unexpectedly succeeds, the retained
+errors still prevent that exact instance from being admitted without a resolved
+proof. This admission check also applies to the isolated provider used by staged
+constant evaluation: its results are checked against the requesting analysis's
+exact failed-instance keys without sharing mutable effect-graph state. Missing
+or open effects remain unknown and retain their normal rejection.
+
+The isolated effect worker preserves the ordinary pending trusted-body context
+and uses the existing late-demand mechanism before certifying a result. Each
+concrete attempt has a separate effect/check journal: a provisional attempt is
+discarded, while successfully finalized primary-body facts remain available.
+A nonconverged batch forwards its exact required bodies to the frontend's
+bounded fresh-semantic retry; it exports no effect certificate. Required bodies
+invalidate partial HIR, and failed demand cannot populate the reusable instance
+cache. A failed batch with no retry roots retains its actual errors. Recursive
+same-key staging may supply facts while its open outer analysis owns assertion
+diagnostics; the final outer provider still checks retained failures after that
+key leaves the open chain.
+
+Persistent-storage loan checks reuse that exact effect graph and the ordinary
+structured loan endpoint scheduler. A request-local full-expression frame is
+selected by the existing `SemanticFullExpression` roots, including a shared
+frame for a constructor initializer's arguments. Typed fresh-value producers and
+selected input/destination transfers determine which temporaries remain for
+cleanup; the analysis does not execute an alternate cleanup interpreter or
+derive object lifetime from generated C++. Builtin replacement checks its old
+object's cleanup immediately, while the common root endpoint checks remaining
+temporaries and protects a published reference or borrowed result. Body cleanup
+summaries retain conservative rollback effects until the closed execution/failure
+proof can establish a narrower path.
+
+Macro-local returns select the exact active result region's destination type,
+matched by lexical function and lambda depth, rather than the enclosing
+function's return type. Transferring an owning result therefore consumes its
+temporary at that boundary; actually discarding the result still records its
+cleanup effects. Nested lambdas retain ordinary function-return handling.
+Unevaluated expression-text and skipped-argument probes fork effect journals
+and cannot publish speculative storage writes or cleanup into caller flow.
+
+The closed source effect graph also computes a monotone may-propagate-failure
+bit from typed local defined-failure outcomes, unknown GTI boundaries and exact
+selected callees. It executes no GTI and adds no alternate failure semantics.
+Deferred lifecycle edges remain conservative for process-initializer ordering;
+hidden persistent-storage checks traverse them when a body can fail, alongside
+the unconditional cleanup effects recorded at actual scope/full-expression and
+replacement endpoints. Thus a no-fail constructor that moves a parameter into a
+field does not appear to destroy that moved parameter, but a potentially failing
+constructor retains field/input rollback. Concrete effect import preserves
+deferred versus executed paths rather than flattening a conditional destructor
+into an unconditional ambient write.
+
+Full-expression root indices and typed expression/failure slices are owned by
+the semantic-model snapshot. Concrete-instance delta brackets reset those caches
+and restore the caller's exact cache and active temporary frames on exit; an
+instance cannot reuse another specialization's expression count or selected
+`if constexpr` roots. Ordinary late body demand keeps the same growing model
+cache but saves and restores the caller's active full-expression frames, so
+analyzing a callee cannot consume or clean up a caller's temporary inventory.
 
 Value-generic arithmetic needed before complete program HIR/MIR is retained as
 an immutable declaration-ID-bound expression tree, never a borrowed AST pointer.
@@ -3347,7 +3439,11 @@ isolated semantic provider rather than reentering the unfinished caller. Its
 request-local snapshot copies the sealed catalog and the canonical semantic
 model, preserves declaration IDs, and rebuilds owned callable indexes. Ordinary
 instance analysis still produces each typed delta; there is no second generic
-resolver. Non-generic closures do not allocate this snapshot. Instance deltas
+resolver. The requesting analysis validates each returned delta against any
+retained invalid effect query before staged HIR can execute it. The adapter uses
+non-owning argument views and materializes a lookup key only when such failures
+exist; this does not copy the caller's mutable effect graph into the worker.
+Non-generic closures do not allocate this snapshot. Instance deltas
 expire after the synchronous lowering operation. The snapshot is reused while
 the declaration order, whether a concrete reanalysis is open, and the
 available constexpr definitions and constructors are unchanged, and completing

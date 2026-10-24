@@ -67,6 +67,10 @@ def main() -> None:
         # Exercises the type-level scoped-task prerequisite query directly,
         # separately from permission to invoke a join-all source operation.
         "tests/scoped_thread_semantic_tests.cpp",
+        # Reuses one visitor to prove trusted catalog identities are reset and
+        # injects an invalid empty-pack destructor provider outcome; separate
+        # Frontend snapshots cannot expose either boundary.
+        "tests/thread_local_semantic_tests.cpp",
     }
     actual: set[str] = set()
     for directory in ("include", "src", "tests"):

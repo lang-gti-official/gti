@@ -151,7 +151,9 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
   auto worker =
       std::make_unique<Impl>(target, sourceGraph, false, nullptr, sources,
                              RawPointerAuditMode::Off, false, trustedBodies);
-  static_cast<RequestSessionContext &>(worker->requestSession) = requestSession;
+  // The query is logically const, but its fork temporarily suspends and
+  // restores request-local expression scratch before any probe work begins.
+  const_cast<Impl *>(this)->copyRequestSessionForSpeculativeModel(*worker);
   worker->macroLookupBase = this;
   worker->nextExpansion = nextExpansion;
   worker->macroExpansionDepth = macroExpansionDepth;

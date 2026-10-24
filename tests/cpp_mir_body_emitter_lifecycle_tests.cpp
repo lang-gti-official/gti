@@ -1674,8 +1674,19 @@ void testPackParameterCleanup() {
         if (instruction.kind != lang::MirInstructionKind::Call)
           continue;
         for (const auto &operand : instruction.operands) {
-          const auto *place = function.body.findPlace(operand.place);
-          if (operand.kind != lang::MirOperandKind::BorrowRead ||
+          const lang::MirOperand *input = nullptr;
+          const auto *value = function.body.findValue(operand.value);
+          const auto *block =
+              value ? function.body.findBlock(value->definitionBlock) : nullptr;
+          if (operand.kind == lang::MirOperandKind::Value && block)
+            for (const auto &stage : block->instructions)
+              if (stage.id == value->definition &&
+                  stage.kind == lang::MirInstructionKind::CallInput &&
+                  stage.operands.size() == 1)
+                input = &stage.operands.front();
+          const auto *place =
+              input ? function.body.findPlace(input->place) : nullptr;
+          if (!input || input->kind != lang::MirOperandKind::BorrowRead ||
               place == nullptr || place->projections.size() != 1 ||
               place->projections.front().kind !=
                   lang::MirProjectionKind::PackElement)

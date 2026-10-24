@@ -1,0 +1,60 @@
+// Build with --execution-profile concurrent. Every thread owns its state;
+// workers need no mutex to update their own thread-local objects.
+#include <std/atomic>
+#include <std/format>
+#include <std/thread>
+#include <std/string>
+
+class ThreadState {
+  std::string label = std::string("thread state");
+  mut int visits = 0;
+public:
+  ThreadState() = default;
+  int visit() mut {
+    this.visits += 1;
+    return this.visits;
+  }
+  ~ThreadState() {
+    std::println("{} retired after {} visits", this.label.view(), this.visits);
+  }
+};
+
+thread_local mut ThreadState state{};
+std::atomic<int> worker_result{0};
+
+class Registry {
+  static thread_local mut int visits = 0;
+public:
+  static int visit() {
+    Registry::visits += 1;
+    return Registry::visits;
+  }
+};
+
+int local_visit() {
+  thread_local mut int count = 0;
+  count += 1;
+  return count;
+}
+
+int main() {
+  if (state.visit() != 1 || Registry::visit() != 1 || local_visit() != 1)
+    return 1;
+  auto started = std::thread::start([]() -> void {
+    int first = state.visit();
+    int second = state.visit();
+    worker_result.store(first * 10 + second + Registry::visit() + local_visit(),
+                        std::memory_order_release());
+  });
+  if (!started) return 2;
+  mut auto worker = std::move(started).value();
+  auto joined = worker.join();
+  if (!joined) return 3;
+  // Worker TLS cleanup completed before join returned. The main thread's
+  // objects retain their independent values and retire when main exits.
+  int main_count = state.visit();
+  int observed = worker_result.load(std::memory_order_acquire());
+  std::println("worker {} main {}", observed, main_count);
+  return observed == 14 && main_count == 2 && Registry::visit() == 2 &&
+         local_visit() == 2 ? 0 : 4;
+}

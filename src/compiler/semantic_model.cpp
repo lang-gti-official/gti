@@ -564,6 +564,7 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
     existing.mutableBinding = symbol.mutableBinding;
     existing.defaultLibrary = existing.defaultLibrary || symbol.defaultLibrary;
     existing.staticMember = existing.staticMember || symbol.staticMember;
+    existing.threadLocal = existing.threadLocal || symbol.threadLocal;
     existing.internalLinkage =
         existing.internalLinkage || symbol.internalLinkage;
     existing.compilerPrivate =
@@ -778,6 +779,14 @@ SemanticModel::programInitializationPlan() const {
                  programInitialization.unitOrder.empty()
              ? base->programInitializationPlan()
              : programInitialization;
+}
+
+const ProgramInitializationPlan &
+SemanticModel::threadLocalInitializationPlan() const {
+  return base != nullptr && threadLocalInitialization.steps.empty() &&
+                 threadLocalInitialization.unitOrder.empty()
+             ? base->threadLocalInitializationPlan()
+             : threadLocalInitialization;
 }
 
 const std::optional<HostedProgramEntryPlan> &
@@ -1205,6 +1214,18 @@ SemanticModel::shareMacroExpansion(const Call &call) const {
       found != macroValueExpansions.end())
     return found->second;
   auto inherited = base == nullptr ? nullptr : base->shareMacroExpansion(call);
+  noteBaseSyntheticSyntax(inherited != nullptr &&
+                          !baseStableSyntheticSyntax(&call));
+  return inherited;
+}
+
+const FunctionDecl *
+SemanticModel::findMacroDeclaration(const Call &call) const {
+  if (const auto found = macroValueDeclarations.find(&call);
+      found != macroValueDeclarations.end())
+    return found->second;
+  const FunctionDecl *inherited =
+      base == nullptr ? nullptr : base->findMacroDeclaration(call);
   noteBaseSyntheticSyntax(inherited != nullptr &&
                           !baseStableSyntheticSyntax(&call));
   return inherited;
@@ -2041,6 +2062,7 @@ void SemanticModel::clear() {
   definedFailures.clear();
   callerLocations.clear();
   programInitialization = {};
+  threadLocalInitialization = {};
   hostedProgramEntry.reset();
   programKind_ = ProgramKind::Executable;
   embeddingPlan_.reset();
@@ -2141,6 +2163,11 @@ void SemanticModel::setAnalysisSeal(SemanticAnalysisSeal seal) {
 void SemanticModel::setProgramInitializationPlan(
     ProgramInitializationPlan plan) {
   programInitialization = std::move(plan);
+}
+
+void SemanticModel::setThreadLocalInitializationPlan(
+    ProgramInitializationPlan plan) {
+  threadLocalInitialization = std::move(plan);
 }
 
 void SemanticModel::setHostedProgramEntryPlan(
@@ -2687,6 +2714,11 @@ void SemanticModel::recordMacroDefault(const Expr &expression, Token caller) {
 void SemanticModel::recordMacroExpansion(const Call &call, StmtPtr body,
                                          const FunctionDecl &declaration) {
   macroValueExpansions.insert_or_assign(&call, std::move(body));
+  recordMacroDeclaration(call, declaration);
+}
+
+void SemanticModel::recordMacroDeclaration(const Call &call,
+                                           const FunctionDecl &declaration) {
   macroValueDeclarations.insert_or_assign(&call, &declaration);
 }
 
@@ -3169,6 +3201,8 @@ void SemanticModel::adoptExpansionArena(
 }
 
 void SemanticModel::recordOccurrence(SemanticOccurrence occurrence) {
+  if (const auto *symbol = semanticDatabase.findSymbol(occurrence.symbol))
+    occurrence.threadLocal = symbol->threadLocal;
   noteConstruction(occurrence.constructor);
   if (occurrence.selectedConstruction)
     noteConstruction(occurrence.selectedConstruction->declaration);
@@ -3185,6 +3219,9 @@ void SemanticModel::setToolingOccurrencesEnabled(bool enabled) {
 }
 
 void SemanticModel::recordCompletion(SemanticCompletionContext context) {
+  for (auto &candidate : context.candidates)
+    if (const auto *symbol = semanticDatabase.findSymbol(candidate.symbol))
+      candidate.threadLocal = symbol->threadLocal;
   completion = std::move(context);
 }
 

@@ -434,6 +434,8 @@ SignaturePrinter::binding(const SemanticOccurrence &occurrence) const {
       occurrence.type.kind == SemanticType::Reference &&
       occurrence.type.referenceAccess == AccessMode::Mutable;
   std::string prefix = occurrence.staticMember ? "static " : "";
+  if (occurrence.threadLocal)
+    prefix += "thread_local ";
   if (occurrence.mutableBinding && !typeCarriesMutability) {
     prefix += "mut ";
   }
@@ -1321,6 +1323,8 @@ public:
         result.notes.emplace_back(
             "Foreign storage: reads and writes require unsafe; address "
             "formation does not certify lifetime or initialization.");
+      } else if (occurrence->threadLocal) {
+        result.signature = signatures.binding(*occurrence);
       } else {
         result.signature = types.print(occurrence->type);
       }
@@ -2553,6 +2557,8 @@ private:
         record.type.kind == SemanticType::Reference &&
         record.type.referenceAccess == AccessMode::Mutable;
     std::string prefix = record.staticMember ? "static " : "";
+    if (record.threadLocal)
+      prefix += "thread_local ";
     if (record.mutableBinding && !typeCarriesMutability) {
       prefix += "mut ";
     }

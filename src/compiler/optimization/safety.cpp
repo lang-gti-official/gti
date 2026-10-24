@@ -9035,6 +9035,7 @@ rootClosedCallContexts(const MirProgram &program) {
     bool root = address.kind == MirBodyKind::Module ||
                 address.kind == MirBodyKind::FieldInitializers ||
                 address.kind == MirBodyKind::StaticFieldInitializers ||
+                address.kind == MirBodyKind::ThreadLocalInitializer ||
                 address.kind == MirBodyKind::HostedStartup;
     if (address.kind == MirBodyKind::Function) {
       const MirFunctionInstance *function =

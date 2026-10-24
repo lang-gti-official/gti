@@ -253,6 +253,11 @@ is a mutable reference. An empty pack performs no call and has no effect. The
 comma and ellipsis in this syntax do not admit another fold operator or
 delegate expansion order to the backend.
 
+These input intervals include any first-use initialization of a named
+`thread_local` argument. A later initializer cannot invalidate an earlier
+borrow merely because both arguments are written as names. Within an empty
+concrete fold, even that first-use initialization does not execute.
+
 A contextual brace argument initializes its selected fixed-array parameter in
 place. Its elements run from left to right under the array element order below;
 the complete array parameter becomes live before evaluation advances to the
@@ -846,6 +851,12 @@ once, selects by the active alternative, binds that alternative's selected
 fields, and executes the selected arm. An exhaustive payload switch has no
 unmatched execution path.
 
+The variant name in a payload-constructor callee or a switch pattern is a
+non-evaluated designator. Naming it neither creates an enum temporary nor adds
+destructor or rollback effects. This does not apply to an actual unit-variant
+value or to the enclosing payload construction, which follow ordinary owning
+value lifetime rules.
+
 A named subject place is observed. An ordinary value binding owns an
 immutable copy of its field and drops it at the arm's end. A tag-only pattern
 observes a move-only payload without extracting it; `auto&` instead borrows a
@@ -1163,11 +1174,17 @@ after join.
 
 Program-wide initialization completes before initial entry and every managed
 spawn. With no detach in the first model, all managed tasks finish before
-program-wide destruction begins. Future thread-local values are initialized on
-first use in their owning attached thread and destroyed there in reverse
-initialization order. Recursive thread-local initialization raises `GTI-R0013`
-while the detected state is still safe to clean; references to thread-local
-storage cannot cross to another thread.
+program-wide destruction begins. `thread_local` values initialize on first
+evaluated use in their owning attached thread and are destroyed there in reverse
+successful-initialization order, before the thread's outcome is published.
+Hosted entry explicitly establishes the lifetime scope; managed and dedicated
+manual GTI entry establish their corresponding scopes. Recursive initialization,
+new initialization after shutdown begins, and dynamic initialization on an
+unattached thread raise `GTI-R0013` before exposing invalid storage. Passive
+literal data needs no registration. Checked scoped lending is permitted when
+the owning thread, referent capability, loan and structured join prove the
+borrow; owned tasks/results cannot retain a TLS dependency beyond that boundary.
+See [thread-local storage](concurrency.md#thread-local-storage).
 
 A worker checked failure cleans task-owned state to the generated task-entry
 boundary and stores the original section 4.10 record without independently
@@ -1357,7 +1374,7 @@ backend prose. Panic reports print the captured message while retaining
 | `invalid_storage_state` | `duplicate_construction`, `uninitialized_access`, `relocation_capacity`, `invalid_relocation_source`, `occupied_relocation_destination` |
 | `allocation_failure` | `unique_owner`, `shared_owner`, `private_storage`, `element_construction`, `hosted_arguments` |
 | `infallible_host_operation_failed` | `stdout_write`, `automatic_join`, `mutex_lock` |
-| `hosted_runtime_contract_failure` | `negative_argument_count`, `recursive_thread_local_initialization` |
+| `hosted_runtime_contract_failure` | `negative_argument_count`, `recursive_thread_local_initialization`, `thread_local_initialization_during_shutdown`, `thread_local_outside_attached_lifetime` |
 | `key_not_found` | `key_lookup` |
 | `invalid_container_argument` | `container_argument` |
 | `panic` | `explicit_panic` |

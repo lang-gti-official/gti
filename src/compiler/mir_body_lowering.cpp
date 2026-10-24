@@ -2944,6 +2944,29 @@ private:
         }
       }
     }
+    if (instruction.kind != MirInstructionKind::EnsureThreadLocal) {
+      bool movedThreadLocalDetector = false;
+      for (auto &origin : instruction.definedFailure.localOrigins) {
+        const auto removed = std::erase_if(origin.outcomes, [&](const auto
+                                                                    outcome) {
+          return outcome.code ==
+                     DefinedFailureCode::HostedRuntimeContractFailure &&
+                 (outcome.detail == DefinedFailureDetail::
+                                        RecursiveThreadLocalInitialization ||
+                  outcome.detail ==
+                      DefinedFailureDetail::
+                          ThreadLocalInitializationDuringShutdown ||
+                  outcome.detail ==
+                      DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime);
+        });
+        movedThreadLocalDetector |= removed != 0;
+      }
+      std::erase_if(instruction.definedFailure.localOrigins,
+                    [](const auto &origin) { return origin.outcomes.empty(); });
+      if (movedThreadLocalDetector && instruction.definedFailure.propagation ==
+                                          FailurePropagationKind::BodyCall)
+        instruction.definedFailure.propagation = FailurePropagationKind::None;
+    }
     instruction.localFailureSites.clear();
     if (instruction.callerLocation) {
       const auto site =
@@ -3496,6 +3519,13 @@ private:
 
   MirPlaceId appendPlace(MirPlace place) {
     if (place.root == MirPlaceRootKind::Symbol && place.capture == 0 &&
+        std::any_of(program.threadLocalStorage().begin(),
+                    program.threadLocalStorage().end(),
+                    [&](const auto &storage) {
+                      return storage.symbol == place.symbol;
+                    }))
+      place.initiallyAvailable = true;
+    if (place.root == MirPlaceRootKind::Symbol && place.capture == 0 &&
         program.findForeignStorage(place.symbol) != nullptr) {
       place.foreignStorage = true;
       place.initiallyAvailable = true;
@@ -3574,15 +3604,17 @@ private:
       key =
           PlaceKey{.domain = output.placeDomain, .root = binding->info.symbol};
     }
-    const MirPlaceId place =
-        appendPlace({.root = MirPlaceRootKind::Binding,
-                     .binding = id,
-                     .symbol = binding->info.symbol,
-                     .type = binding->info.type,
-                     .access = binding->info.access,
-                     .traits = binding->info.traits,
-                     .key = std::move(key),
-                     .initiallyAvailable = binding->parameter != nullptr});
+    const MirPlaceId place = appendPlace(
+        {.root = binding->info.threadLocal ? MirPlaceRootKind::Symbol
+                                           : MirPlaceRootKind::Binding,
+         .binding = binding->info.threadLocal ? 0 : id,
+         .symbol = binding->info.symbol,
+         .type = binding->info.type,
+         .access = binding->info.access,
+         .traits = binding->info.traits,
+         .key = std::move(key),
+         .initiallyAvailable =
+             binding->parameter != nullptr || binding->info.threadLocal});
     bindingPlaces.emplace(id, place);
     return place;
   }
@@ -4165,7 +4197,52 @@ private:
     return place;
   }
 
+  void ensureThreadLocalValue(HirValueId id) {
+    const auto *threadValue = findValue(id);
+    if (threadValue != nullptr && threadValue->symbol != 0 &&
+        !lambdaCaptures.contains(threadValue->symbol) &&
+        ensuredThreadLocalValues.insert(id).second) {
+      const auto storage = std::find_if(
+          program.threadLocalStorage().begin(),
+          program.threadLocalStorage().end(), [&](const auto &candidate) {
+            return candidate.symbol == threadValue->symbol;
+          });
+      if (storage != program.threadLocalStorage().end()) {
+        auto failure = threadValue->definedFailure;
+        for (auto &origin : failure.localOrigins)
+          std::erase_if(origin.outcomes, [](const auto outcome) {
+            return outcome.code !=
+                       DefinedFailureCode::HostedRuntimeContractFailure ||
+                   (outcome.detail != DefinedFailureDetail::
+                                          RecursiveThreadLocalInitialization &&
+                    outcome.detail !=
+                        DefinedFailureDetail::
+                            ThreadLocalInitializationDuringShutdown &&
+                    outcome.detail != DefinedFailureDetail::
+                                          ThreadLocalOutsideAttachedLifetime);
+          });
+        std::erase_if(failure.localOrigins, [](const auto &origin) {
+          return origin.outcomes.empty();
+        });
+        failure.propagation = storage->dataInitializer
+                                  ? FailurePropagationKind::None
+                                  : FailurePropagationKind::BodyCall;
+        (void)appendInstruction(
+            {.kind = MirInstructionKind::EnsureThreadLocal,
+             .threadLocalStorage = storage->symbol,
+             .hirValue = id,
+             .definedFailure = std::move(failure),
+             .bodyTarget =
+                 MirBodyAddress{.kind = MirBodyKind::ThreadLocalInitializer,
+                                .owner = storage->symbol},
+             .info = {.type = SemanticType::Void}},
+            false);
+      }
+    }
+  }
+
   [[nodiscard]] MirPlaceId placeForValue(HirValueId id) {
+    ensureThreadLocalValue(id);
     if (const auto found = valuePlaces.find(id); found != valuePlaces.end()) {
       return found->second;
     }
@@ -4293,6 +4370,42 @@ private:
         }
       }
       break;
+    case HirValueKind::PackElement: {
+      const auto *pack = value->operands.size() == 1
+                             ? findValue(value->operands.front())
+                             : nullptr;
+      if (!value->packElement || !pack ||
+          pack->info.type.kind != SemanticType::TypePack ||
+          !pack->info.type.concretePack || value->symbol == 0 ||
+          pack->symbol != value->symbol ||
+          *value->packElement >= pack->info.type.arguments.size() ||
+          pack->info.type.arguments[*value->packElement] != value->info.type ||
+          value->info.category != ValueCategory::Place ||
+          value->info.access != AccessMode::ReadOnly ||
+          value->info.traits != resolvedTraits(value->info.type)) {
+        valid = false;
+        break;
+      }
+      const auto *sourcePlace = output.findPlace(placeForValue(pack->id));
+      if (!sourcePlace || sourcePlace->root != MirPlaceRootKind::Binding ||
+          sourcePlace->capture != 0 || !sourcePlace->projections.empty() ||
+          sourcePlace->symbol != pack->symbol ||
+          sourcePlace->type != pack->info.type) {
+        valid = false;
+        break;
+      }
+      MirPlace projected = *sourcePlace;
+      projected.id = 0;
+      projected.projections.push_back({.kind = MirProjectionKind::PackElement,
+                                       .constantIndex = *value->packElement});
+      projected.type = value->info.type;
+      projected.traits = resolvedTraits(value->info.type);
+      projected.access = AccessMode::ReadOnly;
+      projected.sourceValue = 0;
+      projected.key.reset();
+      place = appendPackElementPlace(std::move(projected));
+      break;
+    }
     case HirValueKind::Call:
     case HirValueKind::Propagation:
     case HirValueKind::Conditional:
@@ -4353,6 +4466,7 @@ private:
   }
 
   [[nodiscard]] MirPlaceId destinationFor(const HirValue &value) {
+    ensureThreadLocalValue(value.id);
     switch (value.kind) {
     case HirValueKind::PlaceSet:
       if (value.operands.size() == 2) {
@@ -4744,6 +4858,7 @@ private:
     case HirValueKind::ScopedResult:
     case HirValueKind::Grouping:
     case HirValueKind::Index:
+    case HirValueKind::PackElement:
     case HirValueKind::MemberAccess:
     case HirValueKind::QualifiedName:
     case HirValueKind::This:
@@ -5060,6 +5175,7 @@ private:
       }
       break;
     case HirValueKind::Grouping:
+    case HirValueKind::PackElement:
       if (!value->operands.empty()) {
         emitPlaceDependencies(value->operands.front(), checkedPrefix);
       }
@@ -5748,6 +5864,7 @@ private:
     case HirValueKind::Literal:
       return MirOperation::Literal;
     case HirValueKind::PackFold:
+    case HirValueKind::PackElement:
       return MirOperation::None;
     case HirValueKind::PackExpansion:
       // Calls lower concrete expansions directly into projected element
@@ -8316,82 +8433,46 @@ private:
   void emitPackFold(const HirValue &value) {
     if (value.info.type != SemanticType::Void || value.packFoldSymbol == 0 ||
         value.packFoldParameter == 0 || value.packFoldFunction == 0 ||
-        value.operands.size() != value.packFoldArgument + 1) {
+        value.operands.size() !=
+            value.packFoldArgument + 1 + value.packFoldElements.size()) {
       valid = false;
       return;
     }
 
-    const HirValueId packValue = value.operands.back();
-    emitPlaceDependencies(packValue);
-    const MirPlaceId packPlaceId = placeForValue(packValue);
-    const MirPlace *resolvedPackPlace = output.findPlace(packPlaceId);
-    if (resolvedPackPlace == nullptr ||
-        resolvedPackPlace->root != MirPlaceRootKind::Binding ||
-        !resolvedPackPlace->projections.empty() ||
-        resolvedPackPlace->symbol != value.packFoldSymbol ||
-        resolvedPackPlace->type.kind != SemanticType::TypePack ||
-        !resolvedPackPlace->type.concretePack ||
-        resolvedPackPlace->type.genericParameterId != value.packFoldParameter ||
-        resolvedPackPlace->type.arguments.size() !=
-            value.packFoldElements.size()) {
+    const auto *pack = findValue(value.operands[value.packFoldArgument]);
+    if (!pack || pack->symbol != value.packFoldSymbol ||
+        pack->info.type.kind != SemanticType::TypePack ||
+        !pack->info.type.concretePack ||
+        pack->info.type.genericParameterId != value.packFoldParameter ||
+        pack->info.type.arguments.size() != value.packFoldElements.size()) {
       valid = false;
       return;
     }
-    // Appending projected places can reallocate output.places. Keep the
-    // verified entry-place descriptor by value for the whole expansion.
-    const MirPlace packPlace = *resolvedPackPlace;
-
     for (std::size_t elementIndex = 0;
          elementIndex < value.packFoldElements.size(); ++elementIndex) {
       const HirPackFoldElement &element = value.packFoldElements[elementIndex];
+      const auto *call = findValue(element.call);
       if (element.functionTarget == 0 ||
-          element.elementType != packPlace.type.arguments[elementIndex] ||
-          element.parameterTypes.size() != value.packFoldArgument + 1) {
+          element.elementType != pack->info.type.arguments[elementIndex] ||
+          element.parameterTypes.size() != value.packFoldArgument + 1 ||
+          !call || call->kind != HirValueKind::Call ||
+          call->functionTarget != element.functionTarget ||
+          call->parameterTypes != element.parameterTypes ||
+          value.operands[value.packFoldArgument + 1 + elementIndex] !=
+              element.call ||
+          !call->callPlan) {
         valid = false;
         return;
       }
 
-      MirInstruction call{
-          .kind = MirInstructionKind::Call,
-          .hirValue = value.id,
-          .definedFailure = {.propagation = normalizedCallPropagation(
-                                 FailurePropagationKind::DirectCall,
-                                 CallDispatch::Static, element.functionTarget)},
-          .dispatch = CallDispatch::Static,
-          .functionTarget = element.functionTarget,
-          .info = value.info,
-      };
-      call.parameterTypes = element.parameterTypes;
-      call.operands.reserve(element.parameterTypes.size());
-      for (std::size_t argument = 0; argument < value.packFoldArgument;
-           ++argument) {
-        call.operands.push_back(argumentOperand(
-            value.operands[argument], element.parameterTypes[argument]));
-      }
-
-      const SemanticType &elementParameter = element.parameterTypes.back();
-      if (elementParameter.kind != SemanticType::Reference ||
-          elementParameter.referenceAccess != AccessMode::ReadOnly ||
-          elementParameter.arguments.size() != 1 ||
-          elementParameter.arguments.front() != element.elementType) {
-        valid = false;
+      // HIR has already expanded each concrete element into its own
+      // ordinary invocation. Reuse its canonical left-to-right CallInput
+      // schedule, including protection across later TLS initialization.
+      emitValue(element.call);
+      if (terminated()) {
+        emittedValues.insert(value.id);
         return;
       }
-      MirPlace projected = packPlace;
-      projected.id = 0;
-      projected.projections.push_back({.kind = MirProjectionKind::PackElement,
-                                       .constantIndex = elementIndex});
-      projected.type = element.elementType;
-      projected.access = AccessMode::ReadOnly;
-      projected.traits = resolvedTraits(element.elementType);
-      projected.sourceValue = 0;
-      projected.key.reset();
-      const MirPlaceId elementPlace =
-          appendPackElementPlace(std::move(projected));
-      call.operands.push_back({.kind = MirOperandKind::BorrowRead,
-                               .place = elementPlace,
-                               .type = elementParameter});
-      (void)appendInstruction(std::move(call));
     }
 
     emittedValues.insert(value.id);
@@ -11184,6 +11265,7 @@ private:
     if (value == nullptr) {
       return {};
     }
+    ensureThreadLocalValue(valueId);
     emitPlaceDependencies(valueId);
     if (terminated()) {
       return {};
@@ -11755,7 +11837,7 @@ private:
     if (binding != nullptr &&
         binding->info.type.kind != SemanticType::Reference &&
         binding->info.traits.drop == DropKind::Lexical &&
-        !binding->info.staticStorage) {
+        !binding->info.threadLocal && !binding->info.staticStorage) {
       if (dropObligationForBinding(bindingId) == 0) {
         valid = false;
         return;
@@ -12778,6 +12860,31 @@ private:
   [[nodiscard]] MirInstructionId lowerVariable(const HirStatement &statement) {
     if (!statement.binding) {
       return 0;
+    }
+    if (const auto *binding = findBinding(*statement.binding);
+        binding != nullptr && binding->info.threadLocal) {
+      const auto storage = std::find_if(
+          program.threadLocalStorage().begin(),
+          program.threadLocalStorage().end(), [&](const auto &candidate) {
+            return candidate.symbol == binding->info.symbol;
+          });
+      auto failure = storage == program.threadLocalStorage().end()
+                         ? DefinedFailureOperation{}
+                         : storage->ensureFailure;
+      failure.propagation = storage != program.threadLocalStorage().end() &&
+                                    storage->dataInitializer
+                                ? FailurePropagationKind::None
+                                : FailurePropagationKind::BodyCall;
+      return appendInstruction(
+          {.kind = MirInstructionKind::EnsureThreadLocal,
+           .threadLocalStorage = binding->info.symbol,
+           .hirStatement = statement.id,
+           .definedFailure = std::move(failure),
+           .bodyTarget =
+               MirBodyAddress{.kind = MirBodyKind::ThreadLocalInitializer,
+                              .owner = binding->info.symbol},
+           .info = {.type = SemanticType::Void}},
+          false);
     }
     if (statement.value) {
       const auto *initializer = findValue(*statement.value);
@@ -15261,6 +15368,7 @@ private:
   std::unordered_map<SymbolId, HirBindingId> localSymbols;
   std::unordered_map<SymbolId, std::size_t> lambdaCaptures;
   std::unordered_map<HirBindingId, MirPlaceId> bindingPlaces;
+  std::unordered_set<HirValueId> ensuredThreadLocalValues;
   std::unordered_map<HirDropObligationId, MirDropObligationId> dropObligations;
   std::unordered_map<HirFullExpressionId, HirFullExpressionId>
       fullExpressionIds;

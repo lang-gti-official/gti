@@ -129,7 +129,8 @@ void checkFixtures(const std::filesystem::path &root) {
   const auto editorCase = [&](const std::string &caseLabel,
                               const std::string &libraryText,
                               const std::string &source,
-                              std::size_t expectedRounds) {
+                              std::size_t expectedRounds,
+                              bool expectedValid = true) {
     const auto run =
         [&](bool complete, lang::FrontendWorkMetrics &work,
             std::shared_ptr<lang::SemanticPreambleCache> preambles = nullptr) {
@@ -149,6 +150,9 @@ void checkFixtures(const std::filesystem::path &root) {
         };
     lang::FrontendWorkMetrics completeWork;
     const auto complete = run(true, completeWork);
+    expect(complete.semanticValid == expectedValid &&
+               complete.hirValid == expectedValid,
+           caseLabel + ": complete check has the expected validity");
     // The same expectations hold over a trusted prefix preamble, whose
     // held-back body diagnostics late demand reaches instead of analysing.
     for (const bool preamble : {false, true}) {
@@ -218,15 +222,29 @@ void checkFixtures(const std::filesystem::path &root) {
              "int value_of<T>(T& value) { return value(0); }\n",
              "#include <std/cmath>\n"
              "int main() { Producer value{}; return value_of(value) - 42; }\n",
-             1);
-  // A global initializer's effect closure already consulted the body; the
-  // validated initialization plan must not change underneath it.
+             1, false);
+  // A global initializer's effect closure completes the consulted body before
+  // validating the initialization plan. Later HIR discovery therefore needs
+  // no repeated analysis to preserve those already-finalized effects.
   editorCase("late demand behind a global initializer", lateLibrary,
              "#include <std/cmath>\n"
              "Producer producer{};\n"
              "int first = value_of(producer);\n"
              "int main() { return first - 42; }\n",
-             1);
+             0);
+  // Resolving that dependency early must still retain its source errors. An
+  // invalid body requires the ordinary primary-analysis retry, just as it does
+  // when reached from a function instead of a persistent initializer.
+  editorCase("late demand reporting an error behind a global initializer",
+             "int leaf() { return missing_late; }\n"
+             "class Producer { public: int operator()(int n) { return leaf() + "
+             "n; } };\n"
+             "int value_of<T>(T& value) { return value(0); }\n",
+             "#include <std/cmath>\n"
+             "Producer producer{};\n"
+             "int first = value_of(producer);\n"
+             "int main() { return first - 42; }\n",
+             1, false);
 }
 
 std::string key(const lang::Diagnostic &diagnostic) {

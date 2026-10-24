@@ -62,7 +62,7 @@ private:
   [[nodiscard]] static MirLoweringResult
   lowerProgram(const HirProgram &source, const FailureMetadata &failureMetadata,
                const MirDefinedFailureEffects &definedFailureEffects,
-               bool includeProgramInitialization);
+               bool includeHostedStartup);
 
   [[nodiscard]] static MirBody lowerBody(
       const HirProgram &program, const FailureMetadata &failureMetadata,

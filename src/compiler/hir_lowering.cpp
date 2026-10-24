@@ -139,6 +139,7 @@ public:
       seedConcreteDeclarationType(storage.type);
     lowerEmbeddingPlan();
     lowerProgramInitializationPlan();
+    lowerThreadLocalInitializationPlan();
     lowerHostedProgramEntryPlan();
     std::unordered_set<HirBindingId> programStorageBindings;
     for (const auto &step : output.program.programInitialization.steps)
@@ -1295,6 +1296,76 @@ private:
     output.program.embeddingPlan_ = std::move(plan);
   }
 
+  void lowerThreadLocalInitializationPlan() {
+    for (const ProgramInitializationStep &step :
+         baseModel->threadLocalInitializationPlan().steps) {
+      const auto *declaration = step.declaration;
+      const auto *binding = declaration == nullptr
+                                ? nullptr
+                                : baseModel->findBinding(*declaration);
+      if (declaration == nullptr || binding == nullptr || step.symbol == 0) {
+        lifecycleValid = false;
+        continue;
+      }
+      HirThreadLocalStorage storage{.symbol = step.symbol,
+                                    .sourceUnit = step.sourceUnit,
+                                    .type = binding->type,
+                                    .traits = binding->traits,
+                                    .access = binding->access,
+                                    .source = declaration,
+                                    .requiresActiveCleanup =
+                                        step.requiresActiveCleanup,
+                                    .ensureFailure = step.ensureFailure};
+      seedConcreteDeclarationType(storage.type);
+      std::optional<HirValueId> initializer;
+      if (declaration->initializer()) {
+        initializer = lowerExpression(declaration->initializer(), *baseModel,
+                                      {}, {}, storage.initializer);
+      } else {
+        Literal zero{std::uint64_t{0}};
+        if (storage.type.kind == SemanticType::Bool)
+          zero = false;
+        else if (storage.type.kind == SemanticType::Char)
+          zero = CharacterLiteral{};
+        else if (storage.type.kind == SemanticType::Float)
+          zero = BinaryFloat{.bits = 0, .format = BinaryFloatFormat::Binary32};
+        else if (storage.type.kind == SemanticType::Double)
+          zero = BinaryFloat{.bits = 0, .format = BinaryFloatFormat::Binary64};
+        initializer = nextValueId++;
+        storage.initializer.values.push_back(
+            {.id = *initializer,
+             .kind = HirValueKind::Literal,
+             .info = makeExpressionInfo(storage.type),
+             .literal = std::move(zero)});
+      }
+      if (!initializer) {
+        lifecycleValid = false;
+        continue;
+      }
+      if (step.role == ProgramInitializationStepRole::DataOnly) {
+        const auto *value = storage.initializer.findValue(*initializer);
+        std::unordered_set<HirValueId> visited;
+        while (value != nullptr && visited.insert(value->id).second &&
+               value->kind == HirValueKind::Conversion &&
+               value->operands.size() == 1)
+          value = storage.initializer.findValue(value->operands.front());
+        if (value != nullptr && value->kind == HirValueKind::Literal &&
+            value->literal && !step.requiresActiveCleanup)
+          storage.dataInitializer = value->literal;
+        else
+          lifecycleValid = false;
+      }
+      const auto result = appendStatement({.kind = HirStatementKind::Return,
+                                           .source = declaration,
+                                           .value = initializer},
+                                          storage.initializer);
+      storage.initializer.roots.push_back(result);
+      finalizeLifetimes(storage.initializer, *baseModel);
+      lowerLoans(*baseModel, storage.initializer);
+      output.program.threadLocalStorage_.push_back(std::move(storage));
+    }
+  }
+
   void lowerProgramInitializationPlan() {
     const ProgramInitializationPlan &semanticPlan =
         baseModel->programInitializationPlan();
@@ -1739,6 +1810,7 @@ private:
                 model->findBinding(*field.declaration)) {
           info.symbol = recorded->symbol;
           info.constant = recorded->constant;
+          info.threadLocal = recorded->threadLocal;
           info.type = recorded->type;
           info.traits = recorded->traits;
           type = recorded->type;
@@ -1799,7 +1871,9 @@ private:
         }
       }
       LoweredProgramStorage lowered;
-      if (field.declaration != nullptr) {
+      info.threadLocal =
+          field.declaration != nullptr && field.declaration->isThreadLocal();
+      if (field.declaration != nullptr && !info.threadLocal) {
         const auto found = loweredProgramStorage.find(field.declaration);
         if (found == loweredProgramStorage.end()) {
           // Generic class statics are intentionally outside the whole-program
@@ -2631,7 +2705,8 @@ private:
     currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
-    if (!owner.typeArguments.empty() || !owner.valueArguments.empty()) {
+    if ((ownerInfo != nullptr && !ownerInfo->genericParameters.empty()) ||
+        !owner.typeArguments.empty() || !owner.valueArguments.empty()) {
       const PhaseTimeScope timeScope("hir-instance-analysis", "destructor");
       analysis = instanceProvider->analyzeDestructorInstance(
           owner.declaration, owner.typeArguments, owner.valueArguments);
@@ -2995,6 +3070,7 @@ private:
     case HirValueKind::IndexSet:
     case HirValueKind::LayoutQuery:
     case HirValueKind::PayloadExtraction:
+    case HirValueKind::PackElement:
     case HirValueKind::QualifiedName:
     case HirValueKind::This:
     case HirValueKind::MemberSet:
@@ -3177,6 +3253,7 @@ private:
       HirStatementId statement = 0;
       std::size_t constructorInitializer = 0;
     };
+    const FullExpressionLookup lookup(body);
     std::vector<PendingFullExpression> pendingFullExpressions;
     for (std::size_t index = 0; index < initializers.size(); ++index) {
       const HirConstructorInitializer &initializer = initializers[index];
@@ -3209,8 +3286,21 @@ private:
       if (statement.source == nullptr) {
         continue;
       }
+      const auto *invocation = stmtAs<ExpressionStmt>(statement.source);
+      const bool statementOnlyMacro =
+          invocation && invocation->expression() &&
+          statement.kind == HirStatementKind::Block && !statement.value &&
+          model.findMacroExpansion(*invocation) != nullptr &&
+          model.typeOf(*invocation->expression()) == SemanticType::Void &&
+          lookup.forRoot(body, *invocation->expression()) == nullptr;
       for (const SemanticFullExpression &expression :
            model.fullExpressionsFor(*statement.source)) {
+        // A checked statement-only expansion has no executable invocation
+        // value. Its evaluated children retain their own ordinary expression
+        // roots and cleanup; only this exact syntactic outer root is absent.
+        if (statementOnlyMacro && expression.roots.size() == 1 &&
+            expression.roots.front() == invocation->expression().get())
+          continue;
         pendingFullExpressions.push_back(
             {.expression = &expression, .statement = statement.id});
       }
@@ -3229,7 +3319,6 @@ private:
           }
           return left.expression->order < right.expression->order;
         });
-    const FullExpressionLookup lookup(body);
     for (const PendingFullExpression &pending : pendingFullExpressions) {
       const std::vector<HirValueId> roots =
           pending.constructorInitializer != 0 &&
@@ -3268,7 +3357,7 @@ private:
         continue;
       }
       if (binding.info.type.kind == SemanticType::Reference ||
-          binding.info.staticStorage ||
+          binding.info.threadLocal || binding.info.staticStorage ||
           binding.info.traits.drop != DropKind::Lexical) {
         continue;
       }
@@ -6553,7 +6642,14 @@ private:
         value.packFoldFunction = resolved->function;
         value.packFoldArgument = resolved->packArgument;
         value.packFoldElements.reserve(resolved->elements.size());
-        for (const ResolvedPackFoldElement &element : resolved->elements) {
+        if (value.operands.size() != resolved->packArgument + 1) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        const HirValueId pack = value.operands[resolved->packArgument];
+        for (std::size_t index = 0; index < resolved->elements.size();
+             ++index) {
+          const ResolvedPackFoldElement &element = resolved->elements[index];
           const FunctionInfo *target =
               baseModel->findFunction(element.call.function);
           const HirFunctionInstanceId functionTarget =
@@ -6567,10 +6663,72 @@ private:
           if (functionTarget == 0) {
             lifecycleValid = false;
           }
+          // Each concrete invocation owns fresh evaluations of its named
+          // prefix. Reusing their value IDs would cache a scalar load or TLS
+          // Ensure across element calls, contrary to source call order.
+          std::vector<HirValueId> arguments;
+          for (std::size_t argument = 0; argument < resolved->packArgument;
+               ++argument) {
+            const auto *input = body.findValue(value.operands[argument]);
+            if (!input || input->kind != HirValueKind::Variable) {
+              lifecycleValid = false;
+              return std::nullopt;
+            }
+            HirValue copy = *input;
+            copy.id = nextValueId++;
+            copy.source = nullptr;
+            arguments.push_back(copy.id);
+            body.values.push_back(std::move(copy));
+          }
+          const HirValueId projected = nextValueId++;
+          body.values.push_back({.id = projected,
+                                 .kind = HirValueKind::PackElement,
+                                 .info = {.type = element.elementType,
+                                          .category = ValueCategory::Place,
+                                          .access = AccessMode::ReadOnly,
+                                          .traits = instanceProvider->traitsFor(
+                                              element.elementType)},
+                                 .symbol = resolved->packSymbol,
+                                 .operands = {pack},
+                                 .packElement = index});
+          arguments.push_back(projected);
+          const auto plan = orderedArguments(
+              arguments, element.call.parameterTypes, body, arguments.size());
+          if (!plan) {
+            lifecycleValid = false;
+            return std::nullopt;
+          }
+          const HirValueId call = nextValueId++;
+          body.values.push_back(
+              {.id = call,
+               .kind = HirValueKind::Call,
+               .source = resolved->pattern,
+               .info = {.type = SemanticType::Void,
+                        .category = ValueCategory::Value,
+                        .access = AccessMode::ReadOnly,
+                        .traits =
+                            instanceProvider->traitsFor(SemanticType::Void)},
+               .unsafeOperation = model.unsafeOperation(*resolved->pattern),
+               .operands = std::move(arguments),
+               .parameterTypes = element.call.parameterTypes,
+               .neverReturns = element.call.neverReturns,
+               .tracksCaller = element.call.tracksCaller,
+               .definedFailure = {.propagation =
+                                      FailurePropagationKind::DirectCall},
+               .dispatch = CallDispatch::Static,
+               .dispatchOwner = element.call.dispatchOwner,
+               .callPlan = HirCallPlan{.arguments = *plan},
+               .functionTarget = functionTarget});
+          output.program.sourceValueIds[resolved->pattern].push_back(call);
           value.packFoldElements.push_back(
               {.elementType = element.elementType,
                .functionTarget = functionTarget,
-               .parameterTypes = element.call.parameterTypes});
+               .parameterTypes = element.call.parameterTypes,
+               .call = call});
+          // The prefix and pack remain the source descriptor; the suffix is
+          // the ordered executable expansion. Ordinary operand traversal
+          // assigns all calls and their inputs this fold's full expression.
+          value.operands.push_back(call);
         }
       }
     }

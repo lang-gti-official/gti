@@ -70,6 +70,8 @@ enum class DefinedFailureDetail : std::uint8_t {
   ContainerArgument,
   SharedOwner,
   ExplicitPanic,
+  ThreadLocalInitializationDuringShutdown,
+  ThreadLocalOutsideAttachedLifetime,
   Count,
 };
 
@@ -218,7 +220,11 @@ validDefinedFailureOutcome(DefinedFailureOutcome outcome) {
   case DefinedFailureCode::HostedRuntimeContractFailure:
     return outcome.detail == DefinedFailureDetail::NegativeArgumentCount ||
            outcome.detail ==
-               DefinedFailureDetail::RecursiveThreadLocalInitialization;
+               DefinedFailureDetail::RecursiveThreadLocalInitialization ||
+           outcome.detail ==
+               DefinedFailureDetail::ThreadLocalInitializationDuringShutdown ||
+           outcome.detail ==
+               DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime;
   case DefinedFailureCode::KeyNotFound:
     return outcome.detail == DefinedFailureDetail::KeyLookup;
   case DefinedFailureCode::InvalidContainerArgument:
@@ -351,6 +357,10 @@ definedFailureDetailName(DefinedFailureDetail detail) {
     return "negative_argument_count";
   case DefinedFailureDetail::RecursiveThreadLocalInitialization:
     return "recursive_thread_local_initialization";
+  case DefinedFailureDetail::ThreadLocalInitializationDuringShutdown:
+    return "thread_local_initialization_during_shutdown";
+  case DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime:
+    return "thread_local_outside_attached_lifetime";
   case DefinedFailureDetail::None:
   case DefinedFailureDetail::Count:
     return "none";

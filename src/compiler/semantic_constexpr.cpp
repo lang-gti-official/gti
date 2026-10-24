@@ -7,16 +7,33 @@
 
 #include <algorithm>
 #include <functional>
+#include <span>
 
 namespace lang {
 namespace {
+// A staging request borrows its already-owned arguments. Failed effect
+// journals are uncommon; do not allocate an owning key merely to check an
+// empty journal on every ordinary constant-evaluation call.
+struct StagedInstanceKeyView {
+  InstanceAnalysisKind kind = InstanceAnalysisKind::Function;
+  std::size_t declaration = 0;
+  std::span<const SemanticType> ownerTypes;
+  std::span<const CompileTimeValue> ownerValues;
+  std::span<const SemanticType> types;
+  std::span<const CompileTimeValue> values;
+};
+
 // Read-only traits do not require a fork. Allocate the isolated analysis
 // snapshot only if ordinary HIR discovery actually requests an instance.
 class StagedInstanceProvider final : public SemanticInstanceProvider {
 public:
+  using ValidateResult = std::function<void(const StagedInstanceKeyView &,
+                                            SemanticInstanceAnalysis &)>;
   StagedInstanceProvider(const SemanticInstanceProvider &facts,
-                         std::function<SemanticInstanceProvider &()> acquire)
-      : facts(facts), acquire(std::move(acquire)) {}
+                         std::function<SemanticInstanceProvider &()> acquire,
+                         ValidateResult validate)
+      : facts(facts), acquire(std::move(acquire)),
+        validate(std::move(validate)) {}
   SemanticTypeTraits traitsFor(const SemanticType &type) const override {
     return facts.traitsFor(type);
   }
@@ -32,31 +49,60 @@ public:
       const std::vector<CompileTimeValue> &ownerValues,
       const std::vector<SemanticType> &types,
       const std::vector<CompileTimeValue> &values) override {
-    return acquire().analyzeFunctionInstance(id, ownerTypes, ownerValues, types,
-                                             values);
+    auto result = acquire().analyzeFunctionInstance(id, ownerTypes, ownerValues,
+                                                    types, values);
+    validate({.kind = InstanceAnalysisKind::Function,
+              .declaration = id,
+              .ownerTypes = ownerTypes,
+              .ownerValues = ownerValues,
+              .types = types,
+              .values = values},
+             result);
+    return result;
   }
   SemanticInstanceAnalysis analyzeConstructorInstance(
       ConstructorId id, const std::vector<SemanticType> &ownerTypes,
       const std::vector<CompileTimeValue> &ownerValues,
       const std::vector<SemanticType> &types,
       const std::vector<CompileTimeValue> &values) override {
-    return acquire().analyzeConstructorInstance(id, ownerTypes, ownerValues,
-                                                types, values);
+    auto result = acquire().analyzeConstructorInstance(
+        id, ownerTypes, ownerValues, types, values);
+    validate({.kind = InstanceAnalysisKind::Constructor,
+              .declaration = id,
+              .ownerTypes = ownerTypes,
+              .ownerValues = ownerValues,
+              .types = types,
+              .values = values},
+             result);
+    return result;
   }
   SemanticInstanceAnalysis analyzeDestructorInstance(
       ClassId id, const std::vector<SemanticType> &types,
       const std::vector<CompileTimeValue> &values) override {
-    return acquire().analyzeDestructorInstance(id, types, values);
+    auto result = acquire().analyzeDestructorInstance(id, types, values);
+    validate({.kind = InstanceAnalysisKind::Destructor,
+              .declaration = id,
+              .ownerTypes = types,
+              .ownerValues = values},
+             result);
+    return result;
   }
   SemanticInstanceAnalysis analyzeClassFieldInitializers(
       ClassId id, const std::vector<SemanticType> &types,
       const std::vector<CompileTimeValue> &values) override {
-    return acquire().analyzeClassFieldInitializers(id, types, values);
+    auto result = acquire().analyzeClassFieldInitializers(id, types, values);
+    validate({.kind = InstanceAnalysisKind::ClassFieldInitializers,
+              .declaration = id,
+              .ownerTypes = types,
+              .ownerValues = values},
+             result);
+    return result;
   }
 
 private:
   const SemanticInstanceProvider &facts;
   std::function<SemanticInstanceProvider &()> acquire;
+  ValidateResult validate;
 };
 } // namespace
 
@@ -105,6 +151,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   copy.globalBorrowStorage = other.globalBorrowStorage;
   copy.genericConstraints = other.genericConstraints;
   copy.genericConstraintConcepts = other.genericConstraintConcepts;
+  copy.compilerTypeClasses = other.compilerTypeClasses;
   copy.classes = other.classes;
   copy.exactClassSpecializations = other.exactClassSpecializations;
   copy.conformances = other.conformances;
@@ -158,6 +205,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   copy.globalBorrowStorage = globalBorrowStorage;
   copy.genericConstraints = genericConstraints;
   copy.genericConstraintConcepts = genericConstraintConcepts;
+  copy.compilerTypeClasses = compilerTypeClasses;
   copy.classes = classes;
   copy.exactClassSpecializations = exactClassSpecializations;
   copy.conformances = conformances;
@@ -285,9 +333,32 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   // in-progress visitor. A request-local snapshot reuses the ordinary semantic
   // provider and exact declaration identities without lending it mutable caller
   // state. It lives until HIR has consumed every concrete instance delta.
-  StagedInstanceProvider provider(*this, [&]() -> SemanticInstanceProvider & {
-    return stagedWorkerFor(stagingModel, context.work);
-  });
+  StagedInstanceProvider provider(
+      *this,
+      [&]() -> SemanticInstanceProvider & {
+        return stagedWorkerFor(stagingModel, context.work);
+      },
+      [&](const StagedInstanceKeyView &request,
+          SemanticInstanceAnalysis &analysis) {
+        const auto &state = requestSession.programConcreteEffects;
+        if (!analysis.valid() || !state || state->invalidInstances.empty())
+          return;
+        // The isolated staged worker deliberately does not share mutable
+        // effect graphs. Validate its result against the current outer
+        // authority, which may already have closed failed concrete queries.
+        preserveInvalidProgramEffectDiagnostics(
+            {.kind = request.kind,
+             .declaration = request.declaration,
+             .classTypes = std::vector<SemanticType>(request.ownerTypes.begin(),
+                                                     request.ownerTypes.end()),
+             .classValues = std::vector<CompileTimeValue>(
+                 request.ownerValues.begin(), request.ownerValues.end()),
+             .types = std::vector<SemanticType>(request.types.begin(),
+                                                request.types.end()),
+             .values = std::vector<CompileTimeValue>(request.values.begin(),
+                                                     request.values.end())},
+            analysis);
+      });
   std::string stagedDetail =
       function ? info->qualifiedName : std::string("constructor");
   for (const auto &[parameter, type] : substitution.types)

@@ -33,6 +33,7 @@ EXAMPLES_ROOT = REPOSITORY_ROOT / "examples"
 PUBLIC_EXAMPLE_EXECUTION_PROFILES = {
     "066-managed-threads.gti": "concurrent",
     "076-scalar-atomics.gti": "concurrent",
+    "171-thread-local-storage.gti": "concurrent",
 }
 
 INTERNAL_FAILURE_MARKERS = (

@@ -141,6 +141,7 @@ ConstantFoldingPass::evaluate(const HirValue &value) const {
   case HirValueKind::Lambda:
   case HirValueKind::LayoutQuery:
   case HirValueKind::PackFold:
+  case HirValueKind::PackElement:
   case HirValueKind::PackExpansion:
   case HirValueKind::PayloadConstruction:
   case HirValueKind::PayloadExtraction:

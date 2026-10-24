@@ -276,7 +276,7 @@ void testExactLoweringAndPrinting(const lang::FrontendResult &frontend) {
              frontend.failureMetadataValid && frontend.mirValid &&
              verification.valid() && exactSteps && sawImplicit && sawConstant &&
              sawDynamic && sawStatic && exactTags && checkedFailure &&
-             substitution && dump.starts_with("mir-v113 valid=") &&
+             substitution && dump.starts_with("mir-v114 valid=") &&
              dump.find("program-initialization units=1") != std::string::npos &&
              dump.find("data-kind=implicit-zero") != std::string::npos &&
              dump.find("program-initialization-step=") != std::string::npos,
@@ -1087,8 +1087,20 @@ int main() { return out; }
         if (out == nullptr || later == nullptr || loan == body->loans.end()) {
           return;
         }
+        const auto *laterStorage = body->findPlace(later->storagePlace);
+        if (laterStorage == nullptr)
+          return;
+        // A declared persistent-symbol view keeps this mutation outside the
+        // body-local uninitialized-scalar rule. Only the program's dense
+        // initialization schedule can prove when this global is available.
+        lang::MirPlace laterView = *laterStorage;
+        laterView.id = body->places.size() + 1;
+        laterView.root = lang::MirPlaceRootKind::Symbol;
+        laterView.binding = 0;
+        const auto laterPlace = laterView.id;
+        body->places.push_back(std::move(laterView));
         const lang::MirPlaceId oldSource = loan->source;
-        loan->source = later->storagePlace;
+        loan->source = laterPlace;
         for (lang::MirBlock &block : body->blocks) {
           if (block.programInitializationStep != out->id) {
             continue;
@@ -1097,7 +1109,7 @@ int main() { return out; }
             for (lang::MirOperand &operand : item.operands) {
               if (operand.kind == lang::MirOperandKind::BorrowRead &&
                   operand.place == oldSource) {
-                operand.place = later->storagePlace;
+                operand.place = laterPlace;
                 changedLoanSource = true;
               }
             }

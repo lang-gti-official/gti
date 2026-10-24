@@ -1,6 +1,80 @@
 # Compiler Verification
 
-## Source-defined concept policies (0.471.0)
+## Thread-local storage (0.473.0)
+
+The TLS slice has distinct source, independent MIR, runtime and native gates:
+
+- `thread_local_syntax`, `thread_local_semantic` and `thread_local_lsp` cover
+  namespace/static/local declarations, placement diagnostics, exact origin and
+  access checks, hidden helper/callback/destructor effects, scoped lending,
+  escaping tasks/results, constant-context rejection and unsaved editor state.
+  Concrete-query regressions analyze two different `if constexpr` specializations
+  in both orders: temporary cleanup must produce `GTI-S2045`, never `GTI-B0001`,
+  while disjoint TLS loans remain valid.
+- `mir_thread_local` independently verifies descriptors, first-use/Ready facts,
+  native literal publication, final-address owning construction, guarded failure
+  and cleanup transfer. `mir_persistent_storage` forges hidden accesses, exact
+  field/input origins, ordered call-input intervals and foreign-boundary records.
+  A source proof is not permission to accept detached or substituted MIR facts.
+- `thread_local_runtime_registry` covers intrusive registration, reverse retirement
+  and failure/emergency behavior. A separate ASan/UBSan build instruments the
+  changed runtime C++ files themselves, not just the generated test program.
+- `thread_local_end_to_end` runs 20 independent scenarios at C++20/C++23
+  O0/O1/O3 and ASan/UBSan (140 executions). These include workers and manual
+  entries, local returned borrows, immovable/unique/array owners, ordinary and
+  emergency result retirement, recursion, shutdown, unattached native entry,
+  formatted payloads, empty folds and per-element TLS reloads. The macro-result
+  scenario checks lexical cleanup, owning-result transfer, exactly-once retirement
+  before join, repeated reads and independent initial-thread storage. Its failure
+  companion checks that a failing lexical cleanup still destroys the unpublished
+  result exactly once while preserving the original failure.
+
+The integration checks at compiler source `c533a4bd` pass TLS semantics,
+persistent-storage MIR, deferred-expansion ownership, temporary-argument runtime
+and generated-default malformed-MIR proofs. The pinned optimized compiler is
+`bb6750a0df49e9ccf92062bfa13cdb1c62b225e82e2ae0f11a7426d75e438bf5`.
+Strict inventories and the full native corpus pass for 171 examples at
+C++20/O0 and C++23/O3: 23,697 emitted MIR bodies, 23,707 lowered bodies,
+178,881 declarations and 14,910 generated items. Example 173 contributes
+274 emitted/275 lowered bodies and three TLS storage descriptors. Existing
+example rows are unchanged, apart from their zero-valued TLS-kind census column.
+
+Earlier focused native matrices also pass on macOS arm64 and Linux x86-64.
+The Linux eight-gate run is `run-0aaed746f884450ca8328a0f339826e8`, source
+`3dd4edf0`; that macOS matrix is source `3d9f6a9a`. These retain their original
+source identities, rather than being relabeled as final integration evidence.
+
+`tests/thread_local_performance_test.py` compares 20 million O3 steps using nine
+interleaved samples and the same explicit first-use, recursion/shutdown and drain
+contract in native C++. The earlier macOS arm64 measurement uses compiler SHA256
+`c78e5767e86be4182cfc9de32115c81b21db3f0bc199f2cba6e2900bb97e53ec`:
+
+| Workload | GTI median | C++ median | Explicit resource allocations | Executable size, GTI/C++ |
+| --- | --- | --- | --- | --- |
+| Literal primitive TLS | 18.458 ms | 18.180 ms | 0 / 0 | 107,704 / 106,408 bytes |
+| Owning dynamic TLS | 18.280 ms | 18.255 ms | 1 × 64 B / 1 × 64 B | 108,056 / 106,600 bytes |
+
+The intrusive registry adds no heap nodes. Allocation counts cover the explicit
+resource allocator, not all process/OS TLS allocation. GTI's source-attribution
+metadata is not replicated by the C++ control. Cold single-call measurements are
+clock/noise limited and establish no speedup. Compilation takes 1.226/0.440 s for
+the primitive pair and 0.595/0.435 s for the owning pair; compiler peak RSS is
+approximately 97.4–97.7 MB for all four builds, runtime RSS about 1.7 MB. Preserve
+the C++ driver invocation spelling separately from canonical binary provenance.
+
+The unfiltered suite, tooling, staged installed consumers, latest-source platform
+and compiler/runtime sanitizer checks, and refreshed performance measurements
+are separate integration acceptance gates. The release PR records their exact
+source identities and results; the historical focused and corpus passes above
+do not substitute for those gates on a changed compiler.
+The owner authorized release before the remaining validation finished. The PR
+records the completed macOS full sweep (857 passes, one skip and one stale test
+expectation), the corrected test's focused pass, scoped Linux passes and partial
+sanitizer results. The final reconciliation with source-defined concept policies
+and the LLVM foundation did not receive a fresh compiler rebuild, full suite,
+installed-SDK or performance run. Those results are not claimed as passing.
+
+## Source-defined concept policies (0.472.0)
 
 `general_requires_semantics` verifies the source replacements for comparison,
 callable, storage, atomic, reflection, iterator, sentinel and range policies.

@@ -514,6 +514,15 @@ generic classes are rejected by current semantics and have no accepted
 program-wide initialization contract; excluding them from this plan is not
 evidence of usable per-instance static storage.
 
+Thread-local declarations instead retain the semantic
+`threadLocalInitializationPlan` as a separate exact `HirThreadLocalStorage`
+inventory. Each declaration owns a typed initializer body and per-thread cleanup
+recipe; it is never lifted into eager `Module/0` initialization or an automatic
+lexical drop. HIR verifies the source declaration, storage identity and
+initializer facts against semantics, including function-local declaration
+identity. Evaluated uses preserve first-use requirements for MIR rather than
+asking the backend to discover them from generated variable names.
+
 An exact frontend-computed program constant becomes a
 `programConstantSubstitution` value carrying the same `ConstantValue`,
 `ExpressionInfo`, source expression, and type. This is the downstream proof
@@ -1010,9 +1019,23 @@ pack occurs once in the target's read-only element position. The concrete HIR
 value retains that declaration identity, the source pack and argument
 position, its fixed named-place operands, and one exact resolved element-call
 record per substituted pack type in source order. Each element record carries
-its concrete type and selected function-instance identity. An empty pack is an
-explicit fold value with an empty element sequence. HIR neither reopens
-overload resolution nor derives element calls from emitted template behavior.
+its concrete type, selected function-instance identity, and a unique ordinary
+`Call` value with the usual invocation-input plan. The fold's operand prefix
+retains its fixed source inputs and pack; its suffix lists these calls in
+execution order. Each call has fresh copies of the resolved named-input values,
+so a scalar load or TLS first-use check is evaluated again for the next element
+rather than cached across invocations. Its final input is a typed read-only
+`PackElement` place naming one exact concrete parameter-pack binding and
+in-range constant index. Verification checks the selected target/signature,
+source-prefix copies, input access modes, unique call and projection ownership,
+element order and type; MIR independently resolves the projection's traits.
+
+The calls reuse ordinary MIR `CallInput` staging. In particular, a borrowed
+prefix remains protected during a later named TLS argument's first-use
+initializer, as required by the source execution contract. An empty pack is an
+explicit fold value with no calls: neither its fixed inputs nor a TLS
+initializer are evaluated. HIR neither reopens overload resolution nor derives
+element calls from emitted template behavior.
 
 This invocation-input plan is not one uniform representation of every source
 expression. Admitted borrowed class inputs and selected ordinary/value-operator

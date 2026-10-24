@@ -329,8 +329,11 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v113`/`mir-body-v91`,
-with `lowered-program-v22` declaration metadata. Declaration-bound computed
+The combined deterministic serialization is currently `mir-v114`/`mir-body-v93`,
+with `lowered-program-v26` declaration metadata. These distinct combined
+identities retain both macro result-region/local-initializer authority and
+thread-local initialization, cleanup and reference-pack proof facts.
+Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains
 complete borrowed-dependency-set proofs alongside foreign-storage inventories
@@ -406,8 +409,11 @@ dependency group rather than selecting one representative origin.
 
 A complete mapping may name static storage: its origin is `Global`, with the
 storage symbol in `globalRoot`, and its source path is built from that
-storage's own type. A capture-free `Symbol` place is that storage even in the
-provisional program, which is lowered before its initialization plan exists.
+storage's own type. A capture-free `Symbol` place identifies that storage. The
+provisional failure-effect proof retains the real module and initialization
+inventory, so persistent-storage effects and exact receiver proofs have the same
+declaration authority as the final program; only hosted startup is omitted until
+the final lowering rounds.
 A carrier whose contract names a global borrows the global's storage-typed
 place, not a place typed as the carrier. The per-input returned-field checks
 skip `Global` mappings, which have no call input; the global-origin check and
@@ -2605,12 +2611,11 @@ A `MirBody` owns:
   pointee's transfer/share policy, without inheriting the pointee's copy, move,
   drop or borrowed-state traits. Pack and scoped-task
   verification consume those same published nominal facts;
-- an explicit `MirOperation::PackFold` for the bounded call fold. It retains
-  the source HIR fold identity, fixed named-place operands, selected generic
-  declaration, source pack identity and argument position, and one concrete
-  element type plus exact resolved call target per pack element in source
-  order. An empty pack retains an empty element sequence instead of
-  disappearing during lowering;
+- ordinary staged calls for a concrete bounded call fold, with exact
+  read-only `PackElement` places. HIR retains the source fold and selected
+  expansion; executable MIR contains no `MirOperation::PackFold`. Earlier
+  expression-inventory descriptions of that operation are historical, not a
+  second execution path. An empty expansion emits no input evaluation or call;
 - exact defined-failure identity on checked instructions. Each local detector
   origin retains a sorted unique outcome set and a snapshot-local
   `SourceUnitId` plus line/offset anchor and has one parallel artifact-local
@@ -2734,6 +2739,42 @@ A `MirBody` owns:
 IDs are body-local and start at one.
 
 ## Lowering And Verification
+
+Thread-local objects have a separate `MirThreadLocalStorage` inventory and
+`ThreadLocalInitializer` bodies. `EnsureThreadLocal` names the exact declaration
+and initializer; independent verification checks inventory, passive data
+provenance, cleanup recipes and dominating first-use guards. `DrainThreadLocals`
+is an explicit hosted-exit operation, not an emitter-added source call. Passive
+data storage uses native per-thread literal-initialized data without dynamic guard or
+registration; owning storage uses a byte slot and explicit object lifetime so
+emergency abandonment cannot accidentally run a native destructor.
+
+Ambient persistent-storage effects are independently derived from executable
+MIR, not trusted frontend summary claims. `mir_storage_effects.cpp` reuses the
+existing canonical-place/CFG loan verifier to collect direct typed storage
+accesses, closes exact helper/constructor/destructor edges, and replays hidden
+accesses at each invocation's live-loan state. Initializer edges retain their
+readiness condition through nested helpers. Captured referents have a distinct
+canonical capture domain from same-thread TLS lookup. Native/raw-pointer
+obligations remain the unsafe boundary; this is not a pointer-provenance solver.
+An exact virtual effect edge requires an independently proved complete owning
+receiver: an unprojected declared storage object, a by-value formal, or a local
+with typed owning initialization. Consumer place types are insufficient evidence;
+formal and persistent declarations must agree, and a reference-valued producer
+cannot be relabeled as owning publication. The receiver must retain its exact
+call-input stage and access mode, and every virtual root must select the same
+source function and concrete instance as the invocation. Missing, ambiguous,
+projected, aliased or construction-phase receiver evidence retains an unknown
+boundary. This closes effects only; dispatch, failure edges, cleanup and argument
+scheduling stay unchanged, and a readonly receiver does not imply a pure callee.
+For an exact persistent-storage reference input, the independently verified
+`CallInput` checkpoint also starts protection before later inputs execute.
+Its unique consuming invocation (or an interrupted invocation's terminal
+boundary) ends that explicit scheduling interval. The verifier walks that
+interval through the existing CFG and uses the same canonical overlap rules,
+including hidden callee effects; it does not infer another NLL lifetime or
+invent a temporary borrow that an otherwise legal returned reference would
+need to outlive. Already-loaned inputs retain their ordinary loan proof.
 
 Every type-owned static function retains an exact owner but no instance receiver:
 it cannot carry virtual/pure/override flags, virtual roots, mutable/consuming
@@ -4082,7 +4123,19 @@ An ordinary-call argument may use `ReadTemporaryBorrow` only when its HIR
 input names an exact fresh class/struct producer or a passive payload-enum
 construction, and its selected parameter is read-only `T&`. Lowering
 materializes the producer's exact mutable place, emits `BorrowRead`, and
-attaches one `CallArgument` loan to the `CallInput`. As for receiver inputs,
+attaches one `CallArgument` loan to the `CallInput`;
+a target-free, zero-input ordinary class `Call` can be the generated default
+producer. Body verification recognizes its exact structural shape; independent
+program verification also requires the concrete owner's generated default
+constructor and no missing initializer schedule. This shares the receiver
+producer query and preserves all materialization, call-loan and drop checks.
+The shared invocation-target query uses that same shape and concrete lifecycle
+proof to classify this producer as executing no source body, rather than an
+unknown call that could access unrelated persistent storage. A required explicit
+or implicit field initializer, or inherited-base initializer, instead has an
+exact concrete constructor schedule whose transitive effects remain checked.
+Missing or forged generated-constructor authority cannot suppress those effects.
+As for receiver inputs,
 a linear value uses its value-rooted place. A call evaluated only in a
 conditional arm or a `&&`/`||` operand borrows the one hidden temporary slot
 that carries the producer's conditional drop through the CFG merge. The merge
@@ -4166,17 +4219,32 @@ construction and rollback contracts. Module MIR owns the verified source-
 graph-derived initialization schedule, and the hosted adapter executes that
 schedule through the implemented `Module/0` body.
 
-`PackFold` has its own bounded verifier contract rather than pretending its
-element calls are ordinary scheduled call syntax. Verification requires the
-recorded element count, source-pack order, concrete element types, parameter
-positions, and per-element function instances to agree with HIR and with the
-one semantic pattern declaration. It rejects a substituted target from a
-different overload/declaration, a missing or duplicated element, reordered
-types, a mutable/consuming element parameter, or fixed-operand drift. The
-operation executes its element calls left to right and keeps ordinary unknown-
-call conservative effects: it is not speculatable, removable, or reorderable.
-This metadata does not introduce general MIR pack iteration or ask a backend to
-perform semantic instantiation.
+`PackFold` retains a bounded HIR expansion proof, but each concrete element now
+has a unique ordinary call identity and the same `CallInput` schedule as other
+calls. HIR verifies the source-pack order, concrete types, source-prefix copies,
+parameter positions and selected function instances before MIR lowering. MIR
+independently verifies the concrete pack binding, read-only element projection,
+resolved traits, exact target/signature, unique staged-input consumer and input
+order. Prefix borrowing therefore starts at its checkpoint, not merely at
+invocation: later input evaluation, including a TLS initializer, cannot
+invalidate it. Each invocation completes before the next element's fresh input
+evaluations. An empty expansion evaluates none of those inputs.
+
+Legacy compact reference operands retain invocation-time protection against
+hidden persistent-storage effects even without a named source loan. This
+general operation-family check does not substitute for the earlier checkpoint
+of an ordinary staged input or authorize new complex input producers. Scalar
+reference inputs of calls also require independently initialized storage;
+raw address formation and storage-lifetime-start destinations remain distinct.
+Physical pointee checks distinguish an object place from a reference-valued
+formal-pack element. For an exact single `PackElement` projection, the verifier
+resolves the binding's concrete pack and element index, checks the complete
+projected type and carrier facts, and derives the element reference's pointee
+and access. The immutable carrier does not make its referent immutable. This
+does not unwrap arbitrary reference-typed places or waive unrelated type,
+origin, index or access mismatches; ordinary exact/public-base compatibility
+still applies to the derived referent.
+No metadata asks a backend to iterate a source pack or instantiate a target.
 
 Program v103 adds the resolved `threadConfinedCallback` declaration fact and
 `ThreadConfined` adapter policy. It represents first-use binding in the existing

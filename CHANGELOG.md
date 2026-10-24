@@ -9,6 +9,42 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.473.0 — Thread-local storage
+
+- `thread_local` defines distinct per-thread storage at namespace scope, in a
+  non-generic static data member, or inside an ordinary function. Both
+  `static thread_local` and `thread_local static` are accepted. Mutable TLS
+  does not require a mutex or a share-capable type.
+- Dynamic values initialize on first use and retire in reverse initialization
+  order on their owning thread. GTI owns construction, rollback and cleanup,
+  including worker failure and the initial thread's exit. Recursive first use,
+  initialization during shutdown, and dynamic first use on an unattached
+  foreign thread produce defined `GTI-R0013` failures.
+- Checked TLS references follow ordinary borrowing rules, including helper
+  calls, reentrant callbacks, scoped workers and destructor effects. They
+  cannot escape their owning thread through an owned task/result. Primitive
+  literal-initialized TLS needs no dynamic GTI guard or cleanup registration.
+- Transitive storage-effect checking also protects checked borrows of ordinary
+  process globals from hidden conflicting accesses through helpers or callbacks.
+- Generated typed-macro syntax remains alive with returned HIR, including
+  nested expansions in concrete generic functions, fixing a compiler crash
+  uncovered by the TLS integration tests.
+- Fresh generated-default class temporaries can be borrowed as ordinary call
+  arguments; exact owner, construction schedule, loan and cleanup proofs remain
+  required by independent MIR verification.
+- Empty generated construction no longer invents accesses to unrelated persistent
+  storage; effectful field and base initialization retain their exact call effects.
+- Calls on proved complete concrete objects retain their exact virtual callee's
+  effects, avoiding false persistent-borrow conflicts without treating readonly
+  methods as pure or weakening checks for aliased receivers.
+- Concrete pack folds retain exact call effects and ordinary ordered argument
+  borrows, including later-argument TLS initialization. Empty concrete folds
+  neither evaluate fixed inputs nor initialize their TLS storage.
+- Payload variant names used as constructor or case designators no longer invent
+  owning temporaries and destructor effects; actual enum values retain cleanup.
+- See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
+  and [runnable example 175](examples/175-thread-local-storage.gti).
+
 ## 0.472.0 — Source-defined concept policies
 
 - All standard-library concepts are defined in ordinary GTI source, composing
