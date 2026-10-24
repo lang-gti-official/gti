@@ -7078,16 +7078,32 @@ auto SemanticVisitor::Impl::resolveRequirements(
        applicationIndex < clause->requirements().size(); ++applicationIndex) {
     const ConceptApplication &application =
         clause->requirements()[applicationIndex];
+    if (application.predicate) {
+      AppliedConceptRequirement requirement{.syntax = &application,
+                                            .expression = &clause->expression,
+                                            .expressionApplication =
+                                                applicationIndex,
+                                            .lookupScope = scope};
+      for (const auto &argument : application.arguments) {
+        argumentsToValidate.push_back(&argument);
+        requirement.arguments.push_back(typeOf(argument, scope));
+      }
+      result.push_back(std::move(requirement));
+      continue;
+    }
     if (application.memberRequirement) {
       recordMemberRequirementReceiver(
           *application.memberRequirement,
-          typeOf(application.memberRequirement->receiver(), scope));
+          application.memberRequirement->isExpressionRequirement()
+              ? SemanticType::Unknown
+              : typeOf(application.memberRequirement->receiver(), scope));
       AppliedConceptRequirement requirement{
           .syntax = &application,
           .expression = &clause->expression,
           .expressionApplication = applicationIndex,
           .trustedMemberAccess = isCompilerTrustedRequester(
-              application.memberRequirement->member())};
+              application.memberRequirement->keyword()),
+          .lookupScope = scope};
       for (const auto &argument : application.arguments) {
         argumentsToValidate.push_back(&argument);
         requirement.arguments.push_back(typeOf(argument, scope));

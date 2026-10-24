@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Failure-free passive constructors (RT-12, 0.467.0)
+## Failure-free passive constructors (RT-12, 0.468.0)
 
 `optimizer_foundation` covers the owned failure closure's passive values in
 `testPassiveValueConstructorFailureEffects`, over user types unrelated to
@@ -42,7 +42,7 @@ staged `unexpected_value` live on the destructor's failure path. The failure
 form now builds a returned construction at its MIR position whenever a
 failure can occur before the Return (`returnConstructCrossesFailure`).
 
-## Nested dependent values (0.467.0)
+## Nested dependent values (0.468.0)
 
 `view_fields` covers phase 3a in `testNestedValues`.
 - A `Report` storing a `Diag` whole, an `Outer` holding a `Report`, an
@@ -69,7 +69,7 @@ use-after-free (ASan). And MIR derived whole-value relays for owned classes
 that semantics never declared, a `GTI-B0001` on `owned_expected_error`. Both
 are fixed, and `testContextualConstruction` covers the first.
 
-## Conversions, field relays and returns (0.467.0)
+## Conversions, field relays and returns (0.468.0)
 
 `view_fields` covers phase 2c in four tests.
 - `testContextualConstruction`: `std::optional<std::string_view> maybe =
@@ -111,6 +111,50 @@ a reference formal and reject one over a local owner.
 global, and ASan reported it once the owner reallocated. Passing the field
 by value or by reference, storing it, and passing on a returned reference to
 it escaped the same way. `testPayloadFieldUses` covers each shape.
+
+## Derived dependent-text carriers (internal)
+
+`view_fields` `testDerivedCarriers` publishes one local owner through a class
+construction, a payload construction and a constructor that stores a
+payload-enum field. Fourteen local bindings then hold its text:
+- the value, a copy and a move;
+- a designated field read and a copy of that view;
+- a relay `first(token)`, a method relay `token.name()` and a formal relay
+  `id(field)`;
+- a view copied through `token.ref()`;
+- a relayed temporary `first(Token(input.view(), 2))`;
+- the payload enum and the nested-path class;
+- two bound payloads, one of them through `line.word`.
+
+The program verifies. MIR rejects each of these mutations with "local binding
+holding dependent text does not carry a loan that retains its owner":
+- dropping any binding from a loan it carries;
+- moving the binding onto the uncarried loan of the owner's first `view()`
+  call;
+- clearing the stored dependency of `token.ref()`'s result loan.
+
+The same mutations run against main at 0.465.0, its `mir_text_contracts.cpp`
+linked into this build:
+- 12 of the 14 drops, 13 of the 14 moves and the cleared dependency verified;
+- the rest failed unrelated shape checks.
+
+`ownerless_text_contracts` `testTextReferenceRelays` now expects MIR to reject
+the copied view without its carrier, and the relay loan without its stored
+dependency. Before, its comment recorded both as semantic decisions.
+
+An `int` read through a dependent value's `int&` accessor also verifies. An
+earlier draft of the rule rejected it, because that accessor's loan has the
+publication as its stored dependency; holding is now typed.
+
+A same-root differential compares this head's compiler with the same build
+linked against main's `mir_text_contracts.cpp`, its only compiled difference.
+Both use one `GTI_STDLIB_PATH`. Against main at 0.465.3 it emitted C++ at -O0
+and -O3 for all 1,853 programs under `tests/` and `examples/`, which is 3,706
+compiles per compiler. `namespace-depth-63`, which times out with both
+compilers, is excluded. Every exit status, refusal code set and emitted C++
+byte matched: both compilers accepted 2,956 compiles and refused 750. Main's
+next change before integration, batched validation, changed no compiled
+source.
 
 ## Passive class moved beside a passive copy (0.465.6)
 
@@ -397,8 +441,9 @@ remain regression coverage for the shared completion and lexical paths.
   and storing `result.value()` are `GTI-S2045`. Appending to the owner while
   a copied view lives is `GTI-S2017`. Before the dereference relay was
   classified, `std::string_view view = *maybe;` followed by an append
-  compiled into a dangling view. MIR still does not check binding carriers,
-  so only these source rules prevent that.
+  compiled into a dangling view. At 0.463.0 MIR did not yet check binding
+  carriers, so only these source rules prevented that; see
+  [Derived dependent-text carriers](#derived-dependent-text-carriers-internal).
 - `testTypeParameterFormals`: `std::vector<Token>::push_back` of a literal
   value verifies (`GTI-B0001` in 0.462.0), MIR rejects its instance with the
   whole-formal requirement cleared, and pushing a value over a local owner

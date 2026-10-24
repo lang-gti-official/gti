@@ -1,0 +1,151 @@
+// Source-defined contracts combine ordinary expressions with compiler-verified
+// reflection facts. Checking a requirement never executes the expression.
+#include <std/meta>
+
+concept adds_to<L, R, Result> = requires(L& left, R& right) {
+  { left + right } -> Result;
+};
+
+concept default_constructible<T> = requires {
+  { T() } -> T;
+};
+
+concept constructed_from<T, Arg> = requires(Arg& argument) {
+  { T(argument) } -> T;
+};
+
+concept invokes<F, Arg, Result> = requires(F& function, Arg& argument) {
+  { function(argument) } -> Result;
+};
+
+concept integer_type<T> = std::meta::is_integral<T>();
+concept transferable_value<T> = std::meta::is_transferable<T>();
+
+concept math_value<T> =
+    adds_to<T, T, T> && std::copyable<T> && default_constructible<T>;
+
+struct Distance {
+  int value = 0;
+  Distance operator+(Distance& other) {
+    Distance result{.value = this.value + other.value};
+    return result;
+  }
+};
+
+class Counter {
+  int value;
+public:
+  Counter(int& value) : value(value) {}
+  int read() { return this.value; }
+};
+
+struct Doubler {
+  int operator()(int& value) { return value * 2; }
+};
+
+Result invoke<F, Arg, Result>(F& function, Arg& argument)
+    requires invokes<F, Arg, Result> {
+  return function(argument);
+}
+
+T sum<T>(T& left, T& right) requires math_value<T> {
+  return left + right;
+}
+
+T zero<T>() requires default_constructible<T> {
+  return T();
+}
+
+// Compiler-verified reflection facts and source operation checks select the
+// same ordinary concrete construction. The resource remains source-defined.
+mut int live_resources = 0;
+class DefaultResource {
+public:
+  DefaultResource() { live_resources += 1; }
+  DefaultResource(DefaultResource& other) = delete;
+  DefaultResource(DefaultResource&& other) = default;
+  ~DefaultResource() { live_resources -= 1; }
+};
+
+class DefaultHolder<T> {
+  T value;
+public:
+  DefaultHolder() requires std::default_initializable<T> : value(T()) {}
+};
+
+T default_from_fact<T>() requires std::default_initializable<T> {
+  return T();
+}
+
+T construct<T, Arg>(Arg& argument) requires constructed_from<T, Arg> {
+  return T(argument);
+}
+
+T twice<T>(T value) requires integer_type<T> && transferable_value<T> {
+  return value + value;
+}
+
+enum class status : uint8_t { ready = 0, busy = 1 };
+
+namespace query_hygiene {
+  mut int observed = 0;
+  #macro inspect(bool query) {
+    bool subject = false;
+    if (query) { observed += 1; }
+  }
+  #macro nested(bool query) {
+    bool subject = false;
+    inspect(query);
+  }
+  int check() {
+    int subject = 7;
+    // The macro's later bool local must not capture this caller's int local.
+    inspect(requires { { subject + subject } -> int; });
+    inspect(requires { { subject } -> bool; }); // false, no increment
+    inspect(requires(int& subject) { { subject + subject } -> int; });
+    nested(requires { { subject + subject } -> int; });
+    nested(requires(int& subject) { { subject + subject } -> int; });
+    inspect(requires(int& value) {
+      { (requires { { value + value } -> int; }) } -> bool;
+    });
+    inspect(requires {
+      { ([]() -> int { int subject = 2; return subject; })() } -> int;
+    });
+    inspect(requires(int& value) {
+      { ([&value]() -> int { return value; })() } -> int;
+    });
+    return observed == 7 ? 0 : 1;
+  }
+}
+
+int main() {
+  if (query_hygiene::check() != 0) { return 4; }
+  {
+    DefaultResource resource = default_from_fact<DefaultResource>();
+    DefaultHolder<DefaultResource> holder{};
+    if (live_resources != 2) { return 2; }
+  }
+  if (live_resources != 0) { return 3; }
+  static_assert(std::meta::is_enum_underlying<status, uint8_t>());
+  static_assert(std::meta::is_bitwise_relocatable<Distance>());
+  static_assert(requires(int& left, int& right) {
+    { left + right } -> int;
+    { left == right } -> bool;
+  });
+  static_assert(!(requires(Distance& value) {
+    { value + value } -> bool;
+  }));
+
+  Distance left{.value = 7};
+  Distance right{.value = 9};
+  Distance total = sum(left, right);
+  Distance empty = zero<Distance>();
+  Doubler doubler{};
+  int input = 3;
+  if (invoke<Doubler, int, int>(doubler, input) != 6) { return 1; }
+  int initial = 12;
+  Counter counter = construct<Counter, int>(initial);
+  return total.value == 16 && empty.value == 0 && counter.read() == 12 &&
+                 twice(initial) == 24
+             ? 0 : 1;
+}
