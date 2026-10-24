@@ -45,6 +45,7 @@ foreach(required_file
           "bin/gti_lsp"
           "lib/libgti_compiler.a"
           "lib/libgti_cpp_backend.a"
+          "lib/libgti_llvm_backend.a"
           "lib/libgti_driver.a"
           "lib/libgti_runtime.a"
           "lib/gti/llvm/libLLVMDemangle.a"
@@ -63,6 +64,7 @@ foreach(required_file
           "include/gti/runtime.h"
           "include/gti/runtime.hpp"
           "share/gti/VERSION"
+          "share/gti/llvm-backend-archives.txt"
           "share/gti/parser/gti.so"
           "share/gti/stdlib/modules/vector.gti"
           "share/gti/stdlib/modules/environment.gti"
@@ -81,6 +83,18 @@ foreach(required_file
           "share/licenses/gti/tomlplusplus-LICENSE.txt")
   if(NOT EXISTS "${GTI_STAGE_DIR}/${required_file}")
     message(FATAL_ERROR "Release staging is missing ${required_file}")
+  endif()
+endforeach()
+
+file(STRINGS "${GTI_STAGE_DIR}/share/gti/llvm-backend-archives.txt"
+     GTI_LLVM_BACKEND_ARCHIVES)
+if(GTI_LLVM_BACKEND_ARCHIVES STREQUAL "")
+  message(FATAL_ERROR "Release staging has an empty LLVM backend archive manifest")
+endif()
+foreach(archive IN LISTS GTI_LLVM_BACKEND_ARCHIVES)
+  if(NOT EXISTS "${GTI_STAGE_DIR}/lib/gti/llvm/${archive}")
+    message(FATAL_ERROR
+            "Release staging is missing LLVM backend archive ${archive}")
   endif()
 endforeach()
 

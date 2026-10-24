@@ -161,6 +161,11 @@ def archive_contract(root, cmake):
             target.write_bytes(f"staged fixture: {relative}\n".encode())
         version = (root / "VERSION").read_text().strip()
         (stage / "share/gti/VERSION").write_text(version + "\n")
+        llvm_backend_archive = "libLLVMCore.a"
+        (stage / "share/gti/llvm-backend-archives.txt").write_text(
+            llvm_backend_archive + "\n")
+        (stage / "lib/gti/llvm" / llvm_backend_archive).write_bytes(
+            b"fixture LLVM backend archive\n")
         libclang = stage / "lib/gti/llvm/libclang.so.20.1"
         libclang.write_bytes(b"fixture libclang\n")
         libclang.with_name("libclang.so.20").symlink_to(libclang.name)

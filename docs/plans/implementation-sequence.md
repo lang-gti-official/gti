@@ -10514,10 +10514,45 @@ admitted. Exact report identity and raw samples live in
   mechanism, without a benchmark-first gate. Verify and measure the resulting
   production implementation.
 
+### O-LLVM-01: Independent Native-Backend Foundation
+
+- **State/role:** complete infrastructure slice; no executable lowering.
+- **Implemented:** `LlvmBackend` is an installed independent consumer of sealed
+  `LoweredProgram`; the driver and direct CLI select it without changing the
+  C++ default; target-scoped LLVM Core/native-codegen dependencies, host target
+  initialization, object artifact vocabulary and object-only native link
+  request, classified unsupported behavior, packaging, and source/link
+  dependency gates are in place.
+- **Non-goals:** LLVM IR for any GTI instruction, a hard-coded program,
+  per-function C++ fallback, cross-backend ABI, cross compilation, or LLVM
+  representation in `LoweredProgram`.
+- **Exit gate:** forged lowered values fail before initialization; valid host
+  programs reach `GTI-B0003` without an artifact; C++ remains byte-compatible;
+  public headers expose no LLVM; system and bundled package link graphs retain
+  target ownership. ADR 031 owns the accepted boundary.
+
+### O-LLVM-02: First Real Scalar LLVM Lowering
+
+- **State/role:** planned next native-backend slice.
+- **Prerequisites:** O-LLVM-01 and ADR 016 are complete. Before implementation,
+  enumerate the exact `LoweredProgram` scalar declaration/body/ABI rows and
+  confirm their layouts need no backend-neutral additions.
+- **Bounded result:** lower a coherent set of non-owning scalar functions,
+  arithmetic, comparisons, branches, block parameters, calls, and returns;
+  construct the selected host target machine; verify each module; emit one
+  relocatable object through `BackendArtifactKind::Object`; and let the driver
+  link it with the ordinary runtime/native inputs.
+- **Acceptance:** unsupported bodies reject before partial publication; LLVM
+  verifier failures remain internal compiler errors with retained evidence;
+  C++/LLVM differential executions cover O0/O3, edge arithmetic, control flow,
+  calls, failure-free ABI and symbol identity; object bytes and project-cache
+  metadata are treated as binary artifacts. No cleanup, ownership, defined
+  failure, aggregate, generic, virtual, callback, thread, or FFI family enters
+  this slice without its complete lowered contract and separate evidence.
+
 Incremental dominance and LLVM bit-vector adoption remain measured/client-
-gated. A future LLVM backend requires complete MIR layout, ABI,
-temporary, drop, and executable authority; support-library adoption does not
-imply it.
+gated. Native LLVM emission proceeds through O-LLVM-02 rather than treating
+support-library availability as executable authority.
 
 ## Parallel Engineering Tracks
 
