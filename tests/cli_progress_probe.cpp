@@ -13,7 +13,7 @@ int main(int argc, char **argv) {
   const std::string_view operation = argv[1];
   const std::string_view phase = argv[2];
   if ((operation != "check" && operation != "build") ||
-      (phase != "hir" && phase != "mir")) {
+      (phase != "hir" && phase != "mir" && phase != "native")) {
     return 64;
   }
   lang::cli::TerminalStyle style;
@@ -25,11 +25,21 @@ int main(int argc, char **argv) {
                                     operation == "check"
                                         ? lang::cli::ProgressOperation::Check
                                         : lang::cli::ProgressOperation::Build);
-  lang::ProgressScope lowering(
-      progress.observer(), phase == "hir" ? lang::ProgressPhase::HirLowering
-                                          : lang::ProgressPhase::MirLowering);
+  lang::ProgressScope lowering(progress.observer(),
+                               phase == "hir" ? lang::ProgressPhase::HirLowering
+                               : phase == "mir"
+                                   ? lang::ProgressPhase::MirLowering
+                                   : lang::ProgressPhase::NativeDependency);
   if (std::cin.get() == std::char_traits<char>::eof()) {
     return 2;
+  }
+  if (phase == "native") {
+    progress.writeMessage("native script log");
+    progress.writeMessage("Reused native dependency alpha@0.1.0\n");
+    progress.writeMessage("Built native dependency beta@0.1.0\n");
+    if (std::cin.get() == std::char_traits<char>::eof()) {
+      return 2;
+    }
   }
   lowering.finish();
   progress.finish(true);

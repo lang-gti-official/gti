@@ -4532,6 +4532,12 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(cli_progress PROPERTIES TIMEOUT 180)
   add_test(
+    NAME cli_native_dependency_progress
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cli_native_dependency_progress_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(cli_native_dependency_progress PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+  add_test(
     NAME cli_install
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cli_install_test.py"
             "$<TARGET_FILE:gti>"

@@ -6346,6 +6346,13 @@ checks and preserve existing executable/representation bytes. A test-only
 renderer probe holds HIR and MIR phases open until the pseudo-terminal observes
 the elapsed row, then releases them. It requires `Checking` for check mode and
 `Building` for build mode without depending on a program's compilation speed.
+The native-phase probe publishes durable dependency messages while the heartbeat
+is active and verifies complete lines followed by resumed elapsed telemetry.
+`cli_native_dependency_progress` additionally runs actual dependency build scripts:
+one reused dependency precedes one deliberately rebuilt dependency, a native
+compiler is held until the PTY observes a live row, and both summaries must
+remain separate durable lines. It also checks quiet/plain output and verbose
+script output lacking a final newline, without suppressing later build phases.
 
 The native-detail assertion accepts the intended elapsed-time suffix and
 rejects explicit backend/tool labels. Pure positive and negative cases keep

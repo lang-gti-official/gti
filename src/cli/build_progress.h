@@ -24,6 +24,9 @@ public:
   ~BuildProgress();
   void onProgress(const ProgressEvent &event) noexcept override;
   [[nodiscard]] ProgressObserver *observer();
+  // Publish durable stderr output without racing the heartbeat or appending to
+  // its unfinished row. Missing final newlines are supplied; telemetry resumes.
+  void writeMessage(std::string_view message);
   // Join the heartbeat and clear any transient row before diagnostics or
   // program streams are rendered. finish() reports the actual final outcome.
   void suspend();
