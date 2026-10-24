@@ -366,6 +366,30 @@ NativeCompileRequest::dependencyFile() const {
   return nativeDependencyFile;
 }
 
+NativeLinkRequest::NativeLinkRequest(std::string compiler,
+                                     std::filesystem::path object,
+                                     std::filesystem::path output,
+                                     NativeInputs inputs, bool debugInfo)
+    : compilerExecutable(std::move(compiler)), objectPath(std::move(object)),
+      outputPath(std::move(output)), nativeInputs(std::move(inputs)),
+      sourceDebugInfo(debugInfo) {}
+
+const std::string &NativeLinkRequest::compiler() const {
+  return compilerExecutable;
+}
+
+const std::filesystem::path &NativeLinkRequest::object() const {
+  return objectPath;
+}
+
+const std::filesystem::path &NativeLinkRequest::output() const {
+  return outputPath;
+}
+
+bool NativeLinkRequest::debugInfo() const { return sourceDebugInfo; }
+
+const NativeInputs &NativeLinkRequest::inputs() const { return nativeInputs; }
+
 void appendNativeTargetPolicy(std::vector<std::string> &command,
                               const NativeTargetPolicy &policy) {
   if (!policy.triple.empty()) {
@@ -466,27 +490,11 @@ const NativeTargetPolicy &NativeCppCompileRequest::targetPolicy() const {
   return nativeTargetPolicy;
 }
 
-std::vector<std::string>
-NativeToolchain::command(const NativeCompileRequest &request) const {
-  std::vector<std::string> command{
-      request.compiler(), std::string(standardFlag(request.standard())),
-      std::string(optimizationFlag(request.optimization()))};
-  const NativeInputs &inputs = request.inputs();
-  // Driver-owned target selection precedes every forwarded native argument
-  // and every input, because it selects which toolchain files the compiler
-  // resolves the rest of the command against.
-  appendNativeTargetPolicy(command, inputs.targetPolicy);
-  for (const std::filesystem::path &directory : inputs.includeDirectories) {
-    command.emplace_back("-I" + directory.string());
-  }
-  command.insert(command.end(), inputs.compilerArguments.begin(),
-                 inputs.compilerArguments.end());
-  if (request.dependencyFile()) {
-    command.emplace_back("-MD");
-    command.emplace_back("-MF");
-    command.push_back(request.dependencyFile()->string());
-  }
-  command.push_back(request.generatedSource().string());
+namespace {
+
+void appendNativeLinkPlan(std::vector<std::string> &command,
+                          const NativeInputs &inputs,
+                          const std::filesystem::path &output) {
   for (const std::filesystem::path &directory : inputs.libraryDirectories) {
     command.emplace_back("-L" + directory.string());
   }
@@ -520,12 +528,48 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
   command.insert(command.end(), inputs.linkerArguments.begin(),
                  inputs.linkerArguments.end());
   command.emplace_back("-o");
-  command.push_back(request.output().string());
+  command.push_back(output.string());
   command.insert(command.end(), inputs.trailingArguments.begin(),
                  inputs.trailingArguments.end());
   for (const std::filesystem::path &library : inputs.finalLibraryFiles) {
     command.push_back(library.string());
   }
+}
+
+void appendReproducibleLinkPolicy(std::vector<std::string> &command) {
+#if defined(__APPLE__)
+  // Apple's linker randomizes LC_UUID in its fast (-O0) mode. Equal inputs
+  // must produce equal bytes for serial/parallel and cache verification.
+  command.emplace_back("-Wl,-reproducible");
+#else
+  static_cast<void>(command);
+#endif
+}
+
+} // namespace
+
+std::vector<std::string>
+NativeToolchain::command(const NativeCompileRequest &request) const {
+  std::vector<std::string> command{
+      request.compiler(), std::string(standardFlag(request.standard())),
+      std::string(optimizationFlag(request.optimization()))};
+  const NativeInputs &inputs = request.inputs();
+  // Driver-owned target selection precedes every forwarded native argument
+  // and every input, because it selects which toolchain files the compiler
+  // resolves the rest of the command against.
+  appendNativeTargetPolicy(command, inputs.targetPolicy);
+  for (const std::filesystem::path &directory : inputs.includeDirectories) {
+    command.emplace_back("-I" + directory.string());
+  }
+  command.insert(command.end(), inputs.compilerArguments.begin(),
+                 inputs.compilerArguments.end());
+  if (request.dependencyFile()) {
+    command.emplace_back("-MD");
+    command.emplace_back("-MF");
+    command.push_back(request.dependencyFile()->string());
+  }
+  command.push_back(request.generatedSource().string());
+  appendNativeLinkPlan(command, inputs, request.output());
   // These language-semantic flags deliberately follow every forwarded native
   // argument so a package cannot re-enable reassociation or contraction.
   command.emplace_back("-fno-fast-math");
@@ -535,13 +579,21 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
   command.emplace_back("-D__gti_strict_ieee754=1");
   if (request.debugInfo())
     command.emplace_back("-g");
-#if defined(__APPLE__)
-  // Apple's linker randomizes LC_UUID in its fast (-O0) mode, which would
-  // make identical builds produce different executables. Equal inputs must
-  // produce equal bytes for serial/parallel build equivalence and cache
-  // verification.
-  command.emplace_back("-Wl,-reproducible");
-#endif
+  appendReproducibleLinkPolicy(command);
+  return command;
+}
+
+std::vector<std::string>
+NativeToolchain::command(const NativeLinkRequest &request) const {
+  std::vector<std::string> command{request.compiler()};
+  const NativeInputs &inputs = request.inputs();
+  appendNativeTargetPolicy(command, inputs.targetPolicy);
+  command.push_back(request.object().string());
+  appendNativeLinkPlan(command, inputs, request.output());
+  if (request.debugInfo()) {
+    command.emplace_back("-g");
+  }
+  appendReproducibleLinkPolicy(command);
   return command;
 }
 
@@ -647,6 +699,16 @@ NativeToolchain::invoke(const NativeCompileRequest &request,
       {.outputMode = ProcessOutputMode::Capture,
        .captureSuccessfulOutput = options.captureSuccessfulOutput,
        .description = "native compiler"});
+}
+
+NativeProcessResult
+NativeToolchain::invoke(const NativeLinkRequest &request,
+                        NativeInvocationOptions options) const {
+  return invokeProcess(
+      command(request),
+      {.outputMode = ProcessOutputMode::Capture,
+       .captureSuccessfulOutput = options.captureSuccessfulOutput,
+       .description = "native linker"});
 }
 
 NativeProcessResult

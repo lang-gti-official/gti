@@ -4,12 +4,13 @@ Status: accepted
 
 ## Decision
 
-GTI uses LLVM's compiler-engineering support libraries — `LLVMSupport`,
-`LLVMTargetParser`, and `LLVMDemangle` — as a mandatory, narrowly confined
-dependency. LLVM IR, MC, Target, CodeGen, ORC, and every other component are
-out of scope: this decision adopts infrastructure, not a backend, and does
-not change the backend position recorded in
-[`docs/architecture/backend.md`](../architecture/backend.md).
+GTI's compiler core uses LLVM's compiler-engineering support libraries —
+`LLVMSupport`, `LLVMTargetParser`, and `LLVMDemangle` — as a mandatory,
+narrowly confined dependency. This decision governs that support-library
+surface. [ADR 031](031-native-llvm-backend-foundation.md) separately adopts
+LLVM IR, target, and code-generation components behind the independent
+`gti_llvm_backend` target; it does not broaden the compiler core or make LLVM
+types cross-phase authority.
 
 There is one compiler implementation. `find_package(LLVM CONFIG)` uses a
 system LLVM version 18 or newer; `GTI_BUNDLE_LLVM` is
@@ -44,6 +45,8 @@ Adopt LLVM for a facility only when all of these hold:
 4. the use is confined behind a GTI-owned type or function; and
 5. no LLVM type or `llvm/*` include reaches `include/gti/`.
 
+Except for the independently governed native backend, adopt support-library
+facilities under this rubric only from `ADT`, `Support`, or `TargetParser`.
 The controlling rule is: **LLVM should be selected only when it clearly
 provides the best implementation—not merely because it is available.** Making
 LLVM a required build dependency removes duplicate build configurations; it
@@ -126,9 +129,11 @@ is a separate future decision with its own ADR, not an incremental drift.
   this rule because LLVM's serializer sorts object keys before writing them;
   GTI owns the object schema and never iterates `json::Object` to assign
   protocol meaning.
-- **Link surface.** Only `LLVMSupport`, `LLVMTargetParser`, and
-  `LLVMDemangle` may be linked from LLVM. libclang — the one Clang library
-  GTI links — is governed by
+- **Link surface.** The compiler core links only `LLVMSupport`,
+  `LLVMTargetParser`, and `LLVMDemangle`. The separate
+  `gti_llvm_backend` target may link only the exact `Core`/`nativecodegen`
+  closure established by ADR 031. libclang — the one Clang library GTI links
+  — is governed by
   [ADR 021](021-libclang-c-import.md), not by this decision.
   `scripts/check_llvm_link_surface.py` (the `llvm_link_surface` test)
   enforces both surfaces in every build.
@@ -174,10 +179,10 @@ the Apache-2.0 modification-notice clause moot.
 
 ## Consequences
 
-- LLVM includes stay in the compiled implementation and out of public GTI
-  headers. Public consumers require LLVM libraries at link time through the
-  installed CMake package, but do not require LLVM headers merely to parse a
-  GTI header.
+- LLVM includes stay in compiled implementation files and out of public GTI
+  headers. Public consumers require the applicable LLVM libraries at link time
+  through the installed CMake package, but do not require LLVM headers merely
+  to parse a GTI header. The native backend preserves the same posture.
 - Crash handling, compile-time telemetry (`--time-trace`), target-triple
   parsing, checked-integer arithmetic, exact binary32/binary64 computation, the HIR
   instance lookup index, snapshot-scoped MIR dominance, and private LSP JSON

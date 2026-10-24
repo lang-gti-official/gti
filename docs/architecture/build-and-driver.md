@@ -60,6 +60,10 @@ choice enters a compilation request, manifest, executable or cache key.
 - `gti_cpp_backend` contains the compiled C++ emitter and consumes the immutable
   compiler-owned `LoweredProgram` contract plus explicit C++ standard policy.
   It depends on `gti_compiler`; the LSP never invokes it.
+- `gti_llvm_backend` is an independent `LoweredProgram` consumer. Its public
+  interface is LLVM-free; its private implementation owns LLVM IR/native
+  code-generation libraries and host initialization. It currently reports a
+  classified unsupported-backend diagnostic before emitting any artifact.
 - `gti_driver` in `include/gti/driver/` and `src/driver/` owns immutable
   compilation/build requests, resources, manifests, project plans, artifacts,
   native command construction, and process execution.
@@ -80,8 +84,9 @@ project-build-root locations so repository scripts and structural evidence do
 not acquire a path-dependent compatibility branch. A static CMake ownership
 gate rejects test registrations or test-source paths returning to the root.
 
-The installed `gti_compiler` and `gti_cpp_backend` archives remain the public
-compiled phase boundary. One private `gti_semantic_analysis` object target has
+The installed `gti_compiler`, `gti_cpp_backend`, and `gti_llvm_backend`
+archives form the public compiled backend boundary. One private
+`gti_semantic_analysis` object target has
 exactly one client: its objects enter `gti_compiler`, it exports no target, and
 it cannot link back to the compiler archive it helps construct. This makes the
 already-separated semantic implementation units one real build-DAG node. The
@@ -100,7 +105,10 @@ trial is deliberately absent.
 `gti_driver` exposes `compileWithBackend` as the generic whole-program backend
 seam. The driver runs the same frontend and optimization gates, constructs and
 verifies one `LoweredProgram`, and then invokes a caller-provided `Backend`
-with only that value. If construction or artifact generation fails, the driver
+with only that value. `CompilationRequest::withBackend` and
+`compileToSelectedBackend` add immutable built-in executable selection while
+preserving `compileToCpp` for explicit library clients. If construction or
+artifact generation fails, the driver
 returns `CompilationStatus::BackendFailure` with a structured entry-anchored
 diagnostic and the retained frontend source/diagnostic snapshot.
 The CLI renders that diagnostic and returns its ordinary compilation-failure
@@ -145,13 +153,17 @@ assembles `TargetInfo` directly is checked against the same OS, vendor,
 architecture, and layout vocabulary; assigning a canonical layout to an
 unknown target name does not bypass the boundary.
 
-`gti_cpp_backend` depends on `gti_compiler`, and `gti_driver` depends privately
-on the backend for the default native path; reverse dependencies are forbidden.
+Both executable backend libraries depend on `gti_compiler`, and `gti_driver`
+depends privately on them for selected native paths; reverse dependencies are
+forbidden. `gti_llvm_backend` privately links the exact LLVM
+`Core`/`nativecodegen` closure while `gti_compiler` retains its support-only
+surface. The configured component manifest and link-surface test prevent that
+closure from leaking onto other targets.
 All are installed static exact-version libraries without a stable cross-version
 compiler ABI promise. Installed consumers use `find_package(GTI CONFIG)` and
-the `GTI::compiler`, `GTI::cpp_backend`, `GTI::driver`, and `GTI::runtime`
-targets rather than linking archive paths by hand. Those targets carry the
-required LLVM support link dependencies. Self-contained release packages
+the `GTI::compiler`, `GTI::cpp_backend`, `GTI::llvm_backend`, `GTI::driver`,
+and `GTI::runtime` targets rather than linking archive paths by hand. Those
+targets carry their required LLVM link dependencies. Self-contained release packages
 include the pinned LLVM archives; a package produced against system LLVM
 requires that exact LLVM CMake package on the consumer machine. A CMake project
 consuming a system-LLVM GTI package must enable both C and C++ before
@@ -479,14 +491,31 @@ requests and direct/project emit-only modes remain valid without an entry.
 Externally supplied native entry points are not a GTI executable contract.
 
 Direct mode accepts one entry `.gti` source and remains manifest-independent.
-Its source graph produces one whole-program C++ artifact and one native compiler
-invocation. Repeatable `-D NAME` options seed valueless GTI configuration flags
+Its source graph produces one whole-program backend artifact and, for the
+production C++ backend, one native compiler invocation. `--backend cpp|llvm`
+selects the immutable executable backend; omission remains `cpp`. The LLVM
+choice currently reaches the verified `LoweredProgram` boundary and reports
+`GTI-B0003` because executable lowering is not implemented. It creates no
+artifact. `--std` and `--keep-cpp` are C++-only, and explicit emit modes keep
+their dedicated backend entry points rather than accepting `--backend`.
+Repeatable `-D NAME` options seed valueless GTI configuration flags
 for the invocation. Repeatable `-Wno-<group>` options (or the equivalent
 `--disable-warning <group>`) add validated warning groups to the immutable
 `CompilationRequest`; for example, `-Wno-unused-mut` suppresses `GTI-S2096`.
 Accepted native arguments after `--` remain exact argv values; native
 `-DNAME[=VALUE]` operands there are compiler arguments and do not define GTI
 flags.
+
+Backend source artifacts enter `NativeCompileRequest`, which applies the
+selected C++ standard and generated-source floating-point policy before
+linking. Backend object artifacts instead enter `NativeLinkRequest`: the
+driver publishes the opaque bytes atomically, then links them with the same
+target policy, declared native objects, ordered libraries/frameworks, and GTI
+runtime without adding source-language or code-generation flags. This object
+path is infrastructure for the LLVM backend and has no producer yet. Until the
+cache schema records binary artifact kind and extension, non-C++ executable
+requests bypass whole-program cache reuse rather than misclassifying object
+bytes as generated C++.
 The shared native-argument policy rejects response files and recognized option
 families that replace driver-owned output, executable build mode,
 language/optimization, target, sysroot, or data layout. Raw Clang cc1/driver
@@ -2174,6 +2203,10 @@ installs from a local project (not a registry or Git source), and installs one
 target per invocation.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
+Project manifests and project subcommands continue to select the production
+C++ backend. Native-backend project configuration is deferred until the LLVM
+backend can produce a real object and the project cache can record that artifact
+kind; direct selection is the only public LLVM foundation surface.
 The LSP consumes the driver-published project facts for host-target analysis and
 supports a named editor profile, with source-based target inference. Explicit
 editor selection of another workspace package, target, or cross target is not

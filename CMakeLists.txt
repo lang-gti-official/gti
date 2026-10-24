@@ -107,15 +107,27 @@ endif()
 
 # LLVM is a required compiler implementation dependency. GTI_BUNDLE_LLVM only
 # controls how that dependency is acquired: ordinary builds use a supported
-# installed LLVM, while release builds fetch the pinned version. Only
-# LLVMSupport, LLVMTargetParser, and LLVMDemangle may be linked; llvm/IR, MC,
-# Target, and CodeGen remain out of scope. LLVM headers stay private to
-# compiled implementation targets and never become a public-header dependency.
+# installed LLVM, while release builds fetch the pinned version. The compiler
+# core is confined to LLVMSupport, LLVMTargetParser, and LLVMDemangle. The
+# independent native backend additionally owns the exact Core/native-codegen
+# closure recorded below. LLVM headers stay private to compiled implementation
+# targets and never become a public-header dependency.
 set(GTI_PINNED_LLVM_VERSION "20.1.0")
 if(GTI_BUNDLE_LLVM)
   include(FetchContent)
   set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static bundled dependencies" FORCE)
-  set(LLVM_TARGETS_TO_BUILD "" CACHE STRING "GTI links no LLVM backends" FORCE)
+  string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" gti_llvm_host_processor)
+  if(gti_llvm_host_processor MATCHES "^(arm64|aarch64)$")
+    set(GTI_LLVM_NATIVE_TARGET "AArch64")
+  elseif(gti_llvm_host_processor MATCHES "^(x86_64|amd64)$")
+    set(GTI_LLVM_NATIVE_TARGET "X86")
+  else()
+    message(
+      FATAL_ERROR
+        "GTI's bundled LLVM backend supports only arm64/aarch64 and x86_64 hosts, not ${CMAKE_SYSTEM_PROCESSOR}")
+  endif()
+  set(LLVM_TARGETS_TO_BUILD "${GTI_LLVM_NATIVE_TARGET}" CACHE STRING
+      "GTI native LLVM backend host target" FORCE)
   set(LLVM_INCLUDE_TESTS OFF CACHE BOOL "Skip LLVM tests" FORCE)
   set(LLVM_INCLUDE_EXAMPLES OFF CACHE BOOL "Skip LLVM examples" FORCE)
   set(LLVM_INCLUDE_BENCHMARKS OFF CACHE BOOL "Skip LLVM benchmarks" FORCE)
@@ -231,6 +243,120 @@ foreach(gti_llvm_target IN ITEMS LLVMSupport LLVMTargetParser LLVMDemangle)
     endif()
   endif()
 endforeach()
+
+# Resolve the smallest LLVM component roots needed by the backend foundation.
+# `explicit_map_components_to_libraries` deliberately avoids a distribution's
+# monolithic libLLVM preference: component targets retain an auditable closure
+# in both ordinary builds and self-contained packages.
+if(NOT COMMAND explicit_map_components_to_libraries)
+  include("${LLVM_CMAKE_DIR}/LLVM-Config.cmake")
+endif()
+explicit_map_components_to_libraries(
+  GTI_LLVM_BACKEND_DIRECT_LIBRARIES core nativecodegen)
+if(NOT GTI_LLVM_BACKEND_DIRECT_LIBRARIES)
+  message(FATAL_ERROR
+          "LLVM ${GTI_LLVM_VERSION} did not resolve core/nativecodegen")
+endif()
+
+function(gti_collect_llvm_library_closure output)
+  set(queue ${ARGN})
+  set(closure)
+  while(queue)
+    list(POP_FRONT queue current)
+    if(current IN_LIST closure)
+      continue()
+    endif()
+    if(NOT TARGET "${current}")
+      message(FATAL_ERROR
+              "LLVM backend dependency ${current} is not a CMake target")
+    endif()
+    list(APPEND closure "${current}")
+    get_target_property(dependencies "${current}" INTERFACE_LINK_LIBRARIES)
+    if(dependencies)
+      foreach(dependency IN LISTS dependencies)
+        string(REGEX MATCHALL "LLVM[A-Za-z0-9_]+" llvm_dependencies
+                             "${dependency}")
+        foreach(llvm_dependency IN LISTS llvm_dependencies)
+          if(TARGET "${llvm_dependency}" AND
+             NOT llvm_dependency IN_LIST closure)
+            list(APPEND queue "${llvm_dependency}")
+          endif()
+        endforeach()
+      endforeach()
+    endif()
+  endwhile()
+  set(${output} "${closure}" PARENT_SCOPE)
+endfunction()
+
+gti_collect_llvm_library_closure(
+  GTI_LLVM_BACKEND_LIBRARY_CLOSURE ${GTI_LLVM_BACKEND_DIRECT_LIBRARIES})
+string(REPLACE ";" "\n" GTI_LLVM_BACKEND_COMPONENT_MANIFEST
+               "${GTI_LLVM_BACKEND_LIBRARY_CLOSURE}")
+file(GENERATE
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gti-llvm-backend-components.txt"
+  CONTENT "${GTI_LLVM_BACKEND_COMPONENT_MANIFEST}\n")
+
+function(gti_llvm_package_target source output)
+  if(source STREQUAL "LLVMSupport")
+    set(result "GTI_LLVM::Support")
+  elseif(source STREQUAL "LLVMTargetParser")
+    set(result "GTI_LLVM::TargetParser")
+  elseif(source STREQUAL "LLVMDemangle")
+    set(result "GTI_LLVM::Demangle")
+  else()
+    set(result "GTI_LLVM::${source}")
+  endif()
+  set(${output} "${result}" PARENT_SCOPE)
+endfunction()
+
+set(GTI_BUNDLED_LLVM_BACKEND_IMPORTS "")
+set(GTI_LLVM_BACKEND_ARCHIVE_TARGETS "")
+if(GTI_BUNDLE_LLVM)
+  foreach(component IN LISTS GTI_LLVM_BACKEND_LIBRARY_CLOSURE)
+    get_target_property(component_type "${component}" TYPE)
+    if(NOT component_type STREQUAL "STATIC_LIBRARY")
+      message(
+        FATAL_ERROR
+          "Bundled LLVM backend component ${component} must be static, but CMake created ${component_type}")
+    endif()
+    if(NOT component MATCHES "^(LLVMSupport|LLVMTargetParser|LLVMDemangle)$")
+      list(APPEND GTI_LLVM_BACKEND_ARCHIVE_TARGETS "${component}")
+      gti_llvm_package_target("${component}" imported_component)
+      string(APPEND GTI_BUNDLED_LLVM_BACKEND_IMPORTS
+             "  _gti_import_llvm_archive(${imported_component} \"${CMAKE_STATIC_LIBRARY_PREFIX}${component}${CMAKE_STATIC_LIBRARY_SUFFIX}\")\n")
+    endif()
+  endforeach()
+
+  foreach(component IN LISTS GTI_LLVM_BACKEND_ARCHIVE_TARGETS)
+    get_target_property(dependencies "${component}" INTERFACE_LINK_LIBRARIES)
+    set(imported_dependencies)
+    if(dependencies)
+      foreach(dependency IN LISTS dependencies)
+        string(REGEX MATCHALL "LLVM[A-Za-z0-9_]+" llvm_dependencies
+                             "${dependency}")
+        foreach(llvm_dependency IN LISTS llvm_dependencies)
+          if(llvm_dependency IN_LIST GTI_LLVM_BACKEND_LIBRARY_CLOSURE)
+            gti_llvm_package_target("${llvm_dependency}" imported_dependency)
+            list(APPEND imported_dependencies "${imported_dependency}")
+          endif()
+        endforeach()
+      endforeach()
+    endif()
+    list(REMOVE_DUPLICATES imported_dependencies)
+    gti_llvm_package_target("${component}" imported_component)
+    string(APPEND GTI_BUNDLED_LLVM_BACKEND_IMPORTS
+           "  set_target_properties(${imported_component} PROPERTIES INTERFACE_LINK_LIBRARIES \"${imported_dependencies}\")\n")
+  endforeach()
+
+  set(imported_direct_libraries)
+  foreach(component IN LISTS GTI_LLVM_BACKEND_DIRECT_LIBRARIES)
+    gti_llvm_package_target("${component}" imported_component)
+    list(APPEND imported_direct_libraries "${imported_component}")
+  endforeach()
+  string(APPEND GTI_BUNDLED_LLVM_BACKEND_IMPORTS
+         "  add_library(GTI_LLVM::Backend INTERFACE IMPORTED)\n"
+         "  set_target_properties(GTI_LLVM::Backend PROPERTIES INTERFACE_LINK_LIBRARIES \"${imported_direct_libraries}\")\n")
+endif()
 
 # The bindgen reader links exactly one clang-project library: libclang, the
 # stable C API (ADR 021). Component libraries (clangAST, clang-cpp, ...) stay
@@ -349,6 +475,7 @@ add_dependencies("gti_semantic_analysis" gti_diagnostic_registry)
 
 add_library(
   "gti_compiler" STATIC
+  "src/compiler/backend.cpp"
   $<TARGET_OBJECTS:gti_semantic_analysis>
   "src/compiler/ast_clone.cpp"
   "src/compiler/ast_printer.cpp"
@@ -469,6 +596,23 @@ target_include_directories("gti_cpp_backend" SYSTEM PRIVATE
 target_compile_features("gti_cpp_backend" PUBLIC cxx_std_20)
 target_link_libraries("gti_cpp_backend" PUBLIC gti_compiler)
 
+add_library("gti_llvm_backend" STATIC "src/compiler/llvm_backend.cpp")
+target_include_directories(
+  "gti_llvm_backend"
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_include_directories("gti_llvm_backend" SYSTEM PRIVATE
+                           ${GTI_LLVM_INCLUDE_DIRS})
+target_compile_features("gti_llvm_backend" PUBLIC cxx_std_20)
+target_link_libraries(
+  "gti_llvm_backend"
+  PUBLIC gti_compiler
+  PRIVATE "$<BUILD_INTERFACE:${GTI_LLVM_BACKEND_DIRECT_LIBRARIES}>"
+          "$<INSTALL_INTERFACE:GTI_LLVM::Backend>"
+)
+
 add_library(
   "gti_runtime" STATIC
   "runtime/src/charconv.cpp"
@@ -545,7 +689,11 @@ target_include_directories(
 target_include_directories("gti_driver" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_include_directories("gti_driver" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include")
 target_compile_features("gti_driver" PUBLIC cxx_std_20)
-target_link_libraries("gti_driver" PUBLIC gti_compiler PRIVATE gti_cpp_backend gti_bindgen gti_runtime)
+target_link_libraries(
+  "gti_driver"
+  PUBLIC gti_compiler
+  PRIVATE gti_cpp_backend gti_llvm_backend gti_bindgen gti_runtime
+)
 if(APPLE)
   enable_language(OBJCXX)
   set_target_properties(gti_driver PROPERTIES OBJCXX_STANDARD 20
@@ -661,11 +809,13 @@ install(TARGETS gti RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
         COMPONENT gti_toolchain)
 set_target_properties(gti_compiler PROPERTIES EXPORT_NAME compiler)
 set_target_properties(gti_cpp_backend PROPERTIES EXPORT_NAME cpp_backend)
+set_target_properties(gti_llvm_backend PROPERTIES EXPORT_NAME llvm_backend)
 set_target_properties(gti_driver PROPERTIES EXPORT_NAME driver)
 set_target_properties(gti_bindgen PROPERTIES EXPORT_NAME bindgen)
 set_target_properties(gti_runtime PROPERTIES EXPORT_NAME runtime)
 install(
-  TARGETS gti_compiler gti_cpp_backend gti_driver gti_bindgen gti_runtime
+  TARGETS gti_compiler gti_cpp_backend gti_llvm_backend gti_driver gti_bindgen
+          gti_runtime
   EXPORT GTITargets
   ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   COMPONENT gti_toolchain
@@ -704,6 +854,23 @@ if(GTI_BUNDLE_LLVM)
           "$<TARGET_FILE:LLVMTargetParser>"
           "$<TARGET_FILE:LLVMDemangle>"
     DESTINATION "${GTI_LLVM_ARCHIVE_INSTALL_DIR}"
+    COMPONENT gti_toolchain
+  )
+  foreach(component IN LISTS GTI_LLVM_BACKEND_ARCHIVE_TARGETS)
+    install(
+      FILES "$<TARGET_FILE:${component}>"
+      DESTINATION "${GTI_LLVM_ARCHIVE_INSTALL_DIR}"
+      COMPONENT gti_toolchain
+    )
+  endforeach()
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/llvm-backend-archives.txt" "")
+  foreach(component IN LISTS GTI_LLVM_BACKEND_ARCHIVE_TARGETS)
+    file(APPEND "${CMAKE_CURRENT_BINARY_DIR}/llvm-backend-archives.txt"
+         "${CMAKE_STATIC_LIBRARY_PREFIX}${component}${CMAKE_STATIC_LIBRARY_SUFFIX}\n")
+  endforeach()
+  install(
+    FILES "${CMAKE_CURRENT_BINARY_DIR}/llvm-backend-archives.txt"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/gti"
     COMPONENT gti_toolchain
   )
   # libclang is deliberately shared — the C API's supported distribution form

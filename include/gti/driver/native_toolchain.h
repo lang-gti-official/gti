@@ -171,6 +171,30 @@ private:
   bool sourceDebugInfo = false;
 };
 
+// Links a backend-produced native object without applying source-language,
+// preprocessing, or frontend code-generation flags. The backend owns the
+// object's target and code-generation policy; the driver owns executable
+// publication and composition with native dependencies and the GTI runtime.
+class NativeLinkRequest final {
+public:
+  NativeLinkRequest(std::string compiler, std::filesystem::path object,
+                    std::filesystem::path output, NativeInputs inputs,
+                    bool debugInfo = false);
+
+  [[nodiscard]] const std::string &compiler() const;
+  [[nodiscard]] const std::filesystem::path &object() const;
+  [[nodiscard]] const std::filesystem::path &output() const;
+  [[nodiscard]] bool debugInfo() const;
+  [[nodiscard]] const NativeInputs &inputs() const;
+
+private:
+  std::string compilerExecutable;
+  std::filesystem::path objectPath;
+  std::filesystem::path outputPath;
+  NativeInputs nativeInputs;
+  bool sourceDebugInfo = false;
+};
+
 class NativeCCompileRequest final {
 public:
   NativeCCompileRequest(std::string compiler, std::filesystem::path source,
@@ -250,6 +274,9 @@ public:
   command(const NativeCompileRequest &request) const;
 
   [[nodiscard]] std::vector<std::string>
+  command(const NativeLinkRequest &request) const;
+
+  [[nodiscard]] std::vector<std::string>
   command(const NativeCCompileRequest &request) const;
 
   [[nodiscard]] std::vector<std::string>
@@ -276,6 +303,10 @@ public:
 
   [[nodiscard]] NativeProcessResult
   invoke(const NativeCompileRequest &request,
+         NativeInvocationOptions options = {}) const;
+
+  [[nodiscard]] NativeProcessResult
+  invoke(const NativeLinkRequest &request,
          NativeInvocationOptions options = {}) const;
 
   [[nodiscard]] NativeProcessResult

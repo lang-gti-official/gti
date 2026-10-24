@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -7,6 +8,15 @@
 namespace lang {
 
 class LoweredProgram;
+
+enum class BackendKind {
+  Cpp,
+  Llvm,
+};
+
+[[nodiscard]] std::string_view backendKindName(BackendKind backend);
+[[nodiscard]] std::optional<BackendKind>
+parseBackendKind(std::string_view name);
 
 enum class BackendArtifactKind {
   Source,

@@ -36,8 +36,9 @@ while canonical language documents continue to describe actual support.
 - [Optimization](architecture/optimization.md) — verified local MIR passes,
   reusable dataflow/SCCP, bounded loop and alias facts, stable proof replay,
   per-instance effects, and optimizer observability.
-- [Backend](architecture/backend.md) — the verified-MIR body contract, sealed
-  C++ representation planning, and native compilation handoff.
+- [Backend](architecture/backend.md) — the sealed `LoweredProgram` consumer
+  contract, production C++ backend, foundational LLVM backend, and native
+  artifact handoff.
 - [Diagnostics](architecture/diagnostics.md) — structured diagnostics, spans,
   fix-its, recovery, and test expectations.
 - [Standard library and runtime](architecture/standard-library-and-runtime.md)
@@ -159,6 +160,9 @@ while canonical language documents continue to describe actual support.
 - [030: Confined typed statement macros](decisions/030-deferred-statement-helpers.md)
   — typed source-defined conditional APIs without eager argument evaluation,
   runtime closures or assertion-name compiler magic.
+- [031: Native LLVM backend foundation](decisions/031-native-llvm-backend-foundation.md)
+  — establishes an independent `LoweredProgram` consumer, target-scoped LLVM
+  build ownership, explicit selection and fail-closed pre-lowering status.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

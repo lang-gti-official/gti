@@ -128,11 +128,14 @@ struct Options {
   std::vector<std::string> compilerArguments;
   lang::ConfigurationFlags configurationFlags;
   std::vector<std::string> disabledWarnings;
+  lang::BackendKind backend = lang::BackendKind::Cpp;
   lang::CppStandard standard = lang::CppStandard::Cpp23;
   lang::OptimizationLevel optimization = lang::OptimizationLevel::O0;
   lang::ExecutionProfile executionProfile =
       lang::ExecutionProfile::SingleThreaded;
   bool executionProfileSelected = false;
+  bool backendSelected = false;
+  bool standardSelected = false;
   bool emitCpp = false;
   bool emitMir = false;
   bool emitNativeHeader = false;
@@ -310,6 +313,8 @@ void printUsage(std::ostream &stream) {
          "debug symbols.\n"
          "      --no-debug-info  Disable source-level debug info.\n"
          "      --cxx <path>     Select the native compiler.\n"
+         "      --backend <name> Select cpp (default) or llvm. The LLVM "
+         "backend is foundational and does not emit executables yet.\n"
          "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
          "      --execution-profile <name>\n"
          "                       Select single-threaded (default) or "
@@ -607,6 +612,25 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
       options.cxx = argv[index];
       continue;
     }
+    if (argument == "--backend") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing name after --backend\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.backendSelected) {
+        std::cerr << "gti: --backend may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      const std::optional<lang::BackendKind> backend =
+          lang::parseBackendKind(argv[index]);
+      if (!backend) {
+        std::cerr << "gti: --backend must be cpp or llvm\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.backend = *backend;
+      options.backendSelected = true;
+      continue;
+    }
     if (argument == "--std") {
       if (++index >= argc) {
         std::cerr << "gti: missing version after --std\n";
@@ -619,6 +643,7 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
         return ArgumentResult::ExitFailure;
       }
       options.standard = *standard;
+      options.standardSelected = true;
       continue;
     }
     if (argument == "--execution-profile") {
@@ -794,6 +819,20 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
   if (options.debugInfo && (options.emitMir || options.emitNativeHeader)) {
     std::cerr << "gti: debug info requires executable or backend "
                  "representation output\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.backendSelected &&
+      (options.emitCpp || options.emitNativeHeader || options.emitMir)) {
+    std::cerr << "gti: --backend selects executable generation and cannot be "
+                 "combined with an explicit emission mode\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.backend == lang::BackendKind::Llvm && options.keepCpp) {
+    std::cerr << "gti: --keep-cpp is available only with --backend cpp\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.backend == lang::BackendKind::Llvm && options.standardSelected) {
+    std::cerr << "gti: --std configures only the C++ backend\n";
     return ArgumentResult::ExitFailure;
   }
   if ((options.emitCpp || options.emitNativeHeader || options.emitMir) &&
@@ -2379,7 +2418,9 @@ int runDirect(const Options &options, const char *driver) {
   const std::filesystem::path generatedSource =
       options.keepCpp
           ? std::filesystem::path(options.output.string() + ".gti.cpp")
-          : lang::driver::temporaryCppPath(options.input);
+      : options.backend == lang::BackendKind::Cpp
+          ? lang::driver::temporaryCppPath(options.input)
+          : lang::driver::temporaryArtifactPath(options.input, ".o");
   lang::driver::NativeInputs nativeInputs;
   nativeInputs.trailingArguments = options.compilerArguments;
   const lang::driver::ExecutableBuildResult result =
@@ -2395,7 +2436,8 @@ int runDirect(const Options &options, const char *driver) {
                   options.rawPointerAudit.value_or(
                       lang::RawPointerAuditMode::Off),
                   {}, {},
-                  options.rawPointerAuditLibraryFindings.value_or(false)),
+                  options.rawPointerAuditLibraryFindings.value_or(false))
+                  .withBackend(options.backend),
               toolchain, generatedSource, options.output,
               lang::driver::discoverNativeCompiler(options.cxx),
               std::move(nativeInputs), options.keepCpp, false, options.verbose,

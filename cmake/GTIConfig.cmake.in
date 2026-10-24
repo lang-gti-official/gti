@@ -49,6 +49,11 @@ if("@GTI_PACKAGE_BUNDLED_LLVM@" STREQUAL "ON")
     GTI_LLVM::TargetParser
     PROPERTIES INTERFACE_LINK_LIBRARIES GTI_LLVM::Support)
 
+@GTI_BUNDLED_LLVM_BACKEND_IMPORTS@
+  if(DEFINED GTI_FOUND AND NOT GTI_FOUND)
+    return()
+  endif()
+
   # libclang ships as the shared C API beside the bundled archives; the
   # installed GTI::bindgen archive resolves it here.
   if(NOT TARGET GTI_LLVM::libclang)
@@ -81,6 +86,24 @@ else()
         PROPERTIES INTERFACE_LINK_LIBRARIES "LLVM${component}")
     endif()
   endforeach()
+
+  if(NOT COMMAND explicit_map_components_to_libraries)
+    include("${LLVM_CMAKE_DIR}/LLVM-Config.cmake")
+  endif()
+  explicit_map_components_to_libraries(_gti_llvm_backend_libraries
+                                       core nativecodegen)
+  if(NOT _gti_llvm_backend_libraries)
+    set(GTI_FOUND FALSE)
+    set(GTI_NOT_FOUND_MESSAGE
+        "LLVM @GTI_LLVM_VERSION@ does not provide core/nativecodegen")
+    return()
+  endif()
+  if(NOT TARGET GTI_LLVM::Backend)
+    add_library(GTI_LLVM::Backend INTERFACE IMPORTED)
+    set_target_properties(
+      GTI_LLVM::Backend
+      PROPERTIES INTERFACE_LINK_LIBRARIES "${_gti_llvm_backend_libraries}")
+  endif()
 
   # The bindgen archive's one clang-project dependency (ADR 021). Clang must
   # be the one matching the LLVM resolved above: a host carrying several

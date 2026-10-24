@@ -9,6 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.469.0 — Native LLVM backend foundation
+
+- The compiler now has an independent installed `LlvmBackend` beside the
+  production `CppBackend`. Both receive only the sealed, verified
+  `LoweredProgram`; frontend, optimizer-private and C++ representation state
+  cannot enter the LLVM backend.
+- Direct compilation accepts `--backend cpp|llvm`, with C++ unchanged as the
+  default. LLVM selection currently returns the classified `GTI-B0003`
+  limitation that executable lowering is not implemented and publishes no
+  artifact; no dummy program or instruction lowering is included.
+- LLVM IR/native-code-generation dependencies, host initialization, package
+  exports and release archives are isolated behind `gti_llvm_backend`. The
+  compiler core retains its narrow support-library link surface, and the next
+  backend phase can begin real scalar-to-object lowering from the existing
+  driver and artifact boundaries.
+
 ## 0.468.5 — Canonical Gitea hosting
 
 - Source, issues, PRs, Actions, tags, release downloads and agent tooling return

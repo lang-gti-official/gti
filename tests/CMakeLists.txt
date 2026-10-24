@@ -461,6 +461,13 @@ target_link_libraries("gti_cpp_backend_library_smoke"
 add_test(NAME cpp_backend_library_boundary
          COMMAND gti_cpp_backend_library_smoke)
 
+add_executable("gti_llvm_backend_library_smoke"
+               "${PROJECT_SOURCE_DIR}/tests/llvm_backend_library_smoke.cpp")
+target_link_libraries("gti_llvm_backend_library_smoke"
+                      PRIVATE gti_llvm_backend)
+add_test(NAME llvm_backend_library_boundary
+         COMMAND gti_llvm_backend_library_smoke)
+
 add_executable("gti_driver_library_smoke" "${PROJECT_SOURCE_DIR}/tests/driver_library_smoke.cpp")
 target_link_libraries("gti_driver_library_smoke" PRIVATE gti_driver)
 add_test(NAME driver_library_boundary COMMAND gti_driver_library_smoke)
@@ -1556,9 +1563,15 @@ target_link_libraries("gti_lowered_program_census" PRIVATE gti_compiler)
 add_executable("gti_backend_lowered_program_rejection_tests"
                "${PROJECT_SOURCE_DIR}/tests/backend_lowered_program_rejection_tests.cpp")
 target_link_libraries("gti_backend_lowered_program_rejection_tests"
-                      PRIVATE gti_cpp_backend)
+                      PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME backend_lowered_program_rejection
          COMMAND gti_backend_lowered_program_rejection_tests)
+
+add_executable("gti_llvm_backend_foundation_tests"
+               "${PROJECT_SOURCE_DIR}/tests/llvm_backend_foundation_tests.cpp")
+target_link_libraries("gti_llvm_backend_foundation_tests"
+                      PRIVATE gti_llvm_backend)
+add_test(NAME llvm_backend_foundation COMMAND gti_llvm_backend_foundation_tests)
 
 add_executable("gti_cpp_mir_program_plan_tests"
                "${PROJECT_SOURCE_DIR}/tests/cpp_mir_program_plan_tests.cpp")
@@ -4500,6 +4513,12 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/llvm_link_surface_test.py"
             "${PROJECT_SOURCE_DIR}/scripts/check_llvm_link_surface.py"
+  )
+  add_test(
+    NAME llvm_backend_cli
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/llvm_backend_cli_test.py"
+            "$<TARGET_FILE:gti>"
   )
   add_test(
     NAME cli_workflow
