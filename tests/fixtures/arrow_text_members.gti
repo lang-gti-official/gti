@@ -1,0 +1,83 @@
+#include <std/string>
+#include <std/optional>
+#include <std/vector>
+
+// `x->m(...)` calls member `m` of the place the selected `operator->`
+// returns. A builtin text referent supplies its own members exactly as it
+// does through `.`, whatever class provides the checked access step.
+class Label {
+public:
+  std::string_view text;
+  Label(std::string_view text) : text(text) {}
+  std::string_view& operator->() { return this.text; }
+};
+
+// Paired receiver overloads: a mutable object selects the mutable step.
+class Slot {
+public:
+  mut std::string_view text;
+  Slot(std::string_view text) : text(text) {}
+  std::string_view& operator->() { return this.text; }
+  mut std::string_view& operator->() mut { return this.text; }
+};
+
+// The same rule through a generic wrapper whose referent is an unrelated
+// user type, constrained only by a member requirement.
+class Counter {
+  int value;
+public:
+  Counter(int value) : value(value) {}
+  int count() { return this.value; }
+};
+
+class Handle<T> {
+  T item;
+public:
+  Handle(T item) : item(item) {}
+  T& operator->() { return this.item; }
+};
+
+concept countable<T> = requires(T& x) { { x.count() } -> int; };
+
+int total<T>(Handle<T>& handle) requires countable<T> {
+  return handle->count();
+}
+
+uint64_t measure(Label& label) { return label->size(); }
+
+int main(int argc, std::vector<std::string> argv) {
+  Label literal = Label("literal");
+  Label blank = Label("");
+  std::println(literal->size());
+  std::println(literal->empty() ? 1 : 0);
+  std::println(blank->empty() ? 1 : 0);
+  // Iterator-factory members take the designated view as their first input.
+  std::println(literal->end().position());
+  std::println(literal->rend().position());
+  std::println(measure(literal));
+
+  std::string owner{"owned"};
+  Label owned = Label(owner.view());
+  std::println(owned->size() + owned->end().position());
+
+  Slot fixed = Slot("fixed");
+  mut Slot changing = Slot("changing");
+  std::println(fixed->size() + changing->size());
+
+  std::string_view text = "optional";
+  std::optional<std::string_view> maybe = text;
+  std::optional<std::string_view> viewed =
+      std::optional<std::string_view>(owner.view());
+  std::println(maybe->size() + viewed->size());
+  std::println(maybe->empty() ? 1 : 0);
+
+  Handle<Counter> handle = Handle<Counter>(Counter(4));
+  std::println(total(handle));
+
+  // An empty optional's checked access step fails before the member runs.
+  if (argc > 1) {
+    std::optional<std::string_view> none = std::optional<std::string_view>();
+    std::println(none->size());
+  }
+  return 0;
+}

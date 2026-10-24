@@ -3098,7 +3098,11 @@ late source diagnostic or relying on generated C++ behavior.
 
 Member stores retain their semantic `Reinitialize` event. A checked-arrow
 store lowers its selected access call separately from the field assignment,
-preserving the assignment operation and the exact call-result loan. Reading an
+preserving the assignment operation and the exact call-result loan. A
+checked-arrow member call is split the same way in HIR. A trusted builtin member
+whose receiver semantics normalized into argument zero, such as a text-view
+iterator factory, receives that access call's reference result as argument
+zero rather than the written object. Reading an
 owner handle does not read its pointee's moved fields; accessing those fields
 or moving the whole owner still requires their availability.
 
