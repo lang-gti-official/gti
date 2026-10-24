@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.467.5 — References to payload enums held inside another enum
+## 0.468.2 — References to payload enums held inside another enum
 
 - `std::optional<Shape>::value()` for a payload enum without cleanup, such as
   `enum Shape { circle(int radius), none }`, used to fail while compiling the
@@ -19,6 +19,93 @@ for what minor and patch releases mean.
   affected any reference bound to an `auto&` payload of that kind, whether
   returned by your own accessor or bound directly, as in
   `case Wrap::one(auto& s): Shape& r = s;`.
+
+## 0.468.1 — References into values over a local owner's text
+
+- Fixed a use-after-free present since 0.465.2. A reference that a method or
+  function returns into a value holding a local string's text, as in
+  `Word& wordRef() { return this.word; }` called on `Line line =
+  Line(input.view());`, could be passed to a function that stores the text,
+  copied or moved out, stored in a global, bound to a reference local and
+  passed on, or returned as a copy, leaving a view of freed memory. Each now
+  reports `error[GTI-S2045]`, as `line.word` already did. Switching on the
+  result in place, or on a reference local bound to it, still works:
+
+  ```gti
+  Word& word = line.wordRef();
+  switch (word) { case Word::text(value): std::println(value); break; ... }
+  keepWordRef(line.wordRef());   // now error[GTI-S2045]
+  ```
+
+- A method returning one of several fields by reference, such as
+  `Word& either(bool first)`, can again be switched on in place over a local
+  owner's text, as before 0.468.0.
+- A function taking a class by reference can pass on the reference one of
+  its methods returns, as in `keepWordRef(line.wordRef())`, while another
+  field of the class holds a local owner's text; this was an internal
+  compiler error (`GTI-B0001`).
+
+## 0.468.0 — Views of the caller's string in results and nested values
+
+- A function can now return a value over the text of one of its read-only
+  reference parameters, and each call's result views that call's argument:
+
+  ```gti
+  expected<int, std::string_view> parse(std::string& input) {
+    if (input.empty()) {
+      return 0;
+    }
+    return unexpected(input.view());
+  }
+  ```
+
+  This used to report `error[GTI-S2045]`. The caller can read
+  `parsed.error()`, and changing or moving the string while the result is
+  still used reports `error[GTI-S2017]`. The same works for your own classes
+  and enums, as in `Token tokenOf(std::string& input) { return
+  Token(input.view(), 1); }`, and for `std::optional<std::string_view>` with
+  `return std::nullopt;` on another path. A view of a local, a by-value or
+  `mut` parameter, or the method's own receiver still reports
+  `error[GTI-S2045]`.
+- Implicit conversions keep the text's owner, so
+  `std::optional<std::string_view> o = input.view();` and
+  `expected<int, std::string_view> r = unexpected(input.view());` no longer
+  report `error[GTI-S2045]`. A value built over a `std::string_view` local,
+  such as `Token(view, 1)` after `std::string_view view = input.view();`,
+  used to report `error[GTI-B0001]` (an internal compiler error); it now
+  views `input`.
+- A value that holds a class or enum with a view inside now keeps that view's
+  owner too. `Outer(Report(Diag(input.view(), 4), 5))`,
+  `std::optional<Token> maybe = Token(input.view(), 6);` and an
+  `expected<int, Diag> check(std::string& input)` that returns
+  `unexpected(Diag(input.view(), 3))` used to report `error[GTI-S2045]`;
+  reading `outer.report.diag.text`, `(*maybe).text` or
+  `checked.error().text` now works.
+- A constructor that stores a text field of one of its class parameters, such
+  as `Wrap(Token token) : word(Word::text(token.text)) {}`, now passes the
+  argument's text on instead of requiring a literal, and
+  `std::move(failure).error()` reads an `unexpected_value` over a local
+  string. A consuming method that returns its moved text field, like
+  `std::string_view take() && { return std::move(this.text); }`, works the
+  same way.
+- Copying a payload binding into a local view, as in `std::string_view view =
+  value;` inside `case Word::text(value):`, used to report `error[GTI-B0001]`;
+  it now works.
+- Fixed a 0.463.0 soundness bug that could leave a dangling view. A method
+  that copied an enum field holding a view of a local string, passed it on or
+  stored it, directly or through an accessor like `Word& wordRef() { return
+  this.word; }`, as in `void keep() { Word w = this.word; switch (w) { case
+  Word::text(v): kept = v; break; ... } }`, compiled when called on such a
+  value. It now reports `error[GTI-S2045]`; over literal text it still works,
+  and switching on the field or the accessor in place still relays its text.
+- Programs that use `std::vector` run at 0.448.4 speed again. Since 0.449.0 a
+  checked loop over a vector ran about 8 to 10 times slower, and a game-style
+  update loop about 3 times slower, because the optimizer lost what it knew
+  about values returned through `expected`.
+- Functions and constructors that build an `expected`, `unexpected(...)` or
+  your own enum-holding class from numbers, enums or plain records, such as
+  `Slot(int32_t n) : state(slot_state::ready(n)) {}`, are again known not to
+  fail, as in 0.448.4, so their callers no longer check for a failure.
 
 ## 0.467.4 — Replacing a payload enum through a reference
 

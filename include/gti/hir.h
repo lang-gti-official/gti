@@ -627,6 +627,8 @@ struct HirFunctionInstance {
   std::vector<std::size_t> ownerlessTextParameters;
   std::vector<OwnerlessTextField> ownerlessTextFields;
   std::vector<PublishedTextField> publishedTextFields;
+  // FunctionInfo::dependentTextReturn.
+  bool dependentTextReturn = false;
   std::optional<SemanticOwnerlessTextContractProof> ownerlessTextContractProof;
   std::vector<HirBindingId> parameterBindings;
   ProgramEntryKind entryKind = ProgramEntryKind::None;

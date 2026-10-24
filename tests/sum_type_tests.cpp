@@ -257,11 +257,14 @@ void testSemanticAndIrModel() {
       gti_test::emitCpp(result, result.mir, result.mir, optimizations);
   expect(
       artifact.contents.find("union Bits {") != std::string::npos &&
+          // Native alternatives carry the source ordinals unshifted; the
+          // backend-private empty shell is the final alternative.
           artifact.contents.find(
-              "::gti_internal::backend::payload_variant<std::monostate") !=
-              std::string::npos &&
+              "::gti_internal::backend::payload_variant<__gti_variant_0, "
+              "__gti_variant_1, __gti_variant_2, std::monostate> "
+              "__gti_value;") != std::string::npos &&
           artifact.contents.find(".__gti_value.index()") != std::string::npos &&
-          artifact.contents.find("::gti_internal::backend::payload_get<2>(") !=
+          artifact.contents.find("::gti_internal::backend::payload_get<1>(") !=
               std::string::npos &&
           artifact.contents.find("std::is_union_v<Bits>") != std::string::npos,
       "the C++ backend should use native unions and tagged variant storage");
@@ -859,8 +862,7 @@ int main() {
              wrapperDefinition != std::string::npos &&
              enumDefinition < wrapperDefinition &&
              containmentArtifact.contents.find(
-                 "::gti_internal::backend::payload_variant<std::monostate") !=
-                 std::string::npos,
+                 ", std::monostate> __gti_value;") != std::string::npos,
          "the C++ type schedule should define an embedded payload enum before "
          "its owning class and retain the private disengaged shell");
 

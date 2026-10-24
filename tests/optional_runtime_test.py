@@ -51,8 +51,8 @@ def validate_representation(generated: str, mode: str) -> bool:
     required = (
         "struct __gti_variant_0",
         "struct __gti_variant_1",
-        "::gti_internal::backend::payload_variant<std::monostate, "
-        "__gti_variant_0, __gti_variant_1> __gti_value;",
+        "::gti_internal::backend::payload_variant<__gti_variant_0, "
+        "__gti_variant_1, std::monostate> __gti_value;",
     )
     forbidden = ("operator new", "unique_ptr", "std::optional<", "optional_storage")
     if depth or any(item not in optional for item in required) or any(

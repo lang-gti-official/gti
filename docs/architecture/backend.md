@@ -380,6 +380,16 @@ slot. Only a successful result activates the replacement stage, so
 receiver failure cannot overwrite the old destination, and failed replacement
 cleanup destroys the unpublished result without committing it.
 
+A construction whose only use is the Return publishes inline at the Return
+unless the failure form can fail in between. When an Invoke or a
+defined-failure source lies on a path from the construction to that Return,
+as fallible scope-exit destructors do after a failure-free `expected`
+construction (RT-12), the failure form builds the result in the out-parameter
+at its MIR position, as it does for a result with a `ReturnResult`
+obligation. Its staged inputs are then consumed where MIR consumes them, so a
+later failure finds no input slot still live; a result with no obligation is
+passive and needs no cleanup on that path.
+
 A member or closure receiver moved out of a named binding materializes at its
 `Move`: the backend constructs the receiver's lifetime slot from the binding
 there, and the Receiver `MoveValue` input and the call only alias that slot.
@@ -1218,9 +1228,21 @@ out-of-line helper frame, not in one caller-frame local per terminal block.
 GNU-compatible compilers use cold/noinline hints; MSVC uses noinline. The helper
 is not noexcept because managed-worker emergency handoff can unwind through it.
 
-Every emitted `Invoke` failure alternate is an `[[unlikely]]` branch, so native
-block placement and call-site frequencies treat the failure path as cold. A
-detector's failure record and its incoming-cleanup check are one out-of-line
+Every emitted `Invoke` failure alternate is cold for native block placement
+and call-site frequencies. The emitter spells it `[[unlikely]]`, except for a
+failure-form call whose callee carries the always-inline small-source hint
+(`cppMirSmallSourceBody`, the same predicate that spells the declaration). That
+alternate begins with the cold, noinline incoming-cleanup check, and once the
+callee inlines, its own failure path ends in a cold publication or check call.
+A weight on the success flag would instead survive inlining as a claim about
+the data condition that success reduces to, such as a payload tag; native jump
+threading then moved it onto the unrelated branch that selected the tag, and
+with the trailing payload-enum tag (RT-11) a `has_value()`/`value()` loop ran
+about twice as slowly. Calls the native inliner may decline keep the weight,
+which informs that decision: dropping it everywhere cost about 10% on a
+string-producing payload-enum loop.
+
+A detector's failure record and its incoming-cleanup check are one out-of-line
 call to `mir_publish_failure_v1`. It writes exactly the record the inline
 sequence wrote, taking the artifact identity from the program's descriptor,
 keeps a propagated inner record, and then performs the same check. A panic
@@ -2367,8 +2389,18 @@ not a shadowing, not-yet-initialized local. Both ordinary and secondary failure
 reports are checked by the composition runtime matrix.
 
 Payload enum rows use backend-private `payload_variant`: a recursive native
-union and compact active tag, with direct tag-dispatched native retirement.
-Constrained-default special members preserve trivial copy/move/assignment and
+union followed by a compact active tag, with direct tag-dispatched native
+retirement. Native alternative `k` is verified MIR variant `k`, unshifted, and
+the backend-private empty shell is the final native alternative, so the live
+discriminants of a two-alternative enum are 0 and 1. Construction,
+`payload_get`, switch cases and cleanup recipes all spell the MIR ordinal
+directly. A small passive carrier often travels whole, as one native scalar,
+through call results, matches and `?` propagation. A leading tag, or ordinals
+shifted past a private alternative zero, kept native optimizers from folding a
+later tag test back into the branch that selected the alternative; the
+trailing tag and unshifted ordinals are the layout Clang folds. GCC 15 instead
+loses 6–10% on scalar tag loops with the unshifted ordinals; the RT-11 row in
+the optimization plan records that open tradeoff. Constrained-default special members preserve trivial copy/move/assignment and
 destruction for passive members, including inert byte transport. Ordinary
 integer enums are unchanged. Payload enums are accessed through
 `payload_get<Index>` selected from the sealed variant inventory, under the
@@ -2388,7 +2420,7 @@ enable GTI assignment: semantic traits and MIR admission still reject assignment
 of a construction-only source type. Throwing-copy or nontrivially destructible
 alternatives do not receive this passive fallback.
 
-The carrier starts with only its private empty alternative active. Construction
+The carrier starts with only its private empty (final) alternative active. Construction
 starts the selected union-member lifetime, then publishes its tag; an exception
 before publication leaves no complete alternative to destroy. Recursive empty
 union tails contain no resource. Native moves retain a valid moved-from member
@@ -2472,8 +2504,8 @@ An admitted direct class/struct field uses the class initializer schedule's
 exact payload construction, `This.field` publication, value-rooted reparenting,
 full-expression endpoint, and construction-rollback row. A transformed
 failure-capable constructor may require a temporarily disengaged native shell;
-the C++ representation therefore reserves a private `std::monostate`
-alternative. It is neither a source variant nor observable tag state. Field
+the C++ representation therefore reserves a private `std::monostate` as the
+final alternative. It is neither a source variant nor observable tag state. Field
 publication retires only that proved empty shell and placement-move-constructs
 the enum from its exact value slot. Its generated transfer must be failure-free;
 neither publication nor rollback reconstruction requires enum assignment. An

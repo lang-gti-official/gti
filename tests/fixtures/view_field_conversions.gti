@@ -1,0 +1,106 @@
+// Owner-tracked text through implicit conversions, constructor relays and
+// returns over a reference formal (L-OWN-02, phase 2c).
+#include <std/optional>
+#include <std/string>
+
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+};
+
+enum Word { text(std::string_view value), none };
+
+// A constructor that stores a formal's text field relays it.
+class Wrap {
+public:
+  Word word;
+  Wrap(Token token) : word(Word::text(token.text)) {}
+};
+
+class Copy {
+public:
+  std::string_view text;
+  Copy(Token token) : text(token.text) {}
+};
+
+// A returned value over the caller's string.
+expected<int, std::string_view> parse(std::string& input) {
+  if (input.empty()) {
+    return 0;
+  }
+  return unexpected(input.view());
+}
+
+expected<int, std::string_view> parseAgain(std::string& input) {
+  return parse(input);
+}
+
+Token tokenOf(std::string& input) { return Token(input.view(), 7); }
+
+Word wordOf(std::string& input) { return Word::text(input.view()); }
+
+std::optional<std::string_view> find(std::string& input) {
+  if (input.empty()) {
+    return std::nullopt;
+  }
+  return input.view();
+}
+
+int main() {
+  std::string input{"owned text"};
+  // An implicit conversion keeps the owner's text.
+  std::optional<std::string_view> maybe = input.view();
+  if (maybe) {
+    std::println(*maybe);
+  }
+  // A view binding's owner, not the binding, is what a value depends on.
+  std::string_view view = input.view();
+  Token token = Token(view, 1);
+  std::println(token.text);
+  // A failure over the owner's text, converted implicitly and explicitly.
+  expected<int, std::string_view> failed = unexpected(input.view());
+  if (!failed) {
+    std::println(failed.error());
+  }
+  std::unexpected_value<std::string_view> failure = unexpected(input.view());
+  std::println(std::move(failure).error());
+  // Constructors that store a formal's text field.
+  Wrap wrap = Wrap(token);
+  switch (wrap.word) {
+  case Word::text(value): std::println(value.size()); break;
+  case Word::none: break;
+  }
+  Copy copy = Copy(Token(input.view(), 2));
+  std::println(copy.text);
+  // Returned values view the argument of each call.
+  std::string source{"bad input"};
+  expected<int, std::string_view> parsed = parse(source);
+  if (!parsed) {
+    std::println(parsed.error());
+  }
+  expected<int, std::string_view> again = parseAgain(source);
+  if (!again) {
+    std::println(again.error().size());
+  }
+  std::string empty{""};
+  expected<int, std::string_view> number = parse(empty);
+  if (number) {
+    std::println(number.value());
+  }
+  Token returned = tokenOf(input);
+  std::println(returned.text);
+  std::println(returned.kind);
+  Word word = wordOf(source);
+  switch (word) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: break;
+  }
+  std::optional<std::string_view> found = find(source);
+  std::optional<std::string_view> missing = find(empty);
+  if (found && !missing) {
+    std::println(*found);
+  }
+  return 0;
+}
