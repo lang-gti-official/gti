@@ -31,11 +31,12 @@ unchanged, so it is a conservative source rather than a forged one. With the
 verifier's ownerless-accessor clause disabled, every literal-backed form fails
 again with that same message and the owner-backed forms still build.
 
-A `gti` linked with PR #298's three semantic and HIR units on top of this
-change builds and runs `maybe->begin()`, `viewed->rbegin()` and
-`label->begin()` through a user `operator->` at `-O0`, `-O3` and with
-ASan/UBSan, keeps `GTI-S2017` for an owner change, and still passes #298's
-`arrow_text_members.gti`.
+Since PR #298 merged first, `arrow_text_members.gti` in `operator_relay_runtime`
+also builds iterators directly through a checked `operator->`:
+`literal->begin()`, `owned->rbegin()`, `maybe->begin()`, `viewed->begin()`
+and the mutable step `changing->begin()`. Before that merge, a `gti`
+side-linked with #298's units ran these forms at `-O0`, `-O3` and with
+ASan/UBSan, and kept `GTI-S2017` for an owner change.
 
 An `--emit-mir -O0` and `--emit-cpp -O3` differential against main
 `cf14a66a`, with the two changed units side-linked into one build so both
@@ -90,11 +91,6 @@ programs in `tests/` and `examples/` at `-O0` and `-O3`, excluding
 `namespace-depth-63.gti`. All 2,950 compiles that main accepts emit
 byte-identical C++. Only example 170 and `arrow_text_members.gti` change:
 main refused both with `GTI-B0001`, and both now build.
-
-`maybe->begin()` still reports `GTI-B0001` in MIR construction, as
-`maybe.value().begin()` and `b.get().begin()` did before this change: an
-iterator that stores a view reference returned by a call gets no stored
-dependency for the view's owner. Binding the reference first works.
 
 ## Derived dependent-text carriers (internal)
 

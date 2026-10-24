@@ -19,6 +19,10 @@ for what minor and patch releases mean.
   or text owned by a `std::string`. So does `for (auto c : box.get())` over a
   literal-backed view, and `std::string_view& view = box.get();
   view.begin()` when the view holds literal text.
+- The same holds through a checked `operator->`: `o->begin()` on a
+  `std::optional<std::string_view>` and `label->begin()` for a class whose
+  `operator->` returns a `std::string_view&` now work. 0.467.1 listed them
+  as not yet supported.
 - The same holds for user carriers built by a function: `Cursor open(
   std::string_view& view) { return Cursor(view); }` can now be called as
   `open(box.get())`, and `attach(panel.current())` can build a carrier from a
