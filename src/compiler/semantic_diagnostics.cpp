@@ -475,28 +475,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The first type must be an integral enum and the second its exact "
           "declared underlying integer type.");
       break;
-    case StructuralConstraintKind::IndirectPredicate:
-      diagnostic.hints.emplace_back(
-          "The iterator's read-only dereference result must be accepted by "
-          "one exact repeatable public callable returning bool.");
-      break;
-    case StructuralConstraintKind::IndirectOperation:
-      diagnostic.hints.emplace_back(
-          "The iterator's read-only dereference result must be accepted by "
-          "one exact repeatable public callable returning the required owned "
-          "result type.");
-      break;
-    case StructuralConstraintKind::RangePredicate:
-      diagnostic.hints.emplace_back(
-          "The complete range's read-only element must be accepted by one "
-          "exact repeatable public callable returning bool.");
-      break;
-    case StructuralConstraintKind::RangeOperation:
-      diagnostic.hints.emplace_back(
-          "The complete range's read-only element must be accepted by one "
-          "exact repeatable public callable returning the required owned "
-          "result type.");
-      break;
     case StructuralConstraintKind::None:
       break;
     }

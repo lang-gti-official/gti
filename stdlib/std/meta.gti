@@ -181,6 +181,8 @@ public:
   constexpr bool is_text() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
   /// Whether T is a checked reference (the access mode is not changed).
   constexpr bool is_reference() { return gti_internal::meta_type_kind<T>() == uint64_t(11); }
+  /// Whether T is a fixed array (not a container with indexing methods).
+  constexpr bool is_array() { return gti_internal::meta_type_kind<T>() == uint64_t(12); }
   /// A raw data address, not an owning pointer or a callable address.
   constexpr bool is_raw_pointer() { return gti_internal::meta_type_kind<T>() == uint64_t(13); }
   /// Whether T denotes absence of a result, rather than an object type.
@@ -470,6 +472,7 @@ constexpr bool is_enum<T>() { return gti_internal::meta_type_kind<T>() == uint64
 constexpr bool is_integral<T>() { return gti_internal::meta_type_trait<T, 17>(); }
 constexpr bool is_floating_point<T>() { return gti_internal::meta_type_trait<T, 18>(); }
 constexpr bool is_bool<T>() { return gti_internal::meta_type_trait<T, 19>(); }
+constexpr bool is_array<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(12); }
 constexpr bool is_raw_pointer<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(13); }
 constexpr bool is_text<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
 constexpr bool is_payload_enum<T>() { return gti_internal::meta_type_trait<T, 0>(); }

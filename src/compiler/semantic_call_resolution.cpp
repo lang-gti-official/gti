@@ -5553,8 +5553,6 @@ auto SemanticVisitor::Impl::symbolicRangeMemberReturnType(
     switch (requirement.kind) {
     case StructuralConstraintKind::InputRange:
     case StructuralConstraintKind::RangeOf:
-    case StructuralConstraintKind::RangePredicate:
-    case StructuralConstraintKind::RangeOperation:
       readable = true;
       break;
     case StructuralConstraintKind::MutableRangeOf:
@@ -5776,113 +5774,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
                           .sentinel = end->returnType};
   };
 
-  const auto readableCallableParameter = [](const SemanticType &parameter,
-                                            const SemanticType &argument) {
-    return parameter == argument ||
-           (parameter.kind == SemanticType::Reference &&
-            parameter.referenceAccess == AccessMode::ReadOnly &&
-            parameter.arguments.size() == 1 &&
-            parameter.arguments.front() == argument);
-  };
-  const auto callableCandidates = [&](const SemanticType &callable) {
-    if (callable.kind == SemanticType::Class) {
-      return structuralOperatorCandidates(callable, OverloadedOperator::Call);
-    }
-    std::vector<CallableCandidate> result;
-    if (callable.hasFunctionItemShape()) {
-      const FunctionInfo *function =
-          semanticModel.findFunction(callable.functionId);
-      if (function == nullptr && instanceBaseModel != nullptr) {
-        function = instanceBaseModel->findFunction(callable.functionId);
-      }
-      const SemanticType *returnType = callable.functionItemReturnType();
-      if (function != nullptr && returnType != nullptr &&
-          function->ownerClass == 0 && !function->entryPoint &&
-          function->linkage == LanguageLinkage::Gti &&
-          function->returnType == *returnType &&
-          function->parameterTypes.size() ==
-              callable.functionItemParameterTypes().size() &&
-          std::equal(function->parameterTypes.begin(),
-                     function->parameterTypes.end(),
-                     callable.functionItemParameterTypes().begin())) {
-        result.push_back({.id = function->id,
-                          .returnType = function->returnType,
-                          .parameterTypes = function->parameterTypes,
-                          .receiverMutability = ReceiverMutability::ReadOnly,
-                          .access = AccessModifier::Public});
-      }
-      return result;
-    }
-    if (callable.kind != SemanticType::Lambda) {
-      return result;
-    }
-    const LambdaInfo *lambda = semanticModel.findLambda(callable.lambdaId);
-    if (lambda == nullptr && instanceBaseModel != nullptr) {
-      lambda = instanceBaseModel->findLambda(callable.lambdaId);
-    }
-    if (lambda != nullptr) {
-      result.push_back(
-          {.returnType = lambda->returnType,
-           .parameterTypes = lambda->parameterTypes,
-           .receiverMutability =
-               lambda->capability == CallableInvocationCapability::Mutable
-                   ? ReceiverMutability::Mutable
-                   : ReceiverMutability::ReadOnly,
-           .access = AccessModifier::Public});
-    }
-    return result;
-  };
-  const auto callableSatisfies = [&](const SemanticType &callable,
-                                     std::span<const SemanticType> parameters,
-                                     const SemanticType &result,
-                                     CallableInvocationCapability required,
-                                     bool referenceArguments = true) {
-    if (result.kind == SemanticType::Reference ||
-        typeTraits(result).containsBorrowedState ||
-        containsLambdaType(result)) {
-      return false;
-    }
-    std::vector<CallableCandidate> candidates = callableCandidates(callable);
-    std::erase_if(candidates, [&](const CallableCandidate &candidate) {
-      if (candidate.returnType != result ||
-          candidate.returnBorrowOrigin != BorrowOriginKind::None ||
-          candidate.parameterTypes.size() != parameters.size() ||
-          !callableCapabilitySatisfies(
-              callableInvocationCapability(candidate.receiverMutability),
-              required)) {
-        return true;
-      }
-      for (std::size_t index = 0; index < parameters.size(); ++index) {
-        if (referenceArguments
-                ? !readableCallableParameter(candidate.parameterTypes[index],
-                                             parameters[index])
-                : candidate.parameterTypes[index] != parameters[index]) {
-          return true;
-        }
-      }
-      return false;
-    });
-    if (required == CallableInvocationCapability::Once &&
-        std::any_of(candidates.begin(), candidates.end(),
-                    [](const CallableCandidate &candidate) {
-                      return candidate.receiverMutability ==
-                             ReceiverMutability::Consuming;
-                    })) {
-      std::erase_if(candidates, [](const CallableCandidate &candidate) {
-        return candidate.receiverMutability != ReceiverMutability::Consuming;
-      });
-    } else if (required != CallableInvocationCapability::Read &&
-               std::any_of(candidates.begin(), candidates.end(),
-                           [](const CallableCandidate &candidate) {
-                             return candidate.receiverMutability ==
-                                    ReceiverMutability::Mutable;
-                           })) {
-      std::erase_if(candidates, [](const CallableCandidate &candidate) {
-        return candidate.receiverMutability == ReceiverMutability::ReadOnly;
-      });
-    }
-    return candidates.size() == 1;
-  };
   const auto readableRangeElement =
       [&](const SemanticType &range) -> std::optional<SemanticType> {
     if (range.kind == SemanticType::Array && range.arguments.size() == 1) {
@@ -5980,45 +5871,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
            satisfiesAtomicConstraint(arguments[0],
                                      GenericConstraintKind::IntegralEnum) &&
            enums[arguments[0].enumId - 1].underlyingType == arguments[1];
-  case StructuralConstraintKind::IndirectPredicate:
-  case StructuralConstraintKind::IndirectOperation: {
-    if (arguments.size() !=
-        (kind == StructuralConstraintKind::IndirectPredicate ? 2 : 3)) {
-      return false;
-    }
-    const std::optional<CallableCandidate> dereference =
-        selectedDereference(arguments[1]);
-    const auto element =
-        dereference ? readableElement(*dereference) : std::nullopt;
-    if (!element) {
-      return false;
-    }
-    const SemanticType &result =
-        kind == StructuralConstraintKind::IndirectPredicate ? SemanticType::Bool
-                                                            : arguments[2];
-    return callableSatisfies(
-        arguments[0], std::span<const SemanticType>(&*element, 1), result,
-        CallableInvocationCapability::Mutable,
-        dereference->returnType.kind == SemanticType::Reference);
-  }
-  case StructuralConstraintKind::RangePredicate:
-  case StructuralConstraintKind::RangeOperation: {
-    if (arguments.size() !=
-        (kind == StructuralConstraintKind::RangePredicate ? 2 : 3)) {
-      return false;
-    }
-    const std::optional<SemanticType> element =
-        readableRangeElement(arguments[1]);
-    if (!element) {
-      return false;
-    }
-    const SemanticType &result =
-        kind == StructuralConstraintKind::RangePredicate ? SemanticType::Bool
-                                                         : arguments[2];
-    return callableSatisfies(arguments[0],
-                             std::span<const SemanticType>(&*element, 1),
-                             result, CallableInvocationCapability::Mutable);
-  }
   case StructuralConstraintKind::None:
     return true;
   case StructuralConstraintKind::ReadMember:
@@ -6139,13 +5991,6 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       // Enum representation classification grants no numeric operators.
       break;
 
-    case StructuralConstraintKind::IndirectPredicate:
-    case StructuralConstraintKind::IndirectOperation:
-    case StructuralConstraintKind::RangePredicate:
-    case StructuralConstraintKind::RangeOperation:
-      // Callable requirements constrain ordinary invocation rather than a
-      // member operator expression synthesized by this table.
-      break;
     case StructuralConstraintKind::ReadMember:
       if (requirement.memberName == operatorFunctionName(kind) &&
           requirement.arguments.size() == argumentTypes.size() + 2 &&

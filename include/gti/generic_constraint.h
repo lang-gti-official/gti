@@ -50,10 +50,6 @@ enum class StructuralConstraintKind : std::uint8_t {
   RangeOf,
   MutableRangeOf,
   SizedRange,
-  IndirectPredicate,
-  IndirectOperation,
-  RangePredicate,
-  RangeOperation,
   EnumUnderlying,
 };
 
@@ -101,7 +97,7 @@ inline constexpr std::array<GenericConstraintKind, 21> genericConstraintKinds{{
 // complete fact inventory above also serves reflection and generic proofs.
 inline constexpr std::array<CompilerConstraintRecord, 0> compilerConstraints{};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 11>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 7>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"dereferences_to", StructuralConstraintKind::DereferencesTo, 2},
@@ -110,10 +106,6 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 11>
         {"range_of", StructuralConstraintKind::RangeOf, 2},
         {"mutable_range_of", StructuralConstraintKind::MutableRangeOf, 2},
         {"sized_range", StructuralConstraintKind::SizedRange, 1},
-        {"indirect_predicate", StructuralConstraintKind::IndirectPredicate, 2},
-        {"indirect_operation", StructuralConstraintKind::IndirectOperation, 3},
-        {"range_predicate", StructuralConstraintKind::RangePredicate, 2},
-        {"range_operation", StructuralConstraintKind::RangeOperation, 3},
     }};
 
 static_assert(genericConstraintKinds.size() + 2 ==

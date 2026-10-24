@@ -2406,8 +2406,12 @@ structural relationships. Unary and binary callable concepts compose source
 expression queries over read-only, mutable, or consumed receivers and borrowed
 or consumed arguments. Query facts retain the exact operand/result types and
 access contracts; alternative argument forms do not invent a common receiver
-or borrow proof. Iterator-aware predicate and operation relations still derive
-the checked-dereference referent privately. This is semantic proof, not text-based
+or borrow proof. Iterator-aware callable policies query the complete ordinary
+`function(*position)` expression in source. Range callable policies compose
+`input_range` with a source query over the actual begin/dereference result,
+or fixed-array indexing under the independent array classification fact.
+All former private callable concept bindings and their duplicate signature
+admission paths are removed. This is semantic proof, not text-based
 operator guessing. The AST application is retained for source-facing
 diagnostics and tooling occurrences.
 

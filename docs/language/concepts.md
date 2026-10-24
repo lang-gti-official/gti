@@ -650,13 +650,15 @@ The current structural capability set is intentionally small:
   borrowed/consumed forms;
 - `once_action<F>` is the source-defined nullary exact-`void` consuming-use
   relation: `requires(F action) { { std::move(action)() } -> void; }`;
-- `indirect_predicate<F, I>` derives the exact referent of `I::operator*()` and
-  requires a repeatable `bool` callable for it; and
-- `indirect_operation<F, I, R>` derives the same referent and requires a
-  repeatable exact owned `R` operation; and
+- `indirect_predicate<F, I>` queries the ordinary `function(*position)`
+  composition in source and requires a safe repeatable `bool` invocation; and
+- `indirect_operation<F, I, R>` uses that same composition with an exact owned
+  `R` result; and
 - `range_predicate<F, R>` and `range_operation<F, R, Result>` derive the exact
   read-only element of a complete range and apply the same repeatable callable
-  rules without exposing an associated iterator type.
+  rules without exposing an associated iterator type. These are source-defined
+  queries over `*range.begin()`, or indexing for fixed arrays only; an unrelated
+  indexing overload on a class cannot substitute for its iterated element.
 
 The unary/binary source policies deliberately replace the former declaration
 census with usable expression queries. A callable may therefore qualify through
@@ -666,6 +668,14 @@ must still satisfy exact overload selection, copying/movement, access and
 lifetime checks. An ambiguous named-argument call remains an error at the call
 site. Generic code that needs one specific form can state that expression
 directly in a requirement. No unary/binary callable compiler bindings remain.
+
+The iterator-aware queries likewise preserve the actual dereference expression's
+value category rather than a private approximation based only on its referent
+type. Owned yields, checked loans, callable access, and any copy or move must
+satisfy ordinary expression rules. Their whole-range counterparts additionally
+require the input-range contract. All callable concept policy is source-defined;
+the compiler retains the general invocation and ownership rules these queries
+ask about.
 
 In a generic body the writable capability supplies the mutable-dereference
 form of `*output = value`, and `subscripts_to_mut` supplies
@@ -704,15 +714,16 @@ viability decides this nullary relation; the query does not relax operator
 declaration restrictions or make an otherwise unavailable overload callable.
 A query neither invokes nor consumes a runtime value;
 an actual `invoke_once` call still transfers ownership and performs deterministic
-cleanup. Unary/binary and indirect callable relations retain their documented
-bounded signature policy pending the ownership-aware query migration.
+cleanup. Unary, binary, iterator-aware and range-aware callable policies use
+the same ordinary query machinery rather than private signature checkers.
 
 An exact callable argument describes a readable source value. A concrete
 target may copy it by value or observe it through an exact read-only reference.
-Library implementations therefore present readable lvalues at these sites;
-they do not use native reference binding or implicit conversion to widen the
-contract. Results may not be references, lambdas, or values carrying tracked
-borrowed state because the bounded relation has no result-owner parameter.
+Library implementations select the borrowed or consumed form that their
+algorithm needs; qualification alone does not make a different form viable.
+They do not use native reference binding to widen the contract. These policies
+require owned, non-borrowed results because they have no result-owner parameter;
+callable-valued results also retain the ordinary callable escape checks.
 
 A borrowed operator result does not satisfy these capabilities: the produced
 value would be tied to a receiver whose lifetime the requirement cannot name.

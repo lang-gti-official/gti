@@ -1164,14 +1164,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
          binding.name == "writable_iterator" || binding.name == "input_range" ||
          binding.name == "range_of" || binding.name == "mutable_range_of" ||
          binding.name == "sized_range");
-    const bool trustedFunctionalConstraint =
-        isFunctionalLibraryUnit(conceptInfo.sourceUnit) &&
-        (binding.name == "indirect_predicate" ||
-         binding.name == "indirect_operation" ||
-         binding.name == "range_predicate" ||
-         binding.name == "range_operation");
-    if ((!isPreludeUnit(conceptInfo.sourceUnit) && !trustedIteratorConstraint &&
-         !trustedFunctionalConstraint) ||
+    if ((!isPreludeUnit(conceptInfo.sourceUnit) &&
+         !trustedIteratorConstraint) ||
         conceptInfo.namespaceScope !=
             std::vector<std::string>{"gti_internal"}) {
       report(binding.attribute,

@@ -1,5 +1,7 @@
 #include <std/memory>
 #include <std/polymorphic>
+#include <std/iterator>
+#include <std/meta>
 
 // Callable relationships and source-defined owning callback policy.
 
@@ -10,10 +12,6 @@ class function_pointer<Signature> {};
 function_pointer<Signature> function_pointer_from_item<Signature, F>(F target);
 R function_pointer_invoke<R, Args...>(function_pointer<R(Args...)>& target,
                                     Args... args);
-@compiler_constraint("indirect_predicate") concept indirect_predicate_capability<Callable, Iterator>;
-@compiler_constraint("indirect_operation") concept indirect_operation_capability<Callable, Iterator, Result>;
-@compiler_constraint("range_predicate") concept range_predicate_capability<Callable, Range>;
-@compiler_constraint("range_operation") concept range_operation_capability<Callable, Range, Result>;
 
 // Each repeatable wrapper owns one erased model. A model that is an inline
 // polymorphic payload and fits the 32-byte slot lives inside the wrapper; any
@@ -518,16 +516,37 @@ public:
     { std::move(callable)() } -> void;
   };
 
-  /// Iterator-aware relations name the source cursor directly because the
-  /// bounded concept language intentionally has no associated-type syntax.
+  /// Check the actual composition, including whether dereference yields a
+  /// borrowed element or an owned value. No execution occurs in the query.
+  [[unsatisfied("The iterator's read-only dereference result must be accepted by a safe repeatable public callable returning bool.")]]
   concept indirect_predicate<Predicate, Iterator> =
-      gti_internal::indirect_predicate_capability<Predicate, Iterator>;
+      requires(mut Predicate& predicate, Iterator& position) {
+        { predicate(*position) } -> bool;
+      };
+  [[unsatisfied("The iterator's read-only dereference result must be accepted by a safe repeatable public callable returning the required owned result type.")]]
   concept indirect_operation<Operation, Iterator, Result> =
-      gti_internal::indirect_operation_capability<Operation, Iterator, Result>;
+      requires(mut Operation& operation, Iterator& position) {
+        { operation(*position) } -> Result;
+      };
+  namespace detail {
+    constexpr bool range_call_expression<F, Range, Result>() {
+      if constexpr (std::meta::is_array<Range>()) {
+        return requires(mut F& function, Range& range, std::size_t index) {
+          { function(range[index]) } -> Result;
+        };
+      } else {
+        return requires(mut F& function, Range& range) {
+          { function(*range.begin()) } -> Result;
+        };
+      }
+    }
+  }
+  [[unsatisfied("The complete range's read-only element must be accepted by a safe repeatable public callable returning bool.")]]
   concept range_predicate<Predicate, Range> =
-      gti_internal::range_predicate_capability<Predicate, Range>;
+      std::input_range<Range> && detail::range_call_expression<Predicate, Range, bool>();
+  [[unsatisfied("The complete range's read-only element must be accepted by a safe repeatable public callable returning the required owned result type.")]]
   concept range_operation<Operation, Range, Result> =
-      gti_internal::range_operation_capability<Operation, Range, Result>;
+      std::input_range<Range> && detail::range_call_expression<Operation, Range, Result>();
 
   /// Consume one exact no-argument action. A reusable target is valid because
   /// a once-only use site may invoke it through owned access; a consuming

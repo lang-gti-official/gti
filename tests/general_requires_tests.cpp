@@ -25,6 +25,10 @@ static_assert(!lang::compilerStructuralConstraint("writes_to"));
 static_assert(!lang::compilerStructuralConstraint("subscripts_to_mut"));
 static_assert(!lang::compilerStructuralConstraint("sentinel_for"));
 static_assert(!lang::compilerStructuralConstraint("sized_sentinel_for"));
+static_assert(!lang::compilerStructuralConstraint("indirect_predicate"));
+static_assert(!lang::compilerStructuralConstraint("indirect_operation"));
+static_assert(!lang::compilerStructuralConstraint("range_predicate"));
+static_assert(!lang::compilerStructuralConstraint("range_operation"));
 static_assert([] {
   for (const std::string_view binding :
        {"numeric", "signed_numeric", "integral", "signed_integral",
@@ -108,6 +112,39 @@ int main(int argc, char **argv) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("gti-general-requires-" + std::to_string(getpid()));
   std::filesystem::create_directories(directory);
+
+  accepted(check(root, directory, "source_range_callable_policy", R"GTI(
+#include <std/functional>
+#include <std/algorithm>
+#include <std/meta>
+struct End {};
+struct Cursor {
+  int value = 1;
+  int& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(End& end) { return false; }
+};
+struct Range {
+  Cursor begin() { return Cursor(); }
+  End end() { return End(); }
+  bool operator[](std::size_t index) { return false; }
+};
+struct WantsInt { bool operator()(int& value) { return value > 0; } };
+struct WantsBool { bool operator()(bool& value) { return value; } };
+struct Consumes { bool operator()(int& value) && { return true; } };
+int main() {
+  static_assert(std::meta::is_array<int[3]>());
+  static_assert(std::meta::type<int[0]>().is_array());
+  static_assert(!std::meta::is_array<Range>());
+  static_assert(requires(Range& range) { { std::all_of(range, WantsInt()) } -> bool; });
+  static_assert(!(requires(Range& range) { { std::all_of(range, WantsBool()) } -> bool; }));
+  static_assert(!(requires(Range& range) { { std::all_of(range, Consumes()) } -> bool; }));
+  int[3] numbers = {1, 2, 3};
+  return std::all_of(numbers, WantsInt()) ? 0 : 1;
+}
+)GTI"),
+           "source range callable queries inspect the actual element, not "
+           "unrelated indexing");
 
   rejected(check(root, directory, "overload_predicate_diagnostic", R"GTI(
 constexpr bool available<T>() { return false; }
