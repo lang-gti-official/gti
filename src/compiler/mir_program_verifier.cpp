@@ -4542,9 +4542,23 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             (source->type.kind == SemanticType::Class ||
              source->type.kind == SemanticType::Enum) &&
             findStoredCarrierReferences(program, source->type).empty();
+        // A carrier of the view an accessor returned holds exactly that
+        // result loan's stored dependency, which is none when the accessor's
+        // own result was proved to hold ownerless text.
+        const auto *accessor =
+            source != nullptr && source->root == MirPlaceRootKind::Loan &&
+                    source->projections.empty() &&
+                    (source->type.kind == SemanticType::StringView ||
+                     source->type.kind == SemanticType::CString)
+                ? body.findLoan(source->loan)
+                : nullptr;
+        const bool ownerlessAccessorText =
+            accessor != nullptr && accessor->kind == MirLoanKind::CallResult &&
+            loan->parent == accessor->id && accessor->storedDependency == 0 &&
+            isCarrierReferenceResult(program, instruction);
         const bool independentText =
             source && (independentlyStaticTextBinding(program, body, *source) ||
-                       ownerlessTextField);
+                       ownerlessTextField || ownerlessAccessorText);
         if ((loan->storedDependency == 0 && !independentText) ||
             !loan->additionalSources().empty() ||
             !instruction.borrowArguments.empty())

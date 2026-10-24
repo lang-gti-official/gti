@@ -552,6 +552,19 @@ private:
     const auto *loan = operand.kind == MirOperandKind::Loan
                            ? body.findLoan(operand.loan)
                            : nullptr;
+    // A reference to the text an accessor returned designates that view,
+    // not a field path of the accessor's owner, which is the loan's source.
+    // A view has no fields to relay; its owner is its loan's stored
+    // dependency.
+    const SemanticType &referent =
+        operand.type.kind == SemanticType::Reference &&
+                operand.type.arguments.size() == 1
+            ? operand.type.arguments.front()
+            : operand.type;
+    if (loan != nullptr && loan->kind == MirLoanKind::CallResult &&
+        (referent.kind == SemanticType::StringView ||
+         referent.kind == SemanticType::CString))
+      return std::nullopt;
     const auto *place = body.findPlace(loan ? loan->source : operand.place);
     const auto *value = operand.kind == MirOperandKind::Value
                             ? body.findValue(operand.value)
