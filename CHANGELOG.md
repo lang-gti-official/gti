@@ -45,6 +45,14 @@ for what minor and patch releases mean.
 - See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
   and [runnable example 175](examples/175-thread-local-storage.gti).
 
+## 0.470.1 — Nested constructor argument staging
+
+- Restore class-field initialization from nested constructor arguments when
+  MIR proves the consuming constructor failure-free. The C++ backend preserves
+  the prepared argument handoff and direct field publication instead of
+  rejecting the constructor with `GTI-B0001`; this applies to ordinary user
+  types as well as clock-point fields.
+
 ## 0.470.0 — Macro results and written expression metadata
 
 - Value macros use `#macro Result NAME(typed parameters)` and ordinary calls.

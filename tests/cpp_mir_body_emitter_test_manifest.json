@@ -862,6 +862,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testCleanupFreeConstructedFieldPreparedInputs",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testCleanupFreeConstructorFieldFailure",
       "suite": "lifecycle"
     },
