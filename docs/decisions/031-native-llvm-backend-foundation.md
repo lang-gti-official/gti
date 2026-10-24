@@ -69,6 +69,29 @@ target initialization and target-machine policy are separate work because they
 must follow GTI's selected `TargetInfo`/`TargetDataLayout`, not LLVM host
 defaults.
 
+## Production Direction (2026-10-24)
+
+LLVM is the intended public production backend, not merely an optional
+experiment contingent on a C++ performance regression. This revises the earlier
+roadmap's non-requirement without changing the current production default.
+The transition must preserve the complete current language and its safety,
+failure, lifetime and execution-cost contracts on macOS and Linux.
+
+The [LLVM production campaign](../plans/implementation-sequence.md#llvm-production-backend-campaign)
+is the sole dependency-ordered implementation queue. It establishes exhaustive
+coverage/admission and native layout/ABI/runtime decisions before executable
+lowering, then assigns the language's operation families to bounded milestones.
+The [readiness audit](../architecture/backend.md#llvm-readiness-audit-2026-10-24)
+records the foundation's strengths and the remaining architectural obligations.
+
+GTI's internal native ABI and object layout belong to LLVM representation, while
+the selected language target, concrete declarations, effects, initialization,
+cleanup and failure semantics remain sealed upstream facts. Native C calls need
+target ABI classification in addition to record offsets. Host/runtime operations
+need explicit ABI bindings; generated C++ templates and C++ exception transport
+are not a native backend contract. These boundaries must be settled centrally,
+not independently rediscovered by each language-family emitter.
+
 ## Current Status
 
 This decision establishes build, package, driver, CLI, initialization, artifact,
@@ -77,12 +100,14 @@ instruction, control-flow edge, layout, ABI, cleanup, failure path, or runtime
 operation is lowered to LLVM IR. Selecting `--backend llvm` for a valid host
 program fails clearly with `GTI-B0003` and does not create an output artifact.
 
-The first executable follow-up may lower a bounded set of scalar functions,
-arithmetic, and control flow only after defining module ownership, symbol/ABI
-mapping, target-machine construction, LLVM verification, object emission, and
-differential execution evidence. Unsupported `LoweredProgram` operations must
-remain classified rejections; mixed per-function C++/LLVM emission and a
-cross-backend private ABI are not permitted.
+O-LLVM-02/03 establish coverage/admission, module ownership, symbol/ABI mapping,
+target-machine construction, LLVM verification and object emission. O-LLVM-04
+then lowers scalar functions, arithmetic and control flow, including checked
+failure paths rather than only successful execution. Unsupported required
+`LoweredProgram` operations remain classified rejections; mixed per-function
+C++/LLVM emission and a cross-backend private ABI are not permitted. Default
+backend promotion waits for the campaign's complete conformance gate, not the
+first executable milestone.
 
 ## Consequences
 
