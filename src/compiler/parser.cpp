@@ -2421,7 +2421,11 @@ private:
   }
 
   void parseArrayTypeSuffix(TypeRef &type) {
-    while (match({TokenKind::LEFT_BRACKET})) {
+    // An attribute following a dependent result type is not an array suffix.
+    // Its owner (for example a borrowed-result requirement) parses the [[...]].
+    while (check(TokenKind::LEFT_BRACKET) &&
+           peekAt(1).kind != TokenKind::LEFT_BRACKET &&
+           match({TokenKind::LEFT_BRACKET})) {
       type.arrayExtents.emplace_back(arrayExtentExpression());
       consume(TokenKind::RIGHT_BRACKET, "Expect ']' after fixed array extent.");
     }

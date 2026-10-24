@@ -113,6 +113,26 @@ int main(int argc, char **argv) {
                          ("gti-general-requires-" + std::to_string(getpid()));
   std::filesystem::create_directories(directory);
 
+  accepted(check(root, directory, "dependent_borrowed_query_result", R"GTI(
+#include <std/meta>
+struct Reader { int value = 1; int& operator*() { return this.value; } };
+constexpr bool result_matches<I, R>(std::meta::type<I> owner, std::meta::type<R> result) {
+  if constexpr (std::meta::type<R>().is_reference()) {
+    return requires(I& input) { { *input } -> R [[borrowed_from(input)]]; };
+  } else { return requires(I& input) { { *input } -> R; }; }
+}
+constexpr bool inspect<I>() {
+  mut bool good = false;
+  constexpr for (auto op : std::meta::lookup_operators_of<I>()) {
+    if constexpr (op.name() == "operator*") {
+      good = result_matches(std::meta::type<I>(), op.result());
+    }
+  }
+  return good;
+}
+int main() { static_assert(inspect<Reader>()); return 0; }
+)GTI"), "dependent borrowed result attributes are distinct from array suffixes");
+
   accepted(check(root, directory, "source_range_callable_policy", R"GTI(
 #include <std/functional>
 #include <std/algorithm>
