@@ -9719,6 +9719,39 @@ static MirVerificationResult verifyObjectAllocations(const MirBody &body,
   return {};
 }
 
+const SemanticType *mirConcretePackElementType(const MirBody &body,
+                                               const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Binding || place.projections.empty() ||
+      !place.initiallyAvailable)
+    return nullptr;
+  const auto &projection = place.projections.front();
+  if (projection.kind != MirProjectionKind::PackElement ||
+      !projection.constantIndex || projection.field != 0 ||
+      projection.index != 0 || projection.selection != 0)
+    return nullptr;
+  const auto root = std::find_if(
+      body.places.begin(), body.places.end(), [&](const MirPlace &candidate) {
+        return candidate.id != place.id &&
+               candidate.root == MirPlaceRootKind::Binding &&
+               candidate.binding == place.binding &&
+               candidate.projections.empty();
+      });
+  if (root == body.places.end() || root->type.kind != SemanticType::TypePack ||
+      !root->type.concretePack ||
+      *projection.constantIndex >= root->type.arguments.size())
+    return nullptr;
+  const auto &element =
+      root->type.arguments[static_cast<std::size_t>(*projection.constantIndex)];
+  if (place.projections.size() == 1 &&
+      (element != place.type || place.access != AccessMode::ReadOnly ||
+       (place.type.kind != SemanticType::Class &&
+        place.type.kind != SemanticType::Lambda &&
+        place.type.kind != SemanticType::Enum &&
+        place.traits != semanticTraits(place.type))))
+    return nullptr;
+  return &element;
+}
+
 MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   if (body.hasCallerLocation && body.kind != MirBodyKind::Function) {
     return failure(body, owner,
@@ -11615,30 +11648,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                            " has an invalid projection");
       }
       if (projection.kind == MirProjectionKind::PackElement) {
-        const bool firstProjection = &projection == &place.projections.front();
-        const auto root =
-            std::find_if(body.places.begin(), body.places.end(),
-                         [&](const MirPlace &candidate) {
-                           return candidate.id != place.id &&
-                                  candidate.root == MirPlaceRootKind::Binding &&
-                                  candidate.binding == place.binding &&
-                                  candidate.projections.empty();
-                         });
-        const std::size_t element =
-            static_cast<std::size_t>(*projection.constantIndex);
-        const bool completeElement = place.projections.size() == 1;
-        if (!firstProjection || place.root != MirPlaceRootKind::Binding ||
-            root == body.places.end() ||
-            root->type.kind != SemanticType::TypePack ||
-            !root->type.concretePack ||
-            element >= root->type.arguments.size() ||
-            (completeElement && (root->type.arguments[element] != place.type ||
-                                 place.access != AccessMode::ReadOnly)) ||
-            (completeElement && place.type.kind != SemanticType::Class &&
-             place.type.kind != SemanticType::Lambda &&
-             place.type.kind != SemanticType::Enum &&
-             place.traits != semanticTraits(place.type)) ||
-            !place.initiallyAvailable) {
+        if (&projection != &place.projections.front() ||
+            mirConcretePackElementType(body, place) == nullptr) {
           return failure(body, owner,
                          "place " + std::to_string(place.id) +
                              " has an invalid concrete pack element");

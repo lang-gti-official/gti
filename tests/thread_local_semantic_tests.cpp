@@ -1265,7 +1265,7 @@ class Types<Elements...> {};
       const std::string selected =
           "void inspect<T>() { constexpr for (auto item : " +
           std::string(reflected ? "std::meta::fields_of<T>()"
-                                : "Types<T, int64_t>{}") +
+                                : "Types<T, int64_t>()") +
           ") { " + mutation + " } } ";
       const auto result = analyze(
           prefix + selected + "int main() { int& held = guarded; inspect<" +

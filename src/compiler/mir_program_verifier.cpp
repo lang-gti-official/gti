@@ -34,16 +34,34 @@ exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
                                            const SemanticType &base);
 
 [[nodiscard]] bool mirBorrowedPlaceMatches(const MirProgram &program,
+                                           const MirBody &body,
                                            const MirPlace *place,
                                            const SemanticType &pointee,
                                            AccessMode access) {
-  return place &&
-         (place->type == pointee ||
-          (place->type.kind == SemanticType::Class &&
+  if (!place)
+    return false;
+  const SemanticType *physical = &place->type;
+  AccessMode physicalAccess = place->access;
+  // A forwarded reference-valued parameter-pack element is an already
+  // checked reference, not a request to borrow its reference carrier. Reuse
+  // the exact root/index/type/access proof; arbitrary Reference places do not
+  // gain an implicit dereference here.
+  if (place->type.kind == SemanticType::Reference &&
+      place->projections.size() == 1 &&
+      place->projections.front().kind == MirProjectionKind::PackElement) {
+    const auto *element = mirConcretePackElementType(body, *place);
+    if (!element || element->kind != SemanticType::Reference ||
+        element->arguments.size() != 1)
+      return false;
+    physical = &element->arguments.front();
+    physicalAccess = element->referenceAccess;
+  }
+  return (*physical == pointee ||
+          (physical->kind == SemanticType::Class &&
            pointee.kind == SemanticType::Class &&
-           mirPublicBaseConversion(program, place->type, pointee))) &&
+           mirPublicBaseConversion(program, *physical, pointee))) &&
          (access != AccessMode::Mutable ||
-          place->access == AccessMode::Mutable);
+          physicalAccess == AccessMode::Mutable);
 }
 
 struct MirStoredCarrierReference {
@@ -3056,7 +3074,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                 ? AccessMode::Mutable
                 : AccessMode::ReadOnly;
         if ((reference && type.arguments.size() != 1) ||
-            !mirBorrowedPlaceMatches(program, place,
+            !mirBorrowedPlaceMatches(program, body, place,
                                      reference ? type.arguments.front() : type,
                                      access))
           return verificationFailure(
@@ -3533,7 +3551,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         const bool exactLoanKind = provenance != nullptr;
         if (source == nullptr || parameter.arguments.size() != 1 ||
             operand.type != parameter || (!exactBorrowKind && !exactLoanKind) ||
-            !mirBorrowedPlaceMatches(program, source,
+            !mirBorrowedPlaceMatches(program, body, source,
                                      parameter.arguments.front(),
                                      parameter.referenceAccess) ||
             (parameter.referenceAccess == AccessMode::Mutable &&

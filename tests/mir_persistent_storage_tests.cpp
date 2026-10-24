@@ -1182,6 +1182,146 @@ void referenceInputPhysicalType(bool mutableInput) {
   }
 }
 
+void referenceValuedPackInputs() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/reference-pack.gti", R"(
+class Record { public: int value; Record(int value) : value(value) {} };
+void consume<Values...>(Values... values) {}
+void forward<Args...>(int tag, Args... args) { consume(args...); }
+class Relay<R(Args...)> {
+public:
+  void forward(Args... args) { consume(args...); }
+};
+int main() {
+  int value = 3;
+  Record record{4};
+  forward<int&>(0, value);
+  forward<Record&>(0, record);
+  mut int changed = 5;
+  Relay<void(mut int&)> relay{};
+  relay.forward(changed);
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "unrelated scalar/class reference packs and readonly carriers of "
+         "mutable references preserve ordinary forwarding");
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t sharedStages = 0;
+  std::size_t mutableStages = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *info = frontend.semantics.findFunction(function.declaration);
+    if (!info || !info->declaration ||
+        info->declaration->name().lexeme != "forward")
+      continue;
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.kind != lang::MirInstructionKind::CallInput ||
+            stage.info.type.kind != lang::SemanticType::Reference ||
+            stage.operands.size() != 1)
+          continue;
+        const auto &operand = stage.operands.front();
+        const auto *loan = operand.kind == lang::MirOperandKind::Loan
+                               ? function.body.findLoan(operand.loan)
+                               : nullptr;
+        const auto *element =
+            function.body.findPlace(loan ? loan->source : operand.place);
+        const auto *type =
+            element ? lang::mirConcretePackElementType(function.body, *element)
+                    : nullptr;
+        if (!type || type->kind != lang::SemanticType::Reference ||
+            element->projections.size() != 1)
+          continue;
+        expect(type->arguments.size() == 1 &&
+                   element->access == lang::AccessMode::ReadOnly,
+               "reference forwarding retains an exact readonly pack carrier");
+        if (stage.callInputKind == lang::HirCallInputKind::MutableBorrow) {
+          ++mutableStages;
+          expect(loan && loan->entry &&
+                     loan->kind == lang::MirLoanKind::Parameter &&
+                     loan->access == lang::AccessMode::Mutable &&
+                     type->referenceAccess == lang::AccessMode::Mutable,
+                 "a mutable pack referent requires its exact parameter loan");
+          for (int mutation = 0; mutation != 2; ++mutation) {
+            auto forged = frontend.mir;
+            auto *body = lang::findMirBody(
+                forged, {lang::MirBodyKind::Function, function.id});
+            auto *changedStage = findInstruction(*body, stage.id);
+            if (mutation == 0) {
+              changedStage->operands.front().kind =
+                  lang::MirOperandKind::BorrowWrite;
+              changedStage->operands.front().place = element->id;
+              changedStage->operands.front().loan = 0;
+            } else if (loan) {
+              body->loans[loan->id - 1].access = lang::AccessMode::ReadOnly;
+            }
+            expect(lang::rebuildMirValueUses(*body) &&
+                       !lang::verifyMirProgram(forged).valid(),
+                   "a readonly mutable-reference carrier cannot replace its "
+                   "parameter loan with a forged place borrow or shared loan");
+          }
+          continue;
+        }
+        if (stage.callInputKind != lang::HirCallInputKind::ReadBorrow ||
+            operand.kind != lang::MirOperandKind::BorrowRead)
+          continue;
+        ++sharedStages;
+        for (int mutation = 0; mutation != 7; ++mutation) {
+          auto forged = frontend.mir;
+          auto *body = lang::findMirBody(
+              forged, {lang::MirBodyKind::Function, function.id});
+          auto &changed = body->places[element->id - 1];
+          auto *changedStage = findInstruction(*body, stage.id);
+          if (mutation == 0)
+            changed.type.arguments.front() = lang::SemanticType::UInt16;
+          if (mutation == 1)
+            changed.access = lang::AccessMode::Mutable;
+          if (mutation == 2)
+            changed.projections.front().constantIndex = 1;
+          if (mutation == 3) {
+            for (const auto &place : body->places)
+              if (place.root == lang::MirPlaceRootKind::Binding &&
+                  place.projections.empty() &&
+                  place.type == lang::SemanticType::Int32)
+                changed.binding = place.binding;
+            expect(changed.binding != element->binding,
+                   "pack-owner mutation selects a distinct scalar binding");
+          }
+          if (mutation == 4)
+            changed.projections.front().kind = lang::MirProjectionKind::Index;
+          if (mutation == 5) {
+            for (auto &place : body->places)
+              if (place.root == lang::MirPlaceRootKind::Binding &&
+                  place.binding == element->binding &&
+                  place.projections.empty())
+                place.type.arguments.front().arguments.front() =
+                    lang::SemanticType::UInt16;
+            changed.type.arguments.front() = lang::SemanticType::UInt16;
+            expect(lang::mirConcretePackElementType(*body, changed) != nullptr,
+                   "coherent pack retagging still cannot alter the selected "
+                   "reference parameter's physical width");
+          }
+          if (mutation == 6) {
+            changedStage->callInputKind = lang::HirCallInputKind::MutableBorrow;
+            changedStage->info.type.referenceAccess = lang::AccessMode::Mutable;
+            changedStage->operands.front().kind =
+                lang::MirOperandKind::BorrowWrite;
+            changedStage->operands.front().type = changedStage->info.type;
+          }
+          expect(lang::rebuildMirValueUses(*body) &&
+                     !lang::verifyMirProgram(forged).valid(),
+                 "reference-valued pack inputs reject wrong element types, "
+                 "access, indices, owners, ordinary-index disguises and "
+                 "coherent width or mutable-access substitutions");
+        }
+      }
+  }
+  expect(sharedStages == 2 && mutableStages == 1,
+         "pack forwarding exercises two physical shared references and one "
+         "mutable referent behind its readonly carrier");
+}
+
 void referenceInputBaseConversion() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-mir-persistent-storage/reference-base.gti", R"(
@@ -1654,6 +1794,7 @@ int main() {
   foldColdInputEffects();
   referenceInputPhysicalType(false);
   referenceInputPhysicalType(true);
+  referenceValuedPackInputs();
   referenceInputBaseConversion();
   scalarInputAvailability(false);
   scalarInputAvailability(true);

@@ -4183,6 +4183,14 @@ general operation-family check does not substitute for the earlier checkpoint
 of an ordinary staged input or authorize new complex input producers. Scalar
 reference inputs of calls also require independently initialized storage;
 raw address formation and storage-lifetime-start destinations remain distinct.
+Physical pointee checks distinguish an object place from a reference-valued
+formal-pack element. For an exact single `PackElement` projection, the verifier
+resolves the binding's concrete pack and element index, checks the complete
+projected type and carrier facts, and derives the element reference's pointee
+and access. The immutable carrier does not make its referent immutable. This
+does not unwrap arbitrary reference-typed places or waive unrelated type,
+origin, index or access mismatches; ordinary exact/public-base compatibility
+still applies to the derived referent.
 No metadata asks a backend to iterate a source pack or instantiate a target.
 
 Program v103 adds the resolved `threadConfinedCallback` declaration fact and
