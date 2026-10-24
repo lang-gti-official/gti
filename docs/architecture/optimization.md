@@ -953,9 +953,12 @@ same facts after sanitizing them against the exact concrete type. These are
 ordinary class facts, not initialized raw-allocation or container invariants.
 
 Shared MIR effects classify exact generated copy/move of ordinary scalar-field
-records, recursively through owned record fields. The bounded profile excludes
-borrowed state, compiler backing capabilities, overlapping or inherited layouts,
-payload enums, arrays and any non-generated selected transfer. Raw pointer fields
+records, recursively through owned record fields. A closed payload enum
+participates when every alternative's payload does, it holds no borrowed state
+and needs no active cleanup: its compiler-defined transfer and drop act only on
+that payload. The bounded profile excludes borrowed state, compiler backing
+capabilities, overlapping or inherited layouts, actively cleaned payloads,
+arrays and any non-generated selected transfer. Raw pointer fields
 are transported as addresses only; they provide no pointee or alias facts.
 Generated movement does not execute a source destructor; actual cleanup remains
 a separate operation. Cleanup of a recursively scalar record with no source
@@ -984,9 +987,51 @@ The optimizer can retain those non-byte field values while retiring the local
 storage; it does not keep pending result correlations, pointer-region facts,
 or arbitrary aliases. Initially available inputs retain the separate exact
 by-value formal rule. The scoped `Counter` regression's void and record result
-controls are recovery-pending under RT-12 since `expected` became a source
-class; a result carrying a custom destructor still performs its native mutation
-and reports the later arithmetic overflow.
+controls prove the later addition again (RT-12): dropping a passive result is a
+structural drop, so the field fact published by its tag test survives the
+scope. A result carrying a custom destructor still performs its native mutation
+and reports the later arithmetic overflow, for the prelude's result class and
+for a user-defined payload whose destructor makes the drop active.
+
+### Payload-Enum Alternatives
+
+The closed-call layer also correlates postconditions with the alternative a
+payload-enum carrier holds (RT-12). A carrier is an immutable value or a root
+place; its state records the alternatives still possible and, per alternative,
+facts about still-current owned integer fields. Payload construction yields
+one exact alternative, a whole-object store or load carries the carrier to its
+destination, and a payload-enum switch narrows its subject on each case edge
+(the default edge excludes every listed case). A source call or constructor
+exports, per alternative of its returned or constructed carrier, the receiver
+and checked-reference postconditions of the exits that can produce it. An exit
+whose carrier it cannot know contributes its facts to every alternative, and
+exits that place the payload at different paths export nothing.
+
+A boolean result that a callee computes from its receiver's or a reference
+argument's alternative is exported as a tag predicate: per alternative, the
+value every possible exit returns, with disagreeing or unknown alternatives
+left out. Nested forwarding and negation preserve it. A branch on such a value
+removes the alternatives whose result differs from the taken edge, publishes
+the facts every surviving alternative shares, and makes the edge unreachable
+when none survives. A missing alternative is impossible, so joins take the
+union of alternatives and keep a fact only where every incoming path that may
+hold that alternative agrees.
+
+Every write that the existing owned-field rules treat as overlapping retires
+the overlapping conditional facts, a carrier whose payload path it overlaps,
+and the predicates over that carrier; unknown, global, raw and vacant
+construction barriers retire all of them, keeping only an immutable value's
+alternatives. Direct writes to by-value frame storage cannot reach the
+implicit receiver. A predicate refers to its carrier's alternative after the
+call that produced it; storing a new object into the carrier retires it. Each
+state keeps at most 64 carriers and 64 facts per alternative. Nothing here
+names a library type: the prelude's result class, `std::vector`'s and
+`std::detail::prefix_owner`'s allocation results and an unrelated user result
+class over a user payload enum share the rule. The user control
+(`optimizer_payload_result_postconditions.gti`) proves its relayed, negated
+and directly switched success additions and keeps the failed-path, reassigned,
+later-call, native-write, mixed unknown-exit, wrong-case and active-destructor
+negatives checked, with independent replay and runtime overflow evidence.
 
 Exact readonly source members may also return a still-current ordinary owned
 integer field. The interpreter records its typed receiver-relative path only

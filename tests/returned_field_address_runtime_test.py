@@ -114,6 +114,15 @@ def main():
     run("optimizer_passive_result_cleanup.gti", {
         "bad_active_result": "counter.bad_active_result()",
     }, "return this.count + 1;")
+    run("optimizer_payload_result_postconditions.gti", {
+        "bad_failed_gate": "bad_failed_gate(ticket)",
+        "bad_reassigned_gate": "bad_reassigned_gate(ticket)",
+        "bad_later_gate": "bad_later_gate(ticket)",
+        "bad_native_gate": "bad_native_gate(ticket)",
+        "bad_mixed_gate": "bad_mixed_gate(ticket)",
+        "bad_switched_gate": "bad_switched_gate(ticket)",
+        "bad_active_gate": "bad_active_gate(ticket)",
+    }, "return ticket.count + 1;")
     run("optimizer_pointer_field_contents.gti", {
         "bad_changed": "cell.bad_changed()",
         "bad_native": "cell.bad_native()",

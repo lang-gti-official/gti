@@ -2540,11 +2540,14 @@ way inside the function, for example keeping it in a local and returning
 that, still requires ownerless text. So does a recursive call whose result
 has a text field, even when it is returned.
 
-A dependent value still cannot be passed to a constructor, a lambda, a
-virtual method or a generic function (a method of a generic class is not one,
-see below), nor returned itself, captured, bound by
-a reference, assigned into existing storage, or stored in a global, a field,
-an array or a container. Each of these is `GTI-S2045`. For the same reason a
+A dependent value still cannot be passed to a lambda, a virtual method or a
+generic function (a method of a generic class is not one, see below), nor
+captured, bound by a reference, assigned into existing storage, or stored in
+a global, a field, an array or a container. It can be passed to a
+constructor only when the constructor relays one of its text fields, and
+returned only over a reference parameter's referent (see
+[Conversions, field relays and returns](#conversions-field-relays-and-returns)).
+Each of the others is `GTI-S2045`. For the same reason a
 class with a destructor, a base or virtual methods keeps the ownerless field
 rule. So does a constructor with a non-empty body, which could read the
 published field back through `this` as ownerless text. A value holds dynamic
@@ -2643,7 +2646,26 @@ arguments whose every return is `this.field` (or another such accessor), as in
 `switch (this.wordRef())`; either form requires or relays the same payload. A
 method returning such an accessor's reference composes the relay, and so do
 overloaded `*` and `->` operators that return it. A method that only tests the
-alternative, without binding the payload, requires nothing.
+alternative, without binding the payload, requires nothing, and so does such
+an accessor itself. Any other use of the field than a `switch` on it, such as
+copying or moving it into a local, passing it by value or by reference,
+storing it, or returning a reference to it from a method that is not such an
+accessor, may carry any of its payloads away, so it requires every text payload
+of the field ownerless. Inside the class, a call of the accessor used any
+other way than as a `switch` subject is such a use of the field:
+
+```gti
+class Line {
+public:
+  Word word;
+  Line(std::string_view text) : word(Word::text(text)) {}
+  void passOut() { keepWord(this.word); }   // requires word's payloads
+};
+
+Line line = Line(input.view());
+line.passOut();                             // GTI-S2045
+Line("literal").passOut();                  // valid: ownerless
+```
 
 `std::optional<std::string_view>` and `expected<std::string_view, E>` are
 ordinary classes of this shape, so a value over a local owner can test and
@@ -2666,9 +2688,113 @@ if (parsed.has_value()) {
 ```
 
 An optional or expected over literal text is ownerless and may be returned or
-stored. One over a local owner must be built by an explicit construction: an
-implicit conversion such as `std::optional<std::string_view> maybe =
-input.view();` still requires ownerless text, as does `std::move(maybe).value()`.
+stored. `std::move(maybe).value()` moves the field and binds its payload by
+value, so it requires ownerless text, as `value_or` does.
+
+#### Conversions, field relays and returns
+
+An implicit conversion is a construction whose argument and converted value
+are the same expression. It keeps the argument's owner as an explicit
+construction does. A view binding's owner, not the binding, is what the value
+depends on:
+
+```gti
+std::optional<std::string_view> maybe = input.view();      // views input
+expected<int, std::string_view> failed = unexpected(input.view());
+std::string_view view = input.view();
+Token token = Token(view, 1);                               // views input
+```
+
+A constructor that stores a text field of one of its class parameters,
+directly or through a method that returns that field, relays it. The new
+value holds the argument's text at the path the constructor stores it in. The
+constructor must name the parameter once and have an empty body, like the
+publishing constructors above. `expected`'s constructor from
+`unexpected_value<E>` is one: it stores `std::move(failure).error()` in its
+error alternative.
+
+```gti
+class Wrap {
+public:
+  Word word;
+  Wrap(Token token) : word(Word::text(token.text)) {}
+};
+
+Wrap wrap = Wrap(token);              // wrap.word's payload views input
+std::unexpected_value<std::string_view> failure = unexpected(input.view());
+std::println(std::move(failure).error());          // a view of input
+```
+
+A function may return a value over the referent of one of its read-only
+reference parameters, such as the text of a `std::string&`. Each call's
+result then views that call's argument, as a value built over it locally
+would:
+
+```gti
+expected<int, std::string_view> parse(std::string& input) {
+  if (input.empty()) {
+    return 0;
+  }
+  return unexpected(input.view());
+}
+
+mut std::string source{"bad input"};
+expected<int, std::string_view> parsed = parse(source);
+if (!parsed) {
+  std::println(parsed.error());       // a view of source
+}
+source.append("!");                   // GTI-S2017 while parsed is used later
+kept = parsed.error();                // GTI-S2045
+```
+
+Alternatives that hold no dynamic text, like `return 0;` or `std::nullopt`,
+may sit beside the dependent return, and a function may return such a call
+of its own parameter. The owner must be one read-only reference parameter.
+A local, a by-value or `mut` parameter, a second owner parameter, a
+method's receiver, and a temporary argument are each `GTI-S2045`, as is an
+implicit conversion inside a constructor initializer. A return that would
+need two implicit conversions is not supported.
+
+#### Nested values
+
+A value that holds a view may itself be stored in a field or payload of
+another value. A constructor that stores a class parameter whole, as
+`Report(Diag diag) : diag(diag) {}` does, nests the argument's text under
+that field, and the same holds at any depth and for payloads, so
+`std::optional<Token>` and `expected<int, Diag>` keep their owner's text:
+
+```gti
+class Report {
+public:
+  Diag diag;
+  int code;
+  Report(Diag diag, int code) : diag(diag), code(code) {}
+};
+
+Report report = Report(Diag(input.view(), 1), 2);
+std::println(report.diag.text);              // a view of input
+std::optional<Token> maybe = Token(input.view(), 3);
+if (maybe) {
+  std::println((*maybe).text);               // a view of input
+}
+
+expected<int, Diag> check(std::string& input) {
+  if (input.empty()) {
+    return 0;
+  }
+  return unexpected(Diag(input.view(), 3));  // the caller's input
+}
+```
+
+The nested value is read through fields and through accessors returning a
+reference to it, such as `*maybe`, `maybe.value()` and `result.error()`. It
+cannot be copied out of its value (`Diag d = report.diag;` and `Token t =
+*maybe;` are `GTI-S2045`), and storing its text is `GTI-S2045`. A function
+taking an optional or expected of such a class by reference may read its
+text and return a count from it. One that stores the text, or copies the
+nested value out, requires ownerless text there, as for a text payload.
+Passing a value whose text sits in a class field, like `Report`, to a
+function is `GTI-S2045` for now.
 
 An adapter that needs to retain dynamic input can instead declare a checked
 `std::string_view&` or `c_string&` field and accept the same reference type in its
