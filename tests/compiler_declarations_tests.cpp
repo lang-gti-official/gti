@@ -4330,8 +4330,7 @@ int use() {
          "unsupported operations and concrete constraint violations should "
          "fail before backend entry");
   expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "does not satisfy generic constraint") &&
+             hasDiagnostic(invalid.diagnostics, "does not satisfy concept") &&
              hasDiagnostic(invalid.diagnostics,
                            "Unknown generic concept 'std::mystery'") &&
              hasDiagnostic(invalid.diagnostics,
@@ -4356,9 +4355,10 @@ int use() {
          "constraint diagnostics should cover declarations, propagation, "
          "calls, conversions, and required operator capabilities");
   expect(hasDiagnosticHint(invalid.diagnostics,
-                           "public, read-only bool operator==") &&
-             hasDiagnosticHint(invalid.diagnostics,
-                               "exact public, read-only bool overloads") &&
+                           "public, read-only bool == and != operators") &&
+             hasDiagnosticHint(
+                 invalid.diagnostics,
+                 "public, read-only bool <, <=, > and >= operators") &&
              hasDiagnosticHint(invalid.diagnostics,
                                "available copy constructor") &&
              hasDiagnosticHint(invalid.diagnostics,

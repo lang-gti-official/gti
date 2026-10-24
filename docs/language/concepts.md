@@ -590,7 +590,7 @@ their former private category bindings are removed. Borrowing iterator and
 range relationships still retain the facts described above.
 
 For example, `std::totally_ordered` remains source composition, and the iterator
-units still define public concepts over the necessary private structural facts:
+units define public concepts over general source requirements and reflection:
 
 ```gti
 namespace std {

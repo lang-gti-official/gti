@@ -1571,10 +1571,18 @@ auto SemanticVisitor::Impl::activeRequirementsImply(
       return implies(provided, b.left) && implies(provided, b.right);
     if (a.kind == ConstraintExpressionKind::Disjunction)
       return implies(a.left, wanted) && implies(a.right, wanted);
+    // A conjunct can preserve a complete disjunction. Splitting the wanted
+    // disjunction first would incorrectly require one particular alternative
+    // from `(A || B) && C`. If neither conjunct proves it alone, still try each
+    // wanted alternative against the complete conjunction below (A and C may
+    // be supplied by different conjuncts).
+    if (a.kind == ConstraintExpressionKind::Conjunction &&
+        (implies(a.left, wanted) || implies(a.right, wanted)))
+      return true;
     if (b.kind == ConstraintExpressionKind::Disjunction)
       return implies(provided, b.left) || implies(provided, b.right);
     if (a.kind == ConstraintExpressionKind::Conjunction)
-      return implies(a.left, wanted) || implies(a.right, wanted);
+      return false;
     if (a.capability && b.capability &&
         a.capability->atomic != GenericConstraintKind::None &&
         b.capability->atomic != GenericConstraintKind::None &&
@@ -1963,6 +1971,23 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
   const RegisteredConcept &conceptInfo = concepts[requirement.conceptId - 1];
   if (conceptInfo.protocol) {
     return protocolConformanceFailure(requirement);
+  }
+  if (std::any_of(requirement.arguments.begin(), requirement.arguments.end(),
+                  containsOpenTypeParameter)) {
+    // Inline generic annotations have no enclosing ConstraintExpression.
+    // Prove their named application through the same bounded source formula
+    // path as a trailing clause, including aliases and opaque predicate leaves.
+    // The temporary shape grants no facts of its own and never escapes this
+    // query. Closed arguments still undergo concrete admission below.
+    ConstraintExpression shape;
+    shape.nodes.push_back(
+        {.kind = ConstraintExpressionKind::Application, .application = 0});
+    shape.root = 0;
+    AppliedConceptRequirement wanted = requirement;
+    wanted.expression = &shape;
+    wanted.expressionApplication = 0;
+    if (activeRequirementsImply(std::span(&wanted, 1), shape, shape.root))
+      return std::nullopt;
   }
   const auto substitution =
       conceptSubstitution(conceptInfo, requirement.arguments);

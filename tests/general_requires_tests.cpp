@@ -503,6 +503,11 @@ struct Key {
 };
 bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
 bool before<std::totally_ordered T>(T& a, T& b) { return a < b; }
+concept ordered_alias<T> = std::totally_ordered<T>;
+bool aliased_before<T>(T& a, T& b) requires ordered_alias<T> {
+  return before(a, b);
+}
+bool ordered_same<std::totally_ordered T>(T& a, T& b) { return same(a, b); }
 bool integer_before<T>(T& a, T& b) requires std::meta::is_integral<T>() {
   return before(a, b);
 }
@@ -523,7 +528,8 @@ int main() {
   static_assert(std::detail::read_ordering_members<Key>());
   Key a{.value = 1}; Key b{.value = 2};
   int x = 1; int y = 2;
-  return !same(a, b) && before(a, b) && integer_before(x, y) ? 0 : 1;
+  return !same(a, b) && !ordered_same(a, b) && before(a, b) &&
+         aliased_before(a, b) && integer_before(x, y) ? 0 : 1;
 }
 )"),
            "source comparison policy uses general declaration facts and "
