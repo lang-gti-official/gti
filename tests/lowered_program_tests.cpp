@@ -1348,6 +1348,7 @@ void expression<T>() requires requires(T& value) {
   { value + value } -> T;
 } {}
 void nullary<T>() requires requires { { T() } -> T; } {}
+void inferred<T>() requires requires(T& value) { { value + value }; } {}
 void iteration<T>() requires requires(mut T& range) {
   for (mut int32_t& element : range) {}
 } {}
@@ -1357,6 +1358,9 @@ struct Cell {
 };
 void borrowed<T>() requires requires(mut T& owner) {
   { owner.edit() } -> mut int32_t& [[borrowed_from(owner)]];
+} {}
+void inferred_borrow<T>() requires requires(mut T& owner) {
+  { owner.edit() } -> mut auto& [[borrowed_from(owner)]];
 } {}
 class Reader {
 public:
@@ -1374,8 +1378,10 @@ int main() {
   predicate<int32_t>();
   expression<int32_t>();
   nullary<int32_t>();
+  inferred<int32_t>();
   iteration<int32_t[3]>();
   borrowed<Cell>();
+  inferred_borrow<Cell>();
   member<Reader>();
   Box box = Box(1);
   return 0;
@@ -1413,6 +1419,23 @@ int main() {
       findPayload<lang::LoweredFunctionDeclaration>(program, "predicate");
   const auto *borrowed =
       findPayload<lang::LoweredFunctionDeclaration>(program, "borrowed");
+  const auto *inferred =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "inferred");
+  const auto *inferredBorrow =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "inferred_borrow");
+  expect(inferred && inferred->requirements.size() == 1 &&
+             inferred->requirements[0].kind ==
+                 lang::LoweredRequirementKind::InferredExpression &&
+             !inferred->requirements[0].resultOriginParameter &&
+             !inferred->requirements[0].inferredResultAccess &&
+             inferredBorrow && inferredBorrow->requirements.size() == 1 &&
+             inferredBorrow->requirements[0].inferredResultAccess ==
+                 lang::AccessMode::Mutable &&
+             inferredBorrow->requirements[0].resultOriginParameter == 0 &&
+             inferredBorrow->requirements[0].arguments[1] ==
+                 lang::SemanticType::Void,
+         "inferred queries retain contracts without publishing unknown "
+         "executable types");
   const auto *iteration =
       findPayload<lang::LoweredFunctionDeclaration>(program, "iteration");
   expect(iteration && iteration->requirements.size() == 1 &&
@@ -1519,6 +1542,8 @@ int main() {
           "unresolved types are rejected before backend consumption");
     }
     if ((*requirements)[0].kind == lang::LoweredRequirementKind::Expression ||
+        (*requirements)[0].kind ==
+            lang::LoweredRequirementKind::InferredExpression ||
         (*requirements)[0].kind == lang::LoweredRequirementKind::Iteration ||
         (*requirements)[0].kind == lang::LoweredRequirementKind::Predicate) {
       auto forged = program;

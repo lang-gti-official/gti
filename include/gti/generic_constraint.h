@@ -44,9 +44,6 @@ enum class StructuralConstraintKind : std::uint8_t {
   None,
   ReadMember,
   Iteration,
-  InputIterator,
-  DereferencesTo,
-  WritableIterator,
   SizedRange,
   EnumUnderlying,
 };
@@ -95,11 +92,8 @@ inline constexpr std::array<GenericConstraintKind, 21> genericConstraintKinds{{
 // complete fact inventory above also serves reflection and generic proofs.
 inline constexpr std::array<CompilerConstraintRecord, 0> compilerConstraints{};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 4>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 1>
     compilerStructuralConstraints{{
-        {"input_iterator", StructuralConstraintKind::InputIterator, 1},
-        {"dereferences_to", StructuralConstraintKind::DereferencesTo, 2},
-        {"writable_iterator", StructuralConstraintKind::WritableIterator, 1},
         {"sized_range", StructuralConstraintKind::SizedRange, 1},
     }};
 

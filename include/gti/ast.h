@@ -1481,14 +1481,14 @@ public:
                     std::vector<Token> bindings,
                     std::optional<Token> unsafeKeyword = std::nullopt,
                     std::optional<Token> borrowedFrom = std::nullopt,
-                    StmtPtr iteration = nullptr)
+                    StmtPtr iteration = nullptr, bool inferredResult = false)
       : keyword_(std::move(keyword)), receiver_(keyword_),
         result_(std::move(result)), parameters_(std::move(parameters)),
         bindings_(std::move(bindings)),
         unsafeKeyword_(std::move(unsafeKeyword)),
         expression_(std::move(expression)),
         borrowedFrom_(std::move(borrowedFrom)),
-        iteration_(std::move(iteration)) {}
+        iteration_(std::move(iteration)), inferredResult_(inferredResult) {}
 
   MemberRequirement(Token keyword, TypeRef receiver, Token binding,
                     Token receiverUse, Token member, TypeRef result,
@@ -1512,6 +1512,17 @@ public:
   const Token &receiverUse() const { return receiverUse_; }
   const Token &member() const { return member_; }
   const TypeRef &result() const { return result_; }
+  [[nodiscard]] bool inferredResult() const { return inferredResult_; }
+  // Inference is query syntax, not an unresolved type argument passed to a
+  // concrete instance. The void slot carries no claimed result type.
+  [[nodiscard]] TypeRef resultArgumentType() const {
+    if (!inferredResult_)
+      return result_;
+    Token token = result_.name.last();
+    token.kind = TokenKind::VOID;
+    token.lexeme = "void";
+    return TypeRef(std::move(token));
+  }
   const std::vector<TypeRef> &parameters() const { return parameters_; }
   const std::vector<Token> &bindings() const { return bindings_; }
   const std::vector<Token> &arguments() const { return arguments_; }
@@ -1543,6 +1554,7 @@ private:
   ExprPtr expression_;
   std::optional<Token> borrowedFrom_;
   StmtPtr iteration_;
+  bool inferredResult_ = false;
 };
 
 class LiteralExpr final : public ExprOfKind<ExprKind::LiteralExpr> {

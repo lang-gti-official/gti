@@ -1159,9 +1159,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
     const CompilerConstraintBinding &binding = *declaration.compilerBinding();
     const bool trustedIteratorConstraint =
         isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
-        (binding.name == "input_iterator" ||
-         binding.name == "dereferences_to" ||
-         binding.name == "writable_iterator" || binding.name == "sized_range");
+        binding.name == "sized_range";
     if ((!isPreludeUnit(conceptInfo.sourceUnit) &&
          !trustedIteratorConstraint) ||
         conceptInfo.namespaceScope !=

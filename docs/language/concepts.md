@@ -274,6 +274,19 @@ owned local a borrowed input, or turn read-only access into mutable access.
 Omitting the origin does not admit reference results. This slice describes
 checked references, not conditional reference-bearing wrapper results.
 
+A simple requirement omits the result contract: `{ expression };` checks
+whether the expression is valid but promises no particular result type,
+ownership category or borrowed origin. In an open generic body, a direct
+operation has a deferred result, not an invented owned value or reference;
+concrete instantiation must resolve it before executable lowering.
+
+An inferred reference requirement instead spells
+`{ expression } -> auto& [[borrowed_from(input)]];` (or `mut auto&`). It checks
+the same exact access and input-origin rules as a typed borrowed requirement,
+while leaving the referent inferred. A value result cannot satisfy this check,
+and inference never changes a read-only input into a mutable borrowed origin.
+Use a simple requirement, not `-> auto`, when no result contract is wanted.
+
 The same query is a Boolean expression usable in `static_assert` and
 `if constexpr`. Example [173](../../examples/173-general-requires.gti) demonstrates
 operators, construction, composition and reflection on an unrelated user type.

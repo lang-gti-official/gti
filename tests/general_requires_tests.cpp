@@ -32,6 +32,9 @@ static_assert(!lang::compilerStructuralConstraint("range_operation"));
 static_assert(!lang::compilerStructuralConstraint("input_range"));
 static_assert(!lang::compilerStructuralConstraint("range_of"));
 static_assert(!lang::compilerStructuralConstraint("mutable_range_of"));
+static_assert(!lang::compilerStructuralConstraint("input_iterator"));
+static_assert(!lang::compilerStructuralConstraint("dereferences_to"));
+static_assert(!lang::compilerStructuralConstraint("writable_iterator"));
 static_assert([] {
   for (const std::string_view binding :
        {"numeric", "signed_numeric", "integral", "signed_integral",
@@ -115,6 +118,58 @@ int main(int argc, char **argv) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("gti-general-requires-" + std::to_string(getpid()));
   std::filesystem::create_directories(directory);
+
+  accepted(
+      check(root, directory, "inferred_requirement_results", R"GTI(
+concept observes<I> = requires(I& cursor) { { *cursor }; };
+concept edits<I> = requires(mut I& cursor) {
+  { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+};
+struct Cell {
+  mut int value = 1;
+  int& operator*() { return this.value; }
+  mut int& operator*() mut { return this.value; }
+};
+struct Value { int operator*() { return 2; } };
+struct Empty {};
+T read<I,T>(I& cursor) requires observes<I> { return *cursor; }
+void write<I,T>(mut I& cursor, T value) requires edits<I> { *cursor = value; }
+bool same<I>(I& cursor, int value) requires observes<I> { return *cursor == value; }
+void exact<I>(mut I& cursor) requires edits<I> && requires(mut I& input) {
+  { *input } -> mut int& [[borrowed_from(input)]];
+} { *cursor = 3; }
+int main() {
+  static_assert(requires(Cell& cursor) { { *cursor }; });
+  static_assert(requires(Value& cursor) { { *cursor }; });
+  static_assert(!(requires(Empty& cursor) { { *cursor }; }));
+  static_assert(!(requires(mut Value& cursor) {
+    { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+  }));
+  static_assert(!(requires(Cell& cursor) {
+    { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+  }));
+  static_assert(!(requires(Cell& left, Cell& right) {
+    { *right } -> auto& [[borrowed_from(left)]];
+  }));
+  mut Cell cell{};
+  Value value{};
+  write(cell, 3);
+  exact(cell);
+  if (!same(cell, 3)) { return 9; }
+  return read<Cell,int>(cell) + read<Value,int>(value) - 5;
+}
+)GTI"),
+      "inferred results preserve existence, access and exact borrowed origins");
+
+  rejected(check(root, directory, "inferred_comparison_rechecked", R"GTI(
+concept observes<I> = requires(I& cursor) { { *cursor }; };
+struct Uncomparable {};
+struct Reader { Uncomparable operator*() { return Uncomparable(); } };
+bool same<I>(I& cursor, int value) requires observes<I> { return *cursor == value; }
+int main() { Reader reader{}; return same(reader, 2) ? 0 : 1; }
+)GTI"),
+           "a deferred comparison must resolve in the concrete instance",
+           "GTI-S2022");
 
   accepted(
       check(root, directory, "iteration_requirements", R"GTI(

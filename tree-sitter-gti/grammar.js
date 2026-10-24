@@ -1520,9 +1520,9 @@ module.exports = grammar({
         )), ")")),
         "{", repeat1(seq(
           optional(field("unsafe", "unsafe")), choice(seq(
-            "{", field("expression", $._expression_not_comma), "}", "->",
-            optional("mut"), field("result_type", $.type),
-            optional(seq("[[", "borrowed_from", "(", field("borrow_origin", $.identifier), ")", "]]")), ";",
+            "{", field("expression", $._expression_not_comma), "}",
+            optional(seq("->", optional("mut"), field("result_type", $.type),
+              optional(seq("[[", "borrowed_from", "(", field("borrow_origin", $.identifier), ")", "]]")))), ";",
           ), $.iteration_requirement),
         )), "}",
       ),

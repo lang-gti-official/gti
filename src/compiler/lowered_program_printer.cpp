@@ -20,6 +20,8 @@ requirementKindName(LoweredRequirementKind kind) {
     return "member";
   case LoweredRequirementKind::Expression:
     return "expression";
+  case LoweredRequirementKind::InferredExpression:
+    return "inferred-expression";
   case LoweredRequirementKind::Iteration:
     return "iteration";
   case LoweredRequirementKind::Predicate:
@@ -224,6 +226,7 @@ private:
       if (value.requiresUnsafe)
         output << ";requires-unsafe=1";
       if (value.kind == LoweredRequirementKind::Expression ||
+          value.kind == LoweredRequirementKind::InferredExpression ||
           value.kind == LoweredRequirementKind::Iteration) {
         output << ";expression-parameters=" << value.expressionParameterCount
                << ";result-argument=";
@@ -233,6 +236,11 @@ private:
           output << "none";
         if (value.resultOriginParameter)
           output << ";result-origin-parameter=" << *value.resultOriginParameter;
+        if (value.inferredResultAccess)
+          output << ";inferred-reference-access="
+                 << (*value.inferredResultAccess == AccessMode::Mutable
+                         ? "mutable"
+                         : "read-only");
       }
       output << ";source=";
       span(value.source);

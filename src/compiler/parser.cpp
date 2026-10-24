@@ -719,7 +719,7 @@ private:
         std::vector<TypeRef> arguments;
         if (requirement->isExpressionRequirement()) {
           arguments = requirement->parameters();
-          arguments.push_back(requirement->result());
+          arguments.push_back(requirement->resultArgumentType());
           collectRequirementTypes(requirement->expression().get(), arguments);
         } else {
           TypeRef receiver = requirement->receiver();
@@ -3807,6 +3807,13 @@ private:
       consume(TokenKind::LEFT_BRACE, "Expect '{' before required expression.");
       ExprPtr expression = assignment();
       consume(TokenKind::RIGHT_BRACE, "Expect '}' after required expression.");
+      if (match({TokenKind::SEMICOLON})) {
+        result.push_back(std::make_unique<MemberRequirement>(
+            keyword, std::move(expression),
+            TypeRef(generatedToken(TokenKind::AUTO, "auto", keyword)),
+            parameters, bindings, unsafeKeyword, std::nullopt, nullptr, true));
+        continue;
+      }
       consume(TokenKind::ARROW,
               "Expect '->' before exact required result type.");
       std::optional<Token> resultAccess;
@@ -3841,6 +3848,18 @@ private:
         consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after borrow origin.");
       }
       consume(TokenKind::SEMICOLON, "Expect ';' after required result type.");
+      const bool inferredResult =
+          requiredResult.name.last().kind == TokenKind::AUTO;
+      if (inferredResult &&
+          (!requiredResult.reference || !borrowedFrom ||
+           requiredResult.reference->kind != TokenKind::AMPERSAND ||
+           !requiredResult.pointers.empty() ||
+           !requiredResult.arrayExtents.empty() ||
+           !requiredResult.arguments.empty()))
+        throw error(requiredResult.name.last(),
+                    "An inferred result uses 'auto&' with borrowed_from; "
+                    "omit '-> type' to check an expression without a result "
+                    "type contract.");
 
       // Preserve the earlier exact-member contract as a subset. Every other
       // expression is checked by the ordinary semantic expression analyzer.
@@ -3873,7 +3892,7 @@ private:
         result.push_back(std::make_unique<MemberRequirement>(
             keyword, std::move(expression), std::move(requiredResult),
             parameters, bindings, std::move(unsafeKeyword),
-            std::move(borrowedFrom)));
+            std::move(borrowedFrom), nullptr, inferredResult));
       }
     }
     if (result.empty())

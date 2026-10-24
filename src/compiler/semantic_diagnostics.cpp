@@ -433,21 +433,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
             "through this requirement still need an explicit unsafe context.");
       break;
     }
-    case StructuralConstraintKind::InputIterator:
-      diagnostic.hints.emplace_back(
-          "The iterator must provide public read-only operator*() returning "
-          "a checked reference and public void operator++() mut.");
-      break;
-    case StructuralConstraintKind::DereferencesTo:
-      diagnostic.hints.emplace_back(
-          "The iterator's read-only dereference must return a checked "
-          "reference whose referent is exactly the required type.");
-      break;
-    case StructuralConstraintKind::WritableIterator:
-      diagnostic.hints.emplace_back(
-          "The iterator must provide public mut operator*() returning a "
-          "mutable checked reference and public void operator++() mut.");
-      break;
     case StructuralConstraintKind::Iteration:
       diagnostic.hints.emplace_back(
           "Provide the operations and checked access required by the range "

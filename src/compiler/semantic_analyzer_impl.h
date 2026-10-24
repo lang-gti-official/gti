@@ -3374,10 +3374,6 @@ private:
   structuralOperatorCandidates(const SemanticType &receiver,
                                OverloadedOperator kind) const;
 
-  [[nodiscard]] std::optional<CallableCandidate> selectStructuralOperator(
-      const SemanticType &receiver, OverloadedOperator kind,
-      std::span<const SemanticType> parameterTypes, bool mutableReceiver) const;
-
   [[nodiscard]] bool
   structuralConstraintSatisfied(StructuralConstraintKind kind,
                                 std::span<const SemanticType> arguments) const;

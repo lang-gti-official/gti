@@ -337,6 +337,14 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
       return std::nullopt;
     fact.arguments = {referent(arguments[*receiver]),
                       arguments[query.parameters().size()]};
+    if (query.inferredResult())
+      fact.arguments[1] =
+          query.borrowedFrom()
+              ? SemanticType::referenceTo(SemanticType::Unknown,
+                                          query.result().referenceMutability
+                                              ? AccessMode::Mutable
+                                              : AccessMode::ReadOnly)
+              : SemanticType::Unknown;
     fact.mutableReceiver =
         arguments[*receiver].kind == SemanticType::Reference &&
         arguments[*receiver].referenceAccess == AccessMode::Mutable;
@@ -351,7 +359,7 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
     fact.arguments.push_back(arguments[operand]);
   if (query.borrowedFrom()) {
     const auto origin = binding(*query.borrowedFrom());
-    const auto &result = arguments[query.parameters().size()];
+    const auto &result = fact.arguments[1];
     if (!receiver || !origin || result.kind != SemanticType::Reference ||
         arguments[*origin].kind != SemanticType::Reference ||
         (result.referenceAccess == AccessMode::Mutable &&
@@ -415,7 +423,9 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
   std::unordered_map<std::string, SemanticType> bindings;
   for (std::size_t index = 0; index < query.parameters().size(); ++index)
     bindQueryType(query.parameters()[index], arguments[index], bindings);
-  bindQueryType(query.result(), arguments[query.parameters().size()], bindings);
+  if (!query.inferredResult())
+    bindQueryType(query.result(), arguments[query.parameters().size()],
+                  bindings);
   for (std::size_t index = 0; index < extraTypes.size(); ++index)
     bindQueryType(*extraTypes[index],
                   arguments[query.parameters().size() + 1 + index], bindings);
@@ -498,7 +508,15 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
   for (const auto &diagnostic : worker->diagnostics)
     if (diagnostic.severity == DiagnosticSeverity::Error)
       return reject(diagnostic.message);
-  const auto &required = arguments[query.parameters().size()];
+  if (query.inferredResult() && actual == SemanticType::Unknown)
+    return reject("The expression's operation remains unresolved. An inferred "
+                  "result does not prove an unresolved compound operation.");
+  const auto required =
+      query.inferredResult() && query.borrowedFrom()
+          ? SemanticType::referenceTo(actual, query.result().referenceMutability
+                                                  ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly)
+          : arguments[query.parameters().size()];
   if (query.borrowedFrom()) {
     const auto origin =
         std::find_if(query.bindings().begin(), query.bindings().end(),
@@ -535,6 +553,8 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
                     "requirement parameter.");
     return true;
   }
+  if (query.inferredResult())
+    return true;
   // Call expressions expose their referent as the ordinary expression type.
   // That value-facing view must not erase a selected declaration's borrowed
   // result when proving an exact owned-result requirement.

@@ -157,6 +157,9 @@ validRequirement(const LoweredConceptRequirement &requirement) {
   if (ordinal(requirement.kind) >= ordinal(LoweredRequirementKind::Count) ||
       !resolvedTypes(requirement.arguments))
     return false;
+  if (requirement.kind != LoweredRequirementKind::InferredExpression &&
+      requirement.inferredResultAccess)
+    return false;
   switch (requirement.kind) {
   case LoweredRequirementKind::Concept:
     return requirement.conceptId != 0 && requirement.memberName.empty() &&
@@ -187,6 +190,31 @@ validRequirement(const LoweredConceptRequirement &requirement) {
                                .referenceAccess == AccessMode::Mutable)
                 : requirement.arguments[*requirement.resultArgument].kind !=
                       SemanticType::Reference) &&
+           !requirement.source.source.empty() &&
+           requirement.source.start < requirement.source.end;
+  case LoweredRequirementKind::InferredExpression:
+    return requirement.conceptId == 0 && requirement.memberName.empty() &&
+           !requirement.mutableReceiver && requirement.resultArgument &&
+           *requirement.resultArgument ==
+               requirement.expressionParameterCount &&
+           *requirement.resultArgument < requirement.arguments.size() &&
+           requirement.arguments[*requirement.resultArgument] ==
+               SemanticType::Void &&
+           (requirement.resultOriginParameter
+                ? *requirement.resultOriginParameter <
+                          requirement.expressionParameterCount &&
+                      requirement.inferredResultAccess &&
+                      (*requirement.inferredResultAccess ==
+                           AccessMode::ReadOnly ||
+                       *requirement.inferredResultAccess ==
+                           AccessMode::Mutable) &&
+                      requirement.arguments[*requirement.resultOriginParameter]
+                              .kind == SemanticType::Reference &&
+                      (*requirement.inferredResultAccess !=
+                           AccessMode::Mutable ||
+                       requirement.arguments[*requirement.resultOriginParameter]
+                               .referenceAccess == AccessMode::Mutable)
+                : !requirement.inferredResultAccess) &&
            !requirement.source.source.empty() &&
            requirement.source.start < requirement.source.end;
   case LoweredRequirementKind::Iteration:

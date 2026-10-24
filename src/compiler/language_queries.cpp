@@ -666,6 +666,10 @@ void SignaturePrinter::appendConceptApplication(
       }
       result += query.unsafeKeyword() ? " { unsafe { " : " { { ";
       result += semantic_spelling::expressionSpelling(*query.expression());
+      if (query.inferredResult() && !query.borrowedFrom()) {
+        result += " }; }";
+        return;
+      }
       result += " } -> ";
       if (query.result().referenceMutability)
         result += "mut ";

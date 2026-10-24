@@ -5,14 +5,57 @@
 #include <std/meta>
 
 namespace gti_internal {
-@compiler_constraint("input_iterator") concept input_iterator_capability<I>;
-@compiler_constraint("dereferences_to") concept dereferences_to_capability<I, T>;
-@compiler_constraint("writable_iterator") concept writable_iterator_capability<I>;
 @compiler_constraint("sized_range") concept sized_range_capability<R>;
 }
 
 namespace std {
 namespace detail {
+// Declaration metadata supplies the result type; an ordinary expression query
+// separately validates access, overload selection, and the checked origin.
+constexpr bool readable_dereference_result<I, R>(std::meta::type<I> owner,
+                                                 std::meta::type<R> result) {
+  if constexpr (std::meta::type<R>().is_reference()) {
+    return requires(I& cursor) { { *cursor } -> R [[borrowed_from(cursor)]]; };
+  } else {
+    // Legacy text handles can retain expression-specific owner dependencies.
+    return !std::meta::type<R>().is_void() && std::meta::is_copyable<R>() &&
+           std::meta::is_borrow_free<R>() &&
+           !std::meta::is_same<R, std::string_view>() &&
+           !std::meta::is_same<R, c_string>() &&
+           (requires(I& cursor) { { *cursor } -> R; });
+  }
+}
+constexpr bool dereference_declaration<I, T, uint64_t Typed>() {
+  if constexpr (std::meta::is_class<I>() || std::meta::is_struct<I>() ||
+                std::meta::type<I>().is_interface() || std::meta::type<I>().is_union()) {
+    mut bool found = false;
+    constexpr for (auto member : std::meta::lookup_operators_of<I>()) {
+      if constexpr (member.name() == "operator*" && member.is_public() &&
+                    !member.is_static() && !member.is_mutating() &&
+                    !member.is_consuming() && !member.is_unsafe() &&
+                    !member.is_generic() && !member.is_constrained() &&
+                    member.parameter_count() == uint64_t(0)) {
+        if constexpr (Typed == uint64_t(0)) {
+          found = readable_dereference_result(std::meta::type<I>(), member.result());
+        } else {
+          if constexpr (!std::meta::type<T>().is_void() &&
+                        !std::meta::type<T>().is_reference()) {
+            if constexpr (member.result().is_same<T>() || member.result().is_same<T&>()) {
+              found = readable_dereference_result(std::meta::type<I>(), member.result());
+            }
+          }
+        }
+      }
+    }
+    return found;
+  } else { return false; }
+}
+constexpr bool readable_dereference_declaration<I>() {
+  return dereference_declaration<I, void, 0>();
+}
+constexpr bool exact_dereference_declaration<I, T>() {
+  return dereference_declaration<I, T, 1>();
+}
 constexpr bool sentinel_declaration<I, S, uint64_t Distance>() {
   if constexpr (std::meta::is_class<I>() || std::meta::is_struct<I>() ||
                 std::meta::type<I>().is_interface() || std::meta::type<I>().is_union()) {
@@ -56,6 +99,10 @@ constexpr bool cursor_movement_declarations<I, uint64_t Required>() {
                       member.parameter_count() == uint64_t(0)) {
           found |= 1;
         }
+        if constexpr (member.name() == "operator++" &&
+                      member.parameter_count() == uint64_t(0)) {
+          found |= 8;
+        }
         if constexpr (member.parameter_count() == uint64_t(1)) {
           constexpr for (auto parameter : member.parameters()) {
             if constexpr (parameter.type().is_same<std::ptrdiff_t>()) {
@@ -73,6 +120,9 @@ constexpr bool cursor_movement_declarations<I, uint64_t Required>() {
 }
 constexpr bool cursor_decrement_declarations<I>() {
   return cursor_movement_declarations<I, 1>();
+}
+constexpr bool cursor_increment_declarations<I>() {
+  return cursor_movement_declarations<I, 8>();
 }
 constexpr bool cursor_jump_declarations<I>() {
   return cursor_movement_declarations<I, 6>();
@@ -107,15 +157,20 @@ requires(mut I& position, std::ptrdiff_t distance) {
   { position -= distance } -> void;
 };
 }
-concept input_iterator<I> = gti_internal::input_iterator_capability<I>;
+[[unsatisfied("Provide public, safe read-only operator*() yielding a checked cursor-borrowed reference or an independent copyable value, and public void operator++() mut.")]]
+concept input_iterator<I> = detail::readable_dereference_declaration<I>() &&
+    detail::cursor_increment_declarations<I>() &&
+    requires(I& cursor, mut I& position) { { *cursor }; { ++position } -> void; };
 [[unsatisfied("The iterator must provide one unambiguous public read-only bool operator!=(S&) or operator!=(S) with copyable S for the exact sentinel type.")]]
 concept sentinel_for<Sentinel, Iterator> =
     detail::sentinel_comparison_declaration<Iterator, Sentinel>() &&
     requires(Iterator& position, Sentinel& end) {
       { position != end } -> bool;
     };
+[[unsatisfied("The read-only dereference must yield exactly T as a checked cursor-borrowed reference or an independent copyable value.")]]
 concept dereferences_to<Iterator, T> =
-    gti_internal::dereferences_to_capability<Iterator, T>;
+    detail::exact_dereference_declaration<Iterator, T>() &&
+    requires(Iterator& cursor) { { *cursor }; };
 concept forward_iterator<Iterator> =
     std::input_iterator<Iterator> &&
     std::copy_constructible<Iterator> &&
@@ -124,8 +179,13 @@ concept forward_iterator<Iterator> =
 // A writable position: mut dereference yields a mutable element reference and
 // prefix increment advances the position. `writes_to` is the exact-element
 // refinement, mirroring how `dereferences_to` refines `input_iterator`.
+[[unsatisfied("Provide mutable operator*() returning a mutable checked reference borrowed from the cursor, and public void operator++() mut.")]]
 concept output_iterator<Iterator> =
-    gti_internal::writable_iterator_capability<Iterator>;
+    detail::cursor_increment_declarations<Iterator>() &&
+    requires(mut Iterator& cursor) {
+      { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+      { ++cursor } -> void;
+    };
 [[unsatisfied("Provide a mutable dereference returning exactly mut T& borrowed from the cursor.")]]
 concept writes_to<Iterator, T> = requires(mut Iterator& cursor) {
   { *cursor } -> mut T& [[borrowed_from(cursor)]];

@@ -6912,6 +6912,22 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
   const auto [leftType, rightType] = analyzeBinaryOperands(expr);
   validateSequencedTransientLoans(expr.left(), expr.right(), expr.oper());
 
+  // An existence-only requirement can establish an operand operation without
+  // knowing its result yet. Do not turn a dependent comparison into a bool
+  // proof (or a false incompatibility): concrete reanalysis must resolve both
+  // operands and select/check the comparison before executable lowering.
+  if ((leftType == SemanticType::Unknown ||
+       rightType == SemanticType::Unknown) &&
+      (expr.oper().kind == TokenKind::EQUAL_EQUAL ||
+       expr.oper().kind == TokenKind::BANG_EQUAL ||
+       expr.oper().kind == TokenKind::LESS ||
+       expr.oper().kind == TokenKind::LESS_EQUAL ||
+       expr.oper().kind == TokenKind::GREATER ||
+       expr.oper().kind == TokenKind::GREATER_EQUAL)) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+
   if ((expr.oper().kind == TokenKind::PLUS ||
        expr.oper().kind == TokenKind::MINUS) &&
       (leftType.kind == SemanticType::RawPointer ||
@@ -10451,9 +10467,10 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
       recordTypeUse(parameter);
       arguments.push_back(typeOf(parameter));
     }
-    validateType(expr.result());
-    recordTypeUse(expr.result());
-    arguments.push_back(typeOf(expr.result()));
+    const auto resultArgument = expr.resultArgumentType();
+    validateType(resultArgument);
+    recordTypeUse(resultArgument);
+    arguments.push_back(typeOf(resultArgument));
     std::vector<const TypeRef *> extraTypes;
     collectRequirementTypeArguments(expr.expression().get(), extraTypes);
     for (const auto *argument : extraTypes) {

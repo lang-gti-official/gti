@@ -65,6 +65,16 @@ concept readable_cell<C, T> = requires(C& owner) {
 concept editable_cell<C, T> = requires(mut C& owner) {
   { owner.edit() } -> mut T& [[borrowed_from(owner)]];
 };
+concept observable_cell<C> = requires(C& owner) { { *owner }; };
+concept inferred_editable_cell<C> = requires(mut C& owner) {
+  { *owner } -> mut auto& [[borrowed_from(owner)]];
+};
+bool matches_cell<C>(C& owner, int value) requires observable_cell<C> {
+  return *owner == value;
+}
+void assign_cell<C>(mut C& owner, int value) requires inferred_editable_cell<C> {
+  *owner = value;
+}
 struct Cell {
   mut int value = 0;
   int& operator*() { return this.value; }
@@ -292,6 +302,9 @@ namespace query_hygiene {
 }
 
 int main() {
+  mut Cell inferred{};
+  assign_cell(inferred, 11);
+  if (!matches_cell(inferred, 11)) { return 21; }
   Counts counts{};
   if (count_sum(counts) != 6) { return 20; }
   static_assert(requires(int[3]& values) { for (auto& value : values) {} });

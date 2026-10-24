@@ -23,6 +23,8 @@ T twice<T>(T value) requires std::meta::is_integral<T>() { return value + value;
 concept raw_read<T> = requires(T& value) { { unsafe { value.raw() } } -> int; };
 concept editable<C, T> = requires(mut C& owner) { { owner.edit() } -> mut T& [[borrowed_from(owner)]]; };
 concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
+concept observes<I> = requires(I& cursor) { { *cursor }; };
+concept changes<I> = requires(mut I& cursor) { { *cursor } -> mut auto& [[borrowed_from(cursor)]]; };
 int main() { int left = 3; int right = 4; return add(left, right) == twice(left) + 1 ? 0 : 1; }
 """
 
@@ -106,6 +108,10 @@ def main():
             assert len(origin_rename["changes"][uri]) == 3, origin_rename
             iteration_contract = hover(SOURCE, SOURCE.index("iterable<R>"))
             assert "for (auto& element : range) {}" in str(iteration_contract), iteration_contract
+            inferred_contract = hover(SOURCE, SOURCE.index("observes<I>"))
+            assert "*cursor };" in str(inferred_contract) and "->" not in str(inferred_contract), inferred_contract
+            mutable_contract = hover(SOURCE, SOURCE.index("changes<I>"))
+            assert "-> mut auto&" in str(mutable_contract) and "borrowed_from(cursor)" in str(mutable_contract), mutable_contract
             range_use = SOURCE.index(": range)") + 2
             range_definition = request("textDocument/definition", {
                 "textDocument": {"uri": uri},
