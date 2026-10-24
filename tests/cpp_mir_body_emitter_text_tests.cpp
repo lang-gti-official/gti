@@ -6509,6 +6509,177 @@ int main() {
          "local");
 }
 
+// An owning payload enum replaced through the complete referent of a checked
+// mutable reference (a call's reference result, a reference local or a
+// reference parameter) drains the old alternative once in its replacement
+// cleanup, move-assigns the staged value into that same referent and retires
+// the moved-from shell, in both the failure and the plain form. The
+// referent's owner keeps the lexical drop, so the borrowed Assign names no
+// local Replace target.
+void testOwningPayloadEnumReferentReplacement() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-owning-payload-enum-referent-replacement.gti", R"gti(
+#include <std/string>
+
+enum class label { text(std::string name), blank };
+
+class box {
+  mut label item;
+public:
+  box(label v) : item(std::move(v)) {}
+  mut label& ref() mut { return this.item; }
+};
+
+void reset(mut label& target) { target = label::blank; }
+
+// Its only cleanup cannot fail, so clear() has just the plain form.
+class quiet {
+public:
+  int32_t id;
+  quiet(int32_t id) : id(id) {}
+  ~quiet() {}
+};
+
+enum class token { held(quiet q), empty };
+
+void clear(mut token& target) { target = token::empty; }
+
+int main() {
+  mut token t = token::held(quiet(1));
+  clear(t);
+  mut box b = box(label::text(std::string("gti")));
+  b.ref() = label::blank;
+  mut label local = label::text(std::string("x"));
+  {
+    mut label& r = local;
+    r = label::text(std::string("y"));
+  }
+  reset(local);
+  return 0;
+}
+)gti");
+  expect(frontend.canGenerateCode(),
+         "the payload-enum referent replacement fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirFunctionInstance *entry = namedFunction(frontend, "main");
+  const lang::MirFunctionInstance *reset = namedFunction(frontend, "reset");
+  const lang::MirFunctionInstance *clear = namedFunction(frontend, "clear");
+  expect(entry != nullptr && reset != nullptr && clear != nullptr,
+         "the referent replacement fixture has main, reset and clear");
+  if (entry == nullptr || reset == nullptr || clear == nullptr) {
+    return;
+  }
+  // Each replacement cleanup drains one dereferenced carrier; the success
+  // edge move-assigns the staged slot into that exact spelling and retires
+  // the slot's shell. Returns the replaced referent spellings.
+  const auto referentReplacements = [](const std::string &text) {
+    std::vector<std::string> lines;
+    for (std::size_t start = 0; start < text.size();) {
+      const std::size_t end = std::min(text.find('\n', start), text.size());
+      const std::size_t first = text.find_first_not_of(' ', start);
+      lines.push_back(first < end ? text.substr(first, end - first) : "");
+      start = end + 1;
+    }
+    std::vector<std::string> replaced;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+      const std::string &line = lines[index];
+      const std::size_t call = line.rfind("}(");
+      if ((line.compare(0, 30, "__gti_mir_replacement_success_") != 0 &&
+           line.compare(0, 6, "(void)") != 0) ||
+          line.find("retire_cleaned_alternative();") == std::string::npos ||
+          call == std::string::npos || line.size() < call + 4)
+        continue;
+      const std::string referent =
+          line.substr(call + 2, line.size() - call - 4);
+      if (referent.compare(0, 11, "(*__gti_mir") != 0)
+        continue;
+      const std::string assignment = referent + " = std::move(__gti_mir_p_";
+      for (std::size_t after = index + 1; after < lines.size(); ++after) {
+        if (lines[after].compare(0, assignment.size(), assignment) != 0)
+          continue;
+        const std::size_t slotStart = assignment.size() - 12;
+        const std::string slot = lines[after].substr(
+            slotStart, lines[after].find(".get());", slotStart) - slotStart);
+        bool retired = false;
+        for (std::size_t shell = after + 1;
+             shell < std::min(after + 3, lines.size()) && !retired; ++shell)
+          retired = lines[shell] == slot + ".destroy();";
+        if (retired)
+          replaced.push_back(referent);
+        break;
+      }
+    }
+    return replaced;
+  };
+  const std::string entryText = selectedBodyText(frontend, *entry);
+  const std::vector<std::string> entryReplaced =
+      referentReplacements(entryText);
+  expect(entryReplaced.size() == 2 &&
+             entryReplaced.front().find("__gti_mir_loan_") !=
+                 std::string::npos &&
+             entryReplaced.back().find("__gti_mir_p_") != std::string::npos,
+         "a call's mutable reference result and a reference local should "
+         "each drain the old alternative once and move the new value into "
+         "the same referent");
+  const std::vector<std::string> resetReplaced =
+      referentReplacements(selectedBodyText(frontend, *reset));
+  expect(resetReplaced.size() == 1,
+         "a mutable reference parameter's referent should be replaced the "
+         "same way");
+  const std::string clearText = selectedBodyText(frontend, *clear);
+  expect(!clear->mayRaiseDefinedFailure &&
+             referentReplacements(clearText).size() == 1 &&
+             clearText.find("(void)[&](auto &__gti_cleanup_value)") !=
+                 std::string::npos,
+         "a non-failing referent replacement should use the plain form");
+  for (const std::string &referent : entryReplaced) {
+    std::size_t drains = 0;
+    for (std::size_t at = entryText.find("}(" + referent + ");");
+         at != std::string::npos;
+         at = entryText.find("}(" + referent + ");", at + 1))
+      ++drains;
+    expect(drains == 1, "each borrowed referent's old alternative should be "
+                        "drained by exactly one replacement cleanup");
+  }
+
+  // A borrowed Assign that claims a local Replace target is not the
+  // referent form and must not reach the shared move-assignment spelling.
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::MirBodyAddress address{lang::MirBodyKind::Function, entry->id};
+  const auto supports = [&](const lang::MirProgram &program) {
+    const lang::CppMirBodyEmitter emitter(program, map);
+    return entry->mayRaiseDefinedFailure
+               ? emitter.supportsFailureBodyText(address)
+               : emitter.supportsBodyText(address);
+  };
+  expect(supports(frontend.mir),
+         "the unmodified referent replacements should be admitted");
+  lang::MirProgram mutated = frontend.mir;
+  bool forged = false;
+  for (const auto &function : mutated.functionInstances()) {
+    if (function.id != entry->id)
+      continue;
+    auto &body = const_cast<lang::MirFunctionInstance &>(function).body;
+    for (lang::MirBlock &block : body.blocks)
+      for (lang::MirInstruction &instruction : block.instructions)
+        if (!forged && instruction.kind == lang::MirInstructionKind::Assign &&
+            instruction.replacementPair != 0 && !instruction.ownership &&
+            instruction.lifecycle.size() == 1 &&
+            instruction.lifecycle.front().target == 0 &&
+            !body.dropObligations.empty()) {
+          instruction.lifecycle.front().target =
+              body.dropObligations.front().id;
+          forged = true;
+        }
+  }
+  expect(forged && !supports(mutated),
+         "a borrowed referent replacement naming a local Replace target "
+         "should be refused");
+}
+
 void testExpectedConsumingMemberReturn() {
   const auto frontend = analyzeWithStandardLibrary(
       "cpp-mir-expected-consuming-member-return.gti", R"(
@@ -10041,6 +10212,8 @@ constexpr NamedTest kTests[] = {
      testExpectedClassReplacementSources},
     {"testOwningExpectedReplacementSources",
      testOwningExpectedReplacementSources},
+    {"testOwningPayloadEnumReferentReplacement",
+     testOwningPayloadEnumReferentReplacement},
     {"testShortCircuitExpectedPayloadFieldView",
      testShortCircuitExpectedPayloadFieldView},
     {"testCallableClassResultSlots", testCallableClassResultSlots},
