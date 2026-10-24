@@ -6182,6 +6182,34 @@ private:
                  value.parameterTypes[value.borrowArgument].arguments));
   }
 
+  // Whether a reference argument names exactly the referent an accessor call
+  // returned under `accessor`: that call's own result place, or a reference
+  // binding initialized from it. A reference binding is never reseated, so
+  // its dereference stays that referent for the binding's whole lifetime.
+  [[nodiscard]] bool
+  designatesAccessorReferent(const MirOperand &argument,
+                             const MirLoan &accessor,
+                             const SemanticType &parameter) const {
+    const MirPlace *place = output.findPlace(argument.place);
+    const HirValue *result = findValue(accessor.producedBy);
+    if (accessor.kind != MirLoanKind::CallResult || place == nullptr ||
+        result == nullptr || parameter.kind != SemanticType::Reference ||
+        parameter.arguments.size() != 1 ||
+        result->info.category != ValueCategory::Place ||
+        result->info.type != parameter.arguments.front() ||
+        place->type != result->info.type ||
+        !accessor.designatedFields.empty() ||
+        !accessor.additionalDependencies.empty())
+      return false;
+    if (place->root == MirPlaceRootKind::Loan)
+      return place->loan == accessor.id && place->projections.empty();
+    return place->root == MirPlaceRootKind::Binding &&
+           place->projections.size() == 1 &&
+           place->projections.front().kind == MirProjectionKind::Dereference &&
+           std::find(accessor.carriers.begin(), accessor.carriers.end(),
+                     place->binding) != accessor.carriers.end();
+  }
+
   [[nodiscard]] MirPlaceId borrowOriginPlace(const HirValue &value,
                                              const MirInstruction &call) {
     if (!value.borrowFields.empty() &&
@@ -7556,6 +7584,48 @@ private:
           textShellOwner = owner;
         }
       }
+      // A carrier that stores a reference to the view an accessor returned
+      // borrows that exact returned referent, whether the call result is
+      // consumed directly (`b.get().begin()`) or first bound to a reference
+      // (`std::string_view& view = b.get(); view.begin()`). The accessor's
+      // result loan is its parent, and the carrier holds exactly that loan's
+      // stored dependency. The accessor's owner, which the semantic contract
+      // names for a temporary result, is not where the stored reference
+      // points.
+      MirLoanId accessorResult = 0;
+      if (kind == MirLoanKind::Stored && textShellOwner == 0 &&
+          value.borrowOrigin == BorrowOriginKind::Argument &&
+          value.borrowArgument < arguments.size() &&
+          value.borrowArgument < call.operands.size() &&
+          storesCarrierReference(value)) {
+        const MirOperand &argument =
+            value.borrowArgument < sourceArguments.size()
+                ? sourceArguments[value.borrowArgument]
+                : call.operands[value.borrowArgument];
+        const MirLoan *accessor = output.findLoan(originLoan);
+        if (accessor != nullptr &&
+            designatesAccessorReferent(
+                argument, *accessor,
+                value.parameterTypes[value.borrowArgument])) {
+          const MirPlace *selected = output.findPlace(origin);
+          if (selected == nullptr || selected->root != MirPlaceRootKind::Loan ||
+              selected->loan != accessor->id ||
+              !selected->projections.empty()) {
+            const MirPlace &referent = *output.findPlace(argument.place);
+            origin = referent.root == MirPlaceRootKind::Loan
+                         ? argument.place
+                         : appendPlace({.root = MirPlaceRootKind::Loan,
+                                        .loan = accessor->id,
+                                        .type = referent.type,
+                                        .access = referent.access,
+                                        .traits = referent.traits,
+                                        .sourceValue =
+                                            arguments[value.borrowArgument]});
+          }
+          parent = accessor->id;
+          accessorResult = accessor->id;
+        }
+      }
       const bool twoPhase =
           reserveBorrowResult && stableReservationOrigin(origin);
       const MirLoanId loan = createLoan(kind, origin, value.borrowAccess,
@@ -7600,6 +7670,10 @@ private:
         output.loans[loan - 1].storedDependency =
             output.loans[parent - 1].storedDependency;
       }
+      if (accessorResult != 0 &&
+          output.loans[loan - 1].storedDependency !=
+              output.loans[accessorResult - 1].storedDependency)
+        valid = false;
       const MirLoanId dependencyLoan =
           originLoan != 0 ? originLoan
           : value.borrowOrigin == BorrowOriginKind::Argument &&
@@ -12661,8 +12735,16 @@ private:
             // storage. Keep the call's exact source and parent intact: changing
             // its source to the range shell would forge its selected field
             // contract. The retained range loan still keeps the shell and its
-            // backing dependency alive for iteration.
-            if (!isRangeIteratorBinding(*statement.binding))
+            // backing dependency alive for iteration. A carrier of the referent
+            // an accessor returned likewise keeps that exact referent below
+            // the retained accessor result.
+            const MirPlace *referent = output.findPlace(candidate->source);
+            const bool accessorReferent =
+                candidate->parent == existing->id && referent != nullptr &&
+                referent->root == MirPlaceRootKind::Loan &&
+                referent->loan == existing->id && referent->projections.empty();
+            if (!isRangeIteratorBinding(*statement.binding) &&
+                !accessorReferent)
               candidate->source = existing->source;
             retainedLoan = existing->id;
           } else {
@@ -14417,9 +14499,23 @@ private:
               }
             }
           }
+          // A payload borrowed through the summarized reference parameter is
+          // a local child of that parameter's entry loan, and its borrow
+          // reads that entry loan.
+          const auto referenceParameterChild = [&](const MirLoan &candidate) {
+            const std::optional<HirBindingId> summarized =
+                returnBorrowParameterBinding();
+            const MirLoan *parent = output.findLoan(candidate.parent);
+            return summarized && candidate.kind == MirLoanKind::Local &&
+                   parent != nullptr &&
+                   parent->kind == MirLoanKind::Parameter && parent->entry &&
+                   std::find(parent->carriers.begin(), parent->carriers.end(),
+                             *summarized) != parent->carriers.end();
+          };
           if ((output.loans[borrow.loan - 1].kind == MirLoanKind::CallResult ||
                output.loans[borrow.loan - 1].kind == MirLoanKind::Stored ||
-               output.loans[borrow.loan - 1].referenceSelection) &&
+               output.loans[borrow.loan - 1].referenceSelection ||
+               referenceParameterChild(output.loans[borrow.loan - 1])) &&
               output.loans[borrow.loan - 1].producedBy != 0) {
             // A returned reference binding may alias the producing call's
             // own result loan, or the Stored loan of the carrier it was
@@ -14427,9 +14523,11 @@ private:
             // a fresh Return loan from it, exactly as a nested
             // reference-returning call and a returned carrier do above, and
             // retires the body-local capability at this boundary.
-            // A payload selection likewise retains its local activation and
-            // tag proof; changing that loan into an escaping Return would
-            // erase the distinction between selection and publication.
+            // A payload selection, or a payload borrow through a reference
+            // parameter, likewise retains its local activation and tag proof;
+            // changing that loan into an escaping Return would erase the
+            // distinction between selection and publication, and would leave
+            // its producing borrow reading a parent the Return loan lacks.
             const MirLoan source = output.loans[borrow.loan - 1];
             const HirValue *returned = findValue(*statement.value);
             const MirLoanId published =

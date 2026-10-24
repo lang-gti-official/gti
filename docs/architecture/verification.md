@@ -1,5 +1,74 @@
 # Compiler Verification
 
+## Carriers of returned references (0.468.3)
+
+`accessor_text_carrier_runtime` runs `accessor_text_carriers.gti` in all
+eight native modes, including the sanitized one. It builds text iterators
+directly from `Box::get()`'s returned `std::string_view&` over literal and
+`std::string`-owned text (`begin()`, `rbegin()`, a counted walk to `end()`),
+through a bound reference to literal text, and in a range-for over a
+literal-backed view. It calls `Cursor open(std::string_view&)` on a returned
+view, iterates `std::optional<std::string_view>::value()`, and builds an
+unrelated user carrier, `attach(panel.current())`, from a returned `Gauge&`.
+Main (`cf14a66a`) stops it with `GTI-B0001`.
+
+`checkAccessorReturnedTextCarriers` in `carrier_shell_references` checks the
+MIR shape: every such carrier's `Stored` loan is sourced at its accessor's
+`CallResult` loan with no projection, has that loan as parent, and holds the
+same stored dependency. Mutations:
+- removing an owner-backed carrier's stored dependency is rejected with
+  "carrier shell loan does not preserve its exact stored dependency";
+- removing a literal-backed carrier's parent, or moving its source to the
+  accessor's owner, is rejected with "carrier reference result requires one
+  exact stored dependency";
+- changing the text's owner, assigning the accessor's receiver, or changing
+  the owner behind `std::optional<std::string_view>::value()` while the
+  iterator lives is `GTI-S2017` alone.
+
+Moving an owner-backed carrier's source to the accessor's owner still
+verifies. That owner contains the referent and the stored dependency is
+unchanged, so it is a conservative source rather than a forged one. With the
+verifier's ownerless-accessor clause disabled, every literal-backed form fails
+again with that same message and the owner-backed forms still build.
+
+Since PR #298 merged first, `arrow_text_members.gti` in `operator_relay_runtime`
+also builds iterators directly through a checked `operator->`:
+`literal->begin()`, `owned->rbegin()`, `maybe->begin()`, `viewed->begin()`
+and the mutable step `changing->begin()`. Before that merge, a `gti`
+side-linked with #298's units ran these forms at `-O0`, `-O3` and with
+ASan/UBSan, and kept `GTI-S2017` for an owner change.
+
+An `--emit-mir -O0` and `--emit-cpp -O3` differential against main
+`cf14a66a`, with the two changed units side-linked into one build so both
+compilers share a `GTI_STDLIB_PATH`, covered 1,855 programs in `tests/` and
+`examples/`. Of 3,710 compiles, 3,707 are identical. The new fixture builds
+where main reported `GTI-B0001`. One previously working program changes only
+in MIR: `text_view_iterator_completion.gti` line 169,
+`select_text(view, events).iterator_at(...)`, sources one iterator loan at the
+returned referent instead of the `view` reference binding. Its parent and
+stored dependency are unchanged, its C++ is byte-identical, and
+`text_view_iterator_compiler` and `text_view_iterator_runtime` pass.
+
+0.468.0's nested relay check (`dependentDesignationPath`) read an accessor
+result's owner path for a `string_view&` argument, so the owner-backed optional
+forms, including the named `std::string_view& selected = viewed.value();
+selected.begin()` that worked before 0.468.0, failed with "dependent text value
+is relayed where its text field may outlive the call". The fixture now covers
+that named form, and `view_field_nesting_runtime`,
+`dependent_reference_results_runtime` and `view_field_conversions_runtime`
+still pass.
+
+A combined full run in an earlier batch found the new runtime test missing
+from the bounded-case-workers list in `tests/TestThroughput.cmake`
+(`test_throughput_registration`); it is registered there now. The owner had
+paused full-suite runs while on battery power, so this change merged after
+targeted validation only. The full suite was not rerun on the final head.
+
+Not covered: constructing a carrier class directly from a returned reference
+(`Cursor(box.get())`) still stops in MIR construction, with "carrier reference
+result requires one exact stored dependency" for literal text and "dependent
+text value is relayed where its text field may outlive" for owned text.
+
 ## Dependent reference results (0.468.1)
 
 `view_fields` covers the use-after-free closed in 0.468.1 in
@@ -273,11 +342,6 @@ programs in `tests/` and `examples/` at `-O0` and `-O3`, excluding
 `namespace-depth-63.gti`. All 2,950 compiles that main accepts emit
 byte-identical C++. Only example 170 and `arrow_text_members.gti` change:
 main refused both with `GTI-B0001`, and both now build.
-
-`maybe->begin()` still reports `GTI-B0001` in MIR construction, as
-`maybe.value().begin()` and `b.get().begin()` did before this change: an
-iterator that stores a view reference returned by a call gets no stored
-dependency for the view's owner. Binding the reference first works.
 
 ## Derived dependent-text carriers (internal)
 

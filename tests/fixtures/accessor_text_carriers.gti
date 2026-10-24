@@ -1,0 +1,112 @@
+#include <std/string>
+#include <std/optional>
+#include <std/vector>
+
+// A carrier built from the view an accessor returns stores a reference to
+// that returned view, whichever text owner it holds. The accessor's result
+// stays borrowed while the carrier lives, as it does when the reference is
+// bound to a local first.
+class Box {
+public:
+  std::string_view text;
+  Box(std::string_view text) : text(text) {}
+  std::string_view& get() { return this.text; }
+};
+
+// A user carrier of a view reference, built by an ordinary function.
+class Cursor {
+  std::string_view& view;
+public:
+  Cursor(std::string_view& view) : view(view) {}
+  uint64_t size() { return this.view.size(); }
+};
+
+Cursor open(std::string_view& view) { return Cursor(view); }
+
+// The same rule for an unrelated user type: a gauge borrows a counter, and a
+// dial borrows the gauge an accessor returns.
+struct Counter {
+  int value;
+  Counter(int value) : value(value) {}
+};
+
+class Gauge {
+  Counter& counter;
+public:
+  Gauge(Counter& counter) : counter(counter) {}
+  int read() { return this.counter.value; }
+};
+
+class Panel {
+  Gauge gauge;
+public:
+  Panel(Gauge gauge) : gauge(gauge) {}
+  Gauge& current() { return this.gauge; }
+};
+
+class Dial {
+  Gauge& gauge;
+public:
+  Dial(Gauge& gauge) : gauge(gauge) {}
+  int read() { return this.gauge.read(); }
+};
+
+Dial attach(Gauge& gauge) { return Dial(gauge); }
+
+int main(int argc, std::vector<std::string> argv) {
+  std::string owner{"owned"};
+  Box owned = Box(owner.view());
+  Box literal = Box("literal");
+
+  // Iterators built directly from the returned view.
+  auto first = owned.get().begin();
+  auto second = literal.get().begin();
+  auto last = literal.get().rbegin();
+  std::println(*first);
+  std::println(*second);
+  std::println(*last);
+  mut auto walk = owned.get().begin();
+  mut int count = 0;
+  while (walk != owned.get().end()) {
+    count += 1;
+    ++walk;
+  }
+  std::println(count);
+
+  // The same iterator through a bound reference.
+  std::string_view& named = literal.get();
+  auto third = named.begin();
+  std::println(*third);
+
+  // Traversal of a returned literal-backed view.
+  mut int letters = 0;
+  for (auto c : literal.get()) {
+    if (c == 'l') { letters += 1; }
+  }
+  std::println(letters);
+
+  // A user carrier of the returned view.
+  std::println(open(literal.get()).size());
+  Cursor cursor = open(owned.get());
+  std::println(cursor.size());
+
+  // std::optional<std::string_view>::value() is an ordinary accessor.
+  std::string_view text = "optional";
+  std::optional<std::string_view> maybe = text;
+  std::optional<std::string_view> viewed =
+      std::optional<std::string_view>(owner.view());
+  auto fourth = maybe.value().begin();
+  auto fifth = viewed.value().begin();
+  std::println(*fourth);
+  std::println(*fifth);
+  std::string_view& selected = viewed.value();
+  auto sixth = selected.begin();
+  std::println(*sixth);
+
+  Counter reading{4};
+  Panel panel{Gauge(reading)};
+  std::println(attach(panel.current()).read());
+  Dial dial = attach(panel.current());
+  std::println(dial.read());
+  return 0;
+}

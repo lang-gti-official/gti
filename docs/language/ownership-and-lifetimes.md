@@ -485,6 +485,26 @@ T& identity<T>(T& value) {
 }
 ```
 
+A reference bound by a borrowed payload pattern (`auto&` or `mut auto&`)
+derives from the place its switch subject names. When that place lies inside
+the selected reference parameter's referent (the parameter, one of its
+fields, or a reference alias of either), the binding is a checked projection
+of that parameter and may be returned, just as a member accessor returns a
+pattern bound inside `this`. A `mut auto&` binding through a `mut T&`
+parameter may be returned as `mut T&`. A pattern over a local copy, a by-value
+parameter or a temporary does not outlive the call and remains rejected:
+
+```gti
+enum class Reading { exact(int32_t value), estimate(int32_t value) };
+
+int32_t& value_of(Reading& reading) {
+  switch (reading) {
+  case Reading::exact(auto& value): return value;
+  case Reading::estimate(auto& value): return value;
+  }
+}
+```
+
 This is implicit single-origin lifetime inference, not a general lifetime
 parameter system. Other parameters may contribute ordinary values, but a
 returned borrow may not choose between owners or combine dependencies.
@@ -806,6 +826,22 @@ any such copy remains live is rejected. A mutable range traversing a borrowed
 carrier additionally retains its receiver's physical lifetime and underlying
 stored dependency; neither can end while the iterator remains live.
 
+A carrier may be built straight from a reference that a call returns, without
+binding that reference first. For `std::string_view& Box::get()`,
+`box.get().begin()` is a text iterator over the returned view, as is
+`maybe.value().begin()` for a `std::optional<std::string_view>`, and a
+function `Cursor open(std::string_view& view)` may receive `box.get()`. An
+unrelated user carrier follows the same rule: `attach(panel.current())` may
+build a `Dial` that holds the `Gauge&` which `Panel::current()` returns. The
+carrier stores a reference to the returned referent itself, so the call's
+result stays borrowed until the carrier's last use, exactly as for
+`std::string_view& view = box.get(); view.begin()`. The carrier also retains
+the external owner of the text the returned view holds, if any; literal text
+has none. Changing that owner, or the accessor's receiver, while the carrier
+lives is rejected (`GTI-S2017`). Constructing a carrier class directly from
+such a result, as in `Cursor(box.get())`, is not yet implemented and stops in
+MIR construction; calling a function that constructs it works.
+
 Nesting uses the same rule, rather than an exception for a particular library
 type. For example, `std::pair<Iterator<int>, bool>` may carry one iterator and
 an insertion flag, and another nominal wrapper may contain that pair. The
@@ -996,13 +1032,11 @@ class: a `std::string_view&` result supplies the view's builtin members, so
 `label->size()`, `label->empty()` and `label->end()` and, for
 `std::optional<std::string_view>`, `maybe->size()` work as `(*maybe).size()`
 does. A scalar or `c_string` referent has no members, so member access through
-it is a source error (`GTI-S2000`). One composition is not yet implemented for
-any accessor spelling: a text-view iterator built directly from a returned
-view reference (`maybe->begin()`, `maybe.value().begin()`) stops in MIR
-construction. Binding the reference first (`std::string_view& view =
-maybe.value();`) and iterating `view` works. These checked
-nominal operators remain distinct from built-in raw-pointer `*`, `->`, and
-`[]`, which require an unsafe block and create no borrow or loan.
+it is a source error (`GTI-S2000`). A text-view iterator may be built
+directly from the returned view, as `maybe->begin()` or `label->begin()`.
+These checked nominal operators remain distinct from built-in raw-pointer
+`*`, `->`, and `[]`, which require an unsafe block and create no borrow or
+loan.
 
 Range-based `for` uses `operator*` through the same receiver-tied rules. A
 read-only declaration records a shared range loan and a loop-bounded read-only
@@ -1752,7 +1786,8 @@ and finite recursion through concrete class cleanup; a failing destructor does
 not skip remaining sibling cleanup. Borrowed payload patterns introduce
 arm-scoped shared (`auto&`) or exclusive (`mut auto&`) loans into stable enum
 storage. Their conflict root is conservatively the whole enum, and a checked
-receiver-derived return retains its original owner dependency. A switch over
+return derived from the receiver or a reference parameter retains its
+original owner dependency. A switch over
 a consumed enum, a prvalue or an explicit `std::move`, instead owns the enum
 until the selected arm's entry: by-value bindings take its fields by move and
 release the drained enum without a second drop, while any other arm drops it
