@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Carriers of returned references (0.468.1)
+## Carriers of returned references (0.468.3)
 
 `accessor_text_carrier_runtime` runs `accessor_text_carriers.gti` in all
 eight native modes, including the sanitized one. It builds text iterators
@@ -68,6 +68,34 @@ Not covered: constructing a carrier class directly from a returned reference
 (`Cursor(box.get())`) still stops in MIR construction, with "carrier reference
 result requires one exact stored dependency" for literal text and "dependent
 text value is relayed where its text field may outlive" for owned text.
+
+## Dependent reference results (0.468.1)
+
+`view_fields` covers the use-after-free closed in 0.468.1 in
+`testDependentReferenceResults`. On 0.465.2-0.468.0 a reference that a call
+returned into a value over a local owner's text was not that value's
+dependent field: passing it to a function that stores the text, copying or
+moving it out, storing it in a global, binding a reference local and passing
+that, or returning a copy compiled, and the returned copy read freed memory
+at run time. Each of those shapes is now `GTI-S2045` (`GTI-S2017` when the
+owner is changed while the reference lives), never `GTI-B`. Switching on the
+result in place, through a reference local, or through a reference local
+bound to another, and every escape over literal text, still compile and
+verify. A callee whose returns are not field paths of its origin is refused
+over dynamic text with `GTI-S2045`.
+
+An accessor returning one of several receiver fields (`either`) relays them
+again, as it did before 0.468.0's payload-field rule: `switch
+(owned.either(true))` over a local owner's text compiles, and its escapes
+are refused. The test checks that `either` declares nothing and that each of
+four uses on a contract formal (passing, a storing `switch`, and the same
+inside the class) requires both fields, with MIR deriving each requirement
+independently (clearing it fails verification). Passing an accessor's
+result on a formal uses only the field it designates: with a second text
+field holding a local owner's text, `keepWordRef(pair.wordRef())` compiles,
+where 0.465.2-0.468.0 reported `GTI-B0001` because MIR counted the reference
+as a whole use of the formal. `dependent_reference_results_runtime` runs the
+accepted forms in every mode.
 
 ## Failure-free passive constructors (RT-12, 0.468.0)
 

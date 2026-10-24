@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.468.1 — Iterators and carriers from returned references
+## 0.468.3 — Iterators and carriers from returned references
 
 - A text iterator can now be built directly from a view that a call returns
   by reference. For `std::string_view& Box::get()`, `box.get().begin()`,
@@ -37,6 +37,42 @@ for what minor and patch releases mean.
 - Not yet supported: constructing a carrier class directly from a returned
   reference, as in `Cursor(box.get())`, still reports `GTI-B0001`. Call a
   function that constructs it, as `open(box.get())` does.
+
+## 0.468.2 — References to payload enums held inside another enum
+
+- `std::optional<Shape>::value()` for a payload enum without cleanup, such as
+  `enum Shape { circle(int radius), none }`, used to fail while compiling the
+  generated C++ (`use of undeclared identifier '__gti_mir_v_1'` in the saved
+  backend log). `Shape inner = o.value();`, `auto& r = o.value();`, `*o`,
+  `o.value() = ...`, and `o.clone()` now compile and run. The same failure
+  affected any reference bound to an `auto&` payload of that kind, whether
+  returned by your own accessor or bound directly, as in
+  `case Wrap::one(auto& s): Shape& r = s;`.
+
+## 0.468.1 — References into values over a local owner's text
+
+- Fixed a use-after-free present since 0.465.2. A reference that a method or
+  function returns into a value holding a local string's text, as in
+  `Word& wordRef() { return this.word; }` called on `Line line =
+  Line(input.view());`, could be passed to a function that stores the text,
+  copied or moved out, stored in a global, bound to a reference local and
+  passed on, or returned as a copy, leaving a view of freed memory. Each now
+  reports `error[GTI-S2045]`, as `line.word` already did. Switching on the
+  result in place, or on a reference local bound to it, still works:
+
+  ```gti
+  Word& word = line.wordRef();
+  switch (word) { case Word::text(value): std::println(value); break; ... }
+  keepWordRef(line.wordRef());   // now error[GTI-S2045]
+  ```
+
+- A method returning one of several fields by reference, such as
+  `Word& either(bool first)`, can again be switched on in place over a local
+  owner's text, as before 0.468.0.
+- A function taking a class by reference can pass on the reference one of
+  its methods returns, as in `keepWordRef(line.wordRef())`, while another
+  field of the class holds a local owner's text; this was an internal
+  compiler error (`GTI-B0001`).
 
 ## 0.468.0 — Views of the caller's string in results and nested values
 

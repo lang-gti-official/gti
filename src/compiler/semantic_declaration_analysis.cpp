@@ -8177,6 +8177,15 @@ auto SemanticVisitor::Impl::accessorReceiverField(
     const FunctionInfo &accessor,
     std::vector<const FunctionInfo *> &visiting) const
     -> std::optional<std::string> {
+  const auto fields = accessorReceiverFields(accessor, visiting);
+  return fields && fields->size() == 1 ? std::optional{fields->front()}
+                                       : std::nullopt;
+}
+
+auto SemanticVisitor::Impl::accessorReceiverFields(
+    const FunctionInfo &accessor,
+    std::vector<const FunctionInfo *> &visiting) const
+    -> std::optional<std::vector<std::string>> {
   const FunctionDecl *body = accessor.bodyDeclaration();
   if (accessor.ownerClass == 0 || accessor.staticMember ||
       accessor.virtualMethod || accessor.overrideMethod || body == nullptr ||
@@ -8209,13 +8218,13 @@ auto SemanticVisitor::Impl::accessorReceiverField(
       declarationFree(declarationFree, body->body().get());
   const ClassInfo &owner = classInfo(accessor.ownerClass);
   visiting.push_back(&accessor);
-  std::optional<std::string> result;
+  std::vector<std::string> result;
   bool valid = true;
   for (const ExprPtr *returned : returns) {
     const Expr *current = returned == nullptr ? nullptr : returned->get();
     while (const auto *group = exprAs<Grouping>(current))
       current = group->expression() ? group->expression().get() : nullptr;
-    std::optional<std::string> field;
+    std::optional<std::vector<std::string>> fields;
     const auto *variable = exprAs<Variable>(current);
     const auto member = variable == nullptr
                             ? owner.members.end()
@@ -8223,28 +8232,40 @@ auto SemanticVisitor::Impl::accessorReceiverField(
     if (const auto *get = exprAs<Get>(current);
         get != nullptr && get->access().kind != TokenKind::ARROW &&
         get->object() && exprAs<This>(get->object().get()) != nullptr)
-      field = get->name().lexeme;
+      fields = std::vector{get->name().lexeme};
     else if (implicitMembers && member != owner.members.end() &&
              !member->second.symbol.staticMember &&
              member->second.symbol.bindingKind == SemanticBindingKind::Field)
-      field = variable->name().lexeme;
+      fields = std::vector{variable->name().lexeme};
     else if (current != nullptr)
-      field = receiverAccessorField(*current, accessor.ownerClass, visiting,
-                                    implicitMembers);
-    if (!field || (result && *result != *field)) {
+      fields = receiverAccessorFields(*current, accessor.ownerClass, visiting,
+                                      implicitMembers);
+    if (!fields) {
       valid = false;
       break;
     }
-    result = field;
+    result.insert(result.end(), fields->begin(), fields->end());
   }
   visiting.pop_back();
-  return valid ? result : std::nullopt;
+  std::sort(result.begin(), result.end());
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return valid ? std::optional{std::move(result)} : std::nullopt;
 }
 
 auto SemanticVisitor::Impl::receiverAccessorField(
     const Expr &subject, ClassId owner,
     std::vector<const FunctionInfo *> &visiting, bool implicitMembers) const
     -> std::optional<std::string> {
+  const auto fields =
+      receiverAccessorFields(subject, owner, visiting, implicitMembers);
+  return fields && fields->size() == 1 ? std::optional{fields->front()}
+                                       : std::nullopt;
+}
+
+auto SemanticVisitor::Impl::receiverAccessorFields(
+    const Expr &subject, ClassId owner,
+    std::vector<const FunctionInfo *> &visiting, bool implicitMembers) const
+    -> std::optional<std::vector<std::string>> {
   const Expr *current = &subject;
   while (const auto *group = exprAs<Grouping>(current))
     current = group->expression() ? group->expression().get() : nullptr;
@@ -8264,7 +8285,7 @@ auto SemanticVisitor::Impl::receiverAccessorField(
       owner,
       implicit != nullptr ? implicit->name().lexeme : member->name().lexeme);
   return accessor == nullptr ? std::nullopt
-                             : accessorReceiverField(*accessor, visiting);
+                             : accessorReceiverFields(*accessor, visiting);
 }
 
 auto SemanticVisitor::Impl::globalReturnBorrowPlace(
