@@ -1033,7 +1033,18 @@ Restricted member `operator*`, `operator->`, and `operator[]` declarations may
 return these receiver-tied references. A wrapper can provide paired read-only
 and mutable receiver overloads, while semantic analysis records the selected
 method and returned access mode. `operator->` performs exactly one checked
-reference step; recursive C++ proxy behavior is not exposed. These checked
+reference step; recursive C++ proxy behavior is not exposed. `x->m` then names
+member `m` of the place that reference designates, looked up on the referenced
+type exactly as `.` looks it up on that place. The referent need not be a
+class: a `std::string_view&` result supplies the view's builtin members, so
+`label->size()`, `label->empty()` and `label->end()` and, for
+`std::optional<std::string_view>`, `maybe->size()` work as `(*maybe).size()`
+does. A scalar or `c_string` referent has no members, so member access through
+it is a source error (`GTI-S2000`). One composition is not yet implemented for
+any accessor spelling: a text-view iterator built directly from a returned
+view reference (`maybe->begin()`, `maybe.value().begin()`) stops in MIR
+construction. Binding the reference first (`std::string_view& view =
+maybe.value();`) and iterating `view` works. These checked
 nominal operators remain distinct from built-in raw-pointer `*`, `->`, and
 `[]`, which require an unsafe block and create no borrow or loan.
 
