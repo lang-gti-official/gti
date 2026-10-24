@@ -72,6 +72,121 @@ materializableProgramConstant(const std::optional<ConstantValue> &constant) {
   return constant && !std::holds_alternative<ConstantAggregateValue>(*constant);
 }
 
+// Initializer roots are values rather than body roots. A scoped result adds a
+// statement subgraph at that value's evaluation position; only that subgraph,
+// not arbitrary body statements, belongs to the selected initialization plan.
+struct InitializerReachability {
+  bool complete = true;
+  std::unordered_set<HirValueId> values;
+  std::unordered_set<HirStatementId> statements;
+  std::unordered_set<HirBindingId> bindings;
+};
+
+[[nodiscard]] InitializerReachability
+initializerReachability(const HirBody &body,
+                        const std::vector<HirValueId> &roots) {
+  InitializerReachability reachable;
+  std::unordered_map<HirValueId, const HirValue *> values;
+  std::unordered_map<HirStatementId, const HirStatement *> statements;
+  std::unordered_set<HirBindingId> bindings;
+  for (const auto &value : body.values)
+    reachable.complete &= values.emplace(value.id, &value).second;
+  for (const auto &statement : body.statements)
+    reachable.complete &= statements.emplace(statement.id, &statement).second;
+  for (const auto &binding : body.bindings)
+    reachable.complete &= bindings.insert(binding.id).second;
+  std::vector<HirValueId> pendingValues = roots;
+  std::vector<HirStatementId> pendingStatements;
+  const auto binding = [&](HirBindingId id) {
+    if (id != 0) {
+      reachable.bindings.insert(id);
+      reachable.complete &= bindings.contains(id);
+    }
+  };
+  while (!pendingValues.empty() || !pendingStatements.empty()) {
+    if (!pendingValues.empty()) {
+      const auto id = pendingValues.back();
+      pendingValues.pop_back();
+      if (id == 0 || !reachable.values.insert(id).second)
+        continue;
+      const auto found = values.find(id);
+      if (found == values.end()) {
+        reachable.complete = false;
+        continue;
+      }
+      const auto &value = *found->second;
+      pendingValues.insert(pendingValues.end(), value.operands.begin(),
+                           value.operands.end());
+      pendingValues.insert(pendingValues.end(), value.sequencedInputs.begin(),
+                           value.sequencedInputs.end());
+      if (value.receiver)
+        pendingValues.push_back(*value.receiver);
+      if (value.regionBody && value.kind == HirValueKind::ScopedResult)
+        pendingStatements.push_back(*value.regionBody);
+      continue;
+    }
+    const auto id = pendingStatements.back();
+    pendingStatements.pop_back();
+    if (id == 0 || !reachable.statements.insert(id).second)
+      continue;
+    const auto found = statements.find(id);
+    if (found == statements.end()) {
+      reachable.complete = false;
+      continue;
+    }
+    const auto &statement = *found->second;
+    if (statement.binding)
+      binding(*statement.binding);
+    for (const auto input :
+         {statement.value, statement.condition, statement.increment})
+      if (input)
+        pendingValues.push_back(*input);
+    for (const auto child :
+         {statement.initializer, statement.body, statement.elseBranch})
+      if (child)
+        pendingStatements.push_back(*child);
+    pendingStatements.insert(pendingStatements.end(),
+                             statement.statements.begin(),
+                             statement.statements.end());
+    for (const auto &element : statement.structuredBindings) {
+      binding(element.binding);
+      if (element.index)
+        pendingValues.push_back(*element.index);
+    }
+    for (const auto &arm : statement.switchArms) {
+      for (const auto &label : arm.labels)
+        if (label.value)
+          pendingValues.push_back(*label.value);
+      for (const auto &payload : arm.payloadBindings) {
+        binding(payload.binding);
+        pendingValues.push_back(payload.value);
+      }
+      pendingStatements.insert(pendingStatements.end(), arm.statements.begin(),
+                               arm.statements.end());
+    }
+    if (const auto &range = statement.rangeIteration) {
+      for (const auto id :
+           {range->owner, range->rangeCarrier, range->iterator, range->sentinel,
+            range->element, range->elementOwner})
+        binding(id);
+      for (const auto id :
+           {range->source, range->begin, range->end, range->comparison,
+            range->elementAccessValue, range->increment})
+        pendingValues.push_back(id);
+      pendingStatements.push_back(range->elementOwnerStatement);
+      pendingStatements.push_back(range->coreLoop);
+    }
+  }
+  return reachable;
+}
+
+template <typename Nodes, typename Ids>
+[[nodiscard]] bool exactInventory(const Nodes &nodes, const Ids &ids) {
+  return nodes.size() == ids.size() &&
+         std::all_of(nodes.begin(), nodes.end(),
+                     [&](const auto &node) { return ids.contains(node.id); });
+}
+
 [[nodiscard]] bool containsUnresolvedGeneric(const CompileTimeValue &value) {
   return value.kind != CompileTimeValue::UInt64;
 }
@@ -221,7 +336,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           "HIR concrete symbol inventory has invalid or overlapping identity");
     }
   }
-  const auto verifyConcreteBindings = [&](const HirBody &body) {
+  const auto verifyConcreteBindings = [&](const HirBody &body,
+                                          const std::vector<HirValueId>
+                                              &initializerValues = {}) {
     const bool hasResultRegion =
         std::any_of(body.values.begin(), body.values.end(),
                     [](const auto &value) {
@@ -232,13 +349,27 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             body.statements.begin(), body.statements.end(),
             [](const auto &statement) { return statement.resultRegion != 0; });
     if (hasResultRegion) {
+      std::unordered_map<HirValueId, const HirValue *> values;
+      std::unordered_map<HirStatementId, const HirStatement *> statements;
+      values.reserve(body.values.size());
+      statements.reserve(body.statements.size());
+      for (const auto &node : body.values)
+        if (!values.emplace(node.id, &node).second)
+          result.errors.emplace_back(
+              "HIR result region repeats a value identity");
+      for (const auto &node : body.statements)
+        if (!statements.emplace(node.id, &node).second)
+          result.errors.emplace_back(
+              "HIR result region repeats a statement identity");
       std::unordered_map<HirStatementId, HirValueId> statementRegions;
       std::unordered_set<HirValueId> checkedValues;
       std::unordered_set<HirValueId> activeValues;
+      std::unordered_set<HirStatementId> activeStatements;
       std::function<void(HirStatementId, HirValueId)> statement;
       std::function<void(HirValueId, HirValueId)> value;
       value = [&](HirValueId id, HirValueId region) {
-        const auto *node = body.findValue(id);
+        const auto found = values.find(id);
+        const auto *node = found == values.end() ? nullptr : found->second;
         if (!node || activeValues.contains(id)) {
           result.errors.emplace_back(
               "HIR result region has a missing/cyclic value");
@@ -271,7 +402,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         activeValues.erase(id);
       };
       statement = [&](HirStatementId id, HirValueId region) {
-        const auto *node = body.findStatement(id);
+        if (activeStatements.contains(id)) {
+          result.errors.emplace_back(
+              "HIR result region has a cyclic statement");
+          return;
+        }
+        const auto entry = statements.find(id);
+        const auto *node = entry == statements.end() ? nullptr : entry->second;
         const auto [found, inserted] = statementRegions.emplace(id, region);
         if (!node || (!inserted && found->second != region)) {
           result.errors.emplace_back(
@@ -280,6 +417,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         }
         if (!inserted)
           return;
+        activeStatements.insert(id);
         if ((node->kind == HirStatementKind::Return &&
              node->resultRegion != region) ||
             (node->kind != HirStatementKind::Return && node->resultRegion != 0))
@@ -297,9 +435,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         for (const auto &arm : node->switchArms)
           for (const auto child : arm.statements)
             statement(child, region);
+        activeStatements.erase(id);
       };
       for (const auto root : body.roots)
         statement(root, 0);
+      for (const auto root : initializerValues)
+        value(root, 0);
     }
     for (const HirBinding &binding : body.bindings) {
       const auto found = instanceSymbols.find(binding.info.symbol);
@@ -317,12 +458,14 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const auto &instance : program.functionInstances())
     verifyConcreteBindings(instance.body);
   for (const auto &instance : program.constructorInstances())
-    verifyConcreteBindings(instance.body);
+    verifyConcreteBindings(instance.body, instance.initializerValues);
   for (const auto &instance : program.destructorInstances())
     verifyConcreteBindings(instance.body);
   for (const auto &instance : program.lambdaInstances())
     verifyConcreteBindings(instance.body);
   for (const auto &instance : program.classInstances()) {
+    verifyConcreteBindings(instance.fieldInitializers);
+    verifyConcreteBindings(instance.staticFieldInitializers);
     const ClassTypeInfo *owner = semantics.findClassType(instance.declaration);
     if (owner == nullptr ||
         owner->typeAliases.size() != instance.typeAliases.size()) {
@@ -569,7 +712,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           instance.parameterTypes.empty() &&
           instance.parameterBindings.empty() &&
           instance.typeArguments.empty() && instance.valueArguments.empty() &&
-          instance.body.statements.empty() && instance.body.roots.empty() &&
+          instance.body.roots.empty() &&
           lifecycle->defaultConstructor == SpecialMemberStatus::Generated;
       std::size_t position = 0;
       const auto base = std::find_if(owner->bases.begin(), owner->bases.end(),
@@ -630,6 +773,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                               initializer.arguments.end());
       exact &= selectedValues == instance.initializerValues &&
                instance.initializers.size() == position + owner->fields.size();
+      const auto reachable =
+          initializerReachability(instance.body, selectedValues);
+      exact &= reachable.complete &&
+               exactInventory(instance.body.statements, reachable.statements) &&
+               exactInventory(instance.body.values, reachable.values) &&
+               exactInventory(instance.body.bindings, reachable.bindings);
       for (const auto &field : owner->fields) {
         const Expr *selectedSource =
             field.declaration == nullptr
@@ -2146,49 +2295,24 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     result.errors.emplace_back(
         "module roots do not exactly match executable initialization steps");
   }
-  if (program.module().bindings.size() != expectedBindings.size() ||
-      std::any_of(program.module().bindings.begin(),
-                  program.module().bindings.end(),
-                  [&](const HirBinding &binding) {
-                    return !expectedBindings.contains(binding.id);
-                  })) {
+  const auto reachable =
+      initializerReachability(program.module(), initializerValues);
+  // Plan roots remain exact and ordered. Only locals and statements nested
+  // inside their initializer values are additional executable inventory.
+  expectedBindings.insert(reachable.bindings.begin(), reachable.bindings.end());
+  expectedStatements.insert(reachable.statements.begin(),
+                            reachable.statements.end());
+  if (!exactInventory(program.module().bindings, expectedBindings)) {
     result.errors.emplace_back(
         "module binding inventory contains unplanned program storage");
   }
-  if (program.module().statements.size() != expectedStatements.size() ||
-      std::any_of(program.module().statements.begin(),
-                  program.module().statements.end(),
-                  [&](const HirStatement &statement) {
-                    return !expectedStatements.contains(statement.id);
-                  })) {
+  if (!exactInventory(program.module().statements, expectedStatements)) {
     result.errors.emplace_back(
         "module statement inventory contains an unplanned initializer");
   }
-
-  std::unordered_set<HirValueId> reachableValues;
-  std::vector<HirValueId> pendingValues = initializerValues;
-  while (!pendingValues.empty()) {
-    const HirValueId id = pendingValues.back();
-    pendingValues.pop_back();
-    if (id == 0 || !reachableValues.insert(id).second) {
-      continue;
-    }
-    const HirValue *value = program.module().findValue(id);
-    if (value == nullptr) {
-      result.errors.emplace_back(
-          "module initializer references a missing HIR value");
-      continue;
-    }
-    pendingValues.insert(pendingValues.end(), value->operands.begin(),
-                         value->operands.end());
-    pendingValues.insert(pendingValues.end(), value->sequencedInputs.begin(),
-                         value->sequencedInputs.end());
-  }
-  if (program.module().values.size() != reachableValues.size() ||
-      std::any_of(program.module().values.begin(),
-                  program.module().values.end(), [&](const HirValue &value) {
-                    return !reachableValues.contains(value.id);
-                  })) {
+  const auto &reachableValues = reachable.values;
+  if (!reachable.complete ||
+      !exactInventory(program.module().values, reachableValues)) {
     result.errors.emplace_back(
         "module value inventory is not exactly reachable from planned "
         "initializer roots");

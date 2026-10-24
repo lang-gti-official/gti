@@ -38,6 +38,50 @@ void testDischargedCompoundOperatorVocabulary() {
       "proved successful path exactly matches C++ semantics");
 }
 
+void testImmediatePassiveCaptureSnapshots() {
+  const auto frontend = analyze("immediate-copy-snapshot.gti", R"(
+int main() {
+  mut int value = 1;
+  int result = ([value]() -> int { return value; })();
+  value = 9;
+  return result;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "immediate copy snapshot lowers to verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.entryKind == lang::ProgramEntryKind::None)
+      continue;
+    expect(
+        supportsSelectedBodyText(frontend.mir, rows, function.id),
+        "an immediate passive capture stays exact despite later source writes");
+  }
+
+  const auto barrier = analyze("intervening-copy-snapshot.gti", R"(
+int main() {
+  mut int value = 1;
+  int result = ([value](int ignored) -> int { return value; })(value = 9);
+  return result;
+}
+)");
+  expect(barrier.canGenerateCode(),
+         "capture/argument ordering is valid ordinary GTI");
+  if (!barrier.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap barrierRows(
+      buildRows(barrier, barrier.mir));
+  for (const auto &function : barrier.mir.functionInstances()) {
+    if (function.entryKind == lang::ProgramEntryKind::None)
+      continue;
+    expect(!supportsSelectedBodyText(barrier.mir, barrierRows, function.id),
+           "an intervening argument write cannot delay the copied capture "
+           "snapshot");
+  }
+}
+
 void testConsumedPassivePayloadTagObservation() {
   const auto frontend =
       analyzeWithStandardLibrary("consumed-payload-tag.gti", R"(
@@ -7118,6 +7162,8 @@ constexpr NamedTest kTests[] = {
      testPassiveEnumTemporaryObservationThenTransfer},
     {"testDischargedCompoundOperatorVocabulary",
      testDischargedCompoundOperatorVocabulary},
+    {"testImmediatePassiveCaptureSnapshots",
+     testImmediatePassiveCaptureSnapshots},
     {"testPassivePayloadTagObservation", testPassivePayloadTagObservation},
     {"testConsumedPassivePayloadTagObservation",
      testConsumedPassivePayloadTagObservation},

@@ -10977,8 +10977,11 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
 // Forward half of one Closure's fused chain. Captured places must stay
 // frozen after the Closure: their only writes are single-shot dominating
 // Initializes, nothing loans or drops them, and a literal spelled at any
-// later invocation therefore captures the same values the Closure saw. Move
-// captures and copied class captures
+// later invocation therefore captures the same values the Closure saw.
+// A passive scalar copy may instead use one immediate same-block invocation:
+// only its exact receiver staging may intervene, so the consumer reads the
+// value observed by Closure even if a later instruction writes the source.
+// Move captures and copied class captures
 // collapse to exactly one direct same-block consumer because a duplicated or
 // delayed literal would transfer ownership twice or change class-temporary
 // lifetime relative to the MIR closure value. The literal is spelled only at
@@ -11010,6 +11013,7 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
   const MirLoopAnalysis loops =
       dominance ? analyzeMirLoops(body, *dominance) : MirLoopAnalysis{};
   bool requiresDirectUse = false;
+  bool immediateCopySnapshot = false;
   for (std::size_t index = 0; index < closure.operands.size(); ++index) {
     const MirOperand &operand = closure.operands[index];
     const LambdaCaptureMode mode = lambda->captureModes[index];
@@ -11025,6 +11029,14 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
          (operand.kind == MirOperandKind::Move || movedCapture != nullptr));
     requiresDirectUse = requiresDirectUse || mode == LambdaCaptureMode::Move ||
                         operand.type.kind == SemanticType::Class;
+    const bool passiveScalarCopy =
+        mode == LambdaCaptureMode::Copy &&
+        operand.type.kind != SemanticType::Class &&
+        operand.type.kind != SemanticType::Array &&
+        operand.type.kind != SemanticType::Lambda &&
+        result->info.traits.copyable &&
+        result->info.traits.drop == DropKind::Trivial &&
+        !result->info.traits.containsBorrowedState;
     const bool copiedClassCapture = mode == LambdaCaptureMode::Copy &&
                                     operand.type.kind == SemanticType::Class;
     const MirPlace *captured =
@@ -11071,6 +11083,10 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
                                                    result->definitionBlock));
         if (writer.kind != MirInstructionKind::Initialize ||
             !validInitializationBlock) {
+          if (passiveScalarCopy) {
+            immediateCopySnapshot = true;
+            continue;
+          }
           return false;
         }
         bool writerPrecedes = false;
@@ -11084,6 +11100,10 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
           }
         }
         if (!writerPrecedes) {
+          if (passiveScalarCopy) {
+            immediateCopySnapshot = true;
+            continue;
+          }
           return false;
         }
       }
@@ -11253,6 +11273,35 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
   }
   if (requiresDirectUse && (invocations + discards != 1 || !directOnly)) {
     return false;
+  }
+  if (immediateCopySnapshot) {
+    if (invocations != 1 || discards != 0 || !directOnly || !directConsumer)
+      return false;
+    const auto *block = body.findBlock(result->definitionBlock);
+    bool seenClosure = false;
+    bool seenConsumer = false;
+    if (!block)
+      return false;
+    for (const auto &instruction : block->instructions) {
+      if (instruction.id == closure.id) {
+        seenClosure = true;
+        continue;
+      }
+      if (!seenClosure)
+        continue;
+      if (instruction.id == directConsumer->id) {
+        seenConsumer = true;
+        break;
+      }
+      // Even a pure-looking argument computation could contain a failure or
+      // observe capture state. Keep this profile to exact receiver aliases;
+      // all delayed/nonadjacent uses retain the frozen-source proof above.
+      if (!valueCallableReceiverInput(body, instruction) ||
+          !instruction.result || !direct(*instruction.result))
+        return false;
+    }
+    if (!seenConsumer)
+      return false;
   }
   if (fusedValueDrop) {
     const bool transferred =

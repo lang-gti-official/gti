@@ -1958,6 +1958,13 @@ obligation; repeated evaluation resets only their representation storage.
 Class captures retain their lexical lifetime obligation even when destruction
 is passive. Thus scalar moves and class copies occur before the branch too.
 Other frozen passive closures still use the existing checked fused representation.
+An immediate passive scalar-copy closure may also fuse into one same-block
+invocation when only its exact receiver staging separates construction and
+use. This preserves the MIR capture-time snapshot even if later instructions
+write the source, including a later loop iteration. Any intervening computation,
+argument evaluation, write, call, cleanup or failure boundary blocks that proof;
+delayed or repeated uses retain the existing frozen-source requirement. Owning
+move and class captures retain their distinct lifetime/consumption proofs.
 Taking a checked local reference prevents that fusion: the closure factory
 materializes its environment once, and the ordinary MIR loan/pointer carrier
 aliases it. The body-local closure type also names reference carriers and

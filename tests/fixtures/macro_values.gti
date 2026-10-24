@@ -1,5 +1,8 @@
+#include <std/source_location>
+
 mut int effects = 0;
 mut int drops = 0;
+mut int propagation_continuations = 0;
 
 class Owner {
   int number;
@@ -40,6 +43,37 @@ int effect(int value) { effects += 1; return value; }
 #macro int invoke<F>(F action) { return action(); }
 #macro stop() { return; }
 
+struct Box {
+  int value;
+  implicit Box(int value) : value(value) {}
+};
+struct Flag {
+  operator bool() { return true; }
+  implicit operator int() { return 19; }
+};
+#macro Flag flag() { return Flag(); }
+Box boxed_result() { return choose(true, 41, 0); }
+#macro int guarded(int expression) { Owner guard{71}; return expression; }
+expected<int, int> fallible(bool fail) {
+  if (fail) { return unexpected(13); }
+  return 31;
+}
+#macro expected<int, int> result(bool fail) { return fallible(fail); }
+expected<int, int> forwarded(bool fail) {
+  Owner caller{72};
+  return guarded(?result(fail));
+}
+expected<int, int> continued(bool fail) {
+  Owner caller{73};
+  int result = guarded(?fallible(fail));
+  propagation_continuations += 1;
+  return result + 1;
+}
+#macro std::source_location here(
+    std::source_location location = std::source_location::current()) {
+  return location;
+}
+
 int main() {
   if (choose(false, effect(9), nested(effect(5))) != 10 || effects != 1) { return 1; }
   if (local_loop(effect(7)) != 7 || effects != 2) { return 2; }
@@ -58,5 +92,23 @@ int main() {
     if (transferred.read() != 23) { return 7; }
   }
   if (drops != 4) { return 8; }
+  Box initialized = choose(true, 17, 0);
+  Box returned = boxed_result();
+  if (initialized.value != 17 || returned.value != 41) { return 9; }
+  int converted = flag();
+  if (!flag() || converted != 19) { return 15; }
+  auto success = forwarded(false);
+  if (!success || success.value() != 31 || drops != 6) { return 10; }
+  auto failure = forwarded(true);
+  if (failure || failure.error() != 13 || drops != 8) { return 11; }
+  auto continued_success = continued(false);
+  if (!continued_success || continued_success.value() != 32 || drops != 10 ||
+      propagation_continuations != 1) { return 12; }
+  auto continued_failure = continued(true);
+  if (continued_failure || continued_failure.error() != 13 || drops != 12 ||
+      propagation_continuations != 1) { return 13; }
+  std::source_location direct = std::source_location::current(); std::source_location defaulted = here();
+  if (defaulted.line() != direct.line() || defaulted.file_name() != direct.file_name() ||
+      defaulted.function_name() != "main") { return 14; }
   return 0;
 }

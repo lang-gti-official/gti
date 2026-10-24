@@ -130,6 +130,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testImmediatePassiveCaptureSnapshots",
+      "suite": "preflight"
+    },
+    {
       "name": "testPassivePayloadTagObservation",
       "suite": "preflight"
     },
