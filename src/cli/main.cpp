@@ -13,6 +13,7 @@
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
 #include "gti/driver/registry.h"
+#include "gti/driver/test_runner.h"
 #include "gti/executable_path.h"
 #include "gti/support.h"
 #include "gti/target.h"
@@ -25,6 +26,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <csignal>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -51,6 +53,36 @@ using lang::cli::Style;
 std::optional<std::string> runtimeColorOverride;
 lang::cli::ProgressMode progressMode = lang::cli::ProgressMode::Auto;
 bool progressSelected = false;
+
+volatile std::sig_atomic_t testInterruptSignal = 0;
+void recordTestInterrupt(int signal) { testInterruptSignal = signal; }
+class TestInterruptScope {
+  using Handler = void (*)(int);
+  Handler previousInterrupt;
+  Handler previousTerminate;
+#if defined(SIGPIPE)
+  Handler previousPipe;
+#endif
+public:
+  TestInterruptScope() {
+    testInterruptSignal = 0;
+    previousInterrupt = std::signal(SIGINT, recordTestInterrupt);
+    previousTerminate = std::signal(SIGTERM, recordTestInterrupt);
+#if defined(SIGPIPE)
+    previousPipe = std::signal(SIGPIPE, recordTestInterrupt);
+#endif
+  }
+  ~TestInterruptScope() {
+    if (previousInterrupt != SIG_ERR)
+      std::signal(SIGINT, previousInterrupt);
+    if (previousTerminate != SIG_ERR)
+      std::signal(SIGTERM, previousTerminate);
+#if defined(SIGPIPE)
+    if (previousPipe != SIG_ERR)
+      std::signal(SIGPIPE, previousPipe);
+#endif
+  }
+};
 
 std::vector<std::pair<std::string, std::string>> programColorEnvironment() {
   if (runtimeColorOverride) {
@@ -198,6 +230,8 @@ struct ProjectOptions {
   std::optional<std::filesystem::path> installRoot;
   bool force = false;
   bool list = false;
+  lang::driver::TestRunOptions test;
+  bool testJson = false;
 };
 
 struct UninstallOptions {
@@ -356,9 +390,21 @@ void printUsage(std::ostream &stream) {
          "      --release        Shorthand for --profile release.\n"
          "      --all            Build every declared target (gti build "
          "only).\n"
-         "      --jobs <count>   Bound native build-script and --all jobs.\n"
+         "      --jobs <count>   Bound native build-script, --all, and test "
+         "jobs.\n"
          "      --cxx <path>     Override the native compiler.\n"
          "      --cc <path>      Override the native C compiler.\n"
+         "\nTest options (gti test only):\n"
+         "      --filter <name> Select test names containing this text.\n"
+         "      --exact         Match the --filter name exactly.\n"
+         "      --skip <name>   Exclude names containing this text "
+         "(repeatable).\n"
+         "      --list          List selected tests without executing them.\n"
+         "      --allow-empty   Accept an empty test selection.\n"
+         "      --timeout <d>   Per-test deadline: Nms, Ns, Nm; default 5m; 0 "
+         "disables.\n"
+         "      --format <mode> Test results: human (default), json (JSON "
+         "Lines).\n"
          "      --std <version>  Override c++20 or c++23.\n"
          "      --execution-profile <name>\n"
          "                       Override single-threaded or concurrent "
@@ -945,6 +991,76 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.list = true;
       continue;
     }
+    if (options.command == ProjectCommand::Test) {
+      if (argument == "--list" || argument == "--exact" ||
+          argument == "--allow-empty") {
+        if (argument == "--list")
+          options.test.listOnly = true;
+        if (argument == "--exact")
+          options.test.exact = true;
+        if (argument == "--allow-empty")
+          options.test.allowEmpty = true;
+        continue;
+      }
+      if (argument == "--filter" || argument == "--skip" ||
+          argument == "--timeout" || argument == "--format") {
+        if (++index >= argc) {
+          std::cerr << "gti: missing value after " << argument << '\n';
+          return ArgumentResult::ExitFailure;
+        }
+        const std::string value = argv[index];
+        if (argument == "--filter" || argument == "--skip") {
+          if (value.empty() ||
+              (argument == "--filter" && options.test.filter)) {
+            std::cerr
+                << "gti: " << argument
+                << " requires nonempty text; --filter may occur only once\n";
+            return ArgumentResult::ExitFailure;
+          }
+          if (argument == "--filter")
+            options.test.filter = value;
+          else
+            options.test.skips.push_back(value);
+        } else if (argument == "--format") {
+          if (value != "human" && value != "json") {
+            std::cerr << "gti: --format requires human or json\n";
+            return ArgumentResult::ExitFailure;
+          }
+          options.testJson = value == "json";
+        } else {
+          std::string_view digits = value;
+          std::int64_t multiplier = 0;
+          if (digits == "0")
+            multiplier = 1;
+          else if (digits.ends_with("ms")) {
+            multiplier = 1;
+            digits.remove_suffix(2);
+          } else if (digits.ends_with("s")) {
+            multiplier = 1000;
+            digits.remove_suffix(1);
+          } else if (digits.ends_with("m")) {
+            multiplier = 60000;
+            digits.remove_suffix(1);
+          }
+          std::int64_t count = 0;
+          const auto [end, error] = std::from_chars(
+              digits.data(), digits.data() + digits.size(), count);
+          const auto maximum =
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::duration::max() / 2)
+                  .count();
+          if (!multiplier || error != std::errc{} ||
+              end != digits.data() + digits.size() || count < 0 ||
+              count > maximum / multiplier) {
+            std::cerr << "gti: --timeout requires Nms, Ns, Nm, or 0, within "
+                         "the clock range\n";
+            return ArgumentResult::ExitFailure;
+          }
+          options.test.timeout = std::chrono::milliseconds(count * multiplier);
+        }
+        continue;
+      }
+    }
     if (argument == "--profile") {
       if (++index >= argc) {
         std::cerr << "gti: missing profile name after --profile\n";
@@ -1275,6 +1391,11 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   }
   if (options.emitMir && options.keepCpp.value_or(false)) {
     std::cerr << "gti: --emit-mir and --keep-cpp cannot be used together\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.command == ProjectCommand::Test && options.test.exact &&
+      !options.test.filter) {
+    std::cerr << "gti: --exact requires --filter\n";
     return ArgumentResult::ExitFailure;
   }
   if (options.emitMir && options.debugInfo.value_or(false)) {
@@ -2116,7 +2237,8 @@ void reportSavedRepresentation(
 
 int reportCompilationFailure(
     const lang::driver::CompilationResult &compilation, bool verbose,
-    const lang::driver::DiagnosticLogResult *savedLog = nullptr) {
+    const lang::driver::DiagnosticLogResult *savedLog = nullptr,
+    std::ostream &summaryOutput = std::cout) {
   if (!compilation.succeeded()) {
     switch (compilation.status) {
     case lang::driver::CompilationStatus::FrontendFailure:
@@ -2149,19 +2271,19 @@ int reportCompilationFailure(
   DiagnosticSummary summary = summarizeDiagnostics(compilation.diagnostics);
   summary.errors = std::max<std::size_t>(summary.errors, 1);
   std::cerr.flush();
-  reportDiagnosticSummary(std::cout, summary);
+  reportDiagnosticSummary(summaryOutput, summary);
   return exitCode(ExitStatus::Compilation);
 }
 
 int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
-                      bool verbose) {
+                      bool verbose, std::ostream &summaryOutput = std::cout) {
   const DiagnosticSummary diagnosticSummary =
       summarizeDiagnostics(result.compilation.diagnostics);
   const auto finishFailure = [&](int status) {
     DiagnosticSummary summary = diagnosticSummary;
     summary.errors = std::max<std::size_t>(summary.errors, 1);
     std::cerr.flush();
-    reportDiagnosticSummary(std::cout, summary);
+    reportDiagnosticSummary(summaryOutput, summary);
     return status;
   };
   if (result.compilation.succeeded() &&
@@ -2252,7 +2374,8 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
   case lang::driver::ExecutableBuildStatus::CompilationFailure:
     return reportCompilationFailure(
         result.compilation, verbose,
-        result.backendDiagnosticLog ? &*result.backendDiagnosticLog : nullptr);
+        result.backendDiagnosticLog ? &*result.backendDiagnosticLog : nullptr,
+        summaryOutput);
   case lang::driver::ExecutableBuildStatus::OutputDirectoryFailure:
     return finishFailure(exitCode(ExitStatus::Io));
   case lang::driver::ExecutableBuildStatus::GeneratedArtifactFailure:
@@ -2669,7 +2792,8 @@ int buildProjectPlan(
         *capturedDiagnostics = summary;
       }
       std::cerr.flush();
-      reportDiagnosticSummary(std::cout, summary);
+      reportDiagnosticSummary(options.testJson ? std::cerr : std::cout,
+                              summary);
       return exitCode(ExitStatus::Compilation);
     }
     nativeInputs = *scripts.nativeInputs;
@@ -2727,7 +2851,8 @@ int buildProjectPlan(
               std::move(cCompiler), std::move(cache), std::move(buildReport)),
           progress.observer());
   progress.suspend();
-  const int status = reportBuildResult(result, options.verbose);
+  const int status = reportBuildResult(
+      result, options.verbose, options.testJson ? std::cerr : std::cout);
   if (capturedDiagnostics != nullptr) {
     *capturedDiagnostics = summarizeDiagnostics(result.compilation.diagnostics);
   }
@@ -3407,10 +3532,22 @@ int runProjectVerify(const ProjectOptions &options, const char *driver) {
 }
 
 int runProjectTests(const ProjectOptions &options, const char *driver) {
+  auto failure = [&](int status, std::string message) {
+    if (options.testJson) {
+      lang::driver::TestRunSummary summary;
+      summary.listOnly = options.test.listOnly;
+      summary.runnerErrors = 1;
+      summary.exitCode = status;
+      summary.diagnostic = std::move(message);
+      lang::driver::writeTestSummaryJson(std::cout, summary);
+    }
+    return status;
+  };
   const std::optional<std::filesystem::path> currentDirectory =
       workingDirectory();
   if (!currentDirectory) {
-    return exitCode(ExitStatus::Io);
+    return failure(exitCode(ExitStatus::Io),
+                   "cannot resolve working directory");
   }
 
   lang::driver::ProjectBuildOverrides overrides;
@@ -3426,7 +3563,7 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   overrides.warningPolicy = lang::WarningPolicy(options.disabledWarnings);
   const ProjectTargetSelection selection = selectProjectTarget(options);
   if (!selection.target) {
-    return selection.failure;
+    return failure(selection.failure, "cannot select test target");
   }
   lang::driver::ProjectTestResolutionResult resolution =
       lang::driver::resolveProjectTests(lang::driver::ProjectBuildRequest(
@@ -3438,27 +3575,25 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
           {.cCompiler = options.cc.has_value()}));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
-    return exitCode(ExitStatus::Compilation);
+    return failure(exitCode(ExitStatus::Compilation),
+                   "cannot resolve test project");
   }
 
   {
     const int bindgenStatus = generateProjectBindgenImports(
         resolution.plans.front(), resolution.sources, options.verbose,
-        std::cout);
+        std::cerr);
     if (bindgenStatus != exitCode(ExitStatus::Success)) {
-      return bindgenStatus;
+      return failure(bindgenStatus, "test binding generation failed");
     }
   }
   const lang::driver::ToolchainLayout toolchain =
       lang::driver::discoverToolchainLayout(driver);
-  std::size_t passed = 0;
-  std::size_t failed = 0;
-  int firstFailure = exitCode(ExitStatus::Success);
   DiagnosticSummary diagnosticSummary;
-  for (const lang::driver::ProjectBuildPlan &plan : resolution.plans) {
-    if (options.verbose) {
+  std::vector<lang::driver::TestSuiteCommand> suites;
+  for (const auto &plan : resolution.plans) {
+    if (options.verbose)
       reportProjectPlan(plan, ProjectCommand::Test);
-    }
     std::cerr << terminalStyle.code(std::cerr, Style::Note) << "Building test"
               << terminalStyle.code(std::cerr, Style::Reset) << ' '
               << plan.targetName() << '\n';
@@ -3467,96 +3602,107 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
     const int buildStatus =
         buildProjectPlan(plan, options, toolchain, &resolution.sources, nullptr,
                          nullptr, &buildSummary, &testCases);
-    if (buildStatus != exitCode(ExitStatus::Success)) {
-      return buildStatus;
-    }
+    if (buildStatus != exitCode(ExitStatus::Success))
+      return failure(buildStatus,
+                     "test suite build failed: " + plan.targetName());
     addDiagnosticSummary(diagnosticSummary, buildSummary);
-
     reportProjectSuccess(std::cerr, "Built", plan);
-    if (plan.keepCpp()) {
+    if (plan.keepCpp())
       std::cerr << "Kept backend representation "
                 << plan.generatedSource().string() << '\n';
-    }
-    std::cerr << terminalStyle.code(std::cerr, Style::Note) << "Testing"
-              << terminalStyle.code(std::cerr, Style::Reset) << ' '
-              << plan.targetName() << '\n';
-    if (!testCases.empty()) {
-      for (const std::string &name : testCases) {
-        const auto started = std::chrono::steady_clock::now();
-        const lang::driver::ProcessResult process = lang::driver::invokeProcess(
-            {plan.output().string(), name},
-            {.outputMode = lang::driver::ProcessOutputMode::Capture,
-             .captureSuccessfulOutput = true,
-             .description = "test case '" + name + "'",
-             .environment = programColorEnvironment()});
-        const auto elapsed =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - started)
-                .count();
-        std::cerr << "  " << name << " ... "
-                  << terminalStyle.code(std::cerr, process.succeeded()
-                                                       ? Style::Success
-                                                       : Style::Error)
-                  << (process.succeeded() ? "passed" : "failed")
-                  << terminalStyle.code(std::cerr, Style::Reset) << " ("
-                  << elapsed << " ms";
-        if (!process.succeeded())
-          std::cerr << ", exit code " << process.exitCode;
-        std::cerr << ")\n";
-        if (!process.output.empty()) {
-          std::istringstream lines(process.output);
-          for (std::string line; std::getline(lines, line);)
-            std::cerr << "    " << line << '\n';
-        }
-        if (process.driverDiagnostic)
-          std::cerr << "    " << *process.driverDiagnostic << '\n';
-        if (process.succeeded()) {
-          ++passed;
-        } else {
-          ++failed;
-          if (firstFailure == exitCode(ExitStatus::Success))
-            firstFailure = process.exitCode;
-        }
+    suites.push_back({plan.targetName(), plan.output(), std::move(testCases)});
+  }
+  auto execution = options.test;
+  execution.retainOutput = false;
+  execution.inheritLegacyOutput = !options.testJson;
+  execution.jobs = options.jobs.value_or(1);
+  execution.environment = programColorEnvironment();
+  lang::driver::TestRunObserver observer;
+  observer.inventory = [&](std::string_view target,
+                           std::span<const lang::driver::TestSelection> tests) {
+    if (options.testJson)
+      lang::driver::writeTestInventoryJson(std::cout, target, tests);
+    else if (execution.listOnly) {
+      for (const auto &test : tests)
+        if (test.selected)
+          std::cout << target << ": " << test.name << '\n';
+    } else
+      std::cerr << terminalStyle.code(std::cerr, Style::Note) << "Testing"
+                << terminalStyle.code(std::cerr, Style::Reset) << ' ' << target
+                << '\n';
+  };
+  if (options.testJson) {
+    observer.started = [&](std::string_view target, std::string_view name) {
+      lang::driver::writeTestStartedJson(std::cout, target, name);
+    };
+    observer.finished = [&](const lang::driver::TestCaseReport &report) {
+      lang::driver::writeTestFinishedJson(std::cout, report);
+    };
+  } else {
+    observer.finished = [&](const lang::driver::TestCaseReport &report) {
+      const bool passed = report.status == lang::driver::TestCaseStatus::Passed;
+      const auto suite =
+          std::find_if(suites.begin(), suites.end(), [&](const auto &s) {
+            return s.target == report.target;
+          });
+      if (suite != suites.end() && suite->tests.empty()) {
+        if (report.diagnostic)
+          std::cerr << *report.diagnostic << '\n';
+        std::cerr << terminalStyle.code(std::cerr,
+                                        passed ? Style::Success : Style::Error)
+                  << (passed ? "Passed" : "Failed")
+                  << terminalStyle.code(std::cerr, Style::Reset) << ' '
+                  << report.target;
+        if (!passed)
+          std::cerr << " (exit code " << report.exitCode << ')';
+        std::cerr << '\n';
+        return;
       }
-      continue;
-    }
-    const lang::driver::ProcessResult process = lang::driver::invokeProcess(
-        {plan.output().string()},
-        {.outputMode = lang::driver::ProcessOutputMode::Inherit,
-         .captureSuccessfulOutput = false,
-         .description = "test target '" + plan.targetName() + "'",
-         .environment = programColorEnvironment()});
-    if (process.driverDiagnostic) {
-      std::cerr << *process.driverDiagnostic << '\n';
-    }
-    if (process.succeeded()) {
-      ++passed;
-      std::cerr << terminalStyle.code(std::cerr, Style::Success) << "Passed"
-                << terminalStyle.code(std::cerr, Style::Reset) << ' '
-                << plan.targetName() << '\n';
-      continue;
-    }
-
-    ++failed;
-    if (firstFailure == exitCode(ExitStatus::Success)) {
-      firstFailure = process.exitCode;
-    }
-    std::cerr << terminalStyle.code(std::cerr, Style::Error) << "Failed"
-              << terminalStyle.code(std::cerr, Style::Reset) << ' '
-              << plan.targetName() << " (exit code " << process.exitCode
-              << ")\n";
+      std::cerr << "  [" << report.target << "] " << report.name << " ... "
+                << terminalStyle.code(std::cerr,
+                                      passed ? Style::Success : Style::Error)
+                << lang::driver::testCaseStatusName(report.status)
+                << terminalStyle.code(std::cerr, Style::Reset) << " ("
+                << report.durationMs << " ms";
+      if (!passed)
+        std::cerr << ", exit code " << report.exitCode;
+      std::cerr << ")\n";
+      if (!report.output.empty()) {
+        std::istringstream lines(report.output);
+        for (std::string line; std::getline(lines, line);)
+          std::cerr << "    " << line << '\n';
+      }
+      if (report.diagnostic)
+        std::cerr << "    " << *report.diagnostic << '\n';
+    };
   }
-
+  TestInterruptScope interrupts;
+  observer.interruption = [] { return static_cast<int>(testInterruptSignal); };
+  const auto result = lang::driver::runTestSuites(suites, execution, observer);
+  if (options.testJson)
+    lang::driver::writeTestSummaryJson(std::cout, result.summary);
+  const auto &summary = result.summary;
+  if (summary.diagnostic)
+    std::cerr << "gti: " << *summary.diagnostic << '\n';
   std::cerr << "Test result: " << terminalStyle.code(std::cerr, Style::Success)
-            << passed << " passed"
+            << summary.passed << " passed"
             << terminalStyle.code(std::cerr, Style::Reset);
-  if (failed != 0) {
-    std::cerr << ", " << terminalStyle.code(std::cerr, Style::Error) << failed
+  const auto failures = summary.failed + summary.crashed + summary.timedOut +
+                        summary.runnerErrors;
+  if (failures)
+    std::cerr << ", " << terminalStyle.code(std::cerr, Style::Error) << failures
               << " failed" << terminalStyle.code(std::cerr, Style::Reset);
-  }
+  if (summary.skipped)
+    std::cerr << ", " << summary.skipped << " skipped";
+  if (summary.listOnly)
+    std::cerr << ", " << summary.selected << " listed";
   std::cerr << '\n';
   reportDiagnosticSummary(std::cerr, diagnosticSummary);
-  return firstFailure;
+  if (options.testJson && !std::cout) {
+    std::cerr << "gti: failed to write test report\n";
+    return exitCode(ExitStatus::Io);
+  }
+  return summary.exitCode;
 }
 
 int runFetch(const FetchOptions &options) {

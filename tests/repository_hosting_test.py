@@ -88,7 +88,10 @@ def main():
            "lifecycle must use Gitea and explicit provenance, never GitHub authentication/backup pushes")
 
     ci, release = (text(root, p) for p in WORKFLOWS)
-    expect("GTI_HEAD_SHA: ${{ gitea.sha }}" in ci and "GITEA_EVENT_PATH" in ci
+    expect("GTI_HEAD_SHA: ${{ gitea.sha }}" in ci
+           and "GTI_EVENT_PATH: ${{ gitea.event_path }}" in ci
+           and '--event "${GTI_EVENT_PATH}"' in ci and "GITEA_EVENT_PATH" not in ci
+           and "python3 tests/repository_hosting_test.py ." in ci
            and "npm run test:source-text" in ci and "--target gti_docgen" in ci
            and "cmp build/documentation-index.json" in ci,
            "CI lost source, Tree-sitter or compiler-owned documentation checks")

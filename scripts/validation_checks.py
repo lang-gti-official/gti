@@ -131,7 +131,8 @@ def ci_mode(event, paths):
     automation_scripts = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
                           "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py"}
     automation_tests = {name.removesuffix(".py") + "_test.py" for name in automation_scripts}
-    automation_tests |= {"validation_ci_test.py", "release_version_test.py", "ci_resources_test.py"}
+    automation_tests |= {"validation_ci_test.py", "release_version_test.py", "ci_resources_test.py",
+                         "repository_hosting_test.py"}
     if paths and all(path in AUTOMATION_FILES or path.startswith(AUTOMATION) or
                      path in {"scripts/" + name for name in automation_scripts} or
                      path in {"tests/" + name for name in automation_tests} for path in paths):

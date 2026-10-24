@@ -2,6 +2,14 @@
 
 Status: Repository automation and the owner's implementation-task contract.
 
+Canonical `origin` is `https://git.internal.howetotech.dev/gti-lang/gti.git`.
+Gitea owns branches, PRs, issues, CI, tags and releases. GitHub-era instructions
+in historical notes or pre-cutover worktrees do not select the current host.
+For a preserved worktree, consult the primary checkout's current `AGENTS.md`
+and skill, and invoke its helper with `--repo <task-worktree>` until the branch
+has reconciled current main. Preserve live runs and follow the explicit
+[record-rehosting contract](#hosts-and-records); never overwrite their identity.
+
 An implementation normally ends with a Gitea PR merged into `main`, the primary
 local checkout synchronized, and the task's
 branches/worktree cleaned up. This
@@ -647,6 +655,18 @@ still select full coverage. The helper does not restart CI on an unchanged
 description when retrying a pending merge. Identified body-only `edited` events
 are metadata-only feedback, not source acceptance. Title edits (Gitea's WIP
 draft transitions), source pushes and unknown edit payloads reclassify normally.
+The classification step binds `gitea.event_path` to `GTI_EVENT_PATH` and rejects
+missing/non-file payloads before running the classifier. Do not infer a
+`GITEA_EVENT_PATH` environment alias from the context's name. The Linux
+workflow-regression job installs CMake (including CTest) and Make explicitly
+before its real, disposable CMake/CTest batch fixtures run; it does not assume
+the runner image is a pre-provisioned compiler build host. `CIEnvironment` in
+`agent_workflow` executes these shell steps with missing event aliases and an
+initially tool-free PATH, preserving fail-closed classification and exercising
+a real configure/build/CTest cycle without installing packages locally.
+The lightweight job also runs `repository_hosting`, whose script is explicitly
+classified as developer automation; unknown/compiler test paths still select
+full advisory CI coverage.
 Automation-only local owning checks may use `verify --focused`, which checks
 the actual diff and does not reserve a broad-suite slot. Compiler changes
 cannot use that path. An active `verify` is atomically refused on duplicate
