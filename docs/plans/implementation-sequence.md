@@ -74,6 +74,13 @@ native standard/optimization/sanitizer parity, disabled type diagnostics,
 ownership/loan/caller-origin rejection tests, editor/profile/module/example
 gates, broad optimized regression and successful-path cost measurements.
 
+Remaining expression-vocabulary integration: admit directly written requirement
+queries in macro bodies once expansion treats synthetic query parameters as
+lexical binders, rather than substituting same-spelled macro formals. Acceptance
+must cover shadowing, nested queries, lambdas and unevaluated ownership effects.
+Caller-supplied query arguments already retain their independent lookup domain;
+this is not a reason to relax macro hygiene or query isolation.
+
 Further goals, not implemented by this slice:
 
 - When a semantic facility introduces model-local expression-order caches or
@@ -386,7 +393,7 @@ workflow determine task scope and integration.
 | Native import `C-08B` | ordinary foreign objects implemented | Exact external-storage identity, unsafe loads/stores, inert addresses, explicit owner-witness borrowing, headers and bindgen cover scalar, recursive pointer, callback and passive-record objects. TLS/volatile and top-level arrays require their general access/address contracts. |
 | `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Select remaining stored-reference, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
 | `T-LSP` latency client | reachable trusted bodies implemented in 0.411.0; library-only instance reuse in 0.420.0; library-only instance bodies omitted from editor HIR in 0.421.0; trusted prefix preamble in 0.423.0 | Snapshots and completion use demand-driven trusted bodies, with explicit HIR-to-semantics requests and a bounded complete-check fallback. Editor snapshots reuse validated library-only concrete instance analyses, no longer lower library-only instance bodies, and resume from a preamble of the standard-library prefix analysed once per include graph (089 per-edit 470 to about 80 ms; exit measure met). Remaining: the adoption copy (about 17 ms per edit). See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
-| `RT-2` through `RT-12` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. RT-12 recovers the optimizer proofs and exit sharing that the source-defined `expected` (0.449.0) gave up by owner decision; its tests mark the lost controls as recovery-pending. Its closed-call proofs and failure closure are delivered in 0.467.0 ([RT-12](optimization.md)); exit sharing for exits that construct the result remains. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
+| `RT-2` through `RT-12` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. RT-12 recovers the optimizer proofs and exit sharing that the source-defined `expected` (0.449.0) gave up by owner decision; its tests mark the lost controls as recovery-pending. Its closed-call proofs and failure closure are delivered in 0.468.0 ([RT-12](optimization.md)); exit sharing for exits that construct the result remains. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2; their scalar normal exits in 0.421.1 | Continuation records entered by `ContinueFailure` share identical failure-cleanup suffixes, and normal exits returning nothing, a scalar or a scalar error share exit ladders; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; exits returning owning, class or borrowed results; path-dependent steps stay private. |
 | Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. General payload-enum destination construction, tagged representation and observation/retirement improvements replace the historical 1.6-times scalar / 1.13-times string result. Singleton cleanup forwarding removes the preceding robust GCC/Linux string residual in fresh paired evidence at `560cafa9` (median 1.0035, interval spanning parity); fresh macOS measurements remain pending ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)). Promotion to `std::optional` still requires surface, failure-behaviour and platform performance acceptance, not merely the representation change. `expected` is a source class on the same `std::tryable` protocol since 0.449.0, and conformance-block patterns over raw pointers and fixed-length arrays are delivered in 0.450.0. Further goals include signature-level borrow-origin contracts on concept operations, and moving member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
 | Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; process capture and environment mutation/enumeration or child-local overrides; required text/range/service breadth. Owned read-only environment lookup is delivered in 0.402.0. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
@@ -9055,7 +9062,10 @@ prerequisite checkpoints as full acceptance.
     that text's opaque owner, as the empty path already does for a lone view.
     Verification accepts that terminal and never treats it as a referent
     place. `verifyOwnerlessTextContracts` admits a dependent text-field write
-    only when the written value's `Stored` loan designates that field.
+    only when the written value's `Stored` loan designates that field. It
+    also derives which local bindings hold a publication's text and requires
+    each to carry a loan that retains the owner, so semantics' carrier lists
+    are checked rather than trusted.
   - *Where a dependent value may live.* A local binding it initializes, a
     by-value argument or result under a summary, and a temporary within one
     expression. Still rejected:
@@ -9216,7 +9226,7 @@ prerequisite checkpoints as full acceptance.
       accessors (`std::move(o).value()`) and returning the value. `o->`
       over a `std::string_view` payload is a backend `GTI-B0001` for every
       receiver (an existing gap that this release makes reachable).
-  - *Implemented in 0.467.0 (2c): conversions, field relays and returns.*
+  - *Implemented in 0.468.0 (2c): conversions, field relays and returns.*
     - *Contextual construction.* An implicit conversion's one expression
       node is both the argument and the converted value. It publishes the
       argument's owner as an explicit construction does, so
@@ -9261,7 +9271,7 @@ prerequisite checkpoints as full acceptance.
   `Entry& entry` (`GTI-S2045` today, even as a local). This reuses the
   composed receiver-prefix proof from the nested conditional carriers
   follow-up.
-  - *Implemented in 0.467.0 (3a): nested text values.* A constructor that
+  - *Implemented in 0.468.0 (3a): nested text values.* A constructor that
     stores a class parameter of a nested text class whole in a field or
     payload, or a class field of one through its accessor, nests the
     argument's text path there, at any depth; a generic function returning
@@ -9278,7 +9288,7 @@ prerequisite checkpoints as full acceptance.
     reference nests in a class field or a generic class today
     (`Holder { Conflict conflict; }`, `Wrapper<Conflict>`), but not in a
     payload-enum alternative, which `optional<Conflict>` and
-    `expected<int, Conflict>` need. Measured on 0.467.0 (identical on main):
+    `expected<int, Conflict>` need. Measured on 0.468.0 (identical on main):
     - A non-generic enum (`enum Outcome { clash(Conflict c), done(int) }`) is
       a MIR `GTI-B0001`: the complete-value fact of the `PayloadConstruct`
       keeps the staged carrier's own group as the dependency's parent, while

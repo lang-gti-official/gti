@@ -1,0 +1,118 @@
+#include <std/meta>
+
+struct Coordinates { int32_t x = 0; int32_t y = 0; };
+class MoveOnly {
+public:
+  MoveOnly() {}
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+class DeletedMove {
+public:
+  DeletedMove() {}
+  DeletedMove(DeletedMove&& other) = delete;
+};
+class NoDefault {
+  int32_t value;
+public:
+  NoDefault(int32_t initial) : value(initial) {}
+};
+class CopyConstructionOnly {
+  int32_t& value;
+public:
+  CopyConstructionOnly(int32_t& source) : value(source) {}
+};
+struct RawAddress { int32_t* value = nullptr; };
+[[no_transfer, no_share]] struct ThreadAffine { int32_t value = 0; };
+enum class Code : uint16_t { none = 0, failed = 1 };
+enum Tagged { empty, value(int32_t item) };
+struct Envelope<T> { T value; };
+class Opaque<T> {};
+
+// A known outer category can fold before its nested type is concrete. A bare
+// type parameter and a computed field-type projection must still defer.
+constexpr int32_t classify<T>() {
+  static_assert(std::meta::is_struct<Envelope<T>>());
+  static_assert(std::meta::is_class<Opaque<T>>());
+  static_assert(!std::meta::is_class<T*>());
+  if constexpr (std::meta::is_class<T>()) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+constexpr int32_t projected<T>() {
+  if constexpr (std::meta::is_struct<std::meta::field_type<Envelope<T>, 0>>()) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+
+static_assert(std::meta::is_integral<int32_t>());
+static_assert(std::meta::is_unsigned_integral<uint32_t>());
+static_assert(!std::meta::is_unsigned_integral<int32_t>());
+static_assert(std::meta::is_numeric<double>());
+static_assert(std::meta::is_signed_numeric<double>());
+static_assert(std::meta::is_floating_point<double>());
+static_assert(!std::meta::is_integral<bool>());
+static_assert(std::meta::is_copy_constructible<Coordinates>());
+static_assert(std::meta::is_copyable<Coordinates>());
+static_assert(!std::meta::is_copy_constructible<MoveOnly>());
+static_assert(std::meta::is_move_constructible<MoveOnly>());
+static_assert(!std::meta::is_move_constructible<DeletedMove>());
+static_assert(std::meta::is_movable<Coordinates>());
+static_assert(std::meta::is_relocatable<Coordinates>());
+static_assert(std::meta::is_bitwise_relocatable<Coordinates>());
+static_assert(std::meta::is_bitwise_relocatable<int32_t[4]>());
+static_assert(std::meta::is_copy_constructible<CopyConstructionOnly>());
+static_assert(!std::meta::is_copyable<CopyConstructionOnly>());
+static_assert(!std::meta::is_relocatable<CopyConstructionOnly>());
+static_assert(std::meta::is_default_initializable<Coordinates>());
+static_assert(!std::meta::is_default_initializable<NoDefault>());
+static_assert(std::meta::is_transferable<Coordinates>());
+static_assert(std::meta::is_shareable<Coordinates>());
+static_assert(!std::meta::is_transferable<RawAddress>());
+static_assert(!std::meta::is_transferable<ThreadAffine>());
+static_assert(!std::meta::is_shareable<ThreadAffine>());
+static_assert(std::meta::is_integral_enum<Code>());
+static_assert(!std::meta::is_integral_enum<Tagged>());
+static_assert(std::meta::is_enum_underlying<Code, uint16_t>());
+static_assert(!std::meta::is_enum_underlying<Code, uint32_t>());
+static_assert(!std::meta::is_enum_underlying<Tagged, int32_t>());
+static_assert(!std::meta::is_enum_underlying<int32_t, int32_t>());
+static_assert(std::meta::is_same<int32_t, int32_t>());
+static_assert(!std::meta::is_same<int32_t, uint32_t>());
+static_assert(std::meta::type<Coordinates>().is_copyable());
+static_assert(std::meta::type<Coordinates>().is_copy_constructible());
+static_assert(std::meta::type<MoveOnly>().is_move_constructible());
+static_assert(std::meta::type<Coordinates>().is_movable());
+static_assert(std::meta::type<Coordinates>().is_relocatable());
+static_assert(std::meta::type<Coordinates>().is_bitwise_relocatable());
+static_assert(std::meta::type<Coordinates>().is_transferable());
+static_assert(std::meta::type<Coordinates>().is_shareable());
+static_assert(std::meta::type<Coordinates>().is_default_initializable());
+static_assert(std::meta::type<Code>().is_integral_enum());
+static_assert(std::meta::type<uint32_t>().is_unsigned_integral());
+static_assert(std::meta::type<double>().is_numeric());
+static_assert(std::meta::type<double>().is_signed_numeric());
+static_assert(std::meta::type<Code>().has_underlying_type<uint16_t>());
+static_assert(std::meta::type<Code>().is_same<Code>());
+static_assert(classify<Opaque<int32_t>>() == 1);
+static_assert(classify<int32_t>() == 2);
+static_assert(projected<int32_t>() == 2);
+static_assert(projected<Envelope<int32_t>>() == 1);
+
+// Runtime observations and constexpr evaluation consume the same folded facts.
+bool independent_fact<T>() {
+  return std::meta::is_relocatable<T>() &&
+         std::meta::is_transferable<T>();
+}
+
+int main() {
+  return independent_fact<Coordinates>() &&
+         !std::meta::is_copy_constructible<MoveOnly>() &&
+         std::meta::is_enum_underlying<Code, uint16_t>() &&
+         classify<Opaque<int32_t>>() == 1 && classify<int32_t>() == 2 &&
+         projected<int32_t>() == 2 && projected<Envelope<int32_t>>() == 1 ? 0 : 1;
+}
