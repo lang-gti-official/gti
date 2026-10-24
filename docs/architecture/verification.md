@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Copied dependent payload views (0.467.1)
+## Copied dependent payload views (0.467.2)
 
 `view_fields` covers the copy in `testCopiedPayloadBindings`.
 - A switch's by-value binding of a dependent payload is copied into a local,
@@ -21,6 +21,43 @@ constructor, and mutating the owner while a copy is live (`GTI-S2045`,
 `GTI-S2017`). Two already built and still do: `id(value)` with
 `std::string_view& r = value;`, and the carrier program of PR #297's
 `testDerivedCarriers`.
+## Text members through checked `operator->` (0.467.1)
+
+`testArrowNonClassReferents` in the `ownership` suite analyzes a class with
+`std::string_view& operator->()` and a `std::optional<std::string_view>`.
+`label->size()`, `maybe->size()`, `label->end()` and `label->empty()` verify,
+lower to the `StringViewSize` and `StringViewEmpty` intrinsics, and leave no
+MIR value of unknown type, which was the backend's refusal before the fix.
+`->` through an `int&` or `c_string&` result, as a call or a field read, is
+`GTI-S2000`; an unknown `string_view` member or a `size(1)` is `GTI-S2035`;
+none reports `GTI-B`.
+
+`operator_relay_runtime` runs `arrow_text_members.gti` in all eight native
+modes, including the sanitized one. It covers literal-backed and owner-backed
+views behind a user class, a paired read-only/`mut` arrow, a reference
+parameter, `end()`/`rend()` (which take the arrow's view as their first
+argument), `std::optional<std::string_view>`, and a generic `Handle<T>` whose
+`T&` arrow reaches an unrelated `Counter` through a `countable<T>`
+requirement. A second run calls `->size()` on an empty optional and expects
+its `GTI-R0008` failure from `<std/optional>` before the member runs.
+Example 170 adds `maybe->size()`.
+
+The census gains one body for example 170, the `optional<string_view>`
+`operator->` instance: 163 bodies, 110 generated items and 59 concrete
+instance adapters. The unit test fails three expectations against main's
+three changed units, including that main gave `l->size(1)` no diagnostic.
+
+The same-root differential against main at 0.465.1 emitted C++ for 1,852
+programs in `tests/` and `examples/` at `-O0` and `-O3`, excluding
+`namespace-depth-63.gti`. All 2,950 compiles that main accepts emit
+byte-identical C++. Only example 170 and `arrow_text_members.gti` change:
+main refused both with `GTI-B0001`, and both now build.
+
+`maybe->begin()` still reports `GTI-B0001` in MIR construction, as
+`maybe.value().begin()` and `b.get().begin()` did before this change: an
+iterator that stores a view reference returned by a call gets no stored
+dependency for the view's owner. Binding the reference first works.
+
 ## Derived dependent-text carriers (internal)
 
 `view_fields` `testDerivedCarriers` publishes one local owner through a class
@@ -65,6 +102,7 @@ byte matched: both compilers accepted 2,956 compiles and refused 750. Main's
 next change before integration, batched validation, changed no compiled
 source.
 
+
 ## Passive class moved beside a passive copy (0.465.6)
 
 `passive_class_move_and_copy_runtime` runs `passive_class_move_and_copy.gti`.
@@ -103,6 +141,7 @@ An `--emit-cpp` differential against main `6333da11`, with one
 - 3,644 of 3,646 compilations emit byte-identical C++, and failing pairs
   report identical diagnostics;
 - only the new fixture changes status, from `GTI-B0001` to success.
+
 
 ## Classes holding function items (0.465.3)
 
@@ -149,6 +188,7 @@ An `--emit-cpp` differential against main `6333da11`, with one
 No existing program, including the standard library's generic callable
 adapters, changes text. Closure captures and call inputs of a function-item
 class emit the same C++ as before.
+
 
 ## Class stores into named places and element fields (0.465.1)
 
