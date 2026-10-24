@@ -866,7 +866,10 @@ add_test(NAME optimizer_object_context COMMAND gti_optimizer_object_context_test
 add_test(NAME optimizer_object_context_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/optimizer_object_context_runtime_test.py"
     $<TARGET_FILE:gti>)
-set_tests_properties(optimizer_object_context_runtime PROPERTIES TIMEOUT 300)
+# Keep the full 57-fixture/eight-mode matrix: all 456 compile/run cases.
+# GNU 15.2 Linux completed 435 cases at the old 300s aggregate bound. Allow
+# its sanitized tail without changing per-case compile/execution deadlines.
+set_tests_properties(optimizer_object_context_runtime PROPERTIES TIMEOUT 600)
 add_test(NAME optimizer_raw_context_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/optimizer_raw_context_runtime_test.py"
     $<TARGET_FILE:gti>)

@@ -1031,7 +1031,13 @@ extern "C" [[noreturn]] void gti_rt_failure_abort_allocation_v2(
     const gti_failure_record_v2 fallback{
         .abi_version = GTI_FAILURE_ABI_VERSION_V2,
         .code = GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
-        .detail = GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+        .detail = GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1,
+        .site_index = 0,
+        .reserved = 0,
+        .artifact_identity = {},
+        .message_size = 0,
+        .message_flags = 0,
+        .message = {}};
     (void)writeOrdinaryNative(&fallback, nullptr);
   }
   std::abort();
