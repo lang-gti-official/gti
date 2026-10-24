@@ -8312,14 +8312,21 @@ owningPayloadEnumValueSlot(const MirProgram &program, const MirBody &body,
   return payloadEnumMoveValueSlot(program, body, valueId).slot;
 }
 
+// An owning payload-enum assignment moves its value slot into the destination
+// after the paired CleanupBeforeAssign drained the old alternative. A place
+// this body tracks records its Reinitialize transition. The complete referent
+// of one checked mutable reference (a reference binding or a source call's
+// mutable reference result) is existing storage whose lexical drop belongs to
+// the referent's owner, so MIR records neither a local ownership transition
+// nor a Replace target there. Those referents use the same exact proofs as
+// class stores; no accessor or container name selects them.
 [[nodiscard]] const MirPlace *
 owningPayloadEnumAssignmentSlot(const MirProgram &program, const MirBody &body,
                                 const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Assign ||
       !instruction.destination || instruction.operands.size() != 1 ||
       instruction.operands.front().kind != MirOperandKind::Value ||
-      instruction.lifecycle.size() != 1 || !instruction.ownership ||
-      instruction.ownership->kind != OwnershipEventKind::Reinitialize)
+      instruction.lifecycle.size() != 1)
     return nullptr;
   const auto *destination = body.findPlace(*instruction.destination);
   const auto *slot = owningPayloadEnumValueSlot(
@@ -8327,12 +8334,21 @@ owningPayloadEnumAssignmentSlot(const MirProgram &program, const MirBody &body,
   const auto &event = instruction.lifecycle.front();
   const auto *source = body.findDropObligation(event.source);
   const auto *cleanup = findInstruction(body, instruction.replacementPair);
-  if (destination == nullptr || !destination->key || slot == nullptr ||
+  if (destination == nullptr)
+    return nullptr;
+  const bool trackedDestination =
+      destination->key && instruction.ownership &&
+      instruction.ownership->kind == OwnershipEventKind::Reinitialize &&
+      instruction.ownership->place == *destination->key &&
+      instruction.ownership->after == OwnershipStateSet::Available;
+  const bool borrowedReferent =
+      !instruction.ownership && event.target == 0 &&
+      (exactMutableReferenceDestination(body, *destination) ||
+       exactMutableCallResultDestination(program, body, *destination));
+  if ((!trackedDestination && !borrowedReferent) || slot == nullptr ||
       destination->type != slot->type ||
-      instruction.operands.front().type != slot->type ||
-      instruction.ownership->place != *destination->key ||
-      instruction.ownership->after != OwnershipStateSet::Available ||
-      source == nullptr || source->place != slot->id ||
+      instruction.operands.front().type != slot->type || source == nullptr ||
+      source->place != slot->id ||
       event.kind != MirLifecycleEventKind::Replace || event.conditional ||
       event.failureCleanup || cleanup == nullptr ||
       cleanup->kind != MirInstructionKind::CleanupBeforeAssign ||
