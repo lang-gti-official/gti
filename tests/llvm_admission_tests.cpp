@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 namespace {
 
@@ -84,11 +85,15 @@ void testLedger() {
     expect(false, "Count cannot become an executable ledger entry");           \
   } catch (const std::logic_error &) {                                         \
   }
+// The unscoped type-kind enum has no valid out-of-range cast; its exhaustive
+// switch is the negative gate. Scoped enums have a fixed underlying type.
 #define LLVM_COVERAGE_END()                                                    \
-  try {                                                                        \
-    static_cast<void>(llvm_detail::coverage(static_cast<Enum>(-1)));           \
-    expect(false, "unknown vocabulary cannot silently gain coverage");         \
-  } catch (const std::logic_error &) {                                         \
+  if constexpr (!std::is_convertible_v<Enum, int>) {                           \
+    try {                                                                      \
+      static_cast<void>(llvm_detail::coverage(static_cast<Enum>(-1)));         \
+      expect(false, "unknown vocabulary cannot silently gain coverage");       \
+    } catch (const std::logic_error &) {                                       \
+    }                                                                          \
   }                                                                            \
   }
 #include "../src/compiler/llvm/coverage.def"

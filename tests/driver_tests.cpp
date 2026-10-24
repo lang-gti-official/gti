@@ -318,12 +318,18 @@ int main() {
                    [](const lang::Diagnostic &diagnostic) {
                      return diagnostic.code == "GTI-B0003";
                    });
+  const auto host = lang::TargetInfo::host();
+  const bool hostTarget =
+      target.os == host.os && target.vendor == host.vendor &&
+      target.arch == host.arch && target.dataLayout == host.dataLayout;
+  const std::string_view limitation =
+      hostTarget ? "executable LLVM lowering is not implemented yet"
+                 : "currently accepts only the host target";
   expect(request.backend() == lang::BackendKind::Cpp &&
              llvmRequest.backend() == lang::BackendKind::Llvm &&
              !llvmResult.succeeded() && !llvmResult.artifact &&
              llvmDiagnostic != llvmResult.diagnostics.end() &&
-             llvmDiagnostic->message.find(
-                 "currently accepts only the host target") != std::string::npos,
+             llvmDiagnostic->message.find(limitation) != std::string::npos,
          "LLVM selection should be immutable and preserve a structured "
          "foundation-limit diagnostic");
   RecordingProgress progress;
