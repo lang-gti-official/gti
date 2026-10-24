@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Carriers of returned references (0.467.2)
+## Carriers of returned references (0.467.3)
 
 `accessor_text_carrier_runtime` runs `accessor_text_carriers.gti` in all
 eight native modes, including the sanitized one. It builds text iterators
@@ -60,6 +60,27 @@ Not covered: constructing a carrier class directly from a returned reference
 result requires one exact stored dependency" for literal text and "dependent
 text value is relayed where its text field may outlive" for owned text.
 
+## Copied dependent payload views (0.467.2)
+
+`view_fields` covers the copy in `testCopiedPayloadBindings`.
+- A switch's by-value binding of a dependent payload is copied into a local,
+  and that local is copied again. Both copies verify and carry the payload's
+  `Stored` loan.
+- Dropping either copy from the loan's carriers is rejected: MIR derives
+  that each copy holds the owner's text (`verifyDependentTextCarriers`), so
+  it must carry a loan that retains the owner.
+- `view_field_payloads_runtime` runs copies of a local enum's binding and of
+  a `line.word` binding in every mode.
+
+Fourteen probes ran on main's compiler and this change's. Seven reported
+`GTI-B0001` on main and now build and run: the plain copy, a copy chain, a
+`default` arm, a generic enum, a payload enum held in a field, a loop, and a
+two-payload variant. Five source rejections are unchanged: assigning the view
+into an existing binding, storing it, republishing it in a payload or
+constructor, and mutating the owner while a copy is live (`GTI-S2045`,
+`GTI-S2017`). Two already built and still do: `id(value)` with
+`std::string_view& r = value;`, and the carrier program of PR #297's
+`testDerivedCarriers`.
 ## Text members through checked `operator->` (0.467.1)
 
 `testArrowNonClassReferents` in the `ownership` suite analyzes a class with
