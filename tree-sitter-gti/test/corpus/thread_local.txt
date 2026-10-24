@@ -1,0 +1,75 @@
+==================
+Thread-local namespace, static-field and block storage
+==================
+
+thread_local mut int counter = 0;
+static thread_local int first = 1;
+thread_local static int second = 2;
+class Registry {
+  static thread_local mut Registry* current = nullptr;
+};
+void work() {
+  thread_local mut int local = 0;
+  static thread_local int other = 1;
+}
+
+---
+
+(source_file
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (literal
+          (integer_literal)))))
+  (static_variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (literal
+          (integer_literal)))))
+  (static_variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (literal
+          (integer_literal)))))
+  (class_declaration
+    (identifier)
+    (class_body
+      (static_variable_declaration
+        (type
+          (user_type
+            (identifier))
+          (pointer_declarator))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (nullptr_literal))))))
+  (function_declaration
+    (type)
+    (identifier)
+    (parameter_clause)
+    (block
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (static_variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal))))))))

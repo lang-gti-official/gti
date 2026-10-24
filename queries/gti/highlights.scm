@@ -251,6 +251,7 @@
   "constexpr"
   "mut"
   "static"
+  "thread_local"
   "virtual"
   "override"
   "extern"
@@ -267,7 +268,7 @@
     "explicit" "friend" "goto" "inline" "long" "mutable" "new"
     "noexcept" "not" "not_eq" "or_eq" "protected" "register"
     "reinterpret_cast" "short" "signed" "static_cast"
-    "template" "thread_local" "throw" "try" "typedef" "typeid"
+    "template" "throw" "try" "typedef" "typeid"
     "unsigned" "volatile" "wchar_t" "xor" "xor_eq")
   (#set! priority 96))
 

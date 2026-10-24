@@ -18976,6 +18976,102 @@ failureFreeFixedArrayAggregateMove(const MirProgram &program,
          !initialize.conditional && !initialize.failureCleanup;
 }
 
+struct FixedArrayInitializerPublication {
+  const MirInstruction *aggregate = nullptr;
+  const MirPlace *result = nullptr;
+  const MirBlock *returned = nullptr;
+
+  [[nodiscard]] explicit operator bool() const {
+    return aggregate != nullptr && result != nullptr && returned != nullptr;
+  }
+};
+
+// An initializer body receives uninitialized final-address storage. Its
+// aggregate may construct there under the same element-transfer proof used
+// by ordinary storage Initialize. This is not an additional ordinary
+// function-return spelling: only the typed initializer result has this
+// destination, and no fallible work may follow publication in this slice.
+[[nodiscard]] FixedArrayInitializerPublication
+fixedArrayInitializerPublication(const MirProgram &program, const MirBody &body,
+                                 MirValueId valueId) {
+  if (body.kind != MirBodyKind::ThreadLocalInitializer ||
+      body.returnType.kind != SemanticType::Array)
+    return {};
+  const auto *value = body.findValue(valueId);
+  if (!value || value->info.type != body.returnType)
+    return {};
+  const auto *aggregate =
+      value ? findInstruction(body, value->definition) : nullptr;
+  const auto *drop =
+      value ? uniqueValueLifetimeDrop(body, valueId, value->info.type)
+            : nullptr;
+  const auto *slot = drop ? body.findPlace(drop->place) : nullptr;
+  if (!value || value->info.type != body.returnType ||
+      value->info.category != ValueCategory::Value ||
+      value->info.traits.containsBorrowedState || !aggregate ||
+      !failureFreeFixedArrayAggregateMove(program, body, *aggregate) ||
+      aggregate->destination || aggregate->receiver ||
+      aggregate->functionTarget || aggregate->constructorTarget ||
+      aggregate->bodyTarget || aggregate->lambdaTarget || aggregate->loan ||
+      !drop || drop->kind != MirDropObligationKind::Value ||
+      drop->initiallyActive || drop->dropType.type != body.returnType ||
+      !slot || slot->root != MirPlaceRootKind::Value ||
+      slot->value != valueId || slot->type != body.returnType ||
+      !slot->projections.empty() || slot->initiallyAvailable ||
+      slot->sourceValue != value->sourceValue ||
+      drop->value != value->sourceValue)
+    return {};
+  bool resultRoot = false;
+  const MirBlock *returned = nullptr;
+  for (const auto &use : body.usesOf(valueId)) {
+    if (use.kind == MirValueUseKind::PlaceRoot && use.place == slot->id &&
+        !resultRoot) {
+      resultRoot = true;
+      continue;
+    }
+    if (use.kind != MirValueUseKind::Terminator || returned)
+      return {};
+    returned = body.findBlock(use.block);
+  }
+  if (!resultRoot || !returned || returned->id != value->definitionBlock ||
+      returned->terminator.kind != MirTerminatorKind::Return ||
+      returned->terminator.returnLoan || !returned->terminator.value ||
+      returned->terminator.value->kind != MirOperandKind::Value ||
+      returned->terminator.value->value != valueId ||
+      returned->terminator.value->type != body.returnType)
+    return {};
+  for (const auto &block : body.blocks)
+    if (block.id != returned->id &&
+        block.terminator.kind == MirTerminatorKind::Return)
+      return {};
+  bool afterAggregate = false;
+  std::size_t publications = 0;
+  for (const auto &instruction : returned->instructions) {
+    if (&instruction == aggregate) {
+      afterAggregate = true;
+      continue;
+    }
+    if (!afterAggregate || instruction.tombstone)
+      continue;
+    if (instruction.kind != MirInstructionKind::Lifecycle ||
+        instruction.result || instruction.destination || instruction.receiver ||
+        instruction.loan || !instruction.operands.empty() ||
+        !instruction.definedFailure.empty() ||
+        instruction.cleanupBoundaryEnd != 0)
+      return {};
+    for (const auto &event : instruction.lifecycle) {
+      if (event.kind != MirLifecycleEventKind::TransferOut ||
+          event.source != drop->id || event.target != 0 || event.conditional ||
+          event.failureCleanup)
+        return {};
+      ++publications;
+    }
+  }
+  return afterAggregate && publications == 1
+             ? FixedArrayInitializerPublication{aggregate, slot, returned}
+             : FixedArrayInitializerPublication{};
+}
+
 struct PassiveFixedArrayConstructAggregate {
   const MirInstruction *aggregate = nullptr;
   const MirInstruction *initialize = nullptr;
@@ -23519,6 +23615,7 @@ private:
     case MirBodyKind::Module:
     case MirBodyKind::Lambda:
     case MirBodyKind::HostedStartup:
+    case MirBodyKind::ThreadLocalInitializer:
       return std::nullopt;
     }
     return std::nullopt;
@@ -23550,6 +23647,7 @@ private:
     case MirBodyKind::Module:
     case MirBodyKind::Lambda:
     case MirBodyKind::HostedStartup:
+    case MirBodyKind::ThreadLocalInitializer:
       return std::nullopt;
     }
     return std::nullopt;
@@ -23841,6 +23939,15 @@ private:
                         &lambda->captureTypes[index], index + 1);
         }
       }
+      return;
+    }
+    case MirBodyKind::ThreadLocalInitializer: {
+      const auto *storage = program.findThreadLocalStorage(result.body.owner);
+      if (storage == nullptr)
+        add(CppMirBodyEmissionIssueKind::MissingBodyRepresentation, 0, 0,
+            "thread-local initializer lost its exact storage declaration");
+      else
+        requireType(storage->type);
       return;
     }
     case MirBodyKind::HostedStartup: {
@@ -24374,6 +24481,9 @@ private:
       requireType(instruction.info.type, block.id, instruction.id);
       break;
     case MirInstructionKind::CallBody:
+    case MirInstructionKind::EnsureThreadLocal:
+    case MirInstructionKind::DrainThreadLocals:
+    case MirInstructionKind::BeginThreadLocals:
       requireType(instruction.info.type, block.id, instruction.id);
       break;
     case MirInstructionKind::Count:
@@ -24932,6 +25042,9 @@ CppMirEmissionEncoding classifyCppMirInstructionKind(MirInstructionKind kind) {
   case MirInstructionKind::Drop:
   case MirInstructionKind::EndBorrow:
   case MirInstructionKind::CallBody:
+  case MirInstructionKind::EnsureThreadLocal:
+  case MirInstructionKind::DrainThreadLocals:
+  case MirInstructionKind::BeginThreadLocals:
   case MirInstructionKind::AllocateObject:
   case MirInstructionKind::InitializeBase:
   case MirInstructionKind::CleanupBeforeAssign:
@@ -25082,6 +25195,7 @@ CppMirEmissionEncoding classifyCppMirBodyKind(MirBodyKind kind) {
   case MirBodyKind::Destructor:
   case MirBodyKind::Lambda:
   case MirBodyKind::HostedStartup:
+  case MirBodyKind::ThreadLocalInitializer:
     return CppMirEmissionEncoding::NeedsCopiedRepresentation;
   }
   return CppMirEmissionEncoding::Invalid;
@@ -26555,6 +26669,10 @@ returnMoveDefinitionByScan(const MirBody &body, MirValueId value) {
 pendingReturnPlacementPlace(const MirProgram &program,
                             const CppMirBodyEmissionMap &representations,
                             const MirBody &body, const MirPlace &place) {
+  if (place.root == MirPlaceRootKind::Value &&
+      fixedArrayInitializerPublication(program, body, place.value).result ==
+          &place)
+    return true;
   return place.root == MirPlaceRootKind::Value && place.projections.empty() &&
          returnResultObligation(body, place.value) != nullptr &&
          (placementDirectReturnCall(program, representations, body,
@@ -26602,6 +26720,8 @@ movedTemporaryHandedOff(const MirBody &body, const MirInstruction &consumer) {
 // A synthetic owned temporary has no named moved-from binding to retain.
 // When its exact return Move is followed by TransferOut, retire only the
 // disarmed native shell at that event. Named locals keep their scheduled Drop.
+// Failure-only cleanup may still own the unpublished value on a path that
+// cannot reach publication; that Drop must remain executable on failure.
 [[nodiscard]] const MirPlace *
 movedReturnTemporaryForTransfer(const MirBody &body,
                                 const MirInstruction &transfer) {
@@ -26620,25 +26740,85 @@ movedReturnTemporaryForTransfer(const MirBody &body,
       drop->dropType.type != slot->type)
     return nullptr;
   const MirInstruction *move = nullptr;
+  const MirBlock *publication = nullptr;
+  std::vector<MirBlockId> failureDrops;
   for (const auto &block : body.blocks) {
     for (std::size_t index = 0; index < block.instructions.size(); ++index) {
       const auto &instruction = block.instructions[index];
       if (instruction.kind == MirInstructionKind::Drop &&
           instruction.destination) {
         const auto *destination = body.findPlace(*instruction.destination);
-        if (destination && sameMirPlaceRoot(*destination, *slot))
-          return nullptr;
+        if (destination && sameMirPlaceRoot(*destination, *slot)) {
+          const bool exactFailureDrop =
+              destination == slot && instruction.lifecycle.size() == 1 &&
+              instruction.lifecycle.front().kind ==
+                  MirLifecycleEventKind::Drop &&
+              instruction.lifecycle.front().source == drop->id &&
+              instruction.lifecycle.front().target == 0 &&
+              !instruction.lifecycle.front().conditional &&
+              instruction.lifecycle.front().failureCleanup &&
+              block.activeFailure != 0 &&
+              body.findFailureRecord(block.activeFailure) != nullptr;
+          if (!exactFailureDrop)
+            return nullptr;
+          failureDrops.push_back(block.id);
+        }
       }
-      if (&instruction == &transfer && index != 0)
+      if (&instruction == &transfer && index != 0) {
         move = &block.instructions[index - 1];
+        publication = &block;
+      }
     }
   }
-  if (move == nullptr || !move->result ||
+  if (move == nullptr || publication == nullptr ||
+      body.findBlock(publication->id) != publication ||
+      publication->activeFailure != 0 || !move->result ||
       returnMoveDefinition(body, *move->result) != move ||
       move->operands.front().place != slot->id ||
       move->operands.front().type != slot->type ||
       move->info.type != slot->type)
     return nullptr;
+  if (!failureDrops.empty()) {
+    // One reverse CFG closure proves all candidate cleanup Drops disjoint
+    // from this publication, including branches and failure continuations.
+    // Merely retaining a failureCleanup flag grants no such authority.
+    std::vector<std::vector<MirBlockId>> predecessors(body.blocks.size() + 1);
+    bool validEdges = true;
+    for (const auto &block : body.blocks) {
+      if (body.findBlock(block.id) != &block) {
+        validEdges = false;
+        continue;
+      }
+      forEachTerminatorEdge(block.terminator, [&](MirBlockId target) {
+        if (target == 0)
+          return;
+        if (body.findBlock(target) == nullptr) {
+          validEdges = false;
+          return;
+        }
+        predecessors[target].push_back(block.id);
+      });
+    }
+    if (!validEdges)
+      return nullptr;
+    std::vector<bool> reachesPublication(body.blocks.size() + 1, false);
+    std::vector<MirBlockId> pending;
+    pending.push_back(publication->id);
+    reachesPublication[publication->id] = true;
+    while (!pending.empty()) {
+      const auto block = pending.back();
+      pending.pop_back();
+      for (const auto predecessor : predecessors[block])
+        if (!reachesPublication[predecessor]) {
+          reachesPublication[predecessor] = true;
+          pending.push_back(predecessor);
+        }
+    }
+    if (std::any_of(
+            failureDrops.begin(), failureDrops.end(),
+            [&](MirBlockId block) { return reachesPublication[block]; }))
+      return nullptr;
+  }
   return slot;
 }
 
@@ -31054,6 +31234,20 @@ public:
         familyLabel);
   }
 
+  [[nodiscard]] std::string
+  emitThreadLocal(const MirThreadLocalStorage &storage,
+                  std::string_view familyLabel) {
+    return emit(
+        ScalarBodyFacts{.body = storage.initializer,
+                        .kind = MirBodyKind::ThreadLocalInitializer,
+                        .id = storage.symbol,
+                        .instanceLabel = "thread-local-initializer",
+                        .owner = std::nullopt,
+                        .parameterBindings = emptyParameterBindings(),
+                        .receiverMutability = ReceiverMutability::ReadOnly},
+        familyLabel);
+  }
+
   [[nodiscard]] std::string emitModule(std::string_view familyLabel) {
     return emit(
         ScalarBodyFacts{.body = program.module(),
@@ -31739,6 +31933,8 @@ public:
         // second SSA slot for those values would be an unrelated object.
         continue;
       }
+      if (fixedArrayInitializerPublication(program, facts.body, value.id))
+        continue; // This exact aggregate already names the ABI result storage.
       const MirInstruction *valueDefinition =
           findInstruction(facts.body, value.definition);
       if (valueDefinition &&
@@ -32317,6 +32513,12 @@ public:
       output << loanTypeSpelling(*loanedType) << " *__gti_mir_loan_" << loan.id
              << "{};\n";
     }
+    for (const auto &block : facts.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::EnsureThreadLocal) {
+          writeIndent();
+          output << "bool __gti_mir_tls_success_" << instruction.id << "{};\n";
+        }
     if (!failureForm) {
       for (const auto &block : facts.body.blocks)
         for (const auto &instruction : block.instructions)
@@ -34576,12 +34778,22 @@ private:
         owningDestination = fixedArrayAggregateInputPlace(program, facts.body,
                                                           *instruction.result);
       }
-      if (const MirPlace *destination = owningDestination) {
-        const MirPlaceId slot = canonicalSlotPlaceId(facts.body, *destination);
-        const bool field = destination->root == MirPlaceRootKind::This;
+      const FixedArrayInitializerPublication initializerResult =
+          failureForm && instruction.result
+              ? fixedArrayInitializerPublication(program, facts.body,
+                                                 *instruction.result)
+              : FixedArrayInitializerPublication{};
+      if (const MirPlace *destination = owningDestination;
+          destination || initializerResult) {
+        const MirPlaceId slot =
+            destination ? canonicalSlotPlaceId(facts.body, *destination) : 0;
+        const bool field =
+            destination && destination->root == MirPlaceRootKind::This;
         const bool byteArray =
             cppRequiresIndirectValueTransport(program, instruction.info.type);
-        if (field) {
+        if (initializerResult) {
+          output << "::new (static_cast<void *>(__gti_mir_out_result)) ";
+        } else if (field) {
           output << "std::destroy_at(std::addressof("
                  << destinationSpelling(facts, destination->id) << "));\n";
           writeIndent();
@@ -34599,7 +34811,9 @@ private:
           if (byteArray) {
             writeIndent();
             output << "::gti_internal::backend::assign_representation(";
-            if (field)
+            if (initializerResult)
+              output << "(*__gti_mir_out_result)";
+            else if (field)
               output << destinationSpelling(facts, destination->id);
             else
               output << "(*__gti_mir_p_" << slot << ".construction_address())";
@@ -34645,7 +34859,7 @@ private:
         }
         if (!byteArray)
           output << "};\n";
-        if (!field) {
+        if (!field && !initializerResult) {
           writeIndent();
           output << "__gti_mir_p_" << slot << ".mark_constructed();\n";
         }
@@ -37469,6 +37683,19 @@ private:
   void emitInstruction(const MirBlock &block, const MirInstruction &instruction,
                        const ScalarBodyFacts &facts) {
     if (instruction.tombstone) {
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::EnsureThreadLocal) {
+      writeIndent();
+      output << "__gti_mir_tls_success_" << instruction.id
+             << " = ::__gti_program::__gti_tls_ensure_"
+             << instruction.threadLocalStorage << '('
+             << (failureForm ? "__gti_mir_failure_record" : "nullptr")
+             << ", UINT32_C("
+             << (instruction.localFailureSites.empty()
+                     ? 0
+                     : instruction.localFailureSites.front())
+             << "));\n";
       return;
     }
     if (failureForm && block.activeFailure != 0 &&
@@ -42224,6 +42451,12 @@ private:
                                     std::to_string(producer->id));
         return;
       }
+      if (producer != nullptr &&
+          producer->kind == MirInstructionKind::EnsureThreadLocal) {
+        emitConditionalEdgeTransfer("__gti_mir_tls_success_" +
+                                    std::to_string(producer->id));
+        return;
+      }
       if (producer != nullptr && producer->kind == MirInstructionKind::Drop &&
           failureDestructorTarget(program, facts.body, *producer) != nullptr) {
         emitConditionalEdgeTransfer("__gti_mir_drop_success_" +
@@ -42841,6 +43074,12 @@ private:
             // result, and the success edge transferred that identity out.
             writeIndent();
             output << "// GTI MIR placement value published at its call\n";
+          } else if (terminator.value->kind == MirOperandKind::Value &&
+                     fixedArrayInitializerPublication(
+                         program, facts.body, terminator.value->value)) {
+            writeIndent();
+            output
+                << "// GTI MIR initializer array published at its aggregate\n";
           } else {
             writeIndent();
             const bool classPublication =
@@ -50105,6 +50344,33 @@ hostedMarshallingSchedule(const MirProgram &program) {
   }
   MirHostedStartupPlan plan = *program.hostedStartupPlan();
   using Kind = MirHostedStartupOperationKind;
+  const auto attachment = std::find_if(
+      plan.operations.begin(), plan.operations.end(),
+      [](const auto &op) { return op.kind == Kind::BeginThreadLocals; });
+  if (!program.threadLocalStorage().empty()) {
+    if (attachment != plan.operations.begin() ||
+        attachment == plan.operations.end() || attachment->block != 1 ||
+        attachment->terminator || attachment->instruction == 0 ||
+        attachment->failureBehavior != MirHostedStartupFailureBehavior::None)
+      return std::nullopt;
+    plan.operations.erase(attachment);
+  } else if (attachment != plan.operations.end()) {
+    return std::nullopt;
+  }
+  const auto drain = std::find_if(
+      plan.operations.begin(), plan.operations.end(),
+      [](const auto &op) { return op.kind == Kind::DrainThreadLocals; });
+  if (!program.threadLocalStorage().empty()) {
+    if (drain == plan.operations.end() || drain->terminator ||
+        drain->failureBehavior != MirHostedStartupFailureBehavior::None ||
+        drain->instruction == 0 || std::next(drain) == plan.operations.end() ||
+        (std::next(drain)->kind != Kind::EndCThreadRuntime &&
+         std::next(drain)->kind != Kind::ReturnEntry))
+      return std::nullopt;
+    plan.operations.erase(drain);
+  } else if (drain != plan.operations.end()) {
+    return std::nullopt;
+  }
   const auto begin = std::find_if(
       plan.operations.begin(), plan.operations.end(),
       [](const auto &op) { return op.kind == Kind::BeginCThreadRuntime; });
@@ -50639,6 +50905,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       return false;
     }
     bodyPointer = &program_.module();
+    break;
+  }
+  case MirBodyKind::ThreadLocalInitializer: {
+    const auto *storage = program_.findThreadLocalStorage(address.owner);
+    if (storage == nullptr || !failureForm ||
+        storage->initializer.returnType != storage->type ||
+        storage->traits.containsBorrowedState)
+      return false;
+    bodyPointer = &storage->initializer;
     break;
   }
   case MirBodyKind::Function: {
@@ -52049,6 +52324,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     const MirInstruction *owningDefinition =
         findInstruction(body, value.definition);
+    if (fixedArrayInitializerPublication(program_, body, value.id)) {
+      if (!failureForm)
+        return false;
+      continue;
+    }
     if (passiveArrayCopyPublication(program_, body, value.id))
       continue;
     if (owningDefinition != nullptr &&
@@ -53559,6 +53839,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
       }
       switch (instruction.kind) {
+      case MirInstructionKind::EnsureThreadLocal: {
+        const auto *storage =
+            program_.findThreadLocalStorage(instruction.threadLocalStorage);
+        if (storage == nullptr || !instruction.bodyTarget ||
+            *instruction.bodyTarget !=
+                MirBodyAddress{.kind = MirBodyKind::ThreadLocalInitializer,
+                               .owner = storage->symbol} ||
+            (!storage->dataInitializer && !failureForm) ||
+            !pendingStaged.empty())
+          return false;
+        continue;
+      }
       case MirInstructionKind::CleanupBeforeAssign:
         if (!instruction.destination || !instruction.replacementCleanup ||
             (!instruction.definedFailure.empty() &&
@@ -57154,6 +57446,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       if (producer->kind == MirInstructionKind::AllocateObject ||
+          producer->kind == MirInstructionKind::EnsureThreadLocal ||
           producer->kind == MirInstructionKind::InitializeBase ||
           producer->kind == MirInstructionKind::CleanupBeforeAssign ||
           (producer->intrinsic == IntrinsicKind::AllocateUniqueOwner &&
@@ -58539,6 +58832,11 @@ CppMirBodyEmissionPlan CppMirBodyEmitter::buildPlanFromAnalysis(
                                  cppMirBodyEmissionIndentationPlaceholder,
                                  deducedCallable, debugBodies_);
     switch (address.kind) {
+    case MirBodyKind::ThreadLocalInitializer:
+      if (const auto *storage = program_.findThreadLocalStorage(address.owner))
+        return writer.emitThreadLocal(*storage,
+                                      cppMirBodyEmissionFamilyPlaceholder);
+      break;
     case MirBodyKind::Module:
       if (address.owner == 0) {
         return writer.emitModule(cppMirBodyEmissionFamilyPlaceholder);
@@ -58879,6 +59177,7 @@ CppMirBodyEmitter::analyzeProgramImpl(bool includeTextVocabulary) const {
         break;
       }
       case MirBodyKind::Lambda:
+      case MirBodyKind::ThreadLocalInitializer:
         textSupported =
             supportsFailureBodyText(address) || supportsBodyText(address);
         break;

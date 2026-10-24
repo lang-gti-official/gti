@@ -31,7 +31,7 @@ MARKER_PATTERN = re.compile(
     r"(module-instance|field-initializers-instance|"
     r"static-field-initializers-instance|function-instance|"
     r"constructor-instance|destructor-instance|lambda-instance|"
-    r"hosted-startup-instance) (\d+)"
+    r"hosted-startup-instance|thread-local-initializer) (\d+)"
 )
 
 # Diagnostics from examples that failed to compile, for the FAIL report.
@@ -67,7 +67,7 @@ def census(gti: Path, root: Path) -> dict[str, int | None]:
                     *(
                         ["--execution-profile", "concurrent"]
                         if source.name
-                        in {"066-managed-threads.gti", "076-scalar-atomics.gti"}
+                        in {"066-managed-threads.gti", "076-scalar-atomics.gti", "175-thread-local-storage.gti"}
                         else []
                     ),
                     str(source),

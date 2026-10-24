@@ -27,7 +27,7 @@ syntax keyword gtiNamespaceKeyword namespace module nextgroup=gtiNamespaceDeclar
 syntax keyword gtiTypeAliasKeyword using nextgroup=gtiTypeAliasName skipwhite
 syntax keyword gtiTypeAliasKeyword typename nextgroup=gtiTypeAliasName skipwhite
 syntax keyword gtiConceptKeyword concept nextgroup=gtiConceptName skipwhite
-syntax keyword gtiStorageClass const constexpr export extern implicit mut override static virtual
+syntax keyword gtiStorageClass const constexpr export extern implicit mut override static thread_local virtual
 syntax keyword gtiOperatorKeyword operator
 syntax match gtiInclude "#include\>"
 syntax match gtiMacroKeyword "#macro\>"

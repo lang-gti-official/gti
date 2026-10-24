@@ -900,6 +900,7 @@ specializedBodyTextIsReady(const LoweredProgram &program, CppStandard standard,
   case MirBodyKind::FieldInitializers:
   case MirBodyKind::StaticFieldInitializers:
   case MirBodyKind::HostedStartup:
+  case MirBodyKind::ThreadLocalInitializer:
     return false;
   }
   return false;
@@ -946,6 +947,8 @@ cppBodyDefinition(LoweredBodyDefinitionKind definition) {
   switch (kind) {
   case LoweredGeneratedItemKind::ProgramInitialization:
     return CppMirThunkKind::ProgramInitialization;
+  case LoweredGeneratedItemKind::ThreadLocalStorage:
+    return CppMirThunkKind::ThreadLocalStorage;
   case LoweredGeneratedItemKind::HostedEntry:
     return CppMirThunkKind::HostedEntry;
   case LoweredGeneratedItemKind::StructuralOperatorAdapter:
@@ -1383,6 +1386,15 @@ selectCppMirBackendProgramRoute(const CppMirProgramPlan &plan) {
       detail = plan.issues.front().detail;
     } else if (!plan.unsupported.empty()) {
       detail = "sealed representation plan contains an unsupported surface";
+      const auto &surface = plan.unsupported.front();
+      if (surface.body)
+        detail += " (body-kind " +
+                  std::to_string(static_cast<int>(surface.body->kind)) +
+                  " owner " + std::to_string(surface.body->owner) + ")";
+      if (surface.thunk)
+        detail += " (thunk-kind " +
+                  std::to_string(static_cast<int>(surface.thunk->kind)) +
+                  " owner " + std::to_string(surface.thunk->owner) + ")";
     } else {
       detail = "unknown representation-plan failure";
     }
@@ -1948,6 +1960,13 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
                      .owner = mir.hostedStartupPlan()->entry},
          .spelling = "::main"});
   }
+  for (const auto &storage : mir.threadLocalStorage()) {
+    builder.rows.bodies.push_back(
+        {.address = {.kind = MirBodyKind::ThreadLocalInitializer,
+                     .owner = storage.symbol},
+         .spelling = "::__gti_program::__gti_tls_init_" +
+                     std::to_string(storage.symbol)});
+  }
 
   // The executable module body carries its own name row like every other
   // executable body; it is never a call target.
@@ -2485,6 +2504,26 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
     }
   }
 
+  for (const auto &storage : mir.threadLocalStorage()) {
+    builder.addType(storage.type);
+    const std::string spelling = "::__gti_program::__gti_tls_value_" +
+                                 std::to_string(storage.symbol) + "()";
+    bool found = false;
+    for (auto &row : builder.rows.symbols) {
+      if (row.kind == CppMirSymbolRepresentationKind::Storage &&
+          row.symbol == storage.symbol && row.ordinal == 0) {
+        row.spelling = spelling;
+        row.runtimeLifetimeSlot = false;
+        found = true;
+      }
+    }
+    if (!found)
+      builder.rows.symbols.push_back(
+          {.kind = CppMirSymbolRepresentationKind::Storage,
+           .symbol = storage.symbol,
+           .type = storage.type,
+           .spelling = spelling});
+  }
   return builder.rows;
 }
 

@@ -803,6 +803,10 @@
           "named": true
         },
         {
+          "type": "static_variable_declaration",
+          "named": true
+        },
+        {
           "type": "structured_binding_declaration",
           "named": true
         },
@@ -1493,6 +1497,10 @@
         },
         {
           "type": "static_assert_declaration",
+          "named": true
+        },
+        {
+          "type": "static_variable_declaration",
           "named": true
         },
         {
@@ -5562,6 +5570,16 @@
           }
         ]
       },
+      "thread_storage": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "thread_local",
+            "named": false
+          }
+        ]
+      },
       "type": {
         "multiple": false,
         "required": true,
@@ -5648,6 +5666,10 @@
         },
         {
           "type": "static_assert_declaration",
+          "named": true
+        },
+        {
+          "type": "static_variable_declaration",
           "named": true
         },
         {
@@ -6082,6 +6104,16 @@
           {
             "type": "identifier",
             "named": true
+          }
+        ]
+      },
+      "thread_storage": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "thread_local",
+            "named": false
           }
         ]
       },
@@ -6652,6 +6684,10 @@
   },
   {
     "type": "thread_confined_callback",
+    "named": false
+  },
+  {
+    "type": "thread_local",
     "named": false
   },
   {

@@ -2079,6 +2079,20 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     return std::nullopt;
   }
 
+  const auto applicationContext = [&] {
+    std::vector<SemanticConstraintContext> context;
+    if (conceptInfo.compilerPrivate)
+      return context;
+    SemanticConstraintContext entry;
+    entry.name = conceptInfo.qualifiedName;
+    entry.arguments = requirement.arguments;
+    if (requirement.syntax != nullptr)
+      entry.location = requirement.syntax->name.last();
+    else
+      entry.location = conceptInfo.declaration->name();
+    context.emplace_back(std::move(entry));
+    return context;
+  };
   const std::size_t count = std::min(requirement.arguments.size(),
                                      conceptInfo.parameterConstraints.size());
   for (std::size_t index = 0; index < count; ++index) {
@@ -2099,19 +2113,7 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
                   ? std::optional<NamePath>{}
                   : std::optional<NamePath>{requirement.syntax->name},
           .application = requirement.syntax,
-          .context =
-              conceptInfo.compilerPrivate
-                  ? std::vector<SemanticConstraintContext>{}
-                  : std::vector<
-                        SemanticConstraintContext>{{conceptInfo.qualifiedName,
-                                                    requirement.arguments,
-                                                    requirement.syntax !=
-                                                            nullptr
-                                                        ? requirement.syntax
-                                                              ->name.last()
-                                                        : conceptInfo
-                                                              .declaration
-                                                              ->name()}},
+          .context = applicationContext(),
           .leafApplication = requirement.syntax,
           .applicationArgumentIndex = index,
           .conceptExplanation = conceptInfo.explanation()};
@@ -2137,19 +2139,7 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
                   : std::optional<NamePath>{requirement.syntax->name},
           .structural = structural.kind,
           .application = requirement.syntax,
-          .context =
-              conceptInfo.compilerPrivate
-                  ? std::vector<SemanticConstraintContext>{}
-                  : std::vector<
-                        SemanticConstraintContext>{{conceptInfo.qualifiedName,
-                                                    requirement.arguments,
-                                                    requirement.syntax !=
-                                                            nullptr
-                                                        ? requirement.syntax
-                                                              ->name.last()
-                                                        : conceptInfo
-                                                              .declaration
-                                                              ->name()}},
+          .context = applicationContext(),
           .leafApplication = requirement.syntax,
           .conceptExplanation = conceptInfo.explanation()};
     }
@@ -5947,6 +5937,24 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
   if (contextual) {
     semanticModel.recordContextualConversion(site, std::move(resolved));
   } else if (projection) {
+    auto check = captureProgramStorageBorrows(tokenSpan(token));
+    const AccessMode access =
+        resolved.receiverMutability == ReceiverMutability::ReadOnly
+            ? AccessMode::ReadOnly
+            : AccessMode::Mutable;
+    if (receiver)
+      appendProgramStorageBorrowInput(check, receiver, access);
+    else if (receiverState)
+      for (const auto &place : loanPlaces(receiverState->place))
+        appendProgramStorageBorrowProtection(check, place, access,
+                                             tokenSpan(token));
+    const auto owner = currentProgramEffectOwner;
+    const auto edgeStart = programEffects[owner].edges.size();
+    const auto unknownStart = programEffects[owner].unknown.size();
+    recordProgramOperatorTargetEffects(site, resolved);
+    if (owner.valid())
+      publishProgramStorageBorrowCheck(std::move(check), owner, edgeStart,
+                                       unknownStart);
     semanticModel.recordProjectionOperator(site, std::move(resolved));
   } else {
     semanticModel.recordOperator(site, std::move(resolved));
@@ -6880,26 +6888,6 @@ auto SemanticVisitor::Impl::bindIntrinsicCallDeclaration(
   recordSelectedCallOccurrence(call, std::move(resolved));
 }
 
-auto SemanticVisitor::Impl::recordDefaultArgumentEffects(
-    const Call &call, const CallableCandidate &function) -> void {
-  if (function.declaration == nullptr ||
-      call.arguments().size() >= function.parameterTypes.size()) {
-    return;
-  }
-  const SourceSpan callSite = tokenSpan(call.paren());
-  for (std::size_t index = call.arguments().size();
-       index < function.parameterTypes.size(); ++index) {
-    if (index >= function.record().defaultArgumentEffectOwners.size() ||
-        function.record().defaultArgumentEffectOwners[index] == 0) {
-      continue;
-    }
-    addProgramEffectEdge(
-        {.kind = ProgramEffectOwnerKind::FunctionDefaultArgument,
-         .id = function.record().defaultArgumentEffectOwners[index]},
-        callSite);
-  }
-}
-
 auto SemanticVisitor::Impl::containsCAbiRawPointer(
     const SemanticType &type, std::unordered_set<ClassId> &visiting) const
     -> bool {
@@ -6983,14 +6971,8 @@ auto SemanticVisitor::Impl::requireFunctionDefinition(
   diagnostics.push_back(std::move(diagnostic));
 }
 
-auto SemanticVisitor::Impl::recordResolvedCall(
-    const Call &call, const CallableCandidate &function,
-    std::vector<SemanticType> typeArguments,
-    std::vector<CompileTimeValue> valueArguments,
-    std::vector<std::size_t> ephemeralBorrowArguments,
-    std::vector<CallableArgumentBoundary> callableArguments,
-    CallReceiverMode receiverMode, const ExprPtr *argumentReceiver) -> void {
-  requireFunctionDefinition(function, expressionToken(call.callee()));
+auto SemanticVisitor::Impl::recordSelectedCallSafety(
+    const Call &call, const CallableCandidate &function) -> void {
   const bool pointerBearingCFunction =
       function.declaration != nullptr && function.declaration->hasCLinkage() &&
       (containsCAbiRawPointer(function.returnType) ||
@@ -7025,10 +7007,20 @@ auto SemanticVisitor::Impl::recordResolvedCall(
            "Pointer-bearing C declaration is here."});
     }
   }
+}
+
+auto SemanticVisitor::Impl::recordResolvedCall(
+    const Call &call, const CallableCandidate &function,
+    std::vector<SemanticType> typeArguments,
+    std::vector<CompileTimeValue> valueArguments,
+    std::vector<std::size_t> ephemeralBorrowArguments,
+    std::vector<CallableArgumentBoundary> callableArguments,
+    CallReceiverMode receiverMode, const ExprPtr *argumentReceiver) -> void {
+  requireFunctionDefinition(function, expressionToken(call.callee()));
+  recordSelectedCallSafety(call, function);
   recordCallableForwardings(call, function);
   recordOwnerlessTextCall(call, function);
   recordTextFieldCall(call, function);
-  recordDefaultArgumentEffects(call, function);
   if (requestSession.hasCThreadRequirements && !instanceAnalysisActive &&
       function.declaration != nullptr) {
     requestSession.cThreadCallUses.push_back(

@@ -3069,6 +3069,9 @@ auto SemanticVisitor::Impl::genericValueParameterCount(
 
 auto SemanticVisitor::Impl::constantFor(const Symbol &symbol) const
     -> const ConstantValue * {
+  if (symbol.variableDeclaration != nullptr &&
+      symbol.variableDeclaration->isThreadLocal())
+    return nullptr;
   if (symbol.variableDeclaration != nullptr) {
     const BindingInfo *binding =
         semanticModel.findBinding(*symbol.variableDeclaration);
@@ -5226,14 +5229,15 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     return;
   }
   if (!function->returnBorrowFields.empty()) {
-    auto actual =
-        function->returnType.kind == SemanticType::Reference
-            ? std::vector<SemanticLoanDependency>{{.place =
-                                                       retainedLoanPlace(value),
-                                                   .access =
-                                                       function->returnType
-                                                           .referenceAccess}}
-            : storedBorrowDependencies(value);
+    std::vector<SemanticLoanDependency> actual;
+    if (function->returnType.kind == SemanticType::Reference) {
+      SemanticLoanDependency dependency{};
+      dependency.place = retainedLoanPlace(value);
+      dependency.access = function->returnType.referenceAccess;
+      actual.emplace_back(std::move(dependency));
+    } else {
+      actual = storedBorrowDependencies(value);
+    }
     const bool matches =
         actual.size() == function->returnBorrowFields.size() &&
         std::all_of(

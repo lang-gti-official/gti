@@ -64,6 +64,7 @@ enum class MirBodyKind {
   Destructor,
   Lambda,
   HostedStartup,
+  ThreadLocalInitializer,
 };
 
 // Stable program-local address of one MIR body. `owner` is zero only for the
@@ -234,6 +235,7 @@ struct MirProgramEffectSummaries {
   std::vector<MirEffectSummary> constructors;
   std::vector<MirEffectSummary> destructors;
   std::vector<MirEffectSummary> lambdas;
+  std::vector<MirEffectSummary> threadLocalInitializers;
 
   friend bool operator==(const MirProgramEffectSummaries &,
                          const MirProgramEffectSummaries &) = default;
@@ -595,6 +597,9 @@ enum class MirInstructionKind {
   // continuations before a backend may erase them.
   ParkRangeCursor,
   RestoreRangeCursor,
+  EnsureThreadLocal,
+  DrainThreadLocals,
+  BeginThreadLocals,
   Count,
 };
 
@@ -708,6 +713,7 @@ struct MirInstruction {
   // is never executable, and is admitted only by MIR verification/coherence.
   bool tombstone = false;
   MirHostedStartupOperationId hostedStartupOperation = 0;
+  SymbolId threadLocalStorage = 0;
   HirValueId hirValue = 0;
   HirStatementId hirStatement = 0;
   HirValueId callSite = 0;
@@ -1725,6 +1731,8 @@ enum class MirHostedStartupOperationKind {
   TerminateCleanupFailure,
   BeginCThreadRuntime,
   EndCThreadRuntime,
+  DrainThreadLocals,
+  BeginThreadLocals,
   Count,
 };
 
@@ -1827,8 +1835,35 @@ struct MirPayloadEnum {
                          const MirPayloadEnum &) = default;
 };
 
+struct MirThreadLocalStorage {
+  SymbolId symbol = 0;
+  SourceUnitId sourceUnit = 0;
+  SemanticType type = SemanticType::Unknown;
+  SemanticTypeTraits traits;
+  AccessMode access = AccessMode::ReadOnly;
+  bool requiresActiveCleanup = false;
+  std::optional<Literal> dataInitializer;
+  MirDropType cleanup;
+  MirEffectSummary effectSummary;
+  MirBody initializer;
+
+  friend bool operator==(const MirThreadLocalStorage &,
+                         const MirThreadLocalStorage &) = default;
+};
+
 class MirProgram {
 public:
+  [[nodiscard]] const std::vector<MirThreadLocalStorage> &
+  threadLocalStorage() const {
+    return threadLocalStorage_;
+  }
+  [[nodiscard]] const MirThreadLocalStorage *
+  findThreadLocalStorage(SymbolId symbol) const {
+    const auto found = std::find_if(
+        threadLocalStorage_.begin(), threadLocalStorage_.end(),
+        [symbol](const auto &storage) { return storage.symbol == symbol; });
+    return found == threadLocalStorage_.end() ? nullptr : &*found;
+  }
   [[nodiscard]] const std::vector<ForeignStorageInfo> &
   foreignStorageDeclarations() const {
     return foreignStorage_;
@@ -2023,6 +2058,7 @@ private:
   std::optional<MirHostedStartupPlan> hostedStartupPlan_;
   std::optional<MirBody> hostedStartupBody;
   MirBody moduleBody;
+  std::vector<MirThreadLocalStorage> threadLocalStorage_;
   std::vector<MirPayloadEnum> payloadEnums_;
   std::vector<MirIntegralEnum> integralEnums_;
   std::vector<MirClassInstance> classes;

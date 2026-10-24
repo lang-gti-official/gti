@@ -75,6 +75,7 @@ enum class CppMirThunkKind {
   NativeInteropAdapter,
   ThreadTaskAdapter,
   ConcreteInstanceAdapter,
+  ThreadLocalStorage,
   Count,
 };
 

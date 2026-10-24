@@ -63,6 +63,9 @@ MirOptimizationCoverage optimizationCoverage(MirInstructionKind kind) {
     return barrier("exact cleanup effects; range invalidation");
   case MirInstructionKind::CallBody:
   case MirInstructionKind::InitializeBase:
+  case MirInstructionKind::EnsureThreadLocal:
+  case MirInstructionKind::DrainThreadLocals:
+  case MirInstructionKind::BeginThreadLocals:
     return barrier("exact body effects; no contextual range transfer");
   case MirInstructionKind::AllocateObject:
     return barrier("allocation, failure and rollback effects");
@@ -385,6 +388,7 @@ MirOptimizationCoverage optimizationCoverage(MirBodyKind kind) {
     return supported(
         "body inventory, analysis cache, editor and source replay");
   case MirBodyKind::HostedStartup:
+  case MirBodyKind::ThreadLocalInitializer:
     return barrier("body inventory/replay; generated startup effects retained");
   }
   return {};
@@ -486,6 +490,8 @@ MirOptimizationCoverage optimizationCoverage(DefinedFailureDetail detail) {
   case DefinedFailureDetail::AutomaticJoin:
   case DefinedFailureDetail::NegativeArgumentCount:
   case DefinedFailureDetail::RecursiveThreadLocalInitialization:
+  case DefinedFailureDetail::ThreadLocalInitializationDuringShutdown:
+  case DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime:
   case DefinedFailureDetail::MutexLock:
   case DefinedFailureDetail::KeyLookup:
   case DefinedFailureDetail::ContainerArgument:

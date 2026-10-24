@@ -92,6 +92,9 @@ enum class HirValueKind {
   Literal,
   Logical,
   PackFold,
+  // A read-only place selected from one exact concrete parameter pack.
+  // This is a typed expansion projection, not source-level pack indexing.
+  PackElement,
   PackExpansion,
   PayloadConstruction,
   PayloadExtraction,
@@ -199,6 +202,7 @@ struct HirPackFoldElement {
   SemanticType elementType = SemanticType::Unknown;
   HirFunctionInstanceId functionTarget = 0;
   std::vector<SemanticType> parameterTypes;
+  HirValueId call = 0;
 };
 
 struct HirPackExpansionElement {
@@ -295,6 +299,7 @@ struct HirValue {
   FunctionId packFoldFunction = 0;
   std::size_t packFoldArgument = 0;
   std::vector<HirPackFoldElement> packFoldElements;
+  std::optional<std::size_t> packElement;
   std::vector<HirPackExpansionElement> packExpansionElements;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirFunctionInstanceId> functionPointerFunctionTarget;
@@ -482,6 +487,22 @@ struct HirBody {
     return id == 0 || id > dropObligations.size() ? nullptr
                                                   : &dropObligations[id - 1];
   }
+};
+
+// One declaration with independent storage and initialization in each attached
+// thread. The initializer is executable HIR, separate from eager program
+// initialization, and returns the exact stored value into its lifetime slot.
+struct HirThreadLocalStorage {
+  SymbolId symbol = 0;
+  SourceUnitId sourceUnit = 0;
+  SemanticType type = SemanticType::Unknown;
+  SemanticTypeTraits traits;
+  AccessMode access = AccessMode::ReadOnly;
+  const VariableDecl *source = nullptr;
+  bool requiresActiveCleanup = false;
+  std::optional<Literal> dataInitializer;
+  DefinedFailureOperation ensureFailure;
+  HirBody initializer;
 };
 
 // Exact executable inventory reached from initializer values, including only
@@ -911,6 +932,11 @@ public:
 
   [[nodiscard]] const HirBody &module() const { return moduleBody; }
 
+  [[nodiscard]] const std::vector<HirThreadLocalStorage> &
+  threadLocalStorage() const {
+    return threadLocalStorage_;
+  }
+
   [[nodiscard]] const HirProgramInitializationPlan &
   programInitializationPlan() const {
     return programInitialization;
@@ -992,6 +1018,7 @@ private:
   std::optional<HirHostedProgramEntryPlan> hostedProgramEntry;
   std::optional<HirEmbeddingPlan> embeddingPlan_;
   HirBody moduleBody;
+  std::vector<HirThreadLocalStorage> threadLocalStorage_;
   std::unordered_map<const Expr *, std::vector<HirValueId>> sourceValueIds;
 };
 

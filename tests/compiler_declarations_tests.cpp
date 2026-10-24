@@ -5643,12 +5643,18 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!concreteFailure.canGenerateCode() &&
-             hasDiagnostic(concreteFailure.diagnostics,
-                           "does not satisfy concept "
-                           "'signed_value<uint64_t>'"),
-         "concrete arguments should be checked against composed concepts with "
-         "the source concept name in diagnostics");
+  expect(
+      !concreteFailure.canGenerateCode() &&
+          hasDiagnostic(concreteFailure.diagnostics,
+                        "does not satisfy concept "
+                        "'signed_value<uint64_t>'") &&
+          hasRelatedDiagnostic(concreteFailure.diagnostics,
+                               "Required application "
+                               "'signed_value<uint64_t>'.") &&
+          !hasRelatedDiagnostic(concreteFailure.diagnostics, "gti_internal::"),
+      "concrete arguments should be checked against composed concepts with "
+      "owned public application context and no compiler-private leaf "
+      "context in diagnostics");
 
   lang::FrontendResult invalid = lang::Frontend().analyze(
       "invalid-source-concepts.gti", R"(
@@ -6547,12 +6553,18 @@ T invalid_forward<Iterator, Sentinel, std::numeric T>(
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!unprovenForward.canGenerateCode() &&
-             hasDiagnosticCode(unprovenForward.diagnostics, "GTI-S2029") &&
-             hasDiagnostic(unprovenForward.diagnostics,
-                           "'std::input_iterator<Iterator>'"),
-         "generic forwarding should require the outer declaration to prove "
-         "the callee's exact structural contract");
+  expect(
+      !unprovenForward.canGenerateCode() &&
+          hasDiagnosticCode(unprovenForward.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(unprovenForward.diagnostics,
+                        "'std::input_iterator<Iterator>'") &&
+          hasRelatedDiagnostic(unprovenForward.diagnostics,
+                               "Required application "
+                               "'std::input_iterator<Iterator>'.") &&
+          !hasRelatedDiagnostic(unprovenForward.diagnostics, "gti_internal::"),
+      "generic forwarding should require the outer declaration to prove "
+      "the callee's exact structural contract with owned public application "
+      "context and no compiler-private leaf context");
 
   const std::string generated = gti_test::emitCppText(valid);
   expect(
@@ -9154,11 +9166,30 @@ int main() {
           ? nullptr
           : foldFrontend.mir.findFunctionInstance(concreteFold->id);
   std::vector<const lang::MirInstruction *> mirFoldCalls;
+  const auto inputSource =
+      [](const lang::MirBody &body,
+         const lang::MirOperand &operand) -> const lang::MirOperand * {
+    const auto *value = body.findValue(operand.value);
+    const auto *block =
+        value ? body.findBlock(value->definitionBlock) : nullptr;
+    if (operand.kind != lang::MirOperandKind::Value || !block)
+      return nullptr;
+    for (const auto &stage : block->instructions)
+      if (stage.id == value->definition &&
+          stage.kind == lang::MirInstructionKind::CallInput &&
+          stage.operands.size() == 1)
+        return &stage.operands.front();
+    return nullptr;
+  };
   if (mirFunction != nullptr && hirFold != nullptr) {
     for (const lang::MirBlock &block : mirFunction->body.blocks) {
       for (const lang::MirInstruction &instruction : block.instructions) {
         if (instruction.kind == lang::MirInstructionKind::Call &&
-            instruction.hirValue == hirFold->id) {
+            std::any_of(hirFold->packFoldElements.begin(),
+                        hirFold->packFoldElements.end(),
+                        [&](const auto &entry) {
+                          return entry.call == instruction.hirValue;
+                        })) {
           mirFoldCalls.push_back(&instruction);
         }
       }
@@ -9171,20 +9202,23 @@ int main() {
        ++index) {
     const lang::MirInstruction &call = *mirFoldCalls[index];
     const lang::HirPackFoldElement &element = hirFold->packFoldElements[index];
-    const lang::MirPlace *packElement =
+    const auto *input =
         call.operands.empty()
             ? nullptr
-            : mirFunction->body.findPlace(call.operands.back().place);
-    orderedMirCalls =
-        call.functionTarget == element.functionTarget &&
-        call.parameterTypes == element.parameterTypes &&
-        call.operands.size() == element.parameterTypes.size() &&
-        call.operands.back().kind == lang::MirOperandKind::BorrowRead &&
-        packElement != nullptr && packElement->type == element.elementType &&
-        packElement->projections.size() == 1 &&
-        packElement->projections.front().kind ==
-            lang::MirProjectionKind::PackElement &&
-        packElement->projections.front().constantIndex == index;
+            : inputSource(mirFunction->body, call.operands.back());
+    const lang::MirPlace *packElement =
+        input ? mirFunction->body.findPlace(input->place) : nullptr;
+    orderedMirCalls = call.functionTarget == element.functionTarget &&
+                      call.parameterTypes == element.parameterTypes &&
+                      call.operands.size() == element.parameterTypes.size() &&
+                      call.callSite == element.call && input &&
+                      input->kind == lang::MirOperandKind::BorrowRead &&
+                      packElement != nullptr &&
+                      packElement->type == element.elementType &&
+                      packElement->projections.size() == 1 &&
+                      packElement->projections.front().kind ==
+                          lang::MirProjectionKind::PackElement &&
+                      packElement->projections.front().constantIndex == index;
   }
   expect(orderedMirCalls,
          "MIR should expand a pack fold into ordered exact calls over concrete "
@@ -9206,7 +9240,8 @@ int main() {
           block.instructions.begin(), block.instructions.end(),
           [&](const lang::MirInstruction &instruction) {
             return instruction.kind == lang::MirInstructionKind::Call &&
-                   instruction.hirValue == hirFold->id;
+                   instruction.hirValue ==
+                       hirFold->packFoldElements.front().call;
           });
       if (call != block.instructions.end() && !call->parameterTypes.empty()) {
         call->parameterTypes.back() = lang::SemanticType::Bool;

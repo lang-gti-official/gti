@@ -195,6 +195,18 @@ request becomes the primary location and the library location a related note:
 an error inside prelude or standard-library internals is reported where the
 caller can act on it, including in the editor's per-document diagnostics.
 
+Concrete storage-effect queries retain invalid-body diagnostics for this same
+ordinary instance-publication path. They must not short-circuit independent
+body/result-type assertion discovery or publish library-internal locations in
+place of the user's instantiation site. Retained errors are keyed by the exact
+instance and remain a refusal if later analysis would otherwise admit it.
+Pending trusted-body contracts are finalized or retried before such a failure
+is retained; a provisional forwarding error is not an invalid-body certificate.
+An exact open outer analysis owns its recursive assertion diagnostics, but must
+still pass the retained-error gate when it completes. Effect-query exhaustion
+uses ordinary discovery's budget diagnostic when available, otherwise its exact
+retained limit error; failed required constants are not runtime effect roots.
+
 `GTI-S2105` reports deterministic concrete-instance discovery exhaustion (64
 new-instance levels or 16,384 distinct generic instances in one HIR request). It anchors
 the requesting source, relates the declaration and explains that runtime
@@ -907,6 +919,22 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   for coherence, explain that the package must own the primary or one
   top-level nominal type argument. Do not offer a fix-it: changing the target,
   argument type, package ownership, or declaration location requires intent.
+- `GTI-S2124` owns invalid `thread_local` declarations and unsupported initializer
+  dependencies. Point at the exact keyword for an invalid declaration shape
+  (native storage, a non-static instance field, `constexpr`, or a declaration
+  requiring an unrepresented concrete generic/lambda storage identity). Relate
+  the storage declaration. For an automatic parameter/local/receiver dependency
+  in a lifted initializer, point at the offending use and relate its declaration
+  when available. Do not offer a speculative fix-it: choosing storage ownership,
+  a runtime initialization argument or a concrete instance is semantic work.
+  Retained checked borrowed state uses `GTI-S2045`, as do transitive hidden
+  persistent-storage accesses that conflict with an ordinary live loan. Relate
+  both the protected origin and the exact conflicting source access; unresolved
+  GTI targets relate the open effect boundary instead. A staged-input conflict
+  points at the later evaluated input and explains that earlier inputs are
+  already bound. Scope, full-expression, replacement and failure cleanup checks
+  identify their scheduling boundary in related information; they are not
+  reported as if the user's destructor ran at its declaration.
 - `GTI-S2123` owns concepts with a body, conformance blocks, and their uses.
   The block owns written header diagnostics, including generic parameter
   constraints. Generated operations reuse those parameter identities and do

@@ -50,6 +50,8 @@ requirementKindName(LoweredRequirementKind kind) {
     return "lambda";
   case MirBodyKind::HostedStartup:
     return "hosted-startup";
+  case MirBodyKind::ThreadLocalInitializer:
+    return "thread-local-initializer";
   }
   return "invalid";
 }
@@ -129,6 +131,8 @@ generatedItemKindName(LoweredGeneratedItemKind kind) {
   switch (kind) {
   case LoweredGeneratedItemKind::ProgramInitialization:
     return "program-initialization";
+  case LoweredGeneratedItemKind::ThreadLocalStorage:
+    return "thread-local-storage";
   case LoweredGeneratedItemKind::HostedEntry:
     return "hosted-entry";
   case LoweredGeneratedItemKind::StructuralOperatorAdapter:
@@ -828,9 +832,9 @@ private:
       output << '-';
     }
     output << ";mutability=" << number(value.mutability)
-           << ";flags=" << value.staticStorage << ':' << value.internalLinkage
-           << ':' << value.constexprStorage << ':' << value.hasInitializer
-           << ')';
+           << ";flags=" << value.staticStorage << ':'
+           << value.threadLocalStorage << ':' << value.internalLinkage << ':'
+           << value.constexprStorage << ':' << value.hasInitializer << ')';
   }
 
   void printValue(const LoweredAccessDeclaration &value) {
@@ -854,7 +858,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v24\n";
+  output << "lowered-program-v26\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

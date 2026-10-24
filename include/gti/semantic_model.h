@@ -654,6 +654,7 @@ enum class ProgramEntryKind {
 enum class ProgramStorageKind {
   NamespaceGlobal,
   StaticField,
+  FunctionLocal,
 };
 
 enum class ProgramInitializationStepRole {
@@ -671,6 +672,9 @@ struct ProgramInitializationStep {
   SymbolId symbol = 0;
   ClassId ownerClass = 0;
   bool requiresActiveCleanup = false;
+  bool threadLocal = false;
+  FunctionId ownerFunction = 0;
+  DefinedFailureOperation ensureFailure;
   SourceSpan declarationSpan;
 
   friend bool operator==(const ProgramInitializationStep &left,
@@ -680,6 +684,9 @@ struct ProgramInitializationStep {
            left.declaration == right.declaration &&
            left.symbol == right.symbol && left.ownerClass == right.ownerClass &&
            left.requiresActiveCleanup == right.requiresActiveCleanup &&
+           left.threadLocal == right.threadLocal &&
+           left.ownerFunction == right.ownerFunction &&
+           left.ensureFailure == right.ensureFailure &&
            left.declarationSpan.source == right.declarationSpan.source &&
            left.declarationSpan.start == right.declarationSpan.start &&
            left.declarationSpan.end == right.declarationSpan.end &&
@@ -1702,6 +1709,7 @@ struct SemanticCompletionCandidateRecord {
   std::vector<AppliedConceptRequirement> requirements;
   bool substitutedCallable = false;
   bool staticMember = false;
+  bool threadLocal = false;
   SymbolId symbol = 0;
   bool compilerPrivate = false;
 };
@@ -1802,6 +1810,7 @@ struct SymbolRecord {
   bool mutableBinding = false;
   bool defaultLibrary = false;
   bool staticMember = false;
+  bool threadLocal = false;
   bool internalLinkage = false;
   bool generated = false;
   bool compilerPrivate = false;
@@ -1844,6 +1853,7 @@ struct SemanticOccurrence {
   std::optional<ResolvedConstructionInfo> selectedConstruction;
   std::optional<SemanticCallGeometry> callGeometry;
   bool staticMember = false;
+  bool threadLocal = false;
 };
 
 class SemanticDatabase {
@@ -2297,6 +2307,9 @@ public:
   [[nodiscard]] const ProgramInitializationPlan &
   programInitializationPlan() const;
 
+  [[nodiscard]] const ProgramInitializationPlan &
+  threadLocalInitializationPlan() const;
+
   [[nodiscard]] const std::optional<HostedProgramEntryPlan> &
   hostedProgramEntryPlan() const;
 
@@ -2422,6 +2435,9 @@ public:
   shareMacroExpansion(const ExpressionStmt &statement) const;
   [[nodiscard]] std::shared_ptr<const Stmt>
   shareMacroExpansion(const Call &call) const;
+  // Source-level declaration identity without inventing an eager call edge.
+  [[nodiscard]] const FunctionDecl *
+  findMacroDeclaration(const Call &call) const;
   [[nodiscard]] std::vector<MacroExpansionSite> macroExpansionSites() const;
   [[nodiscard]] const Token *findMacroDefault(const Expr &expression) const;
   // The declared attributes of a field or class-like declaration; nullptr
@@ -2712,6 +2728,8 @@ private:
 
   void setProgramInitializationPlan(ProgramInitializationPlan plan);
 
+  void setThreadLocalInitializationPlan(ProgramInitializationPlan plan);
+
   void setHostedProgramEntryPlan(std::optional<HostedProgramEntryPlan> plan);
 
   void setProgramKind(ProgramKind kind);
@@ -2874,6 +2892,8 @@ private:
                             const FunctionDecl &declaration);
   void recordMacroExpansion(const Call &call, StmtPtr body,
                             const FunctionDecl &declaration);
+  void recordMacroDeclaration(const Call &call,
+                              const FunctionDecl &declaration);
   void recordMacroDefault(const Expr &expression, Token caller);
   void recordDeclarationAttributes(
       const Stmt &declaration,
@@ -3074,6 +3094,7 @@ private:
   std::unordered_map<const Expr *, DefinedFailureOperation> definedFailures;
   std::unordered_map<const Expr *, CallerLocationOrigin> callerLocations;
   ProgramInitializationPlan programInitialization;
+  ProgramInitializationPlan threadLocalInitialization;
   std::optional<HostedProgramEntryPlan> hostedProgramEntry;
   ProgramKind programKind_ = ProgramKind::Executable;
   std::optional<SemanticEmbeddingPlan> embeddingPlan_;

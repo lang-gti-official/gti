@@ -143,6 +143,8 @@ programStorageName(ProgramStorageKind kind) {
     return "namespace-global";
   case ProgramStorageKind::StaticField:
     return "static-field";
+  case ProgramStorageKind::FunctionLocal:
+    return "function-local";
   }
   return "invalid";
 }
@@ -262,6 +264,10 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
     return "begin-cthread-runtime";
   case MirHostedStartupOperationKind::EndCThreadRuntime:
     return "end-cthread-runtime";
+  case MirHostedStartupOperationKind::DrainThreadLocals:
+    return "drain-thread-locals";
+  case MirHostedStartupOperationKind::BeginThreadLocals:
+    return "begin-thread-locals";
   }
   return "invalid";
 }
@@ -274,7 +280,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v113 valid=" << program.valid() << '\n';
+    output << "mir-v114 valid=" << program.valid() << '\n';
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -350,6 +356,22 @@ public:
              << assignment.origin.end << '\n';
     }
     programInitialization(program.programInitializationPlan());
+    output << "thread-local-storage " << program.threadLocalStorage().size()
+           << '\n';
+    for (const auto &storage : program.threadLocalStorage()) {
+      output << "thread-local-storage @" << storage.symbol
+             << " source-unit=" << storage.sourceUnit << " type=";
+      type(storage.type);
+      output << " access=" << number(storage.access)
+             << " active-cleanup=" << storage.requiresActiveCleanup << ' ';
+      traits(storage.traits);
+      output << " data-initializer=";
+      literal(storage.dataInitializer);
+      effectSummary(storage.effectSummary);
+      output << '\n';
+      dropObligation(MirDropObligation{.dropType = storage.cleanup});
+      body(storage.initializer, storage.symbol);
+    }
     hostedStartup(program.hostedStartupPlan());
     output << "thread-task-adapters " << program.threadTaskAdapters().size()
            << '\n';
@@ -855,7 +877,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v91\n";
+    output << "mir-body-v93\n";
     body(value, 0);
   }
 
@@ -1549,6 +1571,7 @@ private:
            << " tombstone=" << value.tombstone
            << " hosted-operation=" << value.hostedStartupOperation
            << " hir-value=" << value.hirValue
+           << " thread-local-storage=" << value.threadLocalStorage
            << " hir-statement=" << value.hirStatement
            << " call-site=" << value.callSite
            << " constructor-initializer=" << value.constructorInitializer

@@ -33,6 +33,14 @@ selectedReferenceHandoff(const MirBody &body, const MirLoan &selected);
 [[nodiscard]] bool
 generatedUniqueConstruction(const MirInstruction &instruction);
 
+// A zero-input ordinary class value may use generated default construction
+// without a source constructor instance. This is only its producer shape:
+// program verification must prove the exact owner's generated policy and
+// absence of a required initializer schedule, while ordinary materialization,
+// full-expression drop, and call-loan verification remain mandatory.
+[[nodiscard]] bool
+generatedDefaultConstruction(const MirInstruction &instruction);
+
 // Runtime representation queries have no runtime input and cannot acquire
 // ownership or borrow authority merely by naming a type.
 [[nodiscard]] bool objectLayoutQuery(const MirProgram &program,

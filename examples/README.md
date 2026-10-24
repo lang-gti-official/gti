@@ -67,6 +67,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Name a mapper's result in an ordinary source wrapper | [167: callable result types](167-callable-result-types.gti) |
 | Give a source class owned, void and borrowed profiles | [168: source value profiles](168-source-value-profiles.gti) |
 | Use global source-defined results with constexpr, callbacks and checked borrows | [169: source expected](169-source-expected.gti) |
+| Keep independent per-thread state with lazy initialization and deterministic cleanup | [175: thread-local storage](175-thread-local-storage.gti) |
 | Keep views of a local string in a value's text fields without copying the text | [170: view fields](170-view-fields.gti) |
 | Return a caller's text through recursive functions and methods without copying it | [171: recursive text relays](171-recursive-text-relays.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
@@ -249,6 +250,7 @@ is a teaching helper, not a production server.
 | `172-deferred-assertions.gti` | source-defined always-on/debug assertions, lazy formatted messages, skipped owning moves, and an application-defined typed macro |
 | `173-general-requires.gti` | exact expression/construction and mutation requirements, constexpr reflection predicates, symbolic declaration proofs and source concept composition over unrelated domain types |
 | `174-typed-macros.gti` | typed `#macro` calls, lazy scalar/owning results and initializer contexts, local returns and evaluate-once bindings, fresh lambda captures, written expression text, hygienic lookup, and skipped owner movement |
+| `175-thread-local-storage.gti` | namespace, static-field and block `thread_local` storage, independent worker values and owning class cleanup before join; requires `--execution-profile concurrent` |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

@@ -54,6 +54,110 @@ not turn a race into a defined nondeterministic result.
 transfer-capable, or share-capable. Safe shared mutation requires an approved
 interior-synchronization type.
 
+## Thread-Local Storage
+
+`thread_local` gives a declaration one distinct storage instance per thread.
+It is available in both execution profiles and does not require its type to be
+share-capable. For example:
+
+```gti
+thread_local mut int visits = 0;
+class Registry {
+public:
+  static thread_local mut Registry* current = nullptr;
+};
+int visit() {
+  thread_local mut int calls = 0;
+  calls += 1;
+  return calls;
+}
+```
+
+Namespace variables, non-generic static data members and ordinary function-local
+variables are supported. `static thread_local` and `thread_local static` mean the
+same storage duration; `static` retains its ordinary linkage/member meaning.
+Block scope controls name visibility, not the lifetime of the per-thread object.
+A block-local object can therefore be borrowed after its declaring function
+returns, subject to the ordinary checked origin and access rules.
+
+Initialization is lazy at the first evaluated use on each thread. A block
+declaration also performs that first-use check when execution reaches it.
+Initializers use ordinary GTI construction and rollback. Eligible primitive
+literal/zero initialization has no user code, cleanup registration, added GTI
+heap allocation or dynamic guard. Other initializers use an explicit per-thread
+state transition; recursive
+initialization is defined failure `GTI-R0013`, not an implicit C++ rule.
+The passive fast path is currently literal-based; an integral-enum constant or
+a computed/aggregate constant still uses the ordinary lazy initializer. This is
+an optimization boundary, not a restriction on storing those owning values.
+
+Successful cleanup-owning initializations register exactly once. Cleanup runs on
+the same thread in reverse successful-initialization order, after automatic task
+state is retired and before a worker outcome is published. The initial thread
+drains at hosted exit; GTI-created manual C threads drain before leaving their
+attached entry. Ordinary cleanup failure retains its record and remaining
+cleanup; a secondary failure uses the existing bounded two-record emergency and
+abandons remaining lifetimes. New initialization or resurrection during/after
+thread-exit cleanup is `GTI-R0013`. Access to another initialized, not-yet-retired
+slot remains permitted during cleanup.
+
+A library callable may use dynamic TLS when invoked under an attached GTI
+entry; it does not need to define its own hosted main. The runtime entry owns
+the drain boundary, not an implicit native destructor. A public per-thread
+enter/leave ABI for independent native embedding remains a separate goal;
+passive literal/zero primitive TLS needs no managed drain.
+Dynamic first-use on an unattached native thread is defined failure
+`GTI-R0013` before construction or registration. Merely compiling a hosted main
+does not attach an arbitrary foreign callback thread; GTI-owned entries establish
+and close that runtime lifetime explicitly.
+
+A TLS reference is not a process-lifetime promise or an alias exemption. Direct
+accesses and hidden accesses through GTI helpers, constructors, operators,
+initializers and destructors must respect live shared/exclusive loans. First-use
+effects include the initializer; a live checked loan to the exact local slot
+proves that slot already initialized, including through nested helpers. Open
+GTI call targets require a structural ambient-effects proof when a persistent
+borrow remains live. Native calls and raw pointers retain their existing unsafe
+obligations; the compiler does not infer arbitrary native pointer retention.
+
+A concrete pack fold uses the effects of its exact selected element calls, not
+an unconditional unknown-call effect. Each invocation obeys the ordinary
+left-to-right input-borrow intervals: initializing a later TLS input cannot
+mutate an earlier borrowed input. An independently concrete empty pack evaluates
+no fixed input and triggers no TLS initialization; names and types are still
+checked. A symbolic or unresolved expansion does not establish that proof.
+
+A virtual call on a proved exact, complete class object uses the selected final
+overrider's transitive effects. This is an effect proof, not a change to virtual
+dispatch or a claim that read-only methods cannot mutate other storage. The
+current proof accepts direct unprojected owning local or program-storage objects;
+it does not infer a dynamic type from a reference, pointer, field, base subobject,
+capture or instance receiver. Calls without an exact target remain conservative
+while a persistent borrow is live. Extending exact receiver provenance is a
+general dispatch-analysis goal, not an exception for a particular TLS type.
+
+Checked scoped/joined borrowing can lend a TLS referent while its owning thread
+and loan remain alive and the referent permits the selected access. This is not
+a blanket ban on cross-thread references. An independently created worker's
+direct lookup names its own slot, not the captured parent-thread object. Owned
+tasks and results still cannot silently retain borrowed state past its owner.
+
+Current structural boundaries: no non-static TLS fields, TLS parameters or
+functions, `constexpr` TLS, native TLS declarations, generic-instance TLS, or
+lambda-local TLS declarations. A TLS initializer cannot capture an enclosing
+automatic binding, parameter or instance receiver; guarded lexical/per-instance
+initialization is a separate goal. Ordinary locals created by evaluating that
+exact initializer are permitted and retain their normal borrow and cleanup
+rules. This does not let a nested TLS initializer capture locals belonging to
+an outer initializer. A source diagnostic identifies unsupported dependencies.
+Generic function-local and generic class-static storage require a descriptor key
+that includes the exact concrete function/class instance, rather than the
+unspecialized source `SymbolId`; until that inventory is represented and
+verified, both shapes are rejected instead of sharing a slot across instances.
+`thread_local` does not add thread-specific-storage keys, detach, arbitrary
+foreign-thread entry or async suspension. Runnable example:
+[`175-thread-local-storage.gti`](../../examples/175-thread-local-storage.gti).
+
 ## C-Style Scheduling Hint
 
 `<std/cthread>` currently implements `void std::thrd_yield()`. It offers the
@@ -729,7 +833,7 @@ has no safe scoped condition-variable wrapper, safe public manual-unlock API,
 or safe recursive/read-write mutex family. The unsafe `<std/cthread>` surface
 does provide manual unlock, recursive mutexes, and manual condition variables.
 Across both surfaces, detach, C-style thread exit,
-thread-specific storage, read/write mutexes, and arbitrary
+C-style thread-specific-storage keys, read/write mutexes, and arbitrary
 foreign-created-thread entry are not implemented.
 Persistent worker pools, dependency scheduling and asynchronous suspension are
 also separate facilities; synchronous scoped invocation does not provide them.
