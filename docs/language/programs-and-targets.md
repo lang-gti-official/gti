@@ -117,14 +117,26 @@ abnormal process exit fails that test.
 A manifest target with `kind = "test"` selects one explicit suite root. Its
 source graph supplies the tests in the selected package; dependency and trusted
 standard-library tests are not automatically run. Qualified names determine
-stable ordering and reporting. One native executable is built for the suite,
+stable discovery ordering and result identities. One native executable is built for the suite,
 then each test runs in a fresh process with fresh globals and normal hosted
 initialization/cleanup. A panic terminates its child, and later tests continue.
-The command reports every result and returns the first failing child status.
+The command reports every result and returns the first failing child status in
+stable target/name order. `--filter <text>`, optional `--exact`, and repeated
+`--skip <text>` select qualified names; `--list` lists the selection without
+executing it. An empty selection fails unless `--allow-empty` is explicit.
+`--jobs N` bounds parallel isolated tests (default one). Each test has a
+five-minute deadline, overridden by `--timeout Nms|Ns|Nm`; `0` disables it.
+Timeouts kill the child process group and return 124 without guaranteeing source
+cleanup. Normal panic cleanup is unchanged. `--format json` emits versioned JSON
+Lines inventory, launch, completion and summary events on stdout, with build
+progress and diagnostics on stderr. See the [driver contract](../architecture/build-and-driver.md)
+for status and completion accounting.
 
 Annotated suites supply their entry point automatically and cannot also define
 their own hosted `main`. A legacy target with `main` and no annotations still
-runs once as before. A root with neither form is diagnosed before native
+runs once as before, with inherited stdout/stderr in human mode and captured
+output in JSON mode. Parallel legacy targets can interleave their inherited
+streams. A root with neither form is diagnosed before native
 compilation. Ordinary executable/fragment compilation does not discover or
 invoke tests merely because a function is annotated.
 
@@ -132,6 +144,12 @@ invoke tests merely because a function is annotated.
 "Test check failed")`, a source-defined caller-tracked wrapper over `std::panic`.
 Failure reports the user's check location and preserves normal deterministic
 cleanup. The library does not catch or resume a panic.
+Source-defined `check_eq`/`check_ne` macros evaluate operands once and format
+values only on failure; scalar operands accept literals while object operands
+remain borrowed. `check_string_eq`, `check_approx`, and `check_elements_eq`
+provide string byte/length, floating tolerance and borrowed contiguous collection
+diagnostics. See the [standard-library contract](standard-library.md) for exact
+type and borrowing boundaries.
 See [`examples/annotated-tests`](../../examples/annotated-tests/README.md).
 
 ## 6.2 Target And Configuration Selection
