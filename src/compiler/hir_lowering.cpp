@@ -3280,7 +3280,7 @@ private:
       const auto *invocation = stmtAs<ExpressionStmt>(statement.source);
       const bool statementOnlyMacro =
           invocation && invocation->expression() &&
-          statement.kind == HirStatementKind::Block && statement.value == 0 &&
+          statement.kind == HirStatementKind::Block && !statement.value &&
           model.findMacroExpansion(*invocation) != nullptr &&
           model.typeOf(*invocation->expression()) == SemanticType::Void &&
           lookup.forRoot(body, *invocation->expression()) == nullptr;
