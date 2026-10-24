@@ -443,8 +443,10 @@ all managed threads finish before program-wide destruction begins.
 
 ### Thread-Local State
 
-Thread-local storage is a later library/language surface, but its contract is
-proposed now:
+The general source `thread_local` slice implements C++'s keyword spelling for
+namespace variables, non-generic static fields and ordinary function-local
+variables, independently of application or library type names. The current
+contract is specified in [Concurrency](../language/concurrency.md#thread-local-storage):
 
 - each attached thread owns a distinct instance;
 - initialization occurs on first use in that thread, is sequenced before the
@@ -453,14 +455,43 @@ proposed now:
   safe to clean;
 - initialized thread-local values are destroyed in reverse initialization
   order on that same thread at normal detach/exit;
-- a thread-local value cannot contain borrowed state escaping its initializing
-  call and no reference to it crosses to another thread; and
+- a thread-local value cannot retain a borrow that outlives its origin, and a
+  checked reference cannot outlive its owning thread. A scoped worker may
+  borrow the value when the existing loan and join proofs keep both the owner
+  and referent alive through completion. Owned task/result transport cannot
+  carry an escaping checked borrow; and
 - a primary worker failure cleans initialized thread-local values before the
   task boundary stores its record, while Execution §4.10's failure-during-cleanup
   emergency path may terminate without completing remaining cleanup.
 
-Thread-local values may be mutable without synchronization because they are
-not shared. Their final source spelling is outside D-MEM-01.
+Thread-local values may be mutable without a mutex because each thread has
+distinct storage. Access through an existing borrow still follows the normal
+aliasing rules, including when another function or a reentrant callback accesses
+the same thread's storage. This requires transitive storage-effect checking
+against live loans; merely exempting a declaration from the concurrent-global
+policy is insufficient. Raw pointers retain their existing unsafe obligations.
+
+The scoped-borrow clause revises the earlier blanket prohibition on references
+crossing threads: a joined borrow with a proven endpoint is safe and does not
+require a separate transfer-effect restriction. This also matches Rust's
+`thread_local!` access composed with `std::thread::scope`.
+
+The implementation distinguishes executable TLS initialization from eager
+program initialization in semantic plans, HIR, verified MIR and lowered
+declarations. Eligible literal/zero primitive storage requires neither heap
+registration nor a dynamic guard. Dynamic and owning storage pay cold first-use
+and per-thread intrusive cleanup-registration costs. The acceptance gates include
+initialization recursion, reverse cleanup and cleanup failure before worker
+result publication, malformed-MIR rejection, alias/escape/scoped-worker tests,
+editor behavior and native performance against equivalent C++ TLS. A TLS lookup
+during shutdown may observe an initialized live slot, but cannot initialize a
+new slot or resurrect one already retired.
+
+Further goals are concrete-instance descriptor identities for generic local and
+class-static TLS, lambda-local inventory, lexical initialization that can consume
+automatic inputs, and a public native embedding enter/leave ABI. Each needs the
+same exact initialization, loan, exit and representation proofs; none is silently
+implemented by sharing a source declaration's slot between concrete instances.
 
 ## Atomics And Synchronization
 
@@ -853,7 +884,8 @@ the runtime capability.
 This proposal does not add or promise:
 
 - dedicated language keywords for thread creation, atomics or memory orders;
-  the delivered public APIs are source-defined, while TLS remains future work;
+  those public APIs are source-defined, while `thread_local` is the general
+  storage-duration facility specified above;
 - safe owner-tied condition variables, recursive/read-write guard mutexes,
   stop tokens, typed thread-entry argument packs or detach in
   the shipped safe profile; unsafe manual mutex/unlock and condition-variable

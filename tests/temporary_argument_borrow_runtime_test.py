@@ -24,6 +24,16 @@ def main() -> int:
     source_text = """\
 mut int32_t drops = 0;
 mut int64_t trace = 0;
+mut int32_t generated_drops = 0;
+
+struct Implicit {};
+struct Defaulted { Defaulted() = default; };
+struct GeneratedCleanup {
+  ~GeneratedCleanup() { generated_drops += 1; }
+};
+bool inspect_default(Implicit& value) { return true; }
+bool inspect_default(Defaulted& value) { return true; }
+bool inspect_default(GeneratedCleanup& value) { return true; }
 
 class Tracker {
 public:
@@ -155,6 +165,14 @@ int main() {
     return 9;
   }
 
+  if (!inspect_default(Implicit()) || !inspect_default(Defaulted()) ||
+      !inspect_default(GeneratedCleanup())) {
+    return 10;
+  }
+  if (generated_drops != 1) {
+    return 11;
+  }
+
   return 0;
 }
 """
@@ -162,7 +180,7 @@ int main() {
     cleanup_destructor = """\
 class FailureTracker {
 public:
-  FailureTracker() {}
+  FailureTracker() = default;
 
   ~FailureTracker() {
     mut int32_t cleanup = 2147483647;

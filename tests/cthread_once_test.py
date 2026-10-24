@@ -57,6 +57,8 @@ def main():
                  "-Wall", "-Wextra", "-Werror", "-pthread",
                  "-I", root / "runtime/include", "-I", root / "runtime/src",
                  root / "runtime/src/cthread_state.cpp",
+                 root / "runtime/src/thread.cpp",
+                 root / "runtime/src/failure.cpp",
                  root / "tests/runtime_cthread_once_tests.cpp", "-o", native])
             run([native])
             for terminal in ("throws", "incomplete", "null"):

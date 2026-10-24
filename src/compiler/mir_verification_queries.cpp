@@ -556,6 +556,20 @@ bool referenceAddressRetainsLoan(const MirBody &body, const MirPlace &address,
   return !visited.empty();
 }
 
+bool generatedDefaultConstruction(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Call &&
+         instruction.info.type.kind == SemanticType::Class &&
+         instruction.info.category == ValueCategory::Value &&
+         instruction.result && !instruction.functionTarget &&
+         !instruction.constructorTarget && !instruction.lambdaTarget &&
+         !instruction.bodyTarget && !instruction.nativeCalleeType &&
+         !instruction.receiver && !instruction.loan && !instruction.ownership &&
+         instruction.operands.empty() && instruction.parameterTypes.empty() &&
+         instruction.constructorKind == ConstructorKind::Ordinary &&
+         instruction.intrinsic == IntrinsicKind::None &&
+         instruction.dispatch == CallDispatch::Static;
+}
+
 bool generatedUniqueConstruction(const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Call ||
       instruction.intrinsic != IntrinsicKind::AllocateUniqueOwner ||

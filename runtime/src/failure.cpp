@@ -152,10 +152,12 @@ constexpr std::string_view kFailureDetails[] = {
     "container_argument",
     "shared_owner",
     "explicit_panic",
+    "thread_local_initialization_during_shutdown",
+    "thread_local_outside_attached_lifetime",
 };
 
 static_assert(std::size(kFailureCategories) == 18);
-static_assert(std::size(kFailureDetails) == 38);
+static_assert(std::size(kFailureDetails) == 40);
 
 struct ReportOutput {
   WriteFunction write = nullptr;
@@ -276,7 +278,11 @@ struct ResolvedFailure {
   case GTI_FAILURE_CODE_HOSTED_RUNTIME_CONTRACT_FAILURE_V1:
     return detail == GTI_FAILURE_DETAIL_NEGATIVE_ARGUMENT_COUNT_V1 ||
            detail ==
-               GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1;
+               GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1 ||
+           detail ==
+               GTI_FAILURE_DETAIL_THREAD_LOCAL_INITIALIZATION_DURING_SHUTDOWN_V2 ||
+           detail ==
+               GTI_FAILURE_DETAIL_THREAD_LOCAL_OUTSIDE_ATTACHED_LIFETIME_V2;
   case GTI_FAILURE_CODE_KEY_NOT_FOUND_V1:
     return detail == GTI_FAILURE_DETAIL_KEY_LOOKUP_V1;
   case GTI_FAILURE_CODE_INVALID_CONTAINER_ARGUMENT_V1:
@@ -857,6 +863,7 @@ gti_rt_failure_terminate_v1(const gti_failure_record_v1 *record,
     // already completed task cleanup before reaching this containment call.
     gti_runtime_detail::handoff_managed_worker_failure(*record, artifact);
   }
+  gti_runtime_detail::drain_thread_local_cleanup_legacy(record, artifact);
   claimTerminalWinner();
 
   const gti_failure_record_v1 invalidRecord{};
@@ -968,6 +975,9 @@ gti_rt_failure_terminate_v2(const gti_failure_record_v2 *record,
   if (record != nullptr && gti_runtime_detail::managed_worker_active()) {
     gti_runtime_detail::handoff_managed_worker_failure(*record, artifact);
   }
+  // The verified caller has retired its local frame. Thread-owned values
+  // remain live until this attached thread's terminal boundary.
+  gti_runtime_detail::drain_thread_local_cleanup(record, artifact);
   claimTerminalWinner();
   const gti_failure_record_v2 original =
       record == nullptr ? gti_failure_record_v2{} : *record;

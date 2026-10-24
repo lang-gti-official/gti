@@ -1526,9 +1526,10 @@ private:
   static bool isDeclarationModifier(const Lexeme &lexeme) {
     return lexeme.kind == Kind::Word &&
            (lexeme.text == "export" || lexeme.text == "virtual" ||
-            lexeme.text == "static" || lexeme.text == "constexpr" ||
-            lexeme.text == "mut" || lexeme.text == "unsafe" ||
-            lexeme.text == "implicit" || lexeme.text == "#macro");
+            lexeme.text == "static" || lexeme.text == "thread_local" ||
+            lexeme.text == "constexpr" || lexeme.text == "mut" ||
+            lexeme.text == "unsafe" || lexeme.text == "implicit" ||
+            lexeme.text == "#macro");
   }
 
   static bool isDeclarationBoundary(const Lexeme *lexeme) {

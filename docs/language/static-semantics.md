@@ -690,13 +690,20 @@ initialization guard.
 
 Execution-profile selection adds one declaration-wide process-storage rule.
 In the concurrent profile, every namespace global and non-generic class static
-field must be an immutable binding whose concrete resolved type is
+field with process-wide (not `thread_local`) storage must be an immutable binding whose concrete resolved type is
 share-capable. The rule applies equally through aliases, concrete generic
 instances, internal linkage, raw-pointer or borrowed-state carriers, declared
 cleanup, and nominal capability policy. The default single-threaded profile
 continues to permit ordinary mutable globals. An immutable value with a
 reviewed `[[unsafe_share]]` nominal assertion satisfies the capability rule;
 the selection does not itself provide an atomic or mutex operation.
+
+`thread_local` storage is a distinct per-thread object, not shared process
+storage. Mutable and non-share-capable owning values are permitted in either
+profile. Its initializer has its own lazy initialization plan and cannot depend
+on automatic bindings or the current instance receiver. Checked borrowing and
+ambient call/cleanup effects still apply; declaring a value thread-local does
+not exempt it from alias checks. See the [thread-local contract](concurrency.md#thread-local-storage).
 
 ## 3.6 Calls And Overloads
 

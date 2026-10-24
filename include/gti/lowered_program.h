@@ -64,6 +64,7 @@ enum class LoweredGeneratedItemKind {
   NativeInteropAdapter,
   ThreadTaskAdapter,
   ConcreteInstanceAdapter,
+  ThreadLocalStorage,
   Count,
 };
 
@@ -395,6 +396,7 @@ struct LoweredStorageDeclaration {
   std::optional<ConstantValue> constant;
   Mutability mutability = Mutability::Immutable;
   bool staticStorage = false;
+  bool threadLocalStorage = false;
   bool internalLinkage = false;
   bool constexprStorage = false;
   bool hasInitializer = false;

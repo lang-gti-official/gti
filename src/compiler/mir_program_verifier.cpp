@@ -6,7 +6,9 @@
 #include "gti/optimization/dataflow.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
+#include "mir_storage_effects.h"
 #include "mir_text_contracts.h"
+#include "mir_thread_local.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
 
@@ -1983,14 +1985,11 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                             lambda->returnType == receiverPlace->type &&
                             !producer->info.traits.containsBorrowedState;
           }
-          if (!producer->functionTarget && receiverClass != nullptr &&
+          if (receiverClass != nullptr &&
               receiverClass->defaultConstructor ==
                   SpecialMemberStatus::Generated &&
-              !producer->constructorTarget && !producer->lambdaTarget &&
-              !producer->receiver && !producer->loan && !producer->ownership &&
-              producer->operands.empty() && producer->parameterTypes.empty() &&
-              producer->constructorKind == ConstructorKind::Ordinary &&
-              producer->intrinsic == IntrinsicKind::None &&
+              !receiverClass->generatedDefaultRequiresSchedule &&
+              mir_detail::generatedDefaultConstruction(*producer) &&
               producer->info.type == receiverClass->type) {
             exactProducer = true;
           }
@@ -2166,13 +2165,28 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               published->kind == MirLoanKind::Stored && !published->entry &&
               !published->escapes &&
               published->producedBy == producer->hirValue;
+          const MirClassInstance *generatedOwner = nullptr;
+          if (argumentPlace != nullptr &&
+              mir_detail::generatedDefaultConstruction(*producer)) {
+            const auto found = std::find_if(
+                program.classInstances().begin(),
+                program.classInstances().end(), [&](const auto &candidate) {
+                  return candidate.type == argumentPlace->type;
+                });
+            if (found != program.classInstances().end())
+              generatedOwner = &*found;
+          }
           exactProducer =
-              target != nullptr && argumentPlace != nullptr &&
-              target->definitionKind == MirDefinitionKind::Source &&
-              target->linkage == LanguageLinkage::Gti &&
-              target->returnType == argumentPlace->type &&
-              (target->returnBorrowOrigin == BorrowOriginKind::None ||
-               retainedCarrier);
+              (target != nullptr && argumentPlace != nullptr &&
+               target->definitionKind == MirDefinitionKind::Source &&
+               target->linkage == LanguageLinkage::Gti &&
+               target->returnType == argumentPlace->type &&
+               (target->returnBorrowOrigin == BorrowOriginKind::None ||
+                retainedCarrier)) ||
+              (generatedOwner != nullptr &&
+               generatedOwner->defaultConstructor ==
+                   SpecialMemberStatus::Generated &&
+               !generatedOwner->generatedDefaultRequiresSchedule);
         } else if (producer != nullptr && argumentPlace != nullptr &&
                    producer->kind == MirInstructionKind::Compute &&
                    producer->operation == MirOperation::PayloadConstruct &&
@@ -9356,6 +9370,12 @@ verifyMirProgramInitialization(const MirProgram &program) {
       // step.
       continue;
     }
+    if (symbolRoot && place.capture == 0 &&
+        program.findThreadLocalStorage(place.symbol) != nullptr) {
+      // First-use TLS construction is proved independently by exact Ensure
+      // success dominance, not by an eager module storage transition.
+      continue;
+    }
     std::optional<ProgramInitializationStepId> identity;
     bool exact = true;
     const auto requireIdentity = [&](ProgramInitializationStepId candidate) {
@@ -10110,6 +10130,16 @@ verifyMirHostedStartup(const MirProgram &program) {
     return normalBlock;
   };
 
+  const auto takeThreadLocalDrain = [&](MirBlockId block) {
+    if (program.threadLocalStorage().empty())
+      return;
+    const TakenOperation drain =
+        take(MirHostedStartupOperationKind::DrainThreadLocals,
+             MirHostedStartupFailureBehavior::None, block, true, false, false,
+             false);
+    exactInstruction(drain, {.kind = MirInstructionKind::DrainThreadLocals,
+                             .info = generatedInfo(SemanticType::Void)});
+  };
   const auto takeCThreadBoundary = [&](MirBlockId block, bool begin) {
     const auto targetId = begin ? plan.cThreadBegin : plan.cThreadEnd;
     if (!program.requiresCThreadRuntime()) {
@@ -10136,6 +10166,13 @@ verifyMirHostedStartup(const MirProgram &program) {
                             .info = generatedInfo(SemanticType::Void)});
   };
 
+  if (!program.threadLocalStorage().empty()) {
+    const TakenOperation begin = take(
+        MirHostedStartupOperationKind::BeginThreadLocals,
+        MirHostedStartupFailureBehavior::None, 1, true, false, false, false);
+    exactInstruction(begin, {.kind = MirInstructionKind::BeginThreadLocals,
+                             .info = generatedInfo(SemanticType::Void)});
+  }
   if (plan.kind == ProgramEntryKind::NoArguments) {
     MirBlockId currentBlock = 1;
     if (!entry.parameterTypes.empty() || plan.appendFunction != 0 ||
@@ -10178,6 +10215,7 @@ verifyMirHostedStartup(const MirProgram &program) {
       currentBlock =
           takeFailureRoute(currentBlock, callEntry.expected.instruction, {});
     }
+    takeThreadLocalDrain(currentBlock);
     takeCThreadBoundary(currentBlock, false);
     const TakenOperation returnEntry =
         take(MirHostedStartupOperationKind::ReturnEntry,
@@ -10709,6 +10747,7 @@ verifyMirHostedStartup(const MirProgram &program) {
       finalBlock =
           takeFailureRoute(finalBlock, callEntry.expected.instruction, {});
     }
+    takeThreadLocalDrain(finalBlock);
     takeCThreadBoundary(finalBlock, false);
     const TakenOperation returnEntry =
         take(MirHostedStartupOperationKind::ReturnEntry,
@@ -12155,6 +12194,20 @@ struct CompleteBorrowResultPathView {
   AccessMode access;
 };
 
+[[nodiscard]] std::optional<std::vector<MirStoredCarrierReference>>
+completeBorrowResultReferenceInventory(const MirProgram &program,
+                                       const SemanticType &type,
+                                       bool directReference) {
+  if (!directReference)
+    return findStoredCarrierReferenceInventory(program, type);
+  std::optional<std::vector<MirStoredCarrierReference>> result;
+  result.emplace();
+  MirStoredCarrierReference path{};
+  path.reference = type;
+  result->emplace_back(std::move(path));
+  return result;
+}
+
 template <typename Dependency, typename ResultPath>
 [[nodiscard]] bool completeBorrowResultHasTypedShape(
     const MirProgram &program, const SemanticType &type,
@@ -12163,12 +12216,12 @@ template <typename Dependency, typename ResultPath>
   const bool reference =
       type.kind == SemanticType::Reference && type.arguments.size() == 1;
   const auto references =
-      reference ? std::optional{std::vector<MirStoredCarrierReference>{
-                      {.reference = type}}}
-                : findStoredCarrierReferenceInventory(program, type);
-  const auto alternatives =
-      reference ? std::optional{std::vector<BorrowAlternativePath>{}}
-                : findStoredCarrierAlternativeInventory(program, type);
+      completeBorrowResultReferenceInventory(program, type, reference);
+  std::optional<std::vector<BorrowAlternativePath>> alternatives;
+  if (reference)
+    alternatives.emplace();
+  else
+    alternatives = findStoredCarrierAlternativeInventory(program, type);
   if (!references || !alternatives ||
       (alternatives->empty() != possibleAlternatives.empty()))
     return false;
@@ -12368,10 +12421,8 @@ projectCompleteBorrowPayloadSet(const MirProgram &program,
                   path) == result.possibleAlternatives.end())
       result.possibleAlternatives.push_back(std::move(path));
   }
-  const auto inventory =
-      referenceField ? std::optional{std::vector<MirStoredCarrierReference>{
-                           {.reference = fieldType}}}
-                     : findStoredCarrierReferenceInventory(program, fieldType);
+  const auto inventory = completeBorrowResultReferenceInventory(
+      program, fieldType, referenceField);
   if (!inventory)
     return std::nullopt;
   if (inventory->empty() && result.possibleAlternatives.empty()) {
@@ -12450,11 +12501,9 @@ constructedCompleteBorrowFact(const MirProgram &program, const MirBody &body,
                                       ? HirCallInputKind::MutableBorrow
                                       : HirCallInputKind::ReadBorrow)))
       return std::nullopt;
-    const auto inventory =
-        type.kind == SemanticType::Reference && type.arguments.size() == 1
-            ? std::optional{std::vector<MirStoredCarrierReference>{
-                  {.reference = type}}}
-            : findStoredCarrierReferenceInventory(program, type);
+    const auto inventory = completeBorrowResultReferenceInventory(
+        program, type,
+        type.kind == SemanticType::Reference && type.arguments.size() == 1);
     if (!inventory)
       return std::nullopt;
     // A complete concrete reference-free field cannot contribute external
@@ -12638,6 +12687,7 @@ completeBorrowSourcePath(const MirProgram &program,
     return {.root = place->root,
             .binding = place->binding,
             .symbol = place->symbol,
+            .capture = place->capture,
             .temporary = place->temporary,
             .value = place->value,
             .projections = place->projections};
@@ -14061,11 +14111,9 @@ completeBorrowSourcePath(const MirProgram &program,
 completeBorrowMappingIsWellFormed(const MirProgram &program,
                                   const MirFunctionInstance &function,
                                   const BorrowedFieldOrigin &mapping) {
-  const auto resultInventory =
-      function.returnType.kind == SemanticType::Reference
-          ? std::optional{std::vector<MirStoredCarrierReference>{
-                {.reference = function.returnType}}}
-          : findStoredCarrierReferenceInventory(program, function.returnType);
+  const auto resultInventory = completeBorrowResultReferenceInventory(
+      program, function.returnType,
+      function.returnType.kind == SemanticType::Reference);
   if (!resultInventory)
     return false;
   const auto result = std::find_if(
@@ -14634,15 +14682,20 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
         *extract->enumVariant >= enumeration->variants.size())
       return reject("selected reference lacks its exact typed alternative");
     const auto &variant = enumeration->variants[*extract->enumVariant];
+    const auto expectedConditions = [&] {
+      std::vector<BorrowDependencyCondition> conditions;
+      BorrowDependencyCondition condition{};
+      condition.enumeration = enumeration->type;
+      condition.variant = *extract->enumVariant;
+      conditions.emplace_back(std::move(condition));
+      return conditions;
+    };
     if (*extract->payloadIndex >= variant.payloadTypes.size() ||
         *extract->payloadIndex >= variant.payloadSymbols.size() ||
         selection.fields !=
             std::vector<SymbolId>{
                 variant.payloadSymbols[*extract->payloadIndex]} ||
-        selection.conditions !=
-            std::vector<BorrowDependencyCondition>{
-                {.enumeration = enumeration->type,
-                 .variant = *extract->enumVariant}} ||
+        selection.conditions != expectedConditions() ||
         selection.reference != variant.payloadTypes[*extract->payloadIndex] ||
         selection.reference.kind != SemanticType::Reference ||
         selection.reference.arguments.size() != 1 ||
@@ -20284,6 +20337,9 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     }
   }
   appendVerification(result, verifyMirProgramContracts(program));
+  appendVerification(result, verifyMirThreadLocalStorage(program));
+  if (result.valid())
+    appendVerification(result, verifyMirPersistentStorageEffects(program));
   appendVerification(result, verifyMirEffectSummaries(program));
   return result;
 }

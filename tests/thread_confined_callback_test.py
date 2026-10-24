@@ -20,6 +20,8 @@ def main():
             run([cxx, f"-std={std}", f"-{opt}", *sanitizers, "-pthread",
                  "-Wall", "-Wextra", "-Werror", "-I", root / "runtime/include",
                  "-I", root / "runtime/src", root / "runtime/src/cthread_state.cpp",
+                 root / "runtime/src/thread.cpp",
+                 root / "runtime/src/failure.cpp",
                  root / "tests/runtime_confined_callback_tests.cpp", "-o", native])
             run([native])
             for boundary in ("before-begin", "zero", "unbalanced", "foreign", "scope-ended", "after-end"):

@@ -503,7 +503,10 @@ multiple-owner results remain outside this bounded form. See [Expected values](e
 
 Under the default single-threaded execution profile, a free function or static
 method may instead return `T&` or `mut T&` from one exact namespace-global or
-non-generic static-field place. Every reachable return must name the same
+non-generic static-field place. Thread-local storage admits the same checked
+origin in either execution profile, including a non-generic function-local
+`thread_local` declaration whose storage outlives that function call. Every
+reachable return must name the same
 symbol root and the same field, fixed-index, or dereference projection path.
 The function summary retains that place, and each call creates a checked loan
 against it. Unsafe raw-pointer dereference remains lexical to the accessor body;
@@ -530,13 +533,54 @@ only use is as the receiver of a member call whose result does not borrow from
 that receiver, it ends immediately after that call instead. Independent scalar
 reads such as `rows[0].first() == rows[1].second()` therefore execute in source
 order without retaining the first subscript loan across the second. A result
-retained in a local reference remains live to its lexical scope boundary, so a
+retained in a mutable local reference remains live to its lexical scope boundary, so a
 second overlapping mutable borrow is rejected even when the first carrier is
 otherwise unused. A nested block is the explicit way to end such a retained
 global borrow earlier. The concurrent execution profile does not admit this
 unsynchronized mutable process-wide storage: its existing `GTI-S2060` rule
 requires immutable, share-capable globals/statics until an atomic, mutex, or
 guard contract provides synchronization.
+
+Checked loans also protect persistent storage against hidden accesses through
+known GTI calls and cleanup. A call's source-body effects retain the exact
+storage identity, projected path and read/write authority, transitively through
+selected constructors, overloaded operators, helper functions and concrete
+generic bodies. An overlapping hidden access conflicts when either access is
+mutable. This uses the same structured last-use, branch, loop and cleanup-bound
+endpoints as a direct access; merely passing through a helper does not lengthen
+or erase a loan. Complete dependencies of source classes, enums, closures and
+checked erased references participate in the same rule. A returned borrow stays
+protected through cleanup of the returning function's automatic objects and
+return-expression temporaries.
+
+Temporary cleanup follows the common full-expression roots, not just discarded
+expression statements. Conditions, loop conditions and steps, binding and
+constructor initializers, and return expressions use the same producer and
+ownership-transfer facts. Moving a fresh result into a destination does not run
+its eventual destructor at the initializer boundary. Replacing an already live
+object, however, checks its old cleanup at that operation, and a propagating
+failure checks cleanup of inputs that have not yet transferred.
+
+Destructive movement out of persistent storage is not admitted without a
+contract that restores its availability across calls. This extends the existing
+global/static move-state boundary to block-local `thread_local` storage and its
+projections. Copying and ordinary assignment are distinct operations; this rule
+does not forbid updating a live thread-local value.
+
+A GTI invocation without a closed source target set currently cannot run while
+such a persistent-storage loan is live. Its explicit reference input is not
+itself forbidden, but does not prove the absence of hidden ambient storage
+accesses. A future checked effect contract or exact dynamic target set can
+generalize that structural boundary. Foreign calls and unsafe raw-pointer
+retention continue to use their explicit unsafe obligations, not inferred safe
+reference promises.
+
+Thread-local does not mean that its referent can never be read by another
+thread. A shared, transfer-appropriate borrow may be lent to a joined scoped
+worker while the owner thread and ordinary loan remain alive. Owned task and
+result transfer must not let checked borrowed state outlive its owner. Direct
+thread-local lookup on a worker denotes that worker's own independent instance;
+it does not denote a captured borrow of the originating thread's instance.
 
 The same exact global or static place may be the origin of a
 reference-bearing source carrier, such as a class with a reference field or a
@@ -1724,7 +1768,12 @@ neither form of custom constructor body is required by shared ownership.
 
 A type requires active cleanup when its own declared cleanup runs or a base,
 field, or fixed-array element owns a resource/active cleanup obligation. Such a
-type cannot currently have namespace-global or static-field storage. Global/static
+type cannot currently have process-wide namespace-global or static-field storage.
+An owning `thread_local` object is instead permitted: each successful per-thread
+initialization registers its exact cleanup, run on that thread in reverse
+successful-initialization order. A checked reference or borrowed-state value
+cannot itself be retained in thread-local storage through thread shutdown.
+Process-wide global/static
 shutdown remains absent, while program-wide initialization and initializer-
 temporary cleanup use the deterministic cross-unit order in Execution Section
 4.2.4. This restriction is structural and applies through aliases, enclosing

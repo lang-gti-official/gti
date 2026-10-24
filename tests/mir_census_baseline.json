@@ -171,7 +171,8 @@
     "171-recursive-text-relays.gti": 146,
     "172-deferred-assertions.gti": 195,
     "173-general-requires.gti": 31,
-    "174-typed-macros.gti": 156
+    "174-typed-macros.gti": 156,
+    "175-thread-local-storage.gti": 274
   },
-  "total": 23611
+  "total": 23885
 }

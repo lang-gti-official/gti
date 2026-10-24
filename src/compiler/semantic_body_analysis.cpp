@@ -120,6 +120,10 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   currentFunctionDeclaration = nullptr;
   currentProgramEffectOwner = {};
   programEffects.clear();
+  requestSession.programExpressionCache = {};
+  requestSession.fullExpressionStates.clear();
+  requestSession.programStorageBorrowChecks.clear();
+  requestSession.programFailingEffects.clear();
   requestSession.programConcreteEffects =
       std::make_shared<ProgramConcreteEffectState>();
   requestSession.cThreadCallUses.clear();
@@ -2145,6 +2149,13 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
       openClassType(owner.id), &stmt, parameterTypes);
   for (const ConstructorInitializer &initializer : stmt.initializers()) {
     semanticModel.recordFullExpression(initializer);
+    struct FullExpressionCleanupScope {
+      Impl &analyzer;
+      std::size_t frame;
+      ~FullExpressionCleanupScope() {
+        analyzer.finishProgramFullExpression(frame);
+      }
+    } fullExpression{*this, beginProgramFullExpression(initializer)};
     const Token &target = initializer.target.name.last();
     std::optional<std::size_t> fieldIndex;
     const VariableDecl *field = nullptr;
@@ -2532,8 +2543,8 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
 
   analyze(stmt.body()->statements());
   finalizeLoanFlow();
-  recordProgramCleanupEffects(SemanticType::classType(owner.id),
-                              tokenSpan(stmt.tilde()), false);
+  recordProgramExecutedCleanupEffects(SemanticType::classType(owner.id),
+                                      tokenSpan(stmt.tilde()), false);
 
   endScope();
   --destructorDepth;
@@ -3804,6 +3815,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
       .currentStaticMemberFunction = currentStaticMemberFunction,
       .allowPackTypeReference = allowPackTypeReference,
       .loanFlow = std::move(loanFlow),
+      .fullExpressionStates = std::move(requestSession.fullExpressionStates),
       .valueControlFlow = std::move(valueControlFlow),
       .contextualInitializerType = contextualInitializerType,
       .contextualInitializerExpression = contextualInitializerExpression,
@@ -3832,7 +3844,9 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
       .constexprForFrames = std::move(constexprForFrames),
       .constexprForExpandedBodies = constexprForExpandedBodies};
   // The clean state a declaration-level body starts from; keep in step with
-  // prepareInstanceAnalysis.
+  // prepareInstanceAnalysis. The model keeps accumulating facts, so its root
+  // index stays valid. Only active caller temporary frames are body-local;
+  // preserve them while a demanded callee analyzes its own expressions.
   scopes.clear();
   typeParameterScopes.clear();
   valueParameterScopes.clear();
@@ -3853,6 +3867,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
   currentStaticMemberFunction = false;
   allowPackTypeReference = false;
   loanFlow = {};
+  requestSession.fullExpressionStates.clear();
   valueControlFlow.clear();
   contextualInitializerType.reset();
   contextualInitializerExpression = nullptr;
@@ -3904,6 +3919,7 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
   currentStaticMemberFunction = state.currentStaticMemberFunction;
   allowPackTypeReference = state.allowPackTypeReference;
   loanFlow = std::move(state.loanFlow);
+  requestSession.fullExpressionStates = std::move(state.fullExpressionStates);
   valueControlFlow = std::move(state.valueControlFlow);
   contextualInitializerType = state.contextualInitializerType;
   contextualInitializerExpression = state.contextualInitializerExpression;
@@ -4799,6 +4815,7 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       semanticModel.recordBorrowDependencySet(
           *stmt.value(), {.dependencies = std::move(dependencies)});
     }
+    recordReturnedStorageBorrowCleanup(stmt);
     recordRawResult(stmt.value());
     requireInitializedReceiver(stmt.keyword());
     return;
@@ -4846,6 +4863,7 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       }
     }
   }
+  recordReturnedStorageBorrowCleanup(stmt);
   requireInitializedReceiver(stmt.keyword());
 }
 
@@ -5854,9 +5872,23 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     -> void {
   const DeclarationOrderScope declarationOrder{*this, stmt};
   const std::size_t declarationDiagnosticStart = diagnostics.size();
+  if (stmt.isThreadLocal() && !validateThreadLocalDeclaration(stmt))
+    return;
   if (stmt.type().name.last().kind == TokenKind::AUTO) {
     semanticModel.recordFullExpression(stmt, stmt.initializer());
+    const ProgramEffectOwner enclosingOwner = currentProgramEffectOwner;
+    if (stmt.isThreadLocal()) {
+      const SymbolId storage = recordBindingOccurrence(
+          stmt.name(), SemanticType::Unknown, stmt.isMutable(),
+          SemanticBindingKind::LocalVariable, false, false, false, true);
+      requestSession.threadLocalDeclarations.insert_or_assign(storage, &stmt);
+      currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Initializer,
+                                   .id = storage};
+    }
     analyzeInferredVariable(stmt);
+    currentProgramEffectOwner = enclosingOwner;
+    if (stmt.isThreadLocal())
+      recordThreadLocalDeclaration(stmt);
     return;
   }
   validateType(stmt.type());
@@ -5926,7 +5958,10 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   const bool internalLinkage = stmt.isStatic() && !currentClass;
   const SymbolId symbol = recordBindingOccurrence(
       stmt.name(), declaredType, stmt.isMutable(), bindingKind,
-      bindingKind == SemanticBindingKind::StaticField, internalLinkage);
+      bindingKind == SemanticBindingKind::StaticField, internalLinkage, false,
+      stmt.isThreadLocal());
+  if (stmt.isThreadLocal())
+    requestSession.threadLocalDeclarations.insert_or_assign(symbol, &stmt);
   if (!instanceAnalysisActive && !isCompilerTrustedRequester(stmt.name()) &&
       bindingKind == SemanticBindingKind::LocalVariable && stmt.isMutable() &&
       stmt.mutKeyword() && !stmt.isRangeBinding() &&
@@ -5944,6 +5979,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   info.symbol = symbol;
   info.foreignStorage = stmt.linkage() == LanguageLinkage::C;
   info.staticStorage = stmt.isStatic();
+  info.threadLocal = stmt.isThreadLocal();
   info.internalLinkage = internalLinkage;
   semanticModel.record(stmt, std::move(info));
   if (stmt.linkage() == LanguageLinkage::C) {
@@ -5960,14 +5996,16 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     // construction of a type whose owning layout proof already failed.
     return;
   }
-  if (functionDepth > 0)
+  if (functionDepth > 0 && !stmt.isThreadLocal())
     recordProgramCleanupEffects(declaredType, tokenSpan(stmt.name()));
   const bool globalStorage =
-      functionDepth == 0 && (!currentClass || stmt.isStatic());
+      stmt.isThreadLocal() ||
+      (functionDepth == 0 && (!currentClass || stmt.isStatic()));
+  const bool processStorage = globalStorage && !stmt.isThreadLocal();
   SemanticType initializerType = SemanticType::Unknown;
   if (declaredType == SemanticType::Void) {
     report(stmt.type().name.last(), "Variables cannot have type void.");
-  } else if (declaredType.kind == SemanticType::UniqueOwner && globalStorage) {
+  } else if (declaredType.kind == SemanticType::UniqueOwner && processStorage) {
     report(stmt.name(),
            "Compiler-private unique owners can only be local bindings, "
            "function values, or class fields.",
@@ -5977,7 +6015,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
            "Compiler-private unique owner bindings require an initializer.",
            "GTI-S2018");
   } else if (typeTraits(declaredType).ownership == OwnershipKind::Unique &&
-             globalStorage) {
+             processStorage) {
     report(stmt.name(),
            "Unique owners can only be local bindings, function values, or "
            "class fields.",
@@ -5987,7 +6025,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
            "Values carrying stored references cannot have global or static "
            "storage duration.",
            "GTI-S2045");
-  } else if (globalStorage && requiresActiveCleanupFor(declaredType)) {
+  } else if (processStorage && requiresActiveCleanupFor(declaredType)) {
     const std::string storageKind =
         currentClass ? "Static field" : "Namespace global";
     Diagnostic diagnostic = makeDiagnostic(
@@ -6284,6 +6322,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       }
     }
   }
+  if (stmt.isThreadLocal())
+    recordThreadLocalDeclaration(stmt);
 }
 auto SemanticVisitor::Impl::visitWhileStmt(const WhileStmt &stmt) -> void {
   semanticModel.recordFullExpression(stmt, stmt.condition());
@@ -8395,6 +8435,7 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
                                           contextualType ==
                                               SemanticType::Unknown);
   thenUse.reset();
+  consumeProgramTemporary(expr.thenExpression());
   const ScopeStack thenScopes = scopes;
 
   // An enclosing assignment may hold a place rooted in the current scopes.
@@ -8410,6 +8451,7 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
                 expr.elseExpression(), elseExpectation,
                 elseExpectation == SemanticType::Unknown);
   elseUse.reset();
+  consumeProgramTemporary(expr.elseExpression());
   --loanFlow.rawConditionalExpressionDepth;
   const ScopeStack elseScopes = scopes;
 
@@ -9692,6 +9734,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     }
     const std::size_t diagnosticsBeforeInitializer = diagnostics.size();
     const SemanticType initializerType = analyze(capture.initializer);
+    if (!isBorrowingCapture(mode))
+      consumeProgramTemporary(capture.initializer);
     if (!isBorrowingCapture(mode)) {
       const auto sourcePlace = retainedLoanPlace(capture.initializer);
       for (const auto &previous : captureDependencies)
@@ -10973,6 +11017,15 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
 }
 
 auto SemanticVisitor::Impl::visitThisExpr(const This &expr) -> void {
+  if (currentProgramEffectOwner.kind == ProgramEffectOwnerKind::Initializer &&
+      isThreadLocalStorage(currentProgramEffectOwner.id)) {
+    report(expr.keyword(),
+           "A thread-local initializer cannot depend on an automatic receiver; "
+           "its initializer has independent storage duration.",
+           "GTI-S2124");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (analyzingDefaultArgument) {
     report(expr.keyword(),
            "A default argument is declaration-scoped and cannot use "
@@ -11536,6 +11589,22 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
     }
     currentType = SemanticType::Unknown;
     return;
+  }
+  if (currentProgramEffectOwner.kind == ProgramEffectOwnerKind::Initializer &&
+      isThreadLocalStorage(currentProgramEffectOwner.id) &&
+      (symbol->bindingKind == SemanticBindingKind::LocalVariable ||
+       symbol->bindingKind == SemanticBindingKind::Parameter ||
+       symbol->bindingKind == SemanticBindingKind::Field) &&
+      (symbol->variableDeclaration == nullptr ||
+       !symbol->variableDeclaration->isThreadLocal())) {
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2124", DiagnosticPhase::Semantics, expr.name(),
+                       "A thread-local initializer cannot depend on an "
+                       "automatic binding, parameter or instance field.");
+    diagnostic.related.push_back(
+        {tokenSpan(symbol->declaration),
+         "This automatic dependency is declared here."});
+    diagnostics.emplace_back(std::move(diagnostic));
   }
   if (!isCompilerTrustedRequester(expr.name()) && symbol->compilerPrivate) {
     reportCompilerPrivateAccess(expr.name(), expr.name().lexeme);
@@ -13554,7 +13623,8 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
           "The constexpr evaluator could not resolve a local binding."));
     }
     const SemanticType bindingType = constexprType(binding->type, context);
-    if (declaration->isStatic() || !isSupportedConstexprType(bindingType)) {
+    if (declaration->isStatic() || declaration->isThreadLocal() ||
+        !isSupportedConstexprType(bindingType)) {
       return constexprStatementFailure(constexprFailure(
           declaration->name(), ConstantEvaluationFailure::UnsupportedType,
           "Executed constexpr function locals must be automatic supported "

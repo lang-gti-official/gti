@@ -13,6 +13,14 @@ semantic probe; its speculative flow, loans and syntax never enter caller
 execution. The probe forks request context separately from semantic facts,
 reads existing facts through a model delta and owns a copy of active loan
 identities; it does not deep-copy the growing whole-program expression model.
+The expression-order cache and active full-expression cleanup frames are local
+to a semantic-model snapshot. A probe starts with both empty: the context fork
+temporarily detaches those two members while cloning the remaining request
+state, then restores the caller before creating or executing the model delta.
+The restoration is nonthrowing, including when the context copy fails. Active
+loan flow, retained dependencies and identity counters are still copied.
+Ordinary matched model/session clones retain their caches; a speculative fork
+must neither reuse another model's expression indices nor consume its cleanup.
 The source signature is retained only as a tooling occurrence, not an eager
 call in executable effect/transport inventories. The actual body is
 cloned with compiler-owned argument/pack substitutions and separate expansion
@@ -1349,6 +1357,38 @@ use the same exact instance identity. Query expansion is bounded by 64 generic
 ancestry steps and 16,384 analyzed distinct instances, with located `GTI-S2105`
 diagnostics. Open substitutions, dynamic dispatch, and protocol/combinator paths
 without exact selected generic arguments remain conservatively unknown.
+
+Persistent-storage loan checks reuse that exact effect graph and the ordinary
+structured loan endpoint scheduler. A request-local full-expression frame is
+selected by the existing `SemanticFullExpression` roots, including a shared
+frame for a constructor initializer's arguments. Typed fresh-value producers and
+selected input/destination transfers determine which temporaries remain for
+cleanup; the analysis does not execute an alternate cleanup interpreter or
+derive object lifetime from generated C++. Builtin replacement checks its old
+object's cleanup immediately, while the common root endpoint checks remaining
+temporaries and protects a published reference or borrowed result. Body cleanup
+summaries retain conservative rollback effects until the closed execution/failure
+proof can establish a narrower path.
+
+The closed source effect graph also computes a monotone may-propagate-failure
+bit from typed local defined-failure outcomes, unknown GTI boundaries and exact
+selected callees. It executes no GTI and adds no alternate failure semantics.
+Deferred lifecycle edges remain conservative for process-initializer ordering;
+hidden persistent-storage checks traverse them when a body can fail, alongside
+the unconditional cleanup effects recorded at actual scope/full-expression and
+replacement endpoints. Thus a no-fail constructor that moves a parameter into a
+field does not appear to destroy that moved parameter, but a potentially failing
+constructor retains field/input rollback. Concrete effect import preserves
+deferred versus executed paths rather than flattening a conditional destructor
+into an unconditional ambient write.
+
+Full-expression root indices and typed expression/failure slices are owned by
+the semantic-model snapshot. Concrete-instance delta brackets reset those caches
+and restore the caller's exact cache and active temporary frames on exit; an
+instance cannot reuse another specialization's expression count or selected
+`if constexpr` roots. Ordinary late body demand keeps the same growing model
+cache but saves and restores the caller's active full-expression frames, so
+analyzing a callee cannot consume or clean up a caller's temporary inventory.
 
 Value-generic arithmetic needed before complete program HIR/MIR is retained as
 an immutable declaration-ID-bound expression tree, never a borrowed AST pointer.

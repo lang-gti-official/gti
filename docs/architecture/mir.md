@@ -329,8 +329,8 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v112`/`mir-body-v91`,
-with `lowered-program-v22` declaration metadata. Declaration-bound computed
+The combined deterministic serialization is currently `mir-v113`/`mir-body-v92`,
+with `lowered-program-v25` declaration metadata. Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains
 complete borrowed-dependency-set proofs alongside foreign-storage inventories
@@ -406,8 +406,11 @@ dependency group rather than selecting one representative origin.
 
 A complete mapping may name static storage: its origin is `Global`, with the
 storage symbol in `globalRoot`, and its source path is built from that
-storage's own type. A capture-free `Symbol` place is that storage even in the
-provisional program, which is lowered before its initialization plan exists.
+storage's own type. A capture-free `Symbol` place identifies that storage. The
+provisional failure-effect proof retains the real module and initialization
+inventory, so persistent-storage effects and exact receiver proofs have the same
+declaration authority as the final program; only hosted startup is omitted until
+the final lowering rounds.
 A carrier whose contract names a global borrows the global's storage-typed
 place, not a place typed as the carrier. The per-input returned-field checks
 skip `Global` mappings, which have no call input; the global-origin check and
@@ -2615,6 +2618,42 @@ IDs are body-local and start at one.
 
 ## Lowering And Verification
 
+Thread-local objects have a separate `MirThreadLocalStorage` inventory and
+`ThreadLocalInitializer` bodies. `EnsureThreadLocal` names the exact declaration
+and initializer; independent verification checks inventory, passive data
+provenance, cleanup recipes and dominating first-use guards. `DrainThreadLocals`
+is an explicit hosted-exit operation, not an emitter-added source call. Passive
+data storage uses native per-thread literal-initialized data without dynamic guard or
+registration; owning storage uses a byte slot and explicit object lifetime so
+emergency abandonment cannot accidentally run a native destructor.
+
+Ambient persistent-storage effects are independently derived from executable
+MIR, not trusted frontend summary claims. `mir_storage_effects.cpp` reuses the
+existing canonical-place/CFG loan verifier to collect direct typed storage
+accesses, closes exact helper/constructor/destructor edges, and replays hidden
+accesses at each invocation's live-loan state. Initializer edges retain their
+readiness condition through nested helpers. Captured referents have a distinct
+canonical capture domain from same-thread TLS lookup. Native/raw-pointer
+obligations remain the unsafe boundary; this is not a pointer-provenance solver.
+An exact virtual effect edge requires an independently proved complete owning
+receiver: an unprojected declared storage object, a by-value formal, or a local
+with typed owning initialization. Consumer place types are insufficient evidence;
+formal and persistent declarations must agree, and a reference-valued producer
+cannot be relabeled as owning publication. The receiver must retain its exact
+call-input stage and access mode, and every virtual root must select the same
+source function and concrete instance as the invocation. Missing, ambiguous,
+projected, aliased or construction-phase receiver evidence retains an unknown
+boundary. This closes effects only; dispatch, failure edges, cleanup and argument
+scheduling stay unchanged, and a readonly receiver does not imply a pure callee.
+For an exact persistent-storage reference input, the independently verified
+`CallInput` checkpoint also starts protection before later inputs execute.
+Its unique consuming invocation (or an interrupted invocation's terminal
+boundary) ends that explicit scheduling interval. The verifier walks that
+interval through the existing CFG and uses the same canonical overlap rules,
+including hidden callee effects; it does not infer another NLL lifetime or
+invent a temporary borrow that an otherwise legal returned reference would
+need to outlive. Already-loaned inputs retain their ordinary loan proof.
+
 Every type-owned static function retains an exact owner but no instance receiver:
 it cannot carry virtual/pure/override flags, virtual roots, mutable/consuming
 receiver access or a `This`-root place. This is a structural invariant for all
@@ -3944,7 +3983,19 @@ An ordinary-call argument may use `ReadTemporaryBorrow` only when its HIR
 input names an exact fresh class/struct producer or a passive payload-enum
 construction, and its selected parameter is read-only `T&`. Lowering
 materializes the producer's exact mutable place, emits `BorrowRead`, and
-attaches one `CallArgument` loan to the `CallInput`. As for receiver inputs,
+attaches one `CallArgument` loan to the `CallInput`;
+a target-free, zero-input ordinary class `Call` can be the generated default
+producer. Body verification recognizes its exact structural shape; independent
+program verification also requires the concrete owner's generated default
+constructor and no missing initializer schedule. This shares the receiver
+producer query and preserves all materialization, call-loan and drop checks.
+The shared invocation-target query uses that same shape and concrete lifecycle
+proof to classify this producer as executing no source body, rather than an
+unknown call that could access unrelated persistent storage. A required explicit
+or implicit field initializer, or inherited-base initializer, instead has an
+exact concrete constructor schedule whose transitive effects remain checked.
+Missing or forged generated-constructor authority cannot suppress those effects.
+As for receiver inputs,
 a linear value uses its value-rooted place. A call evaluated only in a
 conditional arm or a `&&`/`||` operand borrows the one hidden temporary slot
 that carries the producer's conditional drop through the CFG merge. The merge

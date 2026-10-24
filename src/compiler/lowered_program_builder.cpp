@@ -34,6 +34,11 @@ using lowered_detail::findDeclaration;
 [[nodiscard]] const HirBody *debugHirBody(const HirProgram &hir,
                                           MirBodyAddress address) {
   switch (address.kind) {
+  case MirBodyKind::ThreadLocalInitializer:
+    for (const auto &storage : hir.threadLocalStorage())
+      if (storage.symbol == address.owner)
+        return &storage.initializer;
+    return nullptr;
   case MirBodyKind::Module:
     return &hir.module();
   case MirBodyKind::Function:
@@ -170,6 +175,11 @@ bodyDefinition(MirDefinitionKind definition) {
   switch (address.kind) {
   case MirBodyKind::Module:
     return {};
+  case MirBodyKind::ThreadLocalInitializer:
+    for (const auto &storage : hir.threadLocalStorage())
+      if (storage.symbol == address.owner && storage.source != nullptr)
+        return tokenSpan(storage.source->name());
+    return {};
   case MirBodyKind::FieldInitializers:
   case MirBodyKind::StaticFieldInitializers:
     if (const HirClassInstance *instance = findHirClass(hir, address.owner);
@@ -232,6 +242,14 @@ captureBodyIdentity(const MirProgram &mir, const HirProgram &hir,
                              .placeDomain = body->placeDomain,
                              .source = bodySource(hir, address)};
   switch (address.kind) {
+  case MirBodyKind::ThreadLocalInitializer:
+    if (const auto *storage = mir.findThreadLocalStorage(address.owner);
+        storage != nullptr && &storage->initializer == body) {
+      result.definition = LoweredBodyDefinitionKind::Source;
+      result.declaration = storage->symbol;
+      return result;
+    }
+    return std::nullopt;
   case MirBodyKind::Module:
     return address.owner == 0 ? std::optional{std::move(result)} : std::nullopt;
   case MirBodyKind::FieldInitializers:
@@ -916,6 +934,7 @@ private:
             .constant = info->constant,
             .mutability = declaration->mutability(),
             .staticStorage = info->staticStorage,
+            .threadLocalStorage = info->threadLocal,
             .internalLinkage = info->internalLinkage,
             .constexprStorage = declaration->isConstexpr(),
             .hasInitializer = declaration->initializer() != nullptr};

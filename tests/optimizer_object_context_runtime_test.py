@@ -285,7 +285,7 @@ if __name__ == "__main__":
                            if text.strip().startswith(("if (true) return case_",
                                                        "if (false) return case_"))]
         assert len(global_dispatch) == 6
-        global_marker = "return case_global_initializer(shared_meter);"
+        global_marker = "return case_global_initializer(&shared_meter);"
         assert global_source.count(global_marker) == 1
         clean_globals = global_source
         for dispatch in global_dispatch:
@@ -298,8 +298,8 @@ if __name__ == "__main__":
             start = next(index for index, text in enumerate(global_lines, 1)
                          if text.startswith(f"int {function}("))
             line = next(index for index, text in enumerate(global_lines, 1)
-                        if index > start and "return meter.read() + 1;" in text)
-            global_cases[f"getter_{function}"] = (f"return {function}(shared_meter);", line)
+                        if index > start and "return meter->read() + 1;" in text)
+            global_cases[f"getter_{function}"] = (f"return {function}(&shared_meter);", line)
         for name, (replacement, line) in global_cases.items():
             path = pathlib.Path(temporary) / f"{name}.gti"
             path.write_text(clean_globals.replace(global_marker, replacement))

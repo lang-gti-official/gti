@@ -65,6 +65,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "return",
   "static",
   "static_assert",
+  "thread_local",
   "this",
   "struct",
   "sizeof",
@@ -932,13 +933,27 @@ module.exports = grammar({
 
     variable_declaration: ($) =>
       seq(
+        optional(field("thread_storage", "thread_local")),
         optional(field("constant", "constexpr")),
         $._variable_declaration_body,
       ),
 
     static_variable_declaration: ($) =>
       seq(
-        field("storage", "static"),
+        choice(
+          seq(field("storage", "static"), optional(field("thread_storage", "thread_local"))),
+          seq(field("thread_storage", "thread_local"), field("storage", "static")),
+        ),
+        optional(field("constant", "constexpr")),
+        $._variable_declaration_body,
+      ),
+
+    _block_thread_local_declaration: ($) =>
+      seq(
+        choice(
+          seq(field("storage", "static"), field("thread_storage", "thread_local")),
+          seq(field("thread_storage", "thread_local"), field("storage", "static")),
+        ),
         optional(field("constant", "constexpr")),
         $._variable_declaration_body,
       ),
@@ -1109,6 +1124,7 @@ module.exports = grammar({
         $.static_assert_declaration,
         $.structured_binding_declaration,
         $.variable_declaration,
+        alias($._block_thread_local_declaration, $.static_variable_declaration),
         $.statement,
       ),
 

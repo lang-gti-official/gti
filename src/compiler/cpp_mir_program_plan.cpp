@@ -56,7 +56,8 @@ template <typename Enum>
       identity.kind == CppMirThunkKind::CallableAdapter ||
       identity.kind == CppMirThunkKind::LifecycleCleanup ||
       identity.kind == CppMirThunkKind::NativeInteropAdapter ||
-      identity.kind == CppMirThunkKind::ThreadTaskAdapter) {
+      identity.kind == CppMirThunkKind::ThreadTaskAdapter ||
+      identity.kind == CppMirThunkKind::ThreadLocalStorage) {
     return identity.owner != 0 && identity.ordinal == 0;
   }
   return identity.owner != 0;
@@ -184,6 +185,7 @@ threadTaskRequirements(const MirBody &body) {
 [[nodiscard]] bool isContractedThunkKind(CppMirThunkKind kind) {
   return kind == CppMirThunkKind::HostedEntry ||
          kind == CppMirThunkKind::ProgramInitialization ||
+         kind == CppMirThunkKind::ThreadLocalStorage ||
          kind == CppMirThunkKind::StructuralOperatorAdapter ||
          kind == CppMirThunkKind::CallableAdapter ||
          kind == CppMirThunkKind::LifecycleCleanup ||
@@ -272,6 +274,14 @@ captureCppMirBodyIdentity(const MirProgram &program, MirBodyAddress address) {
   CppMirBodyIdentity result{.address = address,
                             .placeDomain = body->placeDomain};
   switch (address.kind) {
+  case MirBodyKind::ThreadLocalInitializer:
+    if (const auto *storage = program.findThreadLocalStorage(address.owner);
+        storage != nullptr && &storage->initializer == body) {
+      result.definition = CppMirBodyDefinitionKind::Source;
+      result.declaration = storage->symbol;
+      return result;
+    }
+    return std::nullopt;
   case MirBodyKind::Module:
     if (address.owner != 0) {
       return std::nullopt;
@@ -865,6 +875,16 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
                 MirBodyAddress{.kind = MirBodyKind::Module, .owner = 0} &&
             source->role == CppMirBodyRole::SourceExecutable &&
             hasExecutableProgramInitialization(program);
+      } else if (validSource &&
+                 thunk.identity.kind == CppMirThunkKind::ThreadLocalStorage) {
+        const auto *storage =
+            program.findThreadLocalStorage(thunk.identity.owner);
+        validSource =
+            storage != nullptr && thunk.identity.ordinal == 0 &&
+            thunk.sourceBody ==
+                MirBodyAddress{.kind = MirBodyKind::ThreadLocalInitializer,
+                               .owner = storage->symbol} &&
+            source->role == CppMirBodyRole::SourceExecutable;
       } else if (validSource &&
                  thunk.identity.kind == CppMirThunkKind::NativeInteropAdapter) {
         const CppMirNativeCallbackThunk *callback =

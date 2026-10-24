@@ -866,6 +866,7 @@ struct BindingInfo {
   SymbolId symbol = 0;
   bool foreignStorage = false;
   bool staticStorage = false;
+  bool threadLocal = false;
   bool internalLinkage = false;
   SemanticLoanId retainedLoan = 0;
 

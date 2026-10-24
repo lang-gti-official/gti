@@ -119,6 +119,15 @@ def main():
             run([cli, waiting, "--execution-profile", "concurrent", "--std",
                  standard, optimization, "-o", executable], environment, cwd=root)
             run_program(executable, "2\n", environment, root)
+        local_state = root / "installed-thread-local-storage.gti"
+        local_state.write_text((examples / "175-thread-local-storage.gti").read_text())
+        for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
+            executable = root / ("installed-thread-local-" + standard)
+            run([cli, local_state, "--execution-profile", "concurrent", "--std",
+                 standard, optimization, "-o", executable], environment, cwd=root)
+            run_program(executable, "thread state retired after 2 visits\n"
+                        "worker 14 main 2\n"
+                        "thread state retired after 2 visits\n", environment, root)
         iterator_examples = (
             ("143-checked-container-iteration.gti",
              "Checked forward, reverse and mutable iteration\n"),
@@ -172,7 +181,7 @@ int main() {
         run([cli, "bindgen", header, "--namespace", "native", "-o", bindings], environment)
         assert "native_add" in bindings.read_text()
     print("Relocated installed macOS CLI/LSP, runtime closure, native compilation, "
-          "iterator examples/modules and bindgen passed")
+          "TLS/iterator examples/modules and bindgen passed")
 
 
 if __name__ == "__main__":

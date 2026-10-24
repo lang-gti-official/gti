@@ -36,7 +36,7 @@ MARKER_PATTERN = re.compile(
     r"(module-instance|field-initializers-instance|"
     r"static-field-initializers-instance|function-instance|"
     r"constructor-instance|destructor-instance|lambda-instance|"
-    r"hosted-startup-instance) (\d+)"
+    r"hosted-startup-instance|thread-local-initializer) (\d+)"
 )
 ALLOWED_MARKERS = {
     "deduced-callable-v1",
@@ -53,6 +53,8 @@ ALLOWED_MARKERS = {
     "scalar-cfg-destructor-failure-v1",
     "native-boundary-v1",
     "hosted-entry-v1",
+    # Each lazy TLS initializer is a separately verified concrete MIR body.
+    "thread-local-initializer-v1",
 }
 
 
@@ -94,7 +96,7 @@ def build_and_run(gti: Path, root: Path, scratch: Path, source: Path,
         str(source),
         *(
             ["--execution-profile", "concurrent"]
-            if source.name in {"066-managed-threads.gti", "076-scalar-atomics.gti"}
+            if source.name in {"066-managed-threads.gti", "076-scalar-atomics.gti", "175-thread-local-storage.gti"}
             else []
         ),
         f"-{optimization}",

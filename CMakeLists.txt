@@ -388,6 +388,8 @@ add_library(
   "src/compiler/mir_optimization_verifier.cpp"
   "src/compiler/mir_printer.cpp"
   "src/compiler/mir_program_verifier.cpp"
+  "src/compiler/mir_thread_local.cpp"
+  "src/compiler/mir_storage_effects.cpp"
   "src/compiler/mir_text_contracts.cpp"
   "src/compiler/mir_verification_queries.cpp"
   "src/compiler/mir_backend.cpp"

@@ -12,16 +12,16 @@ void change_global_meter() { shared_meter.count = 2147483647; }
 void forward_global_change() { change_global_meter(); }
 void change_global_method() { shared_meter.set_max(); }
 void change_global_reference() {
-  mut GlobalMeter& alias = shared_meter;
+  mut GlobalMeter &alias = shared_meter;
   alias.count = 2147483647;
 }
 void change_global_scalar_reference() {
-  mut int& alias = shared_meter.count;
+  mut int &alias = shared_meter.count;
   alias = 2147483647;
 }
-void set_global_value(mut int& value) { value = 2147483647; }
+void set_global_value(mut int &value) { value = 2147483647; }
 void change_global_reborrow() {
-  mut GlobalMeter& alias = shared_meter;
+  mut GlobalMeter &alias = shared_meter;
   set_global_value(alias.count);
 }
 int change_global_initializer() {
@@ -35,71 +35,104 @@ public:
   GlobalTrigger() {}
 };
 
-int case_global_alias(GlobalMeter& meter) {
-  int previous = meter.read();
+// These adversarial alias cases cross the raw-pointer boundary deliberately.
+// Safe checked references must reject hidden writes to their persistent owner.
+int case_global_alias(GlobalMeter *meter) {
+  unsafe {
+    int previous = meter->read();
+    change_global_meter();
+    if (previous < 2147483647) {
+      return meter->read() + 1;
+    }
+    return 0;
+  }
+}
+
+int case_global_forwarded(GlobalMeter *meter) {
+  unsafe {
+    int previous = meter->read();
+    forward_global_change();
+    if (previous < 2147483647) {
+      return meter->read() + 1;
+    }
+    return 0;
+  }
+}
+
+int case_global_method(GlobalMeter *meter) {
+  unsafe {
+    int previous = meter->read();
+    change_global_method();
+    if (previous < 2147483647) {
+      return meter->read() + 1;
+    }
+    return 0;
+  }
+}
+
+int case_global_initializer(GlobalMeter *meter) {
+  unsafe {
+    int previous = meter->read();
+    GlobalTrigger trigger{};
+    if (trigger.initialized != 0)
+      return 1;
+    if (previous < 2147483647) {
+      return meter->read() + 1;
+    }
+    return 0;
+  }
+}
+
+int case_global_reference(GlobalMeter *meter) {
+  unsafe {
+    int previous = meter->read();
+    change_global_reference();
+    if (previous < 2147483647) {
+      return meter->read() + 1;
+    }
+    return 0;
+  }
+}
+
+int case_global_scalar_reference(GlobalMeter *meter) {
+  unsafe {
+    int previous = meter->read();
+    change_global_scalar_reference();
+    if (previous < 2147483647) {
+      return meter->read() + 1;
+    }
+    return 0;
+  }
+}
+
+int case_global_reborrow(GlobalMeter *meter) {
+  unsafe {
+    int previous = meter->read();
+    change_global_reborrow();
+    if (previous < 2147483647) {
+      return meter->read() + 1;
+    }
+    return 0;
+  }
+}
+
+int case_independent_snapshot(int previous) {
   change_global_meter();
-  if (previous < 2147483647) { return meter.read() + 1; }
-  return 0;
-}
-
-int case_global_forwarded(GlobalMeter& meter) {
-  int previous = meter.read();
-  forward_global_change();
-  if (previous < 2147483647) { return meter.read() + 1; }
-  return 0;
-}
-
-int case_global_method(GlobalMeter& meter) {
-  int previous = meter.read();
-  change_global_method();
-  if (previous < 2147483647) { return meter.read() + 1; }
-  return 0;
-}
-
-int case_global_initializer(GlobalMeter& meter) {
-  int previous = meter.read();
-  GlobalTrigger trigger{};
-  if (trigger.initialized != 0) return 1;
-  if (previous < 2147483647) { return meter.read() + 1; }
-  return 0;
-}
-
-int case_global_reference(GlobalMeter& meter) {
-  int previous = meter.read();
-  change_global_reference();
-  if (previous < 2147483647) { return meter.read() + 1; }
-  return 0;
-}
-
-int case_global_scalar_reference(GlobalMeter& meter) {
-  int previous = meter.read();
-  change_global_scalar_reference();
-  if (previous < 2147483647) { return meter.read() + 1; }
-  return 0;
-}
-
-int case_global_reborrow(GlobalMeter& meter) {
-  int previous = meter.read();
-  change_global_reborrow();
-  if (previous < 2147483647) { return meter.read() + 1; }
-  return 0;
-}
-
-int case_independent_snapshot(GlobalMeter& meter) {
-  int previous = meter.read();
-  change_global_meter();
-  if (previous < 2147483647) { return previous + 1; }
+  if (previous < 2147483647) {
+    return previous + 1;
+  }
   return 0;
 }
 
 int main() {
-  if (case_independent_snapshot(shared_meter) != 2147483647) return 1;
+  if (case_independent_snapshot(shared_meter.read()) != 2147483647)
+    return 1;
   shared_meter.count = 2147483646;
-  if (true) return case_global_alias(shared_meter);
-  if (false) return case_global_forwarded(shared_meter);
-  if (false) return case_global_method(shared_meter);
-  if (false) return case_global_reference(shared_meter);
-  if (false) return case_global_scalar_reference(shared_meter);
-  if (false) return case_global_reborrow(shared_meter);
-  return case_global_initializer(shared_meter);
+  if (true) return case_global_alias(&shared_meter);
+  if (false) return case_global_forwarded(&shared_meter);
+  if (false) return case_global_method(&shared_meter);
+  if (false) return case_global_reference(&shared_meter);
+  if (false) return case_global_scalar_reference(&shared_meter);
+  if (false) return case_global_reborrow(&shared_meter);
+  return case_global_initializer(&shared_meter);
 }

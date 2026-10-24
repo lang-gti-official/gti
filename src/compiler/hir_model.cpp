@@ -138,6 +138,8 @@ const HirLoan *HirBody::findLoan(SemanticLoanId id) const {
 
 std::size_t HirProgram::valueCount() const {
   std::size_t count = moduleBody.values.size();
+  for (const auto &storage : threadLocalStorage_)
+    count += storage.initializer.values.size();
   for (const HirClassInstance &classInstance : classes) {
     count += classInstance.fieldInitializers.values.size();
     count += classInstance.staticFieldInitializers.values.size();
@@ -159,6 +161,8 @@ std::size_t HirProgram::valueCount() const {
 
 std::size_t HirProgram::statementCount() const {
   std::size_t count = moduleBody.statements.size();
+  for (const auto &storage : threadLocalStorage_)
+    count += storage.initializer.statements.size();
   for (const HirClassInstance &classInstance : classes) {
     count += classInstance.fieldInitializers.statements.size();
     count += classInstance.staticFieldInitializers.statements.size();
@@ -234,6 +238,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
   };
   verifyConcreteBindings(program.module());
+  for (const auto &storage : program.threadLocalStorage())
+    verifyConcreteBindings(storage.initializer);
   for (const auto &instance : program.functionInstances())
     verifyConcreteBindings(instance.body);
   for (const auto &instance : program.constructorInstances())
@@ -430,6 +436,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
   };
   verifyNativeInvocations(program.module());
+  for (const auto &storage : program.threadLocalStorage())
+    verifyNativeInvocations(storage.initializer);
   for (const auto &function : program.functionInstances())
     verifyNativeInvocations(function.body);
   for (const auto &constructor : program.constructorInstances())
@@ -813,6 +821,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
   };
   verifyGeneratedConstructionValues(program.module());
+  for (const auto &storage : program.threadLocalStorage())
+    verifyGeneratedConstructionValues(storage.initializer);
   for (const auto &owner : program.classInstances()) {
     verifyGeneratedConstructionValues(owner.fieldInitializers);
     verifyGeneratedConstructionValues(owner.staticFieldInitializers);
@@ -894,6 +904,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
   };
   verifyNativeCallbackValues(program.module());
+  for (const auto &storage : program.threadLocalStorage())
+    verifyNativeCallbackValues(storage.initializer);
   for (const HirClassInstance &instance : program.classInstances()) {
     verifyNativeCallbackValues(instance.fieldInitializers);
     verifyNativeCallbackValues(instance.staticFieldInitializers);
@@ -1083,6 +1095,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
   };
   verifyContextualConstructions(program.module());
+  for (const auto &storage : program.threadLocalStorage())
+    verifyContextualConstructions(storage.initializer);
   for (const HirClassInstance &instance : program.classInstances()) {
     verifyContextualConstructions(instance.fieldInitializers);
     verifyContextualConstructions(instance.staticFieldInitializers);
@@ -1401,6 +1415,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
   };
   verifyCallableValues(program.module());
+  for (const auto &storage : program.threadLocalStorage())
+    verifyCallableValues(storage.initializer);
   for (const HirClassInstance &instance : program.classInstances()) {
     verifyCallableValues(instance.fieldInitializers);
     verifyCallableValues(instance.staticFieldInitializers);
@@ -1506,6 +1522,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
   };
   verifyThreadTaskValues(program.module());
+  for (const auto &storage : program.threadLocalStorage())
+    verifyThreadTaskValues(storage.initializer);
   for (const HirClassInstance &instance : program.classInstances()) {
     verifyThreadTaskValues(instance.fieldInitializers);
     verifyThreadTaskValues(instance.staticFieldInitializers);
@@ -1885,6 +1903,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
   };
   verifyRangeIterations(program.module());
+  for (const auto &storage : program.threadLocalStorage())
+    verifyRangeIterations(storage.initializer);
   for (const HirClassInstance &instance : program.classInstances()) {
     const bool reanalyzed =
         !instance.typeArguments.empty() || !instance.valueArguments.empty();
@@ -1931,6 +1951,47 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       semantics.foreignStorageDeclarations())
     result.errors.emplace_back(
         "HIR foreign storage differs from semantic declarations");
+  const auto &semanticTls = semantics.threadLocalInitializationPlan().steps;
+  const auto &hirTls = program.threadLocalStorage();
+  if (semanticTls.size() != hirTls.size())
+    result.errors.emplace_back(
+        "HIR thread-local inventory differs from semantic declarations");
+  std::unordered_set<SymbolId> tlsSymbols;
+  for (std::size_t index = 0;
+       index < std::min(semanticTls.size(), hirTls.size()); ++index) {
+    const auto &semantic = semanticTls[index];
+    const auto &storage = hirTls[index];
+    const auto *binding = semantic.declaration
+                              ? semantics.findBinding(*semantic.declaration)
+                              : nullptr;
+    bool exact =
+        binding && binding->threadLocal && storage.symbol != 0 &&
+        tlsSymbols.insert(storage.symbol).second &&
+        storage.symbol == semantic.symbol &&
+        storage.sourceUnit == semantic.sourceUnit &&
+        storage.source == semantic.declaration &&
+        storage.type == binding->type && storage.traits == binding->traits &&
+        storage.access == binding->access &&
+        storage.requiresActiveCleanup == semantic.requiresActiveCleanup &&
+        storage.ensureFailure == semantic.ensureFailure &&
+        storage.dataInitializer.has_value() ==
+            (semantic.role == ProgramInitializationStepRole::DataOnly) &&
+        storage.initializer.roots.size() == 1;
+    const auto *returned = storage.initializer.roots.size() == 1
+                               ? storage.initializer.findStatement(
+                                     storage.initializer.roots.front())
+                               : nullptr;
+    exact = exact && returned && returned->kind == HirStatementKind::Return &&
+            returned->source == storage.source && returned->value.has_value();
+    if (exact && storage.source->initializer()) {
+      const auto *value = storage.initializer.initializerValueForSource(
+          *storage.source->initializer());
+      exact = value && *returned->value == value->id;
+    }
+    if (!exact)
+      result.errors.emplace_back("HIR thread-local initializer loses its exact "
+                                 "semantic storage proof");
+  }
   const ProgramInitializationPlan &semanticInitialization =
       semantics.programInitializationPlan();
   const HirProgramInitializationPlan &initialization =

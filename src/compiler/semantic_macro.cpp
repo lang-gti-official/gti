@@ -1,5 +1,8 @@
 #include "semantic_analyzer_impl.h"
 
+#include <type_traits>
+#include <utility>
+
 // The single typed statement-expansion engine, selected by #macro syntax.
 
 namespace lang {
@@ -323,6 +326,38 @@ auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement,
   return stmtAs<EmptyStmt>(&statement);
 }
 
+auto SemanticVisitor::Impl::copyRequestSessionForSpeculativeModel(Impl &probe)
+    -> void {
+  assert(&probe != this);
+  // A speculative model has its own expression order and executes none of
+  // the caller's pending cleanup. Avoid copying those growing caches, but
+  // keep ordinary matched session/model copies unchanged. No semantic work
+  // runs while this guard temporarily removes the caller's expression state.
+  struct RestoreCallerExpressionState {
+    RequestSessionContext &caller;
+    ProgramExpressionCache expressionCache;
+    std::vector<ProgramFullExpressionState> frames;
+
+    explicit RestoreCallerExpressionState(RequestSessionContext &caller)
+        : caller(caller) {
+      static_assert(std::is_nothrow_swappable_v<ProgramExpressionCache>);
+      static_assert(noexcept(frames.swap(caller.fullExpressionStates)));
+      std::swap(expressionCache, caller.programExpressionCache);
+      frames.swap(caller.fullExpressionStates);
+    }
+    RestoreCallerExpressionState(const RestoreCallerExpressionState &) = delete;
+    RestoreCallerExpressionState &
+    operator=(const RestoreCallerExpressionState &) = delete;
+    ~RestoreCallerExpressionState() noexcept {
+      std::swap(expressionCache, caller.programExpressionCache);
+      frames.swap(caller.fullExpressionStates);
+    }
+  } restore(requestSession);
+  // Copying context is value/container cloning, not semantic analysis. Its
+  // active loan identities, flow and counters are retained in the probe.
+  static_cast<RequestSessionContext &>(probe.requestSession) = requestSession;
+} // Restore the caller before creating or executing any probe model.
+
 auto SemanticVisitor::Impl::analyzeMacroStatement(
     const ExpressionStmt &statement) -> bool {
   if (currentFunctionDeclaration && currentFunctionDeclaration->isMacro())
@@ -355,7 +390,7 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
   // but their speculative moves, loans and writes never affect caller flow.
   Impl probe(target, sourceGraph, toolingOccurrences, nullptr, sources,
              rawPointerAudit, requireFunctionDefinitions, trustedBodies);
-  static_cast<RequestSessionContext &>(probe.requestSession) = requestSession;
+  copyRequestSessionForSpeculativeModel(probe);
   probe.semanticModel.beginSpeculativeDelta(semanticModel);
   probe.semanticModel.setFunctionDemandSink(nullptr);
   probe.semanticModel.setCallJournal(nullptr);

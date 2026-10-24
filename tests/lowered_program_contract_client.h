@@ -11,7 +11,7 @@ class LoweredProgram;
 namespace gti_test {
 
 inline constexpr std::size_t loweredDeclarationKindCount = 14;
-inline constexpr std::size_t loweredGeneratedItemKindCount = 8;
+inline constexpr std::size_t loweredGeneratedItemKindCount = 9;
 
 struct LoweredProgramInventory {
   std::size_t bodies = 0;

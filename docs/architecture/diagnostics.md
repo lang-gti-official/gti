@@ -895,6 +895,22 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   for coherence, explain that the package must own the primary or one
   top-level nominal type argument. Do not offer a fix-it: changing the target,
   argument type, package ownership, or declaration location requires intent.
+- `GTI-S2124` owns invalid `thread_local` declarations and unsupported initializer
+  dependencies. Point at the exact keyword for an invalid declaration shape
+  (native storage, a non-static instance field, `constexpr`, or a declaration
+  requiring an unrepresented concrete generic/lambda storage identity). Relate
+  the storage declaration. For an automatic parameter/local/receiver dependency
+  in a lifted initializer, point at the offending use and relate its declaration
+  when available. Do not offer a speculative fix-it: choosing storage ownership,
+  a runtime initialization argument or a concrete instance is semantic work.
+  Retained checked borrowed state uses `GTI-S2045`, as do transitive hidden
+  persistent-storage accesses that conflict with an ordinary live loan. Relate
+  both the protected origin and the exact conflicting source access; unresolved
+  GTI targets relate the open effect boundary instead. A staged-input conflict
+  points at the later evaluated input and explains that earlier inputs are
+  already bound. Scope, full-expression, replacement and failure cleanup checks
+  identify their scheduling boundary in related information; they are not
+  reported as if the user's destructor ran at its declaration.
 - `GTI-S2123` owns concepts with a body, conformance blocks, and their uses.
   The block owns written header diagnostics, including generic parameter
   constraints. Generated operations reuse those parameter identities and do
