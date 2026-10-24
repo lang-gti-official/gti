@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
 
@@ -35,9 +36,150 @@ auto &storage(lang::MirProgram &program) {
   return const_cast<std::vector<lang::MirThreadLocalStorage> &>(
       program.threadLocalStorage());
 }
+
+void initializerHasNoCallerActivation() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-thread-local/initializer-locals.gti", R"(
+extern "C" { mut int32_t external_value; }
+mut int32_t process_value = 4;
+thread_local mut int32_t per_thread_value = 2;
+#macro int32_t lexical_value(int32_t expression) {
+  int32_t saved = expression;
+  unsafe {
+    int32_t native_copy = external_value;
+    return saved + native_copy;
+  }
+}
+int32_t process_result = lexical_value(process_value);
+thread_local int32_t per_thread_result = lexical_value(per_thread_value);
+int32_t invoke(int32_t argument) {
+  int32_t caller = argument;
+  return per_thread_result + caller;
+}
+int main() { return invoke(process_result); }
+)");
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "own lexical locals and declared process/TLS/foreign storage remain "
+         "valid initializer inputs");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "initializer locals verify without granting a caller activation");
+  const auto symbol = [&](std::string_view name) {
+    for (const auto &record : frontend.semantics.database().symbols())
+      if (record.name == name)
+        return record.id;
+    return lang::SymbolId{0};
+  };
+  const auto caller = symbol("caller");
+  const auto tls = symbol("per_thread_result");
+  expect(
+      caller != 0 && tls != 0 && !frontend.mir.findThreadLocalStorage(caller) &&
+          !frontend.mir.findForeignStorage(caller) &&
+          !frontend.mir.programInitializationPlan().findStepForSymbol(caller),
+      "the forged outer root is a real automatic declaration, not storage");
+  for (const auto address :
+       {lang::MirBodyAddress{.kind = lang::MirBodyKind::Module},
+        lang::MirBodyAddress{.kind = lang::MirBodyKind::ThreadLocalInitializer,
+                             .owner = tls}}) {
+    const auto *source = lang::findMirBody(frontend.mir, address);
+    lang::MirPlaceId local = 0;
+    lang::HirBindingId binding = 0;
+    if (source)
+      for (const auto &place : source->places) {
+        const bool persistent = std::any_of(
+            frontend.mir.programInitializationPlan().steps.begin(),
+            frontend.mir.programInitializationPlan().steps.end(),
+            [&](const auto &step) { return step.binding == place.binding; });
+        if (place.root == lang::MirPlaceRootKind::Binding &&
+            !place.initiallyAvailable && place.projections.empty() &&
+            !persistent) {
+          local = place.id;
+          binding = place.binding;
+          break;
+        }
+      }
+    expect(source && local && binding,
+           "both initializer families contain an actual lexical slot");
+    if (!source || !local || !binding)
+      continue;
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto forged = frontend.mir;
+      auto *body = lang::findMirBody(forged, address);
+      bool changed = false;
+      bool removedInitialization = false;
+      for (auto &place : body->places) {
+        if (place.root != lang::MirPlaceRootKind::Binding ||
+            place.binding != binding)
+          continue;
+        if (mutation == 0)
+          place.initiallyAvailable = true;
+        if (mutation == 1 || mutation == 3) {
+          place.root = lang::MirPlaceRootKind::Symbol;
+          place.binding = 0;
+          place.symbol = caller;
+          place.capture = mutation == 3 ? 1 : 0;
+          place.key =
+              lang::PlaceKey{.domain = body->placeDomain, .root = caller};
+        }
+        if (mutation == 2) {
+          place.root = lang::MirPlaceRootKind::This;
+          place.binding = 0;
+          place.symbol = 0;
+          place.key =
+              lang::PlaceKey{.domain = body->placeDomain, .receiver = true};
+        }
+        changed = true;
+      }
+      if (mutation == 0)
+        for (auto &block : body->blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.kind == lang::MirInstructionKind::Initialize &&
+                instruction.destination == local) {
+              instruction = lang::makeMirInstructionTombstone(instruction);
+              removedInitialization = true;
+            }
+      if (mutation == 4) {
+        lang::MirLoan loan;
+        loan.id = body->loans.size() + 1;
+        loan.kind = lang::MirLoanKind::Parameter;
+        loan.semanticLoan = loan.id;
+        loan.source = local;
+        loan.carriers = {binding};
+        loan.entry = true;
+        body->loans.push_back(std::move(loan));
+      }
+      expect(changed && (mutation != 0 || removedInitialization) &&
+                 lang::rebuildMirValueUses(*body),
+             "malformed initializer changes an exact slot and rebuilds uses");
+      const auto proof = lang::verifyMirProgram(forged);
+      const std::string_view expected =
+          mutation == 0   ? "initializer binding cannot claim caller entry"
+          : mutation == 1 ? "initializer symbol does not name declared"
+          : mutation == 4 ? "initializer cannot receive a caller entry loan"
+                          : "initializer cannot receive a caller receiver";
+      const bool rejected = std::any_of(
+          proof.errors.begin(), proof.errors.end(), [&](const auto &error) {
+            return error.bodyKind == address.kind &&
+                   error.owner == address.owner &&
+                   error.message.find(expected) != std::string::npos;
+          });
+      if (!rejected)
+        for (const auto &error : proof.errors)
+          std::cerr << int(address.kind) << " mutation " << mutation << ": "
+                    << error.message << '\n';
+      expect(!proof.valid() && rejected,
+             "an initializer independently rejects caller state by exact "
+             "entry/storage authority");
+    }
+  }
+}
 } // namespace
 
 int main() {
+  initializerHasNoCallerActivation();
   const auto frontend =
       lang::Frontend().analyze("/tmp/gti-mir-thread-local/main.gti", R"(
 thread_local mut int32_t counter = 0;

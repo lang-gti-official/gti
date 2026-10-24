@@ -16949,7 +16949,41 @@ verifyMirProgramContracts(const MirProgram &program) {
                  "foreign storage symbol collides with a native function"});
   }
   const FailureOriginAssignmentLookup failureOrigins(program.failureMetadata());
+  // These initializers have no caller activation. Their Symbol roots may
+  // address only independently declared persistent storage; Binding roots
+  // are fresh body-local slots whose availability is established by the
+  // ordinary initialization/lifecycle flow, never by invented formal state.
+  std::unordered_set<SymbolId> initializerStorageSymbols = foreignSymbols;
+  for (const auto &step : program.programInitializationPlan().steps)
+    initializerStorageSymbols.insert(step.symbol);
+  for (const auto &storage : program.threadLocalStorage())
+    initializerStorageSymbols.insert(storage.symbol);
   const auto verifyBody = [&](const MirBody &body, std::size_t owner) {
+    const bool noCallerActivation =
+        body.kind == MirBodyKind::Module ||
+        body.kind == MirBodyKind::ThreadLocalInitializer;
+    const auto initializerError = [&](std::string message) {
+      result.errors.push_back({.bodyKind = body.kind,
+                               .owner = owner,
+                               .message = std::move(message)});
+    };
+    if (noCallerActivation) {
+      for (const auto &place : body.places) {
+        if (place.root == MirPlaceRootKind::This || place.capture != 0)
+          initializerError(
+              "initializer cannot receive a caller receiver or captures");
+        if (place.root == MirPlaceRootKind::Binding && place.initiallyAvailable)
+          initializerError(
+              "initializer binding cannot claim caller entry availability");
+        if (place.root == MirPlaceRootKind::Symbol && place.capture == 0 &&
+            !initializerStorageSymbols.contains(place.symbol))
+          initializerError("initializer symbol does not name declared program, "
+                           "thread-local or foreign storage");
+      }
+      for (const auto &loan : body.loans)
+        if (loan.entry)
+          initializerError("initializer cannot receive a caller entry loan");
+    }
     const auto verifyStorageType = [&](const SemanticType &type) {
       if (!storageOwnershipTypeValid(program, type))
         result.errors.push_back(
@@ -17966,6 +18000,8 @@ verifyMirProgramContracts(const MirProgram &program) {
                                      program.hostedStartupPlan()->entry));
   }
   verifyBody(program.module(), 0);
+  for (const auto &storage : program.threadLocalStorage())
+    verifyBody(storage.initializer, storage.symbol);
   const auto typeRequiresActiveCleanup =
       [&](const SemanticType &type, const auto &query) -> std::optional<bool> {
     switch (type.kind) {
