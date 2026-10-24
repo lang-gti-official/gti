@@ -4054,6 +4054,76 @@ public:
          "a stale program plan must fail before classifier readiness");
 }
 
+void testProgramInitializerLexicalLocals() {
+  const auto frontend = analyze("cpp-mir-initializer-locals.gti", R"(
+mut int cleaned = 0;
+class Owner {
+public:
+  Owner() {}
+  ~Owner() { cleaned += 1; }
+};
+#macro int initial_value(int value) {
+  Owner guard{};
+  mut int saved = value;
+  saved += 1;
+  if (saved > 0) { return saved; }
+  return 0;
+}
+int global = initial_value(4);
+class Registry { public: static int value = initial_value(6); };
+int main() { return global + Registry::value + cleaned - 14; }
+)");
+  expect(frontend.canGenerateCode(),
+         "owning startup locals must retain verified MIR cleanup");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto rows = buildRows(frontend, frontend.mir);
+  std::size_t locals = 0;
+  for (const auto &step : frontend.mir.programInitializationPlan().steps)
+    for (const auto &local : step.locals) {
+      ++locals;
+      expect(std::none_of(
+                 rows.symbols.begin(), rows.symbols.end(),
+                 [&](const auto &row) {
+                   return row.kind ==
+                              lang::CppMirSymbolRepresentationKind::Storage &&
+                          row.symbol == local.symbol;
+                 }),
+             "initializer-local identities never demand global storage rows");
+    }
+  expect(locals == 4,
+         "both startup steps retain distinct owner and scalar local bindings");
+  const lang::CppMirBodyEmissionMap map(rows);
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress module{.kind = lang::MirBodyKind::Module};
+  expect(emitter.analyze(module).ready() &&
+             emitter.supportsFailureBodyText(module),
+         "startup locals use ordinary verified failure-capable body carriers");
+  expect(!emitter.initializerSchedule(module).supported,
+         "lexical startup execution never becomes a passive global schedule");
+  const auto text = emitter.emitFailureBodyText(module, "initializer", 1);
+  expect(text.emitted() &&
+             text.text.find("__gti_mir_p_") != std::string::npos &&
+             !gti_test::emitCppText(frontend).empty(),
+         "owning startup locals emit complete MIR body text and cleanup");
+  auto malformed = frontend.mir;
+  auto &steps = const_cast<lang::MirProgramInitializationPlan &>(
+                    malformed.programInitializationPlan())
+                    .steps;
+  const auto step =
+      std::find_if(steps.begin(), steps.end(),
+                   [](const auto &item) { return !item.locals.empty(); });
+  if (step != steps.end()) {
+    step->locals.clear();
+    const auto rejected =
+        lang::CppMirBodyEmitter(malformed, map).analyze(module);
+    expect(
+        hasIssue(rejected,
+                 lang::CppMirBodyEmissionIssueKind::InvalidMirProgram),
+        "backend rejects missing local authority instead of inventing storage");
+  }
+}
+
 void testSafeIndexUsesBoundsNotRawMemory() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-body-safe-index.gti", R"(
@@ -7181,6 +7251,8 @@ constexpr NamedTest kTests[] = {
      testHostedStartupOwnsRemainingAuthorityGap},
     {"testVerifiedProgramInitializationPlanClassification",
      testVerifiedProgramInitializationPlanClassification},
+    {"testProgramInitializerLexicalLocals",
+     testProgramInitializerLexicalLocals},
     {"testSafeIndexUsesBoundsNotRawMemory",
      testSafeIndexUsesBoundsNotRawMemory},
     {"testUnsafeRawPointerVocabulary", testUnsafeRawPointerVocabulary},

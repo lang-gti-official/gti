@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -482,6 +483,26 @@ struct HirBody {
                                                   : &dropObligations[id - 1];
   }
 };
+
+// Exact executable inventory reached from initializer values, including only
+// statement subgraphs entered through ScopedResult values. Shared by HIR
+// verification and lowering of program-storage initialization schedules.
+struct HirInitializerReachability {
+  bool complete = true;
+  std::unordered_set<HirValueId> values;
+  std::unordered_set<HirStatementId> statements;
+  std::unordered_set<HirBindingId> bindings;
+};
+
+[[nodiscard]] HirInitializerReachability
+hirInitializerReachability(const HirBody &body,
+                           const std::vector<HirValueId> &roots);
+// Independent root groups share one immutable body index, avoiding a full
+// module-inventory rebuild for every program-storage initializer.
+[[nodiscard]] std::vector<HirInitializerReachability>
+hirInitializerReachabilityBatch(
+    const HirBody &body,
+    const std::vector<std::vector<HirValueId>> &rootGroups);
 
 struct HirLambda {
   HirLambdaId id = 0;

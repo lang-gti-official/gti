@@ -2131,8 +2131,14 @@ uniqueMirClassInstanceForType(const MirProgram &program,
         const MirLoan *loan =
             argumentInput->loan ? body.findLoan(*argumentInput->loan) : nullptr;
         bool exactProducer = false;
-        if (producer != nullptr && argumentPlace != nullptr &&
-            producer->kind == MirInstructionKind::Move) {
+        if (producer && argumentPlace &&
+            argumentPlace->root == MirPlaceRootKind::Temporary &&
+            producer->kind == MirInstructionKind::Load) {
+          // The shared query proves the exact hidden slot transport; body
+          // verification additionally proves its owner live at the input.
+          exactProducer = producer->info.type == argumentPlace->type;
+        } else if (producer != nullptr && argumentPlace != nullptr &&
+                   producer->kind == MirInstructionKind::Move) {
           // The explicitly moved binding's value now lives in this exact
           // temporary; its type is the borrowed referent.
           exactProducer = producer->info.type == argumentPlace->type;
@@ -8937,11 +8943,19 @@ verifyMirProgramInitialization(const MirProgram &program) {
   }
   std::unordered_map<HirBindingId, ProgramInitializationStepId> bindingSteps;
   std::unordered_map<SymbolId, ProgramInitializationStepId> symbolSteps;
+  std::unordered_map<HirBindingId, ProgramInitializationStepId>
+      localBindingSteps;
+  std::unordered_map<SymbolId, ProgramInitializationStepId> localSymbolSteps;
+  std::unordered_map<HirBindingId, const MirProgramInitializationLocal *>
+      localsByBinding;
+  std::unordered_set<MirPlaceId> localPlaces;
   std::unordered_set<MirPlaceId> storagePlaces;
   std::unordered_set<MirInstructionId> storageInitializations;
   std::unordered_set<HirStatementId> statements;
   std::unordered_set<HirValueId> initializerValues;
   std::unordered_set<HirFullExpressionId> fullExpressions;
+  std::unordered_map<HirFullExpressionId, ProgramInitializationStepId>
+      fullExpressionSteps;
   std::unordered_map<MirBlockId, std::vector<MirBlockId>> predecessors;
   for (const MirBlock &block : module.blocks) {
     for (const MirBlockId successor : terminatorSuccessors(block.terminator)) {
@@ -9013,6 +9027,52 @@ verifyMirProgramInitialization(const MirProgram &program) {
       }
     } else {
       add("program-initialization step has an invalid storage kind");
+    }
+    HirBindingId previousLocal = 0;
+    for (const auto &local : step.locals) {
+      const auto *place = module.findPlace(local.place);
+      const PlaceKey key{.domain = module.placeDomain, .root = local.symbol};
+      if (step.role != ProgramInitializationStepRole::Initializer ||
+          local.binding == 0 || local.binding <= previousLocal ||
+          !localBindingSteps.emplace(local.binding, step.id).second ||
+          !localsByBinding.emplace(local.binding, &local).second ||
+          (local.symbol != 0 &&
+           !localSymbolSteps.emplace(local.symbol, step.id).second) ||
+          !localPlaces.insert(local.place).second || place == nullptr ||
+          place->root != MirPlaceRootKind::Binding ||
+          place->binding != local.binding || place->symbol != local.symbol ||
+          place->capture != 0 || place->temporary != 0 || place->value != 0 ||
+          place->loan != 0 || !place->projections.empty() ||
+          place->type == SemanticType::Unknown || place->sourceValue != 0 ||
+          place->foreignStorage || place->initiallyAvailable ||
+          (local.symbol == 0 ? place->key.has_value()
+                             : !place->key || *place->key != key)) {
+        add("program-initialization local has invalid or overlapping identity",
+            step.entryBlock);
+      }
+      previousLocal = local.binding;
+    }
+    for (const auto nested : step.nestedFullExpressions) {
+      const auto *full = nested != 0 && nested <= module.fullExpressions.size()
+                             ? &module.fullExpressions[nested - 1]
+                             : nullptr;
+      const auto found = fullExpressionMarkers.find(nested);
+      if (step.role != ProgramInitializationStepRole::Initializer ||
+          nested == step.fullExpression || full == nullptr ||
+          full->id != nested || full->statement == 0 ||
+          full->constructorInitializer != 0 ||
+          !fullExpressions.insert(nested).second ||
+          !fullExpressionSteps.emplace(nested, step.id).second ||
+          found == fullExpressionMarkers.end() || found->second.empty() ||
+          std::any_of(found->second.begin(), found->second.end(),
+                      [&](const auto &marker) {
+                        return marker.block->programInitializationStep !=
+                               step.id;
+                      })) {
+        add("nested initializer full expression is not exact to its owning "
+            "step",
+            step.entryBlock);
+      }
     }
 
     const ExpressionInfo expectedInfo =
@@ -9137,6 +9197,7 @@ verifyMirProgramInitialization(const MirProgram &program) {
           !statements.insert(step.statement).second ||
           !initializerValues.insert(step.initializer).second ||
           !fullExpressions.insert(step.fullExpression).second ||
+          !fullExpressionSteps.emplace(step.fullExpression, step.id).second ||
           !commonInitialize || !operandMatchesInitializer() ||
           *initialize != canonicalInitialize || full == nullptr ||
           full->id != step.fullExpression ||
@@ -9293,8 +9354,18 @@ verifyMirProgramInitialization(const MirProgram &program) {
   }
 
   if (module.fullExpressions.size() != fullExpressions.size()) {
-    add("module full-expression inventory is not exactly the dynamic steps");
+    add("module full-expression inventory is not exactly the dynamic steps "
+        "and their nested initializer expressions");
   }
+  for (const auto &[binding, step] : localBindingSteps)
+    if (bindingSteps.contains(binding))
+      add("program-initialization local overlaps persistent storage");
+  for (const auto &[symbol, step] : localSymbolSteps)
+    if (symbolSteps.contains(symbol))
+      add("program-initialization local overlaps persistent storage");
+  for (const auto place : localPlaces)
+    if (storagePlaces.contains(place))
+      add("program-initialization local overlaps persistent storage");
   const auto placeIsUsed = [&](MirPlaceId id) {
     if (std::any_of(module.loans.begin(), module.loans.end(),
                     [&](const MirLoan &loan) { return loan.source == id; }) ||
@@ -9320,6 +9391,33 @@ verifyMirProgramInitialization(const MirProgram &program) {
       }
     }
     return false;
+  };
+  for (const auto place : localPlaces)
+    if (!placeIsUsed(place))
+      add("program-initialization local has orphan storage");
+  struct StorageIdentity {
+    ProgramInitializationStepId step = 0;
+    bool local = false;
+  };
+  const auto bindingIdentity = [&](HirBindingId binding) {
+    if (const auto found = localBindingSteps.find(binding);
+        found != localBindingSteps.end())
+      return StorageIdentity{found->second, true};
+    if (const auto found = bindingSteps.find(binding);
+        found != bindingSteps.end())
+      return StorageIdentity{found->second, false};
+    return StorageIdentity{};
+  };
+  const auto symbolIdentity = [&](SymbolId symbol) {
+    if (const auto found = localSymbolSteps.find(symbol);
+        found != localSymbolSteps.end())
+      return StorageIdentity{found->second, true};
+    if (const auto found = symbolSteps.find(symbol); found != symbolSteps.end())
+      return StorageIdentity{found->second, false};
+    return StorageIdentity{};
+  };
+  const auto sameIdentity = [](StorageIdentity left, StorageIdentity right) {
+    return left.step == right.step && left.local == right.local;
   };
   for (const MirPlace &place : module.places) {
     if (place.root == MirPlaceRootKind::This) {
@@ -9356,71 +9454,76 @@ verifyMirProgramInitialization(const MirProgram &program) {
       // step.
       continue;
     }
-    std::optional<ProgramInitializationStepId> identity;
+    if (!placeIsUsed(place.id))
+      add("module contains orphan persistent/local storage place");
+    std::optional<StorageIdentity> identity;
     bool exact = true;
-    const auto requireIdentity = [&](ProgramInitializationStepId candidate) {
-      exact = exact && candidate != 0 && (!identity || *identity == candidate);
-      if (candidate != 0 && !identity) {
+    const auto requireIdentity = [&](StorageIdentity candidate) {
+      exact = exact && candidate.step != 0 &&
+              (!identity || sameIdentity(*identity, candidate));
+      if (candidate.step != 0 && !identity) {
         identity = candidate;
       }
     };
     if (place.root == MirPlaceRootKind::Binding) {
-      const auto binding = bindingSteps.find(place.binding);
-      requireIdentity(binding == bindingSteps.end() ? 0 : binding->second);
+      requireIdentity(bindingIdentity(place.binding));
+      if (const auto local = localsByBinding.find(place.binding);
+          local != localsByBinding.end())
+        exact &= place.symbol == local->second->symbol;
     }
-    const auto symbol = symbolSteps.find(place.symbol);
-    requireIdentity(symbol == symbolSteps.end() ? 0 : symbol->second);
+    if (place.symbol != 0 || !bindingRoot || !identity || !identity->local)
+      requireIdentity(symbolIdentity(place.symbol));
     if (place.key) {
-      const auto keyed = symbolSteps.find(place.key->root);
-      requireIdentity(keyed == symbolSteps.end() ? 0 : keyed->second);
+      exact &= place.key->domain == module.placeDomain &&
+               !place.key->receiver && place.key->root == place.symbol;
+      requireIdentity(symbolIdentity(place.key->root));
+    } else if (place.symbol == 0) {
+      exact &= bindingRoot && identity && identity->local;
     }
     if (!exact) {
       add("module binding/symbol-root place does not name one exact planned "
-          "storage step");
+          "persistent or local storage identity");
     }
   }
 
   const auto stepForPlace = [&](MirPlaceId placeId, const auto &resolve,
                                 std::unordered_set<MirPlaceId> &visiting)
-      -> std::optional<ProgramInitializationStepId> {
+      -> std::optional<StorageIdentity> {
     const MirPlace *place = module.findPlace(placeId);
     if (place == nullptr || !visiting.insert(placeId).second) {
-      return ProgramInitializationStepId{0};
+      return StorageIdentity{};
     }
-    std::optional<ProgramInitializationStepId> selected;
-    const auto select = [&](ProgramInitializationStepId candidate) {
-      if (candidate == 0) {
-        return true;
-      }
-      if (selected && *selected != candidate) {
+    std::optional<StorageIdentity> selected;
+    const auto select = [&](StorageIdentity candidate) {
+      if (candidate.step == 0 ||
+          (selected && !sameIdentity(*selected, candidate))) {
         return false;
       }
       selected = candidate;
       return true;
     };
-    if (const auto found = bindingSteps.find(place->binding);
-        found != bindingSteps.end() && !select(found->second)) {
-      return ProgramInitializationStepId{0};
+    if (place->root == MirPlaceRootKind::Binding &&
+        !select(bindingIdentity(place->binding))) {
+      return StorageIdentity{};
     }
-    if (const auto found = symbolSteps.find(place->symbol);
-        found != symbolSteps.end() && !select(found->second)) {
-      return ProgramInitializationStepId{0};
+    if (place->symbol != 0 && !place->foreignStorage &&
+        !select(symbolIdentity(place->symbol))) {
+      return StorageIdentity{};
     }
     if (place->key) {
-      if (const auto found = symbolSteps.find(place->key->root);
-          found != symbolSteps.end() && !select(found->second)) {
-        return ProgramInitializationStepId{0};
+      if (!place->foreignStorage && !select(symbolIdentity(place->key->root))) {
+        return StorageIdentity{};
       }
     }
     if (place->root == MirPlaceRootKind::Loan) {
       const MirLoan *loan = module.findLoan(place->loan);
       if (loan == nullptr) {
-        return ProgramInitializationStepId{0};
+        return StorageIdentity{};
       }
-      const std::optional<ProgramInitializationStepId> source =
+      const std::optional<StorageIdentity> source =
           resolve(loan->source, resolve, visiting);
-      if (source && (*source == 0 || !select(*source))) {
-        return ProgramInitializationStepId{0};
+      if (source && !select(*source)) {
+        return StorageIdentity{};
       }
     }
     visiting.erase(placeId);
@@ -9430,31 +9533,91 @@ verifyMirProgramInitialization(const MirProgram &program) {
     std::unordered_set<MirPlaceId> visiting;
     return stepForPlace(placeId, stepForPlace, visiting);
   };
-  const auto resolveLoanStep = [&](MirLoanId loanId) {
-    const MirLoan *loan = module.findLoan(loanId);
-    return loan == nullptr
-               ? std::optional<
-                     ProgramInitializationStepId>{ProgramInitializationStepId{
-                     0}}
-               : resolvePlaceStep(loan->source);
+  const auto legalPriorStep = [&](std::optional<StorageIdentity> target,
+                                  ProgramInitializationStepId current,
+                                  bool sameStepInitialization) {
+    if (!target) {
+      return true;
+    }
+    if (target->step == 0) {
+      return false;
+    }
+    if (target->local)
+      return target->step == current;
+    return target->step < current ||
+           (sameStepInitialization && target->step == current);
   };
-  const auto legalPriorStep =
-      [&](std::optional<ProgramInitializationStepId> target,
-          ProgramInitializationStepId current, bool sameStepInitialization) {
-        if (!target) {
-          return true;
-        }
-        if (*target == 0) {
-          return false;
-        }
-        return *target < current ||
-               (sameStepInitialization && *target == current);
-      };
+  using VisitingPlaces = std::unordered_set<MirPlaceId>;
+  using VisitingLoans = std::unordered_set<MirLoanId>;
+  std::function<bool(MirPlaceId, ProgramInitializationStepId, bool,
+                     VisitingPlaces &, VisitingLoans &)>
+      legalPlace;
+  std::function<bool(MirLoanId, ProgramInitializationStepId, VisitingPlaces &,
+                     VisitingLoans &)>
+      legalLoan;
+  legalPlace = [&](MirPlaceId id, ProgramInitializationStepId current,
+                   bool sameStepInitialization, VisitingPlaces &places,
+                   VisitingLoans &loans) {
+    const auto *place = module.findPlace(id);
+    if (place == nullptr || !places.insert(id).second)
+      return false;
+    bool legal =
+        legalPriorStep(resolvePlaceStep(id), current, sameStepInitialization);
+    if (place->root == MirPlaceRootKind::Loan)
+      legal &= legalLoan(place->loan, current, places, loans);
+    places.erase(id);
+    return legal;
+  };
+  legalLoan = [&](MirLoanId id, ProgramInitializationStepId current,
+                  VisitingPlaces &places, VisitingLoans &loans) {
+    const auto *loan = module.findLoan(id);
+    if (loan == nullptr || !loans.insert(id).second)
+      return false;
+    bool legal = legalPlace(loan->source, current, false, places, loans);
+    for (const auto parent : {loan->parent, loan->storedDependency})
+      if (parent != 0)
+        legal &= legalLoan(parent, current, places, loans);
+    for (const auto &dependency : loan->additionalDependencies) {
+      legal &= legalPlace(dependency.source, current, false, places, loans);
+      if (dependency.parent != 0)
+        legal &= legalLoan(dependency.parent, current, places, loans);
+    }
+    if (loan->referenceSelection) {
+      legal &= legalPlace(loan->referenceSelection->carrier, current, false,
+                          places, loans);
+      if (loan->referenceSelection->transferredFrom != 0)
+        legal &= legalLoan(loan->referenceSelection->transferredFrom, current,
+                           places, loans);
+    }
+    for (const auto carrier : loan->carriers)
+      if (const auto found = localBindingSteps.find(carrier);
+          found != localBindingSteps.end())
+        legal &= found->second == current;
+    loans.erase(id);
+    return legal;
+  };
   const auto legalPriorAccess = [&](MirPlaceId placeId,
                                     ProgramInitializationStepId current,
                                     bool sameStepInitialization) {
-    return legalPriorStep(resolvePlaceStep(placeId), current,
-                          sameStepInitialization);
+    VisitingPlaces places;
+    VisitingLoans loans;
+    return legalPlace(placeId, current, sameStepInitialization, places, loans);
+  };
+  const auto legalLoanAccess = [&](MirLoanId id,
+                                   ProgramInitializationStepId current) {
+    VisitingPlaces places;
+    VisitingLoans loans;
+    return legalLoan(id, current, places, loans);
+  };
+  const auto dropInStep = [&](MirDropObligationId id,
+                              ProgramInitializationStepId current) {
+    const auto *drop = module.findDropObligation(id);
+    if (drop == nullptr)
+      return false;
+    if (drop->fullExpression == 0)
+      return true;
+    const auto found = fullExpressionSteps.find(drop->fullExpression);
+    return found != fullExpressionSteps.end() && found->second == current;
   };
 
   std::size_t exits = 0;
@@ -9462,6 +9625,18 @@ verifyMirProgramInitialization(const MirProgram &program) {
     const ProgramInitializationStepId current = block.programInitializationStep;
     const MirProgramInitializationStep *step = plan.findStep(current);
     for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.fullExpressionEnd != 0) {
+        const auto found =
+            fullExpressionSteps.find(instruction.fullExpressionEnd);
+        if (found == fullExpressionSteps.end() || found->second != current)
+          add("initializer full-expression marker escapes its owning step",
+              block.id, instruction.id);
+      }
+      for (const auto &event : instruction.lifecycle)
+        for (const auto id : {event.source, event.target})
+          if (id != 0 && !dropInStep(id, current))
+            add("initializer lifecycle obligation escapes its expression step",
+                block.id, instruction.id);
       const bool exactInitialization =
           step != nullptr && instruction.id == step->storageInitialization &&
           instruction.kind == MirInstructionKind::Initialize &&
@@ -9480,12 +9655,22 @@ verifyMirProgramInitialization(const MirProgram &program) {
               "after its step",
               block.id, instruction.id);
         }
-        if (operand.loan != 0 &&
-            !legalPriorStep(resolveLoanStep(operand.loan), current, false)) {
+        if (operand.loan != 0 && !legalLoanAccess(operand.loan, current)) {
           add("loan operand/receiver accesses program storage before its "
               "step",
               block.id, instruction.id);
         }
+        const auto *value = operand.kind == MirOperandKind::Value
+                                ? module.findValue(operand.value)
+                                : nullptr;
+        if (value && value->borrowDependencies)
+          for (const auto &dependency : value->borrowDependencies->dependencies)
+            if (!legalPriorAccess(dependency.source, current, false) ||
+                (dependency.parent != 0 &&
+                 !legalLoanAccess(dependency.parent, current)))
+              add("initializer value dependency escapes its owning storage "
+                  "step",
+                  block.id, instruction.id);
       };
       if (instruction.receiver) {
         checkOperand(*instruction.receiver);
@@ -9493,6 +9678,13 @@ verifyMirProgramInitialization(const MirProgram &program) {
       for (const MirOperand &operand : instruction.operands) {
         checkOperand(operand);
       }
+      if (instruction.loan && !legalLoanAccess(*instruction.loan, current))
+        add("initializer loan accesses storage outside its owning step",
+            block.id, instruction.id);
+      if (instruction.retainedOwnerPlace &&
+          !legalPriorAccess(*instruction.retainedOwnerPlace, current, false))
+        add("initializer retained owner escapes its owning storage step",
+            block.id, instruction.id);
       if (instruction.programConstantSubstitution &&
           (step == nullptr ||
            step->role != ProgramInitializationStepRole::Initializer ||
@@ -9507,10 +9699,14 @@ verifyMirProgramInitialization(const MirProgram &program) {
       add("terminator accesses program storage before its step", block.id);
     }
     if (block.terminator.value && block.terminator.value->loan != 0 &&
-        !legalPriorStep(resolveLoanStep(block.terminator.value->loan), current,
-                        false)) {
+        !legalLoanAccess(block.terminator.value->loan, current)) {
       add("terminator loan accesses program storage before its step", block.id);
     }
+    for (const auto &event : block.terminator.successLifecycle)
+      for (const auto id : {event.source, event.target})
+        if (id != 0 && !dropInStep(id, current))
+          add("initializer success obligation escapes its expression step",
+              block.id, block.terminator.invokeInstruction);
     for (const MirBlockId successor : terminatorSuccessors(block.terminator)) {
       const MirBlock *target = module.findBlock(successor);
       if (target == nullptr) {

@@ -99,7 +99,15 @@ namespace application {
   }
 }
 
+// Value macros use ordinary lexical locals even in global/field initializers.
+int initial_value = application::twice_once(3);
+struct Settings {
+  int attempts = application::twice_once(2);
+};
+
 int main() {
+  Settings settings{};
+  std::assert(initial_value == 6 && settings.attempts == 4);
   // Body lookup belongs to application, not to this unrelated local name.
   int record = 99;
   application::report();

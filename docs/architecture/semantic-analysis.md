@@ -1900,6 +1900,15 @@ initializers and body in caller flow. Repeated forcing therefore constructs
 separate closure values of one lexical type, and repeated ownership consumption
 is still rejected by the shared place/value-state rules.
 
+An executable scoped result region contributes to lexical local-binding depth
+even when its caller is a namespace, instance-field or static initializer.
+Explicit and inferred declarations, checked references, structured bindings,
+mutation and automatic cleanup therefore use ordinary local rules. The region
+does not invent a function declaration or effect owner: initializer effects
+remain attributed to the real enclosing initializer, local returns target the
+region, and callable-body lexical demand advancement keeps its original
+eligibility.
+
 A direct by-value or checked-reference generic parameter may acquire a `Confined` callable
 contract when its visible body invokes it or forwards it to another proven
 confined parameter. Each call site records an exact parameter list, result

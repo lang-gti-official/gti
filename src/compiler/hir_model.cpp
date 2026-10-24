@@ -72,113 +72,126 @@ materializableProgramConstant(const std::optional<ConstantValue> &constant) {
   return constant && !std::holds_alternative<ConstantAggregateValue>(*constant);
 }
 
+} // namespace
+
 // Initializer roots are values rather than body roots. A scoped result adds a
 // statement subgraph at that value's evaluation position; only that subgraph,
 // not arbitrary body statements, belongs to the selected initialization plan.
-struct InitializerReachability {
+std::vector<HirInitializerReachability> hirInitializerReachabilityBatch(
+    const HirBody &body,
+    const std::vector<std::vector<HirValueId>> &rootGroups) {
   bool complete = true;
-  std::unordered_set<HirValueId> values;
-  std::unordered_set<HirStatementId> statements;
-  std::unordered_set<HirBindingId> bindings;
-};
-
-[[nodiscard]] InitializerReachability
-initializerReachability(const HirBody &body,
-                        const std::vector<HirValueId> &roots) {
-  InitializerReachability reachable;
   std::unordered_map<HirValueId, const HirValue *> values;
   std::unordered_map<HirStatementId, const HirStatement *> statements;
   std::unordered_set<HirBindingId> bindings;
+  values.reserve(body.values.size());
+  statements.reserve(body.statements.size());
+  bindings.reserve(body.bindings.size());
   for (const auto &value : body.values)
-    reachable.complete &= values.emplace(value.id, &value).second;
+    complete &= values.emplace(value.id, &value).second;
   for (const auto &statement : body.statements)
-    reachable.complete &= statements.emplace(statement.id, &statement).second;
+    complete &= statements.emplace(statement.id, &statement).second;
   for (const auto &binding : body.bindings)
-    reachable.complete &= bindings.insert(binding.id).second;
-  std::vector<HirValueId> pendingValues = roots;
-  std::vector<HirStatementId> pendingStatements;
-  const auto binding = [&](HirBindingId id) {
-    if (id != 0) {
-      reachable.bindings.insert(id);
-      reachable.complete &= bindings.contains(id);
-    }
-  };
-  while (!pendingValues.empty() || !pendingStatements.empty()) {
-    if (!pendingValues.empty()) {
-      const auto id = pendingValues.back();
-      pendingValues.pop_back();
-      if (id == 0 || !reachable.values.insert(id).second)
+    complete &= bindings.insert(binding.id).second;
+  std::vector<HirInitializerReachability> results;
+  results.reserve(rootGroups.size());
+  for (const auto &roots : rootGroups) {
+    auto &reachable = results.emplace_back();
+    reachable.complete = complete;
+    std::vector<HirValueId> pendingValues = roots;
+    std::vector<HirStatementId> pendingStatements;
+    const auto binding = [&](HirBindingId id) {
+      if (id != 0) {
+        reachable.bindings.insert(id);
+        reachable.complete &= bindings.contains(id);
+      }
+    };
+    while (!pendingValues.empty() || !pendingStatements.empty()) {
+      if (!pendingValues.empty()) {
+        const auto id = pendingValues.back();
+        pendingValues.pop_back();
+        if (id == 0 || !reachable.values.insert(id).second)
+          continue;
+        const auto found = values.find(id);
+        if (found == values.end()) {
+          reachable.complete = false;
+          continue;
+        }
+        const auto &value = *found->second;
+        pendingValues.insert(pendingValues.end(), value.operands.begin(),
+                             value.operands.end());
+        pendingValues.insert(pendingValues.end(), value.sequencedInputs.begin(),
+                             value.sequencedInputs.end());
+        if (value.receiver)
+          pendingValues.push_back(*value.receiver);
+        if (value.regionBody && value.kind == HirValueKind::ScopedResult)
+          pendingStatements.push_back(*value.regionBody);
         continue;
-      const auto found = values.find(id);
-      if (found == values.end()) {
+      }
+      const auto id = pendingStatements.back();
+      pendingStatements.pop_back();
+      if (id == 0 || !reachable.statements.insert(id).second)
+        continue;
+      const auto found = statements.find(id);
+      if (found == statements.end()) {
         reachable.complete = false;
         continue;
       }
-      const auto &value = *found->second;
-      pendingValues.insert(pendingValues.end(), value.operands.begin(),
-                           value.operands.end());
-      pendingValues.insert(pendingValues.end(), value.sequencedInputs.begin(),
-                           value.sequencedInputs.end());
-      if (value.receiver)
-        pendingValues.push_back(*value.receiver);
-      if (value.regionBody && value.kind == HirValueKind::ScopedResult)
-        pendingStatements.push_back(*value.regionBody);
-      continue;
-    }
-    const auto id = pendingStatements.back();
-    pendingStatements.pop_back();
-    if (id == 0 || !reachable.statements.insert(id).second)
-      continue;
-    const auto found = statements.find(id);
-    if (found == statements.end()) {
-      reachable.complete = false;
-      continue;
-    }
-    const auto &statement = *found->second;
-    if (statement.binding)
-      binding(*statement.binding);
-    for (const auto input :
-         {statement.value, statement.condition, statement.increment})
-      if (input)
-        pendingValues.push_back(*input);
-    for (const auto child :
-         {statement.initializer, statement.body, statement.elseBranch})
-      if (child)
-        pendingStatements.push_back(*child);
-    pendingStatements.insert(pendingStatements.end(),
-                             statement.statements.begin(),
-                             statement.statements.end());
-    for (const auto &element : statement.structuredBindings) {
-      binding(element.binding);
-      if (element.index)
-        pendingValues.push_back(*element.index);
-    }
-    for (const auto &arm : statement.switchArms) {
-      for (const auto &label : arm.labels)
-        if (label.value)
-          pendingValues.push_back(*label.value);
-      for (const auto &payload : arm.payloadBindings) {
-        binding(payload.binding);
-        pendingValues.push_back(payload.value);
+      const auto &statement = *found->second;
+      if (statement.binding)
+        binding(*statement.binding);
+      for (const auto input :
+           {statement.value, statement.condition, statement.increment})
+        if (input)
+          pendingValues.push_back(*input);
+      for (const auto child :
+           {statement.initializer, statement.body, statement.elseBranch})
+        if (child)
+          pendingStatements.push_back(*child);
+      pendingStatements.insert(pendingStatements.end(),
+                               statement.statements.begin(),
+                               statement.statements.end());
+      for (const auto &element : statement.structuredBindings) {
+        binding(element.binding);
+        if (element.index)
+          pendingValues.push_back(*element.index);
       }
-      pendingStatements.insert(pendingStatements.end(), arm.statements.begin(),
-                               arm.statements.end());
-    }
-    if (const auto &range = statement.rangeIteration) {
-      for (const auto id :
-           {range->owner, range->rangeCarrier, range->iterator, range->sentinel,
-            range->element, range->elementOwner})
-        binding(id);
-      for (const auto id :
-           {range->source, range->begin, range->end, range->comparison,
-            range->elementAccessValue, range->increment})
-        pendingValues.push_back(id);
-      pendingStatements.push_back(range->elementOwnerStatement);
-      pendingStatements.push_back(range->coreLoop);
+      for (const auto &arm : statement.switchArms) {
+        for (const auto &label : arm.labels)
+          if (label.value)
+            pendingValues.push_back(*label.value);
+        for (const auto &payload : arm.payloadBindings) {
+          binding(payload.binding);
+          pendingValues.push_back(payload.value);
+        }
+        pendingStatements.insert(pendingStatements.end(),
+                                 arm.statements.begin(), arm.statements.end());
+      }
+      if (const auto &range = statement.rangeIteration) {
+        for (const auto id :
+             {range->owner, range->rangeCarrier, range->iterator,
+              range->sentinel, range->element, range->elementOwner})
+          binding(id);
+        for (const auto id :
+             {range->source, range->begin, range->end, range->comparison,
+              range->elementAccessValue, range->increment})
+          pendingValues.push_back(id);
+        pendingStatements.push_back(range->elementOwnerStatement);
+        pendingStatements.push_back(range->coreLoop);
+      }
     }
   }
-  return reachable;
+  return results;
 }
+
+HirInitializerReachability
+hirInitializerReachability(const HirBody &body,
+                           const std::vector<HirValueId> &roots) {
+  auto results = hirInitializerReachabilityBatch(body, {roots});
+  return std::move(results.front());
+}
+
+namespace {
 
 template <typename Nodes, typename Ids>
 [[nodiscard]] bool exactInventory(const Nodes &nodes, const Ids &ids) {
@@ -774,7 +787,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       exact &= selectedValues == instance.initializerValues &&
                instance.initializers.size() == position + owner->fields.size();
       const auto reachable =
-          initializerReachability(instance.body, selectedValues);
+          hirInitializerReachability(instance.body, selectedValues);
       exact &= reachable.complete &&
                exactInventory(instance.body.statements, reachable.statements) &&
                exactInventory(instance.body.values, reachable.values) &&
@@ -2296,7 +2309,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         "module roots do not exactly match executable initialization steps");
   }
   const auto reachable =
-      initializerReachability(program.module(), initializerValues);
+      hirInitializerReachability(program.module(), initializerValues);
   // Plan roots remain exact and ordered. Only locals and statements nested
   // inside their initializer values are additional executable inventory.
   expectedBindings.insert(reachable.bindings.begin(), reachable.bindings.end());

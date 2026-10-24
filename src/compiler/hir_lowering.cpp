@@ -140,7 +140,11 @@ public:
     lowerEmbeddingPlan();
     lowerProgramInitializationPlan();
     lowerHostedProgramEntryPlan();
-    finalizeLifetimes(output.program.moduleBody, *baseModel, false);
+    std::unordered_set<HirBindingId> programStorageBindings;
+    for (const auto &step : output.program.programInitialization.steps)
+      programStorageBindings.insert(step.binding);
+    finalizeLifetimes(output.program.moduleBody, *baseModel,
+                      programStorageBindings);
     lowerLoans(*baseModel, output.program.moduleBody);
     processPendingInstances();
     const InstanceCounts reachable = instanceCounts();
@@ -1710,6 +1714,7 @@ private:
     output.program.classes[index].typeAliases = std::move(aliases);
     std::vector<HirClassField> fields;
     HirBody fieldInitializers;
+    std::unordered_set<HirBindingId> fieldBindings;
     fields.reserve(declaration->fields.size());
     for (const ClassFieldTypeInfo &field : declaration->fields) {
       SemanticType type = substitute(field.type, substitution);
@@ -1734,6 +1739,7 @@ private:
           field.declaration == nullptr
               ? 0
               : lowerBinding(*field.declaration, info, fieldInitializers);
+      fieldBindings.insert(binding);
       const std::optional<HirValueId> initializer =
           field.declaration == nullptr
               ? std::nullopt
@@ -1757,12 +1763,13 @@ private:
                             instanceProvider->requiresActiveCleanupFor(type)});
     }
     output.program.classes[index].fields = std::move(fields);
-    finalizeLifetimes(fieldInitializers, *model, false);
+    finalizeLifetimes(fieldInitializers, *model, fieldBindings);
     lowerLoans(*model, fieldInitializers);
     output.program.classes[index].fieldInitializers =
         std::move(fieldInitializers);
     std::vector<HirClassField> staticFields;
     HirBody staticFieldInitializers;
+    std::unordered_set<HirBindingId> staticFieldBindings;
     staticFields.reserve(declaration->staticFields.size());
     for (const ClassFieldTypeInfo &field : declaration->staticFields) {
       const SemanticType type = substitute(field.type, substitution);
@@ -1814,9 +1821,10 @@ private:
            .info = info,
            .requiresActiveCleanup =
                instanceProvider->requiresActiveCleanupFor(type)});
+      staticFieldBindings.insert(lowered.binding);
     }
     output.program.classes[index].staticFields = std::move(staticFields);
-    finalizeLifetimes(staticFieldInitializers, *model, false);
+    finalizeLifetimes(staticFieldInitializers, *model, staticFieldBindings);
     lowerLoans(*model, staticFieldInitializers);
     output.program.classes[index].staticFieldInitializers =
         std::move(staticFieldInitializers);
@@ -2189,7 +2197,7 @@ private:
           lowerStatements(bodyDeclaration->body()->statements(), *model,
                           classArguments, classValueArguments, body);
     }
-    finalizeLifetimes(body, *model, true);
+    finalizeLifetimes(body, *model);
     lowerLoans(*model, body, bodyDeclaration);
     std::vector<HirCallableParameter> callableParameters;
     callableParameters.reserve(declaration->callableParameters.size());
@@ -2583,7 +2591,7 @@ private:
       body.roots =
           lowerStatements(snapshot.source->body()->statements(), bodyModel,
                           classArguments, classValueArguments, body);
-    finalizeLifetimes(body, bodyModel, true, initializers);
+    finalizeLifetimes(body, bodyModel, {}, initializers);
     lowerLoans(bodyModel, body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
@@ -2636,7 +2644,7 @@ private:
     body.roots =
         lowerStatements(snapshot.source->body()->statements(), *model,
                         owner.typeArguments, owner.valueArguments, body);
-    finalizeLifetimes(body, *model, true);
+    finalizeLifetimes(body, *model);
     lowerLoans(*model, body, snapshot.source);
     output.program.destructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
@@ -3119,7 +3127,8 @@ private:
   }
 
   void finalizeLifetimes(
-      HirBody &body, const SemanticModel &model, bool lexicalBindings,
+      HirBody &body, const SemanticModel &model,
+      const std::unordered_set<HirBindingId> &nonLexicalBindings = {},
       const std::vector<HirConstructorInitializer> &initializers = {}) {
     body.fullExpressions.clear();
     body.dropObligations.clear();
@@ -3219,43 +3228,47 @@ private:
                            pending.constructorInitializer);
     }
 
-    if (lexicalBindings) {
-      for (HirBinding &binding : body.bindings) {
-        if (binding.parameter != nullptr &&
-            binding.info.type.kind == SemanticType::TypePack &&
-            binding.info.type.concretePack) {
-          for (std::size_t element = 0;
-               element < binding.info.type.arguments.size(); ++element) {
-            const SemanticType &type = binding.info.type.arguments[element];
-            if (instanceProvider->traitsFor(type).drop != DropKind::Lexical)
-              continue;
-            const HirDropObligationId id = body.dropObligations.size() + 1;
-            body.dropObligations.push_back(
-                {.id = id,
-                 .constructionOrder = id,
-                 .kind = HirDropObligationKind::Binding,
-                 .binding = binding.id,
-                 .packElement = element,
-                 .dropType = dropTypeFor(type),
-                 .initiallyActive = true});
-          }
-          continue;
+    // Initializer bodies contain both externally owned storage and ordinary
+    // lexical locals inside result regions. Exempt only the exact storage
+    // bindings; a body-wide exemption would leak those locals or mistake them
+    // for completed field subobjects during MIR rollback staging.
+    for (HirBinding &binding : body.bindings) {
+      if (nonLexicalBindings.contains(binding.id))
+        continue;
+      if (binding.parameter != nullptr &&
+          binding.info.type.kind == SemanticType::TypePack &&
+          binding.info.type.concretePack) {
+        for (std::size_t element = 0;
+             element < binding.info.type.arguments.size(); ++element) {
+          const SemanticType &type = binding.info.type.arguments[element];
+          if (instanceProvider->traitsFor(type).drop != DropKind::Lexical)
+            continue;
+          const HirDropObligationId id = body.dropObligations.size() + 1;
+          body.dropObligations.push_back(
+              {.id = id,
+               .constructionOrder = id,
+               .kind = HirDropObligationKind::Binding,
+               .binding = binding.id,
+               .packElement = element,
+               .dropType = dropTypeFor(type),
+               .initiallyActive = true});
         }
-        if (binding.info.type.kind == SemanticType::Reference ||
-            binding.info.staticStorage ||
-            binding.info.traits.drop != DropKind::Lexical) {
-          continue;
-        }
-        const HirDropObligationId id = body.dropObligations.size() + 1;
-        body.dropObligations.push_back(
-            {.id = id,
-             .constructionOrder = id,
-             .kind = HirDropObligationKind::Binding,
-             .binding = binding.id,
-             .dropType = dropTypeFor(binding.info.type),
-             .initiallyActive = binding.parameter != nullptr});
-        binding.dropObligation = id;
+        continue;
       }
+      if (binding.info.type.kind == SemanticType::Reference ||
+          binding.info.staticStorage ||
+          binding.info.traits.drop != DropKind::Lexical) {
+        continue;
+      }
+      const HirDropObligationId id = body.dropObligations.size() + 1;
+      body.dropObligations.push_back(
+          {.id = id,
+           .constructionOrder = id,
+           .kind = HirDropObligationKind::Binding,
+           .binding = binding.id,
+           .dropType = dropTypeFor(binding.info.type),
+           .initiallyActive = binding.parameter != nullptr});
+      binding.dropObligation = id;
     }
 
     std::unordered_set<HirValueId> temporaryBorrowValues;
@@ -3956,7 +3969,7 @@ private:
                                  classValueArguments, body);
     activeResultRegion = enclosingResultRegion;
     currentSourceFunctionName = enclosingSourceFunctionName;
-    finalizeLifetimes(body, model, true);
+    finalizeLifetimes(body, model);
     lowerLoans(model, body, nullptr, info->captures);
     std::vector<bool> captureRequiresActiveCleanup;
     captureRequiresActiveCleanup.reserve(info->captures.size());
