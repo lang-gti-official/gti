@@ -508,25 +508,12 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The first type must be an integral enum and the second its exact "
           "declared underlying integer type.");
       break;
-    case StructuralConstraintKind::ObjectLayout:
-      diagnostic.hints.emplace_back(
-          "The type must be a scalar, raw pointer, integral enum, positive "
-          "concrete array, or complete non-abstract class, struct or passive "
-          "union. Copying and moving are not required.");
-      break;
     case StructuralConstraintKind::InlinePolymorphicPayload:
       diagnostic.hints.emplace_back(
           "The payload must be a concrete class publicly derived from the "
           "polymorphic interface, with failure-free relocation, no source "
           "destructor or owning cleanup, no checked borrowed state, and no "
           "concurrency capability the interface would add.");
-      break;
-    case StructuralConstraintKind::IndependentObject:
-      diagnostic.hints.emplace_back(
-          "The element must be a complete object type without checked borrowed "
-          "state. Raw pointers remain nonowning and retain their unsafe "
-          "validity "
-          "obligations; copying or moving the element is not required.");
       break;
     case StructuralConstraintKind::ReadCallable:
     case StructuralConstraintKind::MutCallable:
@@ -692,6 +679,9 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
   case GenericConstraintKind::SignedIntegral:
   case GenericConstraintKind::UnsignedIntegral:
   case GenericConstraintKind::FloatingPoint:
+  case GenericConstraintKind::Boolean:
+  case GenericConstraintKind::ObjectLayout:
+  case GenericConstraintKind::BorrowFree:
     break;
   }
   publish(std::move(diagnostic));

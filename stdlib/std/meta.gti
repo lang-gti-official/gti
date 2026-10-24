@@ -46,7 +46,6 @@ uint64_t meta_declaration_line<T, uint64_t Kind, uint64_t I>();
 std::string_view meta_declaration_file<T>();
 std::string_view meta_type_primary_name<T>();
 T meta_construct<T, Values...>(Values... values);
-@compiler_constraint("meta_reflectable") concept meta_reflectable_capability<T>;
 }
 
 namespace std {
@@ -155,7 +154,7 @@ public:
 /// Satisfied when every instance field of `T` is readable through
 /// reflection: `T` is a struct or class whose instance fields are all public,
 /// or one declared `[[reflect_private]]`.
-concept reflectable<T> = gti_internal::meta_reflectable_capability<T>;
+concept reflectable<T> = std::meta::is_reflectable<T>();
 
 /// Describes the type `T`.
 @compiler_type("meta_type") struct type<T> {
@@ -170,7 +169,7 @@ public:
   constexpr bool is_enum() { return gti_internal::meta_type_kind<T>() == uint64_t(5); }
   constexpr bool is_integral() { return gti_internal::meta_type_trait<T, 17>(); }
   constexpr bool is_floating_point() { return gti_internal::meta_type_trait<T, 18>(); }
-  constexpr bool is_bool() { return gti_internal::meta_type_kind<T>() == uint64_t(8); }
+  constexpr bool is_bool() { return gti_internal::meta_type_trait<T, 19>(); }
   constexpr bool is_char() { return gti_internal::meta_type_kind<T>() == uint64_t(9); }
   constexpr bool is_text() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
   /// Whether T is a checked reference (the access mode is not changed).
@@ -212,6 +211,10 @@ public:
   constexpr bool is_unsigned_integral() { return gti_internal::meta_type_trait<T, 14>(); }
   constexpr bool is_numeric() { return gti_internal::meta_type_trait<T, 15>(); }
   constexpr bool is_signed_numeric() { return gti_internal::meta_type_trait<T, 16>(); }
+  /// Whether a complete object representation is available for lifetime operations.
+  constexpr bool has_object_layout() { return gti_internal::meta_type_trait<T, 20>(); }
+  /// Whether the value retains no checked external-owner borrow (not raw-pointer validity).
+  constexpr bool is_borrow_free() { return gti_internal::meta_type_trait<T, 21>(); }
   /// Exact type identity, not conversion compatibility.
   constexpr bool is_same<U>() { return gti_internal::meta_type_relation<T, U, 0>(); }
   /// Exact declared integral-enum representation, false for other types.
@@ -442,7 +445,7 @@ constexpr bool is_class<T>() { return gti_internal::meta_type_kind<T>() == uint6
 constexpr bool is_enum<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(5); }
 constexpr bool is_integral<T>() { return gti_internal::meta_type_trait<T, 17>(); }
 constexpr bool is_floating_point<T>() { return gti_internal::meta_type_trait<T, 18>(); }
-constexpr bool is_bool<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(8); }
+constexpr bool is_bool<T>() { return gti_internal::meta_type_trait<T, 19>(); }
 constexpr bool is_text<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
 constexpr bool is_payload_enum<T>() { return gti_internal::meta_type_trait<T, 0>(); }
 constexpr bool is_generic_instance<T>() { return gti_internal::meta_type_trait<T, 1>(); }
@@ -465,6 +468,11 @@ constexpr bool is_integral_enum<T>() { return gti_internal::meta_type_trait<T, 1
 constexpr bool is_unsigned_integral<T>() { return gti_internal::meta_type_trait<T, 14>(); }
 constexpr bool is_numeric<T>() { return gti_internal::meta_type_trait<T, 15>(); }
 constexpr bool is_signed_numeric<T>() { return gti_internal::meta_type_trait<T, 16>(); }
+/// Whether a complete object representation is available for lifetime operations.
+constexpr bool has_object_layout<T>() { return gti_internal::meta_type_trait<T, 20>(); }
+/// Whether the value retains no checked external-owner borrow. This does not
+/// establish validity, provenance, or ownership of any raw pointer it stores.
+constexpr bool is_borrow_free<T>() { return gti_internal::meta_type_trait<T, 21>(); }
 /// Exact type identity, without widening, implicit conversion or inheritance.
 constexpr bool is_same<T, U>() { return gti_internal::meta_type_relation<T, U, 0>(); }
 /// Whether E is a payload-free enum with exactly U as its declared domain.

@@ -5985,6 +5985,8 @@ private:
 
   [[nodiscard]] static bool constraintImplies(GenericConstraintSet actual,
                                               GenericConstraintKind required);
+  [[nodiscard]] static GenericConstraintSet
+  impliedConstraints(GenericConstraintSet constraints);
 
   [[nodiscard]] GenericConstraintSet
   constraintOf(const SemanticType &type) const;

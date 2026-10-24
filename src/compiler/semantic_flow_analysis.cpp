@@ -11771,6 +11771,22 @@ auto SemanticVisitor::Impl::isInteger(SemanticType type) -> bool {
   return isSignedInteger(type) || isUnsignedInteger(type);
 }
 
+auto SemanticVisitor::Impl::impliedConstraints(GenericConstraintSet constraints)
+    -> GenericConstraintSet {
+  // Close facts before intersecting alternatives. A disjunction promises only
+  // what every branch proves, including shared consequences of distinct facts.
+  if (constraints == 0 || invalidConstraintSet(constraints))
+    return constraints;
+  GenericConstraintSet previous;
+  do {
+    previous = constraints;
+    for (const auto kind : genericConstraintKinds)
+      if (constraintImplies(constraints, kind))
+        constraints |= constraintBit(kind);
+  } while (previous != constraints);
+  return constraints;
+}
+
 auto SemanticVisitor::Impl::constraintImplies(GenericConstraintSet actual,
                                               GenericConstraintKind required)
     -> bool {
@@ -11781,6 +11797,26 @@ auto SemanticVisitor::Impl::constraintImplies(GenericConstraintSet actual,
   }
   if (hasConstraint(actual, required)) {
     return true;
+  }
+  if (required == GenericConstraintKind::AtomicScalar &&
+      (hasConstraint(actual, GenericConstraintKind::Boolean) ||
+       hasConstraint(actual, GenericConstraintKind::Integral) ||
+       hasConstraint(actual, GenericConstraintKind::SignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::UnsignedIntegral)))
+    return true;
+  if (required == GenericConstraintKind::ObjectLayout ||
+      required == GenericConstraintKind::BorrowFree) {
+    for (const auto scalar : {GenericConstraintKind::Numeric,
+                             GenericConstraintKind::SignedNumeric,
+                             GenericConstraintKind::Integral,
+                             GenericConstraintKind::SignedIntegral,
+                             GenericConstraintKind::UnsignedIntegral,
+                             GenericConstraintKind::FloatingPoint,
+                             GenericConstraintKind::AtomicScalar,
+                             GenericConstraintKind::IntegralEnum,
+                             GenericConstraintKind::Boolean})
+      if (hasConstraint(actual, scalar))
+        return true;
   }
   // Classification predicates carry the same primitive category facts as a
   // source composition of the corresponding public concepts. These are type
@@ -11839,7 +11875,7 @@ auto SemanticVisitor::Impl::constraintOf(const SemanticType &type) const
   const auto found = genericConstraints.find(type.genericParameterId);
   const GenericConstraintSet declared =
       found == genericConstraints.end() ? 0 : found->second;
-  return declared | activeAtomicConstraints(type);
+  return impliedConstraints(declared | activeAtomicConstraints(type));
 }
 
 auto SemanticVisitor::Impl::isNumeric(SemanticType type) const -> bool {

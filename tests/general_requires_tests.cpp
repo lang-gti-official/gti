@@ -16,13 +16,16 @@ static_assert(!lang::compilerStructuralConstraint("subtracts"));
 static_assert(!lang::compilerStructuralConstraint("negates"));
 static_assert(!lang::compilerStructuralConstraint("scales_by"));
 static_assert(!lang::compilerStructuralConstraint("enum_underlying"));
+static_assert(!lang::compilerStructuralConstraint("object_layout"));
+static_assert(!lang::compilerStructuralConstraint("independent_object"));
 static_assert([] {
   for (const std::string_view binding :
        {"numeric", "signed_numeric", "integral", "signed_integral",
         "unsigned_integral", "floating_point", "copy_constructible",
         "move_constructible", "copyable", "movable", "relocatable",
         "bitwise_relocatable", "transferable", "shareable",
-        "default_initializable", "integral_enum"})
+        "default_initializable", "integral_enum", "atomic_scalar",
+        "meta_reflectable"})
     if (lang::compilerConstraint(binding))
       return false;
   return true;
@@ -31,10 +34,6 @@ static_assert(lang::compilerConstraint("equality_comparable") ==
               lang::GenericConstraintKind::EqualityComparable);
 static_assert(lang::compilerConstraint("relationally_ordered") ==
               lang::GenericConstraintKind::RelationallyOrdered);
-static_assert(lang::compilerConstraint("atomic_scalar") ==
-              lang::GenericConstraintKind::AtomicScalar);
-static_assert(lang::compilerConstraint("meta_reflectable") ==
-              lang::GenericConstraintKind::Reflectable);
 
 int failures = 0;
 
@@ -92,6 +91,83 @@ int main(int argc, char **argv) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("gti-general-requires-" + std::to_string(getpid()));
   std::filesystem::create_directories(directory);
+
+  accepted(
+      check(root, directory, "source_scalar_policy", R"(
+#include <std/atomic>
+constexpr bool truth_type<T>() { return std::meta::is_bool<T>(); }
+concept integer_or_boolean<T> = std::meta::is_integral<T>() || truth_type<T>();
+concept signed_or_unsigned<T> = std::meta::is_signed_integral<T>() ||
+                               std::meta::is_unsigned_integral<T>();
+T load<T>(std::atomic<T>& value) requires integer_or_boolean<T> {
+  return value.load();
+}
+T load_truth<T>(std::atomic<T>& value) requires truth_type<T> {
+  return value.load();
+}
+T increment<T>(T value) requires signed_or_unsigned<T> { return value + 1; }
+struct Record { int value = 0; };
+concept public_record<T> = std::meta::is_reflectable<T>();
+uint64_t fields<T>() requires public_record<T> {
+  return std::meta::type<T>().field_count();
+}
+int main() {
+  static_assert(std::meta::is_bool<bool>());
+  static_assert(!std::meta::is_bool<int>());
+  std::atomic<bool> truth(true);
+  std::atomic<int> number(7);
+  return load<bool>(truth) && load_truth<bool>(truth) && load<int>(number) == 7 &&
+         increment<int>(3) == 4 && fields<Record>() == uint64_t(1) ? 0 : 1;
+}
+)"),
+      "source scalar policies transport common proofs across alternatives");
+
+  rejected(check(root, directory, "disjunction_does_not_invent_scalar", R"(
+#include <std/atomic>
+concept integer_or_float<T> = std::meta::is_integral<T>() ||
+                              std::meta::is_floating_point<T>();
+T load<T>(std::atomic<T>& value) requires integer_or_float<T> {
+  return value.load();
+}
+int main() { return 0; }
+)"),
+           "one non-atomic alternative cannot justify atomic storage");
+
+  accepted(check(root, directory, "source_storage_policy", R"(
+#include <std/memory>
+struct Payload { int value = 0; };
+struct Borrowed { std::string_view value; };
+concept complete_object<T> = std::meta::has_object_layout<T>();
+concept independent<T> = complete_object<T> && std::meta::is_borrow_free<T>();
+uint64_t bytes<T>() requires complete_object<T> { return sizeof(T); }
+unsafe void retire<T>(T* address) requires complete_object<T> {
+  unsafe { std::destroy_at<T>(address); }
+}
+std::uninitialized<T> slot<T>() requires independent<T> && std::bitwise_relocatable<T> {
+  return std::uninitialized<T>();
+}
+int main() {
+  static_assert(std::meta::has_object_layout<Payload>());
+  static_assert(std::meta::has_object_layout<Borrowed>());
+  static_assert(!std::meta::has_object_layout<void>());
+  static_assert(std::meta::is_borrow_free<Payload>());
+  static_assert(!std::meta::is_borrow_free<Borrowed>());
+  static_assert(!std::meta::is_borrow_free<int&>());
+  static_assert(std::meta::is_borrow_free<int*>());
+  auto vacant = slot<Payload>();
+  return bytes<Payload>() > uint64_t(0) ? 0 : 1;
+}
+)"),
+           "independent source object-layout and borrow-state policies");
+
+  rejected(check(root, directory, "copying_does_not_prove_storage", R"(
+#include <std/memory>
+std::uninitialized<T> slot<T>() requires std::copyable<T> {
+  return std::uninitialized<T>();
+}
+int main() { return 0; }
+)"),
+           "copyability alone does not establish independent storage");
 
   accepted(check(root, directory, "operators", R"(
 concept adds_to<L, R, V> = requires(L& left, R& right) {

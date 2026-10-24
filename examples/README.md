@@ -631,7 +631,10 @@ Address validity, extent and termination remain the caller's unsafe obligations.
 for exact operator results and construction, composes them with constexpr
 reflection predicates, and uses them in generic algorithms over an unrelated
 user-defined value. It also demonstrates multi-check queries and exact result
-rejection. Requirements execute no user code and do not relax ownership rules.
+rejection. Independent object-layout and borrow-state predicates let its own
+storage policy use the same facts as `std/memory`; a signed-or-unsigned
+disjunction demonstrates common guarantees in generic arithmetic. Requirements
+execute no user code and do not relax ownership rules.
 
 ## Complete projects
 

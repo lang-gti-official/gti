@@ -1157,15 +1157,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
     resolveProtocolConcept(conceptInfo, valid);
   } else if (declaration.compilerBinding()) {
     const CompilerConstraintBinding &binding = *declaration.compilerBinding();
-    const bool trustedAtomicConstraint =
-        (isAtomicLibraryUnit(conceptInfo.sourceUnit) &&
-         binding.name == "atomic_scalar") ||
-        (isMetaLibraryUnit(conceptInfo.sourceUnit) &&
-         binding.name == "meta_reflectable");
     const bool trustedMemoryConstraint =
-        (isMemoryLibraryUnit(conceptInfo.sourceUnit) &&
-         (binding.name == "object_layout" ||
-          binding.name == "independent_object")) ||
         (isPolymorphicLibraryUnit(conceptInfo.sourceUnit) &&
          binding.name == "inline_polymorphic_payload");
     const bool trustedIteratorConstraint =
@@ -1191,7 +1183,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
          binding.name == "indirect_operation" ||
          binding.name == "range_predicate" ||
          binding.name == "range_operation");
-    if ((!isPreludeUnit(conceptInfo.sourceUnit) && !trustedAtomicConstraint &&
+    if ((!isPreludeUnit(conceptInfo.sourceUnit) &&
          !trustedIteratorConstraint && !trustedFunctionalConstraint &&
          !trustedMemoryConstraint) ||
         conceptInfo.namespaceScope !=
@@ -1555,7 +1547,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
       }
       for (std::size_t index = 0; index < result.parameters.size(); ++index) {
         result.parameters[index] =
-            left.parameters[index] & right.parameters[index];
+            impliedConstraints(left.parameters[index]) &
+            impliedConstraints(right.parameters[index]);
       }
       for (const RegisteredConcept::StructuralPattern &candidate :
            left.structural) {

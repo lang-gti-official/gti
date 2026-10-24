@@ -65,6 +65,15 @@ static_assert(std::meta::is_movable<Coordinates>());
 static_assert(std::meta::is_relocatable<Coordinates>());
 static_assert(std::meta::is_bitwise_relocatable<Coordinates>());
 static_assert(std::meta::is_bitwise_relocatable<int32_t[4]>());
+static_assert(std::meta::has_object_layout<Coordinates>());
+static_assert(std::meta::has_object_layout<CopyConstructionOnly>());
+static_assert(std::meta::has_object_layout<int32_t[4]>());
+static_assert(!std::meta::has_object_layout<void>());
+static_assert(!std::meta::has_object_layout<int32_t&>());
+static_assert(std::meta::is_borrow_free<Coordinates>());
+static_assert(std::meta::is_borrow_free<RawAddress>());
+static_assert(!std::meta::is_borrow_free<CopyConstructionOnly>());
+static_assert(!std::meta::is_borrow_free<std::string_view>());
 static_assert(std::meta::is_copy_constructible<CopyConstructionOnly>());
 static_assert(!std::meta::is_copyable<CopyConstructionOnly>());
 static_assert(!std::meta::is_relocatable<CopyConstructionOnly>());
@@ -84,6 +93,8 @@ static_assert(!std::meta::is_enum_underlying<int32_t, int32_t>());
 static_assert(std::meta::is_same<int32_t, int32_t>());
 static_assert(!std::meta::is_same<int32_t, uint32_t>());
 static_assert(std::meta::type<Coordinates>().is_copyable());
+static_assert(std::meta::type<Coordinates>().has_object_layout());
+static_assert(std::meta::type<Coordinates>().is_borrow_free());
 static_assert(std::meta::type<Coordinates>().is_copy_constructible());
 static_assert(std::meta::type<MoveOnly>().is_move_constructible());
 static_assert(std::meta::type<Coordinates>().is_movable());
@@ -111,6 +122,9 @@ bool independent_fact<T>() {
 
 int main() {
   return independent_fact<Coordinates>() &&
+         std::meta::type<Coordinates>().has_object_layout() &&
+         std::meta::is_borrow_free<Coordinates>() &&
+         !std::meta::is_borrow_free<CopyConstructionOnly>() &&
          !std::meta::is_copy_constructible<MoveOnly>() &&
          std::meta::is_enum_underlying<Code, uint16_t>() &&
          classify<Opaque<int32_t>>() == 1 && classify<int32_t>() == 2 &&

@@ -56,6 +56,12 @@ metaTypeTraitConstraint(std::uint64_t selector) {
     return GenericConstraintKind::Integral;
   case 18:
     return GenericConstraintKind::FloatingPoint;
+  case 19:
+    return GenericConstraintKind::Boolean;
+  case 20:
+    return GenericConstraintKind::ObjectLayout;
+  case 21:
+    return GenericConstraintKind::BorrowFree;
   default:
     return std::nullopt;
   }

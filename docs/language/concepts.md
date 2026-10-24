@@ -308,6 +308,22 @@ Lexical lookup belongs to the predicate declaration rather than the caller's
 generic bindings. No separate constexpr interpreter or native template probing
 is involved.
 
+Alternatives retain common consequences as well as identical predicates. For
+example, `is_signed_integral<T>() || is_unsigned_integral<T>()` proves that `T`
+is integral; it does not prove either particular signedness. Likewise,
+`is_bool<T>() || is_integral<T>()` supplies the scalar-domain evidence needed
+by atomic storage. Adding a floating-point alternative removes that evidence.
+These implications depend on compiler-verified type categories, not concept or
+wrapper names.
+
+`std::meta::has_object_layout<T>()` answers whether a complete object
+representation is available to the general object-lifetime operations.
+`std::meta::is_borrow_free<T>()` answers whether a value retains no checked
+external-owner borrow. They are separate facts: a text view has a layout but
+retains a borrow. A raw pointer can be borrow-free without being valid, owned,
+or safe to dereference. Neither predicate relaxes unsafe obligations. Both
+queries also have methods on `std::meta::type<T>`.
+
 ### Exact member signature compatibility
 
 Library authors can describe a public, nongeneric instance method with
@@ -443,6 +459,12 @@ Their obsolete declaration-binding labels have been removed; the underlying
 compiler fact kinds remain the authority for reflection and proof checking.
 The exact enum-underlying relation likewise uses reflection rather than a
 separate private concept binding.
+`std::meta::reflectable` now directly uses `is_reflectable<T>()`.
+`std::atomic_scalar` selects Boolean or integral types in source and composes
+the lifecycle and concurrency concepts. `std::layout_queryable` and
+`std::storage_element` compose object-layout and borrow-free facts. Their
+former private concept binding labels are removed; actual reflection access,
+native atomic operations and object lifetimes remain compiler-checked.
 Arithmetic domain concepts use source requirements for the actual operations.
 Their `[[unsatisfied(...)]]` explanations also live in source, so constraint
 diagnostics retain useful guidance without recognizing those concept names.

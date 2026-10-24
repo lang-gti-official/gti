@@ -12,6 +12,10 @@ SOURCE = """#include <std/meta>
 // UTF-16 positioning: 🧮
 concept sums<T> = requires(T& left, T& right) { { left + right } -> T; };
 concept integer_value<T> = std::meta::is_integral<T>();
+concept complete_object<T> = std::meta::has_object_layout<T>();
+concept detached_object<T> = complete_object<T> && std::meta::is_borrow_free<T>();
+concept integer_domain<T> = std::meta::is_signed_integral<T>() || std::meta::is_unsigned_integral<T>();
+T increment<T>(T value) requires integer_domain<T> { return value + 1; }
 T add<T>(T& left, T& right) requires sums<T> { return left + right; }
 T twice<T>(T value) requires std::meta::is_integral<T>() { return value + value; }
 concept raw_read<T> = requires(T& value) { { unsafe { value.raw() } } -> int; };
@@ -71,6 +75,15 @@ def main():
                 "position": lsp_position(SOURCE, callee_position)})
             location = definition[0] if isinstance(definition, list) else definition
             assert location["uri"].endswith("/std/meta.gti"), definition
+            for name in ("has_object_layout", "is_borrow_free"):
+                position = SOURCE.index(name + "<T>")
+                query = hover(SOURCE, position)
+                assert name in str(query) and "bool" in str(query), query
+                definition = request("textDocument/definition", {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(SOURCE, position)})
+                location = definition[0] if isinstance(definition, list) else definition
+                assert location["uri"].endswith("/std/meta.gti"), definition
             selected = hover(SOURCE, SOURCE.rindex("twice(left)"))
             assert "is_integral<int32_t>()" in str(selected), selected
             raw_contract = hover(SOURCE, SOURCE.index("raw_read<T>"))

@@ -33,6 +33,9 @@ enum class GenericConstraintKind : std::uint8_t {
   // Every instance field of a struct or class is readable through
   // reflection where the constraint is checked (std::meta::reflectable).
   Reflectable,
+  Boolean,
+  ObjectLayout,
+  BorrowFree,
   Count,
 };
 
@@ -67,8 +70,6 @@ enum class StructuralConstraintKind : std::uint8_t {
   RangePredicate,
   RangeOperation,
   EnumUnderlying,
-  ObjectLayout,
-  IndependentObject,
   InlinePolymorphicPayload,
 };
 
@@ -88,7 +89,7 @@ struct CompilerStructuralConstraintRecord {
   std::size_t arity;
 };
 
-inline constexpr std::array<GenericConstraintKind, 20> genericConstraintKinds{{
+inline constexpr std::array<GenericConstraintKind, 23> genericConstraintKinds{{
     GenericConstraintKind::Numeric,
     GenericConstraintKind::SignedNumeric,
     GenericConstraintKind::Integral,
@@ -109,18 +110,19 @@ inline constexpr std::array<GenericConstraintKind, 20> genericConstraintKinds{{
     GenericConstraintKind::AtomicScalar,
     GenericConstraintKind::IntegralEnum,
     GenericConstraintKind::Reflectable,
+    GenericConstraintKind::Boolean,
+    GenericConstraintKind::ObjectLayout,
+    GenericConstraintKind::BorrowFree,
 }};
 
 // Only facts still bound by private concept declarations belong here. The
 // complete fact inventory above also serves reflection and generic proofs.
-inline constexpr std::array<CompilerConstraintRecord, 4> compilerConstraints{{
+inline constexpr std::array<CompilerConstraintRecord, 2> compilerConstraints{{
     {"equality_comparable", GenericConstraintKind::EqualityComparable},
     {"relationally_ordered", GenericConstraintKind::RelationallyOrdered},
-    {"atomic_scalar", GenericConstraintKind::AtomicScalar},
-    {"meta_reflectable", GenericConstraintKind::Reflectable},
 }};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 27>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 25>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
@@ -150,8 +152,6 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 27>
         {"indirect_operation", StructuralConstraintKind::IndirectOperation, 3},
         {"range_predicate", StructuralConstraintKind::RangePredicate, 2},
         {"range_operation", StructuralConstraintKind::RangeOperation, 3},
-        {"object_layout", StructuralConstraintKind::ObjectLayout, 1},
-        {"independent_object", StructuralConstraintKind::IndependentObject, 1},
         {"inline_polymorphic_payload",
          StructuralConstraintKind::InlinePolymorphicPayload, 2},
     }};

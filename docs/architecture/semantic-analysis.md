@@ -1067,6 +1067,13 @@ and class scopes. Cycles, ambiguity and opaque computations supply no implied
 type fact. This index never selects executable calls or interprets an arbitrary
 predicate; concrete predicate validation and constant execution remain the
 ordinary semantic/constexpr path.
+Unary fact sets are closed over semantic implications before disjunctions are
+intersected, both while registering concepts and while checking active
+requirements. This retains common guarantees of distinct primitive categories
+without treating either alternative as mandatory. Boolean, complete-object
+layout and absence of stored checked borrows are individual reflection facts;
+source storage concepts compose them. An independent-object operation requires
+both layout and borrow-free evidence; copyability alone supplies neither.
 `field_attributes`, `type_attributes`, `enumerator_list`, `payload_list`,
 `payload_type`, `base_list` and `argument_list` are further computed
 compiler types rewritten by `rewriteCompilerType`.
@@ -1080,9 +1087,10 @@ of that result (`foldAttributeMemberRead`): the read is aliased to a literal
 of the field's type (`constantLiteralExpression`: string, bool, character,
 float, a typed integer conversion, or an enumerator path) and recorded as a
 constant, so the constructed object is never materialised for it. The
-`std::meta::reflectable` constraint is `GenericConstraintKind::Reflectable`
-(`isReflectableType`), bound by `@compiler_constraint("meta_reflectable")`
-in the meta unit.
+`std::meta::reflectable` concept is source-defined through `is_reflectable<T>()`.
+The predicate transports `GenericConstraintKind::Reflectable`, whose answer
+still belongs to `isReflectableType`; there is no separate private concept
+binding.
 
 A direct-initialized class temporary consumed by a projection (the alias
 above, `return {.x = 1}` consumers and the like) is a fresh SSA value that

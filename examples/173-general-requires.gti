@@ -1,6 +1,7 @@
 // Source-defined contracts combine ordinary expressions with compiler-verified
 // reflection facts. Checking a requirement never executes the expression.
 #include <std/meta>
+#include <std/memory>
 
 concept adds_to<L, R, Result> = requires(L& left, R& right) {
   { left + right } -> Result;
@@ -20,6 +21,21 @@ concept invokes<F, Arg, Result> = requires(F& function, Arg& argument) {
 
 concept integer_type<T> = std::meta::is_integral<T>();
 concept transferable_value<T> = std::meta::is_transferable<T>();
+
+// Distinct alternatives retain their common facts, not the facts of either
+// alternative alone. Both signed and unsigned integers support addition.
+concept signed_or_unsigned<T> =
+    std::meta::is_signed_integral<T>() || std::meta::is_unsigned_integral<T>();
+T next_number<T>(T value) requires signed_or_unsigned<T> { return value + 1; }
+
+// A user-defined storage policy has the same facts available as std/memory.
+// Borrow-free does not mean that stored raw pointers are valid or owned.
+concept detached_object<T> =
+    std::meta::has_object_layout<T>() && std::meta::is_borrow_free<T>();
+std::uninitialized<T> empty_slot<T>()
+    requires detached_object<T> && std::bitwise_relocatable<T> {
+  return std::uninitialized<T>();
+}
 
 concept math_value<T> =
     adds_to<T, T, T> && std::copyable<T> && default_constructible<T>;
@@ -128,6 +144,14 @@ int main() {
   if (live_resources != 0) { return 3; }
   static_assert(std::meta::is_enum_underlying<status, uint8_t>());
   static_assert(std::meta::is_bitwise_relocatable<Distance>());
+  static_assert(std::meta::has_object_layout<Distance>());
+  static_assert(std::meta::is_borrow_free<Distance>());
+  static_assert(!std::meta::is_borrow_free<std::string_view>());
+  static_assert(!std::meta::has_object_layout<void>());
+  auto vacant = empty_slot<Distance>();
+  if (next_number<int>(3) != 4 || next_number<uint64_t>(7) != uint64_t(8)) {
+    return 5;
+  }
   static_assert(requires(int& left, int& right) {
     { left + right } -> int;
     { left == right } -> bool;

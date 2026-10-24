@@ -1054,6 +1054,12 @@ auto SemanticVisitor::Impl::satisfiesAtomicConstraint(
            !enums[argument.enumId - 1].payload;
   case GenericConstraintKind::Reflectable:
     return isReflectableType(argument);
+  case GenericConstraintKind::Boolean:
+    return argument == SemanticType::Bool;
+  case GenericConstraintKind::ObjectLayout:
+    return runtimeObjectLayoutType(argument);
+  case GenericConstraintKind::BorrowFree:
+    return !typeTraits(argument).containsBorrowedState;
   case GenericConstraintKind::SignedIntegral:
     return isSignedInteger(argument);
   case GenericConstraintKind::UnsignedIntegral:
@@ -1453,8 +1459,9 @@ auto SemanticVisitor::Impl::activeAtomicConstraints(
       }
       const GenericConstraintSet left = atomicForNode(node.left);
       const GenericConstraintSet right = atomicForNode(node.right);
-      return node.kind == ConstraintExpressionKind::Conjunction ? left | right
-                                                                : left & right;
+      return node.kind == ConstraintExpressionKind::Conjunction
+                 ? left | right
+                 : impliedConstraints(left) & impliedConstraints(right);
     };
     result |= atomicForNode(expression->root);
   }
@@ -1464,27 +1471,6 @@ auto SemanticVisitor::Impl::activeAtomicConstraints(
 auto SemanticVisitor::Impl::structuralRequirementAvailable(
     StructuralConstraintKind kind,
     std::span<const SemanticType> arguments) const -> bool {
-  // These declaration-bound capabilities admit only complete, borrow-free
-  // scalar values. Their generic uses retain those structural guarantees;
-  // movement/copying alone says nothing about layout or stored borrows.
-  if ((kind == StructuralConstraintKind::ObjectLayout ||
-       kind == StructuralConstraintKind::IndependentObject) &&
-      arguments.size() == 1) {
-    const auto constraints = constraintOf(arguments.front());
-    if (!invalidConstraintSet(constraints)) {
-      for (const auto scalar : {GenericConstraintKind::Numeric,
-                                GenericConstraintKind::SignedNumeric,
-                                GenericConstraintKind::Integral,
-                                GenericConstraintKind::SignedIntegral,
-                                GenericConstraintKind::UnsignedIntegral,
-                                GenericConstraintKind::FloatingPoint,
-                                GenericConstraintKind::AtomicScalar,
-                                GenericConstraintKind::IntegralEnum}) {
-        if (hasConstraint(constraints, scalar))
-          return true;
-      }
-    }
-  }
   const std::vector<ExpandedStructuralRequirement> active =
       activeStructuralRequirements();
   const auto callableCapability = [](StructuralConstraintKind candidate)
@@ -6000,12 +5986,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
            satisfiesAtomicConstraint(arguments[0],
                                      GenericConstraintKind::IntegralEnum) &&
            enums[arguments[0].enumId - 1].underlyingType == arguments[1];
-  case StructuralConstraintKind::ObjectLayout:
-    return arguments.size() == 1 && runtimeObjectLayoutType(arguments.front());
-  case StructuralConstraintKind::IndependentObject:
-    return arguments.size() == 1 &&
-           runtimeObjectLayoutType(arguments.front()) &&
-           !typeTraits(arguments.front()).containsBorrowedState;
   case StructuralConstraintKind::InlinePolymorphicPayload:
     return arguments.size() == 2 &&
            inlinePolymorphicPayload(arguments[0], arguments[1]);
@@ -6256,8 +6236,6 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       // size() is a generated member-call fact rather than an operator.
       break;
     case StructuralConstraintKind::EnumUnderlying:
-    case StructuralConstraintKind::ObjectLayout:
-    case StructuralConstraintKind::IndependentObject:
     case StructuralConstraintKind::InlinePolymorphicPayload:
       // Enum representation classification grants no numeric operators.
       break;
