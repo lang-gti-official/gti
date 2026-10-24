@@ -7159,12 +7159,14 @@ int main() {
     const auto observed = constructed == std::string::npos
                               ? std::string::npos
                               : text.find("_mark();", constructed);
+    // The failure-free expected(T) (RT-12) constructs the binding directly;
+    // a fallible one constructs it through its address.
+    const std::string binding = "__gti_mir_p_" + std::to_string(bindingSlot);
     const auto wrapped =
         observed == std::string::npos
             ? std::string::npos
-            : text.find("__gti_mir_p_" + std::to_string(bindingSlot) +
-                            ".construction_address()",
-                        observed);
+            : std::min(text.find(binding + ".construction_address()", observed),
+                       text.find(binding + ".construct(", observed));
     expect(admitted && lang::verifyMirProgram(forged).valid() &&
                wrapped != std::string::npos,
            mutationReasons[mutation]);
@@ -7193,18 +7195,26 @@ int main() {
   bool scheduled =
       !entryText.empty() && schedules.size() == 2 &&
       entryText.find("stages a placement class result") != std::string::npos;
-  for (const auto &[binding, payload] : schedules)
-    scheduled =
-        scheduled &&
-        entryText.find("__gti_mir_p_" + std::to_string(payload) +
-                       ".construct();") != std::string::npos &&
-        entryText.find("::new (static_cast<void *>(__gti_mir_p_" +
-                       std::to_string(binding) + ".construction_address()))") !=
-            std::string::npos &&
-        entryText.find("std::move(__gti_mir_p_" + std::to_string(payload) +
-                       ".take())") != std::string::npos &&
+  // A failure-free expected(T) (RT-12) constructs the binding directly from
+  // the taken payload; a fallible one constructs through its address and
+  // reparents the result.
+  for (const auto &[binding, payload] : schedules) {
+    const std::string bindingSlot = "__gti_mir_p_" + std::to_string(binding);
+    const std::string taken =
+        "std::move(__gti_mir_p_" + std::to_string(payload) + ".take())";
+    const bool direct = entryText.find(bindingSlot + ".construct(" + taken +
+                                       ")") != std::string::npos;
+    const bool placed =
+        entryText.find("::new (static_cast<void *>(" + bindingSlot +
+                       ".construction_address()))") != std::string::npos &&
+        entryText.find(taken) != std::string::npos &&
         entryText.find("// GTI MIR reparent into p" + std::to_string(binding) +
                        "\n") != std::string::npos;
+    scheduled = scheduled &&
+                entryText.find("__gti_mir_p_" + std::to_string(payload) +
+                               ".construct();") != std::string::npos &&
+                (direct || placed);
+  }
   expect(scheduled,
          "production emission should invoke exact generated and explicit "
          "constructors through their verified destination schedules");
@@ -7379,13 +7389,18 @@ int main() {
     const auto observed = constructed == std::string::npos
                               ? std::string::npos
                               : text.find("_mark();", constructed);
+    // The failure-free expected(T) (RT-12) constructs the binding directly
+    // from the prepared payload; a fallible one constructs it in place.
+    const std::string wrapperSlot =
+        "__gti_mir_p_" + std::to_string(destination);
     const auto published =
         observed == std::string::npos
             ? std::string::npos
-            : text.find("::new (static_cast<void *>(__gti_mir_p_" +
-                            std::to_string(destination) +
-                            ".construction_address()))",
-                        observed);
+            : std::min(
+                  text.find("::new (static_cast<void *>(" + wrapperSlot +
+                                ".construction_address()))",
+                            observed),
+                  text.find(wrapperSlot + ".construct(std::move(", observed));
     expect(admitted && lang::verifyMirProgram(forged).valid() &&
                published != std::string::npos,
            reasons[mutation]);
@@ -7409,17 +7424,20 @@ int main() {
             : artifact.contents.substr(start + 1, end - start - 1);
     // The wrapper is constructed in place by the prelude's expected(T)
     // constructor from the prepared payload slot.
+    const std::string wrapperSlot =
+        "__gti_mir_p_" + std::to_string(destination);
+    const std::string taken =
+        "std::move(__gti_mir_p_" + std::to_string(preparedSlot) + ".take())";
     expect(
         destination && entryMarker != std::string::npos &&
             line.find("mir_lifetime_slot<") != std::string::npos &&
-            artifact.contents.find("::new (static_cast<void *>(__gti_mir_p_" +
-                                       std::to_string(destination) +
-                                       ".construction_address()))",
-                                   entryMarker) != std::string::npos &&
-            artifact.contents.find("std::move(__gti_mir_p_" +
-                                       std::to_string(preparedSlot) +
-                                       ".take())",
-                                   entryMarker) != std::string::npos,
+            (artifact.contents.find("::new (static_cast<void *>(" +
+                                        wrapperSlot +
+                                        ".construction_address()))",
+                                    entryMarker) != std::string::npos ||
+             artifact.contents.find(wrapperSlot + ".construct(" + taken + ")",
+                                    entryMarker) != std::string::npos) &&
+            artifact.contents.find(taken, entryMarker) != std::string::npos,
         "checked passive Expected publication declares an uninitialized "
         "wrapper lifetime slot, never an eagerly default-constructed wrapper");
   }
@@ -7782,7 +7800,10 @@ class extent {
   uint64_t count;
 
 public:
-  extent<uint64_t N>(int32_t values[N]) : count(N) {}
+  // Checked arithmetic keeps this constructor fallible; storing N alone from
+  // a passive array formal is failure-free (RT-12).
+  extent<uint64_t N>(int32_t values[N])
+      : count(N + uint64_t(values[0]) - uint64_t(1)) {}
 
   uint64_t size() { return this.count; }
 };
@@ -13570,11 +13591,22 @@ void testPassiveNestedConstructorArgument() {
             !testFieldPublication(constructor.body, construct))
           continue;
         ++tested;
-        expect(
+        // A constructor over passive values is failure-free (RT-12) and is
+        // constructed plainly; a raising one publishes on its Invoke success.
+        const auto *target = construct.constructorTarget
+                                 ? frontend.mir.findConstructorInstance(
+                                       *construct.constructorTarget)
+                                 : nullptr;
+        const bool invoked =
             producerBlock.terminator.kind == lang::MirTerminatorKind::Invoke &&
-                producerBlock.terminator.invokeInstruction == construct.id &&
-                !construct.lifecycle.empty(),
-            "prepared passive input handoff precedes success-only publication");
+            producerBlock.terminator.invokeInstruction == construct.id;
+        expect(target != nullptr && !construct.lifecycle.empty() &&
+                   (target->mayRaiseDefinedFailure
+                        ? invoked
+                        : !invoked && construct.definedFailure.propagation ==
+                                          lang::FailurePropagationKind::None),
+               "prepared passive input handoff precedes publication, on the "
+               "Invoke success edge only when the constructor can raise");
         for (int mutation = 0; mutation != 2; ++mutation) {
           auto malformed = frontend.mir;
           auto *body = lang::findMirBody(
