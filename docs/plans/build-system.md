@@ -26,6 +26,13 @@ campaign rather than adopting the backend's ABI.
 
 ## Current Implementation
 
+Integrated test targets now support name filtering/exclusion, discovery listing,
+explicit empty-selection policy, bounded parallel isolated children, configurable
+per-test deadlines, and versioned JSON Lines lifecycle reporting. Runner-owned
+completion accounting is separate from test-language assertions. Integrated
+coverage, benchmarking, fuzzing, named parameterized cases and source-level
+ignored-test attributes remain follow-on goals, not implemented by these controls.
+
 Configuration defines are implemented in `[build]`, `[profiles.<name>]` and
 `[targets.<name>]`. One driver-owned normalized union combines the selected
 package/dependency build flags, consumer profile, consumer target and CLI

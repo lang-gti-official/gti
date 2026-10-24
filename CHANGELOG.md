@@ -9,13 +9,27 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.468.6 — Nested constructor argument staging
+## 0.469.2 — Nested constructor argument staging
 
 - Restore class-field initialization from nested constructor arguments when
   MIR proves the consuming constructor failure-free. The C++ backend preserves
   the prepared argument handoff and direct field publication instead of
   rejecting the constructor with `GTI-B0001`; this applies to ordinary user
   types as well as clock-point fields.
+
+## 0.469.0 — Test selection, isolated execution and richer assertions
+
+- `gti test` can list, filter and skip individual tests, run bounded parallel
+  workers and enforce per-test deadlines. Process groups are cleaned up on
+  completion, timeout and interruption. Legacy human-mode test executables
+  retain their stdout/stderr streams and status formatting.
+- `--format json` emits versioned inventory, launch, completion and summary
+  events with exact accounting, captured output and distinct process outcomes.
+  Empty selections fail unless explicitly allowed.
+- Source-defined equality, string, approximate floating-point and span-element
+  checks report values and caller locations while retaining ordinary ownership
+  and deterministic panic cleanup. Equality macros evaluate operands once and
+  defer formatting and custom messages until failure.
 
 ## 0.468.5 — Canonical Gitea hosting
 
