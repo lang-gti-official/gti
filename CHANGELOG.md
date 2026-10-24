@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.475.0 - Native LLVM target and ABI infrastructure
+
+- Add the native target/layout/ABI session and explicit O0-O3 optimization
+  pipelines behind the independent LLVM backend. This is infrastructure;
+  executable GTI instruction lowering remains unimplemented and C++ stays the
+  production backend.
+- Ship C runtime entry points for attached thread-local lifetime begin/drain,
+  ready for native hosted startup without C++ helper dependencies.
+- Validate actual object bytes through atomic publication and native linking,
+  with macOS arm64/Linux x86_64 layout and C-signature oracles. LLVM pass-manager
+  components remain private to the native backend and its installed library.
+
 ## 0.474.0 - LLVM coverage and admission foundation
 
 - The compiler library exposes an immutable LLVM admission inventory over
