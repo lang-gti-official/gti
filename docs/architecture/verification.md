@@ -6989,12 +6989,13 @@ Status: Current test and audit structure.
 
 ## Agent task lifecycle
 
-`agent_workflow` uses disposable real Git repositories, a fake GitHub API and a Gitea mirror to
+`agent_workflow` uses disposable real Git repositories and a fake Gitea REST API to
 exercise branch publication, draft creation/retry, successful PR integration,
 upstream reconciliation, exact head/base validation, server merge races and
-required-check refusal. It checks preservation of dirty/divergent local main,
+protected-merge refusal. It checks preservation of dirty/divergent local main,
 cleanup refusal for new commits/ignored/source files, conditional branch
 deletion, abandonment, locks and preservation of existing protection settings.
+An unused backup remote verifies that lifecycle operations never publish there.
 It performs no production network request or GTI compilation. Live lifecycle
 delivery verifies the actual instance's draft, protection and merge APIs. It
 also checks that `verify` releases the metadata lock while its checks run,
@@ -9992,7 +9993,7 @@ and missing-platform refusal, complete CTest inventories/results, required
 regression skips, optimized build ownership, and advisory CI classification. Workflow-only
 changes use these tests and their affected tooling gates rather than a full
 GTI semantic suite. CI still runs full native/sanitizer coverage for compiler
-integration candidates as advisory feedback. GitHub Actions never gates local
+integration candidates as advisory feedback. Gitea Actions never gates local
 validation, integration or completion; preserve exact-source local/managed-runner
 coverage and required platform/performance evidence, and report pending/failed
 CI separately rather than waiting for runner capacity or calling it passed.
@@ -10442,10 +10443,10 @@ instrumentation retained.
 
 ## Repository Build Generator
 
-First-party developer instructions and GitHub automation configure CMake
+First-party developer instructions and Gitea automation configure CMake
 with the Ninja generator. CMake remains the portable configuration and build
 entry point; workflows invoke `cmake --build` rather than calling `ninja`
-directly. Every fresh first-party build tree, including sanitizer, release, and
+directly. Every fresh production build tree, including sanitizer, release, and
 installed-consumer smoke trees, selects `-G Ninja`, and each runner provisions
 Ninja explicitly before configuration. This keeps dependency discovery,
 parallel scheduling, and incremental behavior consistent across local, CI,
@@ -10455,14 +10456,17 @@ CMake generators are fixed when a build tree is created. A pre-existing
 Makefile build directory must not be reconfigured in place with Ninja; create a
 new build directory or deliberately remove the old generated tree first. The
 CMake project itself remains generator-agnostic for downstream IDE integration,
-but non-Ninja generators are outside the first-party verification path.
+but non-Ninja production builds are outside the first-party verification path.
+Disposable `project(... NONE)` workflow fixtures are not compiler builds:
+they exercise the explicit CMake/CTest/Make bootstrap without compiling GTI.
 
 ## Platform Signal
 
-Local verification runs on the macOS/AppleClang host. GitHub Actions CI
-(`ubuntu-latest`, GCC/libstdc++) is the accepted first Linux signal; there is
-no local Linux gate in the pre-push loop. Two mitigations keep that gap
-narrow. First, all first-party targets compile with `-Wall -Wextra
+Local verification uses macOS/AppleClang and the configured Linux managed
+runners where the changed invariant requires Linux evidence. Gitea Actions
+(`ubuntu-latest`, GCC/libstdc++) supplies advisory feedback, not a replacement
+for required exact-source local/managed-runner platform checks. Two additional
+mitigations catch platform differences. First, all first-party targets compile with `-Wall -Wextra
 -Werror`, which turns the compiler-divergence class that previously
 surfaced only on GCC — for example C++20 designated-initializer
 declaration order, which AppleClang merely warns about — into local build

@@ -28,6 +28,12 @@ the replacement repository; preserve them when using `start --adopt`. Read
 [the command contract](../../../docs/architecture/agent-workflow.md) when
 recovering interruptions or interpreting a refused operation.
 
+An older worktree may contain pre-cutover GitHub instructions and a GitHub-only
+helper. Read the current primary checkout's `AGENTS.md` and this skill there,
+and run that primary helper with `--repo <task-worktree>` until current main is
+reconciled. Do not restore a retired remote to satisfy a stale helper. Preserve
+in-flight runs; rehost their records only after the validation owner is finished.
+
 ## Execution discipline
 
 Apply the [bounded-output, analysis and waiting contract](../../../docs/architecture/agent-workflow.md#bounded-output-analysis-and-waiting).

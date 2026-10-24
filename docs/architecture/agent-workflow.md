@@ -2,6 +2,14 @@
 
 Status: Repository automation and the owner's implementation-task contract.
 
+Canonical `origin` is `https://git.internal.howetotech.dev/gti-lang/gti.git`.
+Gitea owns branches, PRs, issues, CI, tags and releases. GitHub-era instructions
+in historical notes or pre-cutover worktrees do not select the current host.
+For a preserved worktree, consult the primary checkout's current `AGENTS.md`
+and skill, and invoke its helper with `--repo <task-worktree>` until the branch
+has reconciled current main. Preserve live runs and follow the explicit
+[record-rehosting contract](#hosts-and-records); never overwrite their identity.
+
 An implementation normally ends with a Gitea PR merged into `main`, the primary
 local checkout synchronized, and the task's
 branches/worktree cleaned up. This

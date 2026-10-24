@@ -914,6 +914,28 @@ class ValidationChecks(unittest.TestCase):
 
 
 class CIEnvironment(unittest.TestCase):
+    def test_current_guidance_does_not_restore_retired_github_hosting(self):
+        retired = [re.compile(pattern, re.I) for pattern in (
+            r"\b(?:current|canonical)\s+GitHub\s+(?:workflow|PR\b|issue\b|remote\b)",
+            r"\bcurrent publication follows the GitHub\b",
+            r"\bGitea (?:is|only) (?:a |the )?backup mirror\b",
+            r"\bGitHub automation configure CMake\b",
+            r"\bGitHub Actions CI\s*\(`ubuntu-latest`",
+        )]
+        paths = [ROOT / name for name in ("AGENTS.md", "CLAUDE.md", "README.md")]
+        for directory in ("docs", ".codex/skills", ".claude/skills"):
+            paths.extend((ROOT / directory).rglob("*.md"))
+        violations = []
+        for path in paths:
+            relative = path.relative_to(ROOT).as_posix()
+            if relative.startswith(("docs/plans/archive/", "docs/third-party-audit/")):
+                continue
+            text = path.read_text()
+            for pattern in retired:
+                if pattern.search(text):
+                    violations.append(f"{relative}: {pattern.pattern}")
+        self.assertEqual(violations, [], "Active guidance must not restore retired hosting")
+
     @staticmethod
     def step(job, name):
         workflow = (ROOT / ".gitea/workflows/ci.yml").read_text()
