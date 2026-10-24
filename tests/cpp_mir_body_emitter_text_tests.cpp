@@ -52,7 +52,12 @@ std::size_t stagedExpectedArguments(const lang::FrontendResult &frontend,
       ++staged;
       const std::string slot =
           "__gti_mir_p_" + std::to_string(*input.destination);
-      const auto published = text.find(slot + ".construction_address()");
+      // A fallible producer publishes through the slot's address; a
+      // failure-free one (a passive payload, RT-12) from its prvalue.
+      const auto fallible = text.find(slot + ".construction_address()");
+      const auto published = fallible != std::string::npos
+                                 ? fallible
+                                 : text.find(slot + ".construct_from(");
       const auto moved =
           published == std::string::npos
               ? std::string::npos
@@ -278,10 +283,10 @@ int main() {
           // by assignment into its already-constructed storage.
           artifact.contents.find(
               "(*this).empty = ::__gti_program::payload_t{"
-              "std::in_place_index<2>}; // direct passive payload field "
+              "std::in_place_index<1>}; // direct passive payload field "
               "publication") != std::string::npos &&
           artifact.contents.find("(*this).valued = ::__gti_program::payload_t{"
-                                 "std::in_place_index<1>, __gti_mir_v_") !=
+                                 "std::in_place_index<0>, __gti_mir_v_") !=
               std::string::npos,
       "production emission executes conversion and payload publication in "
       "constructor MIR without duplicate in-class defaults");
@@ -5877,7 +5882,12 @@ int main() {
           "::gti_internal::backend::assign_representation(__gti_mir_p_" +
           std::to_string(*assign.destination) + ".get(), std::move(" + slot +
           ".get()));";
-      const auto published = text.find(slot + ".construction_address()");
+      // A fallible producer publishes through the slot's address; a
+      // failure-free one (a passive payload, RT-12) from its prvalue.
+      const auto fallible = text.find(slot + ".construction_address()");
+      const auto published = fallible != std::string::npos
+                                 ? fallible
+                                 : text.find(slot + ".construct_from(");
       const auto assigned = text.find(assignment);
       const auto next =
           assigned == std::string::npos
@@ -6479,13 +6489,22 @@ int main() {
          "an owning binding should accept an inline Unexpected replacement");
   // A fresh class error is constructed in its slot, moved into unexpected()
   // and retired right after that call.
+  // unexpected() over a passive class error is failure-free (RT-12) and
+  // calls its plain form; over an owning error it calls its failure form.
+  const auto unexpectedCall = [](const std::string &line) {
+    for (const std::string marker : {"_unexpected__gti_mir_failure(std::move(",
+                                     "_unexpected(std::move("}) {
+      if (const std::size_t staged = line.find(marker);
+          staged != std::string::npos)
+        return staged + marker.size();
+    }
+    return std::string::npos;
+  };
   std::size_t stagedErrors = 0;
   for (std::size_t index = 0; index + 1 < lines.size(); ++index) {
-    const std::string marker = "_unexpected__gti_mir_failure(std::move(";
-    const std::size_t staged = lines[index].find(marker);
-    if (staged == std::string::npos)
+    const std::size_t idStart = unexpectedCall(lines[index]);
+    if (idStart == std::string::npos)
       continue;
-    const std::size_t idStart = staged + marker.size();
     const std::string slot = lines[index].substr(
         idStart, lines[index].find(".get())", idStart) - idStart);
     bool constructed = false;
@@ -6495,7 +6514,7 @@ int main() {
     bool retired = false;
     for (std::size_t after = index + 1;
          after < lines.size() && !retired &&
-         !contains(lines[after], "_unexpected__gti_mir_failure(");
+         unexpectedCall(lines[after]) == std::string::npos;
          ++after)
       retired = lines[after] == slot + ".destroy();";
     stagedErrors += constructed && retired;
@@ -7992,7 +8011,12 @@ int main() { return observe(true) + observe(false) - 13; }
         !place.projections.empty() || !isExpectedClass(frontend, place.type))
       continue;
     const std::string slot = "__gti_mir_p_" + std::to_string(place.id);
-    const auto produced = text.find(slot + ".construction_address()");
+    // A fallible producer constructs through the slot's address; a
+    // failure-free one (a passive payload, RT-12) from its returned prvalue.
+    const auto fallible = text.find(slot + ".construction_address()");
+    const auto produced = fallible != std::string::npos
+                              ? fallible
+                              : text.find(slot + ".construct_from(");
     const auto read = produced == std::string::npos
                           ? std::string::npos
                           : text.find(slot + ".get()", produced);
@@ -8287,11 +8311,15 @@ int main() {
         !place.projections.empty() || !isExpectedClass(frontend, place.type))
       continue;
     const std::string slot = "__gti_mir_p_" + std::to_string(place.id);
-    const auto first = joinText.find(slot + ".construction_address()");
+    // An arm publishes through the slot's address when its producer is
+    // fallible, or from its prvalue when it is failure-free (RT-12).
+    const auto publication = [&](std::size_t from) {
+      return std::min(joinText.find(slot + ".construction_address()", from),
+                      joinText.find(slot + ".construct_from(", from));
+    };
+    const auto first = publication(0);
     const auto second =
-        first == std::string::npos
-            ? first
-            : joinText.find(slot + ".construction_address()", first + 1);
+        first == std::string::npos ? first : publication(first + 1);
     const auto read = second == std::string::npos
                           ? second
                           : joinText.find(slot + ".get().", second);
@@ -9038,8 +9066,12 @@ int main() { return transferred(true) + texted(false) - 3; }
     const std::string join = joinStart == std::string::npos
                                  ? std::string()
                                  : body.substr(joinStart, retired - joinStart);
+    // A fallible arm marks the storage it constructed through its address;
+    // a failure-free one (a passive argument, RT-12) constructs it directly.
     expect(supported && !join.empty() && count(body, retire) == 1 &&
-               count(body, join + ".mark_constructed()") == 2 &&
+               count(body, join + ".mark_constructed()") +
+                       count(body, join + ".construct(") ==
+                   2 &&
                body.rfind(".construct(std::move(" + join + ".get()));",
                           retired) != std::string::npos &&
                count(body, ".take()") == (transfer ? 2u : 0u),
