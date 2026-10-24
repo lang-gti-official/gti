@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Carriers of returned references (0.467.4)
+## Carriers of returned references (0.467.5)
 
 `accessor_text_carrier_runtime` runs `accessor_text_carriers.gti` in all
 eight native modes, including the sanitized one. It builds text iterators
@@ -59,6 +59,52 @@ Not covered: constructing a carrier class directly from a returned reference
 (`Cursor(box.get())`) still stops in MIR construction, with "carrier reference
 result requires one exact stored dependency" for literal text and "dependent
 text value is relayed where its text field may outlive" for owned text.
+
+## Payload enums replaced through references (0.467.4)
+
+`payload_enum_reference_assignment_runtime` runs
+`payload_enum_reference_assignment.gti`.
+- A payload enum whose alternatives own cleanup (a noisy class, a
+  `std::string`) is replaced through a member call's `mut slot&` result, a
+  free function's reference result, a reference local, a reference parameter,
+  `std::optional<slot>::value()` and a reference local bound from it.
+- Each old alternative's destructor reports once, before the new value moves
+  in, and each referent's owner drops the final value once at its own end.
+- When the old alternative's cleanup raises (`GTI-R0001`, exit status 70),
+  only the unpublished replacement drops; the retired referent drops nothing.
+- Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan.
+  The main compiler (`2490f92b`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`, `testOwningPayloadEnumReferentReplacement`
+checks:
+- a call's mutable reference result, a reference local and a reference
+  parameter each drain the old alternative in exactly one replacement cleanup,
+  then move the staged slot into the same `(*carrier)` spelling and destroy
+  only the slot's shell;
+- a payload whose cleanup cannot fail uses the same shape in the plain form;
+- a borrowed Assign forged to name a local `Replace` target is refused.
+
+Mutation checks:
+- without the `Replace` target-zero requirement, the forgery is accepted;
+- with main's proof, the three replacements and the plain form are refused.
+
+An `--emit-cpp` differential against main `2490f92b`, with one
+`GTI_STDLIB_PATH` for both compilers, covered all 1,835 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O1, and the 137 of them
+that declare an `enum class` at O0 and O3:
+- 1,464 programs at O1 and 127 at each of O0 and O3 emit byte-identical C++;
+  the 370 (O1) and 9 (O0, O3) pairs refused or timing out with both compilers
+  report identical diagnostics;
+- only the new fixture changes status, from `GTI-B0001` to success.
+Previously admitted assignments take the unchanged tracked-place branch of
+the proof, so only programs main refuses can change.
+
+The `std::optional` cases construct the optional explicitly. On main, an
+implicit conversion from a payload enum into any class (`wrap t =
+shape::circle(3)`, `std::optional<label> t = label::text(...)`) gives the class
+value the enum's borrow alternatives, and MIR verification then fails with
+"complete dependency set does not match its typed result domain" at the first
+receiver use, independent of assignment. That is tracked separately.
 
 ## Array fields from constructor parameters (0.467.3)
 

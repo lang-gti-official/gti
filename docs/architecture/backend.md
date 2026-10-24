@@ -3597,6 +3597,17 @@ is insufficient, because a missing transfer could leave the published source
 scheduled for cleanup. This requirement is independent of the destination's
 representation or whether it owns a body-local drop obligation.
 
+Owning payload-enum assignment uses the same two referent witnesses. Its
+value slot (a fresh payload construction, call result or moved binding)
+replaces either a place this body tracks, through that place's `Reinitialize`
+ownership event, or the complete referent of a checked mutable reference
+carrier or source mutable call-result loan, where MIR records no local
+ownership event and the `Replace` keeps target zero. The paired
+`CleanupBeforeAssign` drains the old alternative and retires its native shell;
+the commit move-assigns the slot into the same referent spelling and destroys
+only the moved-from slot shell. A borrowed form naming a local `Replace`
+target fails closed.
+
 Requiring a destination obligation for an element, owned field or checked referent
 would retire the same storage twice, so either publication fails closed when
 it names one. Every other destination, a bare-binding, field or loan publication with
