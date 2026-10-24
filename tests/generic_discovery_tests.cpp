@@ -1,6 +1,7 @@
 #include "gti/frontend.h"
 #include "gti/hir.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -60,12 +61,18 @@ int main() { return 0; }
 )gti");
   bool constraint = false;
   for (const auto &diagnostic : invalid.diagnostics)
-    constraint = constraint ||
-                 (diagnostic.code == "GTI-S2029" &&
-                  diagnostic.message.find("Missing") != std::string::npos &&
-                  std::filesystem::path(diagnostic.primary.source).filename() ==
-                      "generic-discovery.gti" &&
-                  diagnostic.primary.end > diagnostic.primary.start);
+    constraint =
+        constraint ||
+        (diagnostic.code == "GTI-S2029" &&
+         (diagnostic.message.find("Missing") != std::string::npos ||
+          std::any_of(diagnostic.related.begin(), diagnostic.related.end(),
+                      [](const auto &note) {
+                        return note.message.find("Missing") !=
+                               std::string::npos;
+                      })) &&
+         std::filesystem::path(diagnostic.primary.source).filename() ==
+             "generic-discovery.gti" &&
+         diagnostic.primary.end > diagnostic.primary.start);
   expect(!invalid.canGenerateCode() && constraint,
          "an unused alias cannot bypass its concrete class constraint");
 }

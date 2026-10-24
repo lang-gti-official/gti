@@ -1235,7 +1235,7 @@
       "outcome": "rejected"
     },
     "diag-g07-concept-method-body-mismatch-in-lambda": {
-      "code": "GTI-S2029",
+      "code": "GTI-S2005",
       "outcome": "rejected"
     },
     "diag-l01-unterminated-string": {

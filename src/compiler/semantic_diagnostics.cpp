@@ -329,6 +329,10 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                                                   "'."});
           }
           appendMemberReason(diagnostic, alternative);
+          if (alternative.expressionFailure &&
+              !alternative.expressionFailure->empty())
+            diagnostic.related.push_back(
+                {tokenSpan(*location), *alternative.expressionFailure});
         };
     for (const SemanticConstraintFailure &alternative : failure.alternatives) {
       appendAlternatives(alternative);

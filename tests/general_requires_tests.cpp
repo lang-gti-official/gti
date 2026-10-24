@@ -125,6 +125,155 @@ int main(int argc, char **argv) {
                          ("gti-general-requires-" + std::to_string(getpid()));
   std::filesystem::create_directories(directory);
 
+  accepted(check(root, directory, "macro_reflected_constraint", R"GTI(
+struct Key {
+  bool operator==(Key& other) { return true; }
+  bool operator!=(Key& other) { return false; }
+};
+#macro inspect<T>(T value) requires std::equality_comparable<T> {
+  if (value == value) {}
+}
+int main() { Key key{}; inspect(key); return 0; }
+)GTI"),
+           "macro probes retain computed reflection declaration identities");
+
+  accepted(check(root, directory, "predicate_alias_lexical_order", R"GTI(
+#include <std/meta>
+constexpr bool accepts<T>() { bool result = std::meta::is_integral<T>(); return result; }
+concept integer_type<T> = accepts<T>();
+class Box<integer_type T> {};
+using IntBox = Box<int>;
+class Holder { public: using Value = Box<int>; };
+int main() { IntBox value{}; return 0; }
+)GTI"),
+           "aliases evaluate source predicates after preceding definitions");
+  rejected(check(root, directory, "predicate_unused_alias_rejection", R"GTI(
+constexpr bool accepts<T>() { return false; }
+concept rejected_type<T> = accepts<T>();
+class Box<rejected_type T> {};
+using Unused = Box<int>;
+int main() { return 0; }
+)GTI"),
+           "unused aliases still validate source-defined constraints");
+  rejected(check(root, directory, "predicate_alias_later_definition", R"GTI(
+constexpr bool accepts<T>();
+concept accepted_type<T> = accepts<T>();
+class Box<accepted_type T> {};
+using TooSoon = Box<int>;
+constexpr bool accepts<T>() { return true; }
+int main() { return 0; }
+)GTI"),
+           "alias predicates cannot consume a later constexpr definition");
+  accepted(check(root, directory, "numeric_pack_forwarding", R"GTI(
+int count<std::numeric Ts...>(Ts... values) { return 1; }
+int forward<std::numeric Ts...>(Ts... values) { return count(values...); }
+int main() { return forward(1, 2, 3) - 1; }
+)GTI"),
+           "source numeric constraints quantify over forwarded pack elements");
+  rejected(check(root, directory, "numeric_pack_missing_proof", R"GTI(
+int count<std::numeric Ts...>(Ts... values) { return 1; }
+int forward<Ts...>(Ts... values) { return count(values...); }
+int main() { return forward(1); }
+)GTI"),
+           "pack forwarding does not invent missing element constraints");
+
+  accepted(
+      check(root, directory, "symbolic_declaration_predicate", R"GTI(
+#include <std/meta>
+struct Cell<T> {
+  T value;
+  Cell(T input) : value(input) {}
+  T& operator*() { return value; }
+};
+constexpr bool has_reference_result<T>() {
+  mut bool found = false;
+  constexpr for (auto member : std::meta::lookup_operators_of<T>()) {
+    if constexpr (member.name() == "operator*") {
+      found = member.result().is_reference();
+    }
+  }
+  return found;
+}
+constexpr bool readable_expression<T>() {
+  return requires(T& cell) { { *cell } -> auto& [[borrowed_from(cell)]]; };
+}
+concept readable_cell<T> = has_reference_result<T>() && readable_expression<T>();
+int consume<readable_cell C>(C& cell) { return 1; }
+int forward<T>(Cell<T>& cell) { return consume(cell); }
+int main() { Cell<int> value{1}; return forward(value) - 1; }
+)GTI"),
+      "symbolic declaration metadata and existing expression proofs compose");
+  accepted(check(root, directory, "symbolic_identity_predicate", R"GTI(
+#include <std/meta>
+struct Cell<T> {};
+struct End {};
+constexpr bool identities<T>() {
+  return std::meta::is_same<Cell<T>&, Cell<T>&>() &&
+         !std::meta::is_same<Cell<T>&, End&>() &&
+         !std::meta::is_same<Cell<T>&, Cell<T>>();
+}
+concept stable<T> = identities<T>();
+int accepts<stable T>(T value) { return 1; }
+int forward<T>(T value) { return accepts(value); }
+constexpr bool equal<T, U>() { return std::meta::is_same<T, U>(); }
+int main() {
+  static_assert(equal<int, int>());
+  static_assert(!equal<int, bool>());
+  return forward(1) - 1;
+}
+)GTI"),
+           "symbolic type identities preserve equality and outer distinctions");
+  rejected(check(root, directory, "symbolic_unknown_equality", R"GTI(
+#include <std/meta>
+constexpr bool equal<T, U>() { return std::meta::is_same<T, U>(); }
+concept same<T, U> = equal<T, U>();
+void accepts<T, U>(T& left, U& right) requires same<T, U> {}
+void forward<T, U>(T& left, U& right) { accepts(left, right); }
+int main() { return 0; }
+)GTI"),
+           "distinct symbolic identities do not establish equality");
+  rejected(check(root, directory, "symbolic_unknown_inequality", R"GTI(
+#include <std/meta>
+constexpr bool unequal<T, U>() { return !std::meta::is_same<T, U>(); }
+concept different<T, U> = unequal<T, U>();
+void accepts<T, U>(T& left, U& right) requires different<T, U> {}
+void forward<T, U>(T& left, U& right) { accepts(left, right); }
+int main() { return 0; }
+)GTI"),
+           "distinct symbolic identities do not establish inequality either");
+  rejected(check(root, directory, "primitive_query_cache_exact_type", R"GTI(
+concept subtractable<T> = requires(T& left, T& right) {
+  { left - right } -> T;
+};
+T difference<subtractable T>(T left, T right) { return left - right; }
+int main() {
+  int good = difference(3, 1);
+  bool bad = difference(true, false);
+  return good;
+}
+)GTI"),
+           "cached primitive proofs never authorize a different type domain");
+  rejected(
+      check(root, directory, "symbolic_specialization_inventory", R"GTI(
+#include <std/meta>
+namespace shapes {
+struct Cell<T> { T value; T& operator*() { return value; } };
+}
+struct shapes::Cell<bool> {};
+constexpr bool readable<T>() {
+  mut bool found = false;
+  constexpr for (auto member : std::meta::lookup_operators_of<T>()) {
+    if constexpr (member.name() == "operator*") { found = true; }
+  }
+  return found;
+}
+concept reads<T> = readable<T>();
+void consume<reads C>(C& cell) {}
+void forward<T>(shapes::Cell<T>& cell) { consume(cell); }
+int main() { return 0; }
+)GTI"),
+      "symbolic metadata cannot assume an unresolved specialization inventory");
+
   accepted(
       check(root, directory, "inferred_requirement_results", R"GTI(
 concept observes<I> = requires(I& cursor) { { *cursor }; };

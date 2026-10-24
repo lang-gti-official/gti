@@ -1695,6 +1695,7 @@ private:
   // written in, kept for validateConformanceTypes whether or not the block
   // registered.
   struct ConformanceTypeCheck {
+    const ConformanceDecl *declaration = nullptr;
     SourceUnitId sourceUnit = 0;
     std::vector<std::string> namespaceScope;
     std::vector<GenericParameterInfo> genericParameters;
@@ -3138,6 +3139,13 @@ private:
   requirementQueryIdentity(const void *syntax,
                            std::span<const SemanticType> arguments) const;
   mutable std::vector<ActiveRequirementQuery> activeRequirementQueries;
+  // Positive results for closed primitive-only expressions depend on neither
+  // declaration lookup nor caller flow. Request-local and bounded; nominal,
+  // symbolic, macro, borrowed-result and call queries never enter this cache.
+  mutable std::unordered_map<const MemberRequirement *,
+                             std::vector<std::vector<SemanticType>>>
+      primitiveRequirementProofs;
+  mutable std::size_t primitiveRequirementProofCount = 0;
   void recordMemberRequirementReceiver(const MemberRequirement &query,
                                        const SemanticType &type);
   struct ActiveMemberRequirement {
@@ -4237,7 +4245,6 @@ private:
                          const ClassDecl *owner, AccessModifier access);
 
   void resolveTypeAliases();
-  void validateTypeAliasConstraints();
 
   void registerConcepts(const StmtList &statements,
                         std::vector<std::string> scope);
@@ -4349,7 +4356,7 @@ private:
   void registerConformances(const StmtList &statements,
                             std::vector<std::string> scope);
   void bindConformanceOperations();
-  void validateConformanceTypes();
+  void validateConformanceTypes(const ConformanceDecl &declaration);
   [[nodiscard]] std::optional<ConformanceMatch>
   matchConformance(ConceptId id,
                    const std::vector<SemanticType> &arguments) const;
@@ -5039,8 +5046,6 @@ private:
   [[nodiscard]] bool isMetaLibraryUnit(SourceUnitId sourceUnit) const;
 
   // ---- Compile-time reflection (std/meta) ----
-  // Classes bound by `@compiler_type`, by binding kind.
-  std::unordered_map<CompilerTypeKind, ClassId> compilerTypeClasses;
   [[nodiscard]] static std::optional<CompilerTypeKind>
   compilerTypeKind(std::string_view binding);
   [[nodiscard]] ClassId compilerTypeClass(CompilerTypeKind kind) const;
@@ -5073,6 +5078,8 @@ private:
   [[nodiscard]] bool
   metaQueryAcceptsOpenSubject(IntrinsicKind intrinsic,
                               const SemanticType &subject) const;
+  [[nodiscard]] bool
+  metaHasStableDeclarations(const SemanticType &subject) const;
   [[nodiscard]] std::optional<ConstantValue>
   metaQueryConstant(IntrinsicKind intrinsic, const SemanticType &subject,
                     const std::optional<SemanticType> &attribute,
@@ -6120,6 +6127,9 @@ private:
   // not rebuild declaration authority in a second table. The catalog is
   // sealed after the ordered registration prepasses complete.
   struct SemanticCatalog {
+    // Trusted computed-type identities are declaration facts. Every isolated
+    // query, macro probe and instance worker must inherit the same registry.
+    std::unordered_map<CompilerTypeKind, ClassId> compilerTypeClasses;
     std::unordered_set<std::string> namespaces;
     std::unordered_map<std::string, SymbolId> namespaceToolingSymbols;
     std::unordered_map<std::string, NamespaceAliasInfo> namespaceAliases;
@@ -6232,7 +6242,8 @@ private:
 
   private:
     [[nodiscard]] std::vector<std::size_t> shape() const {
-      return {namespaces.size(),
+      return {compilerTypeClasses.size(),
+              namespaces.size(),
               namespaceToolingSymbols.size(),
               namespaceAliases.size(),
               compilerPrivateNamespaceSymbol,
@@ -6666,6 +6677,8 @@ private:
   // preamble reports into its own sink.
   SemanticDiagnosticReporter reporter{semanticModel, diagnostics};
   SemanticCatalog &catalog = requestSession.catalog;
+  std::unordered_map<CompilerTypeKind, ClassId> &compilerTypeClasses =
+      requestSession.catalog.compilerTypeClasses;
   ValueFlowState &valueFlow = requestSession.valueFlow;
   ScopeStack &scopes = requestSession.valueFlow.scopes;
   std::unordered_set<std::string> &namespaces =
@@ -6748,8 +6761,8 @@ private:
   // so diagnostics can spell them while the block is not in `conformances`.
   const std::vector<GenericParameterInfo> *registeringConformanceParameters =
       nullptr;
-  // Filled by registerConformances, emptied by validateConformanceTypes in
-  // the same registration.
+  // Filled during registration; validated at each block's lexical position
+  // once preceding source-defined constexpr predicates are available.
   std::vector<ConformanceTypeCheck> conformanceTypeChecks;
   std::vector<EnumInfo> &enums = requestSession.catalog.enums;
   std::vector<std::unordered_map<std::string, SemanticType>>

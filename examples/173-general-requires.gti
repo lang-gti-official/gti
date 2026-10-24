@@ -6,6 +6,29 @@
 #include <std/iterator>
 #include <std/algorithm>
 
+// A source predicate can inspect a fixed generic declaration before its payload
+// type is concrete. Reflection does not grant access: the expression query must
+// independently prove the cursor borrow.
+struct GenericCell<T> {
+  T value;
+  GenericCell(T initial) : value(initial) {}
+  T& operator*() { return this.value; }
+};
+constexpr bool declares_reference<T>() {
+  mut bool found = false;
+  constexpr for (auto method : std::meta::lookup_operators_of<T>()) {
+    if constexpr (method.name() == "operator*") {
+      found = method.result().is_reference();
+    }
+  }
+  return found;
+}
+concept symbolically_readable_cell<T> = declares_reference<T>() && requires(T& cell) {
+  { *cell } -> auto& [[borrowed_from(cell)]];
+};
+int accepts_cell<symbolically_readable_cell T>(T& cell) { return 1; }
+int forwards_cell<T>(GenericCell<T>& cell) { return accepts_cell(cell); }
+
 struct Finish { int position = 8; };
 struct Position {
   int position = 3;
@@ -312,6 +335,8 @@ namespace query_hygiene {
 }
 
 int main() {
+  GenericCell<int> symbolic_payload{3};
+  if (forwards_cell(symbolic_payload) != 1) { return 9; }
   mut Cell inferred{};
   assign_cell(inferred, 11);
   if (!matches_cell(inferred, 11)) { return 21; }

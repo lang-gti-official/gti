@@ -960,11 +960,19 @@ runtime effect.
 
 ## Compile-Time Iteration And Reflection
 
+Trusted computed-type identities belong to the sealed `SemanticCatalog`, not
+to an individual analysis visitor. Macro probes, expression-requirement probes,
+constant-evaluation workers and body-effect workers inherit the same registry
+with their catalog snapshot. Speculation does not lose metadata-list reduction
+or publish changes back to the caller's declaration environment.
+
 `constexpr for` is expanded by semantic analysis and is gone afterwards.
 `visitConstexprForStmt` analyzes the sequence expression, requires a class
 type with one type-pack argument list (`compileTimeSequenceElements`), and
-defers when the type contains an open generic parameter, using the same
-deferral marks as a dependent `if constexpr`. Otherwise it clones the body
+defers when the cardinality or element storage remains symbolic, using the same
+deferral marks as a dependent `if constexpr`. A fixed list of empty,
+constexpr-default-constructible descriptor classes can expand while the types
+they describe are still open. Otherwise it clones the body
 once per element with `cloneStmt` (`ast_clone.cpp`), builds the element
 binding `[constexpr] auto name = <element>()`, wraps both in a block and
 analyzes the block. Every copy's tokens carry an expansion id
@@ -992,6 +1000,23 @@ to name, and `meta_field_list` and `meta_field_type` are computed types that
 `rewriteCompilerType` rewrites in `selectExactClassSpecialization`, the
 canonicalization point both `typeOf` and `substituteType` pass through, as
 soon as their arguments are concrete.
+
+Method/parameter/return metadata can also reduce for an open class with a fixed
+declaration inventory. Alternate class definitions, possible exact
+specializations, unresolved bases, conversion names with dependent targets and
+unexpanded parameter packs retain their deferred boundary. Known type identity,
+outer categories and reference/pointer access distinctions can establish a
+symbolic equality result; unrelated type parameters do not establish inequality.
+These are semantic constant kernels. Source predicates still execute through
+the existing staged verified-MIR path; no AST execution rule is added.
+Expression requirements may retain a proven true result with open arguments;
+failure to prove a symbolic query remains deferred, not a false constant.
+Each request memoizes at most 1024 positive, closed primitive-expression proofs
+by query identity and exact parameter/result types (including reference access).
+Only unary/binary operations on the query's own bindings qualify. Ordinary
+semantic analysis establishes the first proof; calls, nominal or symbolic types,
+macro queries, borrowed results and iteration are excluded. The cache is cleared
+on request reset and does not publish speculative flow or declaration facts.
 
 `meta_callable_return_type` projects the exact logical result already recorded
 on a function item, native function pointer, function signature or lambda.
@@ -2368,8 +2393,9 @@ Reflection uses canonical operator spellings, including both tokens of
 
 Sentinel comparison and distance policies likewise combine source declaration
 metadata with ordinary expression queries. Their former private bindings and
-symbolic cases are removed; remaining private range admission uses the concrete
-endpoint-selection helper until range policy migration is complete. Overload
+symbolic cases are removed. Source range queries reuse ordinary endpoint
+selection and checked loop analysis, rather than a private category-admission
+policy. Overload
 filtering retains source predicate failure details even when no primitive or
 structural capability tag failed, so a rejected predicate reports its concept
 contract instead of falling back to a generic no-matching-overload diagnostic.
@@ -2398,8 +2424,10 @@ its diagnostic guidance.
 
 Constexpr Boolean-call leaves use existing constant evaluation. Trusted
 reflection fact identity, including unambiguous transparent source wrappers,
-can transport unary or exact relational proof. Opaque predicates only filter
-concrete viability. Calls and expression checks preserve their distinct kind,
+can transport unary or exact relational proof. Other predicates filter viability
+without inferring new primitive facts from arbitrary source code; their result
+can be decidable over a structurally known generic declaration. Calls and
+expression checks preserve their distinct kind,
 ordered parameter/result type roles and source provenance in AST-free
 `LoweredConceptRequirement` records; neither HIR nor the backend evaluates
 constraints anew.
@@ -2585,9 +2613,11 @@ identity, which includes the generated namespace.
    each operation's function from the generated namespace and compares both
    signatures in the block's parameter space, with projections of the block's
    own pattern resolved to its types.
-3. `validateConformanceTypes` runs with the type-alias constraint check,
-   after every block is registered and each class's members and lifecycle
-   are recorded. It validates each block's patterns and `using` types once,
+3. `validateConformanceTypes` runs when the lexical body walk reaches each
+   block, as type aliases also validate at their lexical positions. Every
+   block is already registered and each class's members and lifecycle are
+   recorded; preceding constexpr definitions are now available to execute
+   source-defined constraint predicates. It validates patterns and `using` types once,
    whether or not the block registered. A concrete type's constraints and a
    projection through a block declared later are therefore decided as in any
    other declaration. The restated requires clause on each block function is

@@ -2551,18 +2551,18 @@
       }
     },
     "173-general-requires.gti": {
-      "declarations": 1593,
-      "bodies": 169,
-      "generated_items": 91,
+      "declarations": 1601,
+      "bodies": 174,
+      "generated_items": 95,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
-        "structural_operator_adapter": 27,
+        "structural_operator_adapter": 28,
         "callable_adapter": 26,
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 33
+        "concrete_instance_adapter": 36
       }
     },
     "174-typed-macros.gti": {
@@ -2582,8 +2582,8 @@
     }
   },
   "totals": {
-    "declarations": 185530,
-    "bodies": 23850,
-    "generated_items": 14982
+    "declarations": 185538,
+    "bodies": 23855,
+    "generated_items": 14986
   }
 }

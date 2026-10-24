@@ -314,7 +314,8 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     registeringConformanceParameters = &parameters;
     // Registration needs only the types' identities; validateConformanceTypes
     // validates the written types once what they depend on is known.
-    ConformanceTypeCheck typeCheck{.sourceUnit = currentSourceUnit,
+    ConformanceTypeCheck typeCheck{.declaration = declaration,
+                                   .sourceUnit = currentSourceUnit,
                                    .namespaceScope = enclosing,
                                    .genericParameters = parameters};
     std::vector<SemanticType> patterns;
@@ -672,17 +673,20 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
 }
 
 // A block's patterns and `using` types are validated here, once, as a type
-// alias's constraints are: after every block is registered and each class's
-// members and lifecycle are known. Only then can a concrete type's
-// constraints, or a projection through a block declared later, be decided.
+// alias's constraints are: at its lexical position, after registration made
+// every block and class signature available and preceding constexpr bodies
+// have been analyzed. This also preserves definition-before-use for source
+// predicates while allowing projections through blocks declared later.
 // The requirement each operation restates is not validated again.
-auto SemanticVisitor::Impl::validateConformanceTypes() -> void {
+auto SemanticVisitor::Impl::validateConformanceTypes(
+    const ConformanceDecl &declaration) -> void {
   const SourceUnitId enclosingUnit = currentSourceUnit;
   const auto enclosingNamespace = currentNamespace;
   const auto enclosingClass = currentClass;
   currentClass.reset();
-  for (const ConformanceTypeCheck &check :
-       std::exchange(conformanceTypeChecks, {})) {
+  for (const ConformanceTypeCheck &check : conformanceTypeChecks) {
+    if (check.declaration != &declaration)
+      continue;
     currentSourceUnit = check.sourceUnit;
     currentNamespace = check.namespaceScope;
     beginTypeParameterScope(check.genericParameters);
@@ -1410,6 +1414,8 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
 
 auto SemanticVisitor::Impl::visitConformanceDecl(const ConformanceDecl &stmt)
     -> void {
+  const DeclarationOrderScope declarationOrder{*this, stmt};
+  validateConformanceTypes(stmt);
   const auto found =
       std::find_if(conformances.begin(), conformances.end(),
                    [&](const RegisteredConformance &conformance) {

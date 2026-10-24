@@ -38,6 +38,50 @@ void bindQueryType(const TypeRef &syntax, SemanticType type,
     for (std::size_t index = 0; index < syntax.arguments.size(); ++index)
       bindQueryType(syntax.arguments[index], type.arguments[index], bindings);
 }
+
+bool closedPrimitive(const SemanticType &type) {
+  if (type.kind == SemanticType::Reference)
+    return type.arguments.size() == 1 &&
+           closedPrimitive(type.arguments.front());
+  switch (type.kind) {
+  case SemanticType::Int8:
+  case SemanticType::Int16:
+  case SemanticType::Int32:
+  case SemanticType::Int64:
+  case SemanticType::UInt8:
+  case SemanticType::UInt16:
+  case SemanticType::UInt32:
+  case SemanticType::UInt64:
+  case SemanticType::Float:
+  case SemanticType::Double:
+  case SemanticType::Bool:
+  case SemanticType::Char:
+  case SemanticType::Void:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// This is cache eligibility, not a second expression checker. Only operations
+// on the query's own primitive parameters qualify; ordinary analysis supplies
+// the first proof, including operator legality, mutability and exact result.
+bool primitiveQueryExpression(const Expr *expression,
+                              const MemberRequirement &query) {
+  if (const auto *variable = exprAs<Variable>(expression))
+    return std::any_of(query.bindings().begin(), query.bindings().end(),
+                       [&](const Token &binding) {
+                         return binding.lexeme == variable->name().lexeme;
+                       });
+  if (const auto *group = exprAs<Grouping>(expression))
+    return primitiveQueryExpression(group->expression().get(), query);
+  if (const auto *unary = exprAs<Unary>(expression))
+    return primitiveQueryExpression(unary->right().get(), query);
+  if (const auto *binary = exprAs<Binary>(expression))
+    return primitiveQueryExpression(binary->left().get(), query) &&
+           primitiveQueryExpression(binary->right().get(), query);
+  return false;
+}
 } // namespace
 
 auto SemanticVisitor::Impl::collectIterationRequirementTypeArguments(
@@ -108,10 +152,6 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
       std::make_unique<Impl>(target, sourceGraph, false, nullptr, sources,
                              RawPointerAuditMode::Off, false, trustedBodies);
   static_cast<RequestSessionContext &>(worker->requestSession) = requestSession;
-  // Computed reflection types belong to the declaration environment, not to
-  // caller flow. Isolated queries need the same trusted type identities to
-  // reduce metadata sequences and dependent projections.
-  worker->compilerTypeClasses = compilerTypeClasses;
   worker->macroLookupBase = this;
   worker->nextExpansion = nextExpansion;
   worker->macroExpansionDepth = macroExpansionDepth;
@@ -413,9 +453,26 @@ auto SemanticVisitor::Impl::requirementQueryIdentity(
 }
 
 auto SemanticVisitor::Impl::expressionRequirementSatisfied(
-    const MemberRequirement &query, std::span<const SemanticType> arguments,
-    std::string *reason, const std::vector<std::string> *lookupScope) const
-    -> bool {
+    const MemberRequirement &query,
+    std::span<const SemanticType> inputArguments, std::string *reason,
+    const std::vector<std::string> *lookupScope) const -> bool {
+  // A constraint on a forwarded open pack is universally quantified over
+  // its elements. Probe one symbolic element with that pack's identity and
+  // established facts, not a runtime pack value. Ordinary expressions outside
+  // this unevaluated query retain all pack-expansion restrictions.
+  const auto elementType = [](const auto &self,
+                              SemanticType type) -> SemanticType {
+    if (type.kind == SemanticType::TypePack && !type.concretePack)
+      return SemanticType::typeParameter(type.genericParameterId);
+    for (auto &argument : type.arguments)
+      argument = self(self, std::move(argument));
+    return type;
+  };
+  std::vector<SemanticType> elementArguments;
+  elementArguments.reserve(inputArguments.size());
+  for (const auto &argument : inputArguments)
+    elementArguments.push_back(elementType(elementType, argument));
+  const std::span<const SemanticType> arguments(elementArguments);
   const auto reject = [&](std::string message) {
     if (reason)
       *reason = std::move(message);
@@ -429,6 +486,19 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
   if (arguments.size() != query.parameters().size() + 1 + extraTypes.size())
     return reject(
         "The required expression has incomplete explicit type arguments.");
+  const bool cacheable =
+      !query.inferredResult() && !query.borrowedFrom() && !query.iteration() &&
+      !macroContext(query.keyword()) &&
+      std::all_of(arguments.begin(), arguments.end(), closedPrimitive) &&
+      primitiveQueryExpression(query.expression().get(), query);
+  if (cacheable) {
+    const auto cached = primitiveRequirementProofs.find(&query);
+    if (cached != primitiveRequirementProofs.end())
+      for (const auto &proof : cached->second)
+        if (std::equal(arguments.begin(), arguments.end(), proof.begin(),
+                       proof.end()))
+          return true;
+  }
   if (std::any_of(arguments.begin(), arguments.end(),
                   containsOpenTypeParameter)) {
     const auto wanted = expressionRequirementFact(query, arguments);
@@ -493,6 +563,7 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
   for (const auto &argument : arguments)
     retainArgumentFacts(retainArgumentFacts, argument);
   worker->typeParameterScopes.push_back(std::move(bindings));
+  worker->typePackScopes.emplace_back();
   worker->beginScope();
   if (!query.parameters().empty() && macroContext(query.keyword())) {
     // Caller syntax retains its independent macro lookup domain. Admit only
@@ -628,6 +699,11 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
       worker->typeTraits(actual).containsBorrowedState)
     return reject("Expression requirements currently require an owned, "
                   "non-borrowed result.");
+  if (cacheable && primitiveRequirementProofCount < 1024) {
+    primitiveRequirementProofs[&query].emplace_back(arguments.begin(),
+                                                    arguments.end());
+    ++primitiveRequirementProofCount;
+  }
   return true;
 }
 
@@ -676,6 +752,15 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
   auto worker = unevaluatedExpressionWorker();
   worker->prepareRequirementLookup(lookupScope,
                                    sourceUnitFor(application.name.last()));
+  const auto retainArgumentFacts = [&](const auto &self,
+                                       const SemanticType &type) -> void {
+    if (type.kind == SemanticType::TypeParameter)
+      worker->genericConstraints[type.genericParameterId] |= constraintOf(type);
+    for (const auto &argument : type.arguments)
+      self(self, argument);
+  };
+  for (const auto &argument : arguments)
+    retainArgumentFacts(retainArgumentFacts, argument);
   worker->unsafeDepth = 0;
   std::unordered_map<std::string, SemanticType> bindings;
   for (std::size_t index = 0;
@@ -683,6 +768,7 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
        ++index)
     bindQueryType(application.arguments[index], arguments[index], bindings);
   worker->typeParameterScopes.push_back(std::move(bindings));
+  worker->typePackScopes.emplace_back();
   worker->analyzingDependentConstantCondition = true;
   worker->constantConditionGenericDependency = false;
   const auto type = worker->analyze(*application.predicate);
@@ -694,6 +780,9 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
   auto context = worker->makeConstexprInterpreter();
   const auto evaluated =
       worker->evaluateConstexprExpression(*application.predicate, context);
+  for (const auto &diagnostic : worker->diagnostics)
+    if (diagnostic.severity == DiagnosticSeverity::Error)
+      return reject(diagnostic.message);
   const bool *value =
       evaluated ? std::get_if<bool>(&*evaluated.value) : nullptr;
   if (!value)

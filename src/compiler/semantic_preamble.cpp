@@ -94,7 +94,6 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
   requestSession.trackedAssertionFailed = false;
   requestSession.assertionDiagnostics.clear();
   requestSession.collectingRawResult.reset();
-  compilerTypeClasses = source.compilerTypeClasses;
   designatedMoves = source.designatedMoves;
   analyzedDeclarationAttributeOwners =
       source.analyzedDeclarationAttributeOwners;

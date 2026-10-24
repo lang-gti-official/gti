@@ -985,34 +985,6 @@ auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
   deferringTypeAliasConstraints = false;
 }
 
-auto SemanticVisitor::Impl::validateTypeAliasConstraints() -> void {
-  const SourceUnitId enclosingUnit = currentSourceUnit;
-  const auto enclosingNamespace = currentNamespace;
-  const auto enclosingClass = currentClass;
-  for (const RegisteredTypeAlias &alias :
-       registering(typeAliases, registrationFloor.typeAliases)) {
-    if (alias.resolution != TypeAliasResolution::Resolved) {
-      continue;
-    }
-    currentSourceUnit = alias.sourceUnit;
-    currentNamespace = alias.lookupScope;
-    currentClass = alias.ownerClass == 0
-                       ? std::nullopt
-                       : std::optional<ClassId>(alias.ownerClass);
-    if (currentClass) {
-      beginTypeParameterScope(classInfo(*currentClass).genericParameters);
-    }
-    validateType(alias.declaration->target(),
-                 alias.declaration->target().isNativeFunction());
-    if (currentClass) {
-      endTypeParameterScope();
-    }
-  }
-  currentSourceUnit = enclosingUnit;
-  currentNamespace = enclosingNamespace;
-  currentClass = enclosingClass;
-}
-
 auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
                                              std::vector<std::string> scope)
     -> void {
@@ -3385,7 +3357,7 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
     const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
     const ClassId method = compilerTypeClass(CompilerTypeKind::MetaMethod);
     if (list == 0 || method == 0 || type.arguments.size() != 1 ||
-        containsOpenTypeParameter(type.arguments.front()))
+        !metaHasStableDeclarations(type.arguments.front()))
       return type;
     const SemanticType &subject = type.arguments.front();
     const ClassInfo *owner = classInfo(subject);
@@ -3436,7 +3408,8 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
         compilerTypeClass(constructors ? CompilerTypeKind::MetaConstructor
                                        : CompilerTypeKind::MetaMethod);
     if (list == 0 || element == 0 || type.arguments.size() != 1 ||
-        containsOpenTypeParameter(type.arguments.front())) {
+        (constructors ? containsOpenTypeParameter(type.arguments.front())
+                      : !metaHasStableDeclarations(type.arguments.front()))) {
       return type;
     }
     const SemanticType &subject = type.arguments.front();
@@ -3475,7 +3448,8 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
     if (list == 0 || element == 0 || type.arguments.size() != 1 ||
         type.valueArguments.size() != 1 ||
         type.valueArguments.front().kind != CompileTimeValue::UInt64 ||
-        containsOpenTypeParameter(type.arguments.front())) {
+        (constructors ? containsOpenTypeParameter(type.arguments.front())
+                      : !metaHasStableDeclarations(type.arguments.front()))) {
       return type;
     }
     const SemanticType &subject = type.arguments.front();
@@ -3508,7 +3482,9 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
     if (type.arguments.size() != 1 || type.valueArguments.size() != 2 ||
         type.valueArguments[0].kind != CompileTimeValue::UInt64 ||
         type.valueArguments[1].kind != CompileTimeValue::UInt64 ||
-        containsOpenTypeParameter(type.arguments.front())) {
+        (info.compilerType == CompilerTypeKind::MetaConstructorParameterType
+             ? containsOpenTypeParameter(type.arguments.front())
+             : !metaHasStableDeclarations(type.arguments.front()))) {
       return type;
     }
     const std::uint64_t position = type.valueArguments[1].value;
@@ -3528,8 +3504,7 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
   case CompilerTypeKind::MetaListFirst:
   case CompilerTypeKind::MetaListRest: {
     const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
-    if (list == 0 || type.arguments.size() != 1 ||
-        containsOpenTypeParameter(type.arguments.front())) {
+    if (list == 0 || type.arguments.size() != 1) {
       return type;
     }
     const std::optional<std::vector<SemanticType>> elements =
@@ -3559,7 +3534,7 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
   case CompilerTypeKind::MetaReturnType: {
     if (type.arguments.size() != 1 || type.valueArguments.size() != 1 ||
         type.valueArguments.front().kind != CompileTimeValue::UInt64 ||
-        containsOpenTypeParameter(type.arguments.front())) {
+        !metaHasStableDeclarations(type.arguments.front())) {
       return type;
     }
     const std::optional<MetaMethodFacts> facts = metaMethodFacts(
@@ -3615,6 +3590,9 @@ auto SemanticVisitor::Impl::metaMethodFacts(const SemanticType &type,
           : declaration.operatorName()->kind == OverloadedOperator::Conversion
               ? "operator " + typeSpelling(substituteType(function->returnType,
                                                           substitution))
+          : declaration.operatorName()->kind ==
+                  OverloadedOperator::ContextualBool
+              ? "operatorbool"
               : std::string(
                     operatorSourceSpelling(declaration.operatorName()->kind)),
       .declaration = &declaration,

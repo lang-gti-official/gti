@@ -389,6 +389,12 @@ Lexical lookup belongs to the predicate declaration rather than the caller's
 generic bindings. No separate constexpr interpreter or native template probing
 is involved.
 
+Type aliases and conformance-block types validate their constraints even when
+unused. Predicates requiring source-body execution follow the normal constexpr
+definition-before-use rule at the alias or block's lexical position;
+registering type identities does not execute those bodies. Transparent reflected
+fact aliases retain the declaration-level proof behavior described above.
+
 Alternatives retain common consequences as well as identical predicates. For
 example, `is_signed_integral<T>() || is_unsigned_integral<T>()` proves that `T`
 is integral; it does not prove either particular signedness. Likewise,
@@ -590,13 +596,23 @@ overloads retain lookup order. Existing `methods_of<T>()`, `operators_of<T>()`
 and `type<T>::method_count()` remain declaration-only. Metadata alone never
 grants access or permission to invoke a method; expression queries still check
 the actual use on `T`.
+An open generic class can provide this metadata when its declaration inventory
+is fixed independently of its arguments. This lets a source predicate inspect
+an iterator's declared reference result without needing its element type to be
+concrete. Possible specializations or other unresolved declaration choices do
+not establish that proof. Likewise, `is_same<T, T>()` is true while a comparison
+between two unrelated open parameters is still unknown, not automatically false.
+Expression queries preserve proofs available from the checked generic context;
+an unproven symbolic query waits for concrete analysis rather than disabling
+the operation's ownership, access or lifetime checks.
 `std::meta::is_raw_pointer<T>()` and `type<T>::is_raw_pointer()` classify a
 concrete type using the existing type-category metadata. They do not establish
 pointer validity, lifetime, access rights, or permission to dereference it.
 Iterator relations returning checked borrows, and callable relations carrying
-the complete read/mutable/once-use and borrow/escape contract, retain their
-existing compiler facts. A single owned-result expression query is not a
-replacement for those complete relationships.
+the complete read/mutable/once-use and borrow/escape contract, compose source
+queries. The compiler still owns the origin, access and lifetime facts that
+those queries verify; an owned-result-only query cannot replace a complete
+borrowed relationship.
 
 Prefix mutation and compound assignment can also supply general operation
 proofs, for example `requires(mut T& value, int n) { { value += n } -> void; }`.
