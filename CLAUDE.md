@@ -25,6 +25,10 @@ does not restate it. Put durable rules in `AGENTS.md`, not here.
 
 ## Task Lifecycle
 
+Canonical `origin` is `https://git.internal.howetotech.dev/gti-lang/gti.git`.
+If an older worktree still names GitHub, follow the current primary checkout's
+`AGENTS.md` and workflow skill, not that worktree's stale hosting instructions.
+
 An implementation task ends with a merged Gitea PR and a synchronized primary
 `main`, through the `agent-workflow` skill and
 [`docs/architecture/agent-workflow.md`](docs/architecture/agent-workflow.md).

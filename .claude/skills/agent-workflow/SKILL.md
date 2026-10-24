@@ -11,6 +11,11 @@ rehosting, advisory CI, exact-source/risk-based batch validation, bounded logs,
 waiting, sidebar titles, integration and cleanup. Do not maintain a competing
 GitHub or CI-gated lifecycle here.
 
+For a pre-cutover worktree, read that skill from the current primary checkout,
+not its stale branch copy, and invoke the primary helper with
+`--repo <task-worktree>` until current main is reconciled. Do not restore GitHub
+to satisfy an old helper; preserve live validation before explicit rehosting.
+
 ## Claude-specific worktree handling
 
 The canonical Gitea repository is `gti-lang/gti` on
