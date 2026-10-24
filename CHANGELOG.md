@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.467.4 — References to payload enums held inside another enum
+## 0.467.5 — References to payload enums held inside another enum
 
 - `std::optional<Shape>::value()` for a payload enum without cleanup, such as
   `enum Shape { circle(int radius), none }`, used to fail while compiling the
@@ -19,6 +19,16 @@ for what minor and patch releases mean.
   affected any reference bound to an `auto&` payload of that kind, whether
   returned by your own accessor or bound directly, as in
   `case Wrap::one(auto& s): Shape& r = s;`.
+
+## 0.467.4 — Replacing a payload enum through a reference
+
+- A payload enum whose alternatives need cleanup, such as one holding a
+  `std::string`, can now be assigned through a mutable reference: a member or
+  free function's `mut T&` result (`b.ref() = label::blank;`, including
+  `std::optional<T>::value()`), a `mut T&` local or a `mut T&` parameter.
+  These assignments used to report `error[GTI-B0001]` (an internal compiler
+  error). The old alternative is dropped exactly once before the new value
+  moves in; if dropping it fails, only the unpublished new value is dropped.
 
 ## 0.467.3 — Array fields built from constructor parameters
 
