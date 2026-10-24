@@ -4839,6 +4839,9 @@ auto SemanticVisitor::Impl::constructorSignatureSpelling(
 auto SemanticVisitor::Impl::consumingResultCarriesBorrow(
     const CallableCandidate &function) const -> bool {
   return function.receiverMutability == ReceiverMutability::Consuming &&
+         !receiverTextFieldResult(function.returnType,
+                                  function.returnBorrowOrigin,
+                                  function.returnBorrowFields) &&
          !conditionalReferenceReturn(function.returnType,
                                      function.parameterTypes,
                                      function.dispatchOwner) &&
@@ -7762,8 +7765,10 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   // A callee that returns an argument in a text field of its fresh result
   // publishes that argument's owner at this call (L-OWN-02). Its relays are
   // body facts, read after the body demand above.
-  if (restoreDeclaration != nullptr && !function.virtualMethod)
+  if (restoreDeclaration != nullptr && !function.virtualMethod) {
     publishTextCallResult(call, resolved, *restoreDeclaration);
+    publishTextReturnResult(call, resolved, *restoreDeclaration);
+  }
   // Complete dependency facts are body-derived, not overload properties.
   // Read the exact declaration after the order-independent body demand above;
   // never reuse an open primary's facts for a different concrete instance.
