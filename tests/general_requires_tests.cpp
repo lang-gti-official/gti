@@ -195,6 +195,13 @@ concept bound_call<F, R, Result> = requires(mut F& function, R& range) {
   }
 };
 bool accepts<F, R, Result>() requires bound_call<F, R, Result> { return true; }
+concept matching_layout<R, T> = requires(R& range) {
+  for (auto& element : range) {
+    static_assert(sizeof(T) == sizeof(int));
+    static_assert(alignof(T) == alignof(int));
+  }
+};
+bool sized<R, T>() requires matching_layout<R, T> { return true; }
 concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
 bool check_false<R>() requires iterable<R> {
   return requires(R& range) {
@@ -204,6 +211,8 @@ bool check_false<R>() requires iterable<R> {
 int main() {
   static_assert(requires { { accepts<Count, std::string_view, void>() } -> bool; });
   static_assert(!(requires { { accepts<Count, std::string_view, bool>() } -> bool; }));
+  static_assert(requires { { sized<Values, int>() } -> bool; });
+  static_assert(!(requires { { sized<Values, bool>() } -> bool; }));
   static_assert(requires(Values& range) {
     for (auto& element : range) {
       static_assert(requires { { positive(element) } -> bool; });

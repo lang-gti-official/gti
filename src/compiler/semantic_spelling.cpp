@@ -67,6 +67,9 @@ std::string expressionSpelling(const Expr &expression) {
     return pathSpelling(qualified->name());
   if (const auto *literal = exprAs<LiteralExpr>(&expression))
     return literal->token().lexeme;
+  if (const auto *layout = exprAs<LayoutQuery>(&expression))
+    return layout->keyword().lexeme + "(" + typeRefSpelling(layout->type()) +
+           ")";
   if (const auto *group = exprAs<Grouping>(&expression)) {
     const auto value = expressionSpelling(*group->expression());
     return group->unsafeKeyword() ? "unsafe { " + value + " }"

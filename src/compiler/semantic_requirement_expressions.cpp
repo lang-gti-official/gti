@@ -76,6 +76,8 @@ auto SemanticVisitor::Impl::collectRequirementTypeArguments(
   } else if (const auto *conversion = exprAs<Conversion>(expression)) {
     types.push_back(&conversion->targetType());
     collectRequirementTypeArguments(conversion->value().get(), types);
+  } else if (const auto *layout = exprAs<LayoutQuery>(expression)) {
+    types.push_back(&layout->type());
   } else if (const auto *qualified = exprAs<QualifiedName>(expression)) {
     if (qualified->ownerType())
       types.push_back(&*qualified->ownerType());
