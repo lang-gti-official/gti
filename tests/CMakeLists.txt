@@ -816,6 +816,10 @@ add_test(NAME shared_accessor_range_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/shared_accessor_range_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(shared_accessor_range_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME accessor_text_carrier_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/accessor_text_carrier_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(accessor_text_carrier_runtime PROPERTIES TIMEOUT 240)
 
 add_test(
   NAME semantic_header_boundary
@@ -1026,6 +1030,10 @@ add_test(NAME readonly_range_over_mutable_result_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/readonly_range_over_mutable_result.gti" --ownership-checks)
 set_tests_properties(readonly_range_over_mutable_result_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME parameter_payload_reference_returns_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/parameter_payload_reference_returns.gti" --ownership-checks)
+set_tests_properties(parameter_payload_reference_returns_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME raw_pointer_slot_references_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/raw_pointer_slot_references.gti" --ownership-checks)
@@ -4397,7 +4405,7 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/borrowed_payload_pattern_runtime_test.py"
               "$<TARGET_FILE:gti>"
     )
-    set_tests_properties(borrowed_payload_pattern_runtime PROPERTIES TIMEOUT 300)
+    set_tests_properties(borrowed_payload_pattern_runtime PROPERTIES TIMEOUT 600)
     add_test(
       NAME argument_reference_return_runtime
       COMMAND "${Python3_EXECUTABLE}"

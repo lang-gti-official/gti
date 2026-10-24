@@ -20,6 +20,74 @@ for what minor and patch releases mean.
   literal-backed written argument text without evaluating the expression.
   Default assertion messages include their original condition text.
 
+## 0.468.5 — Canonical Gitea hosting
+
+- Source, issues, PRs, Actions, tags, release downloads and agent tooling return
+  to `git.internal.howetotech.dev/gti-lang/gti`. GitHub workflows are retired;
+  integration never pushes to GitHub or an automatic backup.
+- Imported task records retain their original source/verification provenance
+  through explicit rehosting. The older distinct Gitea tracker is archived,
+  not overwritten or confused with imported issue numbers.
+- Linux releases remain automated on existing Gitea runners. Apple Silicon
+  stable archives are manually packaged, validated and attached to the matching
+  release; no macOS runner service or automatic macOS nightly is configured.
+
+## 0.468.4 — Returning payload references from reference parameters
+
+- A free function, static method or lambda can now return a reference bound by
+  an `auto&` or `mut auto&` payload pattern over its reference parameter, a
+  field of it, or a reference alias of it, as a member accessor already could
+  for `this`. `int& inner(wrap& value) { switch (value) { case
+  wrap::one(auto& item): return item; } }` used to report `error[GTI-S2017]`
+  ("Returned reference must derive from read-only parameter 'value'") although
+  the result derives from `value`; it now compiles, and the caller's argument
+  stays borrowed while the result is live. Patterns over a local copy, a
+  by-value parameter or a temporary are still rejected.
+- That diagnostic now says "mutable reference parameter" when the source
+  parameter is `mut T&`, rather than calling it read-only.
+
+## 0.468.3 — Iterators and carriers from returned references
+
+- A text iterator can now be built directly from a view that a call returns
+  by reference. For `std::string_view& Box::get()`, `box.get().begin()`,
+  `box.get().rbegin()` and `maybe.value().begin()` on a
+  `std::optional<std::string_view>` used to report `error[GTI-B0001]` (an
+  internal compiler error); they now work, whether the view holds literal text
+  or text owned by a `std::string`. So does `for (auto c : box.get())` over a
+  literal-backed view, and `std::string_view& view = box.get();
+  view.begin()` when the view holds literal text.
+- The same holds through a checked `operator->`: `o->begin()` on a
+  `std::optional<std::string_view>` and `label->begin()` for a class whose
+  `operator->` returns a `std::string_view&` now work. 0.467.1 listed them
+  as not yet supported.
+- The same holds for user carriers built by a function: `Cursor open(
+  std::string_view& view) { return Cursor(view); }` can now be called as
+  `open(box.get())`, and `attach(panel.current())` can build a carrier from a
+  `Gauge&` that `Panel::current()` returns. Each used to report
+  `error[GTI-B0001]`.
+- The returned reference stays borrowed while the iterator or carrier lives:
+  changing the text's owner, or assigning the accessor's receiver, is still
+  rejected with `error[GTI-S2017]`.
+- Fixed: since 0.468.0, `std::string_view& view = maybe.value();
+  view.begin()` on a `std::optional<std::string_view>` holding text owned by a
+  `std::string` reported `error[GTI-B0001]`; it works again.
+- Not yet supported: constructing a carrier class directly from a returned
+  reference, as in `Cursor(box.get())`, still reports `GTI-B0001`. Call a
+  function that constructs it, as `open(box.get())` does.
+
+
+## 0.468.2 — References to payload enums held inside another enum
+
+- `std::optional<Shape>::value()` for a payload enum without cleanup, such as
+  `enum Shape { circle(int radius), none }`, used to fail while compiling the
+  generated C++ (`use of undeclared identifier '__gti_mir_v_1'` in the saved
+  backend log). `Shape inner = o.value();`, `auto& r = o.value();`, `*o`,
+  `o.value() = ...`, and `o.clone()` now compile and run. The same failure
+  affected any reference bound to an `auto&` payload of that kind, whether
+  returned by your own accessor or bound directly, as in
+  `case Wrap::one(auto& s): Shape& r = s;`.
+
+
 ## 0.468.1 — References into values over a local owner's text
 
 - Fixed a use-after-free present since 0.465.2. A reference that a method or
@@ -44,6 +112,7 @@ for what minor and patch releases mean.
   its methods returns, as in `keepWordRef(line.wordRef())`, while another
   field of the class holds a local owner's text; this was an internal
   compiler error (`GTI-B0001`).
+
 
 ## 0.468.0 — Views of the caller's string in results and nested values
 
@@ -107,6 +176,7 @@ for what minor and patch releases mean.
   `Slot(int32_t n) : state(slot_state::ready(n)) {}`, are again known not to
   fail, as in 0.448.4, so their callers no longer check for a failure.
 
+
 ## 0.467.4 — Replacing a payload enum through a reference
 
 - A payload enum whose alternatives need cleanup, such as one holding a
@@ -116,6 +186,7 @@ for what minor and patch releases mean.
   These assignments used to report `error[GTI-B0001]` (an internal compiler
   error). The old alternative is dropped exactly once before the new value
   moves in; if dropping it fails, only the unpublished new value is dropped.
+
 
 ## 0.467.3 — Array fields built from constructor parameters
 
@@ -130,6 +201,7 @@ for what minor and patch releases mean.
   `Point[2] corners = {a, std::move(b)};` or `Point[2][2] g = {{a, b}, {c, d}};`,
   also reported `GTI-B0001` and now work.
 
+
 ## 0.467.2 — Copying a payload view that holds a local owner's text
 
 - In a `switch` over a payload enum whose `string_view` payload views a local
@@ -140,6 +212,7 @@ for what minor and patch releases mean.
   published text field does. This also covers copies of copies, a payload
   enum held in a field (`switch (line.word)`), generic enums, `default` arms
   and loops.
+
 ## 0.467.1 — Text members through `operator->`
 
 - When an `operator->` returns a `std::string_view&`, its members can be

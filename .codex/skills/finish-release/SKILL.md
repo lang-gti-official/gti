@@ -1,6 +1,6 @@
 ---
 name: finish-release
-description: Apply GTI version and release policy to locally validated work delivered through the agent-workflow PR lifecycle. Use when an implementation is ready to deliver or the user asks to commit, publish or release. GitHub CI and asynchronous release packaging do not block completion.
+description: Apply GTI version and release policy to locally validated work delivered through the agent-workflow PR lifecycle. Use when an implementation is ready to deliver or the user asks to commit, publish or release. Gitea CI and asynchronous release packaging do not block completion.
 ---
 
 # Finish A GTI Release
@@ -22,7 +22,7 @@ policy below without bypassing that lifecycle.
   a stable release from an admitted component. Complete the canonical
   [batch validation contract](../../../docs/architecture/agent-workflow.md#risk-based-batch-validation)
   and required local/managed-runner platform gates before merging the batch and
-  syncing main. GitHub CI is advisory and must not delay this boundary.
+  syncing main. Gitea CI is advisory and must not delay this boundary.
 - Treat a change as release-bearing when repository version policy requires a
   `VERSION` advance, when it changes shipped behavior or packaging, or when the
   user explicitly requests a release.
@@ -44,28 +44,31 @@ policy below without bypassing that lifecycle.
 2. Fetch the remote before publication. If the destination branch advanced,
    reconcile it without discarding local or remote work. Do not force-push or
    rewrite shared history.
-   The destination must be GTI's canonical GitHub repository (`origin`,
-   `lang-gti-official/gti`); the `gitea` remote is a backup mirror the helper
-   pushes to after integration, never a publication target.
+   The destination must be GTI's canonical Gitea repository (`origin`,
+   `gti-lang/gti` at `git.internal.howetotech.dev`). There is no automatic
+   backup push; never publish branches, issues, PRs or releases to GitHub.
 3. Run the proportionate local build, tests, packaging checks, formatting, and
    release-version checks (`python3 scripts/check_release_version.py
-   origin/main HEAD`). GitHub CI is confirmation, not a substitute for local
+   origin/main HEAD`). Gitea CI is confirmation, not a substitute for local
    gates. Apply `verify-change`'s evidence ledger and delta-based revalidation:
    retain exact-head results if main advances, reconcile, then obtain fresh
    acceptance without dropping required gates or relabeling previous passes.
    Use the [execution contract](../../../docs/architecture/agent-workflow.md#bounded-output-analysis-and-waiting)
    for bounded output and waiting on existing local/managed-runner validation
-   handles; advisory GitHub CI is not a completion dependency.
+   handles; advisory Gitea CI is not a completion dependency.
 4. Stage only the intended files, review `git diff --cached`, and create a
    focused commit.
 
 ## Initiate The Release
 
-Use the repository's GitHub release workflow as the tag and release authority.
+Use the repository's Gitea release workflow as the tag and release authority.
 For the current workflow, merging a release-bearing PR with an advanced
-`VERSION` into canonical GitHub `main` dispatches packaging for Linux x64 and
-Apple Silicon and publication of the matching `v<VERSION>` tag and GitHub
-release. Do not also push a competing tag.
+`VERSION` into canonical Gitea `main` dispatches Linux x64 packaging and
+publication of the matching `v<VERSION>` tag and Gitea release. Apple Silicon
+archives are manually built, validated and uploaded to that same immutable
+stable release; follow the manual macOS contract in the release policy.
+There is no macOS Actions runner, and no service installation is authorized.
+Do not also push a competing tag.
 
 Manual workflow dispatch may rebuild the release for the selected commit, but
 the workflow still owns tag creation. Never tag a version mismatch or an
@@ -75,7 +78,7 @@ unvalidated tree by hand.
 
 Respect required local validation, PR freshness and reviews before integration;
 never force a merge or administratively bypass them. Do not wait for advisory
-GitHub CI; record its actual pending/failed state separately. Once integration and local-main sync succeed,
+Gitea CI; record its actual pending/failed state separately. Once integration and local-main sync succeed,
 report the PR, commit, intended version when applicable, validation and cleanup.
 Do not wait for post-merge packaging or release publication. A merge/sync failure
 is an incomplete task and must remain visible; a later asynchronous packaging

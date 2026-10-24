@@ -30,6 +30,7 @@ def main():
         launcher.write_text("#!/bin/sh\nexit 0\n")
         launcher.chmod(0o755)
         environment = os.environ.copy()
+        environment.pop("GITEA_ENV", None)
         environment["PATH"] = str(commands)
         for index, directory in enumerate((str(root / "cache with spaces"), "", "/",
                                            "relative/cache", "/cache\nBAD=value",
@@ -51,6 +52,14 @@ def main():
                 "CCACHE_COMPILERCHECK": "content", "CCACHE_BASEDIR": "",
                 "CCACHE_SLOPPINESS": "",
             }
+        gitea_output, ignored_legacy = root / "gitea-environment", root / "unused-github-environment"
+        environment.update(GITEA_ENV=str(gitea_output), GITHUB_ENV=str(ignored_legacy),
+                           GTI_CACHE_DIRECTORY=str(root / "gitea-cache"))
+        subprocess.run([bash, str(script)], env=environment, check=True,
+                       capture_output=True, text=True, timeout=10)
+        assert values(gitea_output)["CCACHE_DIR"] == str(root / "gitea-cache")
+        assert not ignored_legacy.exists(), "Gitea must use its own runner environment file"
+        environment.pop("GITEA_ENV")
         launcher.unlink()
         output = root / "missing-launcher"
         environment.update(GITHUB_ENV=str(output), GTI_CACHE_DIRECTORY=str(root / "cache"))
@@ -60,6 +69,7 @@ def main():
 
         if args.ccache:
             environment = os.environ.copy()
+            environment.pop("GITEA_ENV", None)
             environment["PATH"] = str(args.ccache.resolve().parent) + os.pathsep + environment["PATH"]
             output = root / "real-environment"
             environment.update(GITHUB_ENV=str(output), GTI_CACHE_DIRECTORY=str(root / "real-cache"))

@@ -2374,7 +2374,10 @@ value-rooted slot; at the Return the caller's result is constructed from that
 slot, and a failure on the way destroys the still-unpublished value. Any other
 return fails admission rather than assigning into uninitialized caller
 storage. A cleanup-free enum's value-rooted place, which a call borrows for a
-fresh temporary, is the SSA value itself and has no separate local.
+fresh temporary, is the SSA value itself and has no separate local. A borrowed
+payload extraction's value is not an object even when its type is such an
+enum: its place, including the address a reference binding retains, names the
+active payload inside the subject.
 Constructor arguments use the same proof, including fresh unit variants.
 A fallible ordinary source call may also construct its owning enum result
 directly in a binding when its sole executable value use is the first

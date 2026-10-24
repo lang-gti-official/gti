@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preview admission with real disposable Git repositories and fake builds/GitHub."""
+"""Preview admission with real disposable Git repositories and fake builds/Gitea."""
 
 from contextlib import nullcontext
 import json

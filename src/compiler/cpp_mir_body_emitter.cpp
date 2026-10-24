@@ -6637,8 +6637,13 @@ directTemporaryBorrowForValue(const MirBody &body, MirValueId valueId) {
   return temporary;
 }
 
+[[nodiscard]] const MirInstruction *borrowedPayloadExtract(const MirBody &body,
+                                                           MirValueId valueId);
+
 // A cleanup-free enum value has no lifetime slot: its value-rooted place,
-// which a call borrows for that call's duration, is the value itself.
+// which a call borrows for that call's duration, is the value itself. A
+// borrowed payload extraction's value is not an object: it names the active
+// payload inside its subject, so its place spells through that subject.
 [[nodiscard]] bool cleanupFreeEnumValuePlace(const MirProgram &program,
                                              const MirBody &body,
                                              const MirPlace &place) {
@@ -6649,7 +6654,8 @@ directTemporaryBorrowForValue(const MirBody &body, MirValueId valueId) {
   const MirPayloadEnum *enumeration = program.findPayloadEnum(place.type);
   const MirValue *value = body.findValue(place.value);
   return enumeration != nullptr && !enumeration->requiresActiveCleanup &&
-         value != nullptr && value->info.type == place.type;
+         value != nullptr && value->info.type == place.type &&
+         borrowedPayloadExtract(body, value->id) == nullptr;
 }
 
 [[nodiscard]] DirectTemporaryBorrow

@@ -14,7 +14,7 @@ vim.fn.mkdir(temporary, "p")
 local ok, problem = xpcall(function()
   local lazy_spec = dofile(vim.fs.joinpath(repository, "lazy.lua"))
   if lazy_spec[1]
-      ~= "https://github.com/lang-gti-official/gti.git"
+      ~= "https://git.internal.howetotech.dev/gti-lang/gti.git"
     or lazy_spec.name ~= "gti"
     or lazy_spec.lazy ~= false
     or lazy_spec.build ~= "build.lua"
@@ -24,9 +24,9 @@ local ok, problem = xpcall(function()
 
   local installer = dofile(vim.fs.joinpath(repository, "lua", "gti", "installer.lua"))
   local expected_release_url =
-    "https://github.com/lang-gti-official/gti/releases/download/nightly/BUILD_ID"
+    "https://git.internal.howetotech.dev/gti-lang/gti/releases/download/nightly/BUILD_ID"
   if installer.release_url("nightly", "BUILD_ID") ~= expected_release_url then
-    fail("installer does not resolve release assets from canonical GitHub")
+    fail("installer does not resolve release assets from canonical Gitea")
   end
   local installed = installer.install({
     root = temporary,
