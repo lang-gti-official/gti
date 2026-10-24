@@ -10123,6 +10123,8 @@ complete example/census inventory. Run the full C++ corpus when changing this
 shared harness. The complete LLVM corpus becomes an acceptance gate only after
 the requisite native lowering milestones, and does not certify support today.
 
+### MIR And C++ Corpus Gates
+
 The base-constructor stage gate retains the existing generated-base, owning
 payload-argument and field-after-base ordering mutations. Checked/effectful
 scalar preparation additionally checks forged parameter, receiver, borrow,
