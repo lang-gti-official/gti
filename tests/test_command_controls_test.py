@@ -101,6 +101,30 @@ extern "C" { int raise(int signal); int usleep(uint32_t duration); }
                         child.kill()
                         child.wait()
 
+        # A failed report sink must not return success when the test passed.
+        with tempfile.TemporaryFile() as diagnostics:
+            child = subprocess.Popen([str(compiler), "test", "--filter", "d_timeout", "--exact",
+                                      "--timeout", "0", "--format", "json"], cwd=project,
+                                     env=env, stdout=subprocess.PIPE, stderr=diagnostics,
+                                     text=True)
+            try:
+                while True:
+                    line = child.stdout.readline()
+                    assert line, "runner ended before starting the selected test"
+                    if json.loads(line)["event"] == "test_started":
+                        break
+                child.stdout.close()
+                status = child.wait(timeout=15)
+                diagnostics.seek(0)
+                reported = diagnostics.read()
+                assert status != 0, (status, reported)
+                assert b"Test result: 1 passed" in reported, reported
+                assert b"failed to write test report" in reported, reported
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait()
+
         for args in (("--jobs", "0"), ("--timeout", "-1s"), ("--timeout", "2"),
                      ("--timeout", "999999999999999999999m"), ("--exact",),
                      ("--filter", ""), ("--format", "xml")):

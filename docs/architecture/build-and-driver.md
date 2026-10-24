@@ -744,7 +744,8 @@ consistent terminal counts; failure outcomes still constitute completed runs.
 Listing is explicitly complete with zero launches. Invalid catalogs, unexpected
 empty selections and build/resolution failures produce incomplete nonzero
 summaries. Argument parsing errors precede the event protocol. Output-stream
-failure makes the command fail. These records establish runner completion,
+failure returns nonzero even when all selected tests passed. These records
+establish runner completion,
 not proof against a compiler silently miscompiling both a test and its checks;
 independent compiler conformance oracles remain necessary.
 
