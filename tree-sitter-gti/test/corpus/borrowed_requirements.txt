@@ -1,0 +1,55 @@
+==================
+Borrowed requirement owner contracts
+==================
+concept borrowed<I, T> = requires(I& cursor) {
+  { *cursor } -> T& [[borrowed_from(cursor)]];
+};
+concept writable<I, T> = requires(mut I& cursor, int index) {
+  { cursor[index] } -> mut T& [[borrowed_from(cursor)]];
+};
+---
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (unary_expression
+          (primary_expression
+            (identifier)))
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier))))
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (type
+          (primitive_type))
+        (identifier)
+        (index_expression
+          (primary_expression
+            (identifier))
+          (primary_expression
+            (identifier)))
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)))))

@@ -3,6 +3,7 @@
 #include <std/meta>
 #include <std/memory>
 #include <std/functional>
+#include <std/iterator>
 
 concept adds_to<L, R, Result> = requires(L& left, R& right) {
   { left + right } -> Result;
@@ -19,6 +20,30 @@ concept constructed_from<T, Arg> = requires(Arg& argument) {
 concept invokes<F, Arg, Result> = requires(F& function, Arg& argument) {
   { function(argument) } -> Result;
 };
+
+// A reference result names the borrowed input that bounds its lifetime.
+concept readable_cell<C, T> = requires(C& owner) {
+  { *owner } -> T& [[borrowed_from(owner)]];
+};
+concept editable_cell<C, T> = requires(mut C& owner) {
+  { owner.edit() } -> mut T& [[borrowed_from(owner)]];
+};
+struct Cell {
+  mut int value = 0;
+  int& operator*() { return this.value; }
+  mut int& operator*() mut { return this.value; }
+  mut int& operator[](std::ptrdiff_t offset) mut { return this.value; }
+  mut int& edit() mut { return this.value; }
+};
+[[borrowed_from(owner)]] T& peek_cell<C, T>(C& owner)
+    requires readable_cell<C, T> { return *owner; }
+[[borrowed_from(owner)]] mut T& edit_cell<C, T>(mut C& owner)
+    requires editable_cell<C, T> { return owner.edit(); }
+void put_cell<C>(mut C& owner, int value) requires std::writes_to<C, int> {
+  *owner = value;
+}
+void put_cell_at<C>(mut C& owner, std::ptrdiff_t offset, int value)
+    requires std::subscripts_to_mut<C, int> { owner[offset] = value; }
 
 concept integer_type<T> = std::meta::is_integral<T>();
 concept transferable_value<T> = std::meta::is_transferable<T>();
@@ -200,6 +225,18 @@ namespace query_hygiene {
 }
 
 int main() {
+  mut Cell cell{};
+  {
+    mut int& value = edit_cell<Cell, int>(cell);
+    value = 12;
+  }
+  if (peek_cell<Cell, int>(cell) != 12) { return 11; }
+  put_cell(cell, 13);
+  put_cell_at(cell, std::ptrdiff_t(0), 14);
+  if (peek_cell<Cell, int>(cell) != 14) { return 12; }
+  static_assert(!(requires(Cell& owner, Cell& other) {
+    { *owner } -> int& [[borrowed_from(other)]];
+  }));
   static_assert(names_runtime_type<RuntimeObject>());
   static_assert(requires(FinalTask task) {
     { std::move(task)() } -> void;

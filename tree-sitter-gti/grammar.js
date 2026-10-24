@@ -1521,7 +1521,8 @@ module.exports = grammar({
         "{", repeat1(seq(
           optional(field("unsafe", "unsafe")), "{",
           field("expression", $._expression_not_comma), "}", "->",
-          field("result_type", $.type), ";",
+          optional("mut"), field("result_type", $.type),
+          optional(seq("[[", "borrowed_from", "(", field("borrow_origin", $.identifier), ")", "]]")), ";",
         )), "}",
       ),
 

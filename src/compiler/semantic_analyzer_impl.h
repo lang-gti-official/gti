@@ -894,6 +894,8 @@ private:
     std::string memberName;
     bool mutableReceiver = false;
     bool requiresUnsafe = false;
+    // Index in arguments: receiver=0, result=1 (never an origin), operands>=2.
+    std::optional<std::size_t> borrowSource;
   };
 
   struct ContextualCallableResult {
@@ -1622,6 +1624,7 @@ private:
       std::string memberName;
       bool mutableReceiver = false;
       bool requiresUnsafe = false;
+      std::optional<std::size_t> borrowSource;
 
       friend bool operator==(const StructuralPattern &,
                              const StructuralPattern &) = default;

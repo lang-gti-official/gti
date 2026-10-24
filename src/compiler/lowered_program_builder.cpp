@@ -361,6 +361,13 @@ lowerRequirements(const std::vector<AppliedConceptRequirement> &requirements) {
           lowered.kind = LoweredRequirementKind::Expression;
           lowered.expressionParameterCount = query->parameters().size();
           lowered.resultArgument = query->parameters().size();
+          if (query->borrowedFrom()) {
+            for (std::size_t index = 0; index < query->bindings().size();
+                 ++index)
+              if (query->bindings()[index].lexeme ==
+                  query->borrowedFrom()->lexeme)
+                lowered.resultOriginParameter = index;
+          }
         } else {
           lowered.kind = LoweredRequirementKind::Member;
           lowered.memberName = query->member().lexeme;

@@ -656,8 +656,13 @@ void SignaturePrinter::appendConceptApplication(
       }
       result += query.unsafeKeyword() ? " { unsafe { " : " { { ";
       result += semantic_spelling::expressionSpelling(*query.expression());
-      result +=
-          " } -> " + semantic_spelling::typeRefSpelling(query.result()) + "; }";
+      result += " } -> ";
+      if (query.result().referenceMutability)
+        result += "mut ";
+      result += semantic_spelling::typeRefSpelling(query.result());
+      if (query.borrowedFrom())
+        result += " [[borrowed_from(" + query.borrowedFrom()->lexeme + ")]]";
+      result += "; }";
       return;
     }
     result += "requires (" +

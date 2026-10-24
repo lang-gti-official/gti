@@ -261,7 +261,16 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
                     ? std::optional(OverloadedOperator::PreIncrement)
                 : unary->oper().kind == TokenKind::MINUS_MINUS
                     ? std::optional(OverloadedOperator::PreDecrement)
+                : unary->oper().kind == TokenKind::STAR
+                    ? std::optional(OverloadedOperator::Dereference)
                     : unaryValueOperator(unary->oper().kind);
+  } else if (const auto *index = exprAs<Index>(expression)) {
+    receiver = parameter(index->object().get());
+    const auto offset = parameter(index->index().get());
+    if (!offset)
+      return std::nullopt;
+    operation = OverloadedOperator::Subscript;
+    operands.push_back(*offset);
   } else if (const auto *assignment = exprAs<Assign>(expression)) {
     if (assignment->path().segments.size() != 1)
       return std::nullopt;
@@ -317,8 +326,28 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
   }
   if (operation)
     fact.memberName = operatorFunctionName(*operation);
+  if (fact.memberName.empty())
+    return std::nullopt;
   for (const auto operand : operands)
     fact.arguments.push_back(arguments[operand]);
+  if (query.borrowedFrom()) {
+    const auto origin = binding(*query.borrowedFrom());
+    const auto &result = arguments[query.parameters().size()];
+    if (!receiver || !origin || result.kind != SemanticType::Reference ||
+        arguments[*origin].kind != SemanticType::Reference ||
+        (result.referenceAccess == AccessMode::Mutable &&
+         arguments[*origin].referenceAccess != AccessMode::Mutable))
+      return std::nullopt;
+    if (*origin == *receiver) {
+      fact.borrowSource = 0;
+    } else {
+      const auto found = std::find(operands.begin(), operands.end(), *origin);
+      if (found == operands.end())
+        return std::nullopt;
+      fact.borrowSource =
+          2 + static_cast<std::size_t>(found - operands.begin());
+    }
+  }
   return fact;
 }
 
@@ -347,6 +376,7 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
             active.arguments == wanted->arguments &&
             active.memberName == wanted->memberName &&
             active.mutableReceiver == wanted->mutableReceiver &&
+            active.borrowSource == wanted->borrowSource &&
             (wanted->requiresUnsafe || !active.requiresUnsafe))
           return true;
     // Ordinary symbolic analysis can also prove built-in operations from
@@ -412,6 +442,7 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
   }
   worker->unsafeDepth = query.unsafeKeyword() ? 1 : 0;
   worker->valueFlow.extendBody(worker->catalog);
+  std::vector<SymbolId> parameterIdentities;
   for (std::size_t index = 0; index < query.parameters().size(); ++index) {
     const auto &binding = query.bindings()[index];
     Symbol symbol;
@@ -423,6 +454,7 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     symbol.bindingKind = SemanticBindingKind::Parameter;
     symbol.toolingSymbol = worker->recordToolingSymbol(
         binding, SymbolKind::RequirementParameter, binding.lexeme, symbol.type);
+    parameterIdentities.push_back(symbol.toolingSymbol);
     worker->scopes.back().emplace(binding.lexeme, std::move(symbol));
   }
   const SemanticType actual = worker->analyze(query.expression());
@@ -430,6 +462,42 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     if (diagnostic.severity == DiagnosticSeverity::Error)
       return reject(diagnostic.message);
   const auto &required = arguments[query.parameters().size()];
+  if (query.borrowedFrom()) {
+    const auto origin =
+        std::find_if(query.bindings().begin(), query.bindings().end(),
+                     [&](const Token &binding) {
+                       return binding.lexeme == query.borrowedFrom()->lexeme;
+                     });
+    if (origin == query.bindings().end())
+      return reject("The borrow origin is not a requirement parameter.");
+    const auto index =
+        static_cast<std::size_t>(origin - query.bindings().begin());
+    if (required.kind != SemanticType::Reference ||
+        required.arguments.size() != 1 ||
+        arguments[index].kind != SemanticType::Reference)
+      return reject("A borrowed requirement result needs a checked reference "
+                    "result and a borrowed parameter origin.");
+    const auto *info =
+        worker->semanticModel.findExpression(*query.expression());
+    if (actual != required.arguments.front() || !info ||
+        info->category != ValueCategory::Place ||
+        info->access != required.referenceAccess)
+      return reject("The expression does not produce the exact required "
+                    "checked reference access and referent.");
+    if (required.referenceAccess == AccessMode::Mutable &&
+        arguments[index].referenceAccess != AccessMode::Mutable)
+      return reject("A mutable result requires a mutable borrowed origin.");
+    const auto places = worker->loanPlaces(query.expression());
+    if (places.empty() || parameterIdentities[index] == 0 ||
+        std::any_of(places.begin(), places.end(),
+                    [&](const SemanticLoanPlace &place) {
+                      return !place.valid() || place.receiver ||
+                             place.root != parameterIdentities[index];
+                    }))
+      return reject("The checked result is not borrowed from the named "
+                    "requirement parameter.");
+    return true;
+  }
   if (actual != required)
     return reject(
         "The expression does not have the exact required owned result type.");

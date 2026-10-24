@@ -1164,8 +1164,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
         (binding.name == "input_iterator" || binding.name == "sentinel_for" ||
          binding.name == "dereferences_to" ||
-         binding.name == "writable_iterator" || binding.name == "writes_to" ||
-         binding.name == "subscripts_to_mut" ||
+         binding.name == "writable_iterator" ||
          binding.name == "sized_sentinel_for" ||
          binding.name == "input_range" || binding.name == "range_of" ||
          binding.name == "mutable_range_of" || binding.name == "sized_range");
@@ -1333,6 +1332,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
             pattern.memberName = fact->memberName;
             pattern.mutableReceiver = fact->mutableReceiver;
             pattern.requiresUnsafe = fact->requiresUnsafe;
+            pattern.borrowSource = fact->borrowSource;
             for (const auto &type : fact->arguments)
               pattern.arguments.push_back({.concrete = type});
             leafStructuralConstraints[requirementIndex].push_back(
@@ -1455,6 +1455,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         mapped.memberName = pattern.memberName;
         mapped.mutableReceiver = pattern.mutableReceiver;
         mapped.requiresUnsafe = pattern.requiresUnsafe;
+        mapped.borrowSource = pattern.borrowSource;
         std::vector<SemanticType> mappedTypes;
         for (const auto &argument : argumentMap)
           mappedTypes.push_back(
@@ -3643,7 +3644,8 @@ auto SemanticVisitor::Impl::metaMethodFacts(const SemanticType &type,
           : declaration.operatorName()->kind == OverloadedOperator::Conversion
               ? "operator " + typeSpelling(substituteType(function->returnType,
                                                           substitution))
-              : "operator" + declaration.operatorName()->symbol.lexeme,
+              : std::string(
+                    operatorSourceSpelling(declaration.operatorName()->kind)),
       .declaration = &declaration,
       .staticMember = function->staticMember,
       .operatorMethod = declaration.operatorName().has_value(),

@@ -1479,12 +1479,14 @@ public:
   MemberRequirement(Token keyword, ExprPtr expression, TypeRef result,
                     std::vector<TypeRef> parameters,
                     std::vector<Token> bindings,
-                    std::optional<Token> unsafeKeyword = std::nullopt)
+                    std::optional<Token> unsafeKeyword = std::nullopt,
+                    std::optional<Token> borrowedFrom = std::nullopt)
       : keyword_(std::move(keyword)), receiver_(keyword_),
         result_(std::move(result)), parameters_(std::move(parameters)),
         bindings_(std::move(bindings)),
         unsafeKeyword_(std::move(unsafeKeyword)),
-        expression_(std::move(expression)) {}
+        expression_(std::move(expression)),
+        borrowedFrom_(std::move(borrowedFrom)) {}
 
   MemberRequirement(Token keyword, TypeRef receiver, Token binding,
                     Token receiverUse, Token member, TypeRef result,
@@ -1518,6 +1520,9 @@ public:
     return expression_ != nullptr;
   }
   [[nodiscard]] const ExprPtr &expression() const { return expression_; }
+  [[nodiscard]] const std::optional<Token> &borrowedFrom() const {
+    return borrowedFrom_;
+  }
 
 private:
   Token keyword_;
@@ -1531,6 +1536,7 @@ private:
   std::vector<Token> arguments_;
   std::optional<Token> unsafeKeyword_;
   ExprPtr expression_;
+  std::optional<Token> borrowedFrom_;
 };
 
 class LiteralExpr final : public ExprOfKind<ExprKind::LiteralExpr> {

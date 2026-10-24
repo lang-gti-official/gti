@@ -1348,6 +1348,13 @@ void expression<T>() requires requires(T& value) {
   { value + value } -> T;
 } {}
 void nullary<T>() requires requires { { T() } -> T; } {}
+struct Cell {
+  mut int32_t value = 0;
+  mut int32_t& edit() mut { return this.value; }
+};
+void borrowed<T>() requires requires(mut T& owner) {
+  { owner.edit() } -> mut int32_t& [[borrowed_from(owner)]];
+} {}
 class Reader {
 public:
   int32_t read() { return 7; }
@@ -1364,6 +1371,7 @@ int main() {
   predicate<int32_t>();
   expression<int32_t>();
   nullary<int32_t>();
+  borrowed<Cell>();
   member<Reader>();
   Box box = Box(1);
   return 0;
@@ -1399,10 +1407,19 @@ int main() {
       findPayload<lang::LoweredFunctionDeclaration>(program, "nullary");
   const auto *predicate =
       findPayload<lang::LoweredFunctionDeclaration>(program, "predicate");
+  const auto *borrowed =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "borrowed");
   expect(named && member && expression && nullary && predicate,
          "all requirement declaration rows are retained");
   if (!named || !member || !expression || !nullary || !predicate)
     return;
+  expect(borrowed && borrowed->requirements.size() == 1 &&
+             borrowed->requirements[0].resultOriginParameter == 0 &&
+             borrowed->requirements[0].arguments[1].kind ==
+                 lang::SemanticType::Reference &&
+             borrowed->requirements[0].arguments[1].referenceAccess ==
+                 lang::AccessMode::Mutable,
+         "borrowed requirements retain their exact input origin and access");
   expect(
       named->requirements.size() == 1 &&
           named->requirements[0].kind ==
@@ -1453,7 +1470,7 @@ int main() {
       ++checkedFunctions;
     else
       ++checkedConstructors;
-    for (int mutation = 0; mutation < 7; ++mutation) {
+    for (int mutation = 0; mutation < 8; ++mutation) {
       auto forged = program;
       auto &payload =
           lang::LoweredProgramTestAccess::declarations(forged)[row].payload;
@@ -1475,9 +1492,11 @@ int main() {
       else if (mutation == 5) {
         requirement.kind = lang::LoweredRequirementKind::Expression;
         requirement.resultArgument.reset();
-      } else {
+      } else if (mutation == 6) {
         requirement.kind = lang::LoweredRequirementKind::Predicate;
         requirement.requiresUnsafe = true;
+      } else {
+        requirement.resultOriginParameter = requirement.arguments.size();
       }
       expect(
           hasIssue(lang::verifyLoweredProgram(forged),
@@ -1502,6 +1521,23 @@ int main() {
           "general requirement leaves must retain source provenance");
     }
     if ((*requirements)[0].kind == lang::LoweredRequirementKind::Expression) {
+      if ((*requirements)[0].resultOriginParameter) {
+        auto forged = program;
+        auto &payload =
+            lang::LoweredProgramTestAccess::declarations(forged)[row].payload;
+        auto &requirement =
+            function ? std::get<lang::LoweredFunctionDeclaration>(payload)
+                           .requirements[0]
+                     : std::get<lang::LoweredConstructorDeclaration>(payload)
+                           .requirements[0];
+        requirement.arguments[*requirement.resultOriginParameter]
+            .referenceAccess = lang::AccessMode::ReadOnly;
+        expect(
+            hasIssue(
+                lang::verifyLoweredProgram(forged),
+                lang::LoweredProgramIssueKind::InvalidDeclarationInventory),
+            "a mutable result cannot acquire a read-only origin in lowering");
+      }
       auto forged = program;
       auto &payload =
           lang::LoweredProgramTestAccess::declarations(forged)[row].payload;
@@ -1511,7 +1547,10 @@ int main() {
                    : std::get<lang::LoweredConstructorDeclaration>(payload)
                          .requirements[0];
       auto &result = requirement.arguments[*requirement.resultArgument];
-      result = lang::SemanticType::referenceTo(result);
+      if (requirement.resultOriginParameter)
+        requirement.resultOriginParameter.reset();
+      else
+        result = lang::SemanticType::referenceTo(result);
       expect(
           hasIssue(lang::verifyLoweredProgram(forged),
                    lang::LoweredProgramIssueKind::InvalidDeclarationInventory),

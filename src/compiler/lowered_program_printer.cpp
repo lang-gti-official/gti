@@ -228,6 +228,8 @@ private:
           output << *value.resultArgument;
         else
           output << "none";
+        if (value.resultOriginParameter)
+          output << ";result-origin-parameter=" << *value.resultOriginParameter;
       }
       output << ";source=";
       span(value.source);

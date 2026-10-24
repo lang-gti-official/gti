@@ -2303,8 +2303,27 @@ are resolved before an isolated semantic worker checks the ordinary AST. The
 worker uses a speculative model delta, isolated flow/effect/query journals and
 declaration-owned lookup; diagnostics become a failed requirement rather than
 escaping as invalid executable HIR. General queries retain ordinary ownership,
-access and unsafe rules and reject reference or borrow-bearing results. The
+access and unsafe rules. A reference result requires an explicit synthetic
+parameter origin; other borrow-bearing result shapes remain unsupported. The
 historical direct member shape still uses its exact signature checker.
+
+`MemberRequirement::borrowedFrom` retains the source token. The isolated worker
+checks the expression's exact place access and referent, then verifies every
+resolved loan place against that borrowed parameter's declaration identity.
+An owned parameter or mismatched origin cannot satisfy the query. Normalized
+`ReadMember` facts carry the origin's ordered receiver/operand index alongside
+the exact reference type; composition, disjunction and candidate deduplication
+preserve it. Symbolic member/operator calls copy the origin and access into
+their ordinary resolved call facts. Concrete instances still resolve real
+declarations, so no synthetic target reaches executable HIR. Lowered requirement
+records retain the origin parameter index for verification and inspection;
+backends do not reconstruct ownership from the attribute spelling.
+
+`writes_to` and `subscripts_to_mut` now compose these general borrowed-result
+queries in source. Subscript policy also uses operator metadata to retain the
+exact by-value offset parameter; neither public concept has a private binding.
+Reflection uses canonical operator spellings, including both tokens of
+`operator[]` and `operator()`, rather than only the leading punctuation token.
 
 Direct bound-operand operator/call shapes normalize to `ReadMember` facts with
 the existing operator identity; direct type construction uses an internal
@@ -2330,6 +2349,11 @@ concrete viability. Calls and expression checks preserve their distinct kind,
 ordered parameter/result type roles and source provenance in AST-free
 `LoweredConceptRequirement` records; neither HIR nor the backend evaluates
 constraints anew.
+
+Bounded implication forwards identical opaque predicate leaves through nested
+source-concept conjunctions as well as disjunctions. It compares declaration
+identity and exact substituted arguments; it does not infer equivalence from
+matching names or one observed result, nor assume one branch of an alternative.
 
 Isolated query and staged constant workers preserve the declaration-bound
 reflection type registry alongside their catalog snapshot. This lets generic

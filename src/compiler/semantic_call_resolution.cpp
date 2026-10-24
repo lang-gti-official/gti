@@ -1229,7 +1229,8 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
           .application = requirement.syntax,
           .memberName = pattern.memberName,
           .mutableReceiver = pattern.mutableReceiver,
-          .requiresUnsafe = pattern.requiresUnsafe};
+          .requiresUnsafe = pattern.requiresUnsafe,
+          .borrowSource = pattern.borrowSource};
       bool valid = true;
       for (const RegisteredConcept::StructuralPattern::Argument &argument :
            pattern.arguments) {
@@ -1279,6 +1280,7 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
     return left.kind == right.kind && left.arguments == right.arguments &&
            left.memberName == right.memberName &&
            left.mutableReceiver == right.mutableReceiver &&
+           left.borrowSource == right.borrowSource &&
            left.requiresUnsafe == right.requiresUnsafe;
   };
   std::function<std::vector<ExpandedStructuralRequirement>(std::size_t)>
@@ -1769,7 +1771,15 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
                              .disjunction = &node.operation,
                              .alternatives = {*left, *right}};
   };
-  return failureFor(expression->root);
+  auto failure = failureFor(expression->root);
+  // A source concept can imply another through nested conjunctions, including
+  // opaque predicate leaves whose declaration identity is preserved. Do not
+  // re-evaluate those predicates on an unknown type and discard an existing
+  // proof merely because the requested expression has no disjunction.
+  if (failure &&
+      activeRequirementsImply(requirements, *expression, expression->root))
+    return std::nullopt;
+  return failure;
 }
 
 auto SemanticVisitor::Impl::firstConceptApplicationFailure(
@@ -5495,7 +5505,7 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
                   containsOpenTypeParameter)) {
     for (const auto &requirement : activeStructuralRequirements()) {
       if (requirement.kind == StructuralConstraintKind::ReadMember &&
-          requirement.memberName == member &&
+          requirement.memberName == member && !requirement.borrowSource &&
           requirement.mutableReceiver == mutableReceiver &&
           (requiresUnsafe || !requirement.requiresUnsafe) &&
           requirement.arguments.size() == parameters.size() + 2 &&
@@ -6002,19 +6012,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
            hasMutableDereference(arguments.front(), nullptr) &&
            hasVoidMutation(arguments.front(), OverloadedOperator::PreIncrement,
                            {});
-  case StructuralConstraintKind::WritesTo:
-    return arguments.size() == 2 &&
-           hasMutableDereference(arguments[0], &arguments[1]);
-  case StructuralConstraintKind::SubscriptsToMut: {
-    if (arguments.size() != 2) {
-      return false;
-    }
-    const SemanticType index = SemanticType::Int64;
-    const std::optional<CallableCandidate> subscript = selectStructuralOperator(
-        arguments[0], OverloadedOperator::Subscript,
-        std::span<const SemanticType>(&index, 1), true);
-    return subscript && mutableReference(*subscript, &arguments[1]);
-  }
   case StructuralConstraintKind::SizedSentinelFor: {
     if (arguments.size() != 2) {
       return false;
@@ -6052,14 +6049,11 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     const std::array<SemanticType, 1> iteratorArguments{shape->iterator};
     const std::array<SemanticType, 2> sentinelArguments{shape->sentinel,
                                                         shape->iterator};
-    const std::array<SemanticType, 2> writeArguments{shape->iterator,
-                                                     arguments[1]};
     return structuralConstraintSatisfied(
                StructuralConstraintKind::WritableIterator, iteratorArguments) &&
            structuralConstraintSatisfied(StructuralConstraintKind::SentinelFor,
                                          sentinelArguments) &&
-           structuralConstraintSatisfied(StructuralConstraintKind::WritesTo,
-                                         writeArguments);
+           hasMutableDereference(shape->iterator, &arguments[1]);
   }
   case StructuralConstraintKind::SizedRange: {
     if (arguments.size() != 1) {
@@ -6212,33 +6206,6 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
         }
       }
       break;
-    case StructuralConstraintKind::WritesTo:
-      if (kind == OverloadedOperator::Dereference &&
-          requirement.arguments.size() == 2 &&
-          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
-        candidate.returnType = SemanticType::referenceTo(
-            requirement.arguments[1], AccessMode::Mutable);
-        candidate.receiverMutability = ReceiverMutability::Mutable;
-        candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
-        candidate.returnBorrowAccess = AccessMode::Mutable;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::SubscriptsToMut:
-      if (kind == OverloadedOperator::Subscript &&
-          requirement.arguments.size() == 2 &&
-          requirement.arguments[0] == receiverType &&
-          argumentTypes.size() == 1 &&
-          argumentTypes[0] == SemanticType::Int64) {
-        candidate.returnType = SemanticType::referenceTo(
-            requirement.arguments[1], AccessMode::Mutable);
-        candidate.parameterTypes = {SemanticType::Int64};
-        candidate.receiverMutability = ReceiverMutability::Mutable;
-        candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
-        candidate.returnBorrowAccess = AccessMode::Mutable;
-        matches = true;
-      }
-      break;
     case StructuralConstraintKind::SizedSentinelFor:
       if (kind == OverloadedOperator::Minus &&
           requirement.arguments.size() == 2 &&
@@ -6341,6 +6308,15 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
                                              ? ReceiverMutability::Mutable
                                              : ReceiverMutability::ReadOnly;
           candidate.requiresUnsafeFact = requirement.requiresUnsafe;
+          if (requirement.borrowSource) {
+            candidate.returnBorrowOrigin = *requirement.borrowSource == 0
+                                               ? BorrowOriginKind::Receiver
+                                               : BorrowOriginKind::Argument;
+            candidate.returnBorrowParameter =
+                *requirement.borrowSource == 0 ? 0
+                                               : *requirement.borrowSource - 2;
+            candidate.returnBorrowAccess = candidate.returnType.referenceAccess;
+          }
           matches = true;
         }
       }
@@ -6354,8 +6330,8 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
     }
   }
 
-  // An exact-referent dereference or subscript relation (dereferences_to,
-  // writes_to, subscripts_to_mut) refines the unknown-referent form from
+  // An exact-referent dereference or subscript requirement refines the
+  // unknown-referent form from
   // the unary capability with the same receiver mutability; the refined
   // candidate replaces only its own mutability's unknown form so a
   // read-only refinement never erases a mutable capability or vice versa.
@@ -6393,6 +6369,10 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
           return existing.returnType == candidate.returnType &&
                  existing.parameterTypes == candidate.parameterTypes &&
                  existing.receiverMutability == candidate.receiverMutability &&
+                 existing.returnBorrowOrigin == candidate.returnBorrowOrigin &&
+                 existing.returnBorrowParameter ==
+                     candidate.returnBorrowParameter &&
+                 existing.returnBorrowAccess == candidate.returnBorrowAccess &&
                  existing.requiresUnsafeFact == candidate.requiresUnsafeFact;
         });
     if (!duplicate) {

@@ -162,27 +162,39 @@ validRequirement(const LoweredConceptRequirement &requirement) {
     return requirement.conceptId != 0 && requirement.memberName.empty() &&
            !requirement.mutableReceiver && !requirement.requiresUnsafe &&
            requirement.expressionParameterCount == 0 &&
-           !requirement.resultArgument;
+           !requirement.resultArgument && !requirement.resultOriginParameter;
   case LoweredRequirementKind::Member:
     return requirement.conceptId == 0 && !requirement.memberName.empty() &&
            requirement.arguments.size() >= 2 &&
            requirement.expressionParameterCount == 0 &&
-           !requirement.resultArgument;
+           !requirement.resultArgument && !requirement.resultOriginParameter;
   case LoweredRequirementKind::Expression:
     return requirement.conceptId == 0 && requirement.memberName.empty() &&
            !requirement.mutableReceiver && requirement.resultArgument &&
            *requirement.resultArgument ==
                requirement.expressionParameterCount &&
            *requirement.resultArgument < requirement.arguments.size() &&
-           requirement.arguments[*requirement.resultArgument].kind !=
-               SemanticType::Reference &&
+           (requirement.resultOriginParameter
+                ? *requirement.resultOriginParameter <
+                          requirement.expressionParameterCount &&
+                      requirement.arguments[*requirement.resultOriginParameter]
+                              .kind == SemanticType::Reference &&
+                      requirement.arguments[*requirement.resultArgument].kind ==
+                          SemanticType::Reference &&
+                      (requirement.arguments[*requirement.resultArgument]
+                               .referenceAccess != AccessMode::Mutable ||
+                       requirement.arguments[*requirement.resultOriginParameter]
+                               .referenceAccess == AccessMode::Mutable)
+                : requirement.arguments[*requirement.resultArgument].kind !=
+                      SemanticType::Reference) &&
            !requirement.source.source.empty() &&
            requirement.source.start < requirement.source.end;
   case LoweredRequirementKind::Predicate:
     return requirement.conceptId == 0 && requirement.memberName.empty() &&
            !requirement.mutableReceiver && !requirement.requiresUnsafe &&
            requirement.expressionParameterCount == 0 &&
-           !requirement.resultArgument && !requirement.source.source.empty() &&
+           !requirement.resultArgument && !requirement.resultOriginParameter &&
+           !requirement.source.source.empty() &&
            requirement.source.start < requirement.source.end;
   case LoweredRequirementKind::Count:
     return false;

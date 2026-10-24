@@ -7571,7 +7571,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           if (selected && !selected->mutableReceiver &&
               requirement.mutableReceiver)
             selected.reset();
-          if (selected && selected->arguments != requirement.arguments)
+          if (selected && (selected->arguments != requirement.arguments ||
+                           selected->borrowSource != requirement.borrowSource))
             ambiguous = true;
           if (selected && selected->arguments == requirement.arguments &&
               !selected->requiresUnsafe && requirement.requiresUnsafe)
@@ -7590,13 +7591,23 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           requireUnsafe(expr, UnsafeOperationKind::DeclaredUnsafeCall,
                         expr.paren(), "Calling an unsafe required member");
         }
-        semanticModel.record(
-            expr, ResolvedCallInfo{.returnType = selected->arguments[1],
-                                   .receiverMode =
-                                       selected->mutableReceiver
-                                           ? CallReceiverMode::MutablePlace
-                                           : CallReceiverMode::ReadOnlyPlace});
-        currentType = selected->arguments[1];
+        ResolvedCallInfo resolved{
+            .returnType = selected->arguments[1],
+            .parameterTypes = std::vector<SemanticType>(
+                selected->arguments.begin() + 2, selected->arguments.end()),
+            .receiverMode = selected->mutableReceiver
+                                ? CallReceiverMode::MutablePlace
+                                : CallReceiverMode::ReadOnlyPlace};
+        if (selected->borrowSource) {
+          resolved.borrowOrigin = *selected->borrowSource == 0
+                                      ? BorrowOriginKind::Receiver
+                                      : BorrowOriginKind::Argument;
+          resolved.borrowArgument =
+              *selected->borrowSource == 0 ? 0 : *selected->borrowSource - 2;
+          resolved.borrowAccess = resolved.returnType.referenceAccess;
+        }
+        semanticModel.record(expr, std::move(resolved));
+        currentType = callExpressionType(selected->arguments[1]);
         return;
       }
     }
@@ -10370,6 +10381,18 @@ auto SemanticVisitor::Impl::recordMemberRequirementReceiver(
       }
     };
     recordUses(*query.expression());
+    if (query.borrowedFrom()) {
+      const auto found = parameters.find(query.borrowedFrom()->lexeme);
+      if (found != parameters.end())
+        semanticModel.recordOccurrence(
+            {.sourceUnit = sourceUnitFor(*query.borrowedFrom()),
+             .span = tokenSpan(*query.borrowedFrom()),
+             .kind = SemanticOccurrenceKind::Symbol,
+             .symbol = found->second.first,
+             .roles = OccurrenceRole::Reference,
+             .name = query.borrowedFrom()->lexeme,
+             .type = found->second.second});
+    }
     return;
   }
   const auto symbol = recordToolingSymbol(

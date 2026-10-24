@@ -252,8 +252,28 @@ concept defaults<T> = requires { { T() } -> T; };
 
 The parameter list is optional. Each binding has an exact type; `mut` is
 permitted only on a reference parameter. A block contains one or more checks,
-all of which must hold. Each `-> R` names an exact owned, non-borrowed result
-type, including `void`; it is not a result concept or an implicit conversion.
+all of which must hold. An unannotated `-> R` names an exact owned, non-borrowed
+result type, including `void`; it is not a result concept or an implicit
+conversion. A checked reference result instead names its borrowed input:
+
+```gti
+concept readable<C, T> = requires(C& owner) {
+  { *owner } -> T& [[borrowed_from(owner)]];
+};
+concept editable<C, T> = requires(mut C& owner) {
+  { owner.edit() } -> mut T& [[borrowed_from(owner)]];
+};
+```
+
+The result's referent and access must match exactly, and every possible checked
+origin must belong to the named synthetic parameter. That parameter must itself
+be borrowed; a mutable result additionally needs a mutable input. Merely
+returning the correct reference type from a different input does not satisfy
+the contract. The annotation cannot authorize a temporary to escape, make an
+owned local a borrowed input, or turn read-only access into mutable access.
+Omitting the origin does not admit reference results. This slice describes
+checked references, not conditional reference-bearing wrapper results.
+
 The same query is a Boolean expression usable in `static_assert` and
 `if constexpr`. Example [173](../../examples/173-general-requires.gti) demonstrates
 operators, construction, composition and reflection on an unrelated user type.
@@ -281,6 +301,9 @@ a reference receiver and direct `T(arguments...)` construction requirements
 supply exact provisional
 operation facts. These facts do not create executable call targets: concrete
 instances resolve and validate ordinary operations again before HIR/MIR.
+For a direct member call, dereference or subscript, the provisional fact retains
+the named receiver/argument origin and reference access. Composition and
+disjunction cannot erase that lifetime contract or substitute another input.
 Owned receiver queries are concrete filters until an exact consuming-access
 proof is available; they never manufacture a borrowed receiver capability.
 Compound expressions may filter concrete types, but do not manufacture proofs
@@ -564,13 +587,16 @@ The current structural capability set is intentionally small:
 - `writable_iterator<I>` requires public `mut I::operator*() mut` returning a
   mutable checked reference plus public `void operator++() mut`; the public
   spelling is `std::output_iterator<I>`;
-- `writes_to<I, T>` refines the mutable dereference referent to exactly `T`;
+- `writes_to<I, T>` is a source-defined requirement for mutable dereference
+  returning exactly `mut T&`, borrowed from the mutable cursor parameter;
 - `bidirectional_iterator<I>` requires public `void operator--() mut`;
 - `random_access_iterator<I>` requires public
   `void operator+=(std::ptrdiff_t) mut` and
   `void operator-=(std::ptrdiff_t) mut`;
 - `subscripts_to_mut<I, T>` requires public
-  `mut T& I::operator[](std::ptrdiff_t) mut` with exactly `T`;
+  `mut T& I::operator[](std::ptrdiff_t) mut` with exactly `T`. Source metadata
+  checks the exact by-value offset declaration, and a borrowed expression
+  requirement checks its result access and cursor origin;
 - `sized_sentinel_for<S, I>` requires public read-only
   `std::ptrdiff_t I::operator-(S&)`, the signed distance from the iterator to
   the sentinel;

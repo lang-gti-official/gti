@@ -454,17 +454,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The iterator must provide public mut operator*() returning a "
           "mutable checked reference and public void operator++() mut.");
       break;
-    case StructuralConstraintKind::WritesTo:
-      diagnostic.hints.emplace_back(
-          "The iterator's mut operator*() must return a mutable checked "
-          "reference whose referent is exactly the required type.");
-      break;
-    case StructuralConstraintKind::SubscriptsToMut:
-      diagnostic.hints.emplace_back(
-          "The iterator's mut operator[](std::ptrdiff_t) must return a "
-          "mutable checked reference whose referent is exactly the required "
-          "type.");
-      break;
     case StructuralConstraintKind::SizedSentinelFor:
       diagnostic.hints.emplace_back(
           "The iterator must provide public read-only "

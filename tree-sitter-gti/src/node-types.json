@@ -3964,6 +3964,16 @@
           }
         ]
       },
+      "borrow_origin": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
       "expression": {
         "multiple": true,
         "required": true,

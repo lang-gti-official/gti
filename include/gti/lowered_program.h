@@ -153,6 +153,9 @@ struct LoweredConceptRequirement {
   // These are static proven types, never a backend expression to evaluate.
   std::size_t expressionParameterCount = 0;
   std::optional<std::size_t> resultArgument;
+  // A checked reference result is bounded by this synthetic input's lifetime.
+  // This is a semantic contract, not permission for backend origin inference.
+  std::optional<std::size_t> resultOriginParameter;
   SourceSpan source;
 
   friend bool operator==(const LoweredConceptRequirement &,

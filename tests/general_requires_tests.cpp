@@ -21,6 +21,8 @@ static_assert(!lang::compilerStructuralConstraint("independent_object"));
 static_assert(!lang::compilerStructuralConstraint("bidirectional_iterator"));
 static_assert(!lang::compilerStructuralConstraint("random_access_iterator"));
 static_assert(!lang::compilerStructuralConstraint("once_action"));
+static_assert(!lang::compilerStructuralConstraint("writes_to"));
+static_assert(!lang::compilerStructuralConstraint("subscripts_to_mut"));
 static_assert([] {
   for (const std::string_view binding :
        {"numeric", "signed_numeric", "integral", "signed_integral",
@@ -84,6 +86,9 @@ void rejected(const lang::FrontendResult &result, const std::string &name,
       std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
                    [&](const auto &item) { return item.code == code; });
   expect(diagnostic != result.diagnostics.end(), name + " diagnostic");
+  if (diagnostic == result.diagnostics.end())
+    for (const auto &item : result.diagnostics)
+      std::cerr << "  " << item.code << ": " << item.message << '\n';
   if (diagnostic != result.diagnostics.end())
     expect(diagnostic->primary.line > 0, name + " source location");
   expect(!result.hirValid, name + " cannot publish executable HIR");
@@ -482,6 +487,166 @@ int main() { static_assert(construct() == 1); return 0; }
            "type-only constant arguments do not admit polymorphic objects",
            "GTI-S2057");
 
+  accepted(
+      check(root, directory, "borrowed_expression_requirements", R"(
+struct Box {
+  mut int value = 7;
+  int& read() { return this.value; }
+  mut int& edit() mut { return this.value; }
+  int& operator*() { return this.value; }
+  mut int& operator[](int index) mut { return this.value; }
+};
+[[borrowed_from(left)]] int& select(int& left, int& right) { return left; }
+concept readable<C, T> = requires(C& owner) {
+  { *owner } -> T& [[borrowed_from(owner)]];
+};
+concept editable<C, T> = requires(mut C& owner, int offset) {
+  { owner.edit() } -> mut T& [[borrowed_from(owner)]];
+  { owner[offset] } -> mut T& [[borrowed_from(owner)]];
+};
+[[borrowed_from(owner)]] T& peek<C, T>(C& owner) requires readable<C, T> {
+  return *owner;
+}
+[[borrowed_from(owner)]] mut T& edit<C, T>(mut C& owner) requires editable<C, T> {
+  return owner.edit();
+}
+void store<C, T>(mut C& owner, T value) requires editable<C, T> {
+  mut T& slot = owner[0];
+  slot = value;
+}
+int main() {
+  mut Box box{};
+  store<Box, int>(box, 9);
+  if (peek<Box, int>(box) != 9) { return 1; }
+  {
+    mut int& value = edit<Box, int>(box);
+    value = 11;
+  }
+  if (peek<Box, int>(box) != 11) { return 2; }
+  static_assert(requires(Box& box) {
+    { box.read() } -> int& [[borrowed_from(box)]];
+    { *box } -> int& [[borrowed_from(box)]];
+  });
+  static_assert(requires(mut Box& box, int index) {
+    { box.edit() } -> mut int& [[borrowed_from(box)]];
+    { box[index] } -> mut int& [[borrowed_from(box)]];
+  });
+  static_assert(requires(int& left, int& right) {
+    { select(left, right) } -> int& [[borrowed_from(left)]];
+  });
+  static_assert(!(requires(int& left, int& right) {
+    { select(left, right) } -> int& [[borrowed_from(right)]];
+  }));
+  static_assert(!(requires(Box& box, Box& other) {
+    { box.read() } -> int& [[borrowed_from(other)]];
+  }));
+  static_assert(!(requires(Box box) {
+    { box.read() } -> int& [[borrowed_from(box)]];
+  }));
+  static_assert(!(requires(Box& box) {
+    { box.edit() } -> mut int& [[borrowed_from(box)]];
+  }));
+  static_assert(!(requires(Box& box) {
+    { box.read() } -> mut int& [[borrowed_from(box)]];
+  }));
+  static_assert(!(requires(Box& box) { { box.read() } -> int&; }));
+  return 0;
+}
+)"),
+      "checked borrowed queries preserve exact owner, access and referent");
+
+  accepted(
+      check(root, directory, "source_mutable_cursor_policy", R"GTI(
+#include <std/iterator>
+#include <std/meta>
+struct Cursor {
+  mut int value = 0;
+  mut int& operator*() mut { return this.value; }
+  mut int& operator[](std::ptrdiff_t offset) mut { return this.value; }
+  int operator()() { return this.value; }
+};
+constexpr bool paired_operator_names() {
+  mut bool index = false;
+  mut bool call = false;
+  constexpr for (auto member : std::meta::operators_of<Cursor>()) {
+    if constexpr (member.name() == "operator[]") { index = true; }
+    if constexpr (member.name() == "operator()") { call = true; }
+  }
+  return index && call;
+}
+void store<I>(mut I& cursor, int value) requires std::writes_to<I, int> {
+  *cursor = value;
+}
+void store_at<I>(mut I& cursor, std::ptrdiff_t offset, int value)
+    requires std::subscripts_to_mut<I, int> {
+  cursor[offset] = value;
+}
+int main() {
+  static_assert(paired_operator_names());
+  mut Cursor cursor{};
+  store(cursor, 9);
+  store_at(cursor, std::ptrdiff_t(0), 11);
+  return cursor.value == 11 ? 0 : 1;
+}
+)GTI"),
+      "source cursor policies use general owner-aware reference requirements");
+
+  accepted(check(root, directory, "source_cursor_policy_implication", R"(
+#include <std/iterator>
+void retreat<I>(mut I& cursor) requires std::bidirectional_cursor<I> {
+  --cursor;
+}
+void jump_then_retreat<I>(mut I& cursor)
+    requires std::random_access_cursor<I> && std::writes_to<I, int> {
+  cursor += std::ptrdiff_t(2);
+  retreat(cursor);
+  std::advance(cursor, std::ptrdiff_t(-1));
+}
+int main() { return 0; }
+)"),
+           "nested conjunctions preserve opaque source predicate proofs");
+
+  rejected(check(root, directory, "source_mutable_cursor_exact_index", R"(
+#include <std/iterator>
+struct Cursor {
+  mut int value = 0;
+  mut int& operator[](std::ptrdiff_t& offset) mut { return this.value; }
+};
+void require_cursor<I>() requires std::subscripts_to_mut<I, int> {}
+int main() { require_cursor<Cursor>(); return 0; }
+)"),
+           "source index policy retains the exact by-value offset signature");
+
+  const auto unknownOrigin =
+      check(root, directory, "unknown_query_borrow_origin", R"(
+int main() {
+  static_assert(requires(int& value) {
+    { value } -> int& [[borrowed_from(other)]];
+  });
+  return 0;
+}
+)");
+  expect(!unknownOrigin.syntaxValid && !unknownOrigin.canGenerateCode() &&
+             std::any_of(unknownOrigin.diagnostics.begin(),
+                         unknownOrigin.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-P0001";
+                         }),
+         "borrow origin must resolve in its query (recovered HIR is not "
+         "executable)");
+
+  rejected(check(root, directory, "borrow_contract_is_not_shared_mutation", R"(
+concept editable<C, T> = requires(mut C& owner) {
+  { owner.edit() } -> mut T& [[borrowed_from(owner)]];
+};
+void broken<C, T>(C& owner, T value) requires editable<C, T> {
+  mut T& slot = owner.edit();
+  slot = value;
+}
+int main() { return 0; }
+)"),
+           "a mutable result proof does not grant mutable receiver access");
+
   rejected(check(root, directory, "mutation_requires_mutable_receiver", R"(
 concept adjustable<T> = requires(mut T& value, int amount) {
   { value += amount } -> void;
@@ -491,6 +656,51 @@ int main() { return 0; }
 )"),
            "a mutation proof never grants mutable access to a shared receiver",
            "GTI-S2029");
+
+  rejected(check(root, directory, "borrowed_query_local_escape", R"(
+concept readable<C> = requires(C& owner) {
+  { owner.read() } -> int& [[borrowed_from(owner)]];
+};
+[[borrowed_from(input)]] int& escape<C>(C& input)
+    requires readable<C> && std::default_initializable<C> {
+  C local = C();
+  return local.read();
+}
+int main() { return 0; }
+)"),
+           "a generic borrowed result cannot escape its local owner",
+           "GTI-S2017");
+
+  rejected(check(root, directory, "borrowed_query_live_alias", R"(
+concept editable<C> = requires(mut C& owner) {
+  { owner.edit() } -> mut int& [[borrowed_from(owner)]];
+};
+void alias<C>(mut C& owner) requires editable<C> {
+  mut int& first = owner.edit();
+  mut int& second = owner.edit();
+  first = 1;
+  second = 2;
+}
+int main() { return 0; }
+)"),
+           "generic result origins retain exclusive-loan conflicts",
+           "GTI-S2017");
+
+  rejected(check(root, directory, "borrowed_query_disjoint_origins", R"(
+concept from_receiver<C> = requires(C& owner, int& input) {
+  { owner.select(input) } -> int& [[borrowed_from(owner)]];
+};
+concept from_argument<C> = requires(C& owner, int& input) {
+  { owner.select(input) } -> int& [[borrowed_from(input)]];
+};
+[[borrowed_from(owner)]] int& select<C>(C& owner, int& input)
+    requires from_receiver<C> || from_argument<C> {
+  return owner.select(input);
+}
+int main() { return 0; }
+)"),
+           "alternative result origins cannot invent a common owner",
+           "GTI-S2000");
 
   accepted(check(root, directory, "construction", R"(
 concept defaults<T> = requires { { T() } -> T; };
@@ -946,6 +1156,7 @@ int read<T>(T& value) requires raw_read<T> { return value.raw(); }
   const std::string formatting =
       R"(concept sum<T>=requires(T& a,T& b){{a+b}->T;{a==b}->bool;};
 concept ints<T>=std::meta::is_integral<T>();
+concept editable<T>=requires(mut T& owner){{owner.edit()}->mut int& [[borrowed_from(owner)]];};
 )";
   const auto formatted = lang::Formatter().format(formatting);
   expect(lang::Formatter().format(formatted) == formatted,

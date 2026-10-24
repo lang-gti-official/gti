@@ -9,8 +9,6 @@ namespace gti_internal {
 @compiler_constraint("sentinel_for") concept sentinel_for_capability<S, I>;
 @compiler_constraint("dereferences_to") concept dereferences_to_capability<I, T>;
 @compiler_constraint("writable_iterator") concept writable_iterator_capability<I>;
-@compiler_constraint("writes_to") concept writes_to_capability<I, T>;
-@compiler_constraint("subscripts_to_mut") concept subscripts_to_mut_capability<I, T>;
 @compiler_constraint("sized_sentinel_for") concept sized_sentinel_for_capability<S, I>;
 @compiler_constraint("input_range") concept input_range_capability<R>;
 @compiler_constraint("range_of") concept range_of_capability<R, T>;
@@ -57,6 +55,24 @@ constexpr bool cursor_decrement_declarations<I>() {
 constexpr bool cursor_jump_declarations<I>() {
   return cursor_movement_declarations<I, 6>();
 }
+constexpr bool cursor_index_declaration<I>() {
+  if constexpr (std::meta::is_class<I>() || std::meta::is_struct<I>() ||
+                std::meta::type<I>().is_interface() || std::meta::type<I>().is_union()) {
+    mut bool found = false;
+    constexpr for (auto member : std::meta::lookup_operators_of<I>()) {
+      if constexpr (member.name() == "operator[]" && member.is_public() &&
+                    !member.is_static() && member.is_mutating() &&
+                    !member.is_consuming() && !member.is_unsafe() &&
+                    !member.is_generic() && !member.is_constrained() &&
+                    member.parameter_count() == uint64_t(1)) {
+        constexpr for (auto parameter : member.parameters()) {
+          if constexpr (parameter.type().is_same<std::ptrdiff_t>()) { found = true; }
+        }
+      }
+    }
+    return found;
+  } else { return false; }
+}
 [[unsatisfied("Provide public void operator--() mut.")]]
 concept cursor_decrements<I> = cursor_decrement_declarations<I>() &&
 requires(mut I& position) {
@@ -84,8 +100,10 @@ concept forward_iterator<Iterator> =
 // refinement, mirroring how `dereferences_to` refines `input_iterator`.
 concept output_iterator<Iterator> =
     gti_internal::writable_iterator_capability<Iterator>;
-concept writes_to<Iterator, T> =
-    gti_internal::writes_to_capability<Iterator, T>;
+[[unsatisfied("Provide a mutable dereference returning exactly mut T& borrowed from the cursor.")]]
+concept writes_to<Iterator, T> = requires(mut Iterator& cursor) {
+  { *cursor } -> mut T& [[borrowed_from(cursor)]];
+};
 
 // Movement categories compose over the input contract the same way the
 // C++-familiar hierarchy does, but each level is an exact structural
@@ -113,7 +131,10 @@ concept random_access_cursor<Iterator> =
 // One exclusive cursor plus offsets reaches every element of its range, which
 // is how in-place algorithms keep a single mutable borrow of the owner.
 concept subscripts_to_mut<Iterator, T> =
-    gti_internal::subscripts_to_mut_capability<Iterator, T>;
+    detail::cursor_index_declaration<Iterator>() &&
+    requires(mut Iterator& cursor, std::ptrdiff_t offset) {
+      { cursor[offset] } -> mut T& [[borrowed_from(cursor)]];
+    };
 
 // A sentinel whose distance is known without walking: the iterator provides
 // read-only `std::ptrdiff_t operator-(Sentinel&)` or a copyable by-value

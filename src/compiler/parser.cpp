@@ -3771,7 +3771,37 @@ private:
       consume(TokenKind::RIGHT_BRACE, "Expect '}' after required expression.");
       consume(TokenKind::ARROW,
               "Expect '->' before exact required result type.");
+      std::optional<Token> resultAccess;
+      if (match({TokenKind::MUT}))
+        resultAccess = previous();
       TypeRef requiredResult = parseType();
+      if (resultAccess && !requiredResult.reference)
+        throw error(
+            *resultAccess,
+            "A mutable requirement result must be a checked reference.");
+      requiredResult.referenceMutability = resultAccess;
+      std::optional<Token> borrowedFrom;
+      if (match({TokenKind::LEFT_BRACKET})) {
+        consume(TokenKind::LEFT_BRACKET, "Expect '[[' before borrow origin.");
+        const Token attribute =
+            consume(TokenKind::IDENTIFIER, "Expect 'borrowed_from' attribute.");
+        if (attribute.lexeme != "borrowed_from")
+          throw error(attribute,
+                      "A requirement result supports only 'borrowed_from'.");
+        consume(TokenKind::LEFT_PAREN, "Expect '(' before borrow origin.");
+        borrowedFrom =
+            consume(TokenKind::IDENTIFIER,
+                    "Expect a requirement parameter as borrow origin.");
+        if (std::none_of(bindings.begin(), bindings.end(),
+                         [&](const Token &binding) {
+                           return binding.lexeme == borrowedFrom->lexeme;
+                         }))
+          throw error(*borrowedFrom,
+                      "Borrow origin must name a requirement parameter.");
+        consume(TokenKind::RIGHT_PAREN, "Expect ')' after borrow origin.");
+        consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after borrow origin.");
+        consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after borrow origin.");
+      }
       consume(TokenKind::SEMICOLON, "Expect ';' after required result type.");
 
       // Preserve the earlier exact-member contract as a subset. Every other
@@ -3780,8 +3810,8 @@ private:
       const auto *get = call ? exprAs<Get>(call->callee().get()) : nullptr;
       const auto *receiver =
           get ? exprAs<Variable>(get->object().get()) : nullptr;
-      bool exactMember = !parameters.empty() && parameters[0].reference &&
-                         receiver &&
+      bool exactMember = !borrowedFrom && !parameters.empty() &&
+                         parameters[0].reference && receiver &&
                          receiver->name().lexeme == bindings[0].lexeme &&
                          call->typeArguments().empty() &&
                          call->arguments().size() + 1 == bindings.size();
@@ -3804,7 +3834,8 @@ private:
       } else {
         result.push_back(std::make_unique<MemberRequirement>(
             keyword, std::move(expression), std::move(requiredResult),
-            parameters, bindings, std::move(unsafeKeyword)));
+            parameters, bindings, std::move(unsafeKeyword),
+            std::move(borrowedFrom)));
       }
     }
     if (result.empty())
