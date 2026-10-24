@@ -34,8 +34,10 @@ that explanatory view has no authority to repair or execute an invalid body.
 
 `GTI-S2029` retains the ordinary unsatisfied-requirement call span and related
 requirement detail when a general query re-enters an identical in-flight
-syntax/type/value substitution. The reason identifies a recursive query cycle;
-distinct queries retain the existing 64-active-query limit. No automatic edit
+syntax/type/value substitution. The inner query fails as a recursive cycle;
+nested concept failures retain their ordinary outer concept message and
+related application/query spans. Distinct queries retain the existing
+64-active-query limit. No automatic edit
 attempts to change a recursive contract.
 
 `GTI-S2082` follows payload-enum alternatives, including those inside the

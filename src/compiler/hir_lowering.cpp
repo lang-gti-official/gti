@@ -3301,8 +3301,15 @@ private:
       }
     }
     for (HirValue &value : body.values) {
+      // A result region publishes a real object from one of its return paths.
+      // Even a passive class/closure needs an explicit lifetime identity for
+      // definite initialization, subsequent movement and prepared arguments.
+      // Trivial cleanup remains trivial; the obligation is not a destructor.
+      const bool scopedObject = value.kind == HirValueKind::ScopedResult &&
+                                (value.info.type.kind == SemanticType::Class ||
+                                 value.info.type.kind == SemanticType::Lambda);
       if (value.fullExpression == 0 ||
-          (!materializesDropValue(value, body) &&
+          (!materializesDropValue(value, body) && !scopedObject &&
            !temporaryBorrowValues.contains(value.id) &&
            !borrowedMoveValues.contains(value.id))) {
         continue;

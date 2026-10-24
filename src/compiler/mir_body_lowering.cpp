@@ -9449,6 +9449,14 @@ private:
       valid = false;
       return;
     }
+    if ((value.info.type.kind == SemanticType::Class ||
+         value.info.type.kind == SemanticType::Lambda) &&
+        !value.dropObligation) {
+      // Result-slot initialization is a language lifetime fact, including
+      // passive objects, not a pattern for the backend to reconstruct.
+      valid = false;
+      return;
+    }
     const MirBlockId merge = appendBlock();
     const bool hasResult = value.info.type != SemanticType::Void;
     const MirPlaceId destination = hasResult ? conditionalTemporary(value) : 0;
@@ -13159,14 +13167,15 @@ private:
                                field.declaration == binding->variable &&
                                field.info.symbol == destinationPlace->symbol &&
                                field.info.type == destinationPlace->type &&
-                               field.info.type == sourceDrop->dropType.type &&
-                               field.info.traits.drop == DropKind::Lexical &&
-                               field.requiresActiveCleanup;
+                               field.info.type == sourceDrop->dropType.type;
                       });
       if (destinationPlace != nullptr && sourceDrop != nullptr &&
           destinationPlace->root == MirPlaceRootKind::Binding &&
           destinationPlace->binding != 0 &&
           destinationPlace->projections.empty() && exactField) {
+        // Passive aggregate temporaries still have an object-lifetime
+        // obligation. Preserve its exact field transfer too: trivial cleanup
+        // does not make the publication an unarmed ownership transfer.
         const MirDropObligationId rollback = output.dropObligations.size() + 1;
         output.dropObligations.push_back(
             {.id = rollback,

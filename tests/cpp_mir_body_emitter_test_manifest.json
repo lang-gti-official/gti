@@ -178,6 +178,14 @@
       "suite": "preflight"
     },
     {
+      "name": "testPassiveResultRegionPreparedArgument",
+      "suite": "preflight"
+    },
+    {
+      "name": "testPassiveResultRegionContextualConversions",
+      "suite": "preflight"
+    },
+    {
       "name": "testSafeIndexUsesBoundsNotRawMemory",
       "suite": "preflight"
     },

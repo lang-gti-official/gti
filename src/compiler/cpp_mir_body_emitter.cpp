@@ -5836,8 +5836,9 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
     // Initialize may instead activate the temporary's own full-expression
     // obligation directly. MIR builds this join when a member call borrows
     // the joined value as its receiver. A call, plain or on its Invoke
-    // success edge, an ordinary constructor with prepared inputs, and a copy
-    // of a place construct the temporary right before that Initialize. The
+    // success edge, a verified targetless generated default, an ordinary
+    // constructor with prepared inputs, and a copy of a place construct the
+    // temporary right before that Initialize. The
     // temporary's Drop ends it; input transfers do not activate the result.
     // A move out of a nested cleanup-free join constructs it too. The nested
     // storage carries no obligation either; that move is the
@@ -5897,8 +5898,8 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
                        return drop.place == movedSource->id &&
                               drop.dropType.requiresActiveCleanup;
                      });
-    if ((((directFunctionCall || directCopy || preparedConstruction ||
-           nestedPassiveJoin) &&
+    if ((((directFunctionCall || directDefaultConstruction || directCopy ||
+           preparedConstruction || nestedPassiveJoin) &&
           !definition->successResultDrop &&
           onlyPreparedInputTransfers(body, *definition)) ||
          movedCleanupFreeLocal) &&
@@ -12708,8 +12709,24 @@ declarationInitializersScheduledInConstructors(const MirProgram &program,
           instruction.destination
               ? owner.fieldInitializers.findPlace(*instruction.destination)
               : nullptr;
-      if (place == nullptr || place->root != MirPlaceRootKind::Binding ||
-          !place->projections.empty() || place->symbol == 0 ||
+      if (place == nullptr)
+        return false;
+      const auto field =
+          std::find_if(owner.declaredFields.begin(), owner.declaredFields.end(),
+                       [&](const MirClassFieldInfo &candidate) {
+                         return candidate.field == place->binding ||
+                                candidate.symbol == place->symbol;
+                       });
+      // Result-region execution can initialize lexical owners, scalars and
+      // decomposition sources inside the catalog. They are not declaration
+      // defaults: only the exact published field identities require coverage
+      // by the selected constructor's executable schedule.
+      if (field == owner.declaredFields.end())
+        continue;
+      if (place->root != MirPlaceRootKind::Binding ||
+          place->binding != field->field || place->symbol != field->symbol ||
+          place->type != field->type || !place->projections.empty() ||
+          place->symbol == 0 ||
           std::find(defaults.begin(), defaults.end(), place->symbol) !=
               defaults.end())
         return false;

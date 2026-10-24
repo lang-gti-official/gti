@@ -1037,6 +1037,26 @@ int main() {
         "fixture must retain a static/global initializer macro return");
 }
 
+void passiveInitializerMaterializations() {
+  const auto result = analyze(R"gti(
+struct Leaf { int number = 7; };
+class Record {
+  Leaf object = Leaf();
+  Leaf elements[2] = {};
+public:
+  int read() { return this.object.number + this.elements[1].number; }
+};
+int main() { Record record{}; return record.read() - 14; }
+)gti");
+  if (!result.canGenerateCode())
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  check(result.canGenerateCode(), "passive field and array materializations "
+                                  "retain exact lifetime transfers");
+  check(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+        "trivial field cleanup does not create an unarmed subobject transfer");
+}
+
 void macroFreshArgumentBoundaries() {
   const std::string prefix = R"gti(
 struct Value { int number; Value(int number) : number(number) {} };
@@ -1154,6 +1174,8 @@ int main(int argc, char **argv) {
       callerConversionsAndPropagation();
     else if (name == "macroFreshArgumentBoundaries")
       macroFreshArgumentBoundaries();
+    else if (name == "passiveInitializerMaterializations")
+      passiveInitializerMaterializations();
     else
       return 2;
     return failures == 0 ? 0 : 1;
@@ -1165,6 +1187,7 @@ int main(int argc, char **argv) {
   receiverResultLivenessMutations();
   programInitializerLocalMetadataMutations();
   initializerResultRegions();
+  passiveInitializerMaterializations();
   macroFreshArgumentBoundaries();
   callerConversionsAndPropagation();
   diagnostic("#macro int bad(bool flag) { if (flag) { return 1; } }\n"

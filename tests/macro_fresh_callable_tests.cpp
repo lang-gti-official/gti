@@ -222,40 +222,70 @@ int main() { return constrained(1); }
       lang::Frontend(options).analyze("macro-query-cycle.gti", source);
   expect(!result.semanticValid,
          "a constrained macro query cycle must terminate before expansion");
-  const auto bounded = [](std::string_view message) {
-    return message.find("recursive query cycle") != std::string_view::npos;
-  };
-  expect(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
-                     [&](const auto &diagnostic) {
-                       return diagnostic.code == "GTI-S2029" &&
-                              diagnostic.phase ==
-                                  lang::DiagnosticPhase::Semantics &&
-                              diagnostic.primary.source ==
-                                  "macro-query-cycle.gti" &&
-                              diagnostic.primary.start == source.rfind(");") &&
-                              (bounded(diagnostic.message) ||
-                               std::any_of(diagnostic.related.begin(),
-                                           diagnostic.related.end(),
-                                           [&](const auto &note) {
-                                             return bounded(note.message);
-                                           }));
-                     }),
+  const auto application =
+      source.find("recursive_query<T>", source.find("#macro"));
+  const auto query = source.find("requires(T value)");
+  const auto expectedSource =
+      std::filesystem::weakly_canonical(
+          std::filesystem::absolute("macro-query-cycle.gti"))
+          .string();
+  const bool anchored = std::any_of(
+      result.diagnostics.begin(), result.diagnostics.end(),
+      [&](const auto &diagnostic) {
+        const auto relatedSpan = [&](std::size_t start, std::size_t length) {
+          return std::any_of(diagnostic.related.begin(),
+                             diagnostic.related.end(), [&](const auto &note) {
+                               return note.span.source ==
+                                          diagnostic.primary.source &&
+                                      note.span.start == start &&
+                                      note.span.end == start + length;
+                             });
+        };
+        return diagnostic.code == "GTI-S2029" &&
+               diagnostic.phase == lang::DiagnosticPhase::Semantics &&
+               diagnostic.primary.source == expectedSource &&
+               diagnostic.primary.start == source.rfind(");") &&
+               diagnostic.primary.end == diagnostic.primary.start + 1 &&
+               diagnostic.message.find(
+                   "Generic arguments do not satisfy concept") !=
+                   std::string::npos &&
+               relatedSpan(application, 15) && relatedSpan(query, 8) &&
+               diagnostic.fixes.empty();
+      });
+  if (!anchored) {
+    std::cerr << "cycle expected source=" << expectedSource << '\n';
+    for (std::size_t index = 0;
+         index < std::min<std::size_t>(result.diagnostics.size(), 3); ++index) {
+      const auto &diagnostic = result.diagnostics[index];
+      std::cerr << diagnostic.code
+                << " phase=" << static_cast<int>(diagnostic.phase)
+                << " primary=" << diagnostic.primary.source << ":"
+                << diagnostic.primary.start << ".." << diagnostic.primary.end
+                << " fixes=" << diagnostic.fixes.size() << ": "
+                << diagnostic.message.substr(0, 240) << '\n';
+    }
+  }
+  expect(anchored,
          "macro signature probes reject an identical in-flight query at the "
          "written caller through the ordinary constraint diagnostic");
   const auto finite =
       lang::Frontend(options).analyze("macro-finite-query.gti", R"(
-constexpr bool selected<uint64_t N>() {
-  if constexpr (N == 0) { return true; }
-  else { return requires { { constrained<N - 1>() } -> int; }; }
+struct Leaf {};
+struct Wrap<T> {};
+concept available<T> = requires(T value) { { step(value) } -> int; };
+int step(Leaf value) { return 1; }
+int step<T>(Wrap<T> value) requires available<T> { return 1; }
+#macro int constrained<T>(T value) requires available<T> { return 1; }
+int main() {
+  Wrap<Wrap<Leaf>> value{};
+  return constrained(value) - 1;
 }
-#macro int constrained<uint64_t N>() requires selected<N>() { return 1; }
-int main() { return constrained<3>() - 1; }
 )");
   if (!finite.semanticValid)
     for (const auto &diagnostic : finite.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(finite.semanticValid,
-         "changing concrete value-generic query instances may terminate within "
+         "changing concrete generic query instances may terminate within "
          "the existing depth budget");
 }
 } // namespace

@@ -1053,7 +1053,11 @@ typed temporary, per-return initialization and lifecycle transfer/reparent,
 local cleanup, and an ordinary join transport. Their returns cannot produce
 the surrounding body's Return terminator. The result is active in failure
 cleanup before local destruction begins, and keeps the enclosing expression's
-lifetime after successful local cleanup. Region joins reconcile outer loan
+lifetime after successful local cleanup. Class and closure results retain a
+Value lifetime obligation even when cleanup is trivial: every return activates
+the same typed slot, and independent lifetime flow proves availability before
+movement or argument preparation. No backend reconstructs multi-return
+initialization from control-flow patterns. Region joins reconcile outer loan
 bindings, transferred endpoints and temporary states, rather than inheriting
 the state of the last visited return. Borrowed region outputs remain rejected
 until their provenance/loan-transfer join contract is implemented. No backend

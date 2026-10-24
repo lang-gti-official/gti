@@ -114,8 +114,11 @@ def main():
             diagnostics = change(6, synthesized)
             error = next(item for item in diagnostics if item["code"] == "GTI-S2019"
                          and "complete written source expression" in item["message"])
-            assert error["range"]["start"] == lsp_position(
-                synthesized, synthesized.index(")", synthesized.index("quoted(answer"))), error
+            invocation = synthesized.index("quoted(answer")
+            assert error["range"] == {
+                "start": lsp_position(synthesized, invocation),
+                "end": lsp_position(synthesized, invocation + len("quoted")),
+            }, error
             assert error.get("relatedInformation"), error
             assert not change(7, source)
 

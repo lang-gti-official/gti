@@ -48,6 +48,16 @@ std::string diagnostic() {
 }
 #macro uint64_t invoke<F>(F action) { return action(); }
 
+struct StateValue {
+  uint64_t value;
+  StateValue(uint64_t value) : value(value) {}
+};
+#macro StateValue rewrap(uint64_t expression) {
+  StateValue saved{expression};
+  return saved;
+}
+uint64_t read_state(StateValue state) { return state.value; }
+
 int main(int argc, std::vector<std::string> argv) {
   mut uint64_t state = uint64_t(argc);
   unsafe { adoption_count_begin(); }
@@ -56,8 +66,11 @@ int main(int argc, std::vector<std::string> argv) {
     state = state ^ (state << uint(13));
     state = state ^ (state >> uint(7));
     state = state ^ (state << uint(17));
+    StateValue saved_state{state};
+    state = read_state(saved_state);
 #else
     state = advance(state);
+    state = read_state(rewrap(state));
     state = invoke([state]() -> uint64_t { return state; });
     std::string_view written = std::expression_text(++state);
     if (written != "++state") { return 3; }
