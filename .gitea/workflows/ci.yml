@@ -29,20 +29,29 @@ jobs:
       - name: Classify candidate without weakening its merge gate
         id: plan
         env:
+          GTI_EVENT_PATH: ${{ gitea.event_path }}
           GTI_BASE_SHA: ${{ gitea.event_name == 'pull_request' && gitea.event.pull_request.base.sha || gitea.event.before }}
         run: |
+          if [[ -z "${GTI_EVENT_PATH}" || ! -f "${GTI_EVENT_PATH}" ]]; then
+            echo "Gitea event payload must name an existing file." >&2
+            exit 1
+          fi
           base="${GTI_BASE_SHA}"
           if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
             base="$(git rev-parse origin/main)"
           fi
           python3 scripts/validation_checks.py ci-mode \
-            --event "${GITEA_EVENT_PATH}" --base "${base}" >> "${GITEA_OUTPUT}"
+            --event "${GTI_EVENT_PATH}" --base "${base}" >> "${GITEA_OUTPUT}"
 
   automation-tests:
     name: Workflow regression tests
     runs-on: ubuntu-latest
     steps:
       - uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install workflow test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake make
       - name: Verify workflow, batch, preservation and resource rules
         run: |
           python3 tests/agent_workflow_test.py

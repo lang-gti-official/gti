@@ -647,6 +647,15 @@ still select full coverage. The helper does not restart CI on an unchanged
 description when retrying a pending merge. Identified body-only `edited` events
 are metadata-only feedback, not source acceptance. Title edits (Gitea's WIP
 draft transitions), source pushes and unknown edit payloads reclassify normally.
+The classification step binds `gitea.event_path` to `GTI_EVENT_PATH` and rejects
+missing/non-file payloads before running the classifier. Do not infer a
+`GITEA_EVENT_PATH` environment alias from the context's name. The Linux
+workflow-regression job installs CMake (including CTest) and Make explicitly
+before its real, disposable CMake/CTest batch fixtures run; it does not assume
+the runner image is a pre-provisioned compiler build host. `CIEnvironment` in
+`agent_workflow` executes these shell steps with missing event aliases and an
+initially tool-free PATH, preserving fail-closed classification and exercising
+a real configure/build/CTest cycle without installing packages locally.
 Automation-only local owning checks may use `verify --focused`, which checks
 the actual diff and does not reserve a broad-suite slot. Compiler changes
 cannot use that path. An active `verify` is atomically refused on duplicate
