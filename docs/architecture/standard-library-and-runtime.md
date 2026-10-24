@@ -1389,6 +1389,10 @@ corpus and performance acceptance passed for S-ALLOC-08/09 in 0.397.0; see
 Only `panic` / `explicit_panic` (`GTI-R0017`, detail 37) admits a message.
 Generated code prepares its exact record header, then calls
 `gti_rt_failure_capture_panic_v2` before starting language cleanup. Capture
+also has the scalar-ABI `gti_rt_failure_capture_panic_bytes_v2(record, data,
+size)` form for native code generators; it forwards to the same implementation
+without inventing an aggregate calling convention or changing the contract.
+Both forms of capture
 copies at most 512 bytes without allocation and does not split a valid UTF-8
 scalar at the truncation boundary. Invalid UTF-8 remains byte-exact for later
 escaping. The only message flag means truncation; uncaptured bytes are zero.

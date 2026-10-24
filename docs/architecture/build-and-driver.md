@@ -2281,9 +2281,10 @@ target per invocation.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
 Project manifests and project subcommands continue to select the production
-C++ backend. Native-backend project configuration is deferred until the LLVM
-backend can produce a real object and the project cache can record that artifact
-kind; direct selection is the only public LLVM foundation surface.
+C++ backend. Native LLVM objects are available in direct mode for the admitted
+scalar profile. Native-backend project configuration still requires a manifest
+selection and artifact-kind-aware project cache contract; direct selection is
+the current public LLVM surface.
 The LSP consumes the driver-published project facts for host-target analysis and
 supports a named editor profile, with source-based target inference. Explicit
 editor selection of another workspace package, target, or cross target is not

@@ -11,6 +11,7 @@ enum class RuntimeService {
   TerminateCleanupFailure,
   AbortAllocation,
   ValidateFailure,
+  CapturePanic,
 };
 
 // Only real C symbols with explicitly modeled signatures enter the module.

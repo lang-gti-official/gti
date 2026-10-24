@@ -29,6 +29,10 @@ def main() -> int:
         output = root / "main"
         source.write_text("int main() { return 0; }\n", encoding="utf-8")
 
+        run([sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)], 0)
+        run([str(output)], 0)
+        output.unlink()
+        source.write_text("int main() { int values[2] = {1, 2}; return values[0]; }\n", encoding="utf-8")
         unsupported = run(
             [sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)],
             65,

@@ -24,13 +24,13 @@ reference compiler's current implementation strategy, not the language contract.
 
 The released compiler checks a complete GTI source graph, builds typed HIR and
 MIR, and seals a backend-neutral `LoweredProgram`. The production C++ backend
-then invokes a native C++ compiler. A separately selectable LLVM backend has
-its build and driver foundation but deliberately emits no program yet:
+then invokes a native C++ compiler. A separately selectable LLVM backend emits
+native scalar/control-flow programs; full-language support is still in progress:
 
 ```text
 source graph -> frontend -> checked AST -> typed HIR/MIR
              -> GTI optimization -> LoweredProgram -> C++ backend -> native compiler
-                                                 \-> LLVM backend (foundation only)
+                                                 \-> LLVM backend -> native object (scalar profile)
 ```
 
 > [!IMPORTANT]

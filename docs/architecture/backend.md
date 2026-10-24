@@ -4285,10 +4285,10 @@ locations come from the driver/toolchain installation contract.
 `LoweredProgram` plus GTI-owned LLVM code-generation policy, verifies the
 sealed value, restricts this first stage to the configured host target,
 and builds an immutable admission plan before LLVM initialization. Pending
-requirements report `GTI-B0003`: executable LLVM lowering is not implemented.
-Native target and assembly-printer initialization remains backend-owned and
-idempotent, for the first admitted executable slice. It emits no dummy
-module, special `main`, LLVM IR, object, or executable.
+requirements report `GTI-B0003` with their exact pending family. Native target
+and assembly-printer initialization remains backend-owned and idempotent.
+The admitted [scalar profile](#llvm-scalar-execution) emits real native objects;
+unsupported shapes never fall back to C++ or a dummy program.
 
 The public backend header has no LLVM include or type. LLVM context, target
 registry, triple, and initialization APIs are confined to the private
@@ -4341,8 +4341,8 @@ dependency, initialization, packaging, status, and first-lowering decision.
 
 ### LLVM Target, Layout And Execution ABI
 
-O-LLVM-03 provides the private machinery for real lowering; it does not admit
-any executable instruction family. `Session` owns the exact
+O-LLVM-03 provides the private machinery used by O-LLVM-04's scalar lowering.
+`Session` owns the exact
 `VerifiedLoweredProgram`, context, native target machine, module, unique layout
 and ABI planners, diagnostic collector and emission state. Planner construction
 is private to the session, so clients cannot create competing per-program maps.
@@ -4406,9 +4406,10 @@ failure validation, terminal ordinary/cleanup reporting and allocation abort.
 It models text views and all required v2 failure/v1 descriptor records and
 checks them against native C layout in tests. Initial containment uses the
 existing `gti_rt_failure_terminate_v2`, not C++ exception transport. The new
-`runtime_execution.h` begin/drain C hooks preserve unconditional hosted startup
-and shutdown; typed TLS storage/registration remains O-LLVM-06. Nothing here
-permits skipping a verified startup operation when a program has no TLS owner.
+`runtime_execution.h` begin/drain C hooks preserve startup/shutdown operations
+when present in the sealed plan; typed TLS storage/registration remains
+O-LLVM-06. Backend policy cannot remove a verified startup operation merely
+because it considers that operation unnecessary.
 
 `runtime_abi_inventory` asks Clang to inventory **every active C declaration**
 in all runtime C headers, with exact signature, canonical parameter types,
@@ -4437,9 +4438,58 @@ The object test emits data and minimal C-ABI identity/call oracles, atomically
 publishes and rereads the actual bytes, then links a separately compiled C
 consumer through `NativeLinkRequest` at all four optimization levels. These
 are infrastructure oracles, not a fake GTI `main`, instruction lowering, or
-proof that a GTI program executes with LLVM. The public backend still rejects
-pending admission before creating a session; O-LLVM-04 owns real scalar CFG,
-failure publication and exact reachability.
+proof that a GTI program executes with LLVM. Separate O-LLVM-04 execution gates
+now exercise real GTI scalar programs through the public backend.
+
+### LLVM Scalar Execution
+
+The native backend emits verified MIR scalar bodies directly, without C++
+representation helpers or a second semantic analysis. `body.cpp` owns body-local
+SSA/place materialization, edge arguments, direct calls, return publication and
+MIR-selected failure continuations. `scalar.cpp` owns primitive representations
+and instructions; `failure.cpp` owns immutable source descriptors and the
+versioned failure channel. All are private consumers of the same session.
+
+The admitted profile includes fixed-width integers, bool/char, binary32/64,
+integral scoped enums, concrete generic scalar functions, ordinary recursion,
+local scalar and staging slots, branches/short-circuit flow, switch and loops.
+PHIs are declared before predecessor emission, and bodies emit in reverse
+postorder so dominating SSA definitions are available. Scalar namespace/static
+storage and ordered scalar initialization are implemented as a prerequisite of
+the ordinary numeric and panic wrappers; no class layout or lifecycle support
+is inferred from that overlap with O-LLVM-05/06.
+
+Native functions use the centralized private ABI. A failure-capable direct call
+returns status, never unwinds through LLVM/C++, and loads/publishes its result
+only on its success path. Checked arithmetic guards originate only an exact
+authorized, nondischarged MIR outcome and branch to its selected Invoke failure
+edge. Signed and unsigned overflow are checked; division/conversion/shift guards
+dominate potentially undefined LLVM operations. Signed minimum modulo -1 selects
+a safe divisor and produces zero. Wrapping, saturation and overflow predicates
+use separate intrinsic modes. No `nsw`/`nuw` or fast-math promises are invented.
+Floating operations use ordinary IEEE LLVM operations under GTI's fixed nearest-
+ties-even/gradual-underflow environment, with no reassociation or contraction;
+NaN comparisons and truncation-before-range-check conversion are explicit.
+
+Failure descriptors retain canonical bytes, artifact identity and source/outcome
+tables. Channels carry a copied v2 record and its pinned descriptor through
+propagation and shared continuations. Containment uses the runtime C reporting
+boundary; emergency-envelope construction is retained for cleanup lowering, but
+owning cleanup bodies remain inadmissible. Plain `std::panic(string_view)` is
+source-defined and forwards caller attribution through ordinary direct calls.
+The scalar-ABI `gti_rt_failure_capture_panic_bytes_v2` is a thin form of the
+existing bounded UTF-8-aware capture operation, not a foreign aggregate ABI
+guess. Formatted panic and the currently formatting-based `std::assert` wrappers
+still require their later class/storage/text families; scalar conditional
+assertions calling plain panic need no new intrinsic.
+
+Hosted `main` is emitted from the sealed NoArguments startup body and operations,
+not manufactured from a special source example. Its program-initialization call,
+entry call, exit value and containment are ordinary MIR. TLS begin/drain execute
+when present in that plan (the current producer includes them when TLS storage
+exists). Owned arguments, TLS storage, projected places, references, arrays,
+classes, owners, indirect/virtual/native calls and native debug information remain
+explicit limitations. No mixed-backend fallback is used. C++ stays the default.
 
 ### LLVM Coverage And Admission
 
@@ -4454,8 +4504,8 @@ program. `src/compiler/llvm/` owns the private inventory and vocabulary.
 terminator, place/projection/operand/loan/lifecycle, intrinsic, failure,
 synchronization, native-runtime, declaration/generated-item and startup enum to
 a named O-LLVM milestone. Entries distinguish pending lowering, implemented
-lowering and verified nonexecuting facts. No executable entry is implemented
-yet. A nonexecuting permission/provenance fact can be inventoried without a
+lowering and verified nonexecuting facts. Scalar execution entries name the
+`llvm_scalar_execution` gate. A nonexecuting permission/provenance fact can be inventoried without a
 runtime operation; a source-only query marked `MustBeAbsent` cannot silently
 be erased if it appears as executable input. Neither classification grants LLVM
 attributes or permits removing a runtime check.
@@ -4478,13 +4528,18 @@ definitions remain separate from ABI/data-only bodies and uninstantiated source
 declarations. The latter are inventoried as metadata without demanding that
 their symbolic types have runtime storage.
 
-Current closure policy is explicitly `AllExecutableBodies`: every executable
-body in the sealed inventory is required, including unused concrete helpers.
-This is conservative admission, not a reachability proof. Native ABI declarations,
-concrete type inventories and all generated items are also retained. No unsupported
-body is skipped. Before a partial executable backend can omit otherwise dormant
-prelude bodies, it must implement complete root/dependency reachability from the
-sealed input, including globals, exports, address-taken targets and adapters.
+`SealedEntryDependencies` roots the module and hosted startup plus source C
+exports and TLS initializer bodies. It follows selected direct functions,
+constructors, lambda/address-taken function identities, explicit body calls and
+the sealed generated-item dependency graph. Required bodies retain inventory
+order. All bodies are still scanned; dormant uses are recorded as non-required,
+not erased from coverage. Reachable values independently require their concrete
+types. Passive data without a use is metadata; ordered executable initialization
+is never omitted. Unknown indirect/virtual/callback/task dispatch,
+declaration-backed generated dependencies, embedding exports and rootless
+libraries conservatively select `AllExecutableBodies` and retain all generated
+items. Those shapes reject until their families are admitted. This is a bounded
+omission proof, not speculative whole-program devirtualization.
 
 Admission scans the full inventory before returning a result. The first
 unsupported requirement is deterministic, preferring an instruction with source

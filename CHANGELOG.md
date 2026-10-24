@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.476.0 - Native LLVM scalar execution
+
+- Begin native LLVM execution for scalar functions, direct calls and control
+  flow, with checked arithmetic and source-attributed defined failures.
+  C++ remains the production default; unsupported reachable operations fail
+  explicitly rather than falling back to C++.
+
 ## 0.475.0 - Native LLVM target and ABI infrastructure
 
 - Add the native target/layout/ABI session and explicit O0-O3 optimization

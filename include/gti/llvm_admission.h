@@ -52,10 +52,11 @@ struct LlvmCoverageUse {
   bool executable = false;
 };
 
-// Every executable body is conservatively required until a sealed-input root
-// and dependency analysis proves an omission safe. This is not reachability.
+// Sealed hosted roots admit an exact direct-dependency closure. Unknown
+// dispatch, exports and declaration-backed adapters retain the full inventory.
 enum class LlvmAdmissionClosure {
   AllExecutableBodies,
+  SealedEntryDependencies,
 };
 
 class LlvmAdmissionPlan final {
@@ -64,9 +65,7 @@ public:
     return input.program();
   }
   [[nodiscard]] const LlvmBackendOptions &options() const { return policy; }
-  [[nodiscard]] LlvmAdmissionClosure closure() const {
-    return LlvmAdmissionClosure::AllExecutableBodies;
-  }
+  [[nodiscard]] LlvmAdmissionClosure closure() const { return closure_; }
   [[nodiscard]] std::span<const LlvmCoverageUse> requirements() const {
     return uses;
   }
@@ -86,6 +85,7 @@ private:
   LlvmBackendOptions policy;
   std::vector<LlvmCoverageUse> uses;
   std::vector<MirBodyAddress> bodies;
+  LlvmAdmissionClosure closure_ = LlvmAdmissionClosure::AllExecutableBodies;
 
   friend LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
                                              LlvmBackendOptions options);

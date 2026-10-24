@@ -26,10 +26,11 @@ verified optimized MIR -> LoweredProgram
 ```
 
 `CppBackend` remains the production default. `LlvmBackend` is an installed,
-selectable foundation which verifies the same `LoweredProgram`, checks native
-admission before initializing the host LLVM target, and reports the classified `GTI-B0003` limitation
-that executable LLVM lowering is not implemented. It does not manufacture a
-program merely to prove that LLVM can emit one.
+selectable backend which verifies the same `LoweredProgram` and checks native
+admission before initializing the host LLVM target. O-LLVM-04 now admits the
+documented scalar profile; other valid programs report the classified
+`GTI-B0003` limitation. It does not manufacture a program merely to prove that
+LLVM can emit one.
 
 The following boundaries are mandatory:
 
@@ -100,13 +101,15 @@ boundaries. Admission over an owning verified snapshot inventories the complete
 current vocabulary and represented shapes, then rejects pending requirements
 before LLVM initialization. The private session now plans target layout,
 declarations and signatures and verifies/emits objects for infrastructure
-oracles. No GTI instruction, control-flow edge, cleanup, failure path or runtime
-operation is lowered yet. Selecting `--backend llvm` for a valid host
-program fails clearly with `GTI-B0003` and does not create an output artifact.
+oracles. O-LLVM-04 adds direct scalar/control-flow execution and defined-failure
+channels. Selecting `--backend llvm` emits a native object for its admitted host
+profile; unsupported required operations fail with `GTI-B0003` without replacing
+an existing output artifact. Ownership/lifecycle, general references and library
+conformance remain later campaign milestones.
 
 O-LLVM-02/03 implement coverage/admission, module ownership, bounded symbol/ABI
 mapping, target-machine construction, LLVM verification and object machinery. O-LLVM-04
-then lowers scalar functions, arithmetic and control flow, including checked
+lowers scalar functions, arithmetic and control flow, including checked
 failure paths rather than only successful execution. Unsupported required
 `LoweredProgram` operations remain classified rejections; mixed per-function
 C++/LLVM emission and a cross-backend private ABI are not permitted. Default
@@ -122,7 +125,8 @@ first executable milestone.
   closure for their host architecture. That cost is isolated to the backend
   target and release package rather than broadening `gti_compiler`.
 - Merely selecting LLVM never changes GTI semantics. The C++ backend remains
-  the only backend that can currently produce executables.
+  the complete production backend; LLVM currently emits the admitted scalar
+  profile rather than the whole language.
 - Boundary tests reject frontend and C++ representation dependencies, forged
   lowered programs are rejected before LLVM initialization, and CLI tests pin
   both default-C++ behavior and the explicit foundation limitation.

@@ -199,6 +199,12 @@ gti_failure_report_result_v1
 gti_rt_failure_capture_panic_v2(gti_failure_record_v2 *record,
                                 gti_c_string_view message);
 
+/* Scalar-ABI form of capture_panic_v2 for native code generators. Identical
+ * validation, bounded copying and ownership; no retained message pointer. */
+gti_failure_report_result_v1
+gti_rt_failure_capture_panic_bytes_v2(gti_failure_record_v2 *record,
+                                      const uint8_t *data, uint64_t size);
+
 gti_failure_report_result_v1 gti_rt_failure_write_report_v2(
     const gti_failure_record_v2 *record,
     const gti_failure_artifact_descriptor_v1 *artifact);

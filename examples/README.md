@@ -1,5 +1,13 @@
 # GTI examples
 
+[`llvm/scalar-control-flow.gti`](llvm/scalar-control-flow.gti) is a native LLVM
+backend example using concrete generics, recursion, loops and checked scalar
+arithmetic. Build with `gti examples/llvm/scalar-control-flow.gti --backend llvm
+-O3 -o scalar-control-flow`; it exits zero on success. The registered
+`llvm_scalar_execution` differential corpus checks it with C++ and native
+O0/O3. It is separate from the numbered full-language C++ census because LLVM
+currently admits only its documented scalar/text-value profile.
+
 [`076-scalar-atomics.gti`](076-scalar-atomics.gti) also demonstrates an explicit
 `[[thread_confined_callback]]` native event hook alongside managed workers.
 Build with `--execution-profile concurrent`; native invocation stays `unsafe`,

@@ -1,0 +1,399 @@
+#include "scalar.h"
+
+#include <llvm/ADT/APFloat.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/Intrinsics.h>
+
+namespace lang::native_llvm {
+namespace {
+bool floating(const SemanticType &type) {
+  return type == SemanticType::Float || type == SemanticType::Double;
+}
+MirOperation baseOperation(MirOperation operation) {
+  switch (operation) {
+  case MirOperation::AddAssign:
+    return MirOperation::Add;
+  case MirOperation::SubtractAssign:
+    return MirOperation::Subtract;
+  case MirOperation::MultiplyAssign:
+    return MirOperation::Multiply;
+  case MirOperation::DivideAssign:
+    return MirOperation::Divide;
+  case MirOperation::RemainderAssign:
+    return MirOperation::Remainder;
+  case MirOperation::BitwiseAndAssign:
+    return MirOperation::BitwiseAnd;
+  case MirOperation::BitwiseOrAssign:
+    return MirOperation::BitwiseOr;
+  case MirOperation::BitwiseXorAssign:
+    return MirOperation::BitwiseXor;
+  case MirOperation::ShiftLeftAssign:
+    return MirOperation::ShiftLeft;
+  case MirOperation::ShiftRightAssign:
+    return MirOperation::ShiftRight;
+  default:
+    return operation;
+  }
+}
+} // namespace
+
+Scalars::Scalars(Session &session, llvm::IRBuilder<> &ir, Guard guard)
+    : session(session), ir(ir), guard(std::move(guard)) {}
+
+SemanticType Scalars::domain(const SemanticType &type) const {
+  if (type.kind == SemanticType::Enum) {
+    for (const auto &enumeration : session.program().mir().integralEnums())
+      if (enumeration.type == type)
+        return enumeration.underlyingType;
+    throw BackendUnsupportedError(
+        "LLVM scalar enum requires a sealed integral domain");
+  }
+  return type;
+}
+bool Scalars::signedType(const SemanticType &type) const {
+  auto integer = constantIntegerDomain(domain(type));
+  return integer && integer->signedValue;
+}
+SemanticType Scalars::promoted(const SemanticType &type) const {
+  auto integer = constantIntegerDomain(type);
+  return integer && integer->width < 32 ? SemanticType::Int32 : type;
+}
+SemanticType Scalars::common(const SemanticType &left,
+                             const SemanticType &right) const {
+  auto a = domain(left), b = domain(right);
+  if (a == b && (a == SemanticType::Bool || a == SemanticType::Char))
+    return a;
+  if (a == SemanticType::Double || b == SemanticType::Double)
+    return SemanticType::Double;
+  if (a == SemanticType::Float || b == SemanticType::Float)
+    return SemanticType::Float;
+  a = promoted(a);
+  b = promoted(b);
+  auto x = constantIntegerDomain(a), y = constantIntegerDomain(b);
+  if (!x || !y)
+    throw BackendUnsupportedError(
+        "LLVM numeric operation requires concrete scalar domains");
+  if (x->width != y->width)
+    return x->width > y->width ? a : b;
+  return x->signedValue ? b : a;
+}
+
+llvm::Value *Scalars::literal(const Literal &literal,
+                              const SemanticType &type) {
+  auto *output = session.layouts().get(type).value;
+  if (const auto *integer = std::get_if<uint64_t>(&literal))
+    return llvm::ConstantInt::get(output, *integer);
+  if (const auto *boolean = std::get_if<bool>(&literal))
+    return llvm::ConstantInt::get(output, *boolean);
+  if (const auto *character = std::get_if<CharacterLiteral>(&literal))
+    return llvm::ConstantInt::get(output, character->value);
+  if (const auto *number = std::get_if<BinaryFloat>(&literal)) {
+    const bool wide = number->format == BinaryFloatFormat::Binary64;
+    return llvm::ConstantFP::get(
+        session.context(),
+        llvm::APFloat(wide ? llvm::APFloat::IEEEdouble()
+                           : llvm::APFloat::IEEEsingle(),
+                      llvm::APInt(wide ? 64 : 32, number->bits)));
+  }
+  if (const auto *text = std::get_if<std::string>(&literal)) {
+    auto *data =
+        llvm::ConstantDataArray::getString(session.context(), *text, false);
+    auto *storage = new llvm::GlobalVariable(
+        session.module(), data->getType(), true,
+        llvm::GlobalValue::PrivateLinkage, data, "gti.text");
+    return llvm::ConstantStruct::get(session.abi().textView(),
+                                     {storage, ir.getInt64(text->size())});
+  }
+  throw BackendUnsupportedError("LLVM scalar literal shape is not implemented");
+}
+
+llvm::Value *Scalars::convert(llvm::Value *value, const SemanticType &from,
+                              const SemanticType &to, bool checked) {
+  if (from == to)
+    return value;
+  auto source = domain(from), target = domain(to);
+  auto *output = session.layouts().get(target).value;
+  if (source == target)
+    return value;
+  const DefinedFailureOutcome failure{
+      DefinedFailureCode::NumericConversionOutOfRange,
+      DefinedFailureDetail::NumericCast};
+  if (value->getType()->isIntegerTy() && output->isIntegerTy()) {
+    if (checked) {
+      auto *wide =
+          ir.CreateIntCast(value, ir.getInt128Ty(), signedType(source));
+      const auto width = output->getIntegerBitWidth();
+      const auto minimum = signedType(target)
+                               ? llvm::APInt::getSignedMinValue(width).sext(128)
+                               : llvm::APInt(128, 0);
+      const auto maximum = signedType(target)
+                               ? llvm::APInt::getSignedMaxValue(width).zext(128)
+                               : llvm::APInt::getMaxValue(width).zext(128);
+      guard(ir.CreateOr(ir.CreateICmpSLT(wide, llvm::ConstantInt::get(
+                                                   ir.getInt128Ty(), minimum)),
+                        ir.CreateICmpSGT(wide, llvm::ConstantInt::get(
+                                                   ir.getInt128Ty(), maximum))),
+            failure);
+    }
+    return ir.CreateIntCast(value, output, signedType(source));
+  }
+  if (value->getType()->isIntegerTy() && output->isFloatingPointTy())
+    return signedType(source) ? ir.CreateSIToFP(value, output)
+                              : ir.CreateUIToFP(value, output);
+  if (value->getType()->isFloatingPointTy() && output->isFloatingPointTy())
+    return ir.CreateFPCast(value, output);
+  if (value->getType()->isFloatingPointTy() && output->isIntegerTy()) {
+    const auto width = output->getIntegerBitWidth();
+    auto *truncated = ir.CreateUnaryIntrinsic(llvm::Intrinsic::trunc, value);
+    const auto boundary =
+        llvm::APInt(128, 1).shl(signedType(target) ? width - 1 : width);
+    llvm::APFloat upper(value->getType()->isDoubleTy()
+                            ? llvm::APFloat::IEEEdouble()
+                            : llvm::APFloat::IEEEsingle());
+    upper.convertFromAPInt(boundary, false, llvm::APFloat::rmNearestTiesToEven);
+    auto lower = upper;
+    if (signedType(target))
+      lower.changeSign();
+    else
+      lower = llvm::APFloat::getZero(upper.getSemantics());
+    auto *valid = ir.CreateAnd(
+        ir.CreateFCmpOGE(truncated,
+                         llvm::ConstantFP::get(session.context(), lower)),
+        ir.CreateFCmpOLT(truncated,
+                         llvm::ConstantFP::get(session.context(), upper)));
+    guard(ir.CreateNot(valid), failure);
+    return signedType(target) ? ir.CreateFPToSI(value, output)
+                              : ir.CreateFPToUI(value, output);
+  }
+  throw BackendUnsupportedError(
+      "LLVM scalar conversion shape is not implemented");
+}
+
+llvm::Value *Scalars::arithmetic(MirOperation operation,
+                                 std::span<llvm::Value *const> inputs,
+                                 std::span<const SemanticType> types,
+                                 const SemanticType &result) {
+  const bool comparison = operation >= MirOperation::Equal &&
+                          operation <= MirOperation::GreaterEqual;
+  const bool shift = operation == MirOperation::ShiftLeft ||
+                     operation == MirOperation::ShiftRight;
+  const auto type = comparison ? common(types[0], types[1])
+                    : shift    ? promoted(domain(types[0]))
+                               : domain(result);
+  auto *a = convert(inputs[0], types[0], type, false);
+  auto *b = inputs.size() > 1
+                ? convert(inputs[1], types[1], shift ? types[1] : type, false)
+                : nullptr;
+  if (comparison) {
+    if (floating(type)) {
+      switch (operation) {
+      case MirOperation::Equal:
+        return ir.CreateFCmpOEQ(a, b);
+      case MirOperation::NotEqual:
+        return ir.CreateFCmpUNE(a, b);
+      case MirOperation::Less:
+        return ir.CreateFCmpOLT(a, b);
+      case MirOperation::LessEqual:
+        return ir.CreateFCmpOLE(a, b);
+      case MirOperation::Greater:
+        return ir.CreateFCmpOGT(a, b);
+      case MirOperation::GreaterEqual:
+        return ir.CreateFCmpOGE(a, b);
+      default:
+        break;
+      }
+    } else {
+      switch (operation) {
+      case MirOperation::Equal:
+        return ir.CreateICmpEQ(a, b);
+      case MirOperation::NotEqual:
+        return ir.CreateICmpNE(a, b);
+      case MirOperation::Less:
+        return signedType(type) ? ir.CreateICmpSLT(a, b)
+                                : ir.CreateICmpULT(a, b);
+      case MirOperation::LessEqual:
+        return signedType(type) ? ir.CreateICmpSLE(a, b)
+                                : ir.CreateICmpULE(a, b);
+      case MirOperation::Greater:
+        return signedType(type) ? ir.CreateICmpSGT(a, b)
+                                : ir.CreateICmpUGT(a, b);
+      case MirOperation::GreaterEqual:
+        return signedType(type) ? ir.CreateICmpSGE(a, b)
+                                : ir.CreateICmpUGE(a, b);
+      default:
+        break;
+      }
+    }
+  }
+  if (floating(type)) {
+    switch (operation) {
+    case MirOperation::Add:
+      return ir.CreateFAdd(a, b);
+    case MirOperation::Subtract:
+      return ir.CreateFSub(a, b);
+    case MirOperation::Multiply:
+      return ir.CreateFMul(a, b);
+    case MirOperation::Divide:
+      return ir.CreateFDiv(a, b);
+    case MirOperation::Positive:
+      return a;
+    case MirOperation::Negate:
+      return ir.CreateFNeg(a);
+    default:
+      throw BackendUnsupportedError(
+          "LLVM floating operation is not implemented");
+    }
+  }
+  auto *integer = llvm::cast<llvm::IntegerType>(a->getType());
+  auto zero = llvm::ConstantInt::get(integer, 0);
+  const bool signedValue = signedType(type);
+  const auto overflow = [&](llvm::Value *left, llvm::Value *right,
+                            llvm::Intrinsic::ID signedId,
+                            llvm::Intrinsic::ID unsignedId,
+                            DefinedFailureDetail detail) -> llvm::Value * {
+    auto *pair = ir.CreateBinaryIntrinsic(signedValue ? signedId : unsignedId,
+                                          left, right);
+    guard(ir.CreateExtractValue(pair, 1),
+          {DefinedFailureCode::IntegerOverflow, detail});
+    return ir.CreateExtractValue(pair, 0);
+  };
+  switch (operation) {
+  case MirOperation::Positive:
+    return a;
+  case MirOperation::LogicalNot:
+    return ir.CreateNot(a);
+  case MirOperation::BitwiseNot:
+    return ir.CreateNot(a);
+  case MirOperation::Negate:
+    return overflow(zero, a, llvm::Intrinsic::ssub_with_overflow,
+                    llvm::Intrinsic::usub_with_overflow,
+                    DefinedFailureDetail::Negation);
+  case MirOperation::Add:
+    return overflow(a, b, llvm::Intrinsic::sadd_with_overflow,
+                    llvm::Intrinsic::uadd_with_overflow,
+                    DefinedFailureDetail::Addition);
+  case MirOperation::Subtract:
+    return overflow(a, b, llvm::Intrinsic::ssub_with_overflow,
+                    llvm::Intrinsic::usub_with_overflow,
+                    DefinedFailureDetail::Subtraction);
+  case MirOperation::Multiply:
+    return overflow(a, b, llvm::Intrinsic::smul_with_overflow,
+                    llvm::Intrinsic::umul_with_overflow,
+                    DefinedFailureDetail::Multiplication);
+  case MirOperation::BitwiseAnd:
+    return ir.CreateAnd(a, b);
+  case MirOperation::BitwiseOr:
+    return ir.CreateOr(a, b);
+  case MirOperation::BitwiseXor:
+    return ir.CreateXor(a, b);
+  case MirOperation::ShiftLeft:
+  case MirOperation::ShiftRight: {
+    const auto detail = operation == MirOperation::ShiftLeft
+                            ? DefinedFailureDetail::LeftShift
+                            : DefinedFailureDetail::RightShift;
+    if (signedType(types[1]))
+      guard(ir.CreateICmpSLT(b, llvm::ConstantInt::get(b->getType(), 0)),
+            {DefinedFailureCode::NegativeShiftCount, detail});
+    auto *wide = ir.CreateIntCast(b, ir.getInt128Ty(), signedType(types[1]));
+    guard(ir.CreateICmpUGE(wide, llvm::ConstantInt::get(
+                                     ir.getInt128Ty(), integer->getBitWidth())),
+          {DefinedFailureCode::ShiftCountOutOfRange, detail});
+    b = ir.CreateIntCast(b, integer, false);
+    return operation == MirOperation::ShiftLeft ? ir.CreateShl(a, b)
+           : signedValue                        ? ir.CreateAShr(a, b)
+                                                : ir.CreateLShr(a, b);
+  }
+  case MirOperation::Divide:
+  case MirOperation::Remainder: {
+    const bool remainder = operation == MirOperation::Remainder;
+    guard(ir.CreateICmpEQ(b, zero),
+          {remainder ? DefinedFailureCode::ModuloByZero
+                     : DefinedFailureCode::DivisionByZero,
+           remainder ? DefinedFailureDetail::IntegerModulo
+                     : DefinedFailureDetail::IntegerDivision});
+    if (signedValue) {
+      auto *exceptional = ir.CreateAnd(
+          ir.CreateICmpEQ(
+              a, llvm::ConstantInt::get(integer, llvm::APInt::getSignedMinValue(
+                                                     integer->getBitWidth()))),
+          ir.CreateICmpEQ(b, llvm::ConstantInt::getSigned(integer, -1)));
+      if (!remainder)
+        guard(exceptional, {DefinedFailureCode::IntegerOverflow,
+                            DefinedFailureDetail::Division});
+      else
+        b = ir.CreateSelect(exceptional, llvm::ConstantInt::get(integer, 1), b);
+      return remainder ? ir.CreateSRem(a, b) : ir.CreateSDiv(a, b);
+    }
+    return remainder ? ir.CreateURem(a, b) : ir.CreateUDiv(a, b);
+  }
+  default:
+    throw BackendUnsupportedError(
+        "LLVM scalar arithmetic operation is not implemented");
+  }
+}
+
+llvm::Value *Scalars::compute(const MirInstruction &instruction,
+                              std::span<llvm::Value *const> inputs) {
+  if (instruction.literal)
+    return literal(*instruction.literal, instruction.info.type);
+  if (instruction.operation == MirOperation::EnumConstant &&
+      instruction.enumValue) {
+    auto *type = session.layouts().get(instruction.info.type).value;
+    auto bits = instruction.enumValue->magnitude;
+    return llvm::ConstantInt::get(
+        type, instruction.enumValue->negative ? uint64_t(0) - bits : bits);
+  }
+  if (instruction.operation == MirOperation::Identity ||
+      instruction.operation == MirOperation::Comma)
+    return inputs.back();
+  if (instruction.operation == MirOperation::Convert)
+    return convert(inputs.front(), instruction.operands.front().type,
+                   instruction.info.type);
+  if (const auto intrinsic =
+          integerArithmeticIntrinsic(instruction.intrinsic)) {
+    const auto type = instruction.operands[0].type;
+    const auto width = inputs[0]->getType()->getIntegerBitWidth();
+    const bool sign = signedType(type);
+    const bool add = intrinsic->operation == CheckedIntegerOperation::Add;
+    const bool sub = intrinsic->operation == CheckedIntegerOperation::Subtract;
+    const auto id = sign ? (add   ? llvm::Intrinsic::sadd_with_overflow
+                            : sub ? llvm::Intrinsic::ssub_with_overflow
+                                  : llvm::Intrinsic::smul_with_overflow)
+                         : (add   ? llvm::Intrinsic::uadd_with_overflow
+                            : sub ? llvm::Intrinsic::usub_with_overflow
+                                  : llvm::Intrinsic::umul_with_overflow);
+    auto *pair = ir.CreateBinaryIntrinsic(id, inputs[0], inputs[1]);
+    auto *value = ir.CreateExtractValue(pair, 0);
+    auto *over = ir.CreateExtractValue(pair, 1);
+    if (intrinsic->mode == IntegerArithmeticMode::Wrapping)
+      return value;
+    if (intrinsic->mode == IntegerArithmeticMode::OverflowPredicate)
+      return over;
+    auto *integer = llvm::cast<llvm::IntegerType>(inputs[0]->getType());
+    llvm::Value *limit = llvm::ConstantInt::get(
+        integer, sub ? llvm::APInt(width, 0) : llvm::APInt::getMaxValue(width));
+    if (sign) {
+      auto *negative =
+          ir.CreateICmpSLT(inputs[0], llvm::ConstantInt::get(integer, 0));
+      if (!add && !sub)
+        negative = ir.CreateXor(
+            negative,
+            ir.CreateICmpSLT(inputs[1], llvm::ConstantInt::get(integer, 0)));
+      limit =
+          ir.CreateSelect(negative,
+                          llvm::ConstantInt::get(
+                              integer, llvm::APInt::getSignedMinValue(width)),
+                          llvm::ConstantInt::get(
+                              integer, llvm::APInt::getSignedMaxValue(width)));
+    }
+    return ir.CreateSelect(over, limit, value);
+  }
+  std::vector<SemanticType> types;
+  for (const auto &operand : instruction.operands)
+    types.push_back(operand.type);
+  const auto operation = baseOperation(instruction.operation);
+  return arithmetic(operation, inputs, types, instruction.info.type);
+}
+
+} // namespace lang::native_llvm
