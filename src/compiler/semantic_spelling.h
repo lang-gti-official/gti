@@ -32,6 +32,9 @@ namespace lang::semantic_spelling {
 // The user-facing name of a call target expression, or "function" when the
 // callee has no quotable name.
 [[nodiscard]] std::string callableSpelling(const ExprPtr &callee);
+// Source-facing spelling for unevaluated requirements and predicates. This
+// printer preserves expression structure; it does not resolve operations.
+[[nodiscard]] std::string expressionSpelling(const Expr &expression);
 
 // The declaration keyword of a class kind.
 [[nodiscard]] std::string_view classKindSpelling(ClassKind kind);

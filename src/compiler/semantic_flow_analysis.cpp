@@ -2365,6 +2365,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::MetaTypeAttributeCount:
         case IntrinsicKind::MetaTypeHasAttribute:
         case IntrinsicKind::MetaTypeTrait:
+        case IntrinsicKind::MetaTypeRelation:
         case IntrinsicKind::MetaEnumeratorCount:
         case IntrinsicKind::MetaEnumeratorName:
         case IntrinsicKind::MetaEnumeratorValue:
@@ -5157,9 +5158,11 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
   if (const Symbol *test = resolveGeneratedTestReference(NamePath(name)))
     return test;
   const auto *context = macroContext(name);
-  const auto [begin, end] = macroLocalScopeRange(name);
-  for (std::size_t index = end; index > begin; --index) {
+  const auto localScopes = macroLocalScopeRange(name);
+  for (std::size_t index = scopes.size(); index > 0; --index) {
     const auto &scope = scopes[index - 1];
+    if (!localScopes.contains(index - 1, scope))
+      continue;
     if (const auto found = scope.find(name.lexeme); found != scope.end()) {
       return &found->second;
     }
@@ -5193,9 +5196,11 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
 }
 
 auto SemanticVisitor::Impl::resolveMutable(const Token &name) -> Symbol * {
-  const auto [begin, end] = macroLocalScopeRange(name);
-  for (std::size_t index = end; index > begin; --index) {
+  const auto localScopes = macroLocalScopeRange(name);
+  for (std::size_t index = scopes.size(); index > 0; --index) {
     auto &scope = scopes[index - 1];
+    if (!localScopes.contains(index - 1, scope))
+      continue;
     if (const auto found = scope.find(name.lexeme); found != scope.end()) {
       return &found->second;
     }
@@ -11750,6 +11755,24 @@ auto SemanticVisitor::Impl::constraintImplies(GenericConstraintSet actual,
   if (hasConstraint(actual, required)) {
     return true;
   }
+  // Classification predicates carry the same primitive category facts as a
+  // source composition of the corresponding public concepts. These are type
+  // facts, not assumptions about arbitrary user-defined arithmetic.
+  if (required == GenericConstraintKind::Numeric &&
+      (hasConstraint(actual, GenericConstraintKind::Integral) ||
+       hasConstraint(actual, GenericConstraintKind::SignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::UnsignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::SignedNumeric) ||
+       hasConstraint(actual, GenericConstraintKind::FloatingPoint)))
+    return true;
+  if (required == GenericConstraintKind::Integral &&
+      (hasConstraint(actual, GenericConstraintKind::SignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::UnsignedIntegral)))
+    return true;
+  if (required == GenericConstraintKind::SignedNumeric &&
+      (hasConstraint(actual, GenericConstraintKind::SignedIntegral) ||
+       hasConstraint(actual, GenericConstraintKind::FloatingPoint)))
+    return true;
   if (required == GenericConstraintKind::Relocatable &&
       hasConstraint(actual, GenericConstraintKind::BitwiseRelocatable)) {
     return true;
