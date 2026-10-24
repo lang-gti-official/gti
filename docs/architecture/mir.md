@@ -814,6 +814,17 @@ This applies to read-only as well as exclusive carrier-reference fields.
 A reference obtained through an owning accessor also retains its exact
 transient call-result ancestry until the adapter's endpoint; a coarse owner
 identity is not a substitute for the selected constructor input's loan chain.
+A by-value carrier that a call builds from a reference argument naming exactly
+what an accessor returned (the call's own result place, as in
+`b.get().begin()`, or a reference binding initialized from it) has a `Stored`
+loan whose source is the place rooted at that accessor's `CallResult` loan and
+whose parent is that loan. It holds exactly the accessor loan's stored
+dependency, which is none for ownerless text. A temporary accessor result has
+no semantic loan of its own, so its semantic carrier contract names the
+accessor's owner; lowering refines that to the returned referent, and a binding
+that retains the accessor's loan does not move the carrier's source back to the
+owner. The program verifier admits ownerless text at that exact referent only
+under its result loan.
 Conversely, a completed call with no reference or borrowed-state result can
 retire an unretained transient accessor loan even when its receiver is an
 owning member projected from that accessor. Lowering uses the already
@@ -990,7 +1001,11 @@ canonical containment follows place-valued reference forwarding while still
 checking the selected variant/field. A shared local child may reborrow a shared
 parent without gaining mutable access; parent activity, CFG containment,
 non-escape and child-before-parent endpoints remain mandatory and independently
-verified.
+verified. A payload borrowed through a reference parameter is such a child of
+the parameter's entry loan. Returning it publishes a fresh parentless Return
+loan from the child and retires the child at that boundary, as a returned
+payload selection does. The child is never reclassified in place, because its
+own `Borrow` still reads the entry loan.
 
 Native emission tail-forwards a cleanup recipe only when its verified schedule
 contains one possible action: a class with no source destructor and exactly one
@@ -2055,6 +2070,12 @@ Phase 3 verifies nested paths:
   origin's prefix (`classReferenceSources`), and a whole use of the result
   requires it. A relay of a nested path is contracted only through a payload
   prefix.
+- A reference to text that an accessor returned (a `CallResult` loan whose
+  operand is `string_view&` or `c_string&`) designates no path:
+  `dependentDesignationPath` would otherwise read the path of the accessor's
+  owner, the loan's source, and check it against the view. A view has no
+  fields to relay; its owner is the result loan's stored dependency, which
+  the carrier-shell rules verify.
 
 A text field result (`textFieldResult`: one `returnBorrowFields` mapping of an
 Argument or Receiver origin to one source field, no result fields) carries the

@@ -1327,6 +1327,228 @@ int main() {
          "the formatter preserves borrowed patterns and remains idempotent");
 }
 
+// A payload pattern's reference derives from the place its switch subject
+// names. When that place lies inside a reference parameter's referent, a
+// free function or lambda may return the binding, just as a member accessor
+// returns one bound inside `this`. Local, by-value and temporary subjects
+// still do not outlive the call.
+void testParameterPayloadReferenceReturns() {
+  const std::string prefix = R"(
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class wrap { one(int32_t inner), two(int32_t inner) };
+enum class data { some(resource item) };
+)";
+  const auto accepted = [&](std::string_view name, std::string body,
+                            std::string_view message) {
+    auto result = analyze(name, prefix + std::move(body));
+    if (!result.canGenerateCode())
+      printDiagnostics(result);
+    expect(result.canGenerateCode(), message);
+    if (result.canGenerateCode())
+      expect(lang::verifyMirProgram(result.mir).valid(), message);
+    return result;
+  };
+  const auto scalar =
+      accepted("parameter-payload-scalar.gti", R"(
+int32_t& inner(wrap& value) {
+  switch (value) {
+  case wrap::one(auto& item): return item;
+  case wrap::two(auto& item): return item;
+  }
+}
+int main() { wrap w = wrap::one(3); int32_t c = inner(w); return c - 3; }
+)",
+               "a free function returns a payload borrowed from its parameter");
+  // The return publishes a fresh Return loan from the payload borrow, a
+  // child of the parameter's entry loan, and retires that child at once.
+  if (scalar.canGenerateCode()) {
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      lang::MirProgram forged = scalar.mir;
+      bool changed = false;
+      for (const auto &function : forged.functionInstances()) {
+        auto &body = const_cast<lang::MirBody &>(function.body);
+        for (auto &block : body.blocks) {
+          for (std::size_t index = 0; index + 1 < block.instructions.size();
+               ++index) {
+            auto &publication = block.instructions[index];
+            if (changed ||
+                publication.kind != lang::MirInstructionKind::Borrow ||
+                !publication.loan ||
+                body.loans[*publication.loan - 1].kind !=
+                    lang::MirLoanKind::Return ||
+                publication.operands.front().kind != lang::MirOperandKind::Loan)
+              continue;
+            auto &child = body.loans[publication.operands.front().loan - 1];
+            if (mutation == 0) {
+              // The child is never retired at the publication boundary.
+              block.instructions.erase(block.instructions.begin() +
+                                       static_cast<std::ptrdiff_t>(index) + 1);
+            } else if (mutation == 1) {
+              // The published capability names another place.
+              body.loans[*publication.loan - 1].source =
+                  body.loans[child.parent - 1].source;
+            } else {
+              // The child no longer derives from the parameter's entry.
+              child.parent = 0;
+            }
+            changed = true;
+          }
+        }
+      }
+      expect(changed && !lang::verifyMirProgram(forged).valid(),
+             "a forged parameter payload publication must fail MIR "
+             "verification");
+    }
+  }
+  accepted("parameter-payload-mutable.gti", R"(
+mut int32_t& slot(mut wrap& value) {
+  switch (value) {
+  case wrap::one(mut auto& item): return item;
+  case wrap::two(mut auto& item): return item;
+  }
+}
+int main() { mut wrap w = wrap::two(3); slot(w) = 5; return slot(w) - 5; }
+)",
+           "a mutable payload pattern returns through a mutable parameter");
+  accepted("parameter-payload-move-only.gti", R"(
+resource& held(data& value) {
+  switch (value) {
+  case data::some(auto& item): return item;
+  }
+}
+int main() { data d = data::some(resource()); return held(d).read() - 3; }
+)",
+           "a move-only payload is returned by reference, not copied");
+  accepted("parameter-payload-enum.gti", R"(
+enum class paint { coat(wrap shade, int32_t layers) };
+wrap& shade(paint& value) {
+  switch (value) {
+  case paint::coat(auto& inner, auto& layers): return inner;
+  }
+}
+int main() { paint p = paint::coat(wrap::two(5), 1); wrap& s = shade(p); return 0; }
+)",
+           "a cleanup-free enum payload is returned by reference");
+  accepted("parameter-payload-field.gti", R"(
+class gauge {
+public:
+  wrap reading;
+  gauge(wrap reading) : reading(reading) {}
+};
+int32_t& reading(gauge& value) {
+  switch (value.reading) {
+  case wrap::one(auto& item): return item;
+  case wrap::two(auto& item): return item;
+  }
+}
+int main() { gauge g = gauge(wrap::one(4)); return reading(g) - 4; }
+)",
+           "a pattern over a parameter's field derives from that parameter");
+  accepted("parameter-payload-lambda.gti", R"(
+int main() {
+  auto pick = [](wrap& value) -> int32_t& {
+    switch (value) {
+    case wrap::one(auto& item): return item;
+    case wrap::two(auto& item): return item;
+    }
+  };
+  wrap w = wrap::two(6);
+  return pick(w) - 6;
+}
+)",
+           "a lambda returns a payload borrowed from its parameter");
+
+  const auto local = analyze("parameter-payload-local-copy.gti", prefix + R"(
+int32_t& inner(wrap& value) {
+  wrap copy = value;
+  switch (copy) {
+  case wrap::one(auto& item): return item;
+  case wrap::two(auto& item): return item;
+  }
+}
+int main() { wrap w = wrap::one(3); return inner(w) - 3; }
+)");
+  expect(!local.canGenerateCode() && hasCode(local, "GTI-S2017") &&
+             hasMessage(local, "must derive from read-only parameter 'value'"),
+         "a payload of a local copy cannot escape through the parameter");
+  const auto byValue = analyze("parameter-payload-by-value.gti", prefix + R"(
+int32_t& inner(wrap& keep, wrap value) {
+  switch (value) {
+  case wrap::one(auto& item): return item;
+  case wrap::two(auto& item): return item;
+  }
+}
+int main() { wrap w = wrap::one(3); return inner(w, w) - 3; }
+)");
+  expect(!byValue.canGenerateCode() && hasCode(byValue, "GTI-S2017") &&
+             hasMessage(byValue, "must derive from read-only parameter 'keep'"),
+         "a payload of a by-value parameter is local storage");
+  const auto onlyByValue =
+      analyze("parameter-payload-only-by-value.gti", prefix + R"(
+int32_t& inner(wrap value) {
+  switch (value) {
+  case wrap::one(auto& item): return item;
+  case wrap::two(auto& item): return item;
+  }
+}
+int main() { wrap w = wrap::one(3); return inner(w) - 3; }
+)");
+  expect(!onlyByValue.canGenerateCode() && hasCode(onlyByValue, "GTI-S2017") &&
+             hasMessage(onlyByValue, "A free or static borrowed return"),
+         "a by-value parameter cannot own a reference result");
+  const auto temporary = analyze("parameter-payload-temporary.gti", prefix + R"(
+wrap copy(wrap& value) { return value; }
+int32_t& inner(wrap& value) {
+  switch (copy(value)) {
+  case wrap::one(auto& item): return item;
+  case wrap::two(auto& item): return item;
+  }
+}
+int main() { wrap w = wrap::one(3); return inner(w) - 3; }
+)");
+  expect(!temporary.canGenerateCode() && hasCode(temporary, "GTI-S2067"),
+         "a payload of a temporary subject is not a stable place");
+  const auto mutableLocal =
+      analyze("parameter-payload-mutable-local.gti", prefix + R"(
+mut int32_t& slot(mut wrap& value) {
+  mut wrap copy = value;
+  switch (copy) {
+  case wrap::one(mut auto& item): return item;
+  case wrap::two(mut auto& item): return item;
+  }
+}
+int main() { mut wrap w = wrap::one(3); slot(w) = 4; return 0; }
+)");
+  expect(!mutableLocal.canGenerateCode() &&
+             hasMessage(mutableLocal,
+                        "must derive from mutable reference parameter 'value'"),
+         "the diagnostic names a mutable source parameter's access");
+  const auto replaced = analyze("parameter-payload-replaced.gti", prefix + R"(
+int32_t& inner(wrap& value) {
+  switch (value) {
+  case wrap::one(auto& item): return item;
+  case wrap::two(auto& item): return item;
+  }
+}
+int main() {
+  mut wrap w = wrap::one(3);
+  int32_t& kept = inner(w);
+  w = wrap::two(4);
+  return kept - 3;
+}
+)");
+  expect(!replaced.canGenerateCode(),
+         "the result keeps the caller's enum borrowed against replacement");
+}
+
 // The consuming extractions of one function body, grouped by arm block.
 struct ConsumingArm {
   std::vector<std::size_t> extractions;
@@ -2172,6 +2394,7 @@ int main() {
   testClassPayloadEnums();
   testOrdinaryEnumsAndFormatting();
   testBorrowedPayloadPatterns();
+  testParameterPayloadReferenceReturns();
   testConsumingPayloadPatterns();
   testCleanupFreeMoveOnlyPayloads();
   testFixedArrayElementSubjects();

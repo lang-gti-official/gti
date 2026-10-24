@@ -77,13 +77,13 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   commit. Do not start duplicate per-component full campaigns. Collect ready
   changes for no more than ten minutes; a lone ready change may form a batch
   immediately and never waits for unfinished features. See `batch status`.
-- GitHub CI is advisory, not a development, validation, merge or completion
-  gate. Never wait for queued/running Actions or require a passing GitHub check
+- Gitea CI is advisory, not a development, validation, merge or completion
+  gate. Never wait for queued/running Actions or require a passing Gitea check
   before integration. Keep required exact-source local/managed-runner validation,
   full combined compiler coverage, platform/performance checks and reviews.
   Draft/component CI runs inexpensive checks; ready compiler candidates also
   run native/sanitizer feedback without blocking their locally validated merge.
-  Use `protection --configure --advisory-ci` to remove required GitHub check
+  Use `protection --configure --advisory-ci` to remove required Gitea check
   contexts/app pins while preserving PR-only/up-to-date/admin/review protection.
   This policy change is owner-authorized. Report pending/failed CI honestly;
   investigate known failures without calling them passes or hiding local failures.
@@ -101,11 +101,15 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   append-only removal. Preview is never merged wholesale into main and never
   weakens the original PR's acceptance. Local installation uses the user's
   explicit `install_neovim_local.py --preview` selection.
-- GitHub (`lang-gti-official/gti`, remote `origin`) is the canonical host for
-  branches, pull requests, issues, CI and releases. The self-hosted Gitea
-  repository (remote `gitea`) is a backup mirror of `main` and the tags that
-  the helper's `sync` pushes after every integration; never open PRs or
-  issues there.
+- Gitea at `https://git.internal.howetotech.dev/gti-lang/gti.git`
+  (remote `origin`) is canonical for branches, PRs, issues, CI, tags and
+  releases. Publish only there. GitHub automation is retired; neither the
+  helper nor workflows push to GitHub or any backup. A future private backup
+  requires separate owner configuration. The archived
+  `gti-legacy-gitea-20261024` repository preserves the older, distinct tracker.
+  Imported GitHub task records require explicit `rehost <task> --pr <number>`
+  after checking the mapping; never reuse a historical PR number by assumption
+  or rewrite a live verification record.
 - Begin from current canonical `origin/main` in a clean task-specific branch
   and worktree. Publish the branch immediately; create a draft PR after the
   first meaningful checkpoint. Commit and push coherent checkpoints before
@@ -140,8 +144,8 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   detached run IDs remember their original connection. Do not leave ad hoc
   clones or builds on any runner.
 - Use `scripts/agent_workflow.py` for lifecycle operations. Reconcile upstream,
-  validate the resulting head/base, and merge only through GitHub PRs. Respect
-  required local validation and reviews; GitHub CI is advisory. No direct
+  validate the resulting head/base, and merge only through Gitea PRs. Respect
+  required local validation and reviews; Gitea CI is advisory. No direct
   pushes to `main`, rewritten shared history,
   or administrative bypasses. The owner authorizes the helper's `protection
   --configure` to establish this PR-only/up-to-date rule; preserve existing
@@ -242,9 +246,12 @@ one-off implementation-note or redesign files when an existing category fits.
 ## Release Channels And VERSION
 
 Two channels publish this repository, and they answer different questions.
-Both publish from the GitHub release workflow (`.github/workflows/release.yml`)
-of the canonical repository `lang-gti-official/gti`, for Linux x64 and Apple
-Silicon; the Gitea mirror publishes nothing.
+Both publish through the canonical Gitea release workflow
+(`.gitea/workflows/release.yml`). Existing Linux runners publish Linux x64.
+Apple Silicon release archives are packaged/validated on macOS and uploaded
+manually to the same immutable stable release; no macOS Actions runner is
+configured. Do not promise automatic macOS/nightly assets or install a runner
+service. See the manual publication contract in `docs/architecture/build-and-driver.md`.
 
 - **Nightly** republishes one rolling `nightly` release per commit on `main`.
   It is automatic, replaces its own assets, and needs no `VERSION` change.

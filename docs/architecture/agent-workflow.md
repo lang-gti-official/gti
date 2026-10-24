@@ -2,8 +2,8 @@
 
 Status: Repository automation and the owner's implementation-task contract.
 
-An implementation normally ends with a GitHub PR merged into `main`, the primary
-local checkout synchronized, the Gitea backup mirror updated, and the task's
+An implementation normally ends with a Gitea PR merged into `main`, the primary
+local checkout synchronized, and the task's
 branches/worktree cleaned up. This
 makes the user's local installer consume integrated work. Review-only, PR-only,
 local-only and installation instructions override the appropriate default.
@@ -111,7 +111,7 @@ authoritative work inventory and verification record.
 owns a unique `codex/` branch, a separate worktree and one PR. The worktree
 must lie outside the primary checkout: `start` refuses nested paths, including
 Claude Code's managed `.claude/worktrees/`, so such clients let `start` create
-the task worktree elsewhere. GitHub PRs and published commits are authoritative
+the task worktree elsewhere. Gitea PRs and published commits are authoritative
 inventory; token-free JSON records under the common Git directory's
 `gti-agent-workflow/` retain operation state and recovery pointers. They are
 shared across worktrees, never committed, and contain no credentials. HTTP
@@ -125,7 +125,7 @@ inspected before its exact directory is removed; the helper never removes a
 live lock. `verify` holds the lock only while it records the attempt and the
 result. Its checks run inside a `suite` slot of the shared build window below,
 so a peer's `start`, `status`, `checkpoint` or `cleanup` never waits on a
-validation run. GitHub's up-to-date branch rule closes the race with other
+validation run. Gitea's up-to-date branch rule closes the race with other
 machines. Nothing locks ordinary editing.
 
 | Command | Result |
@@ -136,11 +136,12 @@ machines. Nothing locks ordinary editing.
 | `verify <task> --checks-file <json>` | Record the attempt, release the lock, execute nonempty argv arrays without a shell inside a build-window `suite` slot, then record passing checks against the published clean head and current remote main. |
 | `verify <task> --focused --checks-file <json>` | For a checked automation-only diff, run owning checks directly and record scope `automation`; refuse compiler changes and remote use. Actual broad workloads still use the window. |
 | `finish <task> --body-file <text> [--pr-only]` | Publish the final PR description, mark ready, verify identities/protection, merge the exact head without bypasses and synchronize local main. PR-only stops ready for review. |
-| `sync <task>` | Confirm merged-head/merge-commit reachability, fast-forward primary main, preserving unrelated local edits, then push `main` and the tags to the `gitea` mirror remote and record the result. |
+| `sync <task>` | Confirm merged-head/merge-commit reachability and fast-forward primary main, preserving unrelated local edits. Never push to a backup. |
+| `rehost <task> --pr <number>` | Explicitly bind an imported GitHub task to its verified Gitea repository/branch/head identity; preserve the original record and exact-source evidence. Refuse live verification. |
 | `cleanup <task>` | After confirmed merge/sync, remove a plain clean worktree with no ignored files and delete only unchanged integrated branches. |
 | `abandon <task> --reason <text>` | Publish the final checkpoint and close its PR with a reason, preserving branch and worktree. A task with no PR whose branch holds no commits beyond `origin/main` has nothing to preserve. Its clean worktree and branches are removed and the reason is recorded. |
 | `status [task]` | Read task records and current remote PR state. |
-| `protection [--configure]` | Audit, or establish the owner-approved GitHub branch protection for `main` (pull request required, up-to-date branch, administrators bound, no force pushes or deletion), retaining existing review/status requirements. |
+| `protection [--configure]` | Audit, or establish the owner-approved Gitea branch protection for `main` (pull request required, up-to-date branch, administrators bound, no force pushes or deletion), retaining existing review/status requirements. |
 
 Checkpoint paths are literal files, including exact identities for deleted
 files: Git pathspec magic, deleted-directory prefixes, directory/root staging,
@@ -149,26 +150,37 @@ New task starts reject any already-published branch/PR identity. First publicati
 uses a compare-and-create lease, so a concurrently created branch is preserved.
 
 `--repo <checkout>` precedes the command when invoked elsewhere. Credentials
-come from `GTI_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, the primary
-checkout's ignored `.env` (the helper parses the token key without executing
-the file), or the authenticated GitHub CLI (`gh auth token`). A worktree never
-needs its own credential file. `origin` must be the canonical GitHub
-repository and, when present, the `gitea` remote must be the Gitea mirror;
-both fetch and push URLs are checked before anything is sent.
+come from `GTI_GITEA_TOKEN` or `GITEA_TOKEN`, including the primary checkout's
+ignored `.env` (parsed without executing it). A worktree never needs its own
+credential file. Both fetch and all push URLs of `origin` must be exactly
+`https://git.internal.howetotech.dev/gti-lang/gti.git` before credentials or
+publication are used. Authenticated API requests never follow redirects.
 
 ## Hosts and records
 
-GitHub (`lang-gti-official/gti`) owns branches, pull requests, issues, CI and
-releases. The self-hosted Gitea repository is a backup mirror of `main` and
-the tags: `sync` pushes both there after the primary fast-forward (`main`
-without force, so a merge that landed only on the mirror surfaces as a
-rejected push; tags with force so a moved `nightly` follows) and records `mirror` (remote, pushed,
-time, error) in the task state. A failing or missing mirror remote is reported
-and does not undo the sync; the GitHub `mirror.yml` workflow is a second path
-when its secret is configured. Task records created before the move carry no
-`host` field; `status` lists them as `legacy-gitea` without contacting any
-API, every other command refuses them, and `start --adopt` renames the record
-to `<task>.legacy-gitea.json` and registers the worktree afresh on GitHub.
+Policy revision (2026-10-24): canonical hosting returned to the self-hosted
+Gitea `gti-lang/gti`. GitHub workflows are retired under
+`docs/plans/archive/github-actions-20261024/`. Neither workflows nor helper
+push to GitHub or another backup. Creating/configuring a future private backup
+is a separate owner operation, not an implicit integration step.
+
+The former Gitea tracker is preserved read-only in
+`gti-lang/gti-legacy-gitea-20261024`; its numbers are distinct from the imported
+GitHub tracker. New helper records use schema 3 and `host: gitea`. GitHub-era
+schema-2 records show `legacy-github`, and earlier Gitea records show
+`legacy-gitea`, without contacting an API using their old numbers.
+
+For a verified imported GitHub PR, use `rehost <task> --pr <number>` only after
+the validation owner confirms its live operations have completed. The helper
+checks original GitHub URL, canonical target repositories, branch and exact
+published head, saves the unmodified original record under task evidence, and
+records both hosting identities. It does not relabel or regenerate proof:
+`verified` and admission source/base/compiler/platform identities remain as
+originally measured. Normal freshness checks still require reconciliation and
+proportionate verification before merge. A running `verifying` record refuses
+rehosting. `start --adopt` cannot silently replace an identified GitHub PR.
+Earlier Gitea records can instead be preserved under task evidence and their
+work adopted, without interpreting an archived tracker number on the new repo.
 
 ## Build window
 
@@ -436,8 +448,9 @@ retrieved evidence; the remote worker never publishes or installs.
 
 The first branch push can contain no changes; draft creation waits for a real
 commit because unchanged branches cannot form meaningful PRs. PRs are created
-as GitHub drafts and `finish` marks them ready for review (the one GraphQL
-call; REST cannot leave draft state). An interrupted PR-create request is
+with a `WIP: ` title, which Gitea recognizes as draft; creation verifies that
+state. `finish` applies the final non-WIP title and verifies draft state was
+cleared. An interrupted PR-create request is
 recovered by branch lookup before another create. Head and base repository identities must both be canonical GTI, so a
 similarly named fork branch cannot be adopted or modified. Closed task branches
 are not reused.
@@ -450,14 +463,14 @@ record includes executed commands, head, base and time. Any changed commit,
 dirty source or advancing main requires reconciliation/revalidation. Failed
 checks never mark the task ready.
 
-Finish merges through GitHub with `merge_method: merge` and `sha` pinned to
+Finish merges through Gitea with `do: merge`, `force_merge: false` and `head_commit_id` pinned to
 the validated head, so a branch that moved is refused. The `main` protection
 rule requires a pull request and an up-to-date branch, binds administrators,
 and denies force pushes and deletion. Required reviews remain enforced by
-GitHub. GitHub CI is advisory and never delays a locally validated merge or
+Gitea. Gitea CI is advisory and never delays a locally validated merge or
 task completion. The owner-authorized
-`protection --configure --advisory-ci` clears required status contexts and app
-pins, preserving strict freshness, admin enforcement and review settings. Do
+`protection --configure --advisory-ci` clears required status checks, preserving
+strict freshness, admin enforcement and review settings. Do
 not force a merge or bypass a server rule. Release workflows run after
 integration and need not finish before
 local installation. VERSION follows normal repository policy; workflow-only
@@ -608,33 +621,40 @@ Release closes the unsuccessful batch while preserving its branch/worktree
 and returns its members to the queue. Do not erase conflict work to release it.
 
 Normal `finish` refuses component admissions and requires full platform evidence
-for batches. Required reviews and strict PR freshness still apply; GitHub CI
+for batches. Required reviews and strict PR freshness still apply; Gitea CI
 does not gate acceptance. An umbrella merge
-preserves all original commits and GitHub marks included original PRs merged;
-confirm their states and run their normal sync/cleanup. The primary checkout,
-backup mirror and release policy remain the normal completion boundary.
+preserves all original commits. Gitea need not auto-mark included PRs merged:
+component `sync` verifies the committed membership manifest, exact original
+head/admission, every required platform's accepted combined proof, the umbrella
+PR's real merged state and both heads' main reachability. Only then it closes
+the original PR with an explicit umbrella/merge link, recording
+`integrated_via_batch` without pretending its remote state is merged. Normal
+cleanup repeats that proof. Heuristic merged detection and manual-merge
+overrides are not enabled to fake a provider state. The primary checkout
+and release policy remain the normal completion boundary; there is no backup push.
 
 ### Advisory CI feedback
 
 Draft and admitted component PRs run formatting, version, grammar and workflow
 regressions, without starting native full builds. Their `Validation summary`
-reports **awaiting integration**; helper admission rules, not a GitHub status,
+reports **awaiting integration**; helper admission rules, not a Gitea status,
 block direct component merge. Independent or batch candidates become ready for
 review to start additional CI. Compiler changes run the existing full native
 and compiler-sanitizer jobs as advisory feedback. A conservative
 automation-only diff uses the workflow tests plus the inexpensive gates; CMake,
 compiler tests, runtime, packaged scripts, release packaging and unknown paths
 still select full coverage. The helper does not restart CI on an unchanged
-description when retrying a pending merge. Description-only edits do not
-trigger full CI; source pushes and entering/leaving draft are routing events.
+description when retrying a pending merge. Identified body-only `edited` events
+are metadata-only feedback, not source acceptance. Title edits (Gitea's WIP
+draft transitions), source pushes and unknown edit payloads reclassify normally.
 Automation-only local owning checks may use `verify --focused`, which checks
 the actual diff and does not reserve a broad-suite slot. Compiler changes
 cannot use that path. An active `verify` is atomically refused on duplicate
 submission; resume the recorded operation instead.
 
-Owner policy revision (2026-10-23): GitHub runner availability is not a merge,
+Owner policy revision (2026-10-23): Gitea runner availability is not a merge,
 development or completion prerequisite. Never wait for queued/running Actions
-or require a passing GitHub check. Keep all mandatory optimized local or
+or require a passing Gitea check. Keep all mandatory optimized local or
 managed-runner validation, full combined compiler suites, required platform
 and performance evidence, PR freshness and reviews. Record pending/failed CI
 honestly and investigate known failures without mislabeling them as passes or
@@ -793,7 +813,7 @@ archive remains accessible through the chat attachment. Unmerged abandoned work
 is retained indefinitely until a separate explicit disposition.
 
 A task can have no work at all: no PR, and local, remote and worktree tips
-already contained in `origin/main`. GitHub refuses a PR for such a branch, so
+already contained in `origin/main`. Gitea refuses a PR for such a branch, so
 `abandon` retires it directly instead.
 - Every check runs before the first removal. Uncommitted changes or ignored
   files stop it, and primary `main` must contain the local branch.

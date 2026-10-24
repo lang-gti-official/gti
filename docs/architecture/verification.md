@@ -1,5 +1,74 @@
 # Compiler Verification
 
+## Carriers of returned references (0.468.3)
+
+`accessor_text_carrier_runtime` runs `accessor_text_carriers.gti` in all
+eight native modes, including the sanitized one. It builds text iterators
+directly from `Box::get()`'s returned `std::string_view&` over literal and
+`std::string`-owned text (`begin()`, `rbegin()`, a counted walk to `end()`),
+through a bound reference to literal text, and in a range-for over a
+literal-backed view. It calls `Cursor open(std::string_view&)` on a returned
+view, iterates `std::optional<std::string_view>::value()`, and builds an
+unrelated user carrier, `attach(panel.current())`, from a returned `Gauge&`.
+Main (`cf14a66a`) stops it with `GTI-B0001`.
+
+`checkAccessorReturnedTextCarriers` in `carrier_shell_references` checks the
+MIR shape: every such carrier's `Stored` loan is sourced at its accessor's
+`CallResult` loan with no projection, has that loan as parent, and holds the
+same stored dependency. Mutations:
+- removing an owner-backed carrier's stored dependency is rejected with
+  "carrier shell loan does not preserve its exact stored dependency";
+- removing a literal-backed carrier's parent, or moving its source to the
+  accessor's owner, is rejected with "carrier reference result requires one
+  exact stored dependency";
+- changing the text's owner, assigning the accessor's receiver, or changing
+  the owner behind `std::optional<std::string_view>::value()` while the
+  iterator lives is `GTI-S2017` alone.
+
+Moving an owner-backed carrier's source to the accessor's owner still
+verifies. That owner contains the referent and the stored dependency is
+unchanged, so it is a conservative source rather than a forged one. With the
+verifier's ownerless-accessor clause disabled, every literal-backed form fails
+again with that same message and the owner-backed forms still build.
+
+Since PR #298 merged first, `arrow_text_members.gti` in `operator_relay_runtime`
+also builds iterators directly through a checked `operator->`:
+`literal->begin()`, `owned->rbegin()`, `maybe->begin()`, `viewed->begin()`
+and the mutable step `changing->begin()`. Before that merge, a `gti`
+side-linked with #298's units ran these forms at `-O0`, `-O3` and with
+ASan/UBSan, and kept `GTI-S2017` for an owner change.
+
+An `--emit-mir -O0` and `--emit-cpp -O3` differential against main
+`cf14a66a`, with the two changed units side-linked into one build so both
+compilers share a `GTI_STDLIB_PATH`, covered 1,855 programs in `tests/` and
+`examples/`. Of 3,710 compiles, 3,707 are identical. The new fixture builds
+where main reported `GTI-B0001`. One previously working program changes only
+in MIR: `text_view_iterator_completion.gti` line 169,
+`select_text(view, events).iterator_at(...)`, sources one iterator loan at the
+returned referent instead of the `view` reference binding. Its parent and
+stored dependency are unchanged, its C++ is byte-identical, and
+`text_view_iterator_compiler` and `text_view_iterator_runtime` pass.
+
+0.468.0's nested relay check (`dependentDesignationPath`) read an accessor
+result's owner path for a `string_view&` argument, so the owner-backed optional
+forms, including the named `std::string_view& selected = viewed.value();
+selected.begin()` that worked before 0.468.0, failed with "dependent text value
+is relayed where its text field may outlive the call". The fixture now covers
+that named form, and `view_field_nesting_runtime`,
+`dependent_reference_results_runtime` and `view_field_conversions_runtime`
+still pass.
+
+A combined full run in an earlier batch found the new runtime test missing
+from the bounded-case-workers list in `tests/TestThroughput.cmake`
+(`test_throughput_registration`); it is registered there now. The owner had
+paused full-suite runs while on battery power, so this change merged after
+targeted validation only. The full suite was not rerun on the final head.
+
+Not covered: constructing a carrier class directly from a returned reference
+(`Cursor(box.get())`) still stops in MIR construction, with "carrier reference
+result requires one exact stored dependency" for literal text and "dependent
+text value is relayed where its text field may outlive" for owned text.
+
 ## Dependent reference results (0.468.1)
 
 `view_fields` covers the use-after-free closed in 0.468.1 in
@@ -273,11 +342,6 @@ programs in `tests/` and `examples/` at `-O0` and `-O3`, excluding
 `namespace-depth-63.gti`. All 2,950 compiles that main accepts emit
 byte-identical C++. Only example 170 and `arrow_text_members.gti` change:
 main refused both with `GTI-B0001`, and both now build.
-
-`maybe->begin()` still reports `GTI-B0001` in MIR construction, as
-`maybe.value().begin()` and `b.get().begin()` did before this change: an
-iterator that stores a view reference returned by a call gets no stored
-dependency for the view's owner. Binding the reference first works.
 
 ## Derived dependent-text carriers (internal)
 
@@ -8872,8 +8936,8 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `lsp_scalability_benchmark_smoke` | real JSON-RPC workload/schema, frontend work traces, root-only dependency reuse, scoped dirty-dependency invalidation, protocol-valid completion/cancellation race handling, supersession, and bounded cache occupancy without a CI wall-time threshold |
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
-| `repository_hosting` | fail-closed GitHub source, workflow, release, installer, Lazy package, issue-template, release-policy, mirror, and delivery-instruction authority; retired compiler-repository hosts and live archived-workflow references are rejected outside explicit historical evidence |
-| `release_asset_sync` | post-upload exact GitHub rolling-release asset synchronization, including deterministic retired-platform removal, malformed-identity rejection, and empty-input fail-closed behavior |
+| `repository_hosting` | fail-closed Gitea source, workflow, release, installer, Lazy package, issue-template and delivery authority; no live GitHub automation/backup push; explicit historical identity exceptions and manual macOS platform boundaries |
+| `release_asset_sync` | Gitea release-scoped post-upload asset synchronization; deterministic retired-platform removal, incomplete-upload protection, canonical HTTPS credentials, redirect refusal, malformed-identity and empty-input rejection |
 | `benchmark_harness` | strict schema-1 GTI/C++ and schema-2 multi-GTI/profile descriptors; schema-3 fixed-native attribution; schema-4 bounded generated arithmetic proxies; path and provenance containment; correctness records; deterministic interleaving; and threshold-free vector plus managed-thread smoke execution |
 | `compile_time_harness` | sequential clean/full/emission/native/C++ attribution with preserved compiler identities; raw samples and randomized order; before/after emission equality and optimized runtime output checks; existing-output preservation and invalid repetition rejection, without a timing threshold |
 | `runtime_performance_workloads` | threshold-free build, execution, descriptor, and exact-result-record coverage for the admitted checked-scalar, fixed-array proof/overflow, strict-FP, optimizer-level, and game-update workloads |
@@ -9051,13 +9115,15 @@ when the public wrapper is added.
 `installed_native_record_pipeline` additionally verifies that the packaged
 compiler library exposes the same semantic/HIR/MIR native-record contract.
 
-The live workflows are GitHub Actions under `.github/workflows/` of
-`lang-gti-official/gti` (`ci.yml`, `release.yml`, `mirror.yml`), running on
-GitHub-hosted `ubuntu-latest` and `macos-15` runners. They replace the Gitea
-Actions workflows archived under `docs/plans/archive/gitea-actions/` on
-2026-10-11, when the self-hosted instance's single 6-core runner could not
-carry the full suite's workload; Gitea remains a backup mirror of `main` and
-the tags. The budgets, preflights and selections below carried over unchanged,
+The live workflows are Gitea Actions under `.gitea/workflows/` of canonical
+`gti-lang/gti` (`ci.yml`, `release.yml`), running on existing Linux runners.
+Policy revision (2026-10-24): GitHub automation is retired under
+`docs/plans/archive/github-actions-20261024/`; no helper/workflow pushes to
+GitHub or a backup. The owner selected manual Apple Silicon stable publication,
+not installation of a macOS runner service. Linux-only automated nightly assets
+must not imply automatic macOS availability. See the manual release contract in
+`build-and-driver.md`. Local/managed-runner macOS validation remains required
+where the affected invariant requires it. The budgets, preflights and selections below remain enforced,
 and the helper scripts and their gates (`ci_resources`, `ci_cache`,
 `ci_sanitizer_capability`, `ci_release`, `release_asset_sync`,
 `release_version_policy`, `repository_hosting`) guard them. The CI workflow
@@ -9096,9 +9162,8 @@ a killed compile can be read against them. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution
 is an explicit host capability controlled by
 `GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled. The hosted
-workflows disable it: the former Gitea Docker runner could not reserve the
-required shadow-memory mapping before any GTI code executed, and GitHub-hosted
-runners have not passed the TSAN preflight. Mixed runtime matrices keep
+workflows disable it: Docker/host environments that cannot reserve the required
+shadow-memory mapping have not passed the dedicated TSAN preflight. Mixed runtime matrices keep
 their ordinary and ASan/UBSan modes; dedicated TSAN CTests report an explicit
 skip with return code 77. A compatible dedicated runner must pass the TSAN
 preflight and leave the option enabled before its result counts as race-checking

@@ -310,7 +310,7 @@ class Batches:
         if not proof or any(state.get("batch_verified", {}).get(platform) != identity for platform in required):
             raise WorkflowError("Full combined validation is missing for a required platform or current head/base")
         # Full exact-source/platform proof above is the acceptance gate.
-        # GitHub Actions is additional feedback, never a runner-queue dependency.
+        # Gitea Actions is additional feedback, never a runner-queue dependency.
         self.flow.protection()
 
     def release(self, task, reason):
