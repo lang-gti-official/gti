@@ -4330,13 +4330,23 @@ dependency, initialization, packaging, status, and first-lowering decision.
 
 ### LLVM Readiness Audit (2026-10-24)
 
-Source baseline: `a31de551ee796766d38dfd15986257f610f01345` (0.472.0),
+Initial source baseline for the references below:
+`a31de551ee796766d38dfd15986257f610f01345` (0.472.0),
 including the independent backend foundation and source-defined concept policies.
 This is a structural review, not evidence of executable LLVM support. The
 foundation's previous integration recorded 759/855 tests passing before the
 owner stopped that broad run; it did not complete the full suite. Its focused
 backend and installed-consumer checks passed. Neither result certifies future
 LLVM-generated programs.
+
+Reconciled main `3cc3b3dc1b39b9cf55f04d1ddae7d533bde2b86d` (0.473.0)
+adds thread-local storage. The reviewed contract delta includes
+`MirThreadLocalStorage`, initializer bodies, explicit ensure/begin/drain
+operations, a generated-storage item and new defined-failure outcomes. These
+are part of the campaign's final coverage baseline. The runtime cleanup-entry
+and lifetime APIs in `runtime_thread.hpp` are currently C++-only, adding another
+concrete C-ABI prerequisite; ordinary class/storage work owns TLS representation,
+and the concurrency bucket completes multi-thread entry/drain composition.
 
 **Assessment:** retain the sealed input, backend interface, distinct library,
 and driver-owned artifact boundary. No replacement IR or pipeline refactor is

@@ -10524,8 +10524,9 @@ The [architecture audit](../architecture/backend.md#llvm-readiness-audit-2026-10
 and [ADR 031](../decisions/031-native-llvm-backend-foundation.md) explain the
 boundary and the production decision.
 
-The initial coverage baseline is main
-`a31de551ee796766d38dfd15986257f610f01345` (0.472.0). "Every current program"
+The coverage baseline is reconciled main
+`3cc3b3dc1b39b9cf55f04d1ddae7d533bde2b86d` (0.473.0), including the
+thread-local-storage integration that arrived during this audit. "Every current program"
 means every valid executable shape admitted by that source version on shipped
 macOS arm64 and Linux x86_64, including hosted and embedding programs, native
 dependencies, runtime failures, and both execution profiles. Passing the shipped
@@ -10609,7 +10610,10 @@ and represented shape in these current input families:
 - `IntrinsicKind`, synchronization/C-thread/process-memory operations, source
   runtime bindings, native declarations/storage/callbacks and embedding exports;
 - all `LoweredGeneratedItemKind` families, program initialization and hosted
-  startup operations, including failure and cleanup edges.
+  startup operations, including failure and cleanup edges;
+- the `MirThreadLocalStorage` inventory, `ThreadLocalInitializer` bodies,
+  `EnsureThreadLocal`/`BeginThreadLocals`/`DrainThreadLocals`, passive data versus
+  dynamic initialization, and exact persistent-storage/borrow effect facts.
 
 Each entry needs an owning milestone, concrete admission predicate, positive and
 negative fixtures, and one state: implemented, pending, or verified nonexecuting.
@@ -10662,7 +10666,7 @@ only for an owned implementation need and keep package/link boundary tests.
 | O-LLVM-03 | Target, layout, private call ABI, runtime ABI and emission session | 02 |
 | O-LLVM-04 | Scalar execution, CFG, direct calls and defined failures | 03 |
 | O-LLVM-05 | Places, references, raw addresses, arrays and text views | 04 |
-| O-LLVM-06 | Classes, construction, movement, cleanup and program storage | 05 |
+| O-LLVM-06 | Classes, construction, movement, cleanup and global/thread-local storage | 05 |
 | O-LLVM-07 | Native unions, tagged payloads and conditional value publication | 06 |
 | O-LLVM-08 | Object storage, allocation, unique/shared ownership and relocation | 06, 07 where payload-bearing |
 | O-LLVM-09 | Function values, lambdas, erased callables and adapters | 06, 08 for owned captures |
@@ -10745,6 +10749,9 @@ or resolve them using source.
   exact symbol, types, ABI version, ownership, failure and callback behavior.
   Explicitly distinguish a real C entry from a C++ inline/template helper.
   Initial failure reporting must call the existing versioned C failure ABI.
+  Provide C bindings for unconditional hosted begin/drain hooks needed even by
+  scalar programs; O-LLVM-06 adds typed TLS storage/registration. Do not skip a
+  startup operation merely because the first executable has no owning TLS.
 - **Exit:** positive and negative layout/signature tests on both targets,
   byte-preserving object handoff tests and installed linking of the backend.
   No instruction family is claimed complete here. O-LLVM-04 must exercise this
@@ -10802,12 +10809,24 @@ or resolve them using source.
   and replacement cleanup. Access and mutability were already checked upstream.
 - **Storage:** static fields, namespace globals, initialization dependencies,
   internal/external linkage, teardown and startup failure use the sealed program
-  plan. Shared-state and recursive initialization checks remain GTI rules.
-  Read-only fields must not force extra copies or whole-object reconstruction.
+  plan. Thread-local storage uses its own exact declaration/initializer inventory,
+  passive native data or explicit first-use state, once-only cleanup registration
+  and reverse successful-initialization-order drain. Cover namespace, static
+  member and admitted function-local TLS; keep unsupported generic/lambda/native
+  TLS rejected upstream. Read-only fields must not force extra copies.
+- **TLS runtime:** expose C-compatible entry/active-state/cleanup registration
+  and drain contracts for the existing runtime operations. Do not call its
+  current C++-only `thread_local_cleanup_entry` API from LLVM. Preserve recursive
+  initialization, unattached-thread and shutdown/resurrection failures; explicit
+  startup begins/drains the initial thread's lifetime. No implicit native TLS
+  destructor may replace MIR cleanup or resurrect abandoned state.
 - **Exit:** user-defined unrelated lifecycle probes prove exactly-once cleanup
   and evaluation order on success/failure, nested constructor arguments,
   arrays of objects, implicit return movement and constructor rollback. No
   destructor can be triggered implicitly by an LLVM representation container.
+  TLS tests cover passive fast-path cost, lazy initialization, initialized-slot
+  access during drain and exact cleanup/failure order on the initial thread;
+  multi-thread lifetime composition is completed in O-LLVM-13.
 
 ### O-LLVM-07: Unions, Payloads And Conditional Publication
 
@@ -10888,7 +10907,9 @@ or resolve them using source.
   authorize generated C++ GTI bodies.
 - **Exit:** bidirectional C argument/result/callback tests on both target ABIs,
   native-header and record/union/GLFW oracles, foreign storage, and installed
-  embedding hosts. Matching `sizeof` alone is not acceptance. No status or C++
+  embedding hosts. Foreign-thread dynamic TLS access preserves the current
+  unattached-lifetime failure; do not invent public attach APIs to pass it.
+  Matching `sizeof` alone is not acceptance. No status or C++
   exception crosses a public native signature that does not declare it.
 
 ### O-LLVM-12: Hosted Execution And Library Closure
@@ -10921,6 +10942,9 @@ or resolve them using source.
   transfer/join/auto-join, scoped borrows and join-all failure cleanup. Lower
   LLVM atomic instructions with explicit scope/order/alignment; reuse host
   services for blocking and scheduling rather than spin-loop substitutions.
+  Reuse O-LLVM-06's TLS representation at every verified managed/manual thread
+  entry and drain point. Borrowing a parent-thread slot and looking up the
+  worker's own slot must remain distinct; drain before publishing worker output.
 - **Runtime prerequisite:** replace the C++-exception-dependent generated worker
   handoff with versioned C status/callback adapters usable from LLVM frames.
   Preserve primary/emergency records, exact capture/result destruction, runtime
