@@ -7,7 +7,8 @@ import tempfile
 
 
 def run(arguments: list[str], expected: int) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(arguments, text=True, capture_output=True, check=False)
+    result = subprocess.run(arguments, text=True, capture_output=True, check=False,
+                            timeout=30)
     if result.returncode != expected:
         raise AssertionError(
             f"command returned {result.returncode}, expected {expected}\n"
@@ -19,6 +20,8 @@ def run(arguments: list[str], expected: int) -> subprocess.CompletedProcess[str]
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: llvm_backend_cli_test.py /path/to/gti")
+
+    run([sys.argv[1], "--version"], 0)
 
     with tempfile.TemporaryDirectory(prefix="gti-llvm-backend-cli-") as value:
         root = pathlib.Path(value)

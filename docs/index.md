@@ -43,7 +43,9 @@ while canonical language documents continue to describe actual support.
 - [Backend](architecture/backend.md) — the sealed `LoweredProgram` consumer
   contract, production C++ backend, foundational LLVM backend, and native
   artifact handoff; [LLVM coverage/admission](architecture/backend.md#llvm-coverage-and-admission)
-  records complete vocabulary ownership and the current conservative body inventory.
+  records complete vocabulary ownership and the current conservative body inventory;
+  [LLVM target/layout/ABI](architecture/backend.md#llvm-target-layout-and-execution-abi)
+  describes the native session and object-emission infrastructure.
 - [Diagnostics](architecture/diagnostics.md) — structured diagnostics, spans,
   fix-its, recovery, and test expectations.
 - [Standard library and runtime](architecture/standard-library-and-runtime.md)

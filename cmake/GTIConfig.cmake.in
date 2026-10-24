@@ -91,11 +91,11 @@ else()
     include("${LLVM_CMAKE_DIR}/LLVM-Config.cmake")
   endif()
   explicit_map_components_to_libraries(_gti_llvm_backend_libraries
-                                       core nativecodegen)
+                                       core nativecodegen passes)
   if(NOT _gti_llvm_backend_libraries)
     set(GTI_FOUND FALSE)
     set(GTI_NOT_FOUND_MESSAGE
-        "LLVM @GTI_LLVM_VERSION@ does not provide core/nativecodegen")
+        "LLVM @GTI_LLVM_VERSION@ does not provide core/nativecodegen/passes")
     return()
   endif()
   if(NOT TARGET GTI_LLVM::Backend)

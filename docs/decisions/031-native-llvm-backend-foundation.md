@@ -44,7 +44,7 @@ The following boundaries are mandatory:
   LLVM-specific types, data structures, calling-convention objects, or target
   machines never become cross-phase authority.
 - `gti_llvm_backend` is a distinct compiled and installed library depending on
-  `gti_compiler`. It privately owns LLVM `Core` and `nativecodegen` component
+  `gti_compiler`. It privately owns LLVM `Core`, `nativecodegen` and `Passes` component
   roots. The compiler core retains ADR 006's support-only link surface.
 - System builds resolve those component roots from the selected LLVM package.
   Bundled builds build only the host target and install the exact static target
@@ -94,17 +94,18 @@ not independently rediscovered by each language-family emitter.
 
 ## Current Status
 
-The foundation and O-LLVM-02 establish build, package, driver, CLI,
+The foundation and O-LLVM-02/03 establish build, package, driver, CLI,
 initialization, artifact, diagnostic, coverage/admission and dependency
 boundaries. Admission over an owning verified snapshot inventories the complete
 current vocabulary and represented shapes, then rejects pending requirements
-before LLVM initialization. No GTI declaration, function,
-instruction, control-flow edge, layout, ABI, cleanup, failure path, or runtime
-operation is lowered to LLVM IR. Selecting `--backend llvm` for a valid host
+before LLVM initialization. The private session now plans target layout,
+declarations and signatures and verifies/emits objects for infrastructure
+oracles. No GTI instruction, control-flow edge, cleanup, failure path or runtime
+operation is lowered yet. Selecting `--backend llvm` for a valid host
 program fails clearly with `GTI-B0003` and does not create an output artifact.
 
-O-LLVM-02/03 establish coverage/admission, module ownership, symbol/ABI mapping,
-target-machine construction, LLVM verification and object emission. O-LLVM-04
+O-LLVM-02/03 implement coverage/admission, module ownership, bounded symbol/ABI
+mapping, target-machine construction, LLVM verification and object machinery. O-LLVM-04
 then lowers scalar functions, arithmetic and control flow, including checked
 failure paths rather than only successful execution. Unsupported required
 `LoweredProgram` operations remain classified rejections; mixed per-function

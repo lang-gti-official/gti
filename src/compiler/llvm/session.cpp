@@ -1,0 +1,242 @@
+#include "session.h"
+#include "abi.h"
+
+#include <llvm/Config/llvm-config.h>
+#include <llvm/IR/DiagnosticInfo.h>
+#include <llvm/IR/DiagnosticPrinter.h>
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/MC/TargetRegistry.h>
+#include <llvm/Passes/PassBuilder.h>
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/TargetParser/Host.h>
+#include <llvm/TargetParser/Triple.h>
+
+#include <mutex>
+#include <stdexcept>
+
+namespace lang::native_llvm {
+namespace {
+
+class Diagnostics final : public llvm::DiagnosticHandler {
+public:
+  Diagnostics(std::vector<std::string> &messages, bool &failed)
+      : messages(messages), failed(failed) {}
+  bool handleDiagnostics(const llvm::DiagnosticInfo &info) override {
+    std::string text;
+    llvm::raw_string_ostream stream(text);
+    llvm::DiagnosticPrinterRawOStream printer(stream);
+    info.print(printer);
+    messages.push_back(std::move(text));
+    failed |= info.getSeverity() == llvm::DS_Error;
+    return true;
+  }
+
+private:
+  std::vector<std::string> &messages;
+  bool &failed;
+};
+
+void initializeTarget() {
+  static std::once_flag once;
+  static bool failed = false;
+  std::call_once(once, [] {
+    failed = llvm::InitializeNativeTarget() ||
+             llvm::InitializeNativeTargetAsmPrinter();
+  });
+  if (failed)
+    throw std::runtime_error("LLVM native target initialization failed");
+}
+
+llvm::CodeGenOptLevel codegenLevel(LlvmCodegenOptimization level) {
+  switch (level) {
+  case LlvmCodegenOptimization::None:
+    return llvm::CodeGenOptLevel::None;
+  case LlvmCodegenOptimization::Less:
+    return llvm::CodeGenOptLevel::Less;
+  case LlvmCodegenOptimization::Default:
+    return llvm::CodeGenOptLevel::Default;
+  case LlvmCodegenOptimization::Aggressive:
+    return llvm::CodeGenOptLevel::Aggressive;
+  }
+  throw std::invalid_argument("invalid LLVM optimization policy");
+}
+
+llvm::OptimizationLevel pipelineLevel(LlvmCodegenOptimization level) {
+  switch (level) {
+  case LlvmCodegenOptimization::None:
+    return llvm::OptimizationLevel::O0;
+  case LlvmCodegenOptimization::Less:
+    return llvm::OptimizationLevel::O1;
+  case LlvmCodegenOptimization::Default:
+    return llvm::OptimizationLevel::O2;
+  case LlvmCodegenOptimization::Aggressive:
+    return llvm::OptimizationLevel::O3;
+  }
+  throw std::invalid_argument("invalid LLVM optimization policy");
+}
+
+std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
+                                                 LlvmBackendOptions options) {
+  const auto host = TargetInfo::host();
+  if (target.os != host.os || target.vendor != host.vendor ||
+      target.arch != host.arch || target.dataLayout != host.dataLayout ||
+      !((target.os == "macos" && target.arch == "arm64") ||
+        (target.os == "linux" && target.arch == "x86_64")))
+    throw BackendUnsupportedError("LLVM native emission requires a supported "
+                                  "macOS arm64 or Linux x86_64 host target");
+  if (options.debugInfo)
+    throw BackendUnsupportedError(
+        "LLVM debug metadata emission is not implemented yet (O-LLVM-14)");
+  initializeTarget();
+  const llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
+  std::string error;
+  const auto *registered = llvm::TargetRegistry::lookupTarget(triple, error);
+  if (!registered)
+    throw std::runtime_error("LLVM target lookup failed: " + error);
+  llvm::TargetOptions targetOptions;
+  targetOptions.AllowFPOpFusion = llvm::FPOpFusion::Strict;
+  // No fast-math flags or function attributes are supplied. LLVM 23 removed
+  // older target-wide fast-math toggles in favor of those per-operation facts.
+#if LLVM_VERSION_MAJOR >= 21
+  const auto &machineTriple = triple;
+#else
+  const auto machineTriple = triple.str();
+#endif
+  std::unique_ptr<llvm::TargetMachine> machine(registered->createTargetMachine(
+      machineTriple, "generic", "", targetOptions, llvm::Reloc::PIC_,
+      std::nullopt, codegenLevel(options.optimization)));
+  if (!machine)
+    throw std::runtime_error("LLVM target machine construction failed");
+  return machine;
+}
+
+} // namespace
+
+void verifyTargetLayout(const TargetInfo &target,
+                        const llvm::DataLayout &layout,
+                        llvm::LLVMContext &context) {
+  if (!target.supported() || !target.dataLayout.supported() ||
+      layout.isLittleEndian() != target.dataLayout.littleEndian() ||
+      layout.getPointerSizeInBits(0) != target.dataLayout.pointerWidthBits() ||
+      layout.isNonIntegralAddressSpace(0))
+    throw BackendUnsupportedError(
+        "LLVM target data layout disagrees with the sealed GTI target");
+  for (std::size_t index = 0; index < targetScalarKindCount; ++index) {
+    const auto kind = static_cast<TargetScalarKind>(index);
+    const auto expected = target.dataLayout.scalarLayout(kind);
+    llvm::Type *storage = nullptr;
+    if (kind == TargetScalarKind::Pointer)
+      storage = llvm::PointerType::get(context, 0);
+    else if (kind == TargetScalarKind::Float32)
+      storage = llvm::Type::getFloatTy(context);
+    else if (kind == TargetScalarKind::Float64)
+      storage = llvm::Type::getDoubleTy(context);
+    else
+      storage = llvm::IntegerType::get(context, expected->sizeBytes * 8);
+    if (layout.getTypeAllocSize(storage) != expected->sizeBytes ||
+        layout.getABITypeAlign(storage).value() !=
+            expected->abiAlignmentBytes ||
+        layout.getPrefTypeAlign(storage).value() !=
+            expected->preferredAlignmentBytes)
+      throw BackendUnsupportedError(
+          "LLVM scalar layout disagrees with GTI for " +
+          std::string(targetScalarKindName(kind)));
+  }
+}
+
+Session::Session(VerifiedLoweredProgram program, LlvmBackendOptions options)
+    : input_(std::move(program)), options_(options),
+      machine_(makeMachine(input_.program().target(), options)),
+      module_("gti.native.v" + std::to_string(executionAbiVersion), context_) {
+  context_.setDiagnosticHandler(
+      std::make_unique<Diagnostics>(diagnostics_, diagnosticError_));
+  module_.setDataLayout(machine_->createDataLayout());
+#if LLVM_VERSION_MAJOR >= 21
+  module_.setTargetTriple(machine_->getTargetTriple());
+#else
+  module_.setTargetTriple(machine_->getTargetTriple().str());
+#endif
+  verifyTargetLayout(input_.program().target(), dataLayout(), context_);
+  module_.addModuleFlag(llvm::Module::Error, "gti.execution.abi",
+                        executionAbiVersion);
+  layouts_ = std::unique_ptr<Layouts>(new Layouts(*this));
+  abi_ = std::unique_ptr<Abi>(new Abi(*this, *layouts_));
+}
+
+Session::~Session() = default;
+const LoweredProgram &Session::program() const { return input_.program(); }
+const llvm::DataLayout &Session::dataLayout() const {
+  return module_.getDataLayout();
+}
+
+void Session::verify() const {
+  if (diagnosticError_)
+    throw std::runtime_error("LLVM emission diagnostic: " +
+                             diagnostics_.back());
+  if (module_.getDataLayout() != machine_->createDataLayout())
+    throw std::logic_error(
+        "LLVM module changed its planned target data layout");
+#if LLVM_VERSION_MAJOR >= 21
+  if (module_.getTargetTriple() != machine_->getTargetTriple())
+#else
+  if (module_.getTargetTriple() != machine_->getTargetTriple().str())
+#endif
+    throw std::logic_error("LLVM module changed its planned target triple");
+  std::string error;
+  llvm::raw_string_ostream stream(error);
+  if (llvm::verifyModule(module_, &stream))
+    throw std::logic_error("invalid LLVM module: " + error);
+}
+
+void Session::requireDefinition(llvm::Function &function) {
+  if (function.getParent() != &module_)
+    throw std::logic_error(
+        "LLVM definition obligation belongs to another module");
+  if (std::find(requiredDefinitions_.begin(), requiredDefinitions_.end(),
+                &function) == requiredDefinitions_.end())
+    requiredDefinitions_.push_back(&function);
+}
+
+BackendArtifact Session::emitObject() {
+  if (emissionStarted_)
+    throw std::logic_error("LLVM emission sessions are single-use");
+  for (const auto *function : requiredDefinitions_) {
+    if (function->isDeclaration())
+      throw BackendUnsupportedError(
+          "LLVM object emission requires every planned GTI body to be defined");
+  }
+  verify();
+  emissionStarted_ = true;
+  llvm::LoopAnalysisManager loops;
+  llvm::FunctionAnalysisManager functions;
+  llvm::CGSCCAnalysisManager cgscc;
+  llvm::ModuleAnalysisManager modules;
+  llvm::PassBuilder builder(machine_.get());
+  builder.registerModuleAnalyses(modules);
+  builder.registerCGSCCAnalyses(cgscc);
+  builder.registerFunctionAnalyses(functions);
+  builder.registerLoopAnalyses(loops);
+  builder.crossRegisterProxies(loops, functions, cgscc, modules);
+  const auto level = pipelineLevel(options_.optimization);
+  auto pipeline = level == llvm::OptimizationLevel::O0
+                      ? builder.buildO0DefaultPipeline(level)
+                      : builder.buildPerModuleDefaultPipeline(level);
+  pipeline.run(module_, modules);
+  verify();
+  llvm::SmallVector<char, 0> bytes;
+  llvm::raw_svector_ostream stream(bytes);
+  llvm::legacy::PassManager passes;
+  if (machine_->addPassesToEmitFile(passes, stream, nullptr,
+                                    llvm::CodeGenFileType::ObjectFile))
+    throw std::runtime_error("LLVM target cannot emit object files");
+  passes.run(module_);
+  if (diagnosticError_)
+    throw std::runtime_error("LLVM object emission diagnostic: " +
+                             diagnostics_.back());
+  return {BackendArtifactKind::Object, std::string(bytes.begin(), bytes.end()),
+          ".o"};
+}
+
+} // namespace lang::native_llvm

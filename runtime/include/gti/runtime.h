@@ -10,6 +10,7 @@
 #include "gti/math.h"
 #include "gti/memory.h"
 #include "gti/random.h"
+#include "gti/runtime_execution.h"
 #include "gti/runtime_failure.h"
 
 #include <stdint.h>

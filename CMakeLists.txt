@@ -109,7 +109,7 @@ endif()
 # controls how that dependency is acquired: ordinary builds use a supported
 # installed LLVM, while release builds fetch the pinned version. The compiler
 # core is confined to LLVMSupport, LLVMTargetParser, and LLVMDemangle. The
-# independent native backend additionally owns the exact Core/native-codegen
+# independent native backend additionally owns the exact Core/native-codegen/Passes
 # closure recorded below. LLVM headers stay private to compiled implementation
 # targets and never become a public-header dependency.
 set(GTI_PINNED_LLVM_VERSION "20.1.0")
@@ -252,10 +252,10 @@ if(NOT COMMAND explicit_map_components_to_libraries)
   include("${LLVM_CMAKE_DIR}/LLVM-Config.cmake")
 endif()
 explicit_map_components_to_libraries(
-  GTI_LLVM_BACKEND_DIRECT_LIBRARIES core nativecodegen)
+  GTI_LLVM_BACKEND_DIRECT_LIBRARIES core nativecodegen passes)
 if(NOT GTI_LLVM_BACKEND_DIRECT_LIBRARIES)
   message(FATAL_ERROR
-          "LLVM ${GTI_LLVM_VERSION} did not resolve core/nativecodegen")
+          "LLVM ${GTI_LLVM_VERSION} did not resolve core/nativecodegen/passes")
 endif()
 
 function(gti_collect_llvm_library_closure output)
@@ -603,6 +603,10 @@ add_library(
   "src/compiler/llvm_backend.cpp"
   "src/compiler/llvm/admission.cpp"
   "src/compiler/llvm/coverage.cpp"
+  "src/compiler/llvm/session.cpp"
+  "src/compiler/llvm/layout.cpp"
+  "src/compiler/llvm/abi.cpp"
+  "src/compiler/llvm/runtime_abi.cpp"
 )
 file(
   GENERATE
@@ -625,8 +629,32 @@ target_link_libraries(
           "$<INSTALL_INTERFACE:GTI_LLVM::Backend>"
 )
 
+# System libclang can depend on a shared libLLVM while GTI deliberately links
+# only its owned static components. ELF executable symbols otherwise preempt
+# the shared copy's ManagedStatic/command-line registries, corrupting startup
+# and shutdown. Isolate LLVM implementation symbols only, not GTI/native API
+# exports. INTERFACE propagation protects installed static-library consumers.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(gti_llvm_support_archives
+      "${CMAKE_STATIC_LIBRARY_PREFIX}LLVMSupport${CMAKE_STATIC_LIBRARY_SUFFIX}"
+      "${CMAKE_STATIC_LIBRARY_PREFIX}LLVMTargetParser${CMAKE_STATIC_LIBRARY_SUFFIX}"
+      "${CMAKE_STATIC_LIBRARY_PREFIX}LLVMDemangle${CMAKE_STATIC_LIBRARY_SUFFIX}")
+  list(JOIN gti_llvm_support_archives ":" gti_llvm_support_exclusions)
+  target_link_options(gti_compiler INTERFACE
+                      "LINKER:--exclude-libs,${gti_llvm_support_exclusions}")
+  set(gti_llvm_backend_archives)
+  foreach(component IN LISTS GTI_LLVM_BACKEND_LIBRARY_CLOSURE)
+    list(APPEND gti_llvm_backend_archives
+         "${CMAKE_STATIC_LIBRARY_PREFIX}${component}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+  endforeach()
+  list(JOIN gti_llvm_backend_archives ":" gti_llvm_backend_exclusions)
+  target_link_options(gti_llvm_backend INTERFACE
+                      "LINKER:--exclude-libs,${gti_llvm_backend_exclusions}")
+endif()
+
 add_library(
   "gti_runtime" STATIC
+  "runtime/src/execution.cpp"
   "runtime/src/charconv.cpp"
   "runtime/src/chrono.cpp"
   "runtime/src/cthread.cpp"
