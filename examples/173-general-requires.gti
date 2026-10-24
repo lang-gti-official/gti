@@ -5,6 +5,19 @@
 #include <std/functional>
 #include <std/iterator>
 
+struct Finish { int position = 8; };
+struct Position {
+  int position = 3;
+  bool operator!=(Finish& end) { return this.position != end.position; }
+  std::ptrdiff_t operator-(Finish& end) {
+    return std::ptrdiff_t(this.position - end.position);
+  }
+};
+std::ptrdiff_t remaining<I, S>(I& position, S& end)
+    requires std::sized_sentinel_for<S, I> {
+  return -(position - end);
+}
+
 concept adds_to<L, R, Result> = requires(L& left, R& right) {
   { left + right } -> Result;
 };
@@ -255,6 +268,9 @@ namespace query_hygiene {
 }
 
 int main() {
+  Position position{};
+  Finish end{};
+  if (remaining(position, end) != std::ptrdiff_t(5)) { return 20; }
   ConsumeNumber consume{};
   AddOwnedLeft add{};
   ArgumentForms forms{};

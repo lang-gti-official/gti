@@ -6747,26 +6747,35 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(
+  const bool iteratorDiagnostics =
       !invalid.canGenerateCode() &&
-          hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
-          hasDiagnostic(invalid.diagnostics, "concept 'std::input_iterator'") &&
-          hasDiagnostic(invalid.diagnostics, "concept 'std::sentinel_for'") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "concept 'std::accumulates_into'") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Prefix operator++ must return void") &&
-          hasDiagnosticHint(invalid.diagnostics,
-                            "public read-only operator*() returning") &&
-          hasDiagnosticHint(invalid.diagnostics,
-                            "public read-only bool operator!=") &&
-          hasDiagnosticHint(invalid.diagnostics,
-                            "referent is exactly the required type") &&
-          hasRelatedDiagnostic(
-              invalid.diagnostics,
-              "Required here as 'std::input_iterator<Iterator>'"),
-      "structural requirements should diagnose missing or inexact "
-      "iterator, sentinel, and element operations before backend entry");
+      hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
+      hasDiagnostic(invalid.diagnostics, "concept 'std::input_iterator'") &&
+      (hasDiagnostic(invalid.diagnostics, "concept 'std::sentinel_for'") ||
+       hasDiagnostic(invalid.diagnostics, "concept 'std::sentinel_for<")) &&
+      hasDiagnostic(invalid.diagnostics, "concept 'std::accumulates_into'") &&
+      hasDiagnostic(invalid.diagnostics,
+                    "Prefix operator++ must return void") &&
+      hasDiagnosticHint(invalid.diagnostics,
+                        "public read-only operator*() returning") &&
+      hasDiagnosticHint(invalid.diagnostics,
+                        "public read-only bool operator!=") &&
+      hasDiagnosticHint(invalid.diagnostics,
+                        "referent is exactly the required type") &&
+      hasRelatedDiagnostic(invalid.diagnostics,
+                           "Required here as 'std::input_iterator<Iterator>'");
+  if (!iteratorDiagnostics) {
+    for (const auto &diagnostic : invalid.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      for (const auto &hint : diagnostic.hints)
+        std::cerr << "  hint: " << hint << '\n';
+      for (const auto &note : diagnostic.related)
+        std::cerr << "  note: " << note.message << '\n';
+    }
+  }
+  expect(iteratorDiagnostics,
+         "structural requirements should diagnose missing or inexact "
+         "iterator, sentinel, and element operations before backend entry");
 
   const lang::FrontendResult missingIncrement = lang::Frontend().analyze(
       "missing-increment.gti", R"(

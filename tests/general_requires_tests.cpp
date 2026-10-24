@@ -23,6 +23,8 @@ static_assert(!lang::compilerStructuralConstraint("random_access_iterator"));
 static_assert(!lang::compilerStructuralConstraint("once_action"));
 static_assert(!lang::compilerStructuralConstraint("writes_to"));
 static_assert(!lang::compilerStructuralConstraint("subscripts_to_mut"));
+static_assert(!lang::compilerStructuralConstraint("sentinel_for"));
+static_assert(!lang::compilerStructuralConstraint("sized_sentinel_for"));
 static_assert([] {
   for (const std::string_view binding :
        {"numeric", "signed_numeric", "integral", "signed_integral",
@@ -106,6 +108,59 @@ int main(int argc, char **argv) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("gti-general-requires-" + std::to_string(getpid()));
   std::filesystem::create_directories(directory);
+
+  rejected(check(root, directory, "overload_predicate_diagnostic", R"GTI(
+constexpr bool available<T>() { return false; }
+[[unsatisfied("Use a type accepted by the source policy.")]]
+concept admitted<T> = available<T>();
+int pick<T>(T value) requires admitted<T> { return 1; }
+int pick<T>(T value, int extra) { return extra; }
+int main() { return pick(3); }
+)GTI"),
+           "overload filtering retains ordinary source-predicate failures",
+           "GTI-S2029");
+
+  accepted(check(root, directory, "source_sentinel_policy", R"GTI(
+#include <std/iterator>
+struct End { int position = 8; };
+struct Cursor {
+  int position = 3;
+  bool operator!=(End& end) { return this.position != end.position; }
+  std::ptrdiff_t operator-(End& end) { return std::ptrdiff_t(this.position - end.position); }
+};
+struct CopiedEnd {
+  bool operator!=(End end) { return true; }
+  std::ptrdiff_t operator-(End end) { return std::ptrdiff_t(-1); }
+};
+struct Ambiguous {
+  bool operator!=(End& end) { return true; }
+  bool operator!=(End end) { return true; }
+};
+struct WrongDistance {
+  bool operator!=(End& end) { return true; }
+  uint64_t operator-(End& end) { return uint64_t(1); }
+};
+class Hidden { bool operator!=(End& end) { return true; } };
+bool differs<I, S>(I& position, S& end) requires std::sentinel_for<S, I> {
+  return position != end;
+}
+std::ptrdiff_t offset<I, S>(I& position, S& end) requires std::sized_sentinel_for<S, I> {
+  return position - end;
+}
+int main() {
+  static_assert(requires(Cursor& p, End& e) { { differs(p, e) } -> bool; });
+  static_assert(requires(Cursor& p, End& e) { { offset(p, e) } -> std::ptrdiff_t; });
+  static_assert(requires(CopiedEnd& p, End& e) { { offset(p, e) } -> std::ptrdiff_t; });
+  static_assert(!(requires(Ambiguous& p, End& e) { { differs(p, e) } -> bool; }));
+  static_assert(!(requires(WrongDistance& p, End& e) { { offset(p, e) } -> std::ptrdiff_t; }));
+  static_assert(!(requires(Hidden& p, End& e) { { differs(p, e) } -> bool; }));
+  static_assert(!(requires(int& p, int& e) { { differs(p, e) } -> bool; }));
+  Cursor position{}; End end{};
+  return differs(position, end) && offset(position, end) == std::ptrdiff_t(-5) ? 0 : 1;
+}
+)GTI"),
+           "sentinel policies are source-defined exact safe expression "
+           "requirements");
 
   accepted(
       check(root, directory, "source_scalar_policy", R"(

@@ -1159,12 +1159,11 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
     const CompilerConstraintBinding &binding = *declaration.compilerBinding();
     const bool trustedIteratorConstraint =
         isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
-        (binding.name == "input_iterator" || binding.name == "sentinel_for" ||
+        (binding.name == "input_iterator" ||
          binding.name == "dereferences_to" ||
-         binding.name == "writable_iterator" ||
-         binding.name == "sized_sentinel_for" ||
-         binding.name == "input_range" || binding.name == "range_of" ||
-         binding.name == "mutable_range_of" || binding.name == "sized_range");
+         binding.name == "writable_iterator" || binding.name == "input_range" ||
+         binding.name == "range_of" || binding.name == "mutable_range_of" ||
+         binding.name == "sized_range");
     const bool trustedFunctionalConstraint =
         isFunctionalLibraryUnit(conceptInfo.sourceUnit) &&
         (binding.name == "indirect_predicate" ||

@@ -596,8 +596,9 @@ The current structural capability set is intentionally small:
   checked reference and public `void operator++() mut`; transferring an
   iterator into an algorithm is checked separately by ordinary parameter
   ownership rules;
-- `sentinel_for<S, I>` requires an exact public read-only
-  `bool I::operator!=(S&)`; and
+- `sentinel_for<S, I>` is source-defined: declaration metadata requires one
+  exact public safe read-only `bool I::operator!=(S&)` or copyable by-value
+  `S` parameter, and an expression query proves the named-operand call; and
 - `dereferences_to<I, T>` requires public read-only `I::operator*()` to return
   a checked reference whose referent is exactly `T`;
 - `writable_iterator<I>` requires public `mut I::operator*() mut` returning a
@@ -613,9 +614,11 @@ The current structural capability set is intentionally small:
   `mut T& I::operator[](std::ptrdiff_t) mut` with exactly `T`. Source metadata
   checks the exact by-value offset declaration, and a borrowed expression
   requirement checks its result access and cursor origin;
-- `sized_sentinel_for<S, I>` requires public read-only
-  `std::ptrdiff_t I::operator-(S&)`, the signed distance from the iterator to
-  the sentinel;
+- `sized_sentinel_for<S, I>` composes the sentinel policy with source
+  metadata and a query for exact public read-only
+  `std::ptrdiff_t I::operator-(S&)` or copyable by-value `S`, the signed
+  distance from the iterator to the sentinel. Neither sentinel policy has
+  a private compiler binding;
 - `input_range<R>` derives exact public read-only `begin()`/`end()` endpoints
   and requires their iterator/sentinel pair to satisfy the input protocol;
 - `range_of<R, T>` refines that range to an exact read-only `T&` dereference,

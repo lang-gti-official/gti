@@ -2091,7 +2091,7 @@ auto SemanticVisitor::Impl::hasConstraintFailure(
     const ConstraintFailure &failure) -> bool {
   return failure.failed != GenericConstraintKind::None ||
          failure.structural != StructuralConstraintKind::None ||
-         !failure.alternatives.empty();
+         failure.expressionFailure.has_value() || !failure.alternatives.empty();
 }
 
 auto SemanticVisitor::Impl::reportConstraintFailure(
@@ -5658,6 +5658,14 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
       return std::optional<CallableCandidate>{};
     return copied && typeTraits(sentinel).copyable ? copied : borrowed;
   };
+  // The remaining range admission rules need the same concrete endpoint
+  // question. This is not a public concept binding or a symbolic proof.
+  const auto hasSentinelComparison = [&](const SemanticType &iterator,
+                                         const SemanticType &sentinel) {
+    const auto comparison = selectedSentinelOperator(
+        iterator, OverloadedOperator::NotEqual, sentinel);
+    return comparison && comparison->returnType == SemanticType::Bool;
+  };
   const auto hasDereference = [&](const SemanticType &iterator,
                                   const SemanticType *referent) {
     const std::optional<CallableCandidate> candidate =
@@ -5885,12 +5893,9 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
       return std::nullopt;
     }
     const std::array<SemanticType, 1> iteratorArguments{shape->iterator};
-    const std::array<SemanticType, 2> sentinelArguments{shape->sentinel,
-                                                        shape->iterator};
     if (!structuralConstraintSatisfied(StructuralConstraintKind::InputIterator,
                                        iteratorArguments) ||
-        !structuralConstraintSatisfied(StructuralConstraintKind::SentinelFor,
-                                       sentinelArguments)) {
+        !hasSentinelComparison(shape->iterator, shape->sentinel)) {
       return std::nullopt;
     }
     const std::optional<CallableCandidate> dereference =
@@ -5922,18 +5927,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     return increment && increment->returnType == SemanticType::Void &&
            increment->receiverMutability == ReceiverMutability::Mutable;
   }
-  case StructuralConstraintKind::SentinelFor: {
-    if (arguments.size() != 2) {
-      return false;
-    }
-    const SemanticType &sentinel = arguments[0];
-    const SemanticType &iterator = arguments[1];
-    const std::optional<CallableCandidate> comparison =
-        selectedSentinelOperator(iterator, OverloadedOperator::NotEqual,
-                                 sentinel);
-    return comparison && comparison->returnType == SemanticType::Bool &&
-           comparison->receiverMutability == ReceiverMutability::ReadOnly;
-  }
   case StructuralConstraintKind::DereferencesTo:
     return arguments.size() == 2 && hasDereference(arguments[0], &arguments[1]);
   case StructuralConstraintKind::WritableIterator:
@@ -5941,17 +5934,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
            hasMutableDereference(arguments.front(), nullptr) &&
            hasVoidMutation(arguments.front(), OverloadedOperator::PreIncrement,
                            {});
-  case StructuralConstraintKind::SizedSentinelFor: {
-    if (arguments.size() != 2) {
-      return false;
-    }
-    const SemanticType &sentinel = arguments[0];
-    const SemanticType &iterator = arguments[1];
-    const std::optional<CallableCandidate> difference =
-        selectedSentinelOperator(iterator, OverloadedOperator::Minus, sentinel);
-    return difference && difference->returnType == SemanticType::Int64 &&
-           difference->receiverMutability == ReceiverMutability::ReadOnly;
-  }
   case StructuralConstraintKind::InputRange:
     return arguments.size() == 1 &&
            readableRangeElement(arguments.front()).has_value();
@@ -5976,12 +5958,9 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
       return false;
     }
     const std::array<SemanticType, 1> iteratorArguments{shape->iterator};
-    const std::array<SemanticType, 2> sentinelArguments{shape->sentinel,
-                                                        shape->iterator};
     return structuralConstraintSatisfied(
                StructuralConstraintKind::WritableIterator, iteratorArguments) &&
-           structuralConstraintSatisfied(StructuralConstraintKind::SentinelFor,
-                                         sentinelArguments) &&
+           hasSentinelComparison(shape->iterator, shape->sentinel) &&
            hasMutableDereference(shape->iterator, &arguments[1]);
   }
   case StructuralConstraintKind::SizedRange: {
@@ -6078,19 +6057,6 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
         }
       }
       break;
-    case StructuralConstraintKind::SentinelFor:
-      if (kind == OverloadedOperator::NotEqual &&
-          requirement.arguments.size() == 2 &&
-          requirement.arguments[1] == receiverType &&
-          argumentTypes.size() == 1 &&
-          argumentTypes[0] == requirement.arguments[0]) {
-        candidate.returnType = SemanticType::Bool;
-        candidate.parameterTypes = {SemanticType::referenceTo(
-            requirement.arguments[0], AccessMode::ReadOnly)};
-        candidate.receiverMutability = ReceiverMutability::ReadOnly;
-        matches = true;
-      }
-      break;
     case StructuralConstraintKind::DereferencesTo:
       if (kind == OverloadedOperator::Dereference &&
           requirement.arguments.size() == 2 &&
@@ -6118,19 +6084,6 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
           candidate.returnBorrowAccess = AccessMode::Mutable;
           matches = true;
         }
-      }
-      break;
-    case StructuralConstraintKind::SizedSentinelFor:
-      if (kind == OverloadedOperator::Minus &&
-          requirement.arguments.size() == 2 &&
-          requirement.arguments[1] == receiverType &&
-          argumentTypes.size() == 1 &&
-          argumentTypes[0] == requirement.arguments[0]) {
-        candidate.returnType = SemanticType::Int64;
-        candidate.parameterTypes = {SemanticType::referenceTo(
-            requirement.arguments[0], AccessMode::ReadOnly)};
-        candidate.receiverMutability = ReceiverMutability::ReadOnly;
-        matches = true;
       }
       break;
     case StructuralConstraintKind::InputRange:

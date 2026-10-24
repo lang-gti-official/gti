@@ -438,12 +438,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The iterator must provide public read-only operator*() returning "
           "a checked reference and public void operator++() mut.");
       break;
-    case StructuralConstraintKind::SentinelFor:
-      diagnostic.hints.emplace_back(
-          "The iterator must provide one unambiguous public read-only bool "
-          "operator!=(S&) or operator!=(S) with copyable S for the exact "
-          "sentinel type.");
-      break;
     case StructuralConstraintKind::DereferencesTo:
       diagnostic.hints.emplace_back(
           "The iterator's read-only dereference must return a checked "
@@ -453,13 +447,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       diagnostic.hints.emplace_back(
           "The iterator must provide public mut operator*() returning a "
           "mutable checked reference and public void operator++() mut.");
-      break;
-    case StructuralConstraintKind::SizedSentinelFor:
-      diagnostic.hints.emplace_back(
-          "The iterator must provide public read-only "
-          "std::ptrdiff_t operator-(S&) or operator-(S) with copyable S "
-          "for the exact sentinel type, "
-          "returning the signed distance from the iterator to the sentinel.");
       break;
     case StructuralConstraintKind::InputRange:
       diagnostic.hints.emplace_back(

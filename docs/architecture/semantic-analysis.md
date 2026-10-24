@@ -2325,6 +2325,14 @@ exact by-value offset parameter; neither public concept has a private binding.
 Reflection uses canonical operator spellings, including both tokens of
 `operator[]` and `operator()`, rather than only the leading punctuation token.
 
+Sentinel comparison and distance policies likewise combine source declaration
+metadata with ordinary expression queries. Their former private bindings and
+symbolic cases are removed; remaining private range admission uses the concrete
+endpoint-selection helper until range policy migration is complete. Overload
+filtering retains source predicate failure details even when no primitive or
+structural capability tag failed, so a rejected predicate reports its concept
+contract instead of falling back to a generic no-matching-overload diagnostic.
+
 Direct bound-operand operator/call shapes normalize to `ReadMember` facts with
 the existing operator identity; direct type construction uses an internal
 construction relationship. Only these bounded guaranteed facts admit

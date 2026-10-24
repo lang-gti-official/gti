@@ -6,10 +6,8 @@
 
 namespace gti_internal {
 @compiler_constraint("input_iterator") concept input_iterator_capability<I>;
-@compiler_constraint("sentinel_for") concept sentinel_for_capability<S, I>;
 @compiler_constraint("dereferences_to") concept dereferences_to_capability<I, T>;
 @compiler_constraint("writable_iterator") concept writable_iterator_capability<I>;
-@compiler_constraint("sized_sentinel_for") concept sized_sentinel_for_capability<S, I>;
 @compiler_constraint("input_range") concept input_range_capability<R>;
 @compiler_constraint("range_of") concept range_of_capability<R, T>;
 @compiler_constraint("mutable_range_of") concept mutable_range_of_capability<R, T>;
@@ -18,6 +16,33 @@ namespace gti_internal {
 
 namespace std {
 namespace detail {
+constexpr bool sentinel_declaration<I, S, uint64_t Distance>() {
+  if constexpr (std::meta::is_class<I>() || std::meta::is_struct<I>() ||
+                std::meta::type<I>().is_interface() || std::meta::type<I>().is_union()) {
+    mut uint64_t found = 0;
+    constexpr for (auto member : std::meta::lookup_operators_of<I>()) {
+      if constexpr (member.is_public() && !member.is_static() &&
+                    !member.is_mutating() && !member.is_consuming() &&
+                    !member.is_unsafe() && !member.is_generic() &&
+                    !member.is_constrained() && member.parameter_count() == uint64_t(1)) {
+        if constexpr ((Distance == uint64_t(0) && member.name() == "operator!=") ||
+                      (Distance == uint64_t(1) && member.name() == "operator-")) {
+          constexpr for (auto parameter : member.parameters()) {
+            if constexpr (parameter.type().is_same<S&>() ||
+                          parameter.type().is_same<S>()) { found++; }
+          }
+        }
+      }
+    }
+    return found == uint64_t(1);
+  } else { return false; }
+}
+constexpr bool sentinel_comparison_declaration<I, S>() {
+  return sentinel_declaration<I, S, 0>();
+}
+constexpr bool sentinel_distance_declaration<I, S>() {
+  return sentinel_declaration<I, S, 1>();
+}
 // Preserve the declaration-level category contract, independently of whether
 // one particular expression could bind a different parameter by conversion.
 constexpr bool cursor_movement_declarations<I, uint64_t Required>() {
@@ -86,8 +111,12 @@ requires(mut I& position, std::ptrdiff_t distance) {
 };
 }
 concept input_iterator<I> = gti_internal::input_iterator_capability<I>;
+[[unsatisfied("The iterator must provide one unambiguous public read-only bool operator!=(S&) or operator!=(S) with copyable S for the exact sentinel type.")]]
 concept sentinel_for<Sentinel, Iterator> =
-    gti_internal::sentinel_for_capability<Sentinel, Iterator>;
+    detail::sentinel_comparison_declaration<Iterator, Sentinel>() &&
+    requires(Iterator& position, Sentinel& end) {
+      { position != end } -> bool;
+    };
 concept dereferences_to<Iterator, T> =
     gti_internal::dereferences_to_capability<Iterator, T>;
 concept forward_iterator<Iterator> =
@@ -141,9 +170,13 @@ concept subscripts_to_mut<Iterator, T> =
 // `std::ptrdiff_t operator-(Sentinel)`. Subtraction uses conventional
 // left-minus-right coordinates: an iterator before its end has a negative
 // difference. `distance(first, last)` instead counts forward increments.
+[[unsatisfied("The iterator must provide public read-only std::ptrdiff_t operator-(S&) or operator-(S) with copyable S for the exact sentinel type, returning the signed distance from the iterator to the sentinel.")]]
 concept sized_sentinel_for<Sentinel, Iterator> =
     std::sentinel_for<Sentinel, Iterator> &&
-    gti_internal::sized_sentinel_for_capability<Sentinel, Iterator>;
+    detail::sentinel_distance_declaration<Iterator, Sentinel>() &&
+    requires(Iterator& position, Sentinel& end) {
+      { position - end } -> std::ptrdiff_t;
+    };
 
 // Complete-range concepts derive the private iterator and sentinel selected by
 // a range's exact begin/end protocol. They intentionally expose no associated
