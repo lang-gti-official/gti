@@ -206,6 +206,29 @@ int main() {
 }
 )",
            "GTI-S2001", "unused fresh lambdas still type-check their bodies");
+
+  rejected(
+      R"(
+#include <std/memory>
+#macro F repeated<F>(F expression) { F first = expression; return expression; }
+int main() {
+  auto owner = std::make_unique<int>(7);
+  auto callback = repeated([owned = std::move(owner)]() -> int { return *owned; });
+  return 0;
+}
+)",
+      "GTI-S2018",
+      "returning a closure does not permit forcing one move capture twice");
+  rejected(R"(
+#macro F keep<F>(F expression) { return expression; }
+int main() {
+  int value = 7;
+  auto callback = keep([&value]() -> int { return value; });
+  return callback();
+}
+)",
+           "GTI-S2124",
+           "callable results do not export checked capture borrows");
 }
 
 void constrainedMacroQueryCycle() {

@@ -47,6 +47,8 @@ std::string diagnostic() {
   return saved;
 }
 #macro uint64_t invoke<F>(F action) { return action(); }
+#macro F retain<F>(F action) { return action; }
+#macro F relay_callable<F>(F action) { return retain(action); }
 
 struct StateValue {
   uint64_t value;
@@ -68,10 +70,14 @@ int main(int argc, std::vector<std::string> argv) {
     state = state ^ (state << uint(17));
     StateValue saved_state{state};
     state = read_state(saved_state);
+    auto callback = [state]() -> uint64_t { return state; };
+    state = callback();
 #else
     state = advance(state);
     state = read_state(rewrap(state));
     state = invoke([state]() -> uint64_t { return state; });
+    auto callback = relay_callable([state]() -> uint64_t { return state; });
+    state = callback();
     std::string_view written = std::expression_text(++state);
     if (written != "++state") { return 3; }
 #endif

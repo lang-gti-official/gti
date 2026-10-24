@@ -94,6 +94,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testLambdaResultRegionMaterialization",
+      "suite": "preflight"
+    },
+    {
       "name": "testConditionalOwningArgumentReceiverAdmission",
       "suite": "preflight"
     },

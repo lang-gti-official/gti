@@ -454,6 +454,24 @@ corners({a, b})`).
 
 ## Typed macros and assertions
 
+`macro_result_parser` covers explicit result types and macro-local returns.
+`macro_values_semantic_ir` checks scalar and owning results, nested result
+regions, contextual conversions, initializer bodies, and caller-written `?`.
+Independent HIR/MIR mutations reject missing or cross-region return identities,
+uninitialized result slots, missing lifetime activation, forged temporary
+borrows, and premature cleanup. Passive objects still require a live object
+lifetime even when their destruction has no observable effect. Startup-local
+and decomposition tests reject projected uses before their physical owner is
+initialized; a valid generic body alone cannot authorize an invalid startup
+schedule.
+`macro_values_runtime` checks these paths at C++20/C++23 O0/O1/O2/O3,
+disabled elision and native ASan/UBSan. `macro_fresh_callables` checks that
+type discovery does not execute captures or publish speculative executable
+bindings, that concrete callable identities survive repeated and nested forcing,
+and that recursive constraint queries terminate without rejecting finite queries
+whose exact argument types change. `macro_fresh_callable_runtime` checks
+capture timing, skipped captures, caller ownership and exactly-once cleanup.
+
 `expression_text_semantic_ir` checks exact parser extents, origin-preserving
 clones and forwarding, default-expression provenance, missing source buffers,
 private capability access, static operand errors, strict synthetic-composition
@@ -527,7 +545,9 @@ Tree-sitter corpus and shipped-source parsing cover the new header, module,
 declaration and example inventories.
 
 `deferred_assertions_cost` compares the same complete-state workload with
-handwritten control flow. Zero observed successful-path allocations and cold
+handwritten control flow, including scalar results, passive objects passed by
+value, and nested returned callbacks with captured snapshots. Zero observed
+successful-path allocations and cold
 message calls are correctness gates; `--measure` adds two warmups and nine
 interleaved samples, native/generated size, build time and child peak memory.
 Timing samples are reported rather than gated on noisy shared hosts. Macro

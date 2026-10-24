@@ -1557,14 +1557,28 @@ when its exact initialization and complete use chain satisfy that proof.
 Neither change reconstructs a call or its evaluation order from source syntax.
 
 A lambda local's storage follows the instruction that produces its value.
-`constructedLambdaDestination` names the exact binding that a lambda value
-publishes into, unless an admitted fused closure chain carries that value. Such
+`constructedLambdaDestination` names the exact binding or verified temporary
+result slot that a lambda value publishes into, unless an admitted fused
+closure chain carries that value. Such
 a producer can be a materialized Closure, a copy `Load`, a `Move` or a
 closure-returning call. The declaration (`lifetimeSlotPlace`), the producer's
 construction, the destination `Initialize` and the vocabulary admission all
 consult this one proof. So `F g = f;` in a deduced-callable body declares and
 constructs one lifetime slot even though the body creates no literal of type
-`F`. A passive closure's slot is representation-only. Before each construction,
+`F`. A passive closure's local-binding slot is representation-only. A joined
+result retains its explicit `Value` obligation even when capture cleanup is
+trivial: its exact `Initialize`/`Reparent` publication, later `Move` and `Drop`
+remain the lifetime authority. Nested results reparent the exact moved-from
+temporary's `Value` obligation, not a fabricated SSA-rooted lifetime. Several
+forcing edges share an environment
+factory only for the same exact semantic lambda type and the same independently
+verified concrete lambda instance/body/layout; each edge constructs from its
+own capture operands at that edge's `Closure` step. Distinct concrete generic
+instances do not share an environment by source span alone.
+When `Reparent` hands off a hidden result's obligation, the destination is
+already constructed by its producing `Move`; the publication retires only
+the disarmed source representation, including passive environments.
+Before each representation-only construction,
 its producer retires any previous representation, as a representation-only
 class publication does, so a loop can rebuild the local without a semantic
 Drop. A fused chain's carriers still allocate no storage. When neither a

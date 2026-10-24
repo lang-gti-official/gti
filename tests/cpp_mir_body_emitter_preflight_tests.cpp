@@ -2801,6 +2801,165 @@ int main() { return 0; }
                  "different value must fail admission");
 }
 
+// Callable result regions retain explicit pending Value lifetimes, including
+// passive environments and multiple forcing edges of one written lambda.
+void testLambdaResultRegionMaterialization() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/macro_fresh_callables.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(input.good() || input.eof(), "the macro callable fixture must exist");
+  expect(
+      frontend.canGenerateCode(),
+      "callable result regions preserve ordinary capture and ownership facts");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const bool ready = emitter.analyzeProgram().ready();
+  expect(ready, "all callable result-region bodies need complete emission");
+  if (!ready)
+    return;
+  bool checked = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *hir = frontend.hir.findFunctionInstance(function.id);
+    if (!hir || !hir->source || hir->source->name().lexeme != "choose_snapshot")
+      continue;
+    checked = true;
+    const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                       function.id};
+    const auto text = function.mayRaiseDefinedFailure
+                          ? emitter.emitFailureBodyText(address, "callable", 1)
+                          : emitter.emitBodyText(address, "callable", 1);
+    const auto occurrences = [&](std::string_view needle) {
+      std::size_t count = 0;
+      for (std::size_t at = 0;
+           (at = text.text.find(needle, at)) != std::string::npos;
+           at += needle.size())
+        ++count;
+      return count;
+    };
+    expect(text.emitted() &&
+               occurrences("struct __gti_mir_closure_environment_") == 1 &&
+               occurrences(".construct_from([&]() { return "
+                           "__gti_mir_closure_factory_") == 2,
+           "two forcing edges snapshot separately into one exact environment "
+           "type");
+    const auto passive = std::find_if(
+        function.body.dropObligations.begin(),
+        function.body.dropObligations.end(), [](const auto &drop) {
+          return drop.kind == lang::MirDropObligationKind::Value &&
+                 drop.dropType.type.kind == lang::SemanticType::Lambda &&
+                 !drop.dropType.requiresActiveCleanup;
+        });
+    expect(passive != function.body.dropObligations.end(),
+           "passive callable joins retain their explicit Value obligation");
+    if (passive == function.body.dropObligations.end())
+      continue;
+    auto malformed = frontend.mir;
+    auto *changed = const_cast<lang::MirFunctionInstance *>(
+        malformed.findFunctionInstance(function.id));
+    bool erased = false;
+    for (auto &block : changed->body.blocks) {
+      for (auto &instruction : block.instructions) {
+        if (erased || instruction.kind != lang::MirInstructionKind::Initialize)
+          continue;
+        const auto activation = std::find_if(
+            instruction.lifecycle.begin(), instruction.lifecycle.end(),
+            [&](const auto &event) {
+              return event.kind == lang::MirLifecycleEventKind::Initialize &&
+                     event.target == passive->id;
+            });
+        if (activation != instruction.lifecycle.end()) {
+          instruction.lifecycle.erase(activation);
+          erased = true;
+        }
+      }
+    }
+    expect(
+        erased && !lang::verifyMirProgram(malformed).valid() &&
+            hasIssue(lang::CppMirBodyEmitter(malformed, map).analyze(address),
+                     lang::CppMirBodyEmissionIssueKind::InvalidMirProgram),
+        "missing callable result activation fails before backend spelling");
+  }
+  bool nestedChecked = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (nestedChecked ||
+            instruction.kind != lang::MirInstructionKind::Initialize)
+          continue;
+        for (const auto &event : instruction.lifecycle) {
+          const auto *source = function.body.findDropObligation(event.source);
+          const auto *target = function.body.findDropObligation(event.target);
+          const auto *sourcePlace =
+              source ? function.body.findPlace(source->place) : nullptr;
+          const auto *targetPlace =
+              target ? function.body.findPlace(target->place) : nullptr;
+          if (event.kind != lang::MirLifecycleEventKind::Reparent || !source ||
+              !target || !sourcePlace || !targetPlace ||
+              source->kind != lang::MirDropObligationKind::Value ||
+              target->kind != lang::MirDropObligationKind::Value ||
+              source->dropType.type.kind != lang::SemanticType::Lambda ||
+              source->dropType.requiresActiveCleanup ||
+              sourcePlace->root != lang::MirPlaceRootKind::Temporary ||
+              targetPlace->root != lang::MirPlaceRootKind::Temporary)
+            continue;
+          nestedChecked = true;
+          auto malformed = frontend.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          auto *changedBlock =
+              const_cast<lang::MirBlock *>(changed->body.findBlock(block.id));
+          auto changedInstruction = std::find_if(
+              changedBlock->instructions.begin(),
+              changedBlock->instructions.end(), [&](const auto &candidate) {
+                return candidate.id == instruction.id;
+              });
+          auto changedEvent = std::find_if(
+              changedInstruction->lifecycle.begin(),
+              changedInstruction->lifecycle.end(), [&](const auto &candidate) {
+                return candidate.kind ==
+                           lang::MirLifecycleEventKind::Reparent &&
+                       candidate.source == source->id &&
+                       candidate.target == target->id;
+              });
+          changedEvent->source = target->id;
+          const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                             function.id};
+          expect(
+              !lang::verifyMirProgram(malformed).valid() &&
+                  hasIssue(
+                      lang::CppMirBodyEmitter(malformed, map).analyze(address),
+                      lang::CppMirBodyEmissionIssueKind::InvalidMirProgram),
+              "nested callable publication cannot substitute its source "
+              "Temporary lifetime");
+          break;
+        }
+      }
+    }
+  }
+  expect(nestedChecked,
+         "nested callable results retain distinct exact Temporary lifetimes");
+  const auto completeText = gti_test::emitCppText(frontend);
+  const std::string_view retirement = "end moved closure representation";
+  const auto firstRetirement = completeText.find(retirement);
+  const auto secondRetirement =
+      firstRetirement == std::string::npos
+          ? std::string::npos
+          : completeText.find(retirement, firstRetirement + 1);
+  expect(firstRetirement != std::string::npos &&
+             secondRetirement != std::string::npos &&
+             completeText.find(retirement, secondRetirement + 1) ==
+                 std::string::npos,
+         "nested passive and owning handoffs retire each hidden source "
+         "representation exactly once");
+  expect(checked && !completeText.empty(),
+         "direct, nested, passive and moved-owning callable results emit from "
+         "verified MIR");
+}
+
 // A returned owning payload-enum call result constructs in the caller's
 // result storage, from an ordinary function or an exact lambda, including
 // across a fallible drop that keeps it an unpublished obligation. An exact
@@ -7519,6 +7678,8 @@ constexpr NamedTest kTests[] = {
     {"testOwningPayloadEnumTransportAdmissionFailsClosed",
      testOwningPayloadEnumTransportAdmissionFailsClosed},
     {"testLambdaOwningTransportAdmission", testLambdaOwningTransportAdmission},
+    {"testLambdaResultRegionMaterialization",
+     testLambdaResultRegionMaterialization},
     {"testConditionalOwningArgumentReceiverAdmission",
      testConditionalOwningArgumentReceiverAdmission},
     {"testBorrowedArgumentFallibleConditionAdmission",

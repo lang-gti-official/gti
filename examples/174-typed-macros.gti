@@ -45,6 +45,7 @@ namespace application {
   #macro run_when<F>(bool enabled, F action) {
     if (enabled) { action(); }
   }
+  #macro F retain_callable<F>(F expression) { return expression; }
   #macro std::string_view written<T>(T expression) {
     return std::expression_text(expression);
   }
@@ -106,6 +107,11 @@ struct Settings {
 };
 
 int main() {
+  mut int captured = 41;
+  auto callback = application::retain_callable(
+      [captured]() -> int { return captured; });
+  captured = 99;
+  std::assert(callback() == 41); // Capture happened when the argument was forced.
   Settings settings{};
   std::assert(initial_value == 6 && settings.attempts == 4);
   // Body lookup belongs to application, not to this unrelated local name.
