@@ -5,6 +5,8 @@ import copy
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -871,7 +873,8 @@ class ValidationChecks(unittest.TestCase):
 
     def test_ci_automation_scope_is_conservative_and_has_its_own_gates(self):
         event = {"pull_request": {"draft": False}}
-        self.assertEqual(validation.ci_mode(event, ["scripts/validation_batch.py", "tests/agent_workflow_test.py", "docs/architecture/verification.md"]), "automation")
+        self.assertEqual(validation.ci_mode(event, ["scripts/validation_batch.py", "tests/agent_workflow_test.py",
+                                                  "tests/repository_hosting_test.py", "docs/architecture/verification.md"]), "automation")
         for paths in ([], ["src/compiler/parser.cpp"], ["tests/parser_tests.cpp"],
                       ["runtime/include/gti/runtime.h"], ["CMakeLists.txt"],
                       [".gitea/workflows/release.yml"], [".gti-validation/batches/batch.json"]):
@@ -909,6 +912,135 @@ class ValidationChecks(unittest.TestCase):
         self.assertIn("regression", validation.plan_tests(plan, "linux"))
         self.assertEqual(validation.extra_checks(plan, "darwin"), [["common-check"], ["mac-check"]])
         self.assertEqual(validation.extra_checks(plan, "linux"), [["common-check"], ["linux-check"]])
+
+
+class CIEnvironment(unittest.TestCase):
+    def test_current_guidance_does_not_restore_retired_github_hosting(self):
+        retired = [re.compile(pattern, re.I) for pattern in (
+            r"\b(?:current|canonical)\s+GitHub\s+(?:workflow|PR\b|issue\b|remote\b)",
+            r"\bcurrent publication follows the GitHub\b",
+            r"\bGitea (?:is|only) (?:a |the )?backup mirror\b",
+            r"\bGitHub automation configure CMake\b",
+            r"\bGitHub Actions CI\s*\(`ubuntu-latest`",
+        )]
+        paths = [ROOT / name for name in ("AGENTS.md", "CLAUDE.md", "README.md")]
+        for directory in ("docs", ".codex/skills", ".claude/skills"):
+            paths.extend((ROOT / directory).rglob("*.md"))
+        violations = []
+        for path in paths:
+            relative = path.relative_to(ROOT).as_posix()
+            if relative.startswith(("docs/plans/archive/", "docs/third-party-audit/")):
+                continue
+            text = path.read_text()
+            for pattern in retired:
+                if pattern.search(text):
+                    violations.append(f"{relative}: {pattern.pattern}")
+        self.assertEqual(violations, [], "Active guidance must not restore retired hosting")
+
+    @staticmethod
+    def step(job, name):
+        workflow = (ROOT / ".gitea/workflows/ci.yml").read_text()
+        body = re.search(r"^  " + re.escape(job) + r":\n(.*?)(?=^  [\w-]+:\n|\Z)",
+                         workflow, re.M | re.S).group(1)
+        step = re.search(r"^      - name: " + re.escape(name) +
+                         r"\n(.*?)(?=^      - |\Z)", body, re.M | re.S)
+        if step is None:
+            raise AssertionError(f"Missing {job} step: {name}")
+        lines = step.group(1).split("        run: |\n", 1)[1].splitlines()
+        script = []
+        for line in lines:
+            if line and not line.startswith("          "):
+                break
+            script.append(line[10:] if line else "")
+        return step.group(1), "\n".join(script)
+
+    def test_classification_uses_context_event_without_prefixed_aliases(self):
+        step, script = self.step("validation-plan", "Classify candidate without weakening its merge gate")
+        with tempfile.TemporaryDirectory(prefix="gti-ci-context-") as temporary:
+            root = Path(temporary) / "runner workspace"
+            (root / "scripts").mkdir(parents=True)
+            shutil.copy2(ROOT / "scripts/validation_checks.py", root / "scripts/validation_checks.py")
+            git(root, "init", "-b", "main")
+            git(root, "config", "user.name", "CI Test")
+            git(root, "config", "user.email", "test@example.invalid")
+            git(root, "add", ".")
+            git(root, "commit", "-m", "baseline")
+            base = git(root, "rev-parse", "HEAD")
+            git(root, "update-ref", "refs/remotes/origin/main", base)
+            (root / "README.md").write_text("automation-only change\n")
+            git(root, "add", ".")
+            git(root, "commit", "-m", "documentation")
+            payload = root / "event payload.json"
+            output = root / "runner output"
+            env = {key: value for key, value in os.environ.items()
+                   if key not in {"GITEA_EVENT_PATH", "GITHUB_EVENT_PATH"}}
+            env.update(GTI_EVENT_PATH=str(payload), GTI_BASE_SHA=base, GITEA_OUTPUT=str(output))
+
+            def execute(success):
+                output.write_text("")
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script],
+                                        cwd=root, env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode == 0, success, result.stderr)
+                return output.read_text()
+
+            for event, expected, before in (({}, "automation", "0" * 40),
+                                           ({"pull_request": {"draft": True}}, "draft", base)):
+                with self.subTest(event=event):
+                    payload.write_text(json.dumps(event))
+                    env["GTI_BASE_SHA"] = before
+                    self.assertEqual(execute(True), f"mode={expected}\n")
+            for path in ("", str(root), str(root / "missing.json")):
+                with self.subTest(invalid_event_path=path):
+                    env["GTI_EVENT_PATH"] = path
+                    self.assertEqual(execute(False), "")
+            env["GTI_EVENT_PATH"] = str(payload)
+            payload.write_text("invalid JSON")
+            self.assertEqual(execute(False), "")
+        self.assertIn("GTI_EVENT_PATH: ${{ gitea.event_path }}", step)
+
+    @unittest.skipIf(os.name == "nt", "Gitea ubuntu-latest bootstrap uses POSIX tools")
+    def test_workflow_bootstrap_supplies_real_cmake_ctest_and_make(self):
+        _, script = self.step("automation-tests", "Install workflow test prerequisites")
+        binaries = {name: shutil.which(name) for name in ("cmake", "ctest", "make")}
+        self.assertTrue(all(binaries.values()), "Local verification requires CMake, CTest and Make")
+        with tempfile.TemporaryDirectory(prefix="gti-ci-bootstrap-") as temporary:
+            root = Path(temporary)
+            tools = root / "tools"
+            tools.mkdir()
+            calls = root / "apt-calls.json"
+            sudo = tools / "sudo"
+            # Intercept package installation locally; expose the real tools only
+            # when the workflow requests their actual Debian package names.
+            sudo.write_text(f"#!{sys.executable}\nimport json, pathlib, sys\n"
+                            f"tools=pathlib.Path({str(tools)!r})\nlog=pathlib.Path({str(calls)!r})\n"
+                            f"binaries={binaries!r}\n"
+                            "args=sys.argv[1:]\nassert args[0]=='apt-get'\n"
+                            "calls=json.loads(log.read_text()) if log.exists() else []\n"
+                            "calls.append(args)\nlog.write_text(json.dumps(calls))\n"
+                            "if args[1]=='install':\n"
+                            " for package, names in {'cmake':['cmake','ctest'],'make':['make']}.items():\n"
+                            "  if package in args:\n"
+                            "   for name in names: (tools/name).symlink_to(binaries[name])\n")
+            sudo.chmod(0o755)
+            env = dict(os.environ, PATH=str(tools))
+            with self.assertRaises(FileNotFoundError):
+                subprocess.run(["cmake", "--version"], env=env, check=True)
+            subprocess.run(["/bin/bash", "-e", "-o", "pipefail", "-c", script],
+                           cwd=root, env=env, check=True, capture_output=True, timeout=30)
+            installed = json.loads(calls.read_text())
+            self.assertEqual(installed[0], ["apt-get", "update"])
+            self.assertTrue(any(row[:2] == ["apt-get", "install"] and
+                                {"cmake", "make"} <= set(row) for row in installed))
+            (root / "CMakeLists.txt").write_text(
+                'cmake_minimum_required(VERSION 3.20)\nproject(CIBootstrap NONE)\n'
+                'enable_testing()\nadd_custom_target(workflow_fixture)\n'
+                f'add_test(NAME ci_bootstrap COMMAND "{sys.executable}" -c "pass")\n')
+            for argv in (["cmake", "-S", str(root), "-B", str(root / "build"), "-G", "Unix Makefiles"],
+                         ["cmake", "--build", str(root / "build"), "--target", "workflow_fixture"],
+                         ["ctest", "--test-dir", str(root / "build"), "--no-tests=error", "--output-on-failure"]):
+                subprocess.run(argv, cwd=root, env=env, check=True, capture_output=True, timeout=30)
+        job = (ROOT / ".gitea/workflows/ci.yml").read_text().split("  automation-tests:\n", 1)[1].split("  formatting:\n", 1)[0]
+        self.assertLess(job.index("Install workflow test prerequisites"), job.index("python3 tests/agent_workflow_test.py"))
 
 
 class BatchLifecycle(unittest.TestCase):
