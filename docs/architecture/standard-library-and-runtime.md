@@ -1393,7 +1393,7 @@ also has the scalar-ABI `gti_rt_failure_capture_panic_bytes_v2(record, data,
 size)` form for native code generators; it forwards to the same implementation
 without inventing an aggregate calling convention or changing the contract.
 Both forms of capture
-copies at most 512 bytes without allocation and does not split a valid UTF-8
+copy at most 512 bytes without allocation and do not split a valid UTF-8
 scalar at the truncation boundary. Invalid UTF-8 remains byte-exact for later
 escaping. The only message flag means truncation; uncaptured bytes are zero.
 The report renders a quoted message and an explicit `[truncated]` marker when

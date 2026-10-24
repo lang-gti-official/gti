@@ -60,6 +60,10 @@ int main() {
   char code = char(uint8_t(255));
   if (uint8_t(code) != uint8_t(255) || 'a' == 'b' || !true || false) { return 6; }
   if (int(-0.9) != 0 || uint32_t(-0.9) != uint32_t(0) || double(float(1.5)) != 1.5) { return 7; }
+  if (int8_t(127.9d) != int8_t(127) || int8_t(-128.9d) != int8_t(-128)
+      || uint8_t(255.9d) != uint8_t(255)) { return 8; }
+  if (!(int64_t(-1) < uint32_t(1)) || !(uint32_t(1) > int64_t(-1))
+      || int16_t(-1) + uint16_t(1) != 0 || double(1.5) + float(0.5) != 2.0d) { return 9; }
   return 0;
 }
 '''
@@ -114,6 +118,14 @@ int fail(mut int8_t value) { value += 1; return int(value); }
 int main() { return fail(int8_t(127)); }
 ''', 'GTI-R0006')
     cases['panic'] = ('#include <std/panic>\nint main() { std::panic("native panic"); }\n', 'GTI-R0017')
+    cases['empty-panic'] = ('#include <std/panic>\nint main() { std::panic(""); }\n', 'GTI-R0017')
+    cases['truncated-panic'] = ('#include <std/panic>\nint main() { std::panic("' + '\u03bb' * 260 + '"); }\n', 'GTI-R0017')
+    cases['assertion'] = ('''#include <std/panic>
+#macro require(bool condition) {
+  if (!condition) { std::panic("assertion failed"); }
+}
+int main() { require(false); return 0; }
+''', 'GTI-R0017')
     cases['initializer'] = ('int fail(int value) { return 2147483647 + value; }\n'
                             'int global = fail(1);\nint main() { return 0; }\n', 'GTI-R0001')
     return cases
