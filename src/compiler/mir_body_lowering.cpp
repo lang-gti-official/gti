@@ -14375,9 +14375,23 @@ private:
               }
             }
           }
+          // A payload borrowed through the summarized reference parameter is
+          // a local child of that parameter's entry loan, and its borrow
+          // reads that entry loan.
+          const auto referenceParameterChild = [&](const MirLoan &candidate) {
+            const std::optional<HirBindingId> summarized =
+                returnBorrowParameterBinding();
+            const MirLoan *parent = output.findLoan(candidate.parent);
+            return summarized && candidate.kind == MirLoanKind::Local &&
+                   parent != nullptr &&
+                   parent->kind == MirLoanKind::Parameter && parent->entry &&
+                   std::find(parent->carriers.begin(), parent->carriers.end(),
+                             *summarized) != parent->carriers.end();
+          };
           if ((output.loans[borrow.loan - 1].kind == MirLoanKind::CallResult ||
                output.loans[borrow.loan - 1].kind == MirLoanKind::Stored ||
-               output.loans[borrow.loan - 1].referenceSelection) &&
+               output.loans[borrow.loan - 1].referenceSelection ||
+               referenceParameterChild(output.loans[borrow.loan - 1])) &&
               output.loans[borrow.loan - 1].producedBy != 0) {
             // A returned reference binding may alias the producing call's
             // own result loan, or the Stored loan of the carrier it was
@@ -14385,9 +14399,11 @@ private:
             // a fresh Return loan from it, exactly as a nested
             // reference-returning call and a returned carrier do above, and
             // retires the body-local capability at this boundary.
-            // A payload selection likewise retains its local activation and
-            // tag proof; changing that loan into an escaping Return would
-            // erase the distinction between selection and publication.
+            // A payload selection, or a payload borrow through a reference
+            // parameter, likewise retains its local activation and tag proof;
+            // changing that loan into an escaping Return would erase the
+            // distinction between selection and publication, and would leave
+            // its producing borrow reading a parent the Return loan lacks.
             const MirLoan source = output.loans[borrow.loan - 1];
             const HirValue *returned = findValue(*statement.value);
             const MirLoanId published =

@@ -5361,13 +5361,19 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   if (isParameterDerivedBorrow(value, source)) {
     return;
   }
+  const std::string sourceKind =
+      function->returnBorrowParameter < function->parameterTypes.size() &&
+              function->parameterTypes[function->returnBorrowParameter]
+                      .referenceAccess == AccessMode::Mutable
+          ? "mutable reference parameter"
+          : "read-only parameter";
   Diagnostic diagnostic = makeDiagnostic(
       std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
       "Returned " + std::string(description) + " must derive from " +
           (source.name.lexeme.empty()
-               ? "unnamed read-only parameter " +
+               ? "unnamed " + sourceKind + " " +
                      std::to_string(function->returnBorrowParameter + 1)
-               : "read-only parameter '" + source.name.lexeme + "'") +
+               : sourceKind + " '" + source.name.lexeme + "'") +
           ".");
   diagnostic.related.push_back({tokenSpan(source.sourceAnchor()),
                                 "Required owner dependency source is here."});
@@ -5632,7 +5638,23 @@ auto SemanticVisitor::Impl::isParameterDerivedBorrow(
     if (const ExprPtr *source = storedBorrowSource(expression)) {
       return isParameterDerivedBorrow(*source, parameter, visiting);
     }
-    return false;
+    // A reference binding with no initializer, such as an `auto&` payload
+    // pattern, names its referent only through its retained loan. A loan
+    // whose one origin place is rooted at the parameter's referent borrows
+    // storage inside it, just as a receiver-rooted loan derives from `this`.
+    // A selected stored reference names an external owner instead; its
+    // complete dependency set is proved before this structural walk.
+    const auto *binding = semanticModel.findBinding(parameter);
+    const SemanticLoanInfo *loan =
+        symbol == nullptr || symbol->type.kind != SemanticType::Reference ||
+                symbol->retainedLoan == 0
+            ? nullptr
+            : semanticModel.findLoan(symbol->retainedLoan);
+    return binding != nullptr && binding->symbol != 0 && loan != nullptr &&
+           loan->kind == SemanticLoanKind::Reference &&
+           !loan->referenceSelection && loan->designatedFields.empty() &&
+           loan->conditions.empty() && loan->additionalDependencies.empty() &&
+           !loan->place.receiver && loan->place.root == binding->symbol;
   }
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {
     return isParameterDerivedBorrow(grouping->expression(), parameter,
