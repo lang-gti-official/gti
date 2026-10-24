@@ -1376,7 +1376,10 @@ as an empty effect summary or a genuinely open call. The ordinary instance
 provider supplies the diagnostics to HIR's existing instantiation-context and
 library-reanchoring path. If later analysis unexpectedly succeeds, the retained
 errors still prevent that exact instance from being admitted without a resolved
-proof. Missing or open effects remain unknown and retain their normal rejection.
+proof. This admission check also applies to the isolated provider used by staged
+constant evaluation: its results are checked against the requesting analysis's
+exact failed-instance keys without sharing mutable effect-graph state. Missing
+or open effects remain unknown and retain their normal rejection.
 
 Persistent-storage loan checks reuse that exact effect graph and the ordinary
 structured loan endpoint scheduler. A request-local full-expression frame is
@@ -3197,7 +3200,11 @@ isolated semantic provider rather than reentering the unfinished caller. Its
 request-local snapshot copies the sealed catalog and the canonical semantic
 model, preserves declaration IDs, and rebuilds owned callable indexes. Ordinary
 instance analysis still produces each typed delta; there is no second generic
-resolver. Non-generic closures do not allocate this snapshot. Instance deltas
+resolver. The requesting analysis validates each returned delta against any
+retained invalid effect query before staged HIR can execute it. The adapter uses
+non-owning argument views and materializes a lookup key only when such failures
+exist; this does not copy the caller's mutable effect graph into the worker.
+Non-generic closures do not allocate this snapshot. Instance deltas
 expire after the synchronous lowering operation. The snapshot is reused while
 the declaration order, whether a concrete reanalysis is open, and the
 available constexpr definitions and constructors are unchanged, and completing

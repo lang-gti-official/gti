@@ -1179,6 +1179,74 @@ int main() { return 0; }
          "effect rather than a deferred invalid-body diagnostic");
 }
 
+void stagedEffectQueryDiagnostics() {
+  for (const bool constructor : {false, true}) {
+    const std::string selected = constructor ? R"(
+class Selected<T, uint64_t Width> {
+public:
+  int value;
+  constexpr Selected(int input) : value(input) {
+    static_assert(sizeof(T) == Width, "staged exact body");
+  }
+};
+constexpr int read<T, uint64_t Width>() {
+  Selected<T, Width> value{42};
+  return value.value;
+}
+)"
+                                             : R"(
+constexpr int read<T, uint64_t Width>() {
+  static_assert(sizeof(T) == Width, "staged exact body");
+  return 42;
+}
+)";
+    const std::string prefix =
+        "thread_local mut int guarded = 1; " + selected + R"(
+void check<T, uint64_t Width>() {
+  static_assert(read<T, Width>() == 42, "staged exact value");
+}
+)";
+    for (const bool bad : {false, true}) {
+      const std::string type = bad ? "int64_t" : "int32_t";
+      const std::string runtime =
+          constructor ? "int runtime() { Selected<" + type +
+                            ", 4> value{1}; return value.value; } "
+                      : "int runtime() { return read<" + type + ", 4>(); } ";
+      const std::string main =
+          "int main() { int& held = guarded; check<int32_t, 4>(); "
+          "return runtime() + held; } ";
+      for (const bool reverse : {false, true}) {
+        const auto result = analyze(
+            prefix + (reverse ? main + runtime : runtime + main), true, true);
+        if (!bad) {
+          if (!result.canGenerateCode())
+            for (const auto &diagnostic : result.diagnostics)
+              std::cerr << diagnostic.code << ": " << diagnostic.message
+                        << '\n';
+          expect(result.canGenerateCode(),
+                 "ordinary staged function and constructor providers preserve "
+                 "valid exact type/value requests in either query order");
+          continue;
+        }
+        const auto errors = std::count_if(
+            result.diagnostics.begin(), result.diagnostics.end(),
+            [](const auto &diagnostic) {
+              return diagnostic.code == "GTI-S2079" &&
+                     diagnostic.message ==
+                         "Static assertion failed. staged exact body";
+            });
+        expect(!result.canGenerateCode() && !result.semanticValid &&
+                   errors == 1 && !code(result, "GTI-S2045") &&
+                   !code(result, "GTI-B0001") &&
+                   result.mir.functionInstances().empty(),
+               "an invalid runtime effect query cannot contaminate a "
+               "different valid staged key or permit MIR in either demand "
+               "order");
+      }
+    }
+  }
+}
+
 void emptyPackDestructorProvider() {
   const auto source = analyze(R"(
 class Empty<Args...> { public: ~Empty() {} };
@@ -1839,6 +1907,7 @@ int main() {
   packFoldCallerFacts();
   concreteEffectObligationReplay();
   invalidEffectQueryDiagnostics();
+  stagedEffectQueryDiagnostics();
   emptyPackDestructorProvider();
   packFoldUnsafeBoundary();
   orderedInputProtection();
