@@ -2583,6 +2583,16 @@ array of concrete generic class elements uses each element's private tag
 constructor and never assumes that the public class has a zero-argument
 constructor. This remains a backend-only rollback representation and does not
 add a GTI constructor or observable initialized value.
+Cleanup-free constructed fields use the same body-ordered publication route
+when a nested class argument needs a prepared parameter slot. Proving the
+consuming constructor failure-free removes its failure-propagation marker,
+not the prepared input handoff: the shared transfer-only proof checks a
+bijection between its `TransferOut` events and prepared inputs, independently
+of the status-boundary proof. The field still requires the exact selected
+constructor, a proved non-failing target, adjacent `Initialize`, and its
+construction-only empty representation. No result activation or drop is
+invented for the cleanup-free value. Native member-initializer fusion remains
+an optional equivalent representation, not a prerequisite for this composition.
 A payload enum's private inactive alternative contains no active payload or
 borrow, including when its alternatives mix owning values and references.
 Construction-only empty-state admission may therefore recurse through such an

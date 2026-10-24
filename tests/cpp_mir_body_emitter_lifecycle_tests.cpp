@@ -14311,6 +14311,99 @@ void testExpectedConstructorPayloadPublication() {
          "the fixture must contain an exact constructor-to-Expected transfer");
 }
 
+void testCleanupFreeConstructedFieldPreparedInputs() {
+  const auto frontend = analyze("cpp-mir-cleanup-free-prepared-field.gti", R"(
+class Duration {
+  int64_t value;
+public:
+  Duration(int64_t input) : value(input) {}
+};
+class Stamp {
+  Duration duration;
+public:
+  Stamp(Duration input) : duration(input) {}
+};
+class Timer {
+  mut Stamp last{Duration(int64_t(0))};
+public:
+  Timer() = default;
+};
+int main() { Timer timer{}; return 0; }
+)");
+  expect(frontend.canGenerateCode(),
+         "nested cleanup-free constructor arguments must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  std::size_t checked = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto &owner = frontend.hir.classInstances()[constructor.owner - 1];
+    if (!owner.source || owner.source->name().lexeme != "Timer")
+      continue;
+    const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                       constructor.id};
+    expect(lang::cppMirConstructedFieldInitializerBindings(frontend.mir,
+                                                           constructor)
+               .empty(),
+           "nested argument must use body staging, not native initializer "
+           "pattern recognition");
+    expect(
+        lang::cppMirConstructorRequiresFieldPlacement(frontend.mir,
+                                                      constructor),
+        "failure-free argument handoff must preserve direct field placement");
+    expect(emitter.analyze(address).ready() &&
+               emitter.supportsFailureBodyText(address),
+           "constructor field staging must admit exact successful input "
+           "transfers without a failure propagation marker");
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Construct ||
+            !instruction.definedFailure.empty() ||
+            instruction.lifecycle.size() != 1 ||
+            instruction.lifecycle.front().kind !=
+                lang::MirLifecycleEventKind::TransferOut)
+          continue;
+        ++checked;
+        for (unsigned mutation = 0; mutation != 6; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              malformed.findConstructorInstance(constructor.id));
+          for (auto &candidateBlock : changed->body.blocks) {
+            for (auto &candidate : candidateBlock.instructions) {
+              if (candidate.id != instruction.id)
+                continue;
+              auto &event = candidate.lifecycle.front();
+              if (mutation == 0)
+                event.source = 0;
+              if (mutation == 1)
+                event.target = event.source;
+              if (mutation == 2)
+                event.conditional = true;
+              if (mutation == 3)
+                event.failureCleanup = true;
+              if (mutation == 4)
+                candidate.lifecycle.push_back(event);
+              if (mutation == 5)
+                event.kind = lang::MirLifecycleEventKind::Initialize;
+            }
+          }
+          expect(!lang::CppMirBodyEmitter(malformed, map)
+                      .supportsFailureBodyText(address),
+                 "field staging must reject a missing, retargeted, "
+                 "conditional, failure-only, duplicated or result-activation "
+                 "input handoff " +
+                     std::to_string(mutation));
+        }
+      }
+    }
+  }
+  expect(checked == 1,
+         "fixture must retain one failure-free prepared argument transfer");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "nested cleanup-free field staging must retain production emission");
+}
+
 void testCleanupFreeConstructorFieldFailure() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/constructor_cleanup_free_failure.gti";
@@ -16938,6 +17031,8 @@ constexpr NamedTest kTests[] = {
     {"testDiscardedCleanupFreeClassResult",
      testDiscardedCleanupFreeClassResult},
     {"testNestedCleanupFreeClassResult", testNestedCleanupFreeClassResult},
+    {"testCleanupFreeConstructedFieldPreparedInputs",
+     testCleanupFreeConstructedFieldPreparedInputs},
     {"testCleanupFreeConstructorFieldFailure",
      testCleanupFreeConstructorFieldFailure},
     {"testExpectedConstructorPayloadPublication",
