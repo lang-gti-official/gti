@@ -14,9 +14,13 @@ public:
 #macro when<F>(bool enabled, F action) {
   if (enabled) { action(); }
 }
+#macro when_mut<F>(bool enabled, F action) {
+  if (enabled) { mut F callback = action; callback(); }
+}
 #macro twice<F>(F action) { action(); action(); }
 #macro relay<F>(F action) { when(true, action); }
 #macro ignore<F>(F action) {}
+#macro int snapshot<F>(F action) { return action(); }
 
 void observe<T>(T value) { calls += 1; }
 void generic<T>(T value) {
@@ -45,9 +49,19 @@ int main() {
   auto named = []() -> void { calls += 1; };
   when(true, named);
   mut int borrowed = 5;
-  when(false, [mut &borrowed]() -> void { borrowed += 100; });
+  when_mut(false, [mut &borrowed]() -> void { borrowed += 100; });
   borrowed += 1;
-  when(true, [mut &borrowed]() -> void { borrowed += 1; });
+  when_mut(true, [mut &borrowed]() -> void { borrowed += 1; });
   if (borrowed != 7 || calls != 17 || drops != 2) { return 5; }
+  mut int source = 2;
+  mut int sum = 0;
+  for (mut int index = 0; index < 3; ++index) {
+    sum += snapshot([source]() -> int { return source; });
+    source += 1;
+  }
+  if (sum != 9 || source != 5) { return 6; }
+  int direct = ([source]() -> int { return source; })();
+  source = 99;
+  if (direct != 5) { return 7; }
   return 0;
 }

@@ -252,7 +252,9 @@ The current implemented foundation includes:
   Both check an exact `bool`, evaluating it once when enabled, and use
   `std::panic` on failure. Their default messages include the exact written
   condition through `std::expression_text`, or the explicit description
-  `assertion condition` for synthesized macro expressions. Optional literal or
+  `assertion condition` for synthesized macro expressions. The default helper
+  captures this inert metadata before evaluating the condition, so a consuming
+  condition is not re-checked after its owner has moved. Optional literal or
   formatted messages are evaluated only on failure. `NDEBUG` disables all
   debug-assert argument evaluation, not
   their type checking; it never disables `std::assert`. The built-in release

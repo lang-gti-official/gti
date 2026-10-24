@@ -9827,6 +9827,11 @@ private:
       valid = false;
       return;
     }
+    // Recursive operand emission may add nested result-region expressions and
+    // rehash the baseline maps. Keep the entry state, not invalidated
+    // iterators.
+    const auto initialTemporaryDrops = temporaryBaseline->second;
+    const auto initialScopes = scopeBaseline->second;
     // A named operand that the consuming steps take by value, such as an
     // enum without cleanup, is read once before the branch, so both steps
     // receive that one dominating value; a copied class instead copies at
@@ -9863,8 +9868,8 @@ private:
     if (!terminated()) {
       const MirDropObligationId enclosingPendingReturnDrop = pendingReturnDrop;
       prepareReturnOwnership(returnedValue, result);
-      endReturnExpressionLoans(scopeBaseline->second);
-      emitTemporaryDrops(temporaryBaseline->second, value.id, 0, 0, true);
+      endReturnExpressionLoans(initialScopes);
+      emitTemporaryDrops(initialTemporaryDrops, value.id, 0, 0, true);
       emitScopeExit(0);
       publishReturnOwnership(returnedValue);
       pendingReturnDrop = enclosingPendingReturnDrop;

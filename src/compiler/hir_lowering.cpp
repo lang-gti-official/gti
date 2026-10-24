@@ -4733,6 +4733,32 @@ private:
                            classValueArguments, body);
   }
 
+  [[nodiscard]] std::optional<HirFunctionInstanceId>
+  contextualConversionInstance(
+      const Expr &source, const SemanticModel &model,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments) {
+    const auto *resolved = model.findContextualConversion(source);
+    const auto *target = resolved && resolved->function
+                             ? baseModel->findFunction(resolved->function)
+                             : nullptr;
+    if (!target)
+      return std::nullopt;
+    SemanticType receiverType = resolved->dispatchOwner;
+    if (receiverType.kind != SemanticType::Class ||
+        receiverType.classId != target->ownerClass)
+      receiverType = model.typeOf(source);
+    const auto &ownerArguments = receiverType.kind == SemanticType::Class
+                                     ? receiverType.arguments
+                                     : classArguments;
+    const auto &ownerValueArguments = receiverType.kind == SemanticType::Class
+                                          ? receiverType.valueArguments
+                                          : classValueArguments;
+    return enqueueFunction(*target, ownerArguments, ownerValueArguments, {}, {},
+                           resolved->returnType, resolved->parameterTypes,
+                           operatorInstantiationSite(&source));
+  }
+
   // Calls the conversion operator on an already lowered receiver value; the
   // call is the source's last value, so the context consumes its result.
   [[nodiscard]] HirValueId appendContextualConversion(
@@ -5219,6 +5245,23 @@ private:
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
     ensurePlaceDomain(body);
+    if (const Token *caller = model.findMacroDefault(expression);
+        caller && !activeDefaultArguments.contains(&expression))
+      return lowerDefaultArgument(&expression, model, classArguments,
+                                  classValueArguments, body,
+                                  sourceLocationAt(*caller));
+    if (contextualConstructionInner != &expression) {
+      if (const ResolvedConstructionInfo *construction =
+              model.findContextualConstruction(expression)) {
+        return lowerContextualConstruction(expression, *construction, model,
+                                           classArguments, classValueArguments,
+                                           body);
+      }
+    }
+    // A macro result is an ordinary source producer: preserve caller-selected
+    // defaults and contextual construction before entering its local region.
+    // lowerContextualConstruction re-enters with its exact inner guard, just
+    // as it does for a function-call producer.
     if (const auto *call = exprAs<Call>(&expression)) {
       if (auto expansion = model.shareMacroExpansion(*call)) {
         const auto *info = model.findExpression(expression);
@@ -5243,20 +5286,12 @@ private:
                                .info = *info,
                                .regionBody = *region});
         output.program.sourceValueIds[&expression].push_back(id);
+        if (const auto target = contextualConversionInstance(
+                expression, model, classArguments, classValueArguments))
+          return appendContextualConversion(
+              expression, *model.findContextualConversion(expression), *target,
+              id, body);
         return id;
-      }
-    }
-    if (const Token *caller = model.findMacroDefault(expression);
-        caller && !activeDefaultArguments.contains(&expression))
-      return lowerDefaultArgument(&expression, model, classArguments,
-                                  classValueArguments, body,
-                                  sourceLocationAt(*caller));
-    if (contextualConstructionInner != &expression) {
-      if (const ResolvedConstructionInfo *construction =
-              model.findContextualConstruction(expression)) {
-        return lowerContextualConstruction(expression, *construction, model,
-                                           classArguments, classValueArguments,
-                                           body);
       }
     }
     if (const Expr *alias = model.findExpressionAlias(expression)) {
@@ -6607,29 +6642,8 @@ private:
     }
     // The conversion applied to this value is a further call; its dispatch
     // and borrow facts belong to that call, not to the converted value.
-    if (const ResolvedOperatorInfo *resolved =
-            model.findContextualConversion(*raw);
-        resolved != nullptr && resolved->function != 0) {
-      if (const FunctionInfo *target =
-              baseModel->findFunction(resolved->function)) {
-        SemanticType receiverType = resolved->dispatchOwner;
-        if (receiverType.kind != SemanticType::Class ||
-            receiverType.classId != target->ownerClass) {
-          receiverType = model.typeOf(*raw);
-        }
-        const std::vector<SemanticType> ownerArguments =
-            receiverType.kind == SemanticType::Class ? receiverType.arguments
-                                                     : classArguments;
-        const std::vector<CompileTimeValue> ownerValueArguments =
-            receiverType.kind == SemanticType::Class
-                ? receiverType.valueArguments
-                : classValueArguments;
-        contextualConversionTarget =
-            enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
-                            {}, resolved->returnType, resolved->parameterTypes,
-                            operatorInstantiationSite(raw));
-      }
-    }
+    contextualConversionTarget = contextualConversionInstance(
+        *raw, model, classArguments, classValueArguments);
     // A function target is this instance's exact selection. A generic
     // callable call inherits its deferred record from the primary analysis,
     // but once the instance selects operator() or a function item, that

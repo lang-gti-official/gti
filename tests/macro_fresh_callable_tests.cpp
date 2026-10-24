@@ -148,6 +148,32 @@ int main() {
 )",
         "unused and disabled captures establish no caller moves or cleanup");
 
+  valid(R"(
+#macro when_mut<F>(bool enabled, F action) {
+  if (enabled) { mut F callback = action; callback(); }
+}
+int main() {
+  mut int value = 1;
+  when_mut(false, [mut &value]() -> void { value += 100; });
+  value += 1;
+  when_mut(true, [mut &value]() -> void { value += 1; });
+  return value == 3 ? 0 : 1;
+}
+)",
+        "mutable borrowed closures use ordinary explicit mutable local "
+        "invocation");
+
+  rejected(R"(
+#macro invoke<F>(F action) { action(); }
+int main() {
+  mut int value = 1;
+  invoke([mut &value]() -> void { value += 1; });
+  return 0;
+}
+)",
+           "GTI-S2046",
+           "direct fresh closure invocation does not acquire mutable access");
+
   rejected(R"(
 #include <std/memory>
 #macro twice<F>(F callback) { callback(); callback(); }
