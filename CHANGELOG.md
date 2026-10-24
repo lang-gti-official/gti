@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.467.2 — Returning payload references from reference parameters
+## 0.467.3 — Returning payload references from reference parameters
 
 - A free function, static method or lambda can now return a reference bound by
   an `auto&` or `mut auto&` payload pattern over its reference parameter, a
@@ -22,6 +22,17 @@ for what minor and patch releases mean.
   by-value parameter or a temporary are still rejected.
 - That diagnostic now says "mutable reference parameter" when the source
   parameter is `mut T&`, rather than calling it read-only.
+
+## 0.467.2 — Copying a payload view that holds a local owner's text
+
+- In a `switch` over a payload enum whose `string_view` payload views a local
+  owner, as in `Word word = Word::text(input.view());`, copying the arm's
+  binding into a local (`case Word::text(value): std::string_view v = value;`)
+  used to report `error[GTI-B0001]` (an internal compiler error). The copy now
+  compiles and keeps `input` borrowed while it is live, as a copy of a class's
+  published text field does. This also covers copies of copies, a payload
+  enum held in a field (`switch (line.word)`), generic enums, `default` arms
+  and loops.
 
 ## 0.467.1 — Text members through `operator->`
 
