@@ -1165,8 +1165,6 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         (binding.name == "input_iterator" || binding.name == "sentinel_for" ||
          binding.name == "dereferences_to" ||
          binding.name == "writable_iterator" || binding.name == "writes_to" ||
-         binding.name == "bidirectional_iterator" ||
-         binding.name == "random_access_iterator" ||
          binding.name == "subscripts_to_mut" ||
          binding.name == "sized_sentinel_for" ||
          binding.name == "input_range" || binding.name == "range_of" ||
@@ -1178,14 +1176,12 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
          binding.name == "read_binary_callable" ||
          binding.name == "mut_binary_callable" ||
          binding.name == "once_binary_callable" ||
-         binding.name == "once_action" ||
          binding.name == "indirect_predicate" ||
          binding.name == "indirect_operation" ||
          binding.name == "range_predicate" ||
          binding.name == "range_operation");
-    if ((!isPreludeUnit(conceptInfo.sourceUnit) &&
-         !trustedIteratorConstraint && !trustedFunctionalConstraint &&
-         !trustedMemoryConstraint) ||
+    if ((!isPreludeUnit(conceptInfo.sourceUnit) && !trustedIteratorConstraint &&
+         !trustedFunctionalConstraint && !trustedMemoryConstraint) ||
         conceptInfo.namespaceScope !=
             std::vector<std::string>{"gti_internal"}) {
       report(binding.attribute,
@@ -1546,9 +1542,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         return result;
       }
       for (std::size_t index = 0; index < result.parameters.size(); ++index) {
-        result.parameters[index] =
-            impliedConstraints(left.parameters[index]) &
-            impliedConstraints(right.parameters[index]);
+        result.parameters[index] = impliedConstraints(left.parameters[index]) &
+                                   impliedConstraints(right.parameters[index]);
       }
       for (const RegisteredConcept::StructuralPattern &candidate :
            left.structural) {

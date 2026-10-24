@@ -2314,6 +2314,15 @@ filters, not inferred proofs of their subexpressions. The selected concrete
 instance still resolves every executable call/constructor normally. Query
 recursion is bounded to 64 active checks.
 
+The nullary consuming-use concept is now a source expression query over an
+owned synthetic binding and `std::move(binding)()`. Its compound shape remains
+an opaque filter (not a fabricated borrowed `operator()` proof). Ordinary
+deferred-call inference checks the actual generic body, and concrete reanalysis
+performs invocation/ownership validation. Forwarding the identical requirement
+retains its declaration identity. The former `OnceAction` structural binding,
+checker and special diagnostic have been removed; the source concept supplies
+its diagnostic guidance.
+
 Constexpr Boolean-call leaves use existing constant evaluation. Trusted
 reflection fact identity, including unambiguous transparent source wrappers,
 can transport unary or exact relational proof. Opaque predicates only filter
@@ -3096,6 +3105,15 @@ substitutes for those identities. One execution context carries concrete
 generic substitutions, automatic values, and an optional read-only receiver
 through constexpr calls and constructors while enforcing the existing shared
 4096-step and 64-call-depth limits.
+
+Staged class discovery distinguishes generic type-argument identity from an
+executed object layout. A metadata carrier or ordinary user-defined type tag
+may name a polymorphic, inherited or otherwise runtime-only class without
+constructing it. Such arguments preserve exact enum identities but do not
+eagerly enqueue class layouts. Actual fields, parameters, results and executed
+construction discover their required layouts normally and retain the constant
+profile's restrictions. This is a general identity/representation distinction,
+not an exemption for named reflection types.
 
 Only fully initialized structural aggregates enter this representation.
 Semantics rejects bases, polymorphism, stored references, union state, active

@@ -16,7 +16,6 @@ R function_pointer_invoke<R, Args...>(function_pointer<R(Args...)>& target,
 @compiler_constraint("read_binary_callable") concept read_binary_callable_capability<Callable, Left, Right, Result>;
 @compiler_constraint("mut_binary_callable") concept mut_binary_callable_capability<Callable, Left, Right, Result>;
 @compiler_constraint("once_binary_callable") concept once_binary_callable_capability<Callable, Left, Right, Result>;
-@compiler_constraint("once_action") concept once_action_capability<Callable>;
 @compiler_constraint("indirect_predicate") concept indirect_predicate_capability<Callable, Iterator>;
 @compiler_constraint("indirect_operation") concept indirect_operation_capability<Callable, Iterator, Result>;
 @compiler_constraint("range_predicate") concept range_predicate_capability<Callable, Range>;
@@ -477,8 +476,10 @@ public:
   concept binary_operation<Operation, Left, Right, Result> =
       std::mut_binary_callable<Operation, Left, Right, Result>;
   concept comparator<Compare, T> = std::binary_predicate<Compare, T, T>;
-  concept once_action<Callable> =
-      gti_internal::once_action_capability<Callable>;
+  [[unsatisfied("Provide a safe no-argument call returning exactly void, usable through owned access.")]]
+  concept once_action<Callable> = requires(Callable callable) {
+    { std::move(callable)() } -> void;
+  };
 
   /// Iterator-aware relations name the source cursor directly because the
   /// bounded concept language intentionally has no associated-type syntax.

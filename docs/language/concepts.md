@@ -602,7 +602,8 @@ The current structural capability set is intentionally small:
   read-only/mutable, or usable once through owned access;
 - the corresponding `read_binary_callable`, `mut_binary_callable`, and
   `once_binary_callable` relationships name two exact readable arguments;
-- `once_action<F>` is the nullary exact-`void` consuming-use relation;
+- `once_action<F>` is the source-defined nullary exact-`void` consuming-use
+  relation: `requires(F action) { { std::move(action)() } -> void; }`;
 - `indirect_predicate<F, I>` derives the exact referent of `I::operator*()` and
   requires a repeatable `bool` callable for it; and
 - `indirect_operation<F, I, R>` derives the same referent and requires a
@@ -640,6 +641,16 @@ selected. Inside a generic body, a dependent target such as `less<T>`, or a
 lambda whose signature names `T`, satisfies a relation through its substituted
 `operator()` signature. A bare type parameter satisfies one only through an
 enclosing requirement.
+
+The nullary `once_action` policy no longer has a compiler concept binding.
+Its ordinary expression requirement selects the call and checks public access,
+safe invocation, ownership transfer and the exact `void` result. Ordinary call
+viability decides this nullary relation; the query does not relax operator
+declaration restrictions or make an otherwise unavailable overload callable.
+A query neither invokes nor consumes a runtime value;
+an actual `invoke_once` call still transfers ownership and performs deterministic
+cleanup. Unary/binary and indirect callable relations retain their documented
+bounded signature policy pending the ownership-aware query migration.
 
 An exact callable argument describes a readable source value. A concrete
 target may copy it by value or observe it through an exact read-only reference.

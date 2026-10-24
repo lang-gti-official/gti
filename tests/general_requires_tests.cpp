@@ -20,6 +20,7 @@ static_assert(!lang::compilerStructuralConstraint("object_layout"));
 static_assert(!lang::compilerStructuralConstraint("independent_object"));
 static_assert(!lang::compilerStructuralConstraint("bidirectional_iterator"));
 static_assert(!lang::compilerStructuralConstraint("random_access_iterator"));
+static_assert(!lang::compilerStructuralConstraint("once_action"));
 static_assert([] {
   for (const std::string_view binding :
        {"numeric", "signed_numeric", "integral", "signed_integral",
@@ -129,7 +130,8 @@ int main() {
   return load<bool>(truth) && load_truth<bool>(truth) && load<int>(number) == 7 &&
          increment<int>(3) == 4 && fields<Record>() == uint64_t(1) ? 0 : 1;
 }
-)", true),
+)",
+            true),
       "source scalar policies transport common proofs across alternatives");
 
   rejected(check(root, directory, "disjunction_does_not_invent_scalar", R"(
@@ -141,7 +143,8 @@ T load<T>(std::atomic<T>& value) requires integer_or_float<T> {
   return value.load();
 }
 int main() { return 0; }
-)", true),
+)",
+                 true),
            "one non-atomic alternative cannot justify atomic storage");
 
   accepted(check(root, directory, "source_storage_policy", R"(
@@ -367,6 +370,50 @@ int main() {
            "general mutation requirements prove operations on ordinary "
            "source classes without an iterator capability");
 
+  accepted(check(root, directory, "source_once_action", R"(
+#include <std/functional>
+concept task<F> = requires(F action) { { std::move(action)() } -> void; };
+void run<F>(F action) requires task<F> { std::move(action)(); }
+void forward<F>(F action) requires std::once_action<F> {
+  std::invoke_once(std::move(action));
+}
+struct Once { void operator()() && {} };
+struct Read { void operator()() {} };
+struct Mutable { void operator()() mut {} };
+struct Wrong { int operator()() && { return 1; } };
+struct NeedsArgument { void operator()(int value) {} };
+unsafe void unsafe_action() {}
+class Hidden { void operator()() {} };
+int main() {
+  run(Once());
+  forward(Once());
+  forward(Read());
+  forward(Mutable());
+  forward([]() -> void {});
+  static_assert(!(requires(Wrong action) { { std::move(action)() } -> void; }));
+  static_assert(!(requires(NeedsArgument action) { { std::move(action)() } -> void; }));
+  static_assert(!(requires { { unsafe_action() } -> void; }));
+  static_assert(!(requires(Hidden action) { { std::move(action)() } -> void; }));
+  return 0;
+}
+)"),
+           "source consuming-call requirements preserve ordinary access, "
+           "safety, arity and exact result checks");
+
+  rejected(check(root, directory, "source_once_action_rejects_arity", R"(
+#include <std/functional>
+struct NeedsArgument { void operator()(int value) {} };
+int main() { std::invoke_once(NeedsArgument()); return 0; }
+)"),
+           "source once_action does not invent a missing argument");
+
+  rejected(check(root, directory, "source_once_action_rejects_result", R"(
+#include <std/functional>
+struct Wrong { int operator()() && { return 1; } };
+int main() { std::invoke_once(Wrong()); return 0; }
+)"),
+           "source once_action requires exactly void");
+
   accepted(check(root, directory, "lookup_reflection_overrides", R"(
 #include <std/meta>
 class Parent<T> {
@@ -378,7 +425,35 @@ class Child : public Parent<int> {
 public:
   int sample() override { return 2; }
 };
+constexpr bool exact_lookup<T>() {
+  mut int samples = 0;
+  mut int identities = 0;
+  mut bool exact = true;
+  constexpr for (auto method : std::meta::lookup_methods_of<T>()) {
+    if constexpr (method.name() == "sample") {
+      samples += 1;
+      if constexpr (!method.result().is_same<int>()) { exact = false; }
+    }
+    if constexpr (method.name() == "identity") {
+      identities += 1;
+      constexpr for (auto parameter : method.parameters()) {
+        if constexpr (!parameter.type().is_same<int&>()) { exact = false; }
+      }
+    }
+  }
+  return exact && samples == 1 && identities == 1;
+}
+struct Tag<T> {
+  constexpr Tag() {}
+  constexpr int id() { return 7; }
+};
+constexpr int type_only<T>() {
+  Tag<T> tag{};
+  return tag.id();
+}
 int main() {
+  static_assert(exact_lookup<Child>());
+  static_assert(type_only<Child>() == 7);
   // Exact descriptor identity also proves that the overridden Parent::sample
   // is absent, and that the inherited identity owner retains its int argument.
   static_assert(std::meta::is_same<std::meta::lookup_method_list<Child>,
@@ -390,6 +465,22 @@ int main() {
 )"),
            "lookup metadata substitutes inherited owners and excludes "
            "overridden declarations without changing declaration reflection");
+
+  rejected(check(root, directory, "type_only_is_not_object_permission", R"(
+class Virtual {
+public:
+  constexpr Virtual() {}
+  virtual int value() { return 7; }
+};
+struct Holder<T> {
+  T value;
+  constexpr Holder() : value(T()) {}
+};
+constexpr int construct() { Holder<Virtual> holder{}; return 1; }
+int main() { static_assert(construct() == 1); return 0; }
+)"),
+           "type-only constant arguments do not admit polymorphic objects",
+           "GTI-S2057");
 
   rejected(check(root, directory, "mutation_requires_mutable_receiver", R"(
 concept adjustable<T> = requires(mut T& value, int amount) {

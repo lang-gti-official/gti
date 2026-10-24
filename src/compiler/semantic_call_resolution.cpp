@@ -6093,10 +6093,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     return binaryCallable(CallableInvocationCapability::Mutable);
   case StructuralConstraintKind::OnceBinaryCallable:
     return binaryCallable(CallableInvocationCapability::Once);
-  case StructuralConstraintKind::OnceAction:
-    return arguments.size() == 1 &&
-           callableSatisfies(arguments[0], {}, SemanticType::Void,
-                             CallableInvocationCapability::Once);
   case StructuralConstraintKind::IndirectPredicate:
   case StructuralConstraintKind::IndirectOperation: {
     if (arguments.size() !=
@@ -6316,7 +6312,6 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
     case StructuralConstraintKind::ReadBinaryCallable:
     case StructuralConstraintKind::MutBinaryCallable:
     case StructuralConstraintKind::OnceBinaryCallable:
-    case StructuralConstraintKind::OnceAction:
     case StructuralConstraintKind::IndirectPredicate:
     case StructuralConstraintKind::IndirectOperation:
     case StructuralConstraintKind::RangePredicate:

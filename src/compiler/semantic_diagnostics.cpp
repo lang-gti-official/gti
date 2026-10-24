@@ -524,12 +524,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "read-only reference; its receiver capability must satisfy the "
           "declared read, mut, or once use site.");
       break;
-    case StructuralConstraintKind::OnceAction:
-      diagnostic.hints.emplace_back(
-          "The action must provide one exact public void operator()() usable "
-          "through a consuming receiver; read-only and mutable reusable "
-          "targets also satisfy this once-only use site.");
-      break;
     case StructuralConstraintKind::IndirectPredicate:
       diagnostic.hints.emplace_back(
           "The iterator's read-only dereference result must be accepted by "

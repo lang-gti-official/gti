@@ -2,6 +2,7 @@
 // reflection facts. Checking a requirement never executes the expression.
 #include <std/meta>
 #include <std/memory>
+#include <std/functional>
 
 concept adds_to<L, R, Result> = requires(L& left, R& right) {
   { left + right } -> Result;
@@ -64,6 +65,38 @@ public:
 struct Doubler {
   int operator()(int& value) { return value * 2; }
 };
+
+// A consuming operation can be queried in ordinary source. No invocation or
+// cleanup runs while checking the query; the actual call owns and retires it.
+concept final_task<F> = requires(F task) {
+  { std::move(task)() } -> void;
+};
+mut int task_calls = 0;
+mut int task_drops = 0;
+class FinalTask {
+public:
+  FinalTask() {}
+  FinalTask(FinalTask& other) = delete;
+  FinalTask(FinalTask&& other) = default;
+  ~FinalTask() { task_drops += 1; }
+  void operator()() && { task_calls += 1; }
+};
+void finish<final_task F>(F task) { std::move(task)(); }
+
+class RuntimeObject {
+public:
+  virtual int value() { return 1; }
+};
+// Naming a runtime-only type does not create an object of that type. This
+// works for ordinary user tags as well as the library's reflection carriers.
+struct TypeTag<T> {
+  constexpr TypeTag() {}
+  constexpr bool present() { return true; }
+};
+constexpr bool names_runtime_type<T>() {
+  TypeTag<T> tag{};
+  return tag.present();
+}
 
 // Mutation requirements describe operations on any source type, not just
 // iterator categories. A query never performs the mutation itself.
@@ -167,6 +200,14 @@ namespace query_hygiene {
 }
 
 int main() {
+  static_assert(names_runtime_type<RuntimeObject>());
+  static_assert(requires(FinalTask task) {
+    { std::move(task)() } -> void;
+  });
+  if (task_calls != 0 || task_drops != 0) { return 9; }
+  finish(FinalTask());
+  std::invoke_once(FinalTask());
+  if (task_calls != 2 || task_drops != 2) { return 10; }
   mut Tally tally{};
   adjust(tally, 9);
   if (tally.value != 0) { return 7; }
