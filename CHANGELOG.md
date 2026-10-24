@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.467.4 — Iterators and carriers from returned references
+## 0.467.5 — Iterators and carriers from returned references
 
 - A text iterator can now be built directly from a view that a call returns
   by reference. For `std::string_view& Box::get()`, `box.get().begin()`,
@@ -34,6 +34,16 @@ for what minor and patch releases mean.
 - Not yet supported: constructing a carrier class directly from a returned
   reference, as in `Cursor(box.get())`, still reports `GTI-B0001`. Call a
   function that constructs it, as `open(box.get())` does.
+
+## 0.467.4 — Replacing a payload enum through a reference
+
+- A payload enum whose alternatives need cleanup, such as one holding a
+  `std::string`, can now be assigned through a mutable reference: a member or
+  free function's `mut T&` result (`b.ref() = label::blank;`, including
+  `std::optional<T>::value()`), a `mut T&` local or a `mut T&` parameter.
+  These assignments used to report `error[GTI-B0001]` (an internal compiler
+  error). The old alternative is dropped exactly once before the new value
+  moves in; if dropping it fails, only the unpublished new value is dropped.
 
 ## 0.467.3 — Array fields built from constructor parameters
 
