@@ -17,6 +17,26 @@ struct Position {
 struct IsPositive {
   bool operator()(int& value) { return value > 0; }
 };
+// A user-defined range uses the same loop query as an array or a library range.
+struct CountEnd {};
+struct CountCursor {
+  mut int value = 1;
+  int& operator*() { return this.value; }
+  void operator++() mut { this.value++; }
+  bool operator!=(CountEnd& end) { return this.value <= 3; }
+};
+struct Counts {
+  CountCursor begin() { return CountCursor(); }
+  CountEnd end() { return CountEnd(); }
+};
+concept integer_range<R> = requires(R& range) {
+  for (int& value : range) {}
+};
+int count_sum<R>(R& range) requires integer_range<R> {
+  mut int total = 0;
+  for (int& value : range) { total += value; }
+  return total;
+}
 std::ptrdiff_t remaining<I, S>(I& position, S& end)
     requires std::sized_sentinel_for<S, I> {
   return -(position - end);
@@ -272,6 +292,10 @@ namespace query_hygiene {
 }
 
 int main() {
+  Counts counts{};
+  if (count_sum(counts) != 6) { return 20; }
+  static_assert(requires(int[3]& values) { for (auto& value : values) {} });
+  static_assert(!(requires(int[3]& values) { for (mut int& value : values) {} }));
   int[3] positive_values = {1, 2, 3};
   static_assert(std::meta::is_array<int[3]>());
   if (!std::all_of(positive_values, IsPositive())) { return 21; }

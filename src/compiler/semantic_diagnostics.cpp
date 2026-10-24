@@ -448,22 +448,10 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The iterator must provide public mut operator*() returning a "
           "mutable checked reference and public void operator++() mut.");
       break;
-    case StructuralConstraintKind::InputRange:
+    case StructuralConstraintKind::Iteration:
       diagnostic.hints.emplace_back(
-          "The range must provide exact public read-only begin()/end(); its "
-          "returned iterator and sentinel must satisfy the input-iterator "
-          "and exact-sentinel contracts.");
-      break;
-    case StructuralConstraintKind::RangeOf:
-      diagnostic.hints.emplace_back(
-          "The complete read-only range must dereference to a checked "
-          "reference whose referent is exactly the required element type.");
-      break;
-    case StructuralConstraintKind::MutableRangeOf:
-      diagnostic.hints.emplace_back(
-          "The mutable range must provide exact public begin_mut()/end(); "
-          "mutable dereference must return the required exact element "
-          "reference and prefix increment must return void.");
+          "Provide the operations and checked access required by the range "
+          "loop in this source requirement.");
       break;
     case StructuralConstraintKind::SizedRange:
       diagnostic.hints.emplace_back(

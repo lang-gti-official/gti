@@ -800,11 +800,15 @@ lifecycle, relocation and transfer/share facts are general constexpr
 `std::meta` queries over identity-bound compiler operations. The prelude defines
 its public concepts with those queries and ordinary expression requirements;
 it does not maintain duplicate private concept declarations for migrated facts.
-The compiler retains structural truth, not library composition policy. Strict
-comparison-signature, checked-borrow iterator, and complete callable
-access/escape contracts still use private structural concepts where the general
-source vocabulary cannot express the full rule. Public concepts such as `std::input_iterator`,
-`std::sentinel_for` and `std::accumulates_into` remain source composition.
+The compiler retains structural truth, not library composition policy.
+Comparison, callable, sentinel, checked exact-reference, inline-payload policy,
+and complete range concepts now compose ordinary source reflection and
+unevaluated requirements. Range queries reuse actual loop analysis, including
+access, endpoint lifetime and cleanup checks; they are not a second range
+protocol implementation. The remaining private concept bindings are input
+iteration, dereference-to, writable iteration and size availability. Their
+migration still needs general inferred-result proof support and a coherent
+array/member size query; they are not claimed as source-defined yet.
 Semantics recognizes only trusted declaration identities and exact facts,
 never those public names or `std::accumulate`.
 

@@ -654,6 +654,16 @@ void SignaturePrinter::appendConceptApplication(
         }
         result += ")";
       }
+      if (const auto *loop = stmtAs<RangeForStmt>(query.iteration().get())) {
+        result += query.unsafeKeyword() ? " { unsafe for (" : " { for (";
+        if (loop->bindingMutability() == Mutability::Mutable)
+          result += "mut ";
+        result += semantic_spelling::typeRefSpelling(loop->bindingType()) +
+                  " " + loop->bindingName().lexeme + " : " +
+                  semantic_spelling::expressionSpelling(*query.expression()) +
+                  ") {} }";
+        return;
+      }
       result += query.unsafeKeyword() ? " { unsafe { " : " { { ";
       result += semantic_spelling::expressionSpelling(*query.expression());
       result += " } -> ";

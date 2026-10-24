@@ -29,6 +29,9 @@ static_assert(!lang::compilerStructuralConstraint("indirect_predicate"));
 static_assert(!lang::compilerStructuralConstraint("indirect_operation"));
 static_assert(!lang::compilerStructuralConstraint("range_predicate"));
 static_assert(!lang::compilerStructuralConstraint("range_operation"));
+static_assert(!lang::compilerStructuralConstraint("input_range"));
+static_assert(!lang::compilerStructuralConstraint("range_of"));
+static_assert(!lang::compilerStructuralConstraint("mutable_range_of"));
 static_assert([] {
   for (const std::string_view binding :
        {"numeric", "signed_numeric", "integral", "signed_integral",
@@ -113,7 +116,39 @@ int main(int argc, char **argv) {
                          ("gti-general-requires-" + std::to_string(getpid()));
   std::filesystem::create_directories(directory);
 
-  accepted(check(root, directory, "dependent_borrowed_query_result", R"GTI(
+  accepted(
+      check(root, directory, "iteration_requirements", R"GTI(
+#include <std/vector>
+concept readable<R> = requires(R& range) { for (auto& element : range) {} };
+concept ints<R> = requires(R& range) { for (int& element : range) {} };
+concept editable<R> = requires(mut R& range) { for (mut int& element : range) {} };
+int sum<R>(R& range) requires ints<R> {
+  mut int total = 0;
+  for (int& element : range) { total += element; }
+  return total;
+}
+void clear<R>(mut R& range) requires editable<R> {
+  for (mut int& element : range) { element = 0; }
+}
+struct Empty {};
+int main() {
+  static_assert(requires(int[3]& range) { for (auto& element : range) {} });
+  static_assert(requires(mut int[3]& range) { for (mut int& element : range) {} });
+  static_assert(!(requires(int[3]& range) { for (mut int& element : range) {} }));
+  static_assert(!(requires(int[3]& range) { for (bool& element : range) {} }));
+  static_assert(!(requires(Empty& range) { for (auto& element : range) {} }));
+  static_assert(requires(std::vector<int>& range) { for (auto& element : range) {} });
+  mut std::vector<int> values{};
+  values.push_back(3);
+  int result = sum(values);
+  clear(values);
+  return result == 3 ? 0 : 1;
+}
+)GTI"),
+      "iteration requirements reuse loop analysis and export generic proofs");
+
+  accepted(
+      check(root, directory, "dependent_borrowed_query_result", R"GTI(
 #include <std/meta>
 struct Reader { int value = 1; int& operator*() { return this.value; } };
 constexpr bool result_matches<I, R>(std::meta::type<I> owner, std::meta::type<R> result) {
@@ -131,7 +166,8 @@ constexpr bool inspect<I>() {
   return good;
 }
 int main() { static_assert(inspect<Reader>()); return 0; }
-)GTI"), "dependent borrowed result attributes are distinct from array suffixes");
+)GTI"),
+      "dependent borrowed result attributes are distinct from array suffixes");
 
   accepted(check(root, directory, "source_range_callable_policy", R"GTI(
 #include <std/functional>
@@ -1334,6 +1370,7 @@ int read<T>(T& value) requires raw_read<T> { return value.raw(); }
       R"(concept sum<T>=requires(T& a,T& b){{a+b}->T;{a==b}->bool;};
 concept ints<T>=std::meta::is_integral<T>();
 concept editable<T>=requires(mut T& owner){{owner.edit()}->mut int& [[borrowed_from(owner)]];};
+concept iterable<R>=requires(R& range){for(auto& element:range){}};
 )";
   const auto formatted = lang::Formatter().format(formatting);
   expect(lang::Formatter().format(formatted) == formatted,

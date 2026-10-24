@@ -8,9 +8,6 @@ namespace gti_internal {
 @compiler_constraint("input_iterator") concept input_iterator_capability<I>;
 @compiler_constraint("dereferences_to") concept dereferences_to_capability<I, T>;
 @compiler_constraint("writable_iterator") concept writable_iterator_capability<I>;
-@compiler_constraint("input_range") concept input_range_capability<R>;
-@compiler_constraint("range_of") concept range_of_capability<R, T>;
-@compiler_constraint("mutable_range_of") concept mutable_range_of_capability<R, T>;
 @compiler_constraint("sized_range") concept sized_range_capability<R>;
 }
 
@@ -183,13 +180,13 @@ concept sized_sentinel_for<Sentinel, Iterator> =
 // iterator type: range-first generic code iterates the owner directly, and
 // concrete reanalysis retains the selected source declarations.
 concept input_range<Range> =
-    gti_internal::input_range_capability<Range>;
+    requires(Range& range) { for (auto& element : range) {} };
 concept range_of<Range, T> =
     std::input_range<Range> &&
-    gti_internal::range_of_capability<Range, T>;
+    requires(Range& range) { for (T& element : range) {} };
 concept mutable_range_of<Range, T> =
     std::range_of<Range, T> &&
-    gti_internal::mutable_range_of_capability<Range, T>;
+    requires(mut Range& range) { for (mut T& element : range) {} };
 concept sized_range<Range> =
     std::input_range<Range> &&
     gti_internal::sized_range_capability<Range>;

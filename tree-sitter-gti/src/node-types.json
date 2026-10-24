@@ -3635,6 +3635,32 @@
     }
   },
   {
+    "type": "iteration_requirement",
+    "named": true,
+    "fields": {
+      "binding": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "range_for_declaration",
+            "named": true
+          }
+        ]
+      },
+      "range": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "lambda_capture",
     "named": true,
     "fields": {
@@ -3976,7 +4002,7 @@
       },
       "expression": {
         "multiple": true,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "assignment_expression",
@@ -4052,7 +4078,7 @@
       },
       "result_type": {
         "multiple": true,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "type",
@@ -4070,6 +4096,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "iteration_requirement",
+          "named": true
+        }
+      ]
     }
   },
   {

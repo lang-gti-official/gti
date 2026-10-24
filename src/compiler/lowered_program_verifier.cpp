@@ -189,6 +189,14 @@ validRequirement(const LoweredConceptRequirement &requirement) {
                       SemanticType::Reference) &&
            !requirement.source.source.empty() &&
            requirement.source.start < requirement.source.end;
+  case LoweredRequirementKind::Iteration:
+    return requirement.conceptId == 0 && requirement.memberName.empty() &&
+           !requirement.resultOriginParameter && requirement.resultArgument &&
+           *requirement.resultArgument ==
+               requirement.expressionParameterCount &&
+           *requirement.resultArgument < requirement.arguments.size() &&
+           !requirement.source.source.empty() &&
+           requirement.source.start < requirement.source.end;
   case LoweredRequirementKind::Predicate:
     return requirement.conceptId == 0 && requirement.memberName.empty() &&
            !requirement.mutableReceiver && !requirement.requiresUnsafe &&

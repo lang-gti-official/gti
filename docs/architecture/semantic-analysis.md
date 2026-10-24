@@ -2415,6 +2415,21 @@ admission paths are removed. This is semantic proof, not text-based
 operator guessing. The AST application is retained for source-facing
 diagnostics and tooling occurrences.
 
+An iteration requirement retains an ordinary parser-lowered `RangeForStmt`
+with an empty body and analyzes it in the same isolated query worker. Its
+synthetic bindings are local even when the query is declared at namespace
+scope. The source range expression supplies lexical occurrences; exact element
+bindings are checked against the resolved iteration record, not an implicit
+conversion. A direct borrowed range normalizes to a general iteration fact
+with element/access information. It grants no executable call target; concrete
+instances recheck the real loop. Unsafe or compound-range queries remain
+concrete filters when they cannot supply a safe direct operation proof.
+The lowered boundary records an explicit iteration requirement kind: its
+element slot is not an escaping reference result. The former private input,
+exact-element and mutable-range bindings and duplicate endpoint checker are
+removed; the actual loop semantics and synthetic open-body carriers remain
+compiler-owned.
+
 Registration-time constraint diagnostics use the canonical semantic type
 printer with a read-only lookup into declaration-owned generic parameter
 records when completed model rows are not available yet. The reporter consumes

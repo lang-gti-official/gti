@@ -1480,13 +1480,15 @@ public:
                     std::vector<TypeRef> parameters,
                     std::vector<Token> bindings,
                     std::optional<Token> unsafeKeyword = std::nullopt,
-                    std::optional<Token> borrowedFrom = std::nullopt)
+                    std::optional<Token> borrowedFrom = std::nullopt,
+                    StmtPtr iteration = nullptr)
       : keyword_(std::move(keyword)), receiver_(keyword_),
         result_(std::move(result)), parameters_(std::move(parameters)),
         bindings_(std::move(bindings)),
         unsafeKeyword_(std::move(unsafeKeyword)),
         expression_(std::move(expression)),
-        borrowedFrom_(std::move(borrowedFrom)) {}
+        borrowedFrom_(std::move(borrowedFrom)),
+        iteration_(std::move(iteration)) {}
 
   MemberRequirement(Token keyword, TypeRef receiver, Token binding,
                     Token receiverUse, Token member, TypeRef result,
@@ -1520,6 +1522,9 @@ public:
     return expression_ != nullptr;
   }
   [[nodiscard]] const ExprPtr &expression() const { return expression_; }
+  // An iteration query retains the ordinary lowered range-for statement.
+  // expression() is its source range, used for lexical/proof inspection only.
+  [[nodiscard]] const StmtPtr &iteration() const { return iteration_; }
   [[nodiscard]] const std::optional<Token> &borrowedFrom() const {
     return borrowedFrom_;
   }
@@ -1537,6 +1542,7 @@ private:
   std::optional<Token> unsafeKeyword_;
   ExprPtr expression_;
   std::optional<Token> borrowedFrom_;
+  StmtPtr iteration_;
 };
 
 class LiteralExpr final : public ExprOfKind<ExprKind::LiteralExpr> {

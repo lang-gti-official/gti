@@ -1519,12 +1519,18 @@ module.exports = grammar({
           repeat(seq(",", optional("mut"), field("parameter_type", $.type), field("parameter", $.identifier))),
         )), ")")),
         "{", repeat1(seq(
-          optional(field("unsafe", "unsafe")), "{",
-          field("expression", $._expression_not_comma), "}", "->",
-          optional("mut"), field("result_type", $.type),
-          optional(seq("[[", "borrowed_from", "(", field("borrow_origin", $.identifier), ")", "]]")), ";",
+          optional(field("unsafe", "unsafe")), choice(seq(
+            "{", field("expression", $._expression_not_comma), "}", "->",
+            optional("mut"), field("result_type", $.type),
+            optional(seq("[[", "borrowed_from", "(", field("borrow_origin", $.identifier), ")", "]]")), ";",
+          ), $.iteration_requirement),
         )), "}",
       ),
+
+    iteration_requirement: ($) => seq(
+      "for", "(", field("binding", $.range_for_declaration), ":",
+      field("range", $.expression), ")", "{", "}",
+    ),
 
     layout_query_expression: ($) =>
       seq(

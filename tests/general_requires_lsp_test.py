@@ -22,6 +22,7 @@ T add<sums T>(T& left, T& right) { return left + right; }
 T twice<T>(T value) requires std::meta::is_integral<T>() { return value + value; }
 concept raw_read<T> = requires(T& value) { { unsafe { value.raw() } } -> int; };
 concept editable<C, T> = requires(mut C& owner) { { owner.edit() } -> mut T& [[borrowed_from(owner)]]; };
+concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
 int main() { int left = 3; int right = 4; return add(left, right) == twice(left) + 1 ? 0 : 1; }
 """
 
@@ -103,6 +104,18 @@ def main():
                 "textDocument": {"uri": uri},
                 "position": lsp_position(SOURCE, origin_position), "newName": "source"})
             assert len(origin_rename["changes"][uri]) == 3, origin_rename
+            iteration_contract = hover(SOURCE, SOURCE.index("iterable<R>"))
+            assert "for (auto& element : range) {}" in str(iteration_contract), iteration_contract
+            range_use = SOURCE.index(": range)") + 2
+            range_definition = request("textDocument/definition", {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(SOURCE, range_use)})
+            range_location = range_definition[0] if isinstance(range_definition, list) else range_definition
+            assert range_location["range"]["start"] == lsp_position(SOURCE, SOURCE.index("range) {")), range_definition
+            range_rename = request("textDocument/rename", {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(SOURCE, range_use), "newName": "input"})
+            assert len(range_rename["changes"][uri]) == 2, range_rename
             use_position = lsp_position(SOURCE, SOURCE.index("left + right"))
             definition = request("textDocument/definition", {
                 "textDocument": {"uri": uri}, "position": use_position})

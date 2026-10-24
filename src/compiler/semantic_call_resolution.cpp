@@ -5551,13 +5551,9 @@ auto SemanticVisitor::Impl::symbolicRangeMemberReturnType(
       continue;
     }
     switch (requirement.kind) {
-    case StructuralConstraintKind::InputRange:
-    case StructuralConstraintKind::RangeOf:
-      readable = true;
-      break;
-    case StructuralConstraintKind::MutableRangeOf:
-      readable = true;
-      writable = true;
+    case StructuralConstraintKind::Iteration:
+      readable = !requirement.mutableReceiver || readable;
+      writable = requirement.mutableReceiver || writable;
       break;
     case StructuralConstraintKind::SizedRange:
       sized = true;
@@ -5575,7 +5571,7 @@ auto SemanticVisitor::Impl::symbolicRangeMemberReturnType(
     return symbolicRangeCarrierType(rangeType,
                                     SymbolicRangeCarrier::MutableIterator);
   }
-  if (member == "end" && readable) {
+  if (member == "end" && (readable || writable)) {
     return symbolicRangeCarrierType(rangeType, SymbolicRangeCarrier::Sentinel);
   }
   if (member == "size" && sized) {
@@ -5632,37 +5628,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
         readableIteratorValue(result))
       return result;
     return std::nullopt;
-  };
-  const auto selectedSentinelOperator = [&](const SemanticType &iterator,
-                                            OverloadedOperator operation,
-                                            const SemanticType &sentinel) {
-    const SemanticType reference =
-        SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
-    auto borrowed = selectStructuralOperator(
-        iterator, operation, std::span<const SemanticType>(&reference, 1),
-        false);
-    auto copied = selectStructuralOperator(
-        iterator, operation, std::span<const SemanticType>(&sentinel, 1),
-        false);
-    // Both forms accept a named sentinel. The requirement must not claim
-    // a usable operation when that ordinary call would be ambiguous, or
-    // when its by-value parameter cannot copy the named argument.
-    if (borrowed &&
-        borrowed->receiverMutability != ReceiverMutability::ReadOnly)
-      borrowed.reset();
-    if (copied && copied->receiverMutability != ReceiverMutability::ReadOnly)
-      copied.reset();
-    if (borrowed && copied)
-      return std::optional<CallableCandidate>{};
-    return copied && typeTraits(sentinel).copyable ? copied : borrowed;
-  };
-  // The remaining range admission rules need the same concrete endpoint
-  // question. This is not a public concept binding or a symbolic proof.
-  const auto hasSentinelComparison = [&](const SemanticType &iterator,
-                                         const SemanticType &sentinel) {
-    const auto comparison = selectedSentinelOperator(
-        iterator, OverloadedOperator::NotEqual, sentinel);
-    return comparison && comparison->returnType == SemanticType::Bool;
   };
   const auto hasDereference = [&](const SemanticType &iterator,
                                   const SemanticType *referent) {
@@ -5739,71 +5704,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
                ? std::optional<CallableCandidate>{candidates.front()}
                : std::nullopt;
   };
-  struct ReadRangeShape {
-    SemanticType iterator;
-    SemanticType sentinel;
-  };
-  const auto readRangeShape =
-      [&](const SemanticType &range) -> std::optional<ReadRangeShape> {
-    const std::optional<CallableCandidate> begin =
-        selectedRangeMember(range, "begin", ReceiverMutability::ReadOnly);
-    const std::optional<CallableCandidate> end =
-        selectedRangeMember(range, "end", ReceiverMutability::ReadOnly);
-    if (!begin || !end || begin->returnType.kind == SemanticType::Reference ||
-        end->returnType.kind == SemanticType::Reference ||
-        begin->returnType == SemanticType::Void ||
-        end->returnType == SemanticType::Void) {
-      return std::nullopt;
-    }
-    return ReadRangeShape{.iterator = begin->returnType,
-                          .sentinel = end->returnType};
-  };
-  const auto mutableRangeShape =
-      [&](const SemanticType &range) -> std::optional<ReadRangeShape> {
-    const std::optional<CallableCandidate> begin =
-        selectedRangeMember(range, "begin_mut", ReceiverMutability::Mutable);
-    const std::optional<CallableCandidate> end =
-        selectedRangeMember(range, "end", ReceiverMutability::ReadOnly);
-    if (!begin || !end || begin->returnType.kind == SemanticType::Reference ||
-        end->returnType.kind == SemanticType::Reference ||
-        begin->returnType == SemanticType::Void ||
-        end->returnType == SemanticType::Void) {
-      return std::nullopt;
-    }
-    return ReadRangeShape{.iterator = begin->returnType,
-                          .sentinel = end->returnType};
-  };
-
-  const auto readableRangeElement =
-      [&](const SemanticType &range) -> std::optional<SemanticType> {
-    if (range.kind == SemanticType::Array && range.arguments.size() == 1) {
-      return range.arguments.front();
-    }
-    const std::optional<ReadRangeShape> shape = readRangeShape(range);
-    if (!shape) {
-      return std::nullopt;
-    }
-    const std::array<SemanticType, 1> iteratorArguments{shape->iterator};
-    if (!structuralConstraintSatisfied(StructuralConstraintKind::InputIterator,
-                                       iteratorArguments) ||
-        !hasSentinelComparison(shape->iterator, shape->sentinel)) {
-      return std::nullopt;
-    }
-    const std::optional<CallableCandidate> dereference =
-        selectedDereference(shape->iterator);
-    if (!dereference) {
-      return std::nullopt;
-    }
-    const auto &result = dereference->returnType;
-    if (result.kind == SemanticType::Reference &&
-        result.arguments.size() == 1 &&
-        result.referenceAccess == AccessMode::ReadOnly)
-      return result.arguments.front();
-    if (result.kind != SemanticType::Reference)
-      return readableElement(*dereference);
-    return std::nullopt;
-  };
-
   switch (kind) {
   case StructuralConstraintKind::InputIterator: {
     if (arguments.size() != 1) {
@@ -5825,35 +5725,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
            hasMutableDereference(arguments.front(), nullptr) &&
            hasVoidMutation(arguments.front(), OverloadedOperator::PreIncrement,
                            {});
-  case StructuralConstraintKind::InputRange:
-    return arguments.size() == 1 &&
-           readableRangeElement(arguments.front()).has_value();
-  case StructuralConstraintKind::RangeOf: {
-    if (arguments.size() != 2) {
-      return false;
-    }
-    const std::optional<SemanticType> element =
-        readableRangeElement(arguments[0]);
-    return element && *element == arguments[1];
-  }
-  case StructuralConstraintKind::MutableRangeOf: {
-    if (arguments.size() != 2) {
-      return false;
-    }
-    if (arguments[0].kind == SemanticType::Array &&
-        arguments[0].arguments.size() == 1) {
-      return arguments[0].arguments.front() == arguments[1];
-    }
-    const std::optional<ReadRangeShape> shape = mutableRangeShape(arguments[0]);
-    if (!shape) {
-      return false;
-    }
-    const std::array<SemanticType, 1> iteratorArguments{shape->iterator};
-    return structuralConstraintSatisfied(
-               StructuralConstraintKind::WritableIterator, iteratorArguments) &&
-           hasSentinelComparison(shape->iterator, shape->sentinel) &&
-           hasMutableDereference(shape->iterator, &arguments[1]);
-  }
   case StructuralConstraintKind::SizedRange: {
     if (arguments.size() != 1) {
       return false;
@@ -5874,6 +5745,7 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
   case StructuralConstraintKind::None:
     return true;
   case StructuralConstraintKind::ReadMember:
+  case StructuralConstraintKind::Iteration:
     // Exact member requirements also carry a name, and are checked by
     // readMemberRequirementSatisfied rather than this name-free interface.
     return false;
@@ -5938,15 +5810,12 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
         }
       }
       break;
-    case StructuralConstraintKind::InputRange:
-    case StructuralConstraintKind::RangeOf:
-    case StructuralConstraintKind::MutableRangeOf: {
+    case StructuralConstraintKind::Iteration: {
       if (!rangeCarrier || requirement.arguments.empty() ||
           requirement.arguments.front() != rangeCarrier->first) {
         break;
       }
-      const bool mutableRange =
-          requirement.kind == StructuralConstraintKind::MutableRangeOf;
+      const bool mutableRange = requirement.mutableReceiver;
       const SymbolicRangeCarrier expectedCarrier =
           mutableRange ? SymbolicRangeCarrier::MutableIterator
                        : SymbolicRangeCarrier::ReadIterator;

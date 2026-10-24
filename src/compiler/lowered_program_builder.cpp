@@ -361,6 +361,13 @@ lowerRequirements(const std::vector<AppliedConceptRequirement> &requirements) {
           lowered.kind = LoweredRequirementKind::Expression;
           lowered.expressionParameterCount = query->parameters().size();
           lowered.resultArgument = query->parameters().size();
+          if (const auto *loop =
+                  stmtAs<RangeForStmt>(query->iteration().get())) {
+            lowered.kind = LoweredRequirementKind::Iteration;
+            lowered.mutableReceiver =
+                loop->bindingMutability() == Mutability::Mutable &&
+                loop->bindingType().reference.has_value();
+          }
           if (query->borrowedFrom()) {
             for (std::size_t index = 0; index < query->bindings().size();
                  ++index)

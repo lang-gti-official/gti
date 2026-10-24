@@ -245,6 +245,25 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
   ExpandedStructuralRequirement fact{.kind =
                                          StructuralConstraintKind::ReadMember,
                                      .requiresUnsafe = requiresUnsafe};
+  if (const auto *loop = stmtAs<RangeForStmt>(query.iteration().get())) {
+    const auto range = parameter(expression);
+    // The current symbolic loop carrier has no unsafe operation bit. An
+    // explicitly unsafe iteration query is therefore a concrete filter only,
+    // never permission to use its operations in a safe generic body.
+    if (requiresUnsafe || !range ||
+        arguments[*range].kind != SemanticType::Reference)
+      return std::nullopt;
+    fact.kind = StructuralConstraintKind::Iteration;
+    fact.mutableReceiver = loop->bindingMutability() == Mutability::Mutable &&
+                           loop->bindingType().reference.has_value();
+    if (fact.mutableReceiver &&
+        arguments[*range].referenceAccess != AccessMode::Mutable)
+      return std::nullopt;
+    fact.arguments = {referent(arguments[*range])};
+    if (arguments[query.parameters().size()] != SemanticType::Void)
+      fact.arguments.push_back(referent(arguments[query.parameters().size()]));
+    return fact;
+  }
   std::optional<std::size_t> receiver;
   std::optional<OverloadedOperator> operation;
   std::vector<std::size_t> operands;
@@ -439,6 +458,8 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
       return token;
     };
     (void)cloneExpr(*query.expression(), 0, inspection);
+    if (query.iteration())
+      (void)cloneStmt(*query.iteration(), 0, inspection);
   }
   worker->unsafeDepth = query.unsafeKeyword() ? 1 : 0;
   worker->valueFlow.extendBody(worker->catalog);
@@ -456,6 +477,22 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
         binding, SymbolKind::RequirementParameter, binding.lexeme, symbol.type);
     parameterIdentities.push_back(symbol.toolingSymbol);
     worker->scopes.back().emplace(binding.lexeme, std::move(symbol));
+  }
+  if (const auto *loop = stmtAs<RangeForStmt>(query.iteration().get())) {
+    // Query bindings and the loop's synthetic owners are local even when the
+    // requirement is declared at namespace scope. No executable function or
+    // caller-owned state is published by this isolated worker.
+    worker->functionDepth = std::max<std::size_t>(worker->functionDepth, 1);
+    worker->analyze(query.iteration());
+    for (const auto &diagnostic : worker->diagnostics)
+      if (diagnostic.severity == DiagnosticSeverity::Error)
+        return reject(diagnostic.message);
+    const auto *iteration = worker->semanticModel.findRangeIteration(*loop);
+    const auto &required = arguments[query.parameters().size()];
+    if (!iteration || (required != SemanticType::Void &&
+                       iteration->elementType != referent(required)))
+      return reject("The range does not have the exact required element type.");
+    return true;
   }
   const SemanticType actual = worker->analyze(query.expression());
   for (const auto &diagnostic : worker->diagnostics)

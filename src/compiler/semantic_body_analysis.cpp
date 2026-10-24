@@ -2814,7 +2814,8 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
       !(rangeType.kind == SemanticType::StringView &&
         textViewMemberFactory("begin").has_value() &&
         textViewMemberFactory("end").has_value()) &&
-      rangeType.kind != SemanticType::Class && !symbolicReadRange) {
+      rangeType.kind != SemanticType::Class && !symbolicReadRange &&
+      !(mutableElementRequested && symbolicMutableRange)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2083", DiagnosticPhase::Semantics, stmt.colon(),
         std::string(mutableElementRequested ? "Mutable" : "Read-only") +

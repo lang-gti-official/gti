@@ -1161,9 +1161,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
         (binding.name == "input_iterator" ||
          binding.name == "dereferences_to" ||
-         binding.name == "writable_iterator" || binding.name == "input_range" ||
-         binding.name == "range_of" || binding.name == "mutable_range_of" ||
-         binding.name == "sized_range");
+         binding.name == "writable_iterator" || binding.name == "sized_range");
     if ((!isPreludeUnit(conceptInfo.sourceUnit) &&
          !trustedIteratorConstraint) ||
         conceptInfo.namespaceScope !=

@@ -278,6 +278,28 @@ The same query is a Boolean expression usable in `static_assert` and
 `if constexpr`. Example [173](../../examples/173-general-requires.gti) demonstrates
 operators, construction, composition and reflection on an unrelated user type.
 
+An iteration requirement checks an ordinary range loop without executing it:
+
+```gti
+concept readable_range<R> = requires(R& range) {
+  for (auto& element : range) {}
+};
+concept writable_int_range<R> = requires(mut R& range) {
+  for (mut int& element : range) {}
+};
+```
+
+Its body must be empty. `auto` infers the element type; an explicit element
+type must match exactly, rather than becoming valid through a conversion.
+The check uses the same range analysis as an executable loop, including fixed
+arrays, endpoint selection, temporary lifetime, access and cleanup obligations.
+It neither consumes the caller's range nor publishes an element loan. Direct
+borrowed-parameter range queries preserve provisional iteration facts in an
+open generic body; concrete instantiation rechecks the actual loop. This is a
+general source-language query, not a binding to a standard-library concept.
+An explicitly `unsafe for` query is currently a concrete filter only: it does
+not grant a safe generic body permission to perform unsafe iteration operations.
+
 Semantic analysis checks general expressions using ordinary GTI resolution,
 access, ownership, mutability and lifetime rules in an isolated unevaluated
 context. Missing or ambiguous operations, inaccessible constructors, invalid
@@ -619,11 +641,14 @@ The current structural capability set is intentionally small:
   `std::ptrdiff_t I::operator-(S&)` or copyable by-value `S`, the signed
   distance from the iterator to the sentinel. Neither sentinel policy has
   a private compiler binding;
-- `input_range<R>` derives exact public read-only `begin()`/`end()` endpoints
-  and requires their iterator/sentinel pair to satisfy the input protocol;
-- `range_of<R, T>` refines that range to an exact read-only `T&` dereference,
-  while `mutable_range_of<R, T>` requires exact mutable `begin_mut()` and
-  `mut T&` dereference;
+- `input_range<R>` is a source iteration requirement for
+  `for (auto& element : range) {}`. `range_of<R, T>` additionally checks an
+  exact `T` element, and `mutable_range_of<R, T>` composes that with
+  `for (mut T& element : range) {}` on a mutable borrowed range. These policies
+  use actual loop semantics, including fixed arrays and safe materialized
+  value yields. This deliberately supersedes the old private declaration-only
+  range checker: a viable ordinary loop, rather than a second hand-maintained
+  overload filter, establishes the protocol;
 - `sized_range<R>` requires exact public read-only
   `std::size_t R::size()`; fixed arrays satisfy it from their exact extent;
 - `forward_iterator<I>` is the source-defined conjunction of input iteration,
@@ -757,21 +782,23 @@ C++ conversion or expression probing must not fill that gap implicitly.
 
 The prelude and selected canonical standard-library units use reserved syntax
 to connect an internal declaration to one compiler fact. For example,
-`<std/iterator>` owns its exact sentinel relationship:
+`<std/iterator>` still owns its not-yet-migrated inferred input-iterator
+relationship:
 
 ```gti
 namespace gti_internal {
-@compiler_constraint("sentinel_for")
-concept sentinel_for_capability<S, I>;
+@compiler_constraint("input_iterator")
+concept input_iterator_capability<I>;
 }
 ```
 
 `@compiler_constraint` is accepted only inside `gti_internal` in the implicit
-prelude or in the exact trusted unit assigned to that binding. Atomic scalar
-facts belong to `<std/atomic>`, iterator relationships to `<std/iterator>`, and
-callable relationships to `<std/functional>`; core type and operator facts
-remain in the prelude. Each unit composes its private declarations into public
-concepts. Application source cannot forge a binding, name the private
+prelude or in the exact trusted unit assigned to that binding. The remaining
+four bindings belong to `<std/iterator>`: input iteration, dereference-to,
+writable iteration and size availability. Migrated classification, lifecycle,
+comparison, callable, sentinel, range and exact borrowed-result policies have
+no private concept declarations. They compose general queries and irreducible
+compiler facts in ordinary source. Application source cannot forge a binding, name the private
 capability, or expose it through a public signature. Binding names and bound
 declarations are compiler/standard-library integration details, not a public
 language API.

@@ -1,0 +1,45 @@
+==================
+Unevaluated range loop requirements
+==================
+concept readable<R> = requires(R& range) { for (auto& element : range) {} };
+concept editable<R, T> = requires(mut R& range) { for (mut T& element : range) {} };
+---
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (iteration_requirement
+          (range_for_declaration
+            (type
+              (reference_declarator))
+            (identifier))
+          (primary_expression
+            (identifier))))))
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (iteration_requirement
+          (range_for_declaration
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier))
+          (primary_expression
+            (identifier)))))))

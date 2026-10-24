@@ -1,4 +1,5 @@
 #include "gti/parser.h"
+#include "gti/ast_clone.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -3770,6 +3771,39 @@ private:
       std::optional<Token> unsafeKeyword;
       if (match({TokenKind::UNSAFE}))
         unsafeKeyword = previous();
+      if (match({TokenKind::FOR})) {
+        const Token loop = previous();
+        consume(TokenKind::LEFT_PAREN, "Expect '(' after required 'for'.");
+        const Mutability access = match({TokenKind::MUT})
+                                      ? Mutability::Mutable
+                                      : Mutability::Immutable;
+        TypeRef element = parseType();
+        const Token name = consume(TokenKind::IDENTIFIER,
+                                   "Expect required element binding name.");
+        const Token colon = consume(TokenKind::COLON,
+                                    "An iteration requirement needs a range.");
+        ExprPtr range = expression();
+        consume(TokenKind::RIGHT_PAREN, "Expect ')' after required range.");
+        consume(TokenKind::LEFT_BRACE,
+                "Expect an empty body after an iteration requirement.");
+        consume(TokenKind::RIGHT_BRACE,
+                "Iteration requirements have an empty body; test element "
+                "operations with separate expression requirements.");
+        TypeRef requiredResult = element;
+        // Void is an existential element slot, not a void element type. The
+        // actual binding retains auto and is inferred by normal loop analysis.
+        if (element.name.last().kind == TokenKind::AUTO)
+          requiredResult =
+              TypeRef(generatedToken(TokenKind::VOID, "void", loop));
+        ExprPtr source = cloneExpr(*range);
+        StmtPtr iteration = makeRangeForStatement(
+            loop, access, std::move(element), name, colon, std::move(range),
+            std::make_shared<BlockStmt>(StmtList{}));
+        result.push_back(std::make_unique<MemberRequirement>(
+            keyword, std::move(source), std::move(requiredResult), parameters,
+            bindings, unsafeKeyword, std::nullopt, std::move(iteration)));
+        continue;
+      }
       consume(TokenKind::LEFT_BRACE, "Expect '{' before required expression.");
       ExprPtr expression = assignment();
       consume(TokenKind::RIGHT_BRACE, "Expect '}' after required expression.");

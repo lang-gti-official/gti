@@ -1348,6 +1348,9 @@ void expression<T>() requires requires(T& value) {
   { value + value } -> T;
 } {}
 void nullary<T>() requires requires { { T() } -> T; } {}
+void iteration<T>() requires requires(mut T& range) {
+  for (mut int32_t& element : range) {}
+} {}
 struct Cell {
   mut int32_t value = 0;
   mut int32_t& edit() mut { return this.value; }
@@ -1371,6 +1374,7 @@ int main() {
   predicate<int32_t>();
   expression<int32_t>();
   nullary<int32_t>();
+  iteration<int32_t[3]>();
   borrowed<Cell>();
   member<Reader>();
   Box box = Box(1);
@@ -1409,6 +1413,16 @@ int main() {
       findPayload<lang::LoweredFunctionDeclaration>(program, "predicate");
   const auto *borrowed =
       findPayload<lang::LoweredFunctionDeclaration>(program, "borrowed");
+  const auto *iteration =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "iteration");
+  expect(iteration && iteration->requirements.size() == 1 &&
+             iteration->requirements[0].kind ==
+                 lang::LoweredRequirementKind::Iteration &&
+             iteration->requirements[0].mutableReceiver &&
+             iteration->requirements[0].resultArgument == 1 &&
+             !iteration->requirements[0].resultOriginParameter,
+         "loop queries retain element/access facts without inventing an "
+         "escaping reference result");
   expect(named && member && expression && nullary && predicate,
          "all requirement declaration rows are retained");
   if (!named || !member || !expression || !nullary || !predicate)
@@ -1505,6 +1519,7 @@ int main() {
           "unresolved types are rejected before backend consumption");
     }
     if ((*requirements)[0].kind == lang::LoweredRequirementKind::Expression ||
+        (*requirements)[0].kind == lang::LoweredRequirementKind::Iteration ||
         (*requirements)[0].kind == lang::LoweredRequirementKind::Predicate) {
       auto forged = program;
       auto &payload =
