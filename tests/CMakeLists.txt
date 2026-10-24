@@ -3243,6 +3243,14 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(constructor_constructed_field_runtime
                          PROPERTIES TIMEOUT 240)
     add_test(
+      NAME constructor_nested_argument_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/constructor_nested_argument_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(constructor_nested_argument_runtime
+                         PROPERTIES TIMEOUT 600)
+    add_test(
       NAME generic_clone_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/generic_clone_runtime_test.py"

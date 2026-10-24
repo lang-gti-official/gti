@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.468.6 — Nested constructor argument staging
+
+- Restore class-field initialization from nested constructor arguments when
+  MIR proves the consuming constructor failure-free. The C++ backend preserves
+  the prepared argument handoff and direct field publication instead of
+  rejecting the constructor with `GTI-B0001`; this applies to ordinary user
+  types as well as clock-point fields.
+
 ## 0.468.5 — Canonical Gitea hosting
 
 - Source, issues, PRs, Actions, tags, release downloads and agent tooling return

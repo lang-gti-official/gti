@@ -17673,8 +17673,13 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       !producer->successResultDrop &&
       // Prepared arguments may hand off their exact input obligations even
       // though this cleanup-free result creates none. constructorProducer
-      // verifies each unconditional TransferOut against its CallInput stage.
-      (producer->lifecycle.empty() || constructorProducer) &&
+      // verifies each unconditional TransferOut on the status path. A proved
+      // failure-free construction has no propagation marker, but retains the
+      // same input handoff. Check that transfer-only lifecycle independently
+      // of failure propagation, without admitting a result activation here.
+      (producer->lifecycle.empty() || constructorProducer ||
+       (producer->definedFailure.empty() &&
+        onlyPreparedInputTransfers(body, *producer))) &&
       (producer->definedFailure.propagation == FailurePropagationKind::None ||
        producer->definedFailure.propagation ==
            FailurePropagationKind::Constructor) &&

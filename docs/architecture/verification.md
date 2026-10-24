@@ -1,5 +1,22 @@
 # Compiler Verification
 
+## Nested constructor argument handoff (0.468.6)
+
+`constructor_nested_argument_runtime` exercises cleanup-free class values
+constructed from prepared class arguments in default and explicit field
+initializers, including deeper nesting and a chrono clock-point field. Its
+ordinary user types have no zero-argument constructor or assignment route to
+substitute. The C++20/C++23 optimization, no-elide and sanitizer matrix checks
+field values, ordered sibling effects, and owning-sibling rollback after a
+later initializer fails. The original compiler rejected the defaulted parent
+constructor with `GTI-B0001` at representation admission.
+
+`cpp_mir_body_emitter_lifecycle` additionally pins the existing body-placement
+route for this successful prepared-input schedule and rejects forged transfer
+sources/targets, conditional or failure-only events, duplicate handoffs and
+invented result activation. The proof is independent of a constructor's
+failure-propagation marker; the native initializer fusion contract is unchanged.
+
 ## Carriers of returned references (0.468.3)
 
 `accessor_text_carrier_runtime` runs `accessor_text_carriers.gti` in all
