@@ -1,0 +1,185 @@
+#include <std/string>
+
+// A free function may return a reference bound by a payload pattern of its
+// reference parameter. The binding borrows storage inside that parameter's
+// referent, just as a member accessor's pattern borrows inside `this`, so
+// the call result is tied to the caller's argument.
+
+enum class Reading { exact(int32_t value), estimate(int32_t value) };
+
+int32_t& value_of(Reading& reading) {
+  switch (reading) {
+  case Reading::exact(auto& value): return value;
+  case Reading::estimate(auto& value): return value;
+  }
+}
+
+mut int32_t& slot_of(mut Reading& reading) {
+  switch (reading) {
+  case Reading::exact(mut auto& value): return value;
+  case Reading::estimate(mut auto& value): return value;
+  }
+}
+
+// A cleanup-free enum payload beside a scalar.
+enum class Tone { warm, cool };
+enum class Lamp { lit(Tone tone, int32_t watts), dim(Tone tone) };
+
+Tone& lamp_tone(Lamp& lamp) {
+  switch (lamp) {
+  case Lamp::lit(auto& tone, auto& watts): return tone;
+  case Lamp::dim(auto& tone): return tone;
+  }
+}
+
+// A cleanup-free payload enum held inside another payload.
+enum class Shade { plain(int32_t level), mixed(int32_t level, int32_t tint) };
+enum class Paint { coat(Shade shade, int32_t layers) };
+
+Shade& shade_of(Paint& paint) {
+  switch (paint) {
+  case Paint::coat(auto& shade, auto& layers): return shade;
+  }
+}
+
+int32_t& tint_of(Paint& paint) {
+  switch (shade_of(paint)) {
+  case Shade::plain(auto& level): return level;
+  case Shade::mixed(auto& level, auto& tint): return tint;
+  }
+}
+
+// Nested accessors: a pattern over another accessor's reference result.
+class Gauge {
+public:
+  Reading reading;
+  int32_t scale;
+  Gauge(Reading reading, int32_t scale) : reading(reading), scale(scale) {}
+};
+
+Reading& reading_of(Gauge& gauge) { return gauge.reading; }
+
+int32_t& relayed_level(Gauge& gauge) {
+  switch (reading_of(gauge)) {
+  case Reading::exact(auto& value): return value;
+  case Reading::estimate(auto& value): return value;
+  }
+}
+
+// A plain relay of an accessor's result, and a member accessor relayed
+// through a reference parameter.
+int32_t& relayed_value(Reading& reading) { return value_of(reading); }
+
+class Probe {
+  Reading reading;
+public:
+  Probe(Reading reading) : reading(reading) {}
+  int32_t& current() {
+    switch (this.reading) {
+    case Reading::exact(auto& value): return value;
+    case Reading::estimate(auto& value): return value;
+    }
+  }
+};
+
+int32_t& probed(Probe& probe) { return probe.current(); }
+
+enum class Message { text(std::string body), quoted(std::string body) };
+
+std::string& body_of(Message& message) {
+  switch (message) {
+  case Message::text(auto& body): return body;
+  case Message::quoted(auto& body): return body;
+  }
+}
+
+mut std::string& body_mut(mut Message& message) {
+  switch (message) {
+  case Message::text(mut auto& body): return body;
+  case Message::quoted(mut auto& body): return body;
+  }
+}
+
+// A field of a reference parameter is a place inside that parameter too.
+int32_t& gauge_value(Gauge& gauge) {
+  switch (gauge.reading) {
+  case Reading::exact(auto& value): return value;
+  case Reading::estimate(auto& value): return value;
+  }
+}
+
+// A reference alias of the parameter names the same referent.
+int32_t& aliased_value(Reading& reading) {
+  Reading& alias = reading;
+  switch (alias) {
+  case Reading::exact(auto& value): return value;
+  case Reading::estimate(auto& value): return value;
+  }
+}
+
+enum class Slot<T> { full(T value) };
+
+T& payload_of<T>(Slot<T>& slot) {
+  switch (slot) {
+  case Slot<T>::full(auto& value): return value;
+  }
+}
+
+int main() {
+  mut Reading reading = Reading::estimate(4);
+  if (value_of(reading) != 4)
+    return 1;
+  slot_of(reading) = 9;
+  slot_of(reading) += 1;
+  if (value_of(reading) != 10 || aliased_value(reading) != 10)
+    return 2;
+
+  Probe probe = Probe(Reading::exact(8));
+  if (relayed_value(reading) != 10 || probed(probe) != 8)
+    return 3;
+  Lamp lamp = Lamp::lit(Tone::cool, 40);
+  Lamp dim = Lamp::dim(Tone::warm);
+  if (lamp_tone(lamp) != Tone::cool || lamp_tone(dim) != Tone::warm)
+    return 4;
+  Gauge relayed = Gauge(Reading::estimate(5), 1);
+  if (relayed_level(relayed) != 5)
+    return 6;
+  Paint plain = Paint::coat(Shade::plain(3), 2);
+  Paint mixed = Paint::coat(Shade::mixed(5, 7), 1);
+  if (tint_of(plain) != 3 || tint_of(mixed) != 7)
+    return 12;
+  switch (shade_of(mixed)) {
+  case Shade::plain(auto& level): return 13;
+  case Shade::mixed(auto& level, auto& tint):
+    if (level + tint != 12)
+      return 14;
+    break;
+  }
+
+  mut Message message = Message::quoted(std::string("note"));
+  body_mut(message).append("!");
+  if (body_of(message) != "note!" || body_of(message).size() != 5)
+    return 7;
+  Message text = Message::text(std::string("plain"));
+  if (body_of(text) != "plain")
+    return 8;
+
+  Gauge gauge = Gauge(Reading::exact(12), 3);
+  if (gauge_value(gauge) * gauge.scale != 36)
+    return 9;
+
+  Slot<std::string> named = Slot<std::string>::full(std::string("slot"));
+  Slot<int32_t> counted = Slot<int32_t>::full(6);
+  if (payload_of(named) != "slot" || payload_of(counted) != 6)
+    return 10;
+
+  auto pick = [](Reading& value) -> int32_t& {
+    switch (value) {
+    case Reading::exact(auto& item): return item;
+    case Reading::estimate(auto& item): return item;
+    }
+  };
+  if (pick(reading) != 10)
+    return 11;
+  return 0;
+}
