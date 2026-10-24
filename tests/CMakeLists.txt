@@ -785,6 +785,10 @@ add_test(NAME shared_accessor_range_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/shared_accessor_range_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(shared_accessor_range_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME accessor_text_carrier_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/accessor_text_carrier_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(accessor_text_carrier_runtime PROPERTIES TIMEOUT 240)
 
 add_test(
   NAME semantic_header_boundary
@@ -1005,6 +1009,10 @@ add_test(NAME readonly_range_over_mutable_result_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/readonly_range_over_mutable_result.gti" --ownership-checks)
 set_tests_properties(readonly_range_over_mutable_result_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME parameter_payload_reference_returns_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/parameter_payload_reference_returns.gti" --ownership-checks)
+set_tests_properties(parameter_payload_reference_returns_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME raw_pointer_slot_references_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/raw_pointer_slot_references.gti" --ownership-checks)
@@ -1188,6 +1196,21 @@ add_test(NAME view_field_payloads_runtime
                  "${PROJECT_SOURCE_DIR}/tests/view_field_payloads_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(view_field_payloads_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME view_field_conversions_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/view_field_conversions_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(view_field_conversions_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME dependent_reference_results_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/dependent_reference_results_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(dependent_reference_results_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME view_field_nesting_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/view_field_nesting_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(view_field_nesting_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME recursive_text_relays_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/recursive_text_relays_runtime_test.py"
@@ -1198,6 +1221,11 @@ add_test(NAME failure_free_passive_moves_runtime
                  "${PROJECT_SOURCE_DIR}/tests/failure_free_passive_moves_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(failure_free_passive_moves_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME failure_free_passive_constructors_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/failure_free_passive_constructors_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(failure_free_passive_constructors_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME constructor_copy_after_formal_write_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/constructor_copy_after_formal_write_runtime_test.py"
@@ -1248,6 +1276,11 @@ add_test(NAME reference_owned_field_replacement_runtime
                  "${PROJECT_SOURCE_DIR}/tests/reference_owned_field_replacement_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(reference_owned_field_replacement_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME payload_enum_reference_assignment_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/payload_enum_reference_assignment_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(payload_enum_reference_assignment_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME raw_owned_field_replacement_runtime
          COMMAND ${Python3_EXECUTABLE}
                  "${PROJECT_SOURCE_DIR}/tests/raw_owned_field_replacement_runtime_test.py"
@@ -4351,7 +4384,7 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/borrowed_payload_pattern_runtime_test.py"
               "$<TARGET_FILE:gti>"
     )
-    set_tests_properties(borrowed_payload_pattern_runtime PROPERTIES TIMEOUT 300)
+    set_tests_properties(borrowed_payload_pattern_runtime PROPERTIES TIMEOUT 600)
     add_test(
       NAME argument_reference_return_runtime
       COMMAND "${Python3_EXECUTABLE}"

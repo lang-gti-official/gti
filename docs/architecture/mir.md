@@ -817,6 +817,17 @@ This applies to read-only as well as exclusive carrier-reference fields.
 A reference obtained through an owning accessor also retains its exact
 transient call-result ancestry until the adapter's endpoint; a coarse owner
 identity is not a substitute for the selected constructor input's loan chain.
+A by-value carrier that a call builds from a reference argument naming exactly
+what an accessor returned (the call's own result place, as in
+`b.get().begin()`, or a reference binding initialized from it) has a `Stored`
+loan whose source is the place rooted at that accessor's `CallResult` loan and
+whose parent is that loan. It holds exactly the accessor loan's stored
+dependency, which is none for ownerless text. A temporary accessor result has
+no semantic loan of its own, so its semantic carrier contract names the
+accessor's owner; lowering refines that to the returned referent, and a binding
+that retains the accessor's loan does not move the carrier's source back to the
+owner. The program verifier admits ownerless text at that exact referent only
+under its result loan.
 Conversely, a completed call with no reference or borrowed-state result can
 retire an unretained transient accessor loan even when its receiver is an
 owning member projected from that accessor. Lowering uses the already
@@ -993,7 +1004,11 @@ canonical containment follows place-valued reference forwarding while still
 checking the selected variant/field. A shared local child may reborrow a shared
 parent without gaining mutable access; parent activity, CFG containment,
 non-escape and child-before-parent endpoints remain mandatory and independently
-verified.
+verified. A payload borrowed through a reference parameter is such a child of
+the parameter's entry loan. Returning it publishes a fresh parentless Return
+loan from the child and retires the child at that boundary, as a returned
+payload selection does. The child is never reclassified in place, because its
+own `Borrow` still reads the entry loan.
 
 Native emission tail-forwards a cleanup recipe only when its verified schedule
 contains one possible action: a class with no source destructor and exactly one
@@ -1945,13 +1960,18 @@ instance), `TextContracts` independently derives `ownerlessTextFields`:
 - so is a text payload extracted from a formal's enum field reached through
   that formal's accessor: a statically dispatched, non-virtual source call
   whose every return borrows `this.field`, or another such accessor's result
-  on its own receiver (`accessorResultField`, read from the callee's verified
-  body);
+  on its own receiver (`accessorResultFields`, read from the callee's
+  verified body);
+- a use of the reference such an accessor returns, other than a payload
+  extraction, uses each field its returns name, and so does a payload
+  extraction when they name several (`accessorOperandFields`); an accessor's
+  own returned borrows are its designation (`accessorReturnLoans`);
 - field sources that reach ownerless storage or a `None`-summary text return
   become requirements;
 - each other use of the whole formal or receiver requires all of its text
   fields, except a `CallInput` that a call consumes as a same-class formal or
   receiver of an in-scope callee, which inherits that callee's requirements.
+  An accessor's returned reference is not a whole use of its receiver.
   The consuming call may be in a later block than its input, after a checked
   argument such as `n - 1`;
 - a fixpoint shared with the text-formal requirements closes forwarding.
@@ -2003,6 +2023,62 @@ fields.
   use of the formal it is rooted at, and neither is the receiver it borrows
   for that call: readers resolve the text through `returnSources`, so a
   method composing another accessor's reference relays what it relays.
+
+Phase 2c adds re-rooting constructions and dependent returns:
+- A construction that re-roots a class argument's text field has one
+  `borrowFields` mapping with one `sourceFields` entry. The verifier's
+  `dependentTextPublication` admits it when `dependentTextFieldRelay`, read
+  from the constructor's initializers, maps that parameter's field to exactly
+  the mapping's `resultFields`. In `TextContracts`, a dependent CallInput into
+  such a construction is re-rooted (`publishesFieldRelay`), and a re-rooted
+  formal field must reach no ownerless text storage in the constructor
+  (`constructorBodyFieldNeeds`). `contractPlace` treats a constructor's
+  by-value class formal as a contract place. `dependentDesignationPath`
+  follows a value that a Move or Load produced, so a moved dependent argument
+  is checked too; before 0.468.0 it skipped the relay check.
+- A consuming receiver is a contract formal (`readOnlyContractFormal`). A
+  consuming call whose result is a text field result of its receiver is
+  exempt from the consuming-call borrow rule.
+- In a field-contract function, an instruction other than a `PayloadExtract`
+  that names a contract formal's payload-enum field place (a copy, move or
+  borrow of the field) requires every text payload of that field. A switch
+  observes its subject in place, in its terminator.
+- `dependentTextReturnSummary` admits a function flagged
+  `dependentTextReturn`: one Argument mapping over a read-only reference
+  parameter, with no source fields, at a direct text path, or at a payload of
+  an enum result. It replaces the complete-layout check for that summary. A
+  return that is a Construct or Call without a loan and without publication
+  is an ownerless alternative. Clearing the flag or the path fails
+  verification.
+- HIR gives a publishing contextual construction dependent traits, and its
+  verifier requires the construction and its value node to agree. A by-value
+  payload binding that semantics gives a retained loan carries that loan in
+  MIR (`bindingLoans`).
+
+Phase 3 verifies nested paths:
+- `directTextPath` walks class fields and payload-enum payloads to text at
+  any depth. `TextContracts` records a nested text class formal stored whole
+  (relay key `(parameter, 0)`) or a class field of one, read directly or
+  through an accessor whose every return moves that receiver field
+  (`classFieldSource`). `publishesFieldRelay` and the verifier's
+  `dependentTextRelayPath` accept a designated path through either, and the
+  relay's own producers are exempt from the constructor's whole-use check.
+- A call publishing a dependent class argument that its callee returns whole
+  (`publishesWholeCallText`, `dependentTextCallPublication`) nests the path
+  under the published field; returned fresh constructions derive those relays
+  for class formals.
+- `classReferenceRelay` derives the receiver payload that a reference to a
+  nested text class designates, through payload reference bindings and
+  composed accessors. Text read under such a call's result resolves to the
+  origin's prefix (`classReferenceSources`), and a whole use of the result
+  requires it. A relay of a nested path is contracted only through a payload
+  prefix.
+- A reference to text that an accessor returned (a `CallResult` loan whose
+  operand is `string_view&` or `c_string&`) designates no path:
+  `dependentDesignationPath` would otherwise read the path of the accessor's
+  owner, the loan's source, and check it against the view. A view has no
+  fields to relay; its owner is the result loan's stored dependency, which
+  the carrier-shell rules verify.
 
 A text field result (`textFieldResult`: one `returnBorrowFields` mapping of an
 Argument or Receiver origin to one source field, no result fields) carries the
@@ -2247,6 +2323,25 @@ record only when its event equals the event of the exact `Move` it repeats.
 The constructor proof admits a moved formal's owned-parameter initializer
 when that formal's type is passive. A class move still needs its lifecycle
 events, and a real failure source beside a move keeps the body conservative.
+Its passive values are program-aware (RT-12): scalars, integral enums, fixed
+arrays of passive values, payload enums whose every alternative payload is
+passive and needs no active cleanup, and records with generated special
+members, no destructor, no borrowed state and only passive fields. A
+constructor whose class holds only such fields may take such formals, build
+an enum constant or a payload construction whose operands match the selected
+alternative, keep passive drop obligations (no destructor, no active cleanup,
+no active child), move a passive input into its prepared call slot, and make
+a consuming (`Once`) call of an already proved non-virtual member of a
+passive record whose receiver is that slot, provided the call retires exactly
+the slot's obligation. So `Slot(int32_t n) : state(state_t::ready(n))`, the
+prelude's `expected(T value)`, `expected()` and
+`expected(unexpected_value<E>)` for passive `T` and `E`, and
+`unexpected_value<E>(E)` for an integral enum `E` are failure-free, and the
+structural function proof then lifts result builders over them, such as
+`expected<int32_t, E>`, `expected<void, int32_t>` and
+`expected<Record, int32_t>` returns. A payload whose alternative needs active
+cleanup, a checked operation, a non-consuming or lifecycle-free receiver call,
+or a borrowed or actively cleaned value keeps the constructor conservative.
 This is only the defined-
 failure dimension by itself. Every function, constructor, or destructor whose
 definition provenance is a declaration (and every runtime-bound function) is

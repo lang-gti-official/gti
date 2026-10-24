@@ -911,6 +911,27 @@ bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
     --remaining;
     if (isMirScalarValueType(&program, type))
       return true;
+    // A closed payload enum is passive when every alternative's payload is:
+    // its compiler-defined transfer and drop then act only on that payload.
+    // Borrowed or actively cleaned payloads keep their own effects.
+    if (const MirPayloadEnum *sum = type.kind == SemanticType::Enum
+                                        ? program.findPayloadEnum(type)
+                                        : nullptr) {
+      const bool available =
+          operation == StructuralValueOperation::Copy   ? sum->traits.copyable
+          : operation == StructuralValueOperation::Move ? sum->traits.movable
+                                                        : true;
+      return available && !sum->traits.containsBorrowedState &&
+             !sum->requiresActiveCleanup &&
+             std::all_of(sum->variants.begin(), sum->variants.end(),
+                         [&](const MirPayloadEnumVariant &variant) {
+                           return std::all_of(variant.payloadTypes.begin(),
+                                              variant.payloadTypes.end(),
+                                              [&](const SemanticType &payload) {
+                                                return self(self, payload);
+                                              });
+                         });
+    }
     if (type.kind != SemanticType::Class)
       return false;
     const MirClassInstance *owner = nullptr;

@@ -2830,15 +2830,20 @@ Phase 2b publishes through payload-enum fields at a path `[field, payload]`:
   (`contractPayloadBinding`), whether the subject names the field
   (`formal.field`) or calls the formal's accessor for it
   (`formal.accessor()`, or an implicit `accessor()` on the receiver). An
-  accessor designates a field (`accessorReceiverField`) when it is a
+  accessor designates fields (`accessorReceiverFields`) when it is a
   read-only, non-virtual method whose every return is `this.field` or a call
   `this.other()` of another argument-free such accessor; the implicit `field`
-  and `other()` count only in a parameterless body that declares nothing.
-  A text payload bound through any other call whose reference result borrows
-  a contract formal (an accessor returning one of several fields, say) is a
-  whole use of that formal (`callBorrowedTextFormal`). MIR derives a
-  requirement through an accessor only where semantics names its field or
-  records that whole use. In a generic class, a type-parameter payload
+  and `other()` count only in a parameterless body that declares nothing. Its
+  own returns require nothing (`notePayloadFieldRead`): a caller outside a
+  contract scope keeps the result dependent on each returned field
+  (`dependentReferenceResult`), and a use of the call on a contract formal
+  reads each field (`contractEnumFields`). A `switch` observes a single
+  designated field in place; on an accessor designating several it reads
+  them all. A text payload bound through any other call whose reference
+  result borrows a contract formal (an accessor returning one of several
+  fields, say) is a whole use of that formal (`callBorrowedTextFormal`). MIR
+  derives a requirement through an accessor only where semantics names its
+  fields or records that whole use. In a generic class, a type-parameter payload
   requires it conditionally. A whole use requires every text payload too
   (`textPayloadFields`), and `contractTextPath` filters open requirements for
   an instance. A relay is decided against each designated path.
@@ -2856,6 +2861,67 @@ Phase 2b publishes through payload-enum fields at a path `[field, payload]`:
   analysis. An instance requires every text field and payload of a
   publishable argument type there, and a call relays and forwards nothing
   into it, so a container cannot store a dependent value.
+
+Phase 2c publishes through conversions, constructor field relays and
+returns:
+- A contextual construction's one expression node is both the argument and
+  the converted value. `recordContextualConstruction` notes a dependent
+  conversion, `contextualTextValue` classifies the converted value, and
+  `storedBorrowDependencies` reads the argument's dependency while
+  `contextualTextArgument` names it. `publishTextDependency` does not parent a
+  dependency on a local view carrier's own StoredValue loan, so a value over
+  a view binding depends on the binding's owner.
+- `ConstructorTextInput::sourceField` records a constructor initializer that
+  stores a by-value class formal's text field, as `formal.f` or as a
+  zero-argument accessor whose sole statement returns `this.f`.
+  `relayConstructorTextField` re-roots the argument's dependency at `[f]` to
+  the stored path (`BorrowedFieldOrigin::sourceFields = {f}`). The formal must
+  be mentioned once and the constructor must keep published text.
+- A consuming receiver is a contract receiver (`contractReceiver`): a write
+  into a text field already requires ownerless text, so a moved field holds
+  what the caller published. Moving a view keeps its source's owner
+  dependence, and `ownerlessTextForwardingField` sees through the move.
+- `noteDependentTextReturn` records `FunctionInfo::dependentTextReturn` when
+  a returned value's single dependency designates the referent of one
+  read-only reference formal: an Argument return summary at the text path.
+  `publishTextReturnResult` gives each call that summary. Ownerless returns
+  are alternatives beside it.
+- `notePayloadFieldRead` requires every text payload of a contract formal's
+  or receiver's payload-enum field at any read other than the switch subject
+  being analyzed (`observedSwitchSubject`). An instance analysis reads its
+  receiver at the instance type, so a type-parameter field that is a payload
+  enum there is covered. Before 0.468.0, copying, borrowing or storing such
+  a field let a dependent value's payload escape.
+
+Phase 3 nests dependent values in fields and payloads:
+- `ConstructorTextInput::wholeValue` records an initializer storing a
+  by-value formal of a nested text class (`nestedTextClass`: a publishable
+  class with a text path under it) whole in a field or payload of its type,
+  and `sourceField` may name a class-typed field of a formal. At a call,
+  `relayConstructorTextField` re-roots the argument's one path `P` through the
+  stored part `S` to `D + P[|S|..]`, with `sourceFields = P`.
+  `publishTextCallResult` nests a dependent class argument that a generic
+  function returns whole, as `unexpected` does, and `relayReturnedTextFormal`
+  admits such a formal.
+- A field read of a nested class, a reference relay to one, and a
+  dereference through an operator relay are dependent places with the
+  relayed prefix stripped (`nestedTextRelay`). `textReferenceReturnSummary`
+  and `payloadReferenceRelayArm` admit references to nested text classes.
+  Copying a dependent place other than a named value out is `GTI-S2045`.
+- A field contract names a prefix (`contractPrefix`): a text field exactly,
+  or a payload-enum field's payload, which covers every path below a nested
+  text class payload. A path through a nested class field has no contract,
+  so relaying it is `GTI-S2045`. Class payloads holding text take
+  requirements wherever text payloads do, and `contractTextPath` keeps them
+  in instances.
+- A contract formal's reference relay to a nested text class, and field
+  chains under it, are noted (`noteContractRelayUse`). A text read under one
+  is dynamic and forwards the prefix (`ownerlessTextForwardingField`); any
+  use but a field projection requires the prefix when contracts are
+  finalized.
+- A value initialized from a construction or call that publishes dependent
+  text is a new value: it does not continue a moved carrier's loan, and a
+  publishing direct initialization re-roots its argument.
 
 A temporary needs no further model. Its construction publishes as above, and
 its expression is a dependent value that a field read, a relay or a receiver

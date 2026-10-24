@@ -13286,6 +13286,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         // publication. Returning it transfers the same evaluated address and
         // complete dependency inventory into a fresh escaping capability; it
         // does not reclassify the tag-checked local selection as an entry loan.
+        // A payload borrowed through a reference parameter publishes the same
+        // way.
         const bool selectedReferenceReturnTransfer = [&] {
           if (body.returnType.kind != SemanticType::Reference ||
               body.returnType.arguments.size() != 1 ||
@@ -13298,10 +13300,26 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               instruction.hirValue != produced.producedBy)
             return false;
           const MirLoan *retained = body.findLoan(source.loan);
+          // A payload borrowed through a reference parameter is a local child
+          // of that parameter's caller-owned entry loan. It keeps its own
+          // tag-checked activation until publication, as a selection does.
+          const MirLoan *entry =
+              retained == nullptr ? nullptr : body.findLoan(retained->parent);
+          const MirPlace *formal =
+              entry == nullptr ? nullptr : body.findPlace(entry->source);
+          const bool parameterChild =
+              entry != nullptr && entry->kind == MirLoanKind::Parameter &&
+              entry->entry && !entry->escapes && entry->parent == 0 &&
+              formal != nullptr && formal->root == MirPlaceRootKind::Binding &&
+              formal->projections.empty() &&
+              formal->type.kind == SemanticType::Reference &&
+              std::find(entry->carriers.begin(), entry->carriers.end(),
+                        formal->binding) != entry->carriers.end();
           if (retained == nullptr || retained->id == produced.id ||
               retained->kind != MirLoanKind::Local ||
-              !retained->referenceSelection || retained->entry ||
-              retained->escapes || retained->producedBy == 0 ||
+              (!retained->referenceSelection && !parameterChild) ||
+              retained->entry || retained->escapes ||
+              retained->producedBy == 0 ||
               retained->producedBy != instruction.hirValue ||
               retained->source != produced.source ||
               retained->storedDependency != produced.storedDependency ||

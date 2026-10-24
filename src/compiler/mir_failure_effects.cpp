@@ -1463,23 +1463,6 @@ private:
            traits.drop == DropKind::Trivial && !traits.containsBorrowedState;
   }
 
-  [[nodiscard]] static bool
-  passiveConstructorValueType(const SemanticType &type) {
-    if (scalarType(type)) {
-      return true;
-    }
-    return type.kind == SemanticType::Array && type.arguments.size() == 1 &&
-           type.arrayLength != 0 && type.arrayLengthParameterId == 0 &&
-           passiveConstructorValueType(type.arguments.front());
-  }
-
-  [[nodiscard]] static bool
-  passiveConstructorValueTraits(const SemanticTypeTraits &traits,
-                                const SemanticType &type) {
-    return passiveConstructorValueType(type) &&
-           traits.drop == DropKind::Trivial && !traits.containsBorrowedState;
-  }
-
   [[nodiscard]] static bool scalarOperation(MirOperation operation) {
     switch (operation) {
     case MirOperation::Literal:
@@ -1561,9 +1544,121 @@ private:
            classForType(type.arguments.front()) != nullptr;
   }
 
-  // A source constructor that initializes every passive scalar/fixed-array
-  // field from a matching passive value has no hidden class lifecycle work.
-  // In-class defaults are not evaluated for fields explicitly named by that
+  // A passive value has no lifecycle work of its own, so loading, moving,
+  // storing or dropping it cannot raise a defined failure: a scalar, an
+  // integral enum, a fixed array of passive values, a payload enum whose
+  // every payload is passive, or a record with generated special members,
+  // no destructor and only passive fields. Borrowed state, active cleanup and
+  // declared copy/move/assignment members keep a type out.
+  [[nodiscard]] bool passiveValueType(const SemanticType &type) const {
+    std::unordered_set<HirClassInstanceId> visiting;
+    return passiveValue(type, visiting, 64);
+  }
+
+  [[nodiscard]] bool
+  passiveValue(const SemanticType &type,
+               std::unordered_set<HirClassInstanceId> &visiting,
+               std::size_t depth) const {
+    if (depth == 0) {
+      return false;
+    }
+    if (scalarType(type)) {
+      return true;
+    }
+    if (type.kind == SemanticType::Array) {
+      return type.arguments.size() == 1 && type.arrayLength != 0 &&
+             type.arrayLengthParameterId == 0 &&
+             passiveValue(type.arguments.front(), visiting, depth - 1);
+    }
+    if (type.kind == SemanticType::Enum) {
+      if (program.findIntegralEnum(type) != nullptr) {
+        return true;
+      }
+      const MirPayloadEnum *sum = program.findPayloadEnum(type);
+      return sum != nullptr && sum->traits.movable &&
+             !sum->traits.containsBorrowedState &&
+             !sum->requiresActiveCleanup &&
+             std::all_of(
+                 sum->variants.begin(), sum->variants.end(),
+                 [&](const MirPayloadEnumVariant &variant) {
+                   return std::none_of(
+                              variant.payloadRequiresActiveCleanup.begin(),
+                              variant.payloadRequiresActiveCleanup.end(),
+                              [](bool active) { return active; }) &&
+                          std::all_of(variant.payloadTypes.begin(),
+                                      variant.payloadTypes.end(),
+                                      [&](const SemanticType &payload) {
+                                        return passiveValue(payload, visiting,
+                                                            depth - 1);
+                                      });
+                 });
+    }
+    const MirClassInstance *record = uniqueClass(type);
+    if (record == nullptr || !visiting.insert(record->id).second) {
+      return false;
+    }
+    const bool passive =
+        record->declaration != 0 && record->bases.empty() &&
+        record->structuralBases.empty() && !record->abstract &&
+        !record->polymorphic && !record->cAbiRecord && !record->cAbiLayout &&
+        !record->unionLayout && !record->destructor &&
+        record->destructorStatus == SpecialMemberStatus::Generated &&
+        record->moveConstructor == SpecialMemberStatus::Generated &&
+        record->copyConstructor != SpecialMemberStatus::Declared &&
+        record->copyAssignment != SpecialMemberStatus::Declared &&
+        record->moveAssignment != SpecialMemberStatus::Declared &&
+        !record->requiresActiveDropState && !record->requiresActiveCleanup &&
+        record->compilerCapability == CompilerCapabilityTypeKind::None &&
+        !record->traits.containsBorrowedState &&
+        std::none_of(record->fields.begin(), record->fields.end(),
+                     [](const MirClassFieldLifecycle &field) {
+                       return field.requiresActiveCleanup;
+                     }) &&
+        std::none_of(record->fieldDropOrder.begin(),
+                     record->fieldDropOrder.end(),
+                     [](const MirFieldDrop &field) {
+                       return field.requiresActiveCleanup;
+                     }) &&
+        std::all_of(record->declaredFields.begin(),
+                    record->declaredFields.end(),
+                    [&](const MirClassFieldInfo &field) {
+                      return field.field != 0 && field.symbol != 0 &&
+                             !field.requiresActiveCleanup &&
+                             passiveValue(field.type, visiting, depth - 1);
+                    });
+    visiting.erase(record->id);
+    return passive;
+  }
+
+  [[nodiscard]] const MirClassInstance *
+  uniqueClass(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class) {
+      return nullptr;
+    }
+    const MirClassInstance *selected = nullptr;
+    for (const MirClassInstance &candidate : program.classInstances()) {
+      if (candidate.type == type) {
+        if (selected != nullptr) {
+          return nullptr;
+        }
+        selected = &candidate;
+      }
+    }
+    return selected != nullptr && selected->id != 0 ? selected : nullptr;
+  }
+
+  // Records carry lexical drop metadata even when no destructor runs; every
+  // other passive value must be trivially dropped.
+  [[nodiscard]] bool passiveTraits(const SemanticTypeTraits &traits,
+                                   const SemanticType &type) const {
+    return passiveValueType(type) && !traits.containsBorrowedState &&
+           (type.kind == SemanticType::Class ||
+            traits.drop == DropKind::Trivial);
+  }
+
+  // A source constructor that initializes every passive field from a
+  // matching passive value has no hidden class lifecycle work. In-class
+  // defaults are not evaluated for fields explicitly named by that
   // constructor, so they do not make this exact constructor failure-capable.
   // Keep this proof separate from classForType(): that helper admits the
   // destructor-owning closure used by function/drop analysis, while this
@@ -1575,23 +1670,31 @@ private:
            !owner.polymorphic && !owner.cAbiRecord && !owner.cAbiLayout &&
            !owner.unionLayout && !owner.destructor &&
            !owner.requiresActiveDropState && !owner.requiresActiveCleanup &&
-           owner.fields.empty() && owner.fieldDropOrder.empty() &&
+           std::none_of(owner.fields.begin(), owner.fields.end(),
+                        [](const MirClassFieldLifecycle &field) {
+                          return field.requiresActiveCleanup;
+                        }) &&
+           std::none_of(owner.fieldDropOrder.begin(),
+                        owner.fieldDropOrder.end(),
+                        [](const MirFieldDrop &field) {
+                          return field.requiresActiveCleanup;
+                        }) &&
            std::all_of(owner.declaredFields.begin(), owner.declaredFields.end(),
-                       [](const MirClassFieldInfo &field) {
+                       [&](const MirClassFieldInfo &field) {
                          return field.field != 0 && field.symbol != 0 &&
-                                passiveConstructorValueType(field.type) &&
-                                field.dropKind == DropKind::Trivial &&
+                                passiveValueType(field.type) &&
                                 !field.requiresActiveCleanup;
                        }) &&
-           std::count_if(program.classInstances().begin(),
-                         program.classInstances().end(),
-                         [&](const MirClassInstance &candidate) {
-                           return candidate.type == owner.type;
-                         }) == 1;
+           uniqueClass(owner.type) == &owner;
   }
 
-  [[nodiscard]] static bool
-  commonInstruction(const MirInstruction &instruction) {
+  // Enum selection fields belong only to the enum constant and payload
+  // construction computes a passive constructor admits. A member call's
+  // receiver capability and static owner belong only to the consuming member
+  // call the Call case checks exactly.
+  [[nodiscard]] static bool commonInstruction(const MirInstruction &instruction,
+                                              bool enumComputation = false,
+                                              bool memberCall = false) {
     return instruction.unsafeOperation == UnsafeOperationKind::None &&
            !instruction.rawMemoryAccess &&
            instruction.closureCaptureTypes.empty() &&
@@ -1599,8 +1702,10 @@ private:
            instruction.borrowOrigin == BorrowOriginKind::None &&
            instruction.borrowArgument == 0 &&
            instruction.borrowAccess == AccessMode::ReadOnly &&
-           !instruction.borrowPlace && !instruction.enumOwner &&
-           !instruction.enumValue && !instruction.enumVariant &&
+           !instruction.borrowPlace &&
+           (enumComputation ||
+            (!instruction.enumOwner && !instruction.enumValue &&
+             !instruction.enumVariant)) &&
            !instruction.payloadIndex &&
            (instruction.intrinsic == IntrinsicKind::None ||
             (instruction.kind == MirInstructionKind::Move &&
@@ -1610,9 +1715,10 @@ private:
            instruction.definedFailure.localOrigins.empty() &&
            instruction.localFailureSites.empty() &&
            instruction.dispatch == CallDispatch::Static &&
-           instruction.dispatchOwner == SemanticType::Unknown &&
+           (memberCall || instruction.dispatchOwner == SemanticType::Unknown) &&
            !instruction.lambdaTarget && instruction.callableArguments.empty() &&
-           !instruction.callableBoundary && !instruction.callableInvocation;
+           !instruction.callableBoundary &&
+           (memberCall || !instruction.callableInvocation);
   }
 
   [[nodiscard]] bool proveFunction(HirFunctionInstanceId id);
@@ -1639,19 +1745,21 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
       !verifyMirBody(body, owner).valid()) {
     return false;
   }
+  const bool passiveConstructor = kind == MirBodyKind::Constructor &&
+                                  ownerClass != nullptr &&
+                                  passiveConstructorOwner(*ownerClass);
   const auto eligibleBodyType = [&](const SemanticType &type) {
     return eligibleType(type) ||
-           (kind == MirBodyKind::Constructor && ownerClass != nullptr &&
-            passiveConstructorOwner(*ownerClass) &&
-            (type == ownerClass->type || passiveConstructorValueType(type)));
+           (passiveConstructor &&
+            (type == ownerClass->type || passiveValueType(type)));
   };
   for (const MirPlace &place : body.places) {
     if (!eligibleBodyType(place.type) || place.root == MirPlaceRootKind::Loan ||
         place.loan != 0 || place.capture != 0) {
       return false;
     }
-    if (passiveConstructorValueType(place.type) &&
-        !passiveConstructorValueTraits(place.traits, place.type)) {
+    if (passiveValueType(place.type) &&
+        !passiveTraits(place.traits, place.type)) {
       return false;
     }
     if (place.root == MirPlaceRootKind::This) {
@@ -1675,12 +1783,29 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
     if (!eligibleBodyType(value.info.type) ||
         (callbackType(value.info.type) &&
          !passiveValueTraits(value.info.traits, value.info.type)) ||
-        (passiveConstructorValueType(value.info.type) &&
-         !passiveConstructorValueTraits(value.info.traits, value.info.type))) {
+        (passiveValueType(value.info.type) &&
+         !passiveTraits(value.info.traits, value.info.type))) {
       return false;
     }
   }
   for (const MirDropObligation &drop : body.dropObligations) {
+    // A passive value's obligation runs no destructor and releases nothing.
+    const MirClassInstance *passiveRecord = uniqueClass(drop.dropType.type);
+    if (passiveConstructor && passiveValueType(drop.dropType.type) &&
+        !drop.dropType.requiresActiveCleanup && !drop.dropType.destructor &&
+        !drop.dropType.lambdaInstance && !drop.dropType.uniquePointeeClass &&
+        !drop.dropType.polymorphicCleanup &&
+        std::none_of(drop.dropType.aggregate.begin(),
+                     drop.dropType.aggregate.end(),
+                     [](const MirDropType &child) {
+                       return child.requiresActiveCleanup ||
+                              child.destructor.has_value();
+                     }) &&
+        (!drop.dropType.classInstance ||
+         (passiveRecord != nullptr &&
+          *drop.dropType.classInstance == passiveRecord->id))) {
+      continue;
+    }
     const MirClassInstance *dropClass = classForType(drop.dropType.type);
     if (dropClass == nullptr || drop.dropType.classInstance != dropClass->id ||
         drop.dropType.destructor != dropClass->destructor ||
@@ -1690,24 +1815,62 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
     }
   }
 
+  // An enum constant or a payload construction over passive operands builds
+  // a passive value in place; neither runs user code.
+  const auto passiveEnumComputation = [&](const MirInstruction &instruction) {
+    if (!passiveConstructor ||
+        instruction.kind != MirInstructionKind::Compute ||
+        instruction.info.type.kind != SemanticType::Enum ||
+        !passiveTraits(instruction.info.traits, instruction.info.type) ||
+        instruction.literal) {
+      return false;
+    }
+    if (instruction.operation == MirOperation::EnumConstant) {
+      return instruction.operands.empty() &&
+             program.findIntegralEnum(instruction.info.type) != nullptr;
+    }
+    const MirPayloadEnum *sum = program.findPayloadEnum(instruction.info.type);
+    const auto variant =
+        sum != nullptr && instruction.enumVariant
+            ? std::find_if(sum->variants.begin(), sum->variants.end(),
+                           [&](const MirPayloadEnumVariant &candidate) {
+                             return candidate.variantIndex ==
+                                    *instruction.enumVariant;
+                           })
+            : std::vector<MirPayloadEnumVariant>::const_iterator{};
+    return instruction.operation == MirOperation::PayloadConstruct &&
+           sum != nullptr && instruction.enumVariant &&
+           variant != sum->variants.end() &&
+           instruction.operands.size() == variant->payloadTypes.size() &&
+           std::equal(
+               instruction.operands.begin(), instruction.operands.end(),
+               variant->payloadTypes.begin(),
+               [](const MirOperand &operand, const SemanticType &payload) {
+                 return operand.kind == MirOperandKind::Value &&
+                        operand.type == payload;
+               });
+  };
+
   std::unordered_set<MirInstructionId> provedInvokeEdges;
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
-      if (!commonInstruction(instruction)) {
+      const bool enumComputation = passiveEnumComputation(instruction);
+      const bool memberCall = passiveConstructor &&
+                              instruction.kind == MirInstructionKind::Call &&
+                              instruction.receiver.has_value();
+      if (!commonInstruction(instruction, enumComputation, memberCall)) {
         return false;
       }
       switch (instruction.kind) {
       case MirInstructionKind::Compute: {
         const bool passiveAggregate =
-            kind == MirBodyKind::Constructor && ownerClass != nullptr &&
-            passiveConstructorOwner(*ownerClass) &&
+            passiveConstructor &&
             instruction.operation == MirOperation::Aggregate &&
             instruction.info.type.kind == SemanticType::Array &&
             instruction.info.type.arguments.size() == 1 &&
             instruction.info.type.arrayLengthParameterId == 0 &&
             instruction.operands.size() == instruction.info.type.arrayLength &&
-            passiveConstructorValueTraits(instruction.info.traits,
-                                          instruction.info.type) &&
+            passiveTraits(instruction.info.traits, instruction.info.type) &&
             std::all_of(instruction.operands.begin(),
                         instruction.operands.end(),
                         [&](const MirOperand &operand) {
@@ -1739,7 +1902,8 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
             !instruction.lifecycle.empty() ||
             instruction.definedFailure.propagation !=
                 FailurePropagationKind::None ||
-            (!scalar && !passiveAggregate && !nativeCallback) ||
+            (!scalar && !passiveAggregate && !nativeCallback &&
+             !enumComputation) ||
             (instruction.operation == MirOperation::Literal
                  ? !instruction.literal || !instruction.operands.empty()
                  : instruction.literal.has_value())) {
@@ -1805,8 +1969,7 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
             !owned &&
             (passiveValueTraits(instruction.info.traits,
                                 instruction.info.type) ||
-             passiveConstructorValueTraits(instruction.info.traits,
-                                           instruction.info.type)) &&
+             passiveTraits(instruction.info.traits, instruction.info.type)) &&
             instruction.lifecycle.empty() &&
             instruction.definedFailure.empty() && source != nullptr &&
             source->type == instruction.info.type &&
@@ -1831,8 +1994,33 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
             instruction.preparedParameterDrop
                 ? body.findDropObligation(*instruction.preparedParameterDrop)
                 : nullptr;
-        if (instruction.callSite == 0 ||
-            instruction.callInputRole != MirCallInputRole::Argument ||
+        // A passive input is passed by value, or moved into its prepared
+        // slot, which only initializes that slot's passive obligation; the
+        // consuming call retires it.
+        const bool passive =
+            !scalar && !owned && passiveConstructor &&
+            passiveTraits(instruction.info.traits, instruction.info.type);
+        const bool passiveByValue =
+            passive &&
+            instruction.callInputRole == MirCallInputRole::Argument &&
+            instruction.callInputKind == HirCallInputKind::Value &&
+            !instruction.destination && !instruction.preparedParameterDrop &&
+            instruction.lifecycle.empty();
+        const bool passivePrepared =
+            passive &&
+            instruction.callInputKind == HirCallInputKind::MoveValue &&
+            instruction.destination && prepared != nullptr &&
+            prepared->place == *instruction.destination &&
+            instruction.lifecycle.size() == 1 &&
+            instruction.lifecycle.front().kind ==
+                MirLifecycleEventKind::Initialize &&
+            instruction.lifecycle.front().source == 0 &&
+            instruction.lifecycle.front().target == prepared->id &&
+            !instruction.lifecycle.front().conditional &&
+            !instruction.lifecycle.front().failureCleanup;
+        if (instruction.callSite == 0 || !instruction.callInputRole ||
+            (*instruction.callInputRole != MirCallInputRole::Argument &&
+             !passivePrepared) ||
             !instruction.result || instruction.receiver ||
             instruction.functionTarget || instruction.constructorTarget ||
             !instruction.parameterTypes.empty() ||
@@ -1847,7 +2035,8 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
               !instruction.destination || prepared == nullptr ||
               prepared->place != *instruction.destination ||
               instruction.lifecycle.empty())) ||
-            (!scalar && !owned)) {
+            (passive && !passiveByValue && !passivePrepared) ||
+            (!scalar && !owned && !passive)) {
           return false;
         }
         break;
@@ -1857,8 +2046,43 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
             instruction.functionTarget
                 ? program.findFunctionInstance(*instruction.functionTarget)
                 : nullptr;
+        // A proved member of a passive record may consume a receiver moved
+        // into its prepared slot by this call site; the call retires exactly
+        // that slot's obligation.
+        const MirInstruction *receiverInput =
+            instruction.receiver &&
+                    instruction.receiver->kind == MirOperandKind::Value
+                ? mir_detail::definitionFor(body, instruction.receiver->value)
+                : nullptr;
+        const MirClassInstance *receiverClass =
+            receiverInput == nullptr ? nullptr
+                                     : uniqueClass(receiverInput->info.type);
+        const bool passiveReceiver =
+            passiveConstructor && receiverInput != nullptr &&
+            receiverInput->kind == MirInstructionKind::CallInput &&
+            receiverInput->callSite == instruction.callSite &&
+            receiverInput->callInputRole == MirCallInputRole::Receiver &&
+            receiverInput->callInputKind == HirCallInputKind::MoveValue &&
+            receiverInput->preparedParameterDrop && receiverClass != nullptr &&
+            passiveValueType(receiverInput->info.type) && target != nullptr &&
+            target->owner == receiverClass->id && !target->staticMember &&
+            !target->virtualMethod &&
+            (instruction.dispatchOwner == SemanticType::Unknown ||
+             instruction.dispatchOwner == receiverClass->type) &&
+            instruction.callableInvocation ==
+                CallableInvocationCapability::Once &&
+            instruction.receiver->type == receiverInput->info.type &&
+            instruction.lifecycle.size() == 1 &&
+            instruction.lifecycle.front().kind ==
+                MirLifecycleEventKind::TransferOut &&
+            instruction.lifecycle.front().source ==
+                *receiverInput->preparedParameterDrop &&
+            instruction.lifecycle.front().target == 0 &&
+            !instruction.lifecycle.front().conditional &&
+            !instruction.lifecycle.front().failureCleanup;
         if (instruction.callSite == 0 || instruction.callInputRole ||
-            instruction.destination || instruction.receiver ||
+            instruction.destination ||
+            (instruction.receiver && !passiveReceiver) ||
             !instruction.functionTarget || target == nullptr ||
             instruction.constructorTarget ||
             instruction.parameterTypes != target->parameterTypes ||
@@ -2262,7 +2486,12 @@ bool MirOwnedFailureClosure::proveConstructor(HirConstructorInstanceId id) {
             constructor.parameterTypes.size() ==
                 constructor.parameterBindings.size() &&
             std::all_of(constructor.parameterTypes.begin(),
-                        constructor.parameterTypes.end(), scalarType) &&
+                        constructor.parameterTypes.end(),
+                        [&](const SemanticType &type) {
+                          return scalarType(type) ||
+                                 (passiveConstructorOwner(*owner) &&
+                                  passiveValueType(type));
+                        }) &&
             constructor.initializers.size() == owner->declaredFields.size() &&
             constructor.body.fullExpressions.size() ==
                 constructor.initializers.size() &&
@@ -2292,7 +2521,7 @@ bool MirOwnedFailureClosure::proveConstructor(HirConstructorInstanceId id) {
         *initializer.ownedParameter < constructor.parameterTypes.size() &&
         constructor.parameterTypes[*initializer.ownedParameter] ==
             initializer.targetType &&
-        passiveConstructorValueType(initializer.targetType);
+        passiveValueType(initializer.targetType);
     valid = initializer.kind == ConstructorInitializerTargetKind::Field &&
             initializer.field == field.symbol &&
             fields.insert(initializer.field).second &&
@@ -2337,8 +2566,8 @@ bool MirOwnedFailureClosure::proveConstructor(HirConstructorInstanceId id) {
     // of this field; require its exact stage instead of reconstructing a write
     // from the declaration's initializer inventory.
     const bool passiveStage =
-        passiveConstructorValueType(initializer.targetType) &&
-        stage != nullptr && !stage->result && stage->destination &&
+        passiveValueType(initializer.targetType) && stage != nullptr &&
+        !stage->result && stage->destination &&
         stage->hirValue == initializer.arguments.front() &&
         stage->operation == MirOperation::None && !stage->literal &&
         stage->operands.size() == 1 &&

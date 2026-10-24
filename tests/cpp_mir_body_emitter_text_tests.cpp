@@ -52,7 +52,12 @@ std::size_t stagedExpectedArguments(const lang::FrontendResult &frontend,
       ++staged;
       const std::string slot =
           "__gti_mir_p_" + std::to_string(*input.destination);
-      const auto published = text.find(slot + ".construction_address()");
+      // A fallible producer publishes through the slot's address; a
+      // failure-free one (a passive payload, RT-12) from its prvalue.
+      const auto fallible = text.find(slot + ".construction_address()");
+      const auto published = fallible != std::string::npos
+                                 ? fallible
+                                 : text.find(slot + ".construct_from(");
       const auto moved =
           published == std::string::npos
               ? std::string::npos
@@ -278,10 +283,10 @@ int main() {
           // by assignment into its already-constructed storage.
           artifact.contents.find(
               "(*this).empty = ::__gti_program::payload_t{"
-              "std::in_place_index<2>}; // direct passive payload field "
+              "std::in_place_index<1>}; // direct passive payload field "
               "publication") != std::string::npos &&
           artifact.contents.find("(*this).valued = ::__gti_program::payload_t{"
-                                 "std::in_place_index<1>, __gti_mir_v_") !=
+                                 "std::in_place_index<0>, __gti_mir_v_") !=
               std::string::npos,
       "production emission executes conversion and payload publication in "
       "constructor MIR without duplicate in-class defaults");
@@ -5877,7 +5882,12 @@ int main() {
           "::gti_internal::backend::assign_representation(__gti_mir_p_" +
           std::to_string(*assign.destination) + ".get(), std::move(" + slot +
           ".get()));";
-      const auto published = text.find(slot + ".construction_address()");
+      // A fallible producer publishes through the slot's address; a
+      // failure-free one (a passive payload, RT-12) from its prvalue.
+      const auto fallible = text.find(slot + ".construction_address()");
+      const auto published = fallible != std::string::npos
+                                 ? fallible
+                                 : text.find(slot + ".construct_from(");
       const auto assigned = text.find(assignment);
       const auto next =
           assigned == std::string::npos
@@ -6479,13 +6489,22 @@ int main() {
          "an owning binding should accept an inline Unexpected replacement");
   // A fresh class error is constructed in its slot, moved into unexpected()
   // and retired right after that call.
+  // unexpected() over a passive class error is failure-free (RT-12) and
+  // calls its plain form; over an owning error it calls its failure form.
+  const auto unexpectedCall = [](const std::string &line) {
+    for (const std::string marker : {"_unexpected__gti_mir_failure(std::move(",
+                                     "_unexpected(std::move("}) {
+      if (const std::size_t staged = line.find(marker);
+          staged != std::string::npos)
+        return staged + marker.size();
+    }
+    return std::string::npos;
+  };
   std::size_t stagedErrors = 0;
   for (std::size_t index = 0; index + 1 < lines.size(); ++index) {
-    const std::string marker = "_unexpected__gti_mir_failure(std::move(";
-    const std::size_t staged = lines[index].find(marker);
-    if (staged == std::string::npos)
+    const std::size_t idStart = unexpectedCall(lines[index]);
+    if (idStart == std::string::npos)
       continue;
-    const std::size_t idStart = staged + marker.size();
     const std::string slot = lines[index].substr(
         idStart, lines[index].find(".get())", idStart) - idStart);
     bool constructed = false;
@@ -6495,7 +6514,7 @@ int main() {
     bool retired = false;
     for (std::size_t after = index + 1;
          after < lines.size() && !retired &&
-         !contains(lines[after], "_unexpected__gti_mir_failure(");
+         unexpectedCall(lines[after]) == std::string::npos;
          ++after)
       retired = lines[after] == slot + ".destroy();";
     stagedErrors += constructed && retired;
@@ -6507,6 +6526,177 @@ int main() {
   expect(text.find("_expected __gti_mir_v_") == std::string::npos,
          "no owning replacement should declare a value-initialized Expected "
          "local");
+}
+
+// An owning payload enum replaced through the complete referent of a checked
+// mutable reference (a call's reference result, a reference local or a
+// reference parameter) drains the old alternative once in its replacement
+// cleanup, move-assigns the staged value into that same referent and retires
+// the moved-from shell, in both the failure and the plain form. The
+// referent's owner keeps the lexical drop, so the borrowed Assign names no
+// local Replace target.
+void testOwningPayloadEnumReferentReplacement() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-owning-payload-enum-referent-replacement.gti", R"gti(
+#include <std/string>
+
+enum class label { text(std::string name), blank };
+
+class box {
+  mut label item;
+public:
+  box(label v) : item(std::move(v)) {}
+  mut label& ref() mut { return this.item; }
+};
+
+void reset(mut label& target) { target = label::blank; }
+
+// Its only cleanup cannot fail, so clear() has just the plain form.
+class quiet {
+public:
+  int32_t id;
+  quiet(int32_t id) : id(id) {}
+  ~quiet() {}
+};
+
+enum class token { held(quiet q), empty };
+
+void clear(mut token& target) { target = token::empty; }
+
+int main() {
+  mut token t = token::held(quiet(1));
+  clear(t);
+  mut box b = box(label::text(std::string("gti")));
+  b.ref() = label::blank;
+  mut label local = label::text(std::string("x"));
+  {
+    mut label& r = local;
+    r = label::text(std::string("y"));
+  }
+  reset(local);
+  return 0;
+}
+)gti");
+  expect(frontend.canGenerateCode(),
+         "the payload-enum referent replacement fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirFunctionInstance *entry = namedFunction(frontend, "main");
+  const lang::MirFunctionInstance *reset = namedFunction(frontend, "reset");
+  const lang::MirFunctionInstance *clear = namedFunction(frontend, "clear");
+  expect(entry != nullptr && reset != nullptr && clear != nullptr,
+         "the referent replacement fixture has main, reset and clear");
+  if (entry == nullptr || reset == nullptr || clear == nullptr) {
+    return;
+  }
+  // Each replacement cleanup drains one dereferenced carrier; the success
+  // edge move-assigns the staged slot into that exact spelling and retires
+  // the slot's shell. Returns the replaced referent spellings.
+  const auto referentReplacements = [](const std::string &text) {
+    std::vector<std::string> lines;
+    for (std::size_t start = 0; start < text.size();) {
+      const std::size_t end = std::min(text.find('\n', start), text.size());
+      const std::size_t first = text.find_first_not_of(' ', start);
+      lines.push_back(first < end ? text.substr(first, end - first) : "");
+      start = end + 1;
+    }
+    std::vector<std::string> replaced;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+      const std::string &line = lines[index];
+      const std::size_t call = line.rfind("}(");
+      if ((line.compare(0, 30, "__gti_mir_replacement_success_") != 0 &&
+           line.compare(0, 6, "(void)") != 0) ||
+          line.find("retire_cleaned_alternative();") == std::string::npos ||
+          call == std::string::npos || line.size() < call + 4)
+        continue;
+      const std::string referent =
+          line.substr(call + 2, line.size() - call - 4);
+      if (referent.compare(0, 11, "(*__gti_mir") != 0)
+        continue;
+      const std::string assignment = referent + " = std::move(__gti_mir_p_";
+      for (std::size_t after = index + 1; after < lines.size(); ++after) {
+        if (lines[after].compare(0, assignment.size(), assignment) != 0)
+          continue;
+        const std::size_t slotStart = assignment.size() - 12;
+        const std::string slot = lines[after].substr(
+            slotStart, lines[after].find(".get());", slotStart) - slotStart);
+        bool retired = false;
+        for (std::size_t shell = after + 1;
+             shell < std::min(after + 3, lines.size()) && !retired; ++shell)
+          retired = lines[shell] == slot + ".destroy();";
+        if (retired)
+          replaced.push_back(referent);
+        break;
+      }
+    }
+    return replaced;
+  };
+  const std::string entryText = selectedBodyText(frontend, *entry);
+  const std::vector<std::string> entryReplaced =
+      referentReplacements(entryText);
+  expect(entryReplaced.size() == 2 &&
+             entryReplaced.front().find("__gti_mir_loan_") !=
+                 std::string::npos &&
+             entryReplaced.back().find("__gti_mir_p_") != std::string::npos,
+         "a call's mutable reference result and a reference local should "
+         "each drain the old alternative once and move the new value into "
+         "the same referent");
+  const std::vector<std::string> resetReplaced =
+      referentReplacements(selectedBodyText(frontend, *reset));
+  expect(resetReplaced.size() == 1,
+         "a mutable reference parameter's referent should be replaced the "
+         "same way");
+  const std::string clearText = selectedBodyText(frontend, *clear);
+  expect(!clear->mayRaiseDefinedFailure &&
+             referentReplacements(clearText).size() == 1 &&
+             clearText.find("(void)[&](auto &__gti_cleanup_value)") !=
+                 std::string::npos,
+         "a non-failing referent replacement should use the plain form");
+  for (const std::string &referent : entryReplaced) {
+    std::size_t drains = 0;
+    for (std::size_t at = entryText.find("}(" + referent + ");");
+         at != std::string::npos;
+         at = entryText.find("}(" + referent + ");", at + 1))
+      ++drains;
+    expect(drains == 1, "each borrowed referent's old alternative should be "
+                        "drained by exactly one replacement cleanup");
+  }
+
+  // A borrowed Assign that claims a local Replace target is not the
+  // referent form and must not reach the shared move-assignment spelling.
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::MirBodyAddress address{lang::MirBodyKind::Function, entry->id};
+  const auto supports = [&](const lang::MirProgram &program) {
+    const lang::CppMirBodyEmitter emitter(program, map);
+    return entry->mayRaiseDefinedFailure
+               ? emitter.supportsFailureBodyText(address)
+               : emitter.supportsBodyText(address);
+  };
+  expect(supports(frontend.mir),
+         "the unmodified referent replacements should be admitted");
+  lang::MirProgram mutated = frontend.mir;
+  bool forged = false;
+  for (const auto &function : mutated.functionInstances()) {
+    if (function.id != entry->id)
+      continue;
+    auto &body = const_cast<lang::MirFunctionInstance &>(function).body;
+    for (lang::MirBlock &block : body.blocks)
+      for (lang::MirInstruction &instruction : block.instructions)
+        if (!forged && instruction.kind == lang::MirInstructionKind::Assign &&
+            instruction.replacementPair != 0 && !instruction.ownership &&
+            instruction.lifecycle.size() == 1 &&
+            instruction.lifecycle.front().target == 0 &&
+            !body.dropObligations.empty()) {
+          instruction.lifecycle.front().target =
+              body.dropObligations.front().id;
+          forged = true;
+        }
+  }
+  expect(forged && !supports(mutated),
+         "a borrowed referent replacement naming a local Replace target "
+         "should be refused");
 }
 
 void testExpectedConsumingMemberReturn() {
@@ -7821,7 +8011,12 @@ int main() { return observe(true) + observe(false) - 13; }
         !place.projections.empty() || !isExpectedClass(frontend, place.type))
       continue;
     const std::string slot = "__gti_mir_p_" + std::to_string(place.id);
-    const auto produced = text.find(slot + ".construction_address()");
+    // A fallible producer constructs through the slot's address; a
+    // failure-free one (a passive payload, RT-12) from its returned prvalue.
+    const auto fallible = text.find(slot + ".construction_address()");
+    const auto produced = fallible != std::string::npos
+                              ? fallible
+                              : text.find(slot + ".construct_from(");
     const auto read = produced == std::string::npos
                           ? std::string::npos
                           : text.find(slot + ".get()", produced);
@@ -8116,11 +8311,15 @@ int main() {
         !place.projections.empty() || !isExpectedClass(frontend, place.type))
       continue;
     const std::string slot = "__gti_mir_p_" + std::to_string(place.id);
-    const auto first = joinText.find(slot + ".construction_address()");
+    // An arm publishes through the slot's address when its producer is
+    // fallible, or from its prvalue when it is failure-free (RT-12).
+    const auto publication = [&](std::size_t from) {
+      return std::min(joinText.find(slot + ".construction_address()", from),
+                      joinText.find(slot + ".construct_from(", from));
+    };
+    const auto first = publication(0);
     const auto second =
-        first == std::string::npos
-            ? first
-            : joinText.find(slot + ".construction_address()", first + 1);
+        first == std::string::npos ? first : publication(first + 1);
     const auto read = second == std::string::npos
                           ? second
                           : joinText.find(slot + ".get().", second);
@@ -8867,8 +9066,12 @@ int main() { return transferred(true) + texted(false) - 3; }
     const std::string join = joinStart == std::string::npos
                                  ? std::string()
                                  : body.substr(joinStart, retired - joinStart);
+    // A fallible arm marks the storage it constructed through its address;
+    // a failure-free one (a passive argument, RT-12) constructs it directly.
     expect(supported && !join.empty() && count(body, retire) == 1 &&
-               count(body, join + ".mark_constructed()") == 2 &&
+               count(body, join + ".mark_constructed()") +
+                       count(body, join + ".construct(") ==
+                   2 &&
                body.rfind(".construct(std::move(" + join + ".get()));",
                           retired) != std::string::npos &&
                count(body, ".take()") == (transfer ? 2u : 0u),
@@ -9804,6 +10007,126 @@ int main() {
          "rather than borrowed unwritten");
 }
 
+// A borrowed payload binding names the active payload inside its subject, so
+// its MIR value has no native object even when its type is a cleanup-free
+// enum. A reference bound to it, as a local or as a reference-returning
+// accessor's result, retains that payload's address. A fresh cleanup-free
+// enum temporary is still its own SSA value.
+void testBorrowedCleanupFreeEnumPayloadReference() {
+  const auto frontend =
+      analyze("cpp-mir-borrowed-cleanup-free-payload-reference.gti", R"(
+enum class shape { circle(int radius), none };
+enum class wrap { one(shape inner) };
+int radius(shape& value) {
+  switch (value) {
+  case shape::circle(auto& r): return r;
+  case shape::none: return 0;
+  }
+}
+class holder {
+  wrap state;
+
+public:
+  holder(shape value) : state(wrap::one(value)) {}
+  shape& inner() {
+    switch (this.state) {
+    case wrap::one(auto& item): return item;
+    }
+  }
+};
+int bound(wrap& value) {
+  switch (value) {
+  case wrap::one(auto& item): {
+    shape& alias = item;
+    return radius(alias);
+  }
+  }
+}
+int fresh() { return radius(shape::circle(4)); }
+int main() {
+  wrap nested = wrap::one(shape::circle(3));
+  holder box = holder(shape::circle(3));
+  shape copied = box.inner();
+  return radius(copied) + bound(nested) + fresh() - 10;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "borrowed cleanup-free payload references verify in MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto function = [&](std::string_view name) {
+    for (const lang::HirFunctionInstance &instance :
+         frontend.hir.functionInstances())
+      if (instance.source != nullptr && instance.source->name().lexeme == name)
+        return frontend.mir.findFunctionInstance(instance.id);
+    return static_cast<const lang::MirFunctionInstance *>(nullptr);
+  };
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const auto bodyText = [&](const lang::MirFunctionInstance &instance) {
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = instance.id};
+    return instance.mayRaiseDefinedFailure
+               ? emitter.emitFailureBodyText(address, "borrowed-payload-v0", 1)
+                     .text
+               : emitter.emitBodyText(address, "borrowed-payload-v0", 1).text;
+  };
+  // Whether `text` names `__gti_mir_v_<id>` itself, not a longer id.
+  const auto namesValue = [](const std::string &text, lang::MirValueId id) {
+    const std::string name = "__gti_mir_v_" + std::to_string(id);
+    for (std::size_t at = text.find(name); at != std::string::npos;
+         at = text.find(name, at + name.size())) {
+      const std::size_t end = at + name.size();
+      if (end == text.size() || text[end] < '0' || text[end] > '9')
+        return true;
+    }
+    return false;
+  };
+  const std::string payloadAddress =
+      " = &::gti_internal::backend::payload_get<";
+  for (const std::string_view name : {"inner", "bound"}) {
+    const lang::MirFunctionInstance *instance = function(name);
+    std::vector<lang::MirValueId> borrowed;
+    if (instance != nullptr)
+      for (const lang::MirBlock &block : instance->body.blocks)
+        for (const lang::MirInstruction &instruction : block.instructions)
+          if (instruction.kind == lang::MirInstructionKind::Compute &&
+              instruction.operation == lang::MirOperation::PayloadExtract &&
+              instruction.result &&
+              instruction.info.category == lang::ValueCategory::Place &&
+              instruction.info.type.kind == lang::SemanticType::Enum)
+            borrowed.push_back(*instruction.result);
+    expect(instance != nullptr && borrowed.size() == 1 &&
+               supportsSelectedBodyText(frontend.mir, map, instance->id),
+           std::string(name) +
+               " borrows one cleanup-free enum payload and enters emission");
+    if (instance == nullptr || borrowed.size() != 1 ||
+        !supportsSelectedBodyText(frontend.mir, map, instance->id))
+      continue;
+    const std::string text = bodyText(*instance);
+    expect(!namesValue(text, borrowed.front()),
+           std::string(name) +
+               " never reads the borrowed payload as an SSA object");
+    expect(text.find(payloadAddress) != std::string::npos,
+           std::string(name) +
+               " binds the reference to the active payload's address");
+  }
+  const lang::MirFunctionInstance *temporary = function("fresh");
+  lang::MirValueId constructed = 0;
+  if (temporary != nullptr)
+    for (const lang::MirBlock &block : temporary->body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Compute &&
+            instruction.operation == lang::MirOperation::PayloadConstruct &&
+            instruction.result)
+          constructed = *instruction.result;
+  expect(temporary != nullptr && constructed != 0 &&
+             supportsSelectedBodyText(frontend.mir, map, temporary->id) &&
+             namesValue(bodyText(*temporary), constructed),
+         "a fresh cleanup-free enum temporary is borrowed as its SSA value");
+}
+
 constexpr NamedTest kTests[] = {
     {"testFieldInitializerExpressionVocabulary",
      testFieldInitializerExpressionVocabulary},
@@ -9921,12 +10244,16 @@ constexpr NamedTest kTests[] = {
      testExpectedClassReplacementSources},
     {"testOwningExpectedReplacementSources",
      testOwningExpectedReplacementSources},
+    {"testOwningPayloadEnumReferentReplacement",
+     testOwningPayloadEnumReferentReplacement},
     {"testShortCircuitExpectedPayloadFieldView",
      testShortCircuitExpectedPayloadFieldView},
     {"testCallableClassResultSlots", testCallableClassResultSlots},
     {"testUnconsumedFusedClosureSpellsNoBody",
      testUnconsumedFusedClosureSpellsNoBody},
     {"testHiddenSlotTemporaryArguments", testHiddenSlotTemporaryArguments},
+    {"testBorrowedCleanupFreeEnumPayloadReference",
+     testBorrowedCleanupFreeEnumPayloadReference},
 };
 
 } // namespace

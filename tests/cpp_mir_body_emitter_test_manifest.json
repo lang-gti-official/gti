@@ -558,6 +558,10 @@
       "suite": "text"
     },
     {
+      "name": "testOwningPayloadEnumReferentReplacement",
+      "suite": "text"
+    },
+    {
       "name": "testShortCircuitExpectedPayloadFieldView",
       "suite": "text"
     },
@@ -571,6 +575,10 @@
     },
     {
       "name": "testHiddenSlotTemporaryArguments",
+      "suite": "text"
+    },
+    {
+      "name": "testBorrowedCleanupFreeEnumPayloadReference",
       "suite": "text"
     },
     {

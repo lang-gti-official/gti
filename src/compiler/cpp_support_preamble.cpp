@@ -583,13 +583,21 @@ inline constexpr bool payload_equal_v = requires(const T &left, const T &right) 
   bool(left == right);
 };
 
+// Each source alternative occupies the native index equal to its verified MIR
+// variant ordinal, so a two-alternative enum's live discriminants are 0 and 1.
+// The final alternative is the backend-private empty shell that default
+// construction starts; it is never a source variant. The tag follows the
+// storage. When a small carrier travels whole, as one scalar, native
+// optimizers then fold its tag tests back into the branches that selected
+// the alternative; a leading tag or shifted ordinals defeat that folding.
 template <typename... Values> class payload_variant {
   static_assert(sizeof...(Values) != 0);
   using tag_type = std::conditional_t<(sizeof...(Values) < 256), std::uint8_t,
       std::conditional_t<(sizeof...(Values) < 65536), std::uint16_t, std::size_t>>;
   static constexpr tag_type vacant = static_cast<tag_type>(-1);
-  tag_type tag_ = vacant;
+  static constexpr std::size_t empty_index = sizeof...(Values) - 1;
   payload_union<Values...> storage_;
+  tag_type tag_ = vacant;
 
   template <std::size_t Index = 0, typename Callable>
   static void dispatch(std::size_t tag, Callable &&callable) {
@@ -614,7 +622,9 @@ template <typename... Values> class payload_variant {
   }
 public:
   constexpr payload_variant() noexcept(std::is_nothrow_default_constructible_v<
-      std::tuple_element_t<0, std::tuple<Values...>>>) { construct<0>(); }
+      std::tuple_element_t<empty_index, std::tuple<Values...>>>) {
+    construct<empty_index>();
+  }
   template <std::size_t Index, typename... Args>
   constexpr explicit payload_variant(std::in_place_index_t<Index>, Args &&...args) {
     construct<Index>(std::forward<Args>(args)...);

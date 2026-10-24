@@ -4315,6 +4315,244 @@ int main() {
          "an owned-parameter initializer must name its exact passive formal");
 }
 
+// A constructor over passive values is failure-free: integral enums, payload
+// enums whose payloads are passive, records with generated members and no
+// destructor, and a consuming member call on a passive record moved into its
+// prepared receiver slot. Its callers then call it plainly. A checked
+// operation, or a payload whose alternative needs active cleanup, keeps the
+// constructor conservative, and verification rejects a failure-free claim once
+// an exact passive shape is lost.
+void testPassiveValueConstructorFailureEffects() {
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "passive-value-constructor-failure-effects.gti", R"(
+enum class Mode : int32_t { Fast = 1, Slow = 2 };
+
+enum slot_state { ready(int32_t count), lost(Mode mode), empty };
+
+class Token {
+public:
+  mut Mode mode;
+  int32_t weight;
+  Token(Mode mode, int32_t weight) : mode(mode), weight(weight) {}
+  Mode take() && { return std::move(this.mode); }
+};
+
+class Slot {
+public:
+  mut slot_state state;
+  Slot(int32_t count) : state(slot_state::ready(count)) {}
+  Slot(mut Token token) : state(slot_state::lost(std::move(token).take())) {}
+  Slot() : state(slot_state::empty) {}
+};
+
+class Stamp {
+public:
+  int32_t number = 0;
+};
+
+class Holder {
+public:
+  Stamp stamp;
+  Mode mode;
+  Holder(Stamp stamp, Mode mode) : stamp(std::move(stamp)), mode(mode) {}
+};
+
+class Divided {
+public:
+  mut slot_state state;
+  Divided(int32_t count) : state(slot_state::ready(60 / count)) {}
+};
+
+class Counted {
+public:
+  int32_t value;
+  Counted(int32_t value) : value(value) {}
+  ~Counted() {}
+};
+
+enum kept_state { held(Counted value), none };
+
+class Keeper {
+public:
+  mut kept_state state;
+  Keeper(int32_t value) : state(kept_state::held(Counted(value))) {}
+};
+
+Slot ready_slot(int32_t count) { return Slot(count); }
+
+int main() {
+  Slot ready = ready_slot(3);
+  Slot lost = Slot(Token(Mode::Slow, 2));
+  Slot empty = Slot();
+  Holder holder = Holder(Stamp(), Mode::Fast);
+  Divided divided = Divided(4);
+  Keeper keeper = Keeper(5);
+  return 0;
+}
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "the passive-value constructor fixture should produce verified MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto constructor = [&](std::string_view owner, const auto &signature) {
+    const auto found =
+        std::find_if(frontend.hir.classInstances().begin(),
+                     frontend.hir.classInstances().end(),
+                     [&](const lang::HirClassInstance &instance) {
+                       return instance.source != nullptr &&
+                              instance.source->name().lexeme == owner;
+                     });
+    const lang::MirConstructorInstance *selected = nullptr;
+    for (const lang::MirConstructorInstance &candidate :
+         frontend.mir.constructorInstances())
+      if (found != frontend.hir.classInstances().end() &&
+          candidate.owner == found->id && signature(candidate.parameterTypes))
+        selected = &candidate;
+    return selected;
+  };
+  const auto any = [](const std::vector<lang::SemanticType> &) { return true; };
+  const lang::MirConstructorInstance *ready = constructor(
+      "Slot", [](const std::vector<lang::SemanticType> &parameters) {
+        return parameters.size() == 1 &&
+               parameters.front() == lang::SemanticType::Int32;
+      });
+  const lang::MirConstructorInstance *lost = constructor(
+      "Slot", [](const std::vector<lang::SemanticType> &parameters) {
+        return parameters.size() == 1 &&
+               parameters.front().kind == lang::SemanticType::Class;
+      });
+  const lang::MirConstructorInstance *empty = constructor(
+      "Slot", [](const std::vector<lang::SemanticType> &parameters) {
+        return parameters.empty();
+      });
+  const lang::MirConstructorInstance *token = constructor("Token", any);
+  const lang::MirConstructorInstance *holder = constructor("Holder", any);
+  const lang::MirConstructorInstance *divided = constructor("Divided", any);
+  const lang::MirConstructorInstance *keeper = constructor("Keeper", any);
+  expect(ready != nullptr && lost != nullptr && empty != nullptr &&
+             token != nullptr && holder != nullptr &&
+             !ready->mayRaiseDefinedFailure && !lost->mayRaiseDefinedFailure &&
+             !empty->mayRaiseDefinedFailure && !token->mayRaiseDefinedFailure &&
+             !holder->mayRaiseDefinedFailure,
+         "constructors that build payload enums over passive values, consume "
+         "a passive record's member, or move a passive record formal should "
+         "be proved failure-free");
+  expect(divided != nullptr && divided->mayRaiseDefinedFailure,
+         "a checked division beside a payload construction must keep its "
+         "failure effect");
+  expect(keeper != nullptr && keeper->mayRaiseDefinedFailure,
+         "a payload alternative with active cleanup is not passive");
+  if (ready == nullptr || lost == nullptr || holder == nullptr) {
+    return;
+  }
+
+  // The proved constructor is constructed plainly by its caller.
+  const lang::HirFunctionInstance *relayHir =
+      findHirFunction(frontend, "ready_slot");
+  const lang::MirFunctionInstance *relay =
+      relayHir == nullptr ? nullptr
+                          : frontend.mir.findFunctionInstance(relayHir->id);
+  bool plainConstruct = false;
+  if (relay != nullptr)
+    for (const lang::MirBlock &block : relay->body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Construct &&
+            instruction.constructorTarget == ready->id)
+          plainConstruct = instruction.definedFailure.propagation ==
+                           lang::FailurePropagationKind::None;
+  expect(relay != nullptr && !relay->mayRaiseDefinedFailure && plainConstruct,
+         "a function returning a proved passive construction should be "
+         "failure-free and construct it without a failure edge");
+
+  // Each mutation loses one exact passive shape, so the derived summary turns
+  // conservative and the stored failure-free claim no longer verifies.
+  const auto expectRefused = [&](const lang::MirConstructorInstance &target,
+                                 const auto &mutate,
+                                 const std::string &message) {
+    lang::MirProgram mutated = frontend.mir;
+    auto &constructors =
+        const_cast<std::vector<lang::MirConstructorInstance> &>(
+            mutated.constructorInstances());
+    const bool applied = mutate(constructors[target.id - 1].body);
+    expect(applied &&
+               lang::deriveMirDefinedFailureEffects(mutated)
+                   .constructors[target.id - 1] &&
+               !lang::verifyMirProgram(mutated).valid(),
+           message);
+  };
+  const auto eachInstruction = [](lang::MirBody &body, const auto &mutate) {
+    bool applied = false;
+    for (lang::MirBlock &block : body.blocks)
+      for (lang::MirInstruction &instruction : block.instructions)
+        applied = mutate(instruction) || applied;
+    return applied;
+  };
+  expectRefused(
+      *ready,
+      [&](lang::MirBody &body) {
+        return eachInstruction(body, [](lang::MirInstruction &instruction) {
+          if (instruction.operation != lang::MirOperation::PayloadConstruct)
+            return false;
+          instruction.info.traits.containsBorrowedState = true;
+          return true;
+        });
+      },
+      "a payload construction carrying borrowed state is not passive");
+  expectRefused(
+      *ready,
+      [&](lang::MirBody &body) {
+        return eachInstruction(body, [](lang::MirInstruction &instruction) {
+          if (instruction.operation != lang::MirOperation::PayloadConstruct)
+            return false;
+          instruction.enumVariant = 7;
+          return true;
+        });
+      },
+      "a payload construction must select one of its enum's alternatives");
+  expectRefused(
+      *lost,
+      [&](lang::MirBody &body) {
+        return eachInstruction(body, [](lang::MirInstruction &instruction) {
+          if (instruction.kind != lang::MirInstructionKind::Call ||
+              !instruction.receiver)
+            return false;
+          instruction.callableInvocation =
+              lang::CallableInvocationCapability::Read;
+          return true;
+        });
+      },
+      "only a consuming member call may retire its moved receiver slot");
+  expectRefused(
+      *lost,
+      [&](lang::MirBody &body) {
+        return eachInstruction(body, [](lang::MirInstruction &instruction) {
+          if (instruction.kind != lang::MirInstructionKind::Call ||
+              !instruction.receiver)
+            return false;
+          instruction.lifecycle.clear();
+          return true;
+        });
+      },
+      "a consuming member call must retire exactly its receiver slot");
+  expectRefused(
+      *holder,
+      [](lang::MirBody &body) {
+        bool applied = false;
+        for (lang::MirDropObligation &drop : body.dropObligations) {
+          drop.dropType.requiresActiveCleanup = true;
+          applied = true;
+        }
+        return applied;
+      },
+      "a passive record formal's obligation must need no active cleanup");
+}
+
 void testSynchronizationMirContract() {
   const std::string source = R"(
 void work() {}
@@ -9245,6 +9483,7 @@ int main() {
   testDefinedFailureIdentityAndPropagation();
   testScalarDefinedFailureEffectClosure();
   testPassiveMoveDefinedFailureEffects();
+  testPassiveValueConstructorFailureEffects();
   testSynchronizationMirContract();
   testCarrierShellDependencyMirFlow();
   testCopiedCarrierPublicationProof();

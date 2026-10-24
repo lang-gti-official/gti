@@ -3481,7 +3481,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         (result.kind == SemanticType::Reference ||
          typeTraits(result).containsBorrowedState ||
          (functionInfo != nullptr &&
-          functionInfo->returnBorrowOrigin != BorrowOriginKind::None))) {
+          functionInfo->returnBorrowOrigin != BorrowOriginKind::None &&
+          !receiverTextFieldResult(result, functionInfo->returnBorrowOrigin,
+                                   functionInfo->returnBorrowFields)))) {
       report(stmt.name(),
              std::string("A consuming ") +
                  (stmt.operatorName() ? "operator" : "method") +
@@ -4829,6 +4831,7 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
   const SemanticType valueType =
       analyzeInitializer(stmt.value(), currentReturnType, false, true);
   contextualReturnValue = enclosingReturnValue;
+  noteDependentTextReturn(stmt.value());
   const bool contextualInitialization =
       recordsDeclarationConversion(*stmt.value());
   recordRawResult(stmt.value());
@@ -4910,7 +4913,13 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   loanFlow.switchBoundaries.push_back({.region = loanFlow.currentRegion,
                                        .order = loanFlow.currentOrder,
                                        .statement = &stmt});
+  // A payload-enum field subject is observed in place, not copied out.
+  const Expr *subject = stmt.expression().get();
+  while (const auto *group = exprAs<Grouping>(subject))
+    subject = group->expression() ? group->expression().get() : nullptr;
+  const Expr *enclosingSubject = std::exchange(observedSwitchSubject, subject);
   const SemanticType subjectType = analyze(stmt.expression());
+  observedSwitchSubject = enclosingSubject;
   if (!instanceAnalysisActive) {
     const auto *receiver = receiverStateSymbol();
     const auto *subjectPlace = semanticModel.findPlace(*stmt.expression());
@@ -6189,12 +6198,17 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   }
   // A value whose text field or payload holds dynamic text carries that
   // dependency itself (L-OWN-02). Only a local binding can retain it.
+  // A contextual construction that publishes its argument's owner converts
+  // the initializer into such a value of the declared type.
+  const bool contextualText =
+      initializer && contextualTextValue(*initializer, declaredType);
   const bool ownerDependentValue = !ownerDependentText &&
                                    (declaredType.kind == SemanticType::Class ||
                                     declaredType.kind == SemanticType::Enum) &&
                                    initializerInfo != nullptr &&
-                                   isTextDependentValue(*initializerInfo) &&
-                                   initializerInfo->type == declaredType;
+                                   ((isTextDependentValue(*initializerInfo) &&
+                                     initializerInfo->type == declaredType) ||
+                                    contextualText);
   // A dependent field of a dependent value has no loan of its own yet: a
   // switch observes it in place.
   const Expr *source = initializer.get();
@@ -6208,7 +6222,21 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     else
       break;
   }
-  if (ownerDependentValue && exprAs<Get>(source) != nullptr) {
+  // So does a reference relay to a nested text class: a dependent place
+  // other than a named value is observed, not copied out. A reference local
+  // bound to such a place is that place.
+  const auto *sourceVariable = exprAs<Variable>(source);
+  const Symbol *sourceSymbol =
+      sourceVariable == nullptr ? nullptr : resolve(sourceVariable->name());
+  const bool aliasSource =
+      sourceSymbol != nullptr &&
+      sourceSymbol->type.kind == SemanticType::Reference &&
+      sourceSymbol->variableDeclaration != nullptr &&
+      dependentReferenceAliases.contains(sourceSymbol->variableDeclaration);
+  if (ownerDependentValue && !contextualText &&
+      (exprAs<Get>(source) != nullptr || aliasSource ||
+       (sourceVariable == nullptr &&
+        initializerInfo->category == ValueCategory::Place))) {
     consumeTextDependentValue(initializer);
     report(expressionToken(initializer),
            "This field holds dynamic text from a local owner; a switch on "
@@ -6226,8 +6254,29 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
              "GTI-S2045");
     }
     BindingInfo updated = *semanticModel.findBinding(stmt);
-    updated.traits = initializerInfo->traits;
+    updated.traits = contextualText
+                         ? textDependentValueInfo(declaredType).traits
+                         : initializerInfo->traits;
     semanticModel.record(stmt, std::move(updated));
+  }
+
+  // A reference local bound to a call's dependent reference result, or to
+  // another such local, aliases it (L-OWN-02). A reference to a dependent
+  // value's own field stays unsupported.
+  if ((exprAs<Call>(source) != nullptr || aliasSource) &&
+      declaredType.kind == SemanticType::Reference &&
+      declaredType.arguments.size() == 1 && initializerInfo != nullptr &&
+      initializerInfo->category == ValueCategory::Place &&
+      isTextDependentValue(*initializerInfo) &&
+      initializerInfo->type == declaredType.arguments.front()) {
+    consumeTextDependentValue(initializer);
+    if (globalStorage || instanceField)
+      report(stmt.name(),
+             "A reference into a value holding dynamic text cannot be "
+             "stored because the value's owner dependency is local.",
+             "GTI-S2045");
+    else
+      dependentReferenceAliases[&stmt] = initializer.get();
   }
 
   // A contextual construction or conversion is a fresh value of the declared
