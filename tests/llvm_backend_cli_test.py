@@ -33,13 +33,18 @@ def main() -> int:
         if "error[GTI-B0003]" not in unsupported.stderr or (
             "executable LLVM lowering is not implemented yet"
             not in unsupported.stderr
-        ):
+        ) or "O-LLVM-" not in unsupported.stderr or "MirInstructionKind." not in unsupported.stderr:
             raise AssertionError(
                 "LLVM selection did not preserve the structured limitation:\n"
                 + unsupported.stderr
             )
         if output.exists():
             raise AssertionError("an unsupported LLVM build published an executable")
+
+        output.write_bytes(b"existing artifact")
+        run([sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)], 65)
+        if output.read_bytes() != b"existing artifact":
+            raise AssertionError("unsupported LLVM admission replaced an existing artifact")
 
         run([sys.argv[1], str(source), "--backend", "unknown"], 64)
         run(

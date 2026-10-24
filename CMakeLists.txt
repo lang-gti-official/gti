@@ -598,7 +598,17 @@ target_include_directories("gti_cpp_backend" SYSTEM PRIVATE
 target_compile_features("gti_cpp_backend" PUBLIC cxx_std_20)
 target_link_libraries("gti_cpp_backend" PUBLIC gti_compiler)
 
-add_library("gti_llvm_backend" STATIC "src/compiler/llvm_backend.cpp")
+add_library(
+  "gti_llvm_backend" STATIC
+  "src/compiler/llvm_backend.cpp"
+  "src/compiler/llvm/admission.cpp"
+  "src/compiler/llvm/coverage.cpp"
+)
+file(
+  GENERATE
+  OUTPUT "${CMAKE_BINARY_DIR}/gti_llvm_backend_sources.txt"
+  CONTENT "$<JOIN:$<TARGET_PROPERTY:gti_llvm_backend,SOURCES>,\n>\n"
+)
 target_include_directories(
   "gti_llvm_backend"
   PUBLIC

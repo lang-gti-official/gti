@@ -42,7 +42,8 @@ while canonical language documents continue to describe actual support.
   per-instance effects, and optimizer observability.
 - [Backend](architecture/backend.md) — the sealed `LoweredProgram` consumer
   contract, production C++ backend, foundational LLVM backend, and native
-  artifact handoff.
+  artifact handoff; [LLVM coverage/admission](architecture/backend.md#llvm-coverage-and-admission)
+  records complete vocabulary ownership and the current conservative body inventory.
 - [Diagnostics](architecture/diagnostics.md) — structured diagnostics, spans,
   fix-its, recovery, and test expectations.
 - [Standard library and runtime](architecture/standard-library-and-runtime.md)

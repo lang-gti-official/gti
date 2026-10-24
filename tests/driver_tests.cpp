@@ -167,18 +167,24 @@ private:
 
 class UnsupportedBackend final : public lang::Backend {
 public:
+  explicit UnsupportedBackend(std::optional<lang::SourceSpan> source = {})
+      : source(std::move(source)) {}
   [[nodiscard]] std::string_view name() const override {
     return "unsupported-test";
   }
 
   [[nodiscard]] lang::BackendArtifact generate(lang::LoweredProgram) override {
     invoked = true;
+    if (source)
+      throw lang::BackendUnsupportedError("missing bounded test capability",
+                                          *source);
     throw lang::BackendUnsupportedError("missing bounded test capability");
   }
 
   [[nodiscard]] bool wasInvoked() const { return invoked; }
 
 private:
+  std::optional<lang::SourceSpan> source;
   bool invoked = false;
 };
 
@@ -312,12 +318,18 @@ int main() {
                    [](const lang::Diagnostic &diagnostic) {
                      return diagnostic.code == "GTI-B0003";
                    });
+  const auto host = lang::TargetInfo::host();
+  const bool hostTarget =
+      target.os == host.os && target.vendor == host.vendor &&
+      target.arch == host.arch && target.dataLayout == host.dataLayout;
+  const std::string_view limitation =
+      hostTarget ? "executable LLVM lowering is not implemented yet"
+                 : "currently accepts only the host target";
   expect(request.backend() == lang::BackendKind::Cpp &&
              llvmRequest.backend() == lang::BackendKind::Llvm &&
              !llvmResult.succeeded() && !llvmResult.artifact &&
              llvmDiagnostic != llvmResult.diagnostics.end() &&
-             llvmDiagnostic->message.find(
-                 "currently accepts only the host target") != std::string::npos,
+             llvmDiagnostic->message.find(limitation) != std::string::npos,
          "LLVM selection should be immutable and preserve a structured "
          "foundation-limit diagnostic");
   RecordingProgress progress;
@@ -690,6 +702,18 @@ void testBackendExceptionBoundary() {
              unsupportedDiagnostic->hints.empty(),
          "a classified backend limitation should use GTI-B0003 without "
          "asking the user to report an internal compiler error");
+
+  const lang::SourceSpan precise{canonicalSource.string(), 4, 8, 1};
+  UnsupportedBackend locatedBackend(precise);
+  const auto located =
+      lang::driver::compileWithBackend(request, locatedBackend);
+  const auto locatedDiagnostic = std::find_if(
+      located.diagnostics.begin(), located.diagnostics.end(),
+      [](const auto &diagnostic) { return diagnostic.code == "GTI-B0003"; });
+  expect(locatedDiagnostic != located.diagnostics.end() &&
+             locatedDiagnostic->primary == precise && !located.artifact,
+         "a backend limitation preserves its exact source span without "
+         "publication");
 }
 
 void testProcessInvocation(const std::filesystem::path &testExecutable) {

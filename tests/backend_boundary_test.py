@@ -7,6 +7,8 @@ import re
 import sys
 from pathlib import Path
 
+from llvm_backend_boundary import audit as audit_llvm_backend
+
 
 BACKEND_FILES = (
     "include/gti/backend.h",
@@ -79,19 +81,6 @@ WRITER_FORBIDDEN_IDENTIFIERS = re.compile(
     r"CppMirBodyEmissionMap|CppMirRepresentationSnapshot)\b"
 )
 
-LLVM_BACKEND_FILES = (
-    "include/gti/llvm_backend.h",
-    "src/compiler/llvm_backend.cpp",
-)
-LLVM_FORBIDDEN_INCLUDES = re.compile(
-    r'^\s*#\s*include\s*[<"]gti/(?:cpp_backend|cpp_emitter|cpp_representation|'
-    r'cpp_mir_[A-Za-z0-9_]*|cpp_program_[A-Za-z0-9_]*)\.h[>"]',
-    re.MULTILINE,
-)
-LLVM_FORBIDDEN_IDENTIFIERS = re.compile(
-    r"\b(?:CppBackend|CppEmitter|CppMir[A-Za-z0-9_]*|CppProgram[A-Za-z0-9_]*)\b"
-)
-
 
 def without_comments(source: str) -> str:
     source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
@@ -99,8 +88,8 @@ def without_comments(source: str) -> str:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: backend_boundary_test.py <repo-root>", file=sys.stderr)
+    if len(sys.argv) not in {2, 3}:
+        print("usage: backend_boundary_test.py <repo-root> [configured-source-manifest]", file=sys.stderr)
         return 2
     root = Path(sys.argv[1]).resolve()
     failures: list[str] = []
@@ -137,22 +126,7 @@ def main() -> int:
                 f"{relative}: formatting writer performs program lookup: {match.group(0)}"
             )
 
-    for relative in LLVM_BACKEND_FILES:
-        source = (root / relative).read_text(encoding="utf-8")
-        if match := LLVM_FORBIDDEN_INCLUDES.search(source):
-            failures.append(
-                f"{relative}: LLVM backend includes C++ representation policy: "
-                f"{match.group(0).strip()}"
-            )
-        if match := LLVM_FORBIDDEN_IDENTIFIERS.search(without_comments(source)):
-            failures.append(
-                f"{relative}: LLVM backend depends on C++ representation policy: "
-                f"{match.group(0)}"
-            )
-        if relative.startswith("include/") and re.search(
-            r'^\s*#\s*include\s*[<"]llvm/', source, re.MULTILINE
-        ):
-            failures.append(f"{relative}: public backend header exposes LLVM")
+    failures.extend(audit_llvm_backend(root, Path(sys.argv[2]) if len(sys.argv) == 3 else None))
 
     backend_header = (root / "include/gti/backend.h").read_text(encoding="utf-8")
     if not re.search(

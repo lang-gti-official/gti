@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.474.0 - LLVM coverage and admission foundation
+
+- The compiler library exposes an immutable LLVM admission inventory over
+  verified `LoweredProgram`, with explicit coverage owners and unsupported
+  shapes. LLVM still produces no executable code; C++ remains the default.
+- LLVM limitation diagnostics identify the missing requirement, implementation
+  milestone and available original source location through `GTI-B0003`.
+- Backend dependency and input-vocabulary gates detect new unclassified
+  operations, aggregate fields and private frontend/C++ dependencies. The
+  behavioral example harness can select either backend without imposing C++
+  representation checks on LLVM.
+- Remove duplicate computed-type catalog declarations introduced by integration,
+  restoring clean compiler builds without changing lookup ownership.
+
 ## 0.473.0 — Thread-local storage
 
 - `thread_local` defines distinct per-thread storage at namespace scope, in a
