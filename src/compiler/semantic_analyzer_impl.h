@@ -5196,8 +5196,6 @@ private:
   [[nodiscard]] bool isMetaLibraryUnit(SourceUnitId sourceUnit) const;
 
   // ---- Compile-time reflection (std/meta) ----
-  // Classes bound by `@compiler_type`, by binding kind.
-  std::unordered_map<CompilerTypeKind, ClassId> compilerTypeClasses;
   [[nodiscard]] static std::optional<CompilerTypeKind>
   compilerTypeKind(std::string_view binding);
   [[nodiscard]] ClassId compilerTypeClass(CompilerTypeKind kind) const;
@@ -6316,6 +6314,10 @@ private:
     std::unordered_map<GenericParameterId, GenericConstraintSet>
         genericConstraints;
     std::unordered_map<GenericParameterId, ConceptId> genericConstraintConcepts;
+    // Trusted @compiler_type bindings are declaration identities, just like
+    // the class catalog. Every concrete/speculative snapshot must retain
+    // this registry to rewrite computed types under the same authority.
+    std::unordered_map<CompilerTypeKind, ClassId> compilerTypeClasses;
     std::vector<ClassInfo> classes;
     std::vector<ExactClassSpecialization> exactClassSpecializations;
     std::vector<RegisteredConformance> conformances;
@@ -6410,6 +6412,7 @@ private:
               globalBorrowStorage.size(),
               genericConstraints.size(),
               genericConstraintConcepts.size(),
+              compilerTypeClasses.size(),
               classes.size(),
               exactClassSpecializations.size(),
               conformances.size(),
@@ -6882,6 +6885,8 @@ private:
       &genericConstraints = requestSession.catalog.genericConstraints;
   std::unordered_map<GenericParameterId, ConceptId> &genericConstraintConcepts =
       requestSession.catalog.genericConstraintConcepts;
+  std::unordered_map<CompilerTypeKind, ClassId> &compilerTypeClasses =
+      requestSession.catalog.compilerTypeClasses;
   std::vector<ClassInfo> &classes = requestSession.catalog.classes;
   std::vector<ExactClassSpecialization> &exactClassSpecializations =
       requestSession.catalog.exactClassSpecializations;

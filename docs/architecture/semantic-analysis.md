@@ -1259,8 +1259,12 @@ operation before publishing any result.
 Registration mutates `SemanticCatalog` in the ordered prepasses above. It owns
 namespace and visibility indexes, aliases, concepts, classes, enums,
 inheritance/member tables, exact specializations, native declarations, generic
-parameter identities, and one stable `CallableDeclaration` per source
-function. `FunctionInfo` publication is one explicit projection from that
+parameter identities, trusted compiler-type declaration identities, and one
+stable `CallableDeclaration` per source function. The compiler-type registry
+travels with every catalog copy/snapshot and is cleared with each new request;
+isolated effect, constexpr and speculative workers must not reconstruct these
+identities from public names or inherit them from a previous request.
+`FunctionInfo` publication is one explicit projection from that
 record. Overload resolution copies only a bounded `CallableCandidate` view for
 type substitution, receiver/access, dispatch, borrow-result, and viability
 state. The catalog is sealed before body visitation; body namespace value state

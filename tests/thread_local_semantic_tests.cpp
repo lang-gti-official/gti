@@ -3,9 +3,13 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
+#include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -1247,6 +1251,166 @@ void check<T, uint64_t Width>() {
   }
 }
 
+void reflectedQueryEffects() {
+  const std::string prefix = R"(
+#include <std/meta>
+struct Reading { int first = 1; int second = 2; };
+struct Empty {};
+thread_local mut int guarded = 1;
+thread_local mut int other = 2;
+class Types<Elements...> {};
+)";
+  for (const bool reflected : {false, true}) {
+    for (const std::string mutation : {"", "other = 9;", "guarded = 9;"}) {
+      const std::string selected =
+          "void inspect<T>() { constexpr for (auto item : " +
+          std::string(reflected ? "std::meta::fields_of<T>()"
+                                : "Types<T, int64_t>{}") +
+          ") { " + mutation + " } } ";
+      const auto result = analyze(
+          prefix + selected + "int main() { int& held = guarded; inspect<" +
+              (reflected ? "Reading" : "int32_t") + ">(); return held; }",
+          true, true);
+      if (mutation == "guarded = 9;") {
+        expect(!result.semanticValid && code(result, "GTI-S2045") &&
+                   !code(result, "GTI-B0001"),
+               "concrete ordinary/reflected constexpr-for bodies retain "
+               "hidden overlapping persistent writes");
+      } else {
+        if (!result.canGenerateCode())
+          for (const auto &diagnostic : result.diagnostics)
+            std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+        expect(result.canGenerateCode(),
+               "ordinary/reflected constexpr-for effect queries preserve "
+               "exact registered sequence types and disjoint storage");
+      }
+    }
+  }
+  positive(prefix + R"(
+void inspect<T>() {
+  constexpr for (auto field : std::meta::fields_of<T>()) { guarded = 9; }
+}
+int main() { int& held = guarded; inspect<Empty>(); return held; }
+)",
+           "an exact empty reflected sequence executes no hidden write");
+  const auto invalid = analyze(R"(
+thread_local mut int guarded = 1;
+void inspect<T>(T& sequence) { constexpr for (auto item : sequence) {} }
+int main() { int sequence = 0; int& held = guarded; inspect(sequence); return held; }
+)",
+                               true, true);
+  expect(!invalid.canGenerateCode() && code(invalid, "GTI-S2107") &&
+             !code(invalid, "GTI-S2045") && !code(invalid, "GTI-B0001"),
+         "an actually ineligible concrete sequence retains its ordinary "
+         "source diagnostic rather than an empty effect proof");
+
+  positive(prefix + R"(
+constexpr int count<T>() {
+  mut int result = 0;
+  constexpr for (auto field : std::meta::fields_of<T>()) { result += 1; }
+  return result;
+}
+struct FieldCount<T> {
+  mut int value = 0;
+  constexpr FieldCount() {
+    constexpr for (auto field : std::meta::fields_of<T>()) { this.value += 1; }
+  }
+};
+constexpr int constructed<T>() { FieldCount<T> result{}; return result.value; }
+static_assert(count<Reading>() == 2 && count<Empty>() == 0);
+static_assert(constructed<Reading>() == 2 && constructed<Empty>() == 0);
+int main() { return count<Reading>() - 2; }
+)",
+           "staged function/constructor snapshots retain trusted computed "
+           "reflection type identities for nonempty and empty sequences");
+}
+
+void reflectionRegistrySnapshots() {
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto metaPath =
+      std::filesystem::weakly_canonical(library / "std/meta.gti");
+  const std::string text = R"(
+#include <std/meta>
+struct Reading { int first = 1; int second = 2; };
+void inspect<T>() { constexpr for (auto field : std::meta::fields_of<T>()) {} }
+int main() { inspect<Reading>(); return 0; }
+)";
+  lang::FrontendWorkMetrics metrics;
+  lang::FrontendOptions options;
+  options.workMetrics = &metrics;
+  options.cache = std::make_shared<lang::FrontendCache>();
+  options.preambleCache = std::make_shared<lang::SemanticPreambleCache>();
+  options.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
+  const auto load =
+      [&](const std::string &source,
+          const std::unordered_map<std::string, std::string> &overrides = {}) {
+        metrics = {};
+        return lang::Frontend(options).analyze(
+            "reflection-registry.gti", source, {library / "prelude.gti"},
+            overrides, {library});
+      };
+  const auto first = load(text);
+  const auto cached = load(text + "\n// a later editor snapshot\n");
+  expect(first.canGenerateCode() && cached.canGenerateCode() &&
+             metrics.semanticPreambleAdoptions == 1,
+         "a trusted preamble snapshot carries computed-type declaration "
+         "bindings into a later reflected generic query");
+
+  std::ifstream input(metaPath);
+  std::string altered((std::istreambuf_iterator<char>(input)),
+                      std::istreambuf_iterator<char>{});
+  bool complete = !altered.empty();
+  for (const std::string_view marker :
+       {"@compiler_type(\"meta_list\")", "@compiler_type(\"meta_field\")"}) {
+    const auto position = altered.find(marker);
+    complete &= position != std::string::npos;
+    if (position != std::string::npos)
+      altered.erase(position, marker.size());
+  }
+  expect(complete,
+         "registry reset fixture reads the trusted binding declarations");
+  if (!complete)
+    return;
+  // Keep every public spelling and declaration order, but remove two trusted
+  // identity bindings. Neither a preamble nor a reused visitor may invent
+  // them from an earlier request or from the unchanged public class names.
+  const auto unbound = load(text, {{metaPath.string(), std::move(altered)}});
+  expect(!unbound.canGenerateCode() && code(unbound, "GTI-S2107") &&
+             !code(unbound, "GTI-B0001"),
+         "changed trusted declarations invalidate the preamble's registry "
+         "rather than reusing old computed-type identities");
+
+  lang::SourceGraph graph = first.sourceGraph;
+  lang::SourceManager sources = first.sources;
+  lang::SemanticVisitor semantic(lang::TargetInfo::host(), &graph, false,
+                                 nullptr, &sources);
+  expect(semantic.check(first.program),
+         "first registry request checks successfully");
+  expect(lang::HirLowerer()
+             .lower(first.program, semantic.model(), semantic)
+             .valid(),
+         "the first request establishes its trusted registry");
+  graph = unbound.sourceGraph;
+  sources = unbound.sources;
+  const bool checked = semantic.check(unbound.program);
+  const auto rejected =
+      checked ? lang::HirLowerer().lower(unbound.program, semantic.model(),
+                                         semantic)
+              : lang::HirLoweringResult{};
+  expect(!checked || !rejected.valid(),
+         "resetting one semantic visitor clears registry bindings absent from "
+         "its next catalog");
+  graph = first.sourceGraph;
+  sources = first.sources;
+  expect(semantic.check(first.program) &&
+             lang::HirLowerer()
+                 .lower(first.program, semantic.model(), semantic)
+                 .valid(),
+         "a subsequent visitor request rebuilds only its current trusted "
+         "declaration registry");
+}
+
 void emptyPackDestructorProvider() {
   const auto source = analyze(R"(
 class Empty<Args...> { public: ~Empty() {} };
@@ -1908,6 +2072,8 @@ int main() {
   concreteEffectObligationReplay();
   invalidEffectQueryDiagnostics();
   stagedEffectQueryDiagnostics();
+  reflectedQueryEffects();
+  reflectionRegistrySnapshots();
   emptyPackDestructorProvider();
   packFoldUnsafeBoundary();
   orderedInputProtection();

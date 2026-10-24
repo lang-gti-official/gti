@@ -150,6 +150,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   copy.globalBorrowStorage = other.globalBorrowStorage;
   copy.genericConstraints = other.genericConstraints;
   copy.genericConstraintConcepts = other.genericConstraintConcepts;
+  copy.compilerTypeClasses = other.compilerTypeClasses;
   copy.classes = other.classes;
   copy.exactClassSpecializations = other.exactClassSpecializations;
   copy.conformances = other.conformances;
@@ -202,6 +203,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   copy.globalBorrowStorage = globalBorrowStorage;
   copy.genericConstraints = genericConstraints;
   copy.genericConstraintConcepts = genericConstraintConcepts;
+  copy.compilerTypeClasses = compilerTypeClasses;
   copy.classes = classes;
   copy.exactClassSpecializations = exactClassSpecializations;
   copy.conformances = conformances;
