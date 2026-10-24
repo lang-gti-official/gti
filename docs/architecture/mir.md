@@ -406,8 +406,11 @@ dependency group rather than selecting one representative origin.
 
 A complete mapping may name static storage: its origin is `Global`, with the
 storage symbol in `globalRoot`, and its source path is built from that
-storage's own type. A capture-free `Symbol` place is that storage even in the
-provisional program, which is lowered before its initialization plan exists.
+storage's own type. A capture-free `Symbol` place identifies that storage. The
+provisional failure-effect proof retains the real module and initialization
+inventory, so persistent-storage effects and exact receiver proofs have the same
+declaration authority as the final program; only hosted startup is omitted until
+the final lowering rounds.
 A carrier whose contract names a global borrows the global's storage-typed
 place, not a place typed as the carrier. The per-input returned-field checks
 skip `Global` mappings, which have no call input; the global-origin check and

@@ -331,8 +331,12 @@ class Leaf : public Reader {};
                                 diagnostic.message.find("overlapping path") !=
                                     std::string::npos);
                       });
-      expect(!result.semanticValid && conflict && !code(result, "GTI-B0001"),
-             reason);
+      const bool valid =
+          !result.semanticValid && conflict && !code(result, "GTI-B0001");
+      if (!valid)
+        for (const auto &diagnostic : result.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(valid, reason);
     };
     const std::string declared =
         prefix + readers + storage + "Reader reader{}; ";
@@ -349,7 +353,7 @@ class Leaf : public Reader {};
     accepted(prefix + readers +
                  "int invoke(Reader value) { int& held = guarded; "
                  "return value.read() + held; } "
-                 "int main() { return invoke(Reader{}); }",
+                 "int main() { return invoke(Reader()); }",
              "a by-value class formal owns an exact complete receiver rather "
              "than an arbitrary reference to a derived object");
     accepted(
@@ -440,7 +444,6 @@ int main() { Reader reader{}; return 0; }
              "under-construction this does not establish a complete dynamic "
              "class or erase the unresolved virtual boundary");
     rejected(prefix + R"(
-void change();
 class Reader {
 public:
   mut int value = 1;

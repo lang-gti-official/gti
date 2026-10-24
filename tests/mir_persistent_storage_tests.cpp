@@ -603,7 +603,80 @@ int32_t owned_copy(Source& input) {
            "type");
     expect(!lang::verifyMirProgram(forged).valid(),
            "declared formal or typed local publication rejects a forged class "
-           "root");
+           "root (local=" +
+               std::to_string(localAlias) +
+               ", mutation=" + std::to_string(mutation) + ")");
+  }
+}
+
+void ordinaryBindingsRetainPhysicalStorageTypes() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/ordinary-bindings.gti", R"(
+class Sample {
+public:
+  int32_t member = 3;
+};
+Sample& identity(Sample& input) { return input; }
+int32_t read(Sample& input) {
+  Sample& alias = identity(input);
+  Sample copy = alias;
+  return copy.member;
+}
+int main() { Sample sample{}; return read(sample); }
+)");
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "ordinary reference aliases and explicit owning copies remain valid");
+  if (!frontend.canGenerateCode())
+    return;
+  std::optional<lang::MirBodyAddress> caller;
+  lang::MirPlaceId referent = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *declaration =
+        frontend.semantics.findFunction(function.declaration);
+    if (!declaration || !declaration->declaration ||
+        declaration->declaration->name().lexeme != "read")
+      continue;
+    for (const auto &place : function.body.places)
+      if (place.root == lang::MirPlaceRootKind::Binding &&
+          place.type.kind == lang::SemanticType::Class &&
+          place.projections.size() == 1 &&
+          place.projections.front().kind ==
+              lang::MirProjectionKind::Dereference &&
+          std::find(function.parameterBindings.begin(),
+                    function.parameterBindings.end(),
+                    place.binding) == function.parameterBindings.end()) {
+        caller = lang::MirBodyAddress{.kind = lang::MirBodyKind::Function,
+                                      .owner = function.id};
+        referent = place.id;
+        break;
+      }
+  }
+  expect(caller && referent, "nonvirtual local reference has an explicit view");
+  if (!caller || !referent)
+    return;
+  for (const bool retagStorage : {false, true}) {
+    auto forged = frontend.mir;
+    auto *body = lang::findMirBody(forged, *caller);
+    auto &view = body->places.at(referent - 1);
+    view.projections.clear();
+    if (retagStorage)
+      for (auto &place : body->places)
+        if (place.root == lang::MirPlaceRootKind::Binding &&
+            place.binding == view.binding && place.projections.empty())
+          place.type = view.type;
+    const auto bodyProof = lang::verifyMirBody(*body, caller->owner);
+    expect(!bodyProof.valid() && !lang::verifyMirProgram(forged).valid(),
+           "ordinary reference storage cannot become an owned object by "
+           "stripping or retagging its view");
+    if (!retagStorage)
+      expect(std::any_of(bodyProof.errors.begin(), bodyProof.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find("stored type") !=
+                                  std::string::npos;
+                         }),
+             "reference view rejection owns the physical stored-type rule");
   }
 }
 
@@ -648,8 +721,77 @@ int main() {
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(frontend.canGenerateCode(),
          "whole-object virtual declaration defaults preserve disjoint effects");
-  if (!frontend.canGenerateCode())
+  if (!frontend.canGenerateCode()) {
+    std::cerr << "Exact virtual fixture storage=" << storage
+              << " first=" << symbol(frontend, "first")
+              << " second=" << symbol(frontend, "second")
+              << " reader=" << symbol(frontend, "reader") << '\n';
+    for (const auto address : lang::enumerateMirBodyAddresses(frontend.mir)) {
+      const auto &body = *lang::findMirBody(frontend.mir, address);
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions) {
+          const auto targets =
+              lang::mirInvocationTargets(frontend.mir, body, instruction);
+          if (instruction.kind != lang::MirInstructionKind::Call &&
+              instruction.kind != lang::MirInstructionKind::Construct &&
+              instruction.kind != lang::MirInstructionKind::CallBody &&
+              instruction.kind != lang::MirInstructionKind::EnsureThreadLocal)
+            continue;
+          std::cerr << "body " << static_cast<int>(address.kind) << ':'
+                    << address.owner << " instruction " << instruction.id
+                    << " kind=" << static_cast<int>(instruction.kind)
+                    << " boundary=" << targets.boundary << " targets=";
+          for (const auto target : targets.addresses)
+            std::cerr << static_cast<int>(target.kind) << ':' << target.owner
+                      << ',';
+          std::cerr << '\n';
+          if (!targets.boundary || !instruction.receiver)
+            continue;
+          const auto *value = body.findValue(instruction.receiver->value);
+          const auto *stageBlock =
+              value ? body.findBlock(value->definitionBlock) : nullptr;
+          if (!stageBlock)
+            continue;
+          for (const auto &stage : stageBlock->instructions) {
+            if (stage.id != value->definition || stage.operands.size() != 1)
+              continue;
+            const auto *place = body.findPlace(stage.operands.front().place);
+            if (!place)
+              continue;
+            std::cerr << " receiver root=" << static_cast<int>(place->root)
+                      << " binding=" << place->binding
+                      << " symbol=" << place->symbol
+                      << " type=" << static_cast<int>(place->type.kind) << ':'
+                      << place->type.classId
+                      << " projections=" << place->projections.size()
+                      << " capture=" << place->capture
+                      << " foreign=" << place->foreignStorage
+                      << " stage=" << static_cast<int>(stage.callInputKind)
+                      << " function=" << instruction.functionTarget.value_or(0)
+                      << '\n';
+            const auto *step =
+                frontend.mir.programInitializationPlan().findStepForSymbol(
+                    place->symbol);
+            if (!step)
+              continue;
+            const auto *stored =
+                frontend.mir.module().findPlace(step->storagePlace);
+            std::cerr << " storage step=" << step->id
+                      << " binding=" << step->binding
+                      << " place=" << step->storagePlace;
+            if (stored)
+              std::cerr << " root=" << static_cast<int>(stored->root)
+                        << " binding=" << stored->binding
+                        << " symbol=" << stored->symbol
+                        << " type=" << static_cast<int>(stored->type.kind)
+                        << ':' << stored->type.classId
+                        << " projections=" << stored->projections.size();
+            std::cerr << '\n';
+          }
+        }
+    }
     return;
+  }
   expect(
       lang::verifyMirProgram(frontend.mir).valid(),
       "whole-object virtual effects independently verify before optimization");
@@ -736,7 +878,7 @@ int main() {
                          }),
          "exact readonly virtual call retains conflicting transitive writes");
 
-  for (int mutation = 0; mutation != 13; ++mutation) {
+  for (int mutation = 0; mutation != 14; ++mutation) {
     auto forged = frontend.mir;
     auto *body = lang::findMirBody(forged, *caller);
     lang::MirInstruction *call = nullptr;
@@ -864,6 +1006,18 @@ int main() {
     case 12:
       stage->result.reset();
       break;
+    case 13: {
+      auto &plan = const_cast<lang::MirProgramInitializationPlan &>(
+          forged.programInitializationPlan());
+      bool removed = false;
+      for (auto &step : plan.steps)
+        if (step.symbol == place.symbol) {
+          step.symbol = 0;
+          removed = true;
+        }
+      expect(removed, "receiver has an authoritative storage declaration");
+      break;
+    }
     }
     expect(
         lang::mirInvocationTargets(forged, *body, *call).boundary,
@@ -871,6 +1025,64 @@ int main() {
     expect(!lang::verifyMirProgram(forged).valid(),
            "independent program verification rejects forged virtual evidence");
   }
+}
+
+void provisionalInitializationKeepsFailureCleanup() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/initializer-cleanup.gti", R"(
+thread_local mut int32_t source = 2147483647;
+thread_local mut int32_t cleanup_count = 0;
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { cleanup_count = 1; }
+};
+int32_t initialize() {
+  Guard armed{};
+  return source + 1;
+}
+int32_t initialized = initialize();
+int main() { return initialized; }
+)");
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "provisional module lowering preserves initializer failures and "
+         "armed local cleanup");
+  if (!frontend.canGenerateCode())
+    return;
+  bool moduleInvoke = false;
+  for (const auto &block : frontend.mir.module().blocks)
+    moduleInvoke |= block.terminator.kind == lang::MirTerminatorKind::Invoke;
+  bool cleanup = false;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Drop)
+          for (const auto &event : instruction.lifecycle)
+            cleanup |= event.kind == lang::MirLifecycleEventKind::Drop &&
+                       event.failureCleanup;
+  expect(moduleInvoke && cleanup,
+         "real process initializer keeps its Invoke and failure-side drop");
+  auto forged = frontend.mir;
+  bool removed = false;
+  for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
+    if (address.kind != lang::MirBodyKind::Function)
+      continue;
+    auto *body = lang::findMirBody(forged, address);
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Drop)
+          for (const auto &event : instruction.lifecycle)
+            if (event.kind == lang::MirLifecycleEventKind::Drop &&
+                event.failureCleanup) {
+              instruction.lifecycle.clear();
+              removed = true;
+              break;
+            }
+  }
+  expect(removed && !lang::verifyMirProgram(forged).valid(),
+         "an initializer cannot omit the armed local's failure cleanup");
 }
 } // namespace
 
@@ -896,5 +1108,7 @@ int main() {
   exactWholeObjectVirtualEffects("");
   referenceRootDoesNotAcquireExactVirtualType(false);
   referenceRootDoesNotAcquireExactVirtualType(true);
+  ordinaryBindingsRetainPhysicalStorageTypes();
+  provisionalInitializationKeepsFailureCleanup();
   return passed ? 0 : 1;
 }

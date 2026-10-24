@@ -11049,6 +11049,15 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return false;
       }
       const MirPlace *destination = body.findPlace(*instruction.destination);
+      // A Loan publishes an address alias. An owning value instead needs
+      // its typed value/copy/move publication, never reference transport
+      // disguised by changing only the destination's stored type.
+      if (destination != nullptr &&
+          destination->root == MirPlaceRootKind::Binding &&
+          destination->type.kind != SemanticType::Reference &&
+          instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == MirOperandKind::Loan)
+        return false;
       if (destination == nullptr ||
           destination->root != MirPlaceRootKind::Binding ||
           destination->type.kind != SemanticType::Reference) {
@@ -11495,6 +11504,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   };
 
   std::size_t expectedUseCount = 0;
+  std::unordered_map<HirBindingId, const SemanticType *> bindingStorageTypes;
   for (std::size_t index = 0; index < body.places.size(); ++index) {
     const MirPlace &place = body.places[index];
     if (place.id != index + 1 ||
@@ -11508,6 +11518,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return failure(body, owner,
                      "place " + std::to_string(place.id) +
                          " has an invalid identity or root");
+    }
+    // All unprojected views name the same physical binding storage. A
+    // reference's referent is a distinct, explicitly dereferenced place;
+    // stripping that projection cannot manufacture a by-value object.
+    if (place.root == MirPlaceRootKind::Binding && place.projections.empty()) {
+      const auto [stored, inserted] =
+          bindingStorageTypes.emplace(place.binding, &place.type);
+      if (!inserted && *stored->second != place.type)
+        return failure(body, owner,
+                       "unprojected binding views disagree on stored type");
     }
     if (place.key) {
       if (!place.key->valid() || place.key->domain != body.placeDomain) {
