@@ -23,6 +23,16 @@ for what minor and patch releases mean.
   and deterministic panic cleanup. Equality macros evaluate operands once and
   defer formatting and custom messages until failure.
 
+## 0.467.4 — Replacing a payload enum through a reference
+
+- A payload enum whose alternatives need cleanup, such as one holding a
+  `std::string`, can now be assigned through a mutable reference: a member or
+  free function's `mut T&` result (`b.ref() = label::blank;`, including
+  `std::optional<T>::value()`), a `mut T&` local or a `mut T&` parameter.
+  These assignments used to report `error[GTI-B0001]` (an internal compiler
+  error). The old alternative is dropped exactly once before the new value
+  moves in; if dropping it fails, only the unpublished new value is dropped.
+
 ## 0.467.3 — Array fields built from constructor parameters
 
 - A constructor that initializes a fixed-array field from its by-value
