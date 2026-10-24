@@ -32,6 +32,23 @@ Tone& lamp_tone(Lamp& lamp) {
   }
 }
 
+// A cleanup-free payload enum held inside another payload.
+enum class Shade { plain(int32_t level), mixed(int32_t level, int32_t tint) };
+enum class Paint { coat(Shade shade, int32_t layers) };
+
+Shade& shade_of(Paint& paint) {
+  switch (paint) {
+  case Paint::coat(auto& shade, auto& layers): return shade;
+  }
+}
+
+int32_t& tint_of(Paint& paint) {
+  switch (shade_of(paint)) {
+  case Shade::plain(auto& level): return level;
+  case Shade::mixed(auto& level, auto& tint): return tint;
+  }
+}
+
 // Nested accessors: a pattern over another accessor's reference result.
 class Gauge {
 public:
@@ -127,6 +144,17 @@ int main() {
   Gauge relayed = Gauge(Reading::estimate(5), 1);
   if (relayed_level(relayed) != 5)
     return 6;
+  Paint plain = Paint::coat(Shade::plain(3), 2);
+  Paint mixed = Paint::coat(Shade::mixed(5, 7), 1);
+  if (tint_of(plain) != 3 || tint_of(mixed) != 7)
+    return 12;
+  switch (shade_of(mixed)) {
+  case Shade::plain(auto& level): return 13;
+  case Shade::mixed(auto& level, auto& tint):
+    if (level + tint != 12)
+      return 14;
+    break;
+  }
 
   mut Message message = Message::quoted(std::string("note"));
   body_mut(message).append("!");
