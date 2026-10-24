@@ -397,6 +397,7 @@ workflow determine task scope and integration.
 
 | Outcome / owner | Current readiness | Prerequisite and first useful slice |
 | --- | --- | --- |
+| Native LLVM production backend (`O-LLVM-02` onward) | independent foundation delivered; coverage and ABI planning next | Follow the [LLVM campaign](#llvm-production-backend-campaign), added 2026-10-24. Inventory all current executable shapes and strengthen dependency gates, then centralize target/layout/call/runtime ABI before scalar lowering. LLVM becomes the default only after complete macOS/Linux language, library, native-interop and performance acceptance. |
 | Reflection clients | ready after delivered phases 1–3 | Phase 3 is integrated in 0.400.0: structural construction, callable/source metadata, receiver/owner fixes and expansion-budget tests. The accepted next client is `std::experimental::json`; validate decoding, rollback, diagnostics and performance before the planned `std::json` deprecation. Metaobject invocation/runtime reflection remain separate goals in the [reflection plan](reflection.md). |
 | `L-UP-10` -> `L-UP-11` | acceptance closure, then adoption; may be co-validated | The retained borrowed-pack reproducer passes current O0/O3 probes. Complete the relevant constructor/cleanup composition matrix while adopting final-node emplacement; do not presume another compiler fix. |
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
@@ -10514,6 +10515,175 @@ admitted. Exact report identity and raw samples live in
   mechanism, without a benchmark-first gate. Verify and measure the resulting
   production implementation.
 
+### LLVM Production Backend Campaign
+
+**Direction (2026-10-24):** LLVM is the intended public production backend.
+C++ remains the working production default until O-LLVM-16 passes. This campaign
+implements the current language, not a new LLVM-specific subset or edition.
+The [architecture audit](../architecture/backend.md#llvm-readiness-audit-2026-10-24)
+and [ADR 031](../decisions/031-native-llvm-backend-foundation.md) explain the
+boundary and the production decision.
+
+The initial coverage baseline is main
+`a31de551ee796766d38dfd15986257f610f01345` (0.472.0). "Every current program"
+means every valid executable shape admitted by that source version on shipped
+macOS arm64 and Linux x86_64, including hosted and embedding programs, native
+dependencies, runtime failures, and both execution profiles. Passing the shipped
+examples alone is insufficient. Windows is outside this campaign. Additional
+macOS/Linux target combinations and cross builds need their own execution and
+ABI evidence; host support must not silently claim them.
+
+New language changes during this campaign must update the coverage ledger and
+enter an owned bucket. The frozen baseline cannot be reduced to make a release
+gate pass, and the final release must also reconcile everything added on main.
+No milestone below except O-LLVM-01 is implemented by this planning change.
+The former planned "O-LLVM-02: First Real Scalar LLVM Lowering" is superseded
+by prerequisites O-LLVM-02/03 and executable slice O-LLVM-04.
+
+#### Ownership And Design Commitments
+
+| Fact | Producer/owner | Consumer and lifetime |
+| --- | --- | --- |
+| Chosen declarations, types, effects, origins, concrete instances, cleanup and failure CFG | Semantics -> HIR -> verified optimized MIR -> `LoweredProgramBuilder` | Immutable `VerifiedLoweredProgram` for one generation. A changed source/target/optimization result requires a new verified input. |
+| Emission roots and generated-item dependencies | Sealed declarations, bodies and generated inventory | Backend admission plan. Any omission requires a complete reachability proof including globals, exports, callbacks, address-taken functions and virtual targets. |
+| Native triple, CPU/features, relocation/code model, target ABI and deployment policy | Driver request plus private LLVM target configuration | One generation's `TargetMachine`/`DataLayout`; identity also enters artifact/cache records. Never infer policy independently in each body. |
+| LLVM types, field offsets for opaque GTI classes, symbol names, function signatures, calling convention and debug types | Private backend type/symbol/ABI planning | Program-wide maps, shared by every definition, call and generated adapter. No source re-resolution. Public C layout and target scalar facts must be checked against the sealed input. |
+| SSA values, places, full-expression temporaries, active cleanup and failure records | Verified MIR, represented by a body emitter | Body-local maps; consume exact MIR schedules. LLVM `Value*` must not escape its module/context or become frontend metadata. |
+| Native service ABI and host resource ownership | Versioned C runtime interfaces | Foreign-call lowering and runtime adapter implementations; independent of GTI class layout. ABI versions and runtime artifacts are cache/link inputs. |
+| Objects, native dependencies, linking, diagnostics, publication and caches | Driver | Only publish complete verified results. LLVM owns bytes, not user output paths or subprocess orchestration. |
+
+Retain `Backend::generate(LoweredProgram)` and the byte-owning object artifact.
+Use a private generation session owning the verified program, context, module,
+target machine, diagnostic sink and representation maps in dependency-safe
+destruction order. Separate target configuration, type/layout planning, function
+ABI/symbol planning, runtime declarations, body emission, generated adapters and
+verification/object output by responsibility. Do not build another general IR,
+frontend type system, per-node pass framework, or giant all-feature emitter.
+Introduce files as their owning milestones land, not empty abstractions.
+
+The initial native GTI ABI uses one planned convention for all bodies and call
+sites. Failure-free scalars can return directly; address-only or owned values
+use explicit result destinations without inventing GTI moves/copies. A
+failure-capable function returns a success status and receives result/failure
+destinations; callers read the result only on success. Reference results carry
+the selected address. Signatures, including receivers and hidden caller-source
+information, are planned once. Changes to that private convention invalidate
+generated objects; they do not create a stable cross-backend object ABI.
+
+GTI `Invoke` normally becomes a call plus a conditional branch, with its MIR
+success/failure edges and records intact. GTI does not acquire native unwinding
+merely because LLVM has an `invoke` instruction. Cleanup is explicit on every
+path, including constructor rollback, propagation, containment and failure
+during cleanup. Source `expected`/optional/tryable policies remain ordinary
+classes or sums, separate from the defined-failure ABI.
+
+Do not add `nsw`, `nuw`, `inbounds`, `nonnull`, `noalias`, `dereferenceable`,
+`noundef`, memory-effect attributes or lifetime markers merely from familiar
+source syntax. Each requires the exact verified GTI precondition and valid
+scope. In particular, a mutable reference is not automatically a function-wide
+LLVM `noalias` parameter, and `freeze` cannot repair a missing GTI check.
+Preserve integer overflow/division/shift/conversion failures and strict floating
+behavior before enabling transformations. Use LLVM's overflow intrinsics,
+SSA/PHI facilities, verifier, target lowering and pass manager for their actual
+roles; language permission and checked behavior remain GTI authority.
+
+Physical layout and call ABI are distinct. Define a target-specific classifier
+for GTI's admitted C signature subset, using the selected platform ABI and
+bidirectional C compiler oracles. LLVM `DataLayout` does not perform that
+classification, and the existing libclang reader is not a C code generator.
+Reuse its declaration/layout facts; do not pull Clang AST/CodeGen into the
+language pipeline or infer ABI from generated C++. The initial supported
+targets are Darwin AArch64 and Linux x86_64 System V. Broader foreign-language
+import is not needed to lower currently supported C declarations/adapters.
+
+#### Coverage And Completion Contract
+
+O-LLVM-02 must create a machine-checked coverage ledger covering every member
+and represented shape in these current input families:
+
+- `SemanticType::Kind`, compiler capability kinds, concrete class/enum/function/
+  constructor/destructor/lambda instances and callable signatures;
+- `MirInstructionKind`, `MirOperation`, all `MirTerminatorKind` cases, place
+  roots/projections, operands, loans, lifecycle/drop recipes, failure operations
+  and verified safety discharges;
+- `IntrinsicKind`, synchronization/C-thread/process-memory operations, source
+  runtime bindings, native declarations/storage/callbacks and embedding exports;
+- all `LoweredGeneratedItemKind` families, program initialization and hosted
+  startup operations, including failure and cleanup edges.
+
+Each entry needs an owning milestone, concrete admission predicate, positive and
+negative fixtures, and one state: implemented, pending, or verified nonexecuting.
+An exhaustive enum switch alone is insufficient: type, access, ownership,
+failure, destination and dispatch combinations matter. Unknown new entries
+fail the gate. Compile-time-only and retired entries require producer evidence
+and a rejection test if they reach executable lowering. No generic "other"
+category or silent fallback is allowed.
+
+Admission must inspect the entire required emission closure before publishing
+anything. Initially it may conservatively require every executable body. If
+that rejects an otherwise supported program merely because its prelude contains
+unused functions, implement exact root/dependency reachability over the sealed
+input. Do not strip the prelude, skip global initialization, or ignore an
+unsupported body after encountering it. Uninstantiated generic declarations
+and data-only declarations are not executable bodies. LLVM rejection names the
+first deterministic unsupported operation/type/body and its source location
+through GTI diagnostics; a broken verified invariant remains an ICE.
+
+Every executable milestone proves observable output, exit status, cleanup trace,
+failure code/detail/site, mutation order and applicable rejection behavior at
+O0 and O3 on both shipped targets. Add focused O1/O2 checks for pass-selection
+differences. Floating tests include signed zero, NaNs, infinities, subnormals
+and conversion boundaries under GTI's documented rules; concurrent tests assert
+permitted outcomes and happens-before properties rather than one schedule.
+LLVM IR verification runs before and after optimization. Use compiled C/native
+oracles for ABI and sanitizers where their target support permits them.
+
+C++ is a differential reference, not the semantic authority. Resolve a mismatch
+against the specification, verified MIR and expected test behavior; record an
+existing C++ bug instead of reproducing it. Extend behavioral harnesses to select
+the backend explicitly. Keep C++ spelling/representation tests in their own
+suite; do not delete them or count them as LLVM execution evidence. Preserve
+the existing example census, full stdlib manifest and historical bug fixtures.
+No milestone is complete with compile-only evidence for executable behavior.
+
+Performance evidence accompanies each affected operation family: successful-path
+instructions/checks, allocations, code size, runtime and relevant build/memory
+cost. The initial address-based lowering may use LLVM promotion/SROA, but hidden
+heap allocations, redundant ownership operations and unmeasured regressions
+cannot become the final representation by default. Extend LLVM component roots
+only for an owned implementation need and keep package/link boundary tests.
+
+#### Language Buckets And Dependencies
+
+| Milestone | Assignable responsibility bucket | Requires |
+| --- | --- | --- |
+| O-LLVM-01 | Independent backend/build/driver foundation (complete) | ADR 016 |
+| O-LLVM-02 | Complete coverage inventory, admission and boundary enforcement | 01 |
+| O-LLVM-03 | Target, layout, private call ABI, runtime ABI and emission session | 02 |
+| O-LLVM-04 | Scalar execution, CFG, direct calls and defined failures | 03 |
+| O-LLVM-05 | Places, references, raw addresses, arrays and text views | 04 |
+| O-LLVM-06 | Classes, construction, movement, cleanup and program storage | 05 |
+| O-LLVM-07 | Native unions, tagged payloads and conditional value publication | 06 |
+| O-LLVM-08 | Object storage, allocation, unique/shared ownership and relocation | 06, 07 where payload-bearing |
+| O-LLVM-09 | Function values, lambdas, erased callables and adapters | 06, 08 for owned captures |
+| O-LLVM-10 | Inheritance, interfaces and dynamic dispatch | 06, 08 for polymorphic ownership |
+| O-LLVM-11 | Complete native C ABI, callbacks, foreign storage and embedding | 05, 06, 09 for callbacks |
+| O-LLVM-12 | Hosted entry, runtime services and standard-library closure | 07-11 |
+| O-LLVM-13 | Atomics, mutexes, managed/scoped threads and failure handoff | 08, 09, 11, 12 |
+| O-LLVM-14 | Project/cache/install/debug-artifact driver completion | 04 initially; all families for final gate |
+| O-LLVM-15 | Optimization, debug information and production cost validation | 04 onward; all families for final gate |
+| O-LLVM-16 | Exhaustive conformance and public-default promotion | 02-15 |
+
+Generics/value packs, overloads, concepts, conversions, aliases, namespaces,
+modules/includes, typed macros, `constexpr`, reflection, destructuring and range
+syntax are not independent LLVM frontend projects. Concrete instances,
+selected calls, constants, place operations and generated bodies must work in
+the appropriate rows from their first introduction. Runtime calls to functions
+also declared `constexpr` still need normal lowering. Virtual method selection,
+missing runtime type facts or unmaterialized executable instances must be fixed
+at the producer and sealed before backend consumption; LLVM cannot instantiate
+or resolve them using source.
+
 ### O-LLVM-01: Independent Native-Backend Foundation
 
 - **State/role:** complete infrastructure slice; no executable lowering.
@@ -10531,28 +10701,328 @@ admitted. Exact report identity and raw samples live in
   public headers expose no LLVM; system and bundled package link graphs retain
   target ownership. ADR 031 owns the accepted boundary.
 
-### O-LLVM-02: First Real Scalar LLVM Lowering
+### O-LLVM-02: Coverage, Admission And Dependency Gates
 
-- **State/role:** planned next native-backend slice.
-- **Prerequisites:** O-LLVM-01 and ADR 016 are complete. Before implementation,
-  enumerate the exact `LoweredProgram` scalar declaration/body/ABI rows and
-  confirm their layouts need no backend-neutral additions.
-- **Bounded result:** lower a coherent set of non-owning scalar functions,
-  arithmetic, comparisons, branches, block parameters, calls, and returns;
-  construct the selected host target machine; verify each module; emit one
-  relocatable object through `BackendArtifactKind::Object`; and let the driver
-  link it with the ordinary runtime/native inputs.
-- **Acceptance:** unsupported bodies reject before partial publication; LLVM
-  verifier failures remain internal compiler errors with retained evidence;
-  C++/LLVM differential executions cover O0/O3, edge arithmetic, control flow,
-  calls, failure-free ABI and symbol identity; object bytes and project-cache
-  metadata are treated as binary artifacts. No cleanup, ownership, defined
-  failure, aggregate, generic, virtual, callback, thread, or FFI family enters
-  this slice without its complete lowered contract and separate evidence.
+- **State:** next implementation task. Scope is contract/testing infrastructure.
+- **Deliver:** the exhaustive coverage ledger above, a deterministic required
+  program/admission inventory, and a backend-selectable behavioral harness.
+  Use the existing lowered verifier/generated graph; do not build a second
+  resolver. Record source/target/optimization identity in every coverage result.
+- **Boundary repair:** replace the LLVM gate's hard-coded two-file list with
+  complete owned-source discovery and private include-graph checks. Cover local
+  C++ helper headers, frontend builders, semantic/HIR objects and optimizer
+  internals with negative controls in a newly added helper as well as the entry
+  file. Keep public installed headers LLVM-free. Link ownership still permits
+  the shared `gti_compiler` contract library; it does not authorize frontend use.
+- **Exit:** every current enum/family is assigned; valid unsupported shapes get
+  classified diagnostics without artifacts; forged input still rejects; the
+  current C++ corpus runs through the reusable execution harness. No fake LLVM
+  program is needed. The contract-gap ledger names a producer, verifier, test
+  and dependent milestone for every missing fact.
+
+### O-LLVM-03: Target, Layout And Execution ABI
+
+- **Unlock:** one reusable native emission session usable by all later buckets.
+- **Deliver:** explicit target machine/module/data layout; recursive type and
+  symbol declaration planning; private GTI call ABI with status/result/failure
+  channels; native scalar/pointer and required runtime-record ABI descriptions;
+  LLVM diagnostic capture, module verification and object emission machinery.
+  Verify all target scalar size/alignment/endianness facts before lowering.
+  Establish the explicit O0/O1/O2/O3 target/pass-manager configuration now;
+  O-LLVM-15 extends and measures it rather than deferring optimization-mode
+  identity until after earlier O0/O3 acceptance runs.
+- **Policy:** one module/object per whole program initially; deterministic names
+  from lowered identities; declare functions/types before bodies so recursion
+  works. No process-global module or mutable type cache. Keep source spans for
+  diagnostics and later debug metadata from day one. Freeze an ABI version for
+  cache invalidation, not a public GTI binary compatibility promise.
+- **Layout:** define value vs storage forms (including bool and references),
+  array strides, zero-sized storage, alignment and address-only results. C and
+  union layouts honor sealed facts; opaque class layout has a backend-owned
+  plan. Object-size/alignment queries consume that same plan. A representation
+  choice must not change any source-observable layout fact evaluated upstream.
+- **Runtime:** inventory every `RuntimeBinding` and C service. For each, record
+  exact symbol, types, ABI version, ownership, failure and callback behavior.
+  Explicitly distinguish a real C entry from a C++ inline/template helper.
+  Initial failure reporting must call the existing versioned C failure ABI.
+- **Exit:** positive and negative layout/signature tests on both targets,
+  byte-preserving object handoff tests and installed linking of the backend.
+  No instruction family is claimed complete here. O-LLVM-04 must exercise this
+  infrastructure with actual GTI programs, not a hard-coded LLVM `main`.
+
+### O-LLVM-04: Scalars, Control Flow And Defined Failure
+
+- **Unlock:** real arithmetic/control-flow programs compiled directly to native
+  objects, including concrete generic scalar functions and ordinary recursion.
+- **Deliver:** literals, all current integer widths, char/bool, binary32/64,
+  integral enums, numeric conversions, assignments/mutation, bitwise operations,
+  comparisons, direct calls, return, PHIs for MIR block arguments, loops,
+  branches, short-circuit paths, switch, break/continue, and failure-free minimal
+  hosted entry derived from its plan. Bound support structurally to these types.
+- **Failure from the start:** checked arithmetic/conversion, explicit panic and
+  assertions use success/failure branches and source records. Implement all
+  applicable failure terminators, including containment and emergency routing;
+  ownership-specific drops remain rejected until their bucket is admitted.
+  Guards dominate division, shifts and conversions that could cause LLVM UB.
+  Wrapping/saturating arithmetic and overflow queries preserve distinct rules.
+- **Exit:** scalar edge cases and early returns execute at O0/O3, failure paths
+  carry correct diagnostics, recursion/PHIs verify, and genuine object bytes
+  link/run through `NativeLinkRequest`. Any unsupported reachable owner/class
+  shape rejects explicitly. Floating lowering must select ordinary or
+  constrained operations according to GTI's actual FP-environment contract;
+  never enable reassociation/contraction by treating native defaults as policy.
+
+### O-LLVM-05: Places, References, Arrays And Borrowed Text
+
+- **Unlock:** array algorithms, reference-based helpers, scalar globals and
+  text-view operations without hidden allocations.
+- **Deliver:** place roots and projections, loads/stores, indexing, raw pointer
+  address/conversion/arithmetic/difference, null, fixed/multidimensional arrays,
+  reference results, stored address forms, text/c-string literals and view
+  length/indexing. Read/write order follows MIR staging, including postfix
+  index mutation and aliasing through repeated/nested references.
+- **Borrow rule:** use exact selected loan/place addresses, including call-result
+  and conditional joins; erase permission-only operations only after their
+  verifier obligations hold. Do not reinterpret borrowing as LLVM ownership.
+  Implement range cursor park/restore as verified permission erasure where
+  applicable, without dropping or reconstructing an endpoint.
+- **Exit:** checked bounds and raw-pointer obligations remain correct; embedded
+  NUL/UTF-8 bytes, empty views and byte counts are preserved; conditional returned
+  references, array references and mutable access execute correctly. Unsupported
+  class/payload storage remains owned by later rows, not guessed from a pointer.
+
+### O-LLVM-06: Classes, Lifecycles And Program Storage
+
+- **Unlock:** user records/classes, constructors, field methods and deterministic
+  cleanup, including concrete generic classes and static/global objects.
+- **Deliver:** field layouts/projections and initializers; selected ordinary and
+  copy/move constructors/assignments; destructors; direct/braced/designated
+  construction where admitted today; full-expression temporary staging;
+  destination publication; partial initialization and rollback; drop schedules
+  and replacement cleanup. Access and mutability were already checked upstream.
+- **Storage:** static fields, namespace globals, initialization dependencies,
+  internal/external linkage, teardown and startup failure use the sealed program
+  plan. Shared-state and recursive initialization checks remain GTI rules.
+  Read-only fields must not force extra copies or whole-object reconstruction.
+- **Exit:** user-defined unrelated lifecycle probes prove exactly-once cleanup
+  and evaluation order on success/failure, nested constructor arguments,
+  arrays of objects, implicit return movement and constructor rollback. No
+  destructor can be triggered implicitly by an LLVM representation container.
+
+### O-LLVM-07: Unions, Payloads And Conditional Publication
+
+- **Unlock:** source-defined optional/expected, payload enums, matching and
+  propagation in arbitrary user types.
+- **Deliver:** native union overlapping storage and tag/payload layouts for
+  safe enums, variant initialization/extraction, conditional/switch result
+  publication, payload loans, moves, replacement and exact active-payload drops.
+  Cover optional/polymorphic storage capabilities at the typed slot level;
+  dynamic dispatch itself belongs to O-LLVM-10.
+- **Exit:** inactive-state access failures, borrowed payloads, nested/owned
+  success and error states, conditional early returns, partial cleanup and
+  source `?` propagation execute correctly. Prove with user-defined tagged
+  types as well as the stdlib. No recognition of public wrapper spellings and
+  no unjustified tag/niche optimization; layout refinements remain local later.
+
+### O-LLVM-08: Allocation, Object Lifetimes And Ownership
+
+- **Unlock:** source vector/string/list/storage/allocator and owning pointers.
+- **Deliver:** allocation obligations, exact object-size/alignment queries,
+  construct/destroy/relocate/range-relocate, uninitialized storage, slot state,
+  unique/shared owner mechanisms and control blocks. Public allocators,
+  containers and reference-count policy stay source-defined where they are
+  already source-defined today. Lower only remaining exact private capabilities.
+- **ABI:** use native byte-provider C entries and generated typed cleanup
+  functions, never C++ `new`, templates or `shared_ptr` representation. Preserve
+  alignment/zero count, allocation exhaustion policy, provenance, relocation
+  overlap rules and the difference between ended and never-started lifetimes.
+- **Exit:** allocation counts and drop traces cover empty/reset/move/release,
+  growth, sparse storage, shared last release, failure while staging inputs and
+  failure during cleanup. ASan/UBSan plus existing storage/raw audits apply.
+  Report optimized cost/allocation evidence for container growth and iteration.
+
+### O-LLVM-09: Function Values, Lambdas And Callable Adapters
+
+- **Unlock:** higher-order algorithms, capturing callbacks and source-defined
+  function wrappers, including owned/borrowed and read/mut/once forms.
+- **Deliver:** concrete function items/signatures, function pointers, closure
+  environment layouts, direct/indirect invocation, capture copy/move/borrow,
+  adapters and cleanup. Follow concrete call targets/forwarding and generated
+  items, including nested generic lambdas and captured owners/references.
+- **ABI:** one planned code/environment signature; adapters transport the same
+  defined-failure result convention and hidden caller metadata. Native callback
+  ABI is supplied by O-LLVM-11, not guessed from an internal function pointer.
+- **Exit:** higher-order call, returned/stored closure, consuming invocation and
+  failure after capture transfer tests pass with precise borrow rejection and
+  no accidental capture allocation. Unrelated user wrappers prove generality.
+
+### O-LLVM-10: Inheritance, Interfaces And Polymorphism
+
+- **Unlock:** existing abstract/interface hierarchies and polymorphic owners.
+- **Deliver:** base subobjects, base-constructor/rollback order, verified method
+  targets, dispatch tables, receiver/base adjustments, upcasts and dynamic
+  destructor selection for every inheritance shape currently admitted.
+- **Authority gate:** audit whether virtual roots/base facts uniquely determine
+  the selected target. If they do not, add a verified backend-neutral dispatch
+  plan upstream first. LLVM chooses table layout; it must not redo override,
+  final/pure, access, or ambiguity rules. Do not add unsupported inheritance,
+  C++ RTTI, or an Itanium class ABI as part of this work.
+- **Exit:** multi-level and admitted multiple-interface cases, constructed-
+  versus-complete dynamic state, virtual failure paths, base conversions,
+  owner destruction and partial-construction failures pass with exact traces.
+  Devirtualized and dynamic paths agree at O0/O3.
+
+### O-LLVM-11: Native C Calls, Storage, Callbacks And Embedding
+
+- **Unlock:** the complete existing bindgen/native-library/embedding surface.
+- **Deliver:** extend O-LLVM-03's ABI classifier through every admitted scalar,
+  array, record, union, enum, opaque pointer, indirect call and callback shape;
+  external symbols/storage, linkage and generated C wrappers. Honor sign/zero
+  extension, aggregate coercion/splitting, indirect returns and target-specific
+  calling convention rules. Include variadic forms only if the frozen baseline
+  actually admits them; otherwise retain the same frontend rejection.
+- **Containment:** explicit export/callback entry adapters implement GTI failure
+  policy and thread attachment. Preserve embedding descriptor/version/status,
+  host context, initialization/shutdown and unload contracts. A compiled native
+  C/C++/Objective-C++ dependency stays a driver input; its existence does not
+  authorize generated C++ GTI bodies.
+- **Exit:** bidirectional C argument/result/callback tests on both target ABIs,
+  native-header and record/union/GLFW oracles, foreign storage, and installed
+  embedding hosts. Matching `sizeof` alone is not acceptance. No status or C++
+  exception crosses a public native signature that does not declare it.
+
+### O-LLVM-12: Hosted Execution And Library Closure
+
+- **Unlock:** complete command-line programs and present stdlib workloads,
+  including a CSV library using existing file/text APIs.
+- **Deliver:** full hosted argument-vector construction, program init/shutdown,
+  source-location/panic metadata, C-thread runtime entry/exit, and every remaining
+  source runtime binding. Reuse versioned C I/O/filesystem/process/environment/
+  chrono/random/charconv/math/network/HTTP facilities. Preserve native resource
+  cleanup and status translation; formatting/JSON/container policy stays GTI.
+- **Closure:** inventory the stdlib surface manifest and all shipped examples,
+  and run entries whose prerequisites are complete with LLVM. Thread/SIMD
+  entries retain explicit pending O-LLVM-13/15 coverage, never passing skips;
+  O-LLVM-16 requires the entire inventory. Missing runtime symbols or C++ inline
+  adapters become explicit gaps in their owning family, not new public-type
+  intrinsic cases. Account for raw, current compatibility and experimental
+  surfaces that still compile.
+- **Exit:** argv ownership/failure, global startup failures and teardown,
+  formatted I/O, files/CSV-style parsing, reflection-driven JSON, containers,
+  resource wrappers and native services execute. External service tests use the
+  same controlled fixtures and availability rules as the current backend.
+  Concurrent workloads remain pending until O-LLVM-13.
+
+### O-LLVM-13: Atomics, Synchronization And Threads
+
+- **Unlock:** both current execution profiles and managed/scoped parallel work.
+- **Deliver:** atomic load/store/exchange/CAS/fetch operations and order pairs,
+  wait/notify, mutex/guard and condition behavior; typed thread tasks/results,
+  transfer/join/auto-join, scoped borrows and join-all failure cleanup. Lower
+  LLVM atomic instructions with explicit scope/order/alignment; reuse host
+  services for blocking and scheduling rather than spin-loop substitutions.
+- **Runtime prerequisite:** replace the C++-exception-dependent generated worker
+  handoff with versioned C status/callback adapters usable from LLVM frames.
+  Preserve primary/emergency records, exact capture/result destruction, runtime
+  task-cleanup state and containment. C++ runtime internals may keep private
+  exceptions only when caught before the C boundary; no native unwinder is
+  allowed to cross generated GTI frames.
+- **Exit:** current threading/atomic litmus, rejection and cleanup matrices,
+  scoped cancellation/failure behavior as currently defined, contention and
+  permitted-wakeup tests on both hosts; TSan where supported. Confirm atomic
+  storage is never accessed nonatomically and wait/notify shares its exact
+  representation. Report sequential/parallel workload and synchronization cost.
+
+### O-LLVM-14: Project, Artifact And Installed-Toolchain Completion
+
+- **Unlock:** ordinary users select LLVM in direct/project/build/test/run/install
+  and package workflows, with correct native dependencies and cached builds.
+- **Deliver:** shared backend selection in project plans; binary artifact/cache
+  schema and identity (backend, LLVM/toolchain, runtime/GTI ABI, target triple,
+  CPU/features, relocation, optimization/debug policy); native link/runtime
+  library requirements; target/sysroot/deployment consistency; debug companion
+  artifact publication where required. Keep the single-object path initially.
+- **Exit:** relocated clean installed toolchains on macOS/Linux, NUL-containing
+  object bytes, cache hits/misses/corruption, failed links and atomic publication,
+  native package/build scripts and embedding outputs. Matching system LLVM
+  versions and the pinned bundled build must pass dependency/package gates.
+  GTI compilation must not invoke C++ compilation of a generated source file;
+  a prebuilt runtime implemented in C++ may still require its standard library.
+- **Cross target:** remove host-only admission only after target initialization,
+  runtime/sysroot artifacts and execution or remote-target evidence exist for
+  that target. A plausible triple string is insufficient.
+
+### O-LLVM-15: Optimization, Debugging And Runtime Cost
+
+- **Unlock:** a usable optimized/debuggable production compiler across buckets.
+- **Deliver:** explicit O0/O1/O2/O3 LLVM pipelines using the supported pass
+  manager and selected target machine; verified attributes/alias facts only;
+  source-file/function/line/local/inline debug metadata and reproducible paths.
+  Run IR verification before/after passes. MIR optimization remains the owner
+  of GTI proof transformations; LLVM optimizes their faithful representation.
+- **Numeric completeness:** finish bounded SIMD lowering with exact lane types,
+  mask/comparison/division rules and strict floating policy, in addition to
+  scalar lowering from O-LLVM-04. Test supported operations even without SIMD
+  hardware so legal scalarization does not become a silent unsupported family.
+- **Exit:** all numeric and defined-failure boundaries survive optimization;
+  debugger stepping/locals/backtraces work on both hosts, including failures
+  and callbacks; runtime benchmarks cover arithmetic, branches, arrays/text,
+  allocation/containers, callables, polymorphism, I/O and concurrency. Record
+  allocations, code size and build/memory costs. Material regressions require
+  correction or explicit accepted tradeoffs before production promotion.
+
+### O-LLVM-16: Complete Coverage And Production Promotion
+
+- **Unlock:** LLVM becomes the public default for the whole supported language.
+- **Admission:** no pending executable ledger entries for the frozen baseline
+  or reconciled new main; no unsupported-operation rejection for an otherwise
+  valid supported program. All generated-item/startup/runtime families have
+  execution evidence, not only emission or enum-count coverage.
+- **Verification:** run complete compiler/behavioral regressions, shipped
+  examples, stdlib manifest, historical bug probes, native/embedding oracles,
+  optimized workloads, runtime sanitizers and clean installed-package checks on
+  both shipped targets. Test interactions across buckets, including nested
+  generic lifecycle, borrowed payload callbacks, virtual failure cleanup and
+  threaded results containing owners. A fixture allowlist cannot establish
+  general language coverage. Record remaining platform exclusions explicitly.
+- **Delivery:** update defaults, docs, toolchain fingerprints, project/cache
+  migration, packaging and backend-selection tests in one reviewed release.
+  C++ stays an explicitly selectable reference during validation; no per-function
+  fallback, cross-backend private object ABI or generated-C++ dependency is
+  introduced. Retiring C++ is a separate decision after production evidence.
+
+#### Agent Assignment And Evidence
+
+Assign one milestone (or an explicitly bounded substep) with its prerequisites,
+current coverage entries, owning files, expected user program and acceptance
+matrix. A bucket is a responsibility boundary, not a promise of one prompt or
+permission to omit hard cases. Substeps must preserve the parent exit gate.
+Update the ledger and canonical implemented architecture in the same PR. Each
+handoff records source/base/target/LLVM identities, admitted/rejected shapes,
+tests, runtime costs, open contract gaps and the next prerequisite.
+
+O-LLVM-02/03 are shared foundations and should have one integration owner.
+After O-LLVM-06, payload, memory, callable, polymorphic and foreign-ABI work can
+be assigned separately according to the dependency table. Reserve shared
+type/function ABI tables and runtime schemas with that owner; do not let each
+agent invent its own convention. Driver and debug/performance work can start
+after the first executable slice and validate incrementally. Use focused checks
+per bucket and one coordinated combined campaign when integration requires it;
+do not repeat a complete corpus for every small source edit.
+
+LLVM implementation references are the [IR language reference](https://llvm.org/docs/LangRef.html),
+[undefined-behavior guide](https://llvm.org/docs/UndefinedBehavior.html),
+[GEP rules](https://llvm.org/docs/GetElementPtr.html),
+[atomic guide](https://llvm.org/docs/Atomics.html), and
+[pass-manager guide](https://llvm.org/docs/NewPassManager.html).
+The [libclang API scope](https://clang.llvm.org/docs/LibClang.html) matters when
+separating imported declaration/layout facts from native call ABI classification.
+Use the documentation matching the LLVM version under validation; these sources
+describe implementation constraints, not GTI language semantics.
 
 Incremental dominance and LLVM bit-vector adoption remain measured/client-
-gated. Native LLVM emission proceeds through O-LLVM-02 rather than treating
-support-library availability as executable authority.
+gated. Native LLVM emission proceeds through this campaign; support-library
+availability alone is not executable authority.
 
 ## Parallel Engineering Tracks
 

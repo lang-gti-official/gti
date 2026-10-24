@@ -54,9 +54,14 @@ The readiness claim requires:
 7. reproducible execution-cost evidence, not merely successful compilation; and
 8. an explicit compatibility, omission and support contract.
 
-Self-hosting, an LLVM code-generation backend, separate compilation and a stable
-ABI for ordinary GTI objects are not automatic prerequisites of that claim.
-They can become scheduled goals when a supported outcome needs them. A source
+LLVM is now the intended public production backend under
+[ADR 031](../decisions/031-native-llvm-backend-foundation.md#production-direction-2026-10-24).
+Completing that transition is an explicit delivery goal, not a requirement to
+prove a C++ backend regression first. C++ remains the production default until
+the [LLVM campaign](implementation-sequence.md#llvm-production-backend-campaign)
+passes full current-language conformance on macOS and Linux. Self-hosting,
+separate compilation and a stable ABI for ordinary GTI objects remain separate
+goals rather than automatic prerequisites of systems readiness. A source
 package registry already exists; its historical non-requirement is not evidence
 that it remains unimplemented. General allocation, casts and manual lifetime
 facilities likewise already exist within their current safe/unsafe contracts.
@@ -275,14 +280,17 @@ Operational sequence: the exclusive row order, prerequisites, stop conditions,
 and implementation exit gates live only in
 [`implementation-sequence.md`](implementation-sequence.md). This roadmap keeps
 the durable requirements: use verified MIR proofs, preserve exact failure and
-partial effects, measure end-to-end runtime, and add general loop transforms,
-MemorySSA, devirtualization, or a new backend only when a selected workload
-proves the bounded architecture insufficient.
+partial effects, and measure end-to-end runtime. General loop transforms,
+MemorySSA and devirtualization need explicit cost models and correctness
+obligations. The LLVM backend is an accepted architectural direction with its
+own staged coverage and performance gates; it does not depend on demonstrating
+that a selected workload defeats C++ emission.
 
-Systems readiness requires one checked executable representation to control behavior. It does
-not require an LLVM backend or aggressive `-O3`. Correct `-O0`, deterministic
-output, measurable local optimizations, and no semantic dependence on the
-native optimizer are more important.
+Systems readiness requires one checked executable representation to control
+behavior. Both backends consume that same sealed `LoweredProgram`; native
+lowering must not move semantic authority into LLVM. Correct `-O0`, deterministic
+output, measurable optimizations and no semantic dependence on the native
+optimizer remain requirements throughout the production-backend transition.
 
 ## Parallel Track B: Project Builds And Packages
 

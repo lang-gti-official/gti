@@ -4327,3 +4327,40 @@ not another branch in the C++ emitter.
 
 See [ADR 031](../decisions/031-native-llvm-backend-foundation.md) for the
 dependency, initialization, packaging, status, and first-lowering decision.
+
+### LLVM Readiness Audit (2026-10-24)
+
+Source baseline: `a31de551ee796766d38dfd15986257f610f01345` (0.472.0),
+including the independent backend foundation and source-defined concept policies.
+This is a structural review, not evidence of executable LLVM support. The
+foundation's previous integration recorded 759/855 tests passing before the
+owner stopped that broad run; it did not complete the full suite. Its focused
+backend and installed-consumer checks passed. Neither result certifies future
+LLVM-generated programs.
+
+**Assessment:** retain the sealed input, backend interface, distinct library,
+and driver-owned artifact boundary. No replacement IR or pipeline refactor is
+justified by this audit. The foundation is a sound starting boundary, but native
+execution contracts are still prerequisites, not completed architecture.
+
+| Finding and concrete evidence | Consequence and owner |
+| --- | --- |
+| `LlvmBackend::generate` verifies the owned input, checks the host, initializes LLVM, and rejects execution (`src/compiler/llvm_backend.cpp:61`). `LoweredProgram` owns MIR and concrete/generated inventories (`include/gti/lowered_program.h:738`). | Correct foundation. Keep one verified immutable input alive for the entire generation session. Shared value types named `SemanticType` or IDs named `Hir*` in that contract are not permission to consult semantic/HIR objects. |
+| `LlvmBackendOptions` contains only optimization/debug switches; there is no target machine, module, layout or function ABI planner (`include/gti/llvm_backend.h:18`). Native C/union layout rows exist, but ordinary class layout is not a published C++ ABI (`include/gti/mir.h:1269`, `include/gti/lowered_program.h:241`). | Fix before real lowering: a private target session, recursive type/layout map, symbol/function ABI plans, and explicit failure-result convention. Ordinary object representation remains backend policy; missing language facts must be added upstream with verifier coverage. |
+| `LoweredFunctionDeclaration` records linkage and exact external symbols, but not the platform's register/indirect classification of a C call (`include/gti/lowered_program.h:318`). The C record oracle checks physical offsets (`tests/native_record_c_oracle_test.py`). | C record layout alone cannot establish a working foreign call. Native ABI classification needs bidirectional compiled C oracles for arguments, results and callbacks on each shipped target. It must be separate from the private GTI calling convention. |
+| `runtime/include/gti/runtime.hpp` adapts C++ text views to C records; `runtime/include/gti/runtime_thread.hpp:12` uses a private C++ exception for worker failure handoff. `src/compiler/cpp_support_preamble.cpp` emits templated lifetime/owner helpers. | Runtime migration is required. Reuse versioned C services, lower type-dependent mechanisms from the verified program, and add narrow C status/callback entry points where needed. Calling a C++ helper or throwing through LLVM frames is not a portable runtime ABI. |
+| The LLVM-specific source gate lists exactly two files and its C++ include pattern targets `gti/...` headers (`tests/backend_boundary_test.py:82`). | Strengthen before adding implementation files: discover the backend's complete source/header ownership, inspect local and transitive private dependencies, and add negative mutation controls. Current passing gates do not protect an unlisted future `llvm_*.cpp`. |
+| Object publication uses a binary stream, although the helper is named `publishTextAtomically` (`src/driver/build.cpp:1967`). Linking distinguishes source and object (`src/driver/build.cpp:3554`), but object caching is bypassed and project selection remains C++. | Keep the existing byte artifact and publisher. Add real-object execution tests, project/cache identity, target policy, debug artifacts and installed-toolchain coverage before making LLVM the default. A helper name alone is not grounds for a refactor. |
+
+The highest early correctness risks are unchecked LLVM poison/undefined behavior,
+success-only publication of call results, partial-construction cleanup, native
+ABI mismatch, and thread/callback containment. These cross language buckets and
+must be covered from their first use. In particular, GTI `Invoke` expresses a
+verified success/failure split; it does not require LLVM exception-handling
+`invoke` or a host personality function.
+
+The accepted production direction and complete prerequisite/acceptance sequence
+are in [ADR 031](../decisions/031-native-llvm-backend-foundation.md) and
+[O-LLVM](../plans/implementation-sequence.md#llvm-production-backend-campaign).
+The sequence owns future implementation instructions. The sections above remain
+the authority for what is implemented today.

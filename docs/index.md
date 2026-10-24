@@ -166,7 +166,8 @@ while canonical language documents continue to describe actual support.
   runtime closures or assertion-name compiler magic.
 - [031: Native LLVM backend foundation](decisions/031-native-llvm-backend-foundation.md)
   — establishes an independent `LoweredProgram` consumer, target-scoped LLVM
-  build ownership, explicit selection and fail-closed pre-lowering status.
+  build ownership, explicit selection and fail-closed pre-lowering status;
+  records LLVM as the intended public production backend, pending conformance.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.
@@ -183,6 +184,9 @@ than mixed into the active queue.
   [general object-lifetime and source-defined storage brief](plans/implementation-sequence.md#s-alloc-06-general-object-lifetimes-and-source-defined-storage)
   and delivered
   [source-defined process allocation phase](plans/implementation-sequence.md#s-alloc-07-source-defined-process-allocation-over-native-byte-providers)
+  and the planned
+  [LLVM production backend campaign](plans/implementation-sequence.md#llvm-production-backend-campaign),
+  with complete current-language coverage buckets and prerequisite gates
 - [Systems-readiness roadmap](plans/roadmap-to-1.0.md) — capability outcomes
   and the soft, revisable path to a full-featured 1.0
 - [Language restriction ledger](plans/language-alignment.md) — current
