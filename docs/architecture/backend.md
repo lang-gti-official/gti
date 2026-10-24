@@ -4291,9 +4291,9 @@ idempotent, for the first admitted executable slice. It emits no dummy
 module, special `main`, LLVM IR, object, or executable.
 
 The public backend header has no LLVM include or type. LLVM context, target
-registry, triple, and initialization APIs are confined to
-`src/compiler/llvm_backend.cpp`. The dedicated `gti_llvm_backend` library owns
-the `Core`/`nativecodegen` component roots; `gti_compiler` retains the narrow
+registry, triple, and initialization APIs are confined to the private
+`src/compiler/llvm/` implementation. The dedicated `gti_llvm_backend` library owns
+the `Core`/`nativecodegen`/`Passes` component roots; `gti_compiler` retains the narrow
 support-library surface from ADR 006. Source and link-graph gates reject
 frontend, optimizer-private, C++ representation, and unowned LLVM component
 dependencies.
@@ -4329,6 +4329,106 @@ not another branch in the C++ emitter.
 
 See [ADR 031](../decisions/031-native-llvm-backend-foundation.md) for the
 dependency, initialization, packaging, status, and first-lowering decision.
+
+### LLVM Target, Layout And Execution ABI
+
+O-LLVM-03 provides the private machinery for real lowering; it does not admit
+any executable instruction family. `Session` owns the exact
+`VerifiedLoweredProgram`, context, native target machine, module, diagnostic
+collector and emission state. The only process-global LLVM state is once-only
+target/assembly-printer registration. No module, type cache, diagnostic buffer,
+or pass manager is shared between programs. The initial targets are native
+macOS arm64 and Linux x86_64. Foreign targets and unimplemented debug metadata
+are rejected, not silently approximated.
+
+The machine selects generic CPU features and PIC relocations, verifies the
+sealed scalar allocation sizes, ABI/preferred alignment, pointer width and
+endianness, then supplies the module's triple/data layout. Later verification
+rejects mutations of either. O0/O1/O2/O3 map explicitly to LLVM's corresponding
+module pipeline and target code-generation level. Floating contraction is
+disabled and no fast-math assumptions are supplied. The module is verified
+before and after optimization; LLVM error diagnostics prevent publication and
+warnings remain session-owned. Emission is single-use and returns binary
+`BackendArtifactKind::Object` bytes only after successful target emission.
+
+`Layouts` allocates deterministic named opaque types for concrete class
+identities before completing record bodies. It is the shared authority for
+storage sizes, field offsets, alignment, array element strides and address-only
+transport. Boolean values are `i1`, storage is `i8`; references and raw/native
+function pointers are addresses. Arrays use exact element storage, checked
+extents and target padding; zero-size storage retains its alignment. Plain
+non-polymorphic records are backend-owned, with one byte for an empty record.
+Native C records and unions must match every sealed size/alignment/offset.
+Pointer recursion does not recursively instantiate its pointee; by-value
+cycles and unresolved types reject. Lifecycle drop-state, compiler-capability,
+inheritance/dispatch and payload-enum representations remain owned by their
+later milestones. No public ordinary-class `sizeof` contract is invented.
+
+`Abi` centralizes signatures for definitions, calls and future adapters:
+
+| Private GTI ABI v1 shape | Transport |
+| --- | --- |
+| Failure-free scalar/reference result | Direct scalar/selected address result. |
+| Address-only result | Explicit result-storage pointer; native `sret` is not assumed. |
+| Failure-capable function | `i1` success status; optional result destination, then failure destination. Result storage is published only on success. |
+| Failure destination | `{ gti_failure_record_v2, artifact-descriptor pointer }`; copied owned message, pinned immutable descriptor. It is written only on failure. |
+| Instance receiver | Explicit receiver address after result/failure destinations. |
+| Caller attribution | Exact site index and pinned artifact pointer, after receiver. This is attribution, not permission to originate a failure. |
+| Ordinary arguments | Source order, scalars/addresses directly and address-only values through already-staged storage. MIR owns moves, loans, cleanup and publication. |
+
+All GTI functions use deterministic `__gti_native_v1_f<instance-id>` names.
+Declaration planning retains source spans as private metadata and records
+definition obligations before body emission, enabling recursion without name
+lookup or upstream access. Unlowered required definitions cannot be emitted as
+an object. ABI version 1 is an internal invalidation identity, not a stable
+public GTI binary ABI. No `nsw`, `nuw`, `inbounds`, `noalias`, `nonnull`,
+`noundef`, lifetime or dereferenceability promises follow from these plans.
+
+Native C planning is separate: exact scalar/pointer signatures and required
+narrow signed/unsigned extension attributes are applied identically to calls
+and declarations. Aggregate arguments/results reject until O-LLVM-11 provides
+target-specific classification and bidirectional oracles. Correct field
+offsets alone never authorize passing a C record in registers.
+
+The runtime bridge declares only actual, versioned C services: TLS begin/drain,
+failure validation, terminal ordinary/cleanup reporting and allocation abort.
+It models text views and all required v2 failure/v1 descriptor records and
+checks them against native C layout in tests. Initial containment uses the
+existing `gti_rt_failure_terminate_v2`, not C++ exception transport. The new
+`runtime_execution.h` begin/drain C hooks preserve unconditional hosted startup
+and shutdown; typed TLS storage/registration remains O-LLVM-06. Nothing here
+permits skipping a verified startup operation when a program has no TLS owner.
+
+`runtime_abi_inventory` asks Clang to inventory **every active C declaration**
+in all runtime C headers, with exact signature, canonical parameter types,
+symbol/version, header ownership, resource/failure/callback family and attached
+contract comments. Its target-specific JSON is retained in the build as
+`gti_runtime_abi_inventory.json`; new unclassified headers or missing services
+fail the gate. This tooling does not enter the backend. The five legacy
+`@runtime` bindings accepted by semantics remain explicit adapter obligations:
+
+| Binding / GTI signature | Real C service / remaining adaptation |
+| --- | --- |
+| `stdout.write`: `void(text_view)` | `int32_t gti_rt_write_stdout(gti_c_string_view)`; C aggregate classification and checked write-failure conversion. |
+| `stdin.read_byte`: `int32_t()` | `gti_rt_read_stdin_byte`; direct scalar status/value. |
+| `file.open_read`: `int64_t(text_view)` | `gti_rt_open_file_read(gti_c_string_view)`; C aggregate classification. |
+| `file.read_byte`: `int32_t(int64_t)` | `gti_rt_read_file_byte`; direct scalar status/value. |
+| `file.close`: `int32_t(int64_t)` | `gti_rt_close_file`; direct scalar status/value. |
+
+Those legacy unversioned C services are recorded as such, not relabeled v1.
+Most current library operations already call source-defined wrappers over C
+services. C++ inline/template helpers in `runtime.hpp`, `runtime_thread.hpp`
+and the C++ preamble are **not** linkable C entries; typed lifetime, ownership,
+thread handoff, synchronization and helper-only mechanisms still require their
+named later milestone. Inventory is not lowering admission.
+
+The object test emits data and minimal C-ABI identity/call oracles, atomically
+publishes and rereads the actual bytes, then links a separately compiled C
+consumer through `NativeLinkRequest` at all four optimization levels. These
+are infrastructure oracles, not a fake GTI `main`, instruction lowering, or
+proof that a GTI program executes with LLVM. The public backend still rejects
+pending admission before creating a session; O-LLVM-04 owns real scalar CFG,
+failure publication and exact reachability.
 
 ### LLVM Coverage And Admission
 
@@ -4415,8 +4515,9 @@ The remaining architecture obligations have explicit owners:
 | Complete virtual dispatch facts | Semantics/HIR/MIR publish exact bases, roots and targets; LLVM chooses representation | Dispatch-plan audit and verifier mutations, O-LLVM-10. Extend the upstream contract first if these facts prove insufficient. |
 | Worker/TLS cleanup and atomic wait ABI | Verified task/storage/synchronization schedules; C runtime adapters | Source failure, attachment/drain, memory-order and cleanup matrices, O-LLVM-06/13. C++ unwinding must not cross generated LLVM frames. |
 
-These are implementation prerequisites, not hidden claims that the native ABI,
-runtime migration or object emission already exists. The operational exit gates
+These are implementation prerequisites, not claims that runtime migration or
+GTI executable emission is complete. O-LLVM-03 supplies the bounded session,
+layout/signature and object machinery described above. The operational exit gates
 remain in the [LLVM sequence](../plans/implementation-sequence.md#llvm-production-backend-campaign).
 
 ### LLVM Readiness Audit (2026-10-24)

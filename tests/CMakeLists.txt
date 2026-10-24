@@ -1672,6 +1672,23 @@ add_executable("gti_llvm_admission_tests"
 target_link_libraries("gti_llvm_admission_tests" PRIVATE gti_llvm_backend)
 add_test(NAME llvm_admission COMMAND gti_llvm_admission_tests)
 
+add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
+target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
+add_test(NAME llvm_target_layout_abi COMMAND gti_llvm_session_tests)
+
+add_executable(gti_runtime_execution_tests runtime_execution_tests.cpp)
+target_link_libraries(gti_runtime_execution_tests PRIVATE gti_runtime)
+add_test(NAME runtime_execution_boundary COMMAND gti_runtime_execution_tests)
+
+if(Python3_Interpreter_FOUND)
+  add_test(NAME runtime_abi_inventory
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/runtime_abi_inventory_test.py"
+                   "${PROJECT_SOURCE_DIR}"
+                   "${CMAKE_BINARY_DIR}/gti_runtime_abi_inventory.json")
+endif()
+
 add_executable("gti_cpp_mir_program_plan_tests"
                "${PROJECT_SOURCE_DIR}/tests/cpp_mir_program_plan_tests.cpp")
 target_link_libraries("gti_cpp_mir_program_plan_tests"

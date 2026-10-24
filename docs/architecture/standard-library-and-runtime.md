@@ -1083,6 +1083,16 @@ record. `runtime/include/gti/runtime.h` defines runtime entry prototypes, and
 `runtime/src/` implements host behavior. Bounded `extern "C"` GTI declarations
 carry exact external symbols and an allowlisted ABI selected in semantics.
 
+`runtime_execution.h` adds narrow C entry points for the already-existing
+attached TLS lifetime and reverse cleanup drain. Native LLVM startup can call
+them without naming C++ runtime helpers; typed native TLS registration remains
+a later backend capability. They retain the existing runtime contract and
+v2 failure transport, including containment rather than cross-C unwinding.
+The [LLVM target/ABI boundary](backend.md#llvm-target-layout-and-execution-abi)
+describes exact runtime-record layouts, native service declaration planning
+and the Clang-generated complete C-service inventory. This is infrastructure,
+not executable LLVM library support.
+
 The original stdout and single-byte input/file entries remain compatibility
 symbols. The version-one I/O family adds counted stdout/stderr writes, bounded
 stdin/file reads, typed file open, complete file writes, file seek, and

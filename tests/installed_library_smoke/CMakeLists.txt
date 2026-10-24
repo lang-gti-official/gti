@@ -60,6 +60,10 @@ target_link_libraries(gti_installed_llvm_backend_smoke
 add_test(NAME installed_llvm_backend_library
          COMMAND gti_installed_llvm_backend_smoke)
 
+add_executable(gti_installed_runtime_execution_smoke ../runtime_execution_tests.cpp)
+target_link_libraries(gti_installed_runtime_execution_smoke PRIVATE GTI::runtime)
+add_test(NAME installed_runtime_execution_boundary COMMAND gti_installed_runtime_execution_smoke)
+
 add_executable(gti_installed_driver_smoke ../driver_library_smoke.cpp)
 target_link_libraries(gti_installed_driver_smoke PRIVATE GTI::driver)
 add_test(NAME installed_driver_library COMMAND gti_installed_driver_smoke)

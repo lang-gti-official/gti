@@ -10708,7 +10708,7 @@ or resolve them using source.
 ### O-LLVM-02: Coverage, Admission And Dependency Gates
 
 - **State:** complete contract/testing infrastructure in 0.474.0. All native
-  executable lowering remains pending. O-LLVM-03 is next.
+  executable lowering remains pending. O-LLVM-03 supplies the emission session.
 - **Deliver:** the exhaustive coverage ledger above, a deterministic required
   program/admission inventory, and a backend-selectable behavioral harness.
   Use the existing lowered verifier/generated graph; do not build a second
@@ -10735,6 +10735,9 @@ or resolve them using source.
 
 ### O-LLVM-03: Target, Layout And Execution ABI
 
+- **State:** implemented infrastructure; no executable instruction family is
+  admitted. O-LLVM-04 is next. See the [implemented session and precise
+  representation boundaries](../architecture/backend.md#llvm-target-layout-and-execution-abi).
 - **Unlock:** one reusable native emission session usable by all later buckets.
 - **Deliver:** explicit target machine/module/data layout; recursive type and
   symbol declaration planning; private GTI call ABI with status/result/failure
@@ -10765,6 +10768,14 @@ or resolve them using source.
   byte-preserving object handoff tests and installed linking of the backend.
   No instruction family is claimed complete here. O-LLVM-04 must exercise this
   infrastructure with actual GTI programs, not a hard-coded LLVM `main`.
+- **Delivered:** per-program module/target/diagnostics; explicit O0-O3 pipelines;
+  checked scalar/array/plain-record/native-record/union storage plans; recursive
+  declaration ordering; private status/result/failure ABI and provenance;
+  separate scalar/pointer C ABI; required failure-record layouts and real C
+  failure/startup bindings; Clang-generated complete C-service inventory;
+  verified object bytes through atomic driver publication and native linking.
+  Capability/lifecycle/dispatch storage and native C aggregate call
+  classification remain with O-LLVM-06/07/10/11, not guessed in this slice.
 
 ### O-LLVM-04: Scalars, Control Flow And Defined Failure
 
