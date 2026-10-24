@@ -13023,6 +13023,13 @@ auto SemanticVisitor::Impl::metaQueryConstant(
           (subject.kind == SemanticType::Class ||
            subject.kind == SemanticType::Enum) &&
           (!subject.arguments.empty() || !subject.valueArguments.empty())};
+    case 22:
+      return ConstantValue{requiresActiveCleanupFor(subject)};
+    case 23: {
+      const ClassInfo *owner =
+          subject.kind == SemanticType::Class ? classInfo(subject) : nullptr;
+      return ConstantValue{owner && owner->polymorphic};
+    }
     default:
       return std::nullopt;
     }
@@ -13039,6 +13046,10 @@ auto SemanticVisitor::Impl::metaQueryConstant(
       return ConstantValue{structuralConstraintSatisfied(
           StructuralConstraintKind::EnumUnderlying, arguments)};
     }
+    case 2:
+      return ConstantValue{subject.kind == SemanticType::Class &&
+                           attribute->kind == SemanticType::Class &&
+                           isPublicBaseConversion(subject, *attribute)};
     default:
       return std::nullopt;
     }

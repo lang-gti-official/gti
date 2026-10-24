@@ -14,6 +14,8 @@ concept sums<T> = requires(T& left, T& right) { { left + right } -> T; };
 concept integer_value<T> = std::meta::is_integral<T>();
 concept complete_object<T> = std::meta::has_object_layout<T>();
 concept detached_object<T> = complete_object<T> && std::meta::is_borrow_free<T>();
+concept cleanup_needed<T> = std::meta::has_active_cleanup<T>();
+concept dynamic_object<T> = std::meta::is_polymorphic<T>();
 concept integer_domain<T> = std::meta::is_signed_integral<T>() || std::meta::is_unsigned_integral<T>();
 T increment<T>(T value) requires integer_domain<T> { return value + 1; }
 T add<sums T>(T& left, T& right) { return left + right; }
@@ -76,7 +78,7 @@ def main():
                 "position": lsp_position(SOURCE, callee_position)})
             location = definition[0] if isinstance(definition, list) else definition
             assert location["uri"].endswith("/std/meta.gti"), definition
-            for name in ("has_object_layout", "is_borrow_free"):
+            for name in ("has_object_layout", "is_borrow_free", "has_active_cleanup", "is_polymorphic"):
                 position = SOURCE.index(name + "<T>")
                 query = hover(SOURCE, position)
                 assert name in str(query) and "bool" in str(query), query

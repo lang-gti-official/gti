@@ -488,13 +488,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The first type must be an integral enum and the second its exact "
           "declared underlying integer type.");
       break;
-    case StructuralConstraintKind::InlinePolymorphicPayload:
-      diagnostic.hints.emplace_back(
-          "The payload must be a concrete class publicly derived from the "
-          "polymorphic interface, with failure-free relocation, no source "
-          "destructor or owning cleanup, no checked borrowed state, and no "
-          "concurrency capability the interface would add.");
-      break;
     case StructuralConstraintKind::ReadCallable:
     case StructuralConstraintKind::MutCallable:
     case StructuralConstraintKind::OnceCallable:

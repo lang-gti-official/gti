@@ -6072,9 +6072,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
            satisfiesAtomicConstraint(arguments[0],
                                      GenericConstraintKind::IntegralEnum) &&
            enums[arguments[0].enumId - 1].underlyingType == arguments[1];
-  case StructuralConstraintKind::InlinePolymorphicPayload:
-    return arguments.size() == 2 &&
-           inlinePolymorphicPayload(arguments[0], arguments[1]);
   case StructuralConstraintKind::ReadCallable:
     return unaryCallable(CallableInvocationCapability::Read);
   case StructuralConstraintKind::MutCallable:
@@ -6269,7 +6266,6 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       // size() is a generated member-call fact rather than an operator.
       break;
     case StructuralConstraintKind::EnumUnderlying:
-    case StructuralConstraintKind::InlinePolymorphicPayload:
       // Enum representation classification grants no numeric operators.
       break;
 

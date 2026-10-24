@@ -591,6 +591,47 @@ int main() {
 )GTI"),
       "source cursor policies use general owner-aware reference requirements");
 
+  accepted(check(root, directory, "source_erased_owner_policy", R"(
+#include <std/meta>
+#include <std/polymorphic>
+#include <std/string>
+interface Measure { int read(); };
+class Point : public Measure {
+public:
+  Point() {}
+  int read() override { return 7; }
+};
+class Noisy : public Measure {
+public:
+  Noisy() {}
+  ~Noisy() {}
+  int read() override { return 8; }
+};
+struct Owning { std::string text; };
+int main() {
+  static_assert(std::meta::is_polymorphic<Measure>());
+  static_assert(std::meta::type<Point>().is_polymorphic());
+  static_assert(!std::meta::is_polymorphic<int>());
+  static_assert(std::meta::is_public_base_of<Measure, Point>());
+  static_assert(std::meta::type<Point>().has_public_base<Measure>());
+  static_assert(!std::meta::is_public_base_of<Point, Measure>());
+  static_assert(!std::meta::is_public_base_of<Point, Point>());
+  static_assert(!std::meta::is_public_base_of<int, Point>());
+  static_assert(!std::meta::has_active_cleanup<Point>());
+  static_assert(!std::meta::has_active_cleanup<int>());
+  static_assert(std::meta::has_active_cleanup<Noisy>());
+  static_assert(std::meta::type<Owning>().has_active_cleanup());
+  static_assert(requires(std::detail::inline_payload_probe<Point, Measure>& p) {
+    { p.matches() } -> bool;
+  });
+  static_assert(!(requires(std::detail::inline_payload_probe<Noisy, Measure>& p) {
+    { p.matches() } -> bool;
+  }));
+  return 0;
+}
+)"),
+           "source policy composes independent cleanup and public-base facts");
+
   accepted(check(root, directory, "source_cursor_policy_implication", R"(
 #include <std/iterator>
 void retreat<I>(mut I& cursor) requires std::bidirectional_cursor<I> {

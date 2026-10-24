@@ -1,10 +1,9 @@
 #include <std/memory>
+#include <std/meta>
 
 // Owning polymorphic values with inline storage for small eligible payloads.
 
 namespace gti_internal {
-@compiler_constraint("inline_polymorphic_payload") concept inline_polymorphic_payload_capability<Model, Interface>;
-
 /// Compiler-bound inline slot for at most one object whose dynamic type
 /// implements `Interface`, within `Bytes` and `Align`. Application code cannot
 /// name this type or its operations; `std::inline_polymorphic` owns every
@@ -32,12 +31,26 @@ void polymorphic_storage_reset<Interface, uint64_t Bytes, uint64_t Align>(
 }
 
 namespace std {
+namespace detail {
+constexpr bool inline_payload_policy<Model, Interface>() {
+  return (std::meta::is_class<Model>() || std::meta::is_struct<Model>()) &&
+      std::meta::has_object_layout<Model>() &&
+      std::meta::is_polymorphic<Interface>() &&
+      std::meta::is_public_base_of<Interface, Model>() &&
+      std::meta::is_movable<Model>() && std::meta::is_relocatable<Model>() &&
+      std::meta::is_borrow_free<Model>() &&
+      !std::meta::has_active_cleanup<Model>() &&
+      (!std::meta::is_transferable<Interface>() || std::meta::is_transferable<Model>()) &&
+      (!std::meta::is_shareable<Interface>() || std::meta::is_shareable<Model>());
+}
+}
 /// `Model` may live inline in an `inline_polymorphic<Interface, ...>`: it is a
 /// concrete class publicly derived from polymorphic `Interface`, its generated
 /// relocation cannot fail, its cleanup runs no source code, it retains no
 /// checked borrow, and erasing it grants no concurrency capability it lacks.
+[[unsatisfied("The payload needs a concrete public implementation with movable, relocatable, borrow-free storage, inert cleanup and no added concurrency capability.")]]
 concept inline_polymorphic_payload<Model, Interface> =
-    gti_internal::inline_polymorphic_payload_capability<Model, Interface>;
+    detail::inline_payload_policy<Model, Interface>();
 
 namespace detail {
 struct inline_payload_probe<Model, Interface> {

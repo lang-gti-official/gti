@@ -225,6 +225,13 @@ namespace query_hygiene {
 }
 
 int main() {
+  // Independent facts let an application choose its own erased-storage policy.
+  // They do not grant permission to skip cleanup or extend a borrow.
+  static_assert(std::meta::is_public_base_of<Tally, InheritedTally>());
+  static_assert(!std::meta::is_public_base_of<Tally, Tally>());
+  static_assert(!std::meta::has_active_cleanup<Tally>());
+  static_assert(std::meta::has_active_cleanup<DefaultResource>());
+  static_assert(std::meta::is_polymorphic<RuntimeObject>());
   mut Cell cell{};
   {
     mut int& value = edit_cell<Cell, int>(cell);

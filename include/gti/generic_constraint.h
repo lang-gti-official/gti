@@ -63,7 +63,6 @@ enum class StructuralConstraintKind : std::uint8_t {
   RangePredicate,
   RangeOperation,
   EnumUnderlying,
-  InlinePolymorphicPayload,
 };
 
 using GenericConstraintSet = std::uint32_t;
@@ -110,7 +109,7 @@ inline constexpr std::array<GenericConstraintKind, 21> genericConstraintKinds{{
 // complete fact inventory above also serves reflection and generic proofs.
 inline constexpr std::array<CompilerConstraintRecord, 0> compilerConstraints{};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 20>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 19>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
@@ -133,8 +132,6 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 20>
         {"indirect_operation", StructuralConstraintKind::IndirectOperation, 3},
         {"range_predicate", StructuralConstraintKind::RangePredicate, 2},
         {"range_operation", StructuralConstraintKind::RangeOperation, 3},
-        {"inline_polymorphic_payload",
-         StructuralConstraintKind::InlinePolymorphicPayload, 2},
     }};
 
 static_assert(genericConstraintKinds.size() + 2 ==

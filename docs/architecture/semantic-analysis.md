@@ -2365,6 +2365,14 @@ Comparison policy uses source metadata filtering plus ordinary expression
 queries; no comparison concept binding or class-policy checker remains.
 Primitive-category facts retain native value comparisons even when a source
 requirement was written with reference bindings.
+Cleanup and erasure policy can query independent semantic facts through
+`has_active_cleanup`, `is_polymorphic` and the public-base type relation. These
+queries read the existing recursive cleanup and resolved class/base facts;
+they neither execute destruction nor create an adjusted object pointer.
+The inline-payload concept is source policy over those facts and the existing
+layout/ownership/concurrency predicates. Its former structural binding is
+removed. The trusted polymorphic-storage primitive retains its concrete
+admission check: metadata truth alone never authorizes a lifetime transition.
 Lookup reflection derives its method sequence from the resolved `ClassInfo`
 member set. The computed sequence reuses method metaobjects with the selected
 declaration's exact substituted `dispatchOwner` and declaration index; it does

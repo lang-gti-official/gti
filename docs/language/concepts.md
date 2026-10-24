@@ -355,6 +355,22 @@ pointer can be borrow-free without being valid, owned,
 or safe to dereference. Neither predicate relaxes unsafe obligations. Both
 queries also have methods on `std::meta::type<T>`.
 
+`std::meta::has_active_cleanup<T>()` reports whether destruction has active
+work, including source destructor bodies and recursively owned state. A false
+answer does not permit skipping object lifetime transitions.
+`std::meta::is_polymorphic<T>()` reports resolved virtual dispatch, and
+`std::meta::is_public_base_of<Base, Derived>()` reports the public base relation
+used by ordinary GTI conversion. The latter is false for identical types and
+non-class types. The corresponding type-metaobject methods are
+`has_active_cleanup()`, `is_polymorphic()` and `has_public_base<Base>()`.
+These are metadata queries, not casts or permissions to access an object.
+
+`std::inline_polymorphic_payload<Model, Interface>` now composes these facts,
+object layout, movable/relocatable, borrow-free and concurrency facts in source.
+The trusted storage operation still independently validates its concrete
+lifetime and erasure invariants; removing a private concept does not remove
+those checks or make the storage operation a public escape hatch.
+
 ### Exact member signature compatibility
 
 Library authors can describe a public, nongeneric instance method with

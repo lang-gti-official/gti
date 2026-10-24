@@ -224,10 +224,18 @@ public:
   constexpr bool has_object_layout() { return gti_internal::meta_type_trait<T, 20>(); }
   /// Whether the value retains no checked external-owner borrow (not raw-pointer validity).
   constexpr bool is_borrow_free() { return gti_internal::meta_type_trait<T, 21>(); }
+  /// Whether destroying T requires active cleanup, including nested owned state.
+  /// A false answer does not authorize skipping object lifetime transitions.
+  constexpr bool has_active_cleanup() { return gti_internal::meta_type_trait<T, 22>(); }
+  /// Whether the resolved class/interface has virtual dispatch.
+  constexpr bool is_polymorphic() { return gti_internal::meta_type_trait<T, 23>(); }
   /// Exact type identity, not conversion compatibility.
   constexpr bool is_same<U>() { return gti_internal::meta_type_relation<T, U, 0>(); }
   /// Exact declared integral-enum representation, false for other types.
   constexpr bool has_underlying_type<U>() { return gti_internal::meta_type_relation<T, U, 1>(); }
+  /// Whether Base is a resolved public base of T (not T itself).
+  /// This describes the relation, not permission to access or extend an object.
+  constexpr bool has_public_base<Base>() { return gti_internal::meta_type_relation<T, Base, 2>(); }
   /// The number of enumerators when `T` is an enum, else 0.
   constexpr uint64_t enumerator_count() { return gti_internal::meta_enumerator_count<T>(); }
   /// The enumerators of `T`, as a `list` of `enumerator` metaobjects.
@@ -490,6 +498,14 @@ constexpr bool has_object_layout<T>() { return gti_internal::meta_type_trait<T, 
 /// Whether the value retains no checked external-owner borrow. This does not
 /// establish validity, provenance, or ownership of any raw pointer it stores.
 constexpr bool is_borrow_free<T>() { return gti_internal::meta_type_trait<T, 21>(); }
+/// Includes nested owning state and source cleanup, not merely a declared destructor.
+/// This fact does not permit skipping destruction or a lifetime transition.
+constexpr bool has_active_cleanup<T>() { return gti_internal::meta_type_trait<T, 22>(); }
+/// Whether the resolved class/interface participates in virtual dispatch.
+constexpr bool is_polymorphic<T>() { return gti_internal::meta_type_trait<T, 23>(); }
+/// Whether Base is a resolved public base of Derived (identity is false).
+/// No object access, conversion, or lifetime extension occurs in this query.
+constexpr bool is_public_base_of<Base, Derived>() { return gti_internal::meta_type_relation<Derived, Base, 2>(); }
 /// Exact type identity, without widening, implicit conversion or inheritance.
 constexpr bool is_same<T, U>() { return gti_internal::meta_type_relation<T, U, 0>(); }
 /// Whether E is a payload-free enum with exactly U as its declared domain.

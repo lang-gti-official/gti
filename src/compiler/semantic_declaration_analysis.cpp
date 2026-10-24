@@ -1157,9 +1157,6 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
     resolveProtocolConcept(conceptInfo, valid);
   } else if (declaration.compilerBinding()) {
     const CompilerConstraintBinding &binding = *declaration.compilerBinding();
-    const bool trustedMemoryConstraint =
-        (isPolymorphicLibraryUnit(conceptInfo.sourceUnit) &&
-         binding.name == "inline_polymorphic_payload");
     const bool trustedIteratorConstraint =
         isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
         (binding.name == "input_iterator" || binding.name == "sentinel_for" ||
@@ -1180,7 +1177,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
          binding.name == "range_predicate" ||
          binding.name == "range_operation");
     if ((!isPreludeUnit(conceptInfo.sourceUnit) && !trustedIteratorConstraint &&
-         !trustedFunctionalConstraint && !trustedMemoryConstraint) ||
+         !trustedFunctionalConstraint) ||
         conceptInfo.namespaceScope !=
             std::vector<std::string>{"gti_internal"}) {
       report(binding.attribute,
