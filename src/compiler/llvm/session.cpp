@@ -99,7 +99,7 @@ std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
   targetOptions.AllowFPOpFusion = llvm::FPOpFusion::Strict;
   // No fast-math flags or function attributes are supplied. LLVM 23 removed
   // older target-wide fast-math toggles in favor of those per-operation facts.
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 21
   const auto &machineTriple = triple;
 #else
   const auto machineTriple = triple.str();
@@ -153,7 +153,7 @@ Session::Session(VerifiedLoweredProgram program, LlvmBackendOptions options)
   context_.setDiagnosticHandler(
       std::make_unique<Diagnostics>(diagnostics_, diagnosticError_));
   module_.setDataLayout(machine_->createDataLayout());
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 21
   module_.setTargetTriple(machine_->getTargetTriple());
 #else
   module_.setTargetTriple(machine_->getTargetTriple().str());
@@ -178,7 +178,7 @@ void Session::verify() const {
   if (module_.getDataLayout() != machine_->createDataLayout())
     throw std::logic_error(
         "LLVM module changed its planned target data layout");
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 21
   if (module_.getTargetTriple() != machine_->getTargetTriple())
 #else
   if (module_.getTargetTriple() != machine_->getTargetTriple().str())
