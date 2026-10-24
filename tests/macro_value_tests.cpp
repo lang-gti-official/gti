@@ -412,6 +412,9 @@ struct Count {
   Count saved{expression};
   Count& alias = saved;
   int copied = saved.number;
+  auto [unused_number] = saved;
+  int32_t[2] elements = {1, 2};
+  auto [unused_first, unused_second] = elements;
   return saved;
 }
 Count first = local_count(7);
@@ -448,6 +451,20 @@ int main() { return first.number + Registry::second.number - 16; }
   check(first.place != 0 && second.place != 0,
         "fixture retains two distinct ordinary user-type local places");
   if (first.place == 0 || second.place == 0)
+    return;
+  lang::MirProgramInitializationLocal view;
+  for (const auto &local : initialization.steps[firstIndex].locals) {
+    const auto *place = result.mir.module().findPlace(local.place);
+    if (place && place->binding != local.binding &&
+        place->projections.front().kind == lang::MirProjectionKind::Field) {
+      view = local;
+      break;
+    }
+  }
+  check(view.place != 0,
+        "structured local metadata names a final physical projection, not an "
+        "unused placeholder binding");
+  if (view.place == 0)
     return;
   const auto rejected = [&](std::string_view message,
                             std::string_view expectedError,
@@ -590,6 +607,39 @@ int main() { return first.number + Registry::second.number - 16; }
                  return true;
                }
              return false;
+           });
+  rejected("a structured local cannot substitute a named storage owner",
+           "local has invalid or overlapping identity",
+           [&](auto &, auto &body) {
+             body.places[view.place - 1].binding = first.binding;
+             return true;
+           });
+  rejected(
+      "a structured local cannot forge its semantic place key",
+      "local has invalid or overlapping identity", [&](auto &, auto &body) {
+        body.places[view.place - 1].key =
+            lang::PlaceKey{.domain = body.placeDomain, .root = first.symbol};
+        return true;
+      });
+  rejected("an extra unused structured name cannot widen the decomposition",
+           "local views are not an exact aggregate decomposition",
+           [&](auto &plan, auto &body) {
+             auto extra = *body.findPlace(view.place);
+             auto local = view;
+             extra.id = body.places.size() + 1;
+             for (const auto &place : body.places)
+               local.symbol = std::max(local.symbol, place.symbol);
+             for (const auto &step : plan.steps)
+               for (const auto &candidate : step.locals)
+                 local.binding = std::max(local.binding, candidate.binding);
+             ++local.binding;
+             ++local.symbol;
+             extra.symbol = local.symbol;
+             extra.key.reset();
+             local.place = extra.id;
+             plan.steps[firstIndex].locals.push_back(local);
+             body.places.push_back(std::move(extra));
+             return true;
            });
 }
 
@@ -866,6 +916,47 @@ int main() {
         "fixture must retain a static/global initializer macro return");
 }
 
+void macroFreshArgumentBoundaries() {
+  const std::string prefix = R"gti(
+struct Value { int number; Value(int number) : number(number) {} };
+#macro Value fresh(int number) { Value guard{99}; return Value(number); }
+)gti";
+  diagnostic(prefix + R"gti(
+int change(mut Value& value) { value.number = 3; return value.number; }
+int main() { return change(fresh(1)); }
+)gti",
+             "cannot bind a mutable reference to a temporary");
+  diagnostic(prefix + R"gti(
+Value& escape(Value& value) { return value; }
+int main() { Value& value = escape(fresh(1)); return value.number; }
+)gti",
+             "may return a reference");
+  diagnostic(prefix + R"gti(
+int observe(Value& value);
+int main() { return observe(fresh(1)); }
+)gti",
+             "declaration-only call target");
+  diagnostic(R"gti(
+#include <std/utility>
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  int read() { return 1; }
+};
+#macro Owner take(Owner value) { return value; }
+int inspect(Owner& value) { return value.read(); }
+int main() {
+  Owner owner{};
+  Owner& loan = owner;
+  int result = inspect(take(std::move(owner)));
+  return result + loan.read();
+}
+)gti",
+             "overlapping borrow");
+}
+
 void callerConversionsAndPropagation() {
   const auto result = analyze(R"gti(
 #include <std/source_location>
@@ -940,6 +1031,8 @@ int main(int argc, char **argv) {
       initializerResultRegions();
     else if (name == "callerConversionsAndPropagation")
       callerConversionsAndPropagation();
+    else if (name == "macroFreshArgumentBoundaries")
+      macroFreshArgumentBoundaries();
     else
       return 2;
     return failures == 0 ? 0 : 1;
@@ -951,6 +1044,7 @@ int main(int argc, char **argv) {
   receiverResultLivenessMutations();
   programInitializerLocalMetadataMutations();
   initializerResultRegions();
+  macroFreshArgumentBoundaries();
   callerConversionsAndPropagation();
   diagnostic("#macro int bad(bool flag) { if (flag) { return 1; } }\n"
              "int main() { return bad(false); }",

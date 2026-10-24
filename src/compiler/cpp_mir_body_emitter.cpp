@@ -325,8 +325,8 @@ struct IndexedMirBody {
   const void *conditionalViewRepresentations = nullptr;
   std::optional<std::unordered_set<const MirPlace *>> conditionalViewStorages;
   const MirProgram *moduleLocalProgram = nullptr;
-  std::optional<
-      std::unordered_map<HirBindingId, const MirProgramInitializationLocal *>>
+  std::optional<std::map<std::pair<HirBindingId, SymbolId>,
+                         const MirProgramInitializationLocal *>>
       moduleLocals;
 };
 
@@ -1887,13 +1887,24 @@ moduleInitializationLocal(const MirProgram &program, const MirBody &body,
       place.root != MirPlaceRootKind::Binding)
     return nullptr;
   const auto exactLocal = [&](const MirProgramInitializationLocal *local) {
-    if (local == nullptr || local->binding != place.binding ||
-        local->symbol != place.symbol)
+    if (local == nullptr || local->symbol != place.symbol)
       return static_cast<const MirProgramInitializationLocal *>(nullptr);
-    const MirPlace *root = body.findPlace(local->place);
-    return root != nullptr && root->root == MirPlaceRootKind::Binding &&
-                   root->binding == local->binding &&
-                   root->symbol == local->symbol && root->projections.empty()
+    const MirPlace *view = body.findPlace(local->place);
+    // Structured aliases retain a semantic binding identity distinct from
+    // their physical hidden owner. Match the published physical view and its
+    // exact projection prefix; never invent an unprojected alias object.
+    return view != nullptr && view->root == MirPlaceRootKind::Binding &&
+                   view->binding == place.binding &&
+                   view->symbol == local->symbol &&
+                   view->hostedStartupOperation ==
+                       place.hostedStartupOperation &&
+                   view->capture == place.capture &&
+                   view->temporary == place.temporary &&
+                   view->value == place.value && view->loan == place.loan &&
+                   view->projections.size() <= place.projections.size() &&
+                   std::equal(view->projections.begin(),
+                              view->projections.end(),
+                              place.projections.begin())
                ? local
                : nullptr;
   };
@@ -1906,13 +1917,16 @@ moduleInitializationLocal(const MirProgram &program, const MirBody &body,
       index->moduleLocals.emplace();
       for (const auto &step : program.programInitializationPlan().steps)
         for (const auto &local : step.locals) {
-          const auto [found, inserted] =
-              index->moduleLocals->emplace(local.binding, &local);
+          const auto *view = body.findPlace(local.place);
+          if (view == nullptr || view->root != MirPlaceRootKind::Binding)
+            continue;
+          const auto [found, inserted] = index->moduleLocals->emplace(
+              std::pair{view->binding, local.symbol}, &local);
           if (!inserted)
             found->second = nullptr;
         }
     }
-    const auto found = index->moduleLocals->find(place.binding);
+    const auto found = index->moduleLocals->find({place.binding, place.symbol});
     return found == index->moduleLocals->end() ? nullptr
                                                : exactLocal(found->second);
   }

@@ -8948,6 +8948,9 @@ verifyMirProgramInitialization(const MirProgram &program) {
   std::unordered_map<SymbolId, ProgramInitializationStepId> localSymbolSteps;
   std::unordered_map<HirBindingId, const MirProgramInitializationLocal *>
       localsByBinding;
+  std::unordered_map<SymbolId, const MirProgramInitializationLocal *>
+      localAliasesBySymbol;
+  std::unordered_set<MirPlaceId> localAliasPlaces;
   std::unordered_set<MirPlaceId> localPlaces;
   std::unordered_set<MirPlaceId> storagePlaces;
   std::unordered_set<MirInstructionId> storageInitializations;
@@ -9031,7 +9034,6 @@ verifyMirProgramInitialization(const MirProgram &program) {
     HirBindingId previousLocal = 0;
     for (const auto &local : step.locals) {
       const auto *place = module.findPlace(local.place);
-      const PlaceKey key{.domain = module.placeDomain, .root = local.symbol};
       if (step.role != ProgramInitializationStepRole::Initializer ||
           local.binding == 0 || local.binding <= previousLocal ||
           !localBindingSteps.emplace(local.binding, step.id).second ||
@@ -9040,13 +9042,10 @@ verifyMirProgramInitialization(const MirProgram &program) {
            !localSymbolSteps.emplace(local.symbol, step.id).second) ||
           !localPlaces.insert(local.place).second || place == nullptr ||
           place->root != MirPlaceRootKind::Binding ||
-          place->binding != local.binding || place->symbol != local.symbol ||
-          place->capture != 0 || place->temporary != 0 || place->value != 0 ||
-          place->loan != 0 || !place->projections.empty() ||
-          place->type == SemanticType::Unknown || place->sourceValue != 0 ||
-          place->foreignStorage || place->initiallyAvailable ||
-          (local.symbol == 0 ? place->key.has_value()
-                             : !place->key || *place->key != key)) {
+          place->symbol != local.symbol || place->capture != 0 ||
+          place->temporary != 0 || place->value != 0 || place->loan != 0 ||
+          place->type == SemanticType::Unknown || place->foreignStorage ||
+          place->initiallyAvailable) {
         add("program-initialization local has invalid or overlapping identity",
             step.entryBlock);
       }
@@ -9366,6 +9365,115 @@ verifyMirProgramInitialization(const MirProgram &program) {
   for (const auto place : localPlaces)
     if (storagePlaces.contains(place))
       add("program-initialization local overlaps persistent storage");
+  const auto canonicalLocal = [&](const MirProgramInitializationLocal &local,
+                                  const MirPlace *place) {
+    const PlaceKey key{.domain = module.placeDomain, .root = local.symbol};
+    return place && place->root == MirPlaceRootKind::Binding &&
+           place->binding == local.binding && place->symbol == local.symbol &&
+           place->projections.empty() && place->sourceValue == 0 &&
+           (local.symbol == 0 ? !place->key : place->key && *place->key == key);
+  };
+  std::unordered_map<HirBindingId,
+                     std::vector<const MirProgramInitializationLocal *>>
+      localDecompositions;
+  for (const auto &step : plan.steps)
+    for (const auto &local : step.locals) {
+      const auto *place = module.findPlace(local.place);
+      if (canonicalLocal(local, place))
+        continue;
+      const auto owner =
+          place ? localsByBinding.find(place->binding) : localsByBinding.end();
+      const auto *source = owner == localsByBinding.end()
+                               ? nullptr
+                               : module.findPlace(owner->second->place);
+      const PlaceKey key{.domain = module.placeDomain, .root = local.symbol};
+      bool exact = place && owner != localsByBinding.end() && source &&
+                   step.id != 0 && step.id <= stepBlocks.size() &&
+                   owner->second->binding != local.binding &&
+                   owner->second->symbol == 0 && local.symbol != 0 &&
+                   localBindingSteps[owner->second->binding] == step.id &&
+                   canonicalLocal(*owner->second, source) &&
+                   place->projections.size() == 1 && place->sourceValue != 0 &&
+                   (!place->key || *place->key == key) &&
+                   place->access == AccessMode::ReadOnly;
+      if (exact) {
+        const auto &projection = place->projections.front();
+        if (source->type.kind == SemanticType::Array &&
+            source->type.arguments.size() == 1) {
+          exact = projection.kind == MirProjectionKind::Index &&
+                  projection.field == 0 && projection.index != 0 &&
+                  projection.constantIndex &&
+                  *projection.constantIndex < source->type.arrayLength &&
+                  projection.selection == 0 &&
+                  place->type == source->type.arguments.front();
+        } else {
+          const auto *record =
+              uniqueMirClassInstanceForType(program, source->type);
+          const auto field =
+              record
+                  ? std::find_if(record->declaredFields.begin(),
+                                 record->declaredFields.end(),
+                                 [&](const auto &candidate) {
+                                   return candidate.symbol == projection.field;
+                                 })
+                  : std::vector<MirClassFieldInfo>::const_iterator{};
+          exact = record && record->bases.empty() &&
+                  field != record->declaredFields.end() &&
+                  projection.kind == MirProjectionKind::Field &&
+                  projection.index == 0 && !projection.constantIndex &&
+                  projection.selection == 0 && place->type == field->type;
+        }
+      }
+      bool initialized = false;
+      if (exact)
+        for (const auto *block : stepBlocks[step.id - 1])
+          for (const auto &initialize : block->instructions) {
+            if (initialize.kind != MirInstructionKind::Initialize ||
+                initialize.destination != source->id ||
+                initialize.operands.size() != 1)
+              continue;
+            const auto &operand = initialize.operands.front();
+            const auto *value = operand.kind == MirOperandKind::Value
+                                    ? module.findValue(operand.value)
+                                    : nullptr;
+            const auto *input =
+                operand.place != 0 ? module.findPlace(operand.place) : nullptr;
+            initialized |=
+                (value && value->sourceValue == place->sourceValue) ||
+                (input && input->sourceValue == place->sourceValue);
+          }
+      exact &= initialized;
+      if (!exact) {
+        add("program-initialization local has invalid or overlapping identity",
+            step.entryBlock);
+        continue;
+      }
+      localAliasesBySymbol.emplace(local.symbol, &local);
+      localAliasPlaces.insert(local.place);
+      localDecompositions[owner->second->binding].push_back(&local);
+    }
+  for (const auto &[binding, aliases] : localDecompositions) {
+    const auto *source = module.findPlace(localsByBinding.at(binding)->place);
+    bool exact = false;
+    if (source->type.kind == SemanticType::Array) {
+      exact = aliases.size() == source->type.arrayLength;
+      for (std::size_t index = 0; index < aliases.size(); ++index)
+        exact &= module.findPlace(aliases[index]->place)
+                     ->projections.front()
+                     .constantIndex == index;
+    } else if (const auto *record =
+                   uniqueMirClassInstanceForType(program, source->type)) {
+      exact = aliases.size() == record->declaredFields.size();
+      for (std::size_t index = 0;
+           index < std::min(aliases.size(), record->declaredFields.size());
+           ++index)
+        exact &= module.findPlace(aliases[index]->place)
+                     ->projections.front()
+                     .field == record->declaredFields[index].symbol;
+    }
+    if (!exact)
+      add("initializer local views are not an exact aggregate decomposition");
+  }
   const auto placeIsUsed = [&](MirPlaceId id) {
     if (std::any_of(module.loans.begin(), module.loans.end(),
                     [&](const MirLoan &loan) { return loan.source == id; }) ||
@@ -9393,7 +9501,7 @@ verifyMirProgramInitialization(const MirProgram &program) {
     return false;
   };
   for (const auto place : localPlaces)
-    if (!placeIsUsed(place))
+    if (!placeIsUsed(place) && !localAliasPlaces.contains(place))
       add("program-initialization local has orphan storage");
   struct StorageIdentity {
     ProgramInitializationStepId step = 0;
@@ -9454,7 +9562,7 @@ verifyMirProgramInitialization(const MirProgram &program) {
       // step.
       continue;
     }
-    if (!placeIsUsed(place.id))
+    if (!placeIsUsed(place.id) && !localAliasPlaces.contains(place.id))
       add("module contains orphan persistent/local storage place");
     std::optional<StorageIdentity> identity;
     bool exact = true;
@@ -9467,9 +9575,17 @@ verifyMirProgramInitialization(const MirProgram &program) {
     };
     if (place.root == MirPlaceRootKind::Binding) {
       requireIdentity(bindingIdentity(place.binding));
-      if (const auto local = localsByBinding.find(place.binding);
-          local != localsByBinding.end())
+      const auto alias = localAliasesBySymbol.find(place.symbol);
+      if (alias != localAliasesBySymbol.end()) {
+        const auto *view = module.findPlace(alias->second->place);
+        exact &= view && place.binding == view->binding &&
+                 place.projections.size() >= view->projections.size() &&
+                 std::equal(view->projections.begin(), view->projections.end(),
+                            place.projections.begin());
+      } else if (const auto local = localsByBinding.find(place.binding);
+                 local != localsByBinding.end()) {
         exact &= place.symbol == local->second->symbol;
+      }
     }
     if (place.symbol != 0 || !bindingRoot || !identity || !identity->local)
       requireIdentity(symbolIdentity(place.symbol));

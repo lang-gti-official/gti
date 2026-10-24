@@ -1615,7 +1615,9 @@ enum class MirProgramDataInitializationKind {
 
 // A lexical binding evaluated inside one storage initializer, never persistent
 // program storage. Retain its exact source and place identity independently of
-// the operation shapes emitted for its initialization or cleanup.
+// the operation shapes emitted for its initialization or cleanup. A structured
+// name's place is its published projection of a separate hidden local owner;
+// binding remains the name's semantic identity, not the physical owner's ID.
 struct MirProgramInitializationLocal {
   HirBindingId binding = 0;
   SymbolId symbol = 0;

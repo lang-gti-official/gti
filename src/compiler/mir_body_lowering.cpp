@@ -5373,8 +5373,8 @@ private:
                                 : AccessMode::ReadOnly;
   }
 
-  // The value-rooted slot of a materialized temporary whose obligation is
-  // still active, or zero.
+  // The exact slot of a materialized temporary whose obligation is still
+  // active, including a join's existing hidden slot, or zero.
   [[nodiscard]] MirPlaceId temporarySlot(HirValueId id) {
     const HirValue *temporary = findValue(id);
     const MirDropObligationId obligation =
@@ -5387,7 +5387,10 @@ private:
         drop == nullptr ? nullptr : output.findPlace(drop->place);
     if (drop == nullptr || !temporaryIsActive(obligation) ||
         drop->kind != MirDropObligationKind::Value || drop->value != id ||
-        slot == nullptr || slot->root != MirPlaceRootKind::Value ||
+        slot == nullptr ||
+        (slot->root != MirPlaceRootKind::Value &&
+         !(slot->root == MirPlaceRootKind::Temporary &&
+           findMirTemporaryMaterialization(output, *slot, id))) ||
         !slot->projections.empty()) {
       return 0;
     }
@@ -9502,7 +9505,12 @@ private:
           mergeTemporaryDrops(temporaryDrops, region.exitTemporaries[index]);
     }
     if (hasResult) {
-      const bool move = value.info.traits.drop != DropKind::Trivial ||
+      // A fresh object result uses an owned transport even when its generated
+      // move is trivial. A Load denotes a copied place observation, which is
+      // not the producer contract selected by a later by-value call stage.
+      const bool move = value.info.type.kind == SemanticType::Class ||
+                        value.info.type.kind == SemanticType::Lambda ||
+                        value.info.traits.drop != DropKind::Trivial ||
                         !value.info.traits.copyable;
       (void)appendInstruction(
           {.kind = move ? MirInstructionKind::Move : MirInstructionKind::Load,
@@ -12499,6 +12507,8 @@ private:
         std::vector<HirBindingId> locals(reachable.bindings.begin(),
                                          reachable.bindings.end());
         std::sort(locals.begin(), locals.end());
+        lowered.storageInitialization =
+            statement == nullptr ? 0 : lowerVariable(*statement);
         for (const HirBindingId id : locals) {
           const HirBinding *local = findBinding(id);
           const MirPlaceId place = placeForBinding(id);
@@ -12511,8 +12521,6 @@ private:
           lowered.locals.push_back(
               {.binding = id, .symbol = local->info.symbol, .place = place});
         }
-        lowered.storageInitialization =
-            statement == nullptr ? 0 : lowerVariable(*statement);
         const auto fullExpression =
             initializer == nullptr
                 ? fullExpressionIds.end()

@@ -50,6 +50,7 @@ struct Box {
 };
 #macro Box boxed(int value) { return Box(value); }
 int observe_box(Box& box) { return box.value; }
+int consume_box(Box box) { return box.value; }
 struct Flag {
   operator bool() { return true; }
   implicit operator int() { return 19; }
@@ -146,9 +147,10 @@ int main() {
       defaulted.function_name() != "main") { return 14; }
   int before_argument = drops;
   int observed_owner = observe_owner(local(83));
-  if (observed_owner != 83 || drops != before_argument + 1) { return 17; }
+  if (observed_owner != 83 || drops != before_argument + 1) { return 19; }
   int observed_box = observe_box(boxed(89));
-  if (observed_box != 89) { return 18; }
+  if (observed_box != 89) { return 20; }
+  if (consume_box(boxed(97)) != 97) { return 21; }
   if (initializer_drops != 3 || initialized_global != 9 || setup::namespaced != 10 ||
       InitRecord::shared != 15) { return 16; }
   InitRecord record{};

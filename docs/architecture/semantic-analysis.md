@@ -2191,8 +2191,12 @@ Resolved ordinary method calls and class `operator()` calls retain a
 `CallReceiverMode` alongside the exact selected target. The mode distinguishes
 read-only and mutable source places, reusable values, consuming receivers, and
 read-only or mutable borrows of a fresh temporary. Semantics alone classifies
-freshness: ordinary construction, by-value GTI calls, and value-producing GTI
-operators qualify for the bounded ephemeral-borrow contract. Receiver-only
+freshness: ordinary construction, by-value GTI calls, typed macro result regions,
+and value-producing GTI operators qualify for the bounded ephemeral-borrow
+contract. A concrete self-contained macro result uses its checked expansion and
+exact result type as producer authority, not an invented executable function
+call. The ordinary selected-target confinement, non-borrowing result, linkage,
+access and loan rules still apply. Receiver-only
 materialization also accepts owned movable class values from conditional
 expressions, lambda calls and copy/move construction; this does not broaden
 ephemeral argument borrowing. Reusable
