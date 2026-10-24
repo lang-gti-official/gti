@@ -204,7 +204,7 @@ MirLoweringResult
 MirLowerer::lowerProgram(const HirProgram &source,
                          const FailureMetadata &failureMetadata,
                          const MirDefinedFailureEffects &definedFailureEffects,
-                         bool includeProgramInitialization) {
+                         bool includeHostedStartup) {
   MirLoweringResult result;
   if (!source.valid()) {
     result.program.valid_ = false;
@@ -242,20 +242,17 @@ MirLowerer::lowerProgram(const HirProgram &source,
     }
     result.program.payloadEnums_.push_back(std::move(lowered));
   }
-  if (includeProgramInitialization) {
-    result.program.moduleBody =
-        lowerBody(source, failureMetadata, source.module(), MirBodyKind::Module,
-                  SemanticType::Void, {}, definedFailureEffects, valid,
-                  result.errors, 0, false, nullptr, nullptr, nullptr, nullptr,
-                  &source.programInitializationPlan(),
-                  &result.program.programInitialization);
-  } else {
-    HirBody provisionalModule;
-    provisionalModule.placeDomain = source.module().placeDomain;
-    result.program.moduleBody = lowerBody(
-        source, failureMetadata, provisionalModule, MirBodyKind::Module,
-        SemanticType::Void, {}, definedFailureEffects, valid, result.errors, 0);
-  }
+  // Failure-effect bootstrapping still verifies exact storage identities and
+  // initializer effects. Retain the real module in every round: an empty
+  // provisional module would turn owning global receivers into unproved
+  // dynamic calls, even when their declaration fixes the complete type.
+  // Only the hosted entry wrapper waits for the derived failure contracts.
+  result.program.moduleBody =
+      lowerBody(source, failureMetadata, source.module(), MirBodyKind::Module,
+                SemanticType::Void, {}, definedFailureEffects, valid,
+                result.errors, 0, false, nullptr, nullptr, nullptr, nullptr,
+                &source.programInitializationPlan(),
+                &result.program.programInitialization);
 
   result.program.classes.reserve(source.classInstances().size());
   for (const HirClassInstance &instance : source.classInstances()) {
@@ -624,7 +621,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
     }
     result.program.threadLocalStorage_.push_back(std::move(lowered));
   }
-  if (includeProgramInitialization) {
+  if (includeHostedStartup) {
     valid =
         lowerHostedStartup(source, failureMetadata, result.program) && valid;
   }
