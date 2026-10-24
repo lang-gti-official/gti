@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.467.2 — Returning payload references from reference parameters
+
+- A free function, static method or lambda can now return a reference bound by
+  an `auto&` or `mut auto&` payload pattern over its reference parameter, a
+  field of it, or a reference alias of it, as a member accessor already could
+  for `this`. `int& inner(wrap& value) { switch (value) { case
+  wrap::one(auto& item): return item; } }` used to report `error[GTI-S2017]`
+  ("Returned reference must derive from read-only parameter 'value'") although
+  the result derives from `value`; it now compiles, and the caller's argument
+  stays borrowed while the result is live. Patterns over a local copy, a
+  by-value parameter or a temporary are still rejected.
+- That diagnostic now says "mutable reference parameter" when the source
+  parameter is `mut T&`, rather than calling it read-only.
+
 ## 0.467.0 — Source-defined requirements and general type facts
 
 - `requires` queries can check ordinary expressions and construction with exact
