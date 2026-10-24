@@ -6547,12 +6547,12 @@ T invalid_forward<Iterator, Sentinel, std::numeric T>(
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(
-      !unprovenForward.canGenerateCode() &&
-          hasDiagnosticCode(unprovenForward.diagnostics, "GTI-S2029") &&
-          hasDiagnostic(unprovenForward.diagnostics, "'std::input_iterator'"),
-      "generic forwarding should require the outer declaration to prove "
-      "the callee's exact structural contract");
+  expect(!unprovenForward.canGenerateCode() &&
+             hasDiagnosticCode(unprovenForward.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(unprovenForward.diagnostics,
+                           "'std::input_iterator<Iterator>'"),
+         "generic forwarding should require the outer declaration to prove "
+         "the callee's exact structural contract");
 
   const std::string generated = gti_test::emitCppText(valid);
   expect(
@@ -6750,20 +6750,21 @@ int main() {
   const bool iteratorDiagnostics =
       !invalid.canGenerateCode() &&
       hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
-      hasDiagnostic(invalid.diagnostics, "concept 'std::input_iterator'") &&
+      hasDiagnostic(invalid.diagnostics, "concept 'std::input_iterator<") &&
       (hasDiagnostic(invalid.diagnostics, "concept 'std::sentinel_for'") ||
        hasDiagnostic(invalid.diagnostics, "concept 'std::sentinel_for<")) &&
-      hasDiagnostic(invalid.diagnostics, "concept 'std::accumulates_into'") &&
+      hasDiagnostic(invalid.diagnostics, "concept 'std::accumulates_into<") &&
       hasDiagnostic(invalid.diagnostics,
                     "Prefix operator++ must return void") &&
       hasDiagnosticHint(invalid.diagnostics,
-                        "public read-only operator*() returning") &&
+                        "public, safe read-only operator*() yielding") &&
       hasDiagnosticHint(invalid.diagnostics,
                         "public read-only bool operator!=") &&
       hasDiagnosticHint(invalid.diagnostics,
-                        "referent is exactly the required type") &&
+                        "dereference must yield exactly T") &&
       hasRelatedDiagnostic(invalid.diagnostics,
-                           "Required here as 'std::input_iterator<Iterator>'");
+                           "Required application 'std::input_iterator<"
+                           "MissingDereference>'");
   if (!iteratorDiagnostics) {
     for (const auto &diagnostic : invalid.diagnostics) {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -6804,7 +6805,7 @@ int main() {
   expect(!missingIncrement.canGenerateCode() &&
              hasDiagnosticCode(missingIncrement.diagnostics, "GTI-S2029") &&
              hasDiagnostic(missingIncrement.diagnostics,
-                           "concept 'std::input_iterator'") &&
+                           "concept 'std::input_iterator<MissingIncrement>'") &&
              hasDiagnosticHint(missingIncrement.diagnostics,
                                "public void operator++() mut"),
          "input_iterator should reject an otherwise exact iterator that is "
@@ -6838,8 +6839,9 @@ int main() {
   expect(
       !mutableOnlyDereference.canGenerateCode() &&
           hasDiagnosticCode(mutableOnlyDereference.diagnostics, "GTI-S2029") &&
-          hasDiagnostic(mutableOnlyDereference.diagnostics,
-                        "concept 'std::input_iterator'"),
+          hasDiagnostic(
+              mutableOnlyDereference.diagnostics,
+              "concept 'std::input_iterator<MutableOnlyDereference>'"),
       "input_iterator and accumulates_into should require a read-only "
       "dereference even when the caller owns a mutable iterator value");
 
@@ -8094,7 +8096,8 @@ int main() {
              hasDiagnosticCode(wrongElement.diagnostics, "GTI-S2029") &&
              hasDiagnostic(wrongElement.diagnostics, "std::dereferences_to") &&
              hasRelatedDiagnostic(wrongElement.diagnostics,
-                                  "std::dereferences_to<Iterator, char>"),
+                                  "std::dereferences_to<std::detail::"
+                                  "vector_iterator<int32_t, 0>, char>"),
          "the standard string constructor should reject an iterator whose "
          "read-only element referent is not exactly char");
 

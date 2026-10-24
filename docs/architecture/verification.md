@@ -1,5 +1,40 @@
 # Compiler Verification
 
+## Source-defined concept policies (0.471.0)
+
+`general_requires_semantics` verifies the source replacements for comparison,
+callable, storage, atomic, reflection, iterator, sentinel and range policies.
+It asserts that both private concept binding registries are empty. General
+reflection facts and checked ownership/lifetime operations remain compiler-owned;
+an empty binding registry is not evidence that those mechanisms were removed.
+
+Positive cases use unrelated user-defined records, callables and cursors,
+including inherited overload lookup, consuming invocation, exact borrowed
+results, inferred-result queries and ordinary range-loop requirements. Negative
+cases cover ambiguity, private/unsafe/mutating operations, wrong result types,
+unproved generic forwarding, mismatched loan origins and disjunctions that do
+not guarantee a shared operation. Concrete instantiation must recheck operations
+that are dependent during initial analysis. Alias and inline-constraint cases
+also guard the proof rule `(A || B) && C => A || B`: no particular alternative
+may be invented, and aliases must not discard the complete disjunction.
+
+`lowered_program_contract` checks the corresponding non-executable requirement
+inventory and rejects malformed result/access/origin records.
+`general_requires_lsp` covers recovery, queries and formatting;
+`general_requires_runtime` executes the expanded
+`examples/173-general-requires.gti` across native optimization/standard modes.
+The callable, generic-algorithm, iterator, reflection and compiler-pipeline
+suites retain the existing public contracts, including rejection diagnostics.
+Source-policy failures identify the applied concept and source requirement
+rather than referring to a retired private capability.
+
+The complete example oracles and both body/declaration censuses remain delivery
+gates. Added source helpers legitimately increase declaration inventories;
+changes to emitted bodies or generated adapters still require individual review.
+Performance acceptance also checks optimized range algorithms with allocation
+counts and executable size, separately from compiler/query cost. Moving policy
+into source does not by itself establish a runtime speedup.
+
 ## Carriers of returned references (0.468.3)
 
 `accessor_text_carrier_runtime` runs `accessor_text_carriers.gti` in all
