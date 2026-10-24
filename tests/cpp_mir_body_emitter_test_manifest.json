@@ -814,6 +814,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testArrayFieldConstructorElements",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testCheckedArrayElementFieldAccess",
       "suite": "lifecycle"
     },
