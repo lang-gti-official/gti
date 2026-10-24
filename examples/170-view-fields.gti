@@ -114,10 +114,11 @@ int main() {
   }
 
   // An optional's payload views `line`: testing it and reading its value
-  // keep `line` borrowed.
+  // keep `line` borrowed. `->` calls the payload view's own members.
   std::optional<std::string_view> maybe = line.view();
   if (maybe) {
     std::println(*maybe);
+    std::println(maybe->size());
   }
 
   // The parser's failure views `line`, the string passed to it.

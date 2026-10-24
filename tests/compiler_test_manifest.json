@@ -482,6 +482,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testArrowNonClassReferents",
+      "suite": "ownership"
+    },
+    {
       "name": "testCallableMemberOperators",
       "suite": "ownership"
     },

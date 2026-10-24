@@ -2801,7 +2801,7 @@ auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
     std::vector<const ExprPtr *> inputs{&member.object()};
     for (const auto &argument : call.arguments())
       inputs.push_back(&argument);
-    std::vector<SemanticType> types{semanticModel.typeOf(*member.object())};
+    std::vector<SemanticType> types{memberAccessObjectType(member)};
     types.insert(types.end(), argumentTypes.begin(), argumentTypes.end());
     if (inputs.size() != factory->parameterTypes.size()) {
       report(paren,
