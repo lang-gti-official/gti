@@ -22,6 +22,15 @@ void expect(bool condition, std::string_view message) {
   }
 }
 
+lang::MirInstruction *findInstruction(lang::MirBody &body,
+                                      lang::MirInstructionId id) {
+  for (auto &block : body.blocks)
+    for (auto &instruction : block.instructions)
+      if (instruction.id == id)
+        return &instruction;
+  return nullptr;
+}
+
 lang::FrontendResult fixture(std::string_view storage, bool cleanup) {
   const std::string declarations =
       std::string(storage) + " mut int32_t first = 1;\n" +
@@ -1548,14 +1557,6 @@ void foldPersistentInputs(std::string_view storage, bool mutableInput,
   }
   std::vector<lang::MirInstructionId> calls;
   std::vector<lang::MirInstructionId> inputs;
-  const auto findInstruction = [](lang::MirBody &owner,
-                                  lang::MirInstructionId id) {
-    for (auto &block : owner.blocks)
-      for (auto &instruction : block.instructions)
-        if (instruction.id == id)
-          return &instruction;
-    return static_cast<lang::MirInstruction *>(nullptr);
-  };
   for (auto &block : body->blocks)
     for (auto &instruction : block.instructions) {
       if (instruction.kind != lang::MirInstructionKind::Call ||
