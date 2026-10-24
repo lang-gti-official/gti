@@ -140,7 +140,7 @@ namespace std {
                     std::meta::type<T>().is_interface() ||
                     std::meta::type<T>().is_union()) {
         mut uint64_t found = 0;
-        constexpr for (auto member : std::meta::operators_of<T>()) {
+        constexpr for (auto member : std::meta::lookup_operators_of<T>()) {
           if constexpr (member.is_public() && !member.is_static() &&
                         !member.is_mutating() && !member.is_consuming() &&
                         !member.is_unsafe() && !member.is_generic() &&

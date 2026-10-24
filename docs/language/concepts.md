@@ -489,6 +489,15 @@ classes. General method predicates expose consuming access, unsafe obligations,
 generic declarations and method requirements. Primitive comparisons remain
 value operations, not hypothetical reference-taking member calls. The old
 comparison capability bindings and dedicated class-policy checker are removed.
+The policies use `std::meta::lookup_methods_of<T>()` and
+`lookup_operators_of<T>()` when inherited declarations matter. These return
+the resolved member set, including inherited overloads and excluding
+overridden base declarations. Each metaobject retains its exact instantiated
+declaring owner and original declaration index. Names are sorted lexically;
+overloads retain lookup order. Existing `methods_of<T>()`, `operators_of<T>()`
+and `type<T>::method_count()` remain declaration-only. Metadata alone never
+grants access or permission to invoke a method; expression queries still check
+the actual use on `T`.
 `std::meta::is_raw_pointer<T>()` and `type<T>::is_raw_pointer()` classify a
 concrete type using the existing type-category metadata. They do not establish
 pointer validity, lifetime, access rights, or permission to dereference it.

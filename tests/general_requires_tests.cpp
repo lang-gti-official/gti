@@ -318,6 +318,8 @@ int main() {
            "excluding primitive equality");
 
   accepted(check(root, directory, "source_mutation_requirements", R"(
+#include <std/iterator>
+#include <std/meta>
 concept adjustable<T> = requires(mut T& value, int amount) {
   { ++value } -> void;
   { --value } -> void;
@@ -331,6 +333,20 @@ struct Counter {
   void operator+=(int amount) mut { this.value += amount; }
   void operator-=(int amount) mut { this.value -= amount; }
 };
+struct Inherited : public Counter {};
+struct CursorBase<T> {
+  mut int position = 0;
+  int operator*() { return this.position; }
+  void operator++() mut { this.position += 1; }
+  void operator--() mut { this.position -= 1; }
+  void operator+=(std::ptrdiff_t amount) mut { this.position += int(amount); }
+  void operator-=(std::ptrdiff_t amount) mut { this.position -= int(amount); }
+};
+struct Cursor : public CursorBase<int> {};
+void jump<std::random_access_cursor I>(mut I& iterator, std::ptrdiff_t amount) {
+  iterator += amount;
+  --iterator;
+}
 void adjust<adjustable T>(mut T& value, int amount) {
   ++value;
   value += amount;
@@ -340,11 +356,40 @@ void adjust<adjustable T>(mut T& value, int amount) {
 int main() {
   mut Counter value{};
   adjust(value, 7);
-  return value.value;
+  mut Inherited inherited{};
+  adjust(inherited, 2);
+  mut Cursor cursor{};
+  jump(cursor, std::ptrdiff_t(4));
+  static_assert(std::meta::type<Cursor>().method_count() == uint64_t(0));
+  return value.value == 0 && inherited.value == 0 && cursor.position == 3 ? 0 : 1;
 }
 )"),
            "general mutation requirements prove operations on ordinary "
            "source classes without an iterator capability");
+
+  accepted(check(root, directory, "lookup_reflection_overrides", R"(
+#include <std/meta>
+class Parent<T> {
+public:
+  virtual int sample() { return 1; }
+  T identity(T& value) { return value; }
+};
+class Child : public Parent<int> {
+public:
+  int sample() override { return 2; }
+};
+int main() {
+  // Exact descriptor identity also proves that the overridden Parent::sample
+  // is absent, and that the inherited identity owner retains its int argument.
+  static_assert(std::meta::is_same<std::meta::lookup_method_list<Child>,
+      std::meta::list<std::meta::method<Parent<int>, 1>,
+                      std::meta::method<Child, 0>>>());
+  static_assert(std::meta::is_same<std::meta::parameter_type<Parent<int>, 1, 0>, int&>());
+  return 0;
+}
+)"),
+           "lookup metadata substitutes inherited owners and excludes "
+           "overridden declarations without changing declaration reflection");
 
   rejected(check(root, directory, "mutation_requires_mutable_receiver", R"(
 concept adjustable<T> = requires(mut T& value, int amount) {

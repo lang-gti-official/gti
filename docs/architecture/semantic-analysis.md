@@ -2332,6 +2332,12 @@ Comparison policy uses source metadata filtering plus ordinary expression
 queries; no comparison concept binding or class-policy checker remains.
 Primitive-category facts retain native value comparisons even when a source
 requirement was written with reference bindings.
+Lookup reflection derives its method sequence from the resolved `ClassInfo`
+member set. The computed sequence reuses method metaobjects with the selected
+declaration's exact substituted `dispatchOwner` and declaration index; it does
+not flatten inherited methods into the original declaration-only sequence.
+This preserves override selection and generic base substitutions while source
+comparison and movement policies retain their declaration-level contracts.
 
 A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST

@@ -1409,6 +1409,8 @@ private:
     MetaConstructorParameter,
     MetaMethodList,
     MetaOperatorList,
+    MetaLookupMethodList,
+    MetaLookupOperatorList,
     MetaParameterList,
     MetaParameterType,
     MetaReturnType,

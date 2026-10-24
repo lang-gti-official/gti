@@ -80,6 +80,7 @@ struct Tally {
   void operator+=(int amount) mut { this.value += amount; }
   void operator-=(int amount) mut { this.value -= amount; }
 };
+struct InheritedTally : public Tally {};
 void adjust<adjustable T>(mut T& value, int amount) {
   ++value;
   value += amount;
@@ -169,6 +170,14 @@ int main() {
   mut Tally tally{};
   adjust(tally, 9);
   if (tally.value != 0) { return 7; }
+  mut InheritedTally inherited_tally{};
+  adjust(inherited_tally, 3);
+  if (inherited_tally.value != 0) { return 8; }
+  // Declaration-only reflection stays local; lookup reflection includes bases.
+  static_assert(std::meta::type<InheritedTally>().method_count() == uint64_t(0));
+  constexpr for (auto method : std::meta::lookup_operators_of<InheritedTally>()) {
+    static_assert(method.is_mutating());
+  }
   if (query_hygiene::check() != 0) { return 4; }
   {
     DefaultResource resource = default_from_fact<DefaultResource>();

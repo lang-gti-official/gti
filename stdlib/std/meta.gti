@@ -126,6 +126,13 @@ public:
 /// The subset of `method_list<T>` whose methods are overloaded operators.
 @compiler_type("meta_operator_list") struct operator_list<T> {};
 
+/// The resolved method set of T, including inherited overloads and excluding
+/// overridden base declarations. Elements retain their exact declaring owner
+/// and declaration index; names are ordered lexically, overloads by lookup.
+/// Metadata grants no access or invocation permission.
+@compiler_type("meta_lookup_method_list") struct lookup_method_list<T> {};
+@compiler_type("meta_lookup_operator_list") struct lookup_operator_list<T> {};
+
 /// `list<parameter<T, I, 0>, ...>` over the parameters of method `I`.
 @compiler_type("meta_parameter_list") struct parameter_list<T, uint64_t I> {};
 
@@ -414,6 +421,8 @@ constexpr argument_list<T> arguments_of<T>() { return argument_list<T>(); }
 /// The methods and declared constructors of `T`, as metaobjects.
 constexpr method_list<T> methods_of<T>() { return method_list<T>(); }
 constexpr operator_list<T> operators_of<T>() { return operator_list<T>(); }
+constexpr lookup_method_list<T> lookup_methods_of<T>() { return lookup_method_list<T>(); }
+constexpr lookup_operator_list<T> lookup_operators_of<T>() { return lookup_operator_list<T>(); }
 constexpr constructor_list<T> constructors_of<T>() { return constructor_list<T>(); }
 
 namespace detail {

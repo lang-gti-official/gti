@@ -2,6 +2,8 @@
 // Iterator behavior remains structural in GTI; these names are ordinary
 // library vocabulary rather than compiler-recognized category tags.
 
+#include <std/meta>
+
 namespace gti_internal {
 @compiler_constraint("input_iterator") concept input_iterator_capability<I>;
 @compiler_constraint("sentinel_for") concept sentinel_for_capability<S, I>;
@@ -25,7 +27,7 @@ constexpr bool cursor_movement_declarations<I, uint64_t Required>() {
                 std::meta::type<I>().is_interface() ||
                 std::meta::type<I>().is_union()) {
     mut uint64_t found = 0;
-    constexpr for (auto member : std::meta::operators_of<I>()) {
+    constexpr for (auto member : std::meta::lookup_operators_of<I>()) {
       if constexpr (member.is_public() && !member.is_static() &&
                     member.is_mutating() && !member.is_consuming() &&
                     !member.is_unsafe() && !member.is_generic() &&
@@ -49,13 +51,19 @@ constexpr bool cursor_movement_declarations<I, uint64_t Required>() {
     return false;
   }
 }
+constexpr bool cursor_decrement_declarations<I>() {
+  return cursor_movement_declarations<I, 1>();
+}
+constexpr bool cursor_jump_declarations<I>() {
+  return cursor_movement_declarations<I, 6>();
+}
 [[unsatisfied("Provide public void operator--() mut.")]]
-concept cursor_decrements<I> = cursor_movement_declarations<I, 1>() &&
+concept cursor_decrements<I> = cursor_decrement_declarations<I>() &&
 requires(mut I& position) {
   { --position } -> void;
 };
 [[unsatisfied("Provide public void operator+=(std::ptrdiff_t) mut and operator-=(std::ptrdiff_t) mut.")]]
-concept cursor_jumps<I> = cursor_movement_declarations<I, 6>() &&
+concept cursor_jumps<I> = cursor_jump_declarations<I>() &&
 requires(mut I& position, std::ptrdiff_t distance) {
   { position += distance } -> void;
   { position -= distance } -> void;

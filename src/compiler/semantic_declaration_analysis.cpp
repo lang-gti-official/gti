@@ -3140,6 +3140,8 @@ auto SemanticVisitor::Impl::compilerTypeKind(std::string_view binding)
        CompilerTypeKind::MetaConstructorParameter},
       {"meta_method_list", CompilerTypeKind::MetaMethodList},
       {"meta_operator_list", CompilerTypeKind::MetaOperatorList},
+      {"meta_lookup_method_list", CompilerTypeKind::MetaLookupMethodList},
+      {"meta_lookup_operator_list", CompilerTypeKind::MetaLookupOperatorList},
       {"meta_parameter_list", CompilerTypeKind::MetaParameterList},
       {"meta_parameter_type", CompilerTypeKind::MetaParameterType},
       {"meta_return_type", CompilerTypeKind::MetaReturnType},
@@ -3408,6 +3410,52 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
     for (SemanticType &element : described) {
       elements.push_back(
           SemanticType::classType(metaType, {std::move(element)}));
+    }
+    return SemanticType::classType(list, std::move(elements));
+  }
+  case CompilerTypeKind::MetaLookupMethodList:
+  case CompilerTypeKind::MetaLookupOperatorList: {
+    const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
+    const ClassId method = compilerTypeClass(CompilerTypeKind::MetaMethod);
+    if (list == 0 || method == 0 || type.arguments.size() != 1 ||
+        containsOpenTypeParameter(type.arguments.front()))
+      return type;
+    const SemanticType &subject = type.arguments.front();
+    const ClassInfo *owner = classInfo(subject);
+    std::vector<SemanticType> elements;
+    if (owner) {
+      // Reflect the same resolved member set as lookup, including inherited
+      // overloads and replacing overridden declarations. Keep each existing
+      // method metaobject's declaration index and exact instantiated owner;
+      // declaration-only reflection retains its original meaning and order.
+      std::vector<std::string> names;
+      for (const auto &[name, member] : owner->members)
+        if (member.symbol.type == SemanticType::Function)
+          names.push_back(name);
+      std::sort(names.begin(), names.end());
+      for (const auto &name : names) {
+        const auto resolved =
+            substituteSymbol(owner->members.at(name).symbol, subject);
+        for (const auto &candidate : resolved.overloads) {
+          if (!candidate.declaration ||
+              (info.compilerType == CompilerTypeKind::MetaLookupOperatorList &&
+               !candidate.declaration->operatorName()))
+            continue;
+          const SemanticType declaring = candidate.dispatchOwner;
+          const auto declarations = metaMethodDeclarations(declaring);
+          const auto found = std::find(declarations.begin(), declarations.end(),
+                                       candidate.declaration);
+          if (found == declarations.end())
+            continue;
+          auto descriptor = SemanticType::classType(
+              method, {declaring},
+              {CompileTimeValue::uint64(static_cast<std::uint64_t>(
+                  std::distance(declarations.begin(), found)))});
+          if (std::find(elements.begin(), elements.end(), descriptor) ==
+              elements.end())
+            elements.push_back(std::move(descriptor));
+        }
+      }
     }
     return SemanticType::classType(list, std::move(elements));
   }
