@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.471.0 — Source-defined concept policies
+
+- All standard-library concepts are defined in ordinary GTI source, composing
+  expression requirements and reflection predicates. The compiler continues to
+  own irreducible type, layout, lifetime, relocation and transfer/share facts.
+- Requirements can check borrowed results with exact access and a named origin,
+  infer an expression result without inventing an ownership contract, and check
+  ordinary range iteration without executing it. Generic instances recheck the
+  concrete operations and retain ordinary ownership and cleanup enforcement.
+- General reflection exposes method safety/consumption/generic/constraint facts,
+  inherited lookup and independent layout, borrow-state, cleanup and polymorphism
+  facts. Iterator, callable, sentinel, storage and inline-owner policies compose
+  these facilities without private concept implementations.
+
 ## 0.470.0 — Macro results and written expression metadata
 
 - Value macros use `#macro Result NAME(typed parameters)` and ordinary calls.

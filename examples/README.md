@@ -631,7 +631,9 @@ Address validity, extent and termination remain the caller's unsafe obligations.
 for exact operator results and construction, composes them with constexpr
 reflection predicates, and uses them in generic algorithms over an unrelated
 user-defined value. It also demonstrates multi-check queries and exact result
-rejection. Independent object-layout and borrow-state predicates let its own
+rejection, inferred results, checked borrowed origins, ordinary range loops,
+and one sized-range function used with both a fixed array and a user range.
+Independent object-layout and borrow-state predicates let its own
 storage policy use the same facts as `std/memory`; a signed-or-unsigned
 disjunction demonstrates common guarantees in generic arithmetic. Inline source
 constraints retain complete operation contracts. Source-defined standard
