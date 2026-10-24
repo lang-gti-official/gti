@@ -1278,6 +1278,12 @@ auto SemanticVisitor::Impl::textDependentPaths(const Expr &expression) const
     if (const auto relay = operatorTextReferenceRelay(*unary))
       if (auto nested = nestedTextRelay(*relay))
         return std::move(*nested);
+  // A reference a call returns into a dependent receiver or argument holds
+  // the origin's paths under the field it designates.
+  if (const auto *call = exprAs<Call>(&expression))
+    if (const auto *resolved = semanticModel.findCall(*call))
+      if (const auto reference = dependentReferenceResult(*call, *resolved))
+        return dependentReferencePaths(*reference);
   // A field that paths go through holds their remainder.
   if (const auto *get = exprAs<Get>(&expression)) {
     const auto *place = semanticModel.findPlace(expression);
@@ -1295,6 +1301,13 @@ auto SemanticVisitor::Impl::textDependentPaths(const Expr &expression) const
   const auto *variable = exprAs<Variable>(&expression);
   const Symbol *symbol =
       variable == nullptr ? nullptr : resolvedBorrowVariable(*variable);
+  // A reference local bound to a dependent place holds that place's paths.
+  if (symbol != nullptr && symbol->type.kind == SemanticType::Reference &&
+      symbol->variableDeclaration != nullptr)
+    if (const auto alias =
+            dependentReferenceAliases.find(symbol->variableDeclaration);
+        alias != dependentReferenceAliases.end())
+      return textDependentPaths(*alias->second);
   const SemanticLoanInfo *loan =
       symbol == nullptr || symbol->retainedLoan == 0 ||
               symbol->type.kind == SemanticType::Reference
@@ -1515,6 +1528,227 @@ auto SemanticVisitor::Impl::nestedTextRelay(const FieldSourcedTextResult &relay)
       paths.push_back(std::move(path));
     }
   return paths.empty() ? std::nullopt : std::optional{std::move(paths)};
+}
+
+auto SemanticVisitor::Impl::referenceReturnPrefixes(const FunctionInfo &callee,
+                                                    BorrowOriginKind origin,
+                                                    std::size_t parameter,
+                                                    std::size_t depth) const
+    -> std::optional<std::vector<std::vector<SymbolId>>> {
+  const FunctionDecl *body = callee.bodyDeclaration();
+  if (depth > 8 || callee.virtualMethod || callee.overrideMethod ||
+      body == nullptr || body->body() == nullptr ||
+      callee.returnType.kind != SemanticType::Reference ||
+      (origin == BorrowOriginKind::Receiver &&
+       (callee.ownerClass == 0 || callee.staticMember)) ||
+      (origin == BorrowOriginKind::Argument &&
+       (parameter >= callee.parameterTypes.size() ||
+        parameter >= body->parameters().size())) ||
+      (origin != BorrowOriginKind::Receiver &&
+       origin != BorrowOriginKind::Argument))
+    return std::nullopt;
+  std::vector<const ExprPtr *> returns;
+  collectBorrowReturnExpressions(body->body().get(), returns);
+  if (returns.empty())
+    return std::nullopt;
+  // A name designates a formal or member only where nothing can shadow it.
+  const auto declarationFree = [](const auto &self, const Stmt *statement) {
+    if (statement == nullptr || stmtAs<ReturnStmt>(statement) != nullptr ||
+        stmtAs<ExpressionStmt>(statement) != nullptr)
+      return true;
+    if (const auto *block = stmtAs<BlockStmt>(statement))
+      return std::all_of(
+          block->statements().begin(), block->statements().end(),
+          [&](const StmtPtr &nested) { return self(self, nested.get()); });
+    if (const auto *branch = stmtAs<IfStmt>(statement))
+      return self(self, branch->thenBranch().get()) &&
+             self(self, branch->elseBranch().get());
+    return false;
+  };
+  const bool namesResolve =
+      declarationFree(declarationFree, body->body().get());
+  SemanticType rootType = origin == BorrowOriginKind::Receiver
+                              ? openClassType(callee.ownerClass)
+                              : callee.parameterTypes[parameter];
+  if (rootType.kind == SemanticType::Reference &&
+      rootType.arguments.size() == 1)
+    rootType = SemanticType(rootType.arguments.front());
+  const auto strip = [](const Expr *current) {
+    while (const auto *group = exprAs<Grouping>(current))
+      current = group->expression() ? group->expression().get() : nullptr;
+    return current;
+  };
+  // Extends `prefix`, at `type`, by one member's field symbol.
+  const auto field = [&](std::vector<SymbolId> &prefix, SemanticType &type,
+                         const Token &name) {
+    const MemberInfo *member = findMember(type, name);
+    if (member == nullptr || member->symbol.staticMember ||
+        member->symbol.bindingKind != SemanticBindingKind::Field)
+      return false;
+    prefix.push_back(symbolForDeclaration(member->symbol.declaration));
+    type = substituteType(member->symbol.type, classSubstitution(type));
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+      type = SemanticType(type.arguments.front());
+    return true;
+  };
+  std::vector<std::vector<SymbolId>> prefixes;
+  for (const ExprPtr *returned : returns) {
+    const Expr *current =
+        returned == nullptr ? nullptr : strip(returned->get());
+    std::vector<const Get *> chain;
+    while (const auto *get = exprAs<Get>(current)) {
+      if (get->access().kind == TokenKind::ARROW || !get->object())
+        return std::nullopt;
+      chain.push_back(get);
+      current = strip(get->object().get());
+    }
+    if (current == nullptr)
+      return std::nullopt;
+    // The roots a return may start from, each with its prefix and type.
+    std::vector<std::pair<std::vector<SymbolId>, SemanticType>> roots;
+    const auto *variable = exprAs<Variable>(current);
+    const auto *call = exprAs<Call>(current);
+    if (exprAs<This>(current) != nullptr &&
+        origin == BorrowOriginKind::Receiver) {
+      roots.emplace_back(std::vector<SymbolId>{}, rootType);
+    } else if (variable != nullptr && namesResolve &&
+               origin == BorrowOriginKind::Argument &&
+               variable->name().lexeme ==
+                   body->parameters()[parameter].name.lexeme) {
+      roots.emplace_back(std::vector<SymbolId>{}, rootType);
+    } else if (variable != nullptr && namesResolve &&
+               origin == BorrowOriginKind::Receiver &&
+               callee.parameterTypes.empty()) {
+      // An implicit member, like `this.field`.
+      std::vector<SymbolId> prefix;
+      SemanticType type = rootType;
+      if (!field(prefix, type, variable->name()))
+        return std::nullopt;
+      roots.emplace_back(std::move(prefix), std::move(type));
+    } else if (call != nullptr && origin == BorrowOriginKind::Receiver &&
+               call->arguments().empty() && call->typeArguments().empty()) {
+      // Another accessor of the same receiver.
+      const auto *member = exprAs<Get>(call->callee().get());
+      const auto *implicit = exprAs<Variable>(call->callee().get());
+      const bool receiverCall =
+          member != nullptr && member->access().kind != TokenKind::ARROW &&
+          member->object() &&
+          exprAs<This>(strip(member->object().get())) != nullptr;
+      if (!receiverCall && (implicit == nullptr || !namesResolve ||
+                            !callee.parameterTypes.empty()))
+        return std::nullopt;
+      const FunctionInfo *accessor = readOnlyReceiverAccessor(
+          callee.ownerClass,
+          receiverCall ? member->name().lexeme : implicit->name().lexeme);
+      const auto inner =
+          accessor == nullptr
+              ? std::nullopt
+              : referenceReturnPrefixes(*accessor, BorrowOriginKind::Receiver,
+                                        0, depth + 1);
+      if (!inner)
+        return std::nullopt;
+      for (const auto &prefix : *inner) {
+        SemanticType type = rootType;
+        std::vector<SymbolId> walked;
+        bool valid = true;
+        for (const SymbolId symbol : prefix) {
+          const ClassInfo *owner = classInfo(type);
+          const MemberInfo *member = nullptr;
+          if (owner != nullptr)
+            for (const FieldInfo &candidate : owner->fields)
+              if (const auto found =
+                      candidate.declaration == nullptr
+                          ? owner->members.end()
+                          : owner->members.find(
+                                candidate.declaration->name().lexeme);
+                  found != owner->members.end() &&
+                  symbolForDeclaration(found->second.symbol.declaration) ==
+                      symbol)
+                member = &found->second;
+          if (member == nullptr) {
+            valid = false;
+            break;
+          }
+          walked.push_back(symbol);
+          type = substituteType(member->symbol.type, classSubstitution(type));
+          if (type.kind == SemanticType::Reference &&
+              type.arguments.size() == 1)
+            type = SemanticType(type.arguments.front());
+        }
+        if (!valid)
+          return std::nullopt;
+        roots.emplace_back(std::move(walked), std::move(type));
+      }
+    } else {
+      return std::nullopt;
+    }
+    for (auto &[prefix, type] : roots) {
+      for (auto get = chain.rbegin(); get != chain.rend(); ++get)
+        if (!field(prefix, type, (*get)->name()))
+          return std::nullopt;
+      if (std::find(prefixes.begin(), prefixes.end(), prefix) == prefixes.end())
+        prefixes.push_back(std::move(prefix));
+    }
+  }
+  return prefixes;
+}
+
+auto SemanticVisitor::Impl::dependentReferenceResult(
+    const Call &call, const ResolvedCallInfo &resolved) const
+    -> std::optional<DependentReferenceResult> {
+  // A callee's reference relay summary already designates its result
+  // (`textReferenceRelay`, L-OWN-02 phase 3).
+  if (resolved.returnedTextReference ||
+      resolved.returnType.kind != SemanticType::Reference ||
+      resolved.returnType.arguments.size() != 1 ||
+      (resolved.returnType.arguments.front().kind != SemanticType::Class &&
+       resolved.returnType.arguments.front().kind != SemanticType::Enum))
+    return std::nullopt;
+  DependentReferenceResult result;
+  if (resolved.borrowOrigin == BorrowOriginKind::Receiver) {
+    const auto *member = exprAs<Get>(call.callee().get());
+    if (member == nullptr || member->access().kind == TokenKind::ARROW ||
+        !member->object())
+      return std::nullopt;
+    result.origin = &member->object();
+  } else if (resolved.borrowOrigin == BorrowOriginKind::Argument) {
+    result.origin =
+        resolvedCallArgument(call, &resolved, resolved.borrowArgument);
+  }
+  const ExpressionInfo *info =
+      result.origin == nullptr || !*result.origin
+          ? nullptr
+          : semanticModel.findExpression(**result.origin);
+  if (info == nullptr || !isTextDependentValue(*info))
+    return std::nullopt;
+  // Finding the callee is bookkeeping, not a use of its body.
+  const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+  const FunctionInfo *callee = semanticModel.findFunction(resolved.function);
+  if (callee == nullptr && instanceBaseModel != nullptr)
+    callee = instanceBaseModel->findFunction(resolved.function);
+  if (callee != nullptr)
+    result.prefixes = referenceReturnPrefixes(*callee, resolved.borrowOrigin,
+                                              resolved.borrowArgument);
+  return result;
+}
+
+auto SemanticVisitor::Impl::dependentReferencePaths(
+    const DependentReferenceResult &result) const
+    -> std::vector<std::vector<SymbolId>> {
+  std::vector<std::vector<SymbolId>> paths;
+  if (!result.prefixes || result.origin == nullptr || !*result.origin)
+    return paths;
+  for (const auto &path : textDependentPaths(**result.origin))
+    for (const auto &prefix : *result.prefixes)
+      if (path.size() > prefix.size() &&
+          std::equal(prefix.begin(), prefix.end(), path.begin())) {
+        std::vector<SymbolId> remainder(
+            path.begin() + static_cast<std::ptrdiff_t>(prefix.size()),
+            path.end());
+        if (std::find(paths.begin(), paths.end(), remainder) == paths.end())
+          paths.push_back(std::move(remainder));
+      }
+  return paths;
 }
 
 auto SemanticVisitor::Impl::contractPrefix(const SemanticType &type,
@@ -2011,14 +2245,22 @@ auto SemanticVisitor::Impl::conditionalRelayReturns(
 }
 
 auto SemanticVisitor::Impl::contractEnumField(
-    const Expr *current, const FunctionInfo &function) const
+    const Expr *expression, const FunctionInfo &function) const
     -> std::optional<std::pair<OwnerlessTextField, SemanticType>> {
+  auto fields = contractEnumFields(expression, function);
+  return fields.size() == 1 ? std::optional{std::move(fields.front())}
+                            : std::nullopt;
+}
+
+auto SemanticVisitor::Impl::contractEnumFields(
+    const Expr *current, const FunctionInfo &function) const
+    -> std::vector<std::pair<OwnerlessTextField, SemanticType>> {
   const FunctionInfo *scope = &function;
   while (const auto *group = exprAs<Grouping>(current))
     current = group->expression() ? group->expression().get() : nullptr;
   std::optional<OwnerlessTextField> formal;
   SemanticType owner = SemanticType::Unknown;
-  std::optional<std::string> name;
+  std::vector<std::string> names;
   const auto formalOwner = [&](const Expr &object) {
     formal = textFieldContractFormal(object, function);
     // An instance analysis reads its receiver's fields at their types there.
@@ -2035,16 +2277,15 @@ auto SemanticVisitor::Impl::contractEnumField(
       get != nullptr && get->access().kind != TokenKind::ARROW &&
       get->object()) {
     formalOwner(*get->object());
-    name = get->name().lexeme;
+    names.push_back(get->name().lexeme);
   } else if (call != nullptr && call->typeArguments().empty() &&
              (accessor == nullptr
                   ? exprAs<Variable>(call->callee().get()) != nullptr
                   : accessor->access().kind != TokenKind::ARROW &&
                         accessor->object() != nullptr)) {
-    // A formal's accessor that returns a reference to one of its fields
-    // designates that field, as `formal.field` does, whatever its arguments:
-    // every return names the same field. An implicit `accessor()` is the
-    // receiver's.
+    // A formal's accessor that returns a reference to its fields designates
+    // each field its returns name, as `formal.field` does, whatever its
+    // arguments. An implicit `accessor()` is the receiver's.
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     const FunctionDemandScope pauseDemand(semanticModel, nullptr);
     const FunctionInfo *callee =
@@ -2069,7 +2310,8 @@ auto SemanticVisitor::Impl::contractEnumField(
     if (formal && resolved != nullptr &&
         resolved->borrowOrigin == BorrowOriginKind::Receiver &&
         callee != nullptr)
-      name = accessorReceiverField(*callee, visiting);
+      if (auto fields = accessorReceiverFields(*callee, visiting))
+        names = std::move(*fields);
   } else if (const auto *variable = exprAs<Variable>(current)) {
     // An implicit receiver field, like `this.field`.
     const Symbol *symbol = resolve(variable->name());
@@ -2081,21 +2323,26 @@ auto SemanticVisitor::Impl::contractEnumField(
       formal = OwnerlessTextField{.receiver = true};
       owner = substituteType(openClassType(scope->ownerClass),
                              instanceTypeSubstitution);
-      name = variable->name().lexeme;
+      names.push_back(variable->name().lexeme);
     }
   }
   if (owner.kind == SemanticType::Reference && owner.arguments.size() == 1)
     owner = SemanticType(owner.arguments.front());
-  const ClassInfo *info = formal && name ? classInfo(owner) : nullptr;
-  const auto member = info == nullptr ? decltype(info->members.end()){}
-                                      : info->members.find(*name);
-  if (info == nullptr || member == info->members.end() ||
-      member->second.symbol.staticMember ||
-      member->second.symbol.bindingKind != SemanticBindingKind::Field)
-    return std::nullopt;
-  formal->field = symbolForDeclaration(member->second.symbol.declaration);
-  return std::pair{*formal, substituteType(member->second.symbol.type,
-                                           classSubstitution(owner))};
+  const ClassInfo *info = formal && !names.empty() ? classInfo(owner) : nullptr;
+  std::vector<std::pair<OwnerlessTextField, SemanticType>> fields;
+  for (const auto &name : names) {
+    const auto member = info == nullptr ? decltype(info->members.end()){}
+                                        : info->members.find(name);
+    if (info == nullptr || member == info->members.end() ||
+        member->second.symbol.staticMember ||
+        member->second.symbol.bindingKind != SemanticBindingKind::Field)
+      return {};
+    auto field = *formal;
+    field.field = symbolForDeclaration(member->second.symbol.declaration);
+    fields.emplace_back(field, substituteType(member->second.symbol.type,
+                                              classSubstitution(owner)));
+  }
+  return fields;
 }
 
 auto SemanticVisitor::Impl::contractPayloadBinding(
@@ -2137,26 +2384,28 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
 
 auto SemanticVisitor::Impl::notePayloadFieldRead(const Expr &expression)
     -> void {
-  if (&expression == observedSwitchSubject)
-    return;
   // A generic class method's type-parameter field is a payload enum only in
   // some instances, so those instances' analyses record its requirements.
   const FunctionInfo *scope = textFieldContractScope();
   if (scope == nullptr)
     scope = instanceFieldContractScope();
-  const auto field =
-      scope == nullptr ? std::nullopt : contractEnumField(&expression, *scope);
-  const auto enumeration =
-      field ? enumTypeFor(field->second) : std::optional<EnumTypeInfo>{};
-  if (!enumeration)
+  const auto fields =
+      scope == nullptr
+          ? std::vector<std::pair<OwnerlessTextField, SemanticType>>{}
+          : contractEnumFields(&expression, *scope);
+  // A switch observes one designated field in place. Its payload bindings
+  // name one field, so a switch on an accessor designating several reads
+  // them all.
+  if (fields.empty() ||
+      (fields.size() == 1 && &expression == observedSwitchSubject))
     return;
-  // An accessor's returned field is the accessor's own designation: a caller
-  // that switches on the accessor observes the field in place, and any other
-  // use of the call reads the field there (`contractEnumField`).
-  if (field->first.receiver && scope->bodyDeclaration() != nullptr &&
+  // An accessor's returned fields are the accessor's own designation: a
+  // caller keeps the call's result dependent on them, and a contract
+  // formal's call reads them there (`contractEnumFields`).
+  if (fields.front().first.receiver && scope->bodyDeclaration() != nullptr &&
       scope->bodyDeclaration()->body() != nullptr) {
     std::vector<const FunctionInfo *> visiting;
-    const auto accessed = accessorReceiverField(*scope, visiting);
+    const auto accessed = accessorReceiverFields(*scope, visiting);
     std::vector<const ExprPtr *> returns;
     if (accessed)
       collectBorrowReturnExpressions(scope->bodyDeclaration()->body().get(),
@@ -2174,21 +2423,26 @@ auto SemanticVisitor::Impl::notePayloadFieldRead(const Expr &expression)
   }
   const bool generic = scope->ownerClass != 0 &&
                        !classInfo(scope->ownerClass).genericParameters.empty();
-  const auto substitution = enumSubstitution(field->second);
-  for (const auto &variant : enumeration->enumerators)
-    for (std::size_t index = 0; index < variant.payloadSymbols.size() &&
-                                index < variant.payloadTypes.size();
-         ++index) {
-      const auto type =
-          substituteType(variant.payloadTypes[index], substitution);
-      if (type.kind != SemanticType::StringView &&
-          type.kind != SemanticType::CString && !nestedTextClass(type) &&
-          !(generic && type.kind == SemanticType::TypeParameter))
-        continue;
-      auto payload = field->first;
-      payload.payload = variant.payloadSymbols[index];
-      (void)requireOwnerlessTextField(scope->declaration, payload);
-    }
+  for (const auto &[formal, fieldType] : fields) {
+    const auto enumeration = enumTypeFor(fieldType);
+    if (!enumeration)
+      continue;
+    const auto substitution = enumSubstitution(fieldType);
+    for (const auto &variant : enumeration->enumerators)
+      for (std::size_t index = 0; index < variant.payloadSymbols.size() &&
+                                  index < variant.payloadTypes.size();
+           ++index) {
+        const auto type =
+            substituteType(variant.payloadTypes[index], substitution);
+        if (type.kind != SemanticType::StringView &&
+            type.kind != SemanticType::CString && !nestedTextClass(type) &&
+            !(generic && type.kind == SemanticType::TypeParameter))
+          continue;
+        auto payload = formal;
+        payload.payload = variant.payloadSymbols[index];
+        (void)requireOwnerlessTextField(scope->declaration, payload);
+      }
+  }
 }
 
 auto SemanticVisitor::Impl::noteConditionalTextFieldRead(const Expr &expression)

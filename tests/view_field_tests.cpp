@@ -2,6 +2,8 @@
 #include "gti/hir.h"
 #include "gti/mir_verifier.h"
 
+#include <set>
+
 namespace {
 void printDiagnostics(const lang::FrontendResult &result) {
   for (const auto &diagnostic : result.diagnostics)
@@ -2760,6 +2762,286 @@ int main() {
   }
 }
 
+// A reference a call returns into a value holding dynamic text from a local
+// owner is that value's dependent field (L-OWN-02), as `value.field` is: a
+// switch observes it in place, through the call or a reference local bound
+// to it, but it cannot carry the text out. Before 0.468.1 every escape below
+// compiled, and `leak` returned freed text.
+const std::string kReferenceResults = R"gti(
+#include <std/string>
+mut std::string_view kept = "";
+enum Word { text(std::string_view value), none };
+mut Word keptWord = Word::none;
+void keepWordRef(Word& word) {
+  switch (word) {
+  case Word::text(value): kept = value; break;
+  case Word::none: break;
+  }
+}
+void keepWord(Word word) {
+  switch (word) {
+  case Word::text(value): kept = value; break;
+  case Word::none: break;
+  }
+}
+void readWordRef(Word& word) {
+  switch (word) {
+  case Word::text(auto& value): std::println(value); break;
+  case Word::none: break;
+  }
+}
+class Line {
+public:
+  Word word;
+  Word other;
+  Line(std::string_view value) : word(Word::text(value)), other(Word::none) {}
+  Word& wordRef() { return this.word; }
+  Word& either(bool first) {
+    if (first) { return this.word; }
+    return this.other;
+  }
+  void keepEither() { keepWordRef(this.either(true)); }
+  void showEither() {
+    switch (this.either(true)) {
+    case Word::text(value): std::println(value); break;
+    case Word::none: break;
+    }
+  }
+};
+Word& pickWord(Line& line) { return line.word; }
+void keepFrom(Line& line) { keepWordRef(line.either(true)); }
+void keepSwitch(Line& line) {
+  switch (line.either(true)) {
+  case Word::text(value): kept = value; break;
+  case Word::none: break;
+  }
+}
+)gti";
+
+void testDependentReferenceResults() {
+  const auto accepted = analyzeText(kReferenceResults + R"gti(
+int run() {
+  std::string input{"owned"};
+  Line owned = Line(input.view());
+  switch (owned.wordRef()) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: return 1;
+  }
+  Word& word = owned.wordRef();
+  Word& again = word;
+  switch (again) {
+  case Word::text(auto& value): std::println(value); break;
+  case Word::none: return 2;
+  }
+  // A reference to one of several fields is dependent on each of them.
+  switch (owned.either(false)) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: break;
+  }
+  Word& chosen = owned.either(true);
+  switch (chosen) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: return 3;
+  }
+  // Over literal text the same references may leave.
+  Line literal = Line("literal");
+  keepWordRef(literal.wordRef());
+  keepWord(literal.wordRef());
+  keepWordRef(pickWord(literal));
+  Word& held = literal.wordRef();
+  keepWordRef(held);
+  keptWord = literal.wordRef();
+  keepWordRef(literal.either(true));
+  keepFrom(literal);
+  keepSwitch(literal);
+  literal.keepEither();
+  literal.showEither();
+  return 0;
+}
+int main() { return run(); }
+)gti");
+  if (!accepted.canGenerateCode())
+    printDiagnostics(accepted);
+  expect(accepted.canGenerateCode() &&
+             lang::verifyMirProgram(accepted.mir).valid(),
+         "a dependent reference result can be observed in place, and an "
+         "ownerless one can leave");
+  // `either` relays both fields and requires nothing. A formal's call of it
+  // reads both, switch included, since a payload binding cannot name the
+  // field; MIR derives each such requirement independently.
+  std::size_t severalFieldUses = 0;
+  for (const auto &function : accepted.mir.functionInstances()) {
+    const auto *info = accepted.semantics.findFunction(function.declaration);
+    const std::string name = info == nullptr ? "" : info->qualifiedName;
+    if (name.ends_with("either"))
+      expect(function.ownerlessTextFields.empty(),
+             "an accessor of several fields relays them");
+    if (!name.ends_with("keepFrom") && !name.ends_with("keepSwitch") &&
+        !name.ends_with("keepEither") && !name.ends_with("showEither"))
+      continue;
+    ++severalFieldUses;
+    std::set<lang::SymbolId> fields;
+    for (const auto &field : function.ownerlessTextFields)
+      fields.insert(field.field);
+    expect(fields.size() == 2,
+           "a use of an accessor of several fields reads each: " + name);
+    auto changed = accepted.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(function.id))
+        ->ownerlessTextFields.clear();
+    expect(!lang::verifyMirProgram(changed).valid(),
+           "MIR derives a several-field accessor use's requirement: " + name);
+  }
+  expect(severalFieldUses == 4, "every several-field accessor use is checked");
+
+  // Passing a formal's accessor result uses the field it designates, not the
+  // whole formal: another text field may hold a local owner's text. MIR used
+  // to require every field and reported GTI-B0001.
+  const auto designated = analyzeText(kReferenceResults + R"gti(
+class Pair {
+public:
+  Word word;
+  Word spare;
+  Pair(std::string_view first, std::string_view second)
+      : word(Word::text(first)), spare(Word::text(second)) {}
+  Word& wordRef() { return this.word; }
+};
+void keepPairWord(Pair& pair) { keepWordRef(pair.wordRef()); }
+int run() {
+  std::string input{"owned"};
+  Pair pair = Pair("literal", input.view());
+  keepPairWord(pair);
+  return 0;
+}
+int main() { return run(); }
+)gti");
+  if (!designated.canGenerateCode())
+    printDiagnostics(designated);
+  expect(designated.canGenerateCode() &&
+             lang::verifyMirProgram(designated.mir).valid(),
+         "a passed accessor result requires only its designated field");
+  bool sawKeep = false;
+  for (const auto &function : designated.mir.functionInstances()) {
+    const auto *info = designated.semantics.findFunction(function.declaration);
+    if (info == nullptr || info->qualifiedName != "keepPairWord")
+      continue;
+    sawKeep = true;
+    expect(!function.ownerlessTextFields.empty() &&
+               std::all_of(function.ownerlessTextFields.begin(),
+                           function.ownerlessTextFields.end(),
+                           [&](const auto &field) {
+                             return field.field ==
+                                    function.ownerlessTextFields.front().field;
+                           }),
+           "keepPairWord requires the word field alone");
+    auto changed = designated.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(function.id))
+        ->ownerlessTextFields.clear();
+    expect(!lang::verifyMirProgram(changed).valid(),
+           "MIR derives the designated field's requirement");
+  }
+  expect(sawKeep, "keepPairWord is lowered");
+
+  struct Case {
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{"keepWordRef(owned.wordRef());", "GTI-S2045"},
+           Case{"keepWord(owned.wordRef());", "GTI-S2045"},
+           Case{"readWordRef(owned.wordRef());", "GTI-S2045"},
+           Case{"Word copy = owned.wordRef();", "GTI-S2045"},
+           Case{"keptWord = owned.wordRef();", "GTI-S2045"},
+           Case{"Word& word = owned.wordRef(); keepWordRef(word);",
+                "GTI-S2045"},
+           Case{"Word& word = owned.wordRef(); Word copy = word;", "GTI-S2045"},
+           Case{"Word& word = owned.wordRef(); Word copy = std::move(word);",
+                "GTI-S2045"},
+           Case{"Word& word = owned.wordRef(); Word& again = word; "
+                "keepWordRef(again);",
+                "GTI-S2045"},
+           Case{"Word& word = owned.wordRef(); keptWord = word;", "GTI-S2045"},
+           Case{"keepWordRef(pickWord(owned));", "GTI-S2045"},
+           Case{"Word& word = pickWord(owned); keepWordRef(word);",
+                "GTI-S2045"},
+           Case{"keepWordRef(owned.either(true));", "GTI-S2045"},
+           Case{"Word& word = owned.either(false); keepWordRef(word);",
+                "GTI-S2045"},
+           Case{"Word copy = owned.either(true);", "GTI-S2045"},
+           Case{"keepFrom(owned);", "GTI-S2045"},
+           Case{"keepSwitch(owned);", "GTI-S2045"},
+           Case{"owned.keepEither();", "GTI-S2045"},
+           // Conservative: the switch reads both fields (see above).
+           Case{"owned.showEither();", "GTI-S2045"},
+           Case{"Word& word = owned.wordRef(); input.append(\"!\"); "
+                "switch (word) { case Word::text(value): "
+                "std::println(value); break; case Word::none: break; }",
+                "GTI-S2017"},
+       }) {
+    const auto rejected = analyzeText(
+        kReferenceResults +
+        "int run() { mut std::string input{\"owned\"}; Line owned = "
+        "Line(input.view()); " +
+        entry.body + " return 0; }\nint main() { return run(); }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, entry.code),
+           std::string("a dependent reference result cannot carry its text "
+                       "out: ") +
+               entry.body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + entry.body);
+  }
+
+  // Returning a copy of the referent from the owner's own function would
+  // return freed text.
+  const auto leaked = analyzeText(kReferenceResults + R"gti(
+Word leak() {
+  std::string input{"freed"};
+  Line owned = Line(input.view());
+  return owned.wordRef();
+}
+int main() { return 0; }
+)gti");
+  expect(hasDiagnosticCode(leaked.diagnostics, "GTI-S2045") &&
+             !leaked.canGenerateCode(),
+         "a copy of a dependent reference result cannot be returned");
+
+  // A reference whose returns are not field paths of the owner cannot be
+  // tracked, so it is refused over dynamic text.
+  const auto untracked = analyzeText(kReferenceResults + R"gti(
+class Holder {
+public:
+  Line line;
+  Holder(Line line) : line(line) {}
+  Word& viaLocal() {
+    Word& found = this.line.word;
+    return found;
+  }
+};
+int run() {
+  std::string input{"owned"};
+  Holder holder = Holder(Line(input.view()));
+  switch (holder.viaLocal()) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: break;
+  }
+  return 0;
+}
+int main() { return run(); }
+)gti");
+  expect(hasDiagnosticCode(untracked.diagnostics, "GTI-S2045") &&
+             std::none_of(untracked.diagnostics.begin(),
+                          untracked.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code.starts_with("GTI-B");
+                          }),
+         "an untracked reference into dynamic text is refused at source");
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
@@ -2783,6 +3065,7 @@ constexpr NamedTest kTests[] = {
     {"testPayloadFieldUses", testPayloadFieldUses},
     {"testNestedValues", testNestedValues},
     {"testDerivedCarriers", testDerivedCarriers},
+    {"testDependentReferenceResults", testDependentReferenceResults},
 };
 } // namespace
 

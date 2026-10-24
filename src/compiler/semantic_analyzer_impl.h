@@ -2136,6 +2136,27 @@ private:
   // nested text class designates.
   [[nodiscard]] std::optional<std::vector<std::vector<SymbolId>>>
   nestedTextRelay(const FieldSourcedTextResult &relay) const;
+  // The field paths, relative to a reference-returning callee's borrowed
+  // receiver or argument, that its returns designate: each return is a field
+  // path of that origin, or a receiver accessor's result. Nullopt when a
+  // return designates anything else.
+  [[nodiscard]] std::optional<std::vector<std::vector<SymbolId>>>
+  referenceReturnPrefixes(const FunctionInfo &callee, BorrowOriginKind origin,
+                          std::size_t parameter, std::size_t depth = 0) const;
+  // A call returning a reference into its receiver or argument when that
+  // origin holds dynamic text from a local owner (L-OWN-02): the reference is
+  // the origin's dependent field at the designated prefixes.
+  struct DependentReferenceResult {
+    const ExprPtr *origin = nullptr;
+    // Nullopt when the callee's returns do not name field paths of the origin.
+    std::optional<std::vector<std::vector<SymbolId>>> prefixes;
+  };
+  [[nodiscard]] std::optional<DependentReferenceResult>
+  dependentReferenceResult(const Call &call,
+                           const ResolvedCallInfo &resolved) const;
+  // The origin's dependent paths under the result's prefixes, without them.
+  [[nodiscard]] std::vector<std::vector<SymbolId>>
+  dependentReferencePaths(const DependentReferenceResult &result) const;
   [[nodiscard]] std::optional<FieldSourcedTextResult>
   fieldSourcedTextResult(const Call &call,
                          const ResolvedCallInfo &resolved) const;
@@ -2247,7 +2268,11 @@ private:
                          const ResolvedPayloadPatternInfo &pattern,
                          const PayloadBindingInfo &payload) const;
   // In the field-contract scope `scope`, the contract formal's or receiver's
-  // field that `expression` names, with that field's type there.
+  // fields that `expression` names, with each field's type there: one for
+  // `formal.field`, each field an accessor call's returns designate.
+  [[nodiscard]] std::vector<std::pair<OwnerlessTextField, SemanticType>>
+  contractEnumFields(const Expr *expression, const FunctionInfo &scope) const;
+  // The one field `expression` names.
   [[nodiscard]] std::optional<std::pair<OwnerlessTextField, SemanticType>>
   contractEnumField(const Expr *expression, const FunctionInfo &scope) const;
   // A contract formal's or the receiver's payload-enum field read as a value,
@@ -4643,6 +4668,10 @@ private:
   // The switch subject being analyzed, without groupings: a payload-enum
   // field read there is observed in place (notePayloadFieldRead).
   const Expr *observedSwitchSubject = nullptr;
+  // A reference local bound to a dependent place: its uses are that place's,
+  // so a switch may observe it but it cannot carry the text out (L-OWN-02).
+  std::unordered_map<const VariableDecl *, const Expr *>
+      dependentReferenceAliases;
   // The lowest stack position the current evaluation has read.
   std::size_t textBorrowReadDepth = std::numeric_limits<std::size_t>::max();
   // Whether a provisional summary grew in the current evaluation.
@@ -4681,15 +4710,26 @@ private:
   // the overload a call `this.name()` on a read-only receiver selects.
   [[nodiscard]] const FunctionInfo *
   readOnlyReceiverAccessor(ClassId owner, const std::string &name) const;
-  // The receiver field that `accessor` returns a reference to: every return
-  // is `this.field`, or a call `this.other()` of another such accessor, or,
-  // in a body that declares nothing, the implicit `field` or `other()`.
+  // The receiver fields that `accessor` returns references to, sorted: every
+  // return is `this.field`, or a call `this.other()` of another such
+  // accessor, or, in a body that declares nothing, the implicit `field` or
+  // `other()`.
+  [[nodiscard]] std::optional<std::vector<std::string>>
+  accessorReceiverFields(const FunctionInfo &accessor,
+                         std::vector<const FunctionInfo *> &visiting) const;
+  // The receiver field `accessor` returns a reference to when every return
+  // designates that one field.
   [[nodiscard]] std::optional<std::string>
   accessorReceiverField(const FunctionInfo &accessor,
                         std::vector<const FunctionInfo *> &visiting) const;
-  // The receiver field that `subject`, a call `this.accessor()` in a method
+  // The receiver fields that `subject`, a call `this.accessor()` in a method
   // of `owner`, designates; also an implicit `accessor()` where
   // `implicitMembers` says no local can shadow the name.
+  [[nodiscard]] std::optional<std::vector<std::string>>
+  receiverAccessorFields(const Expr &subject, ClassId owner,
+                         std::vector<const FunctionInfo *> &visiting,
+                         bool implicitMembers = false) const;
+  // The one receiver field that `subject` designates.
   [[nodiscard]] std::optional<std::string>
   receiverAccessorField(const Expr &subject, ClassId owner,
                         std::vector<const FunctionInfo *> &visiting,
