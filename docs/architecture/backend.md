@@ -1,9 +1,12 @@
 # Backend And Native Handoff
 
-Status: current architecture.
+Status: current architecture. The C++ backend is production; the LLVM backend
+has its build, selection, initialization, and boundary foundation but does not
+yet lower GTI instructions or produce native artifacts.
 
-GTI ships a native C++ source backend. All production backends consume one
-compiler-owned, backend-neutral `LoweredProgram`; they do not receive the AST,
+GTI ships a production C++ source backend and a foundational native LLVM
+backend. Both consume one compiler-owned, backend-neutral `LoweredProgram`;
+they do not receive the AST,
 `SemanticModel`, `HirProgram`, source MIR, optimizer side tables, or generated
 C++. The backend chooses target representation, but it cannot recover missing
 language meaning from an upstream representation or from host C++ behavior.
@@ -4276,15 +4279,51 @@ and output publication. Backend code must not assume a command-line working
 directory or write final artifacts directly. Runtime and standard-library
 locations come from the driver/toolchain installation contract.
 
-## Future Backends
+## Native LLVM Backend Foundation
 
-A future LLVM or other native backend receives `LoweredProgram` plus its own
-explicit target policy. It must not link frontend representations, receive
-source MIR or optimizer tables, parse generated C++, depend on C++ spelling
-helpers, or treat HIR as executable authority. If a backend-neutral fact is
-missing, the compiler extends and verifies the lowered contract; a backend may
-not recover that fact from an upstream phase or native behavior.
+`LlvmBackend` is an independent sibling of `CppBackend`. It receives
+`LoweredProgram` plus GTI-owned LLVM code-generation policy, verifies the
+sealed value, restricts this first stage to the configured host target,
+initializes LLVM's native target and assembly printer once, and then reports
+`GTI-B0003`: executable LLVM lowering is not implemented. It emits no dummy
+module, special `main`, LLVM IR, object, or executable.
+
+The public backend header has no LLVM include or type. LLVM context, target
+registry, triple, and initialization APIs are confined to
+`src/compiler/llvm_backend.cpp`. The dedicated `gti_llvm_backend` library owns
+the `Core`/`nativecodegen` component roots; `gti_compiler` retains the narrow
+support-library surface from ADR 006. Source and link-graph gates reject
+frontend, optimizer-private, C++ representation, and unowned LLVM component
+dependencies.
+
+Backend selection is immutable `CompilationRequest` policy. The generic
+`compileToSelectedBackend` entry follows the same frontend, optimized-MIR,
+lowered construction, verification, diagnostic, and progress path as
+`compileToCpp`. Direct CLI compilation exposes `--backend cpp|llvm`; omitting it
+continues to select C++. C++-only `--std` and `--keep-cpp` policy cannot be
+combined with LLVM selection.
+
+`BackendArtifactKind::Object` is the neutral future native handoff. Object
+contents remain opaque bytes; the driver, not the backend, owns atomic
+publication, runtime/native inputs, linking, caches, diagnostics, and final
+executable publication. A dedicated `NativeLinkRequest` composes an object
+artifact with declared native objects, ordered link inputs, and the GTI runtime
+without applying C++ standard, preprocessing, strict-floating-point, or source
+optimization flags. Object-backend cache entries remain conservatively
+bypassed until their binary metadata format is implemented. This foundation
+never returns that artifact kind, so the production build continues entirely
+through C++ source.
+
+The first real LLVM lowering slice starts from this boundary. It must not link
+frontend representations, receive source MIR or optimizer tables, parse
+generated C++, depend on C++ spelling helpers, or treat HIR as executable
+authority. If a backend-neutral fact is missing, the compiler extends and
+verifies `LoweredProgram`; the backend may not recover that fact from an
+upstream phase or native behavior.
 
 Compatibility with the deleted multi-representation route is not a project
 constraint. A new backend is an independent client of the lowered contract,
 not another branch in the C++ emitter.
+
+See [ADR 031](../decisions/031-native-llvm-backend-foundation.md) for the
+dependency, initialization, packaging, status, and first-lowering decision.

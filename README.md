@@ -23,11 +23,14 @@ lifetime, failure, and execution semantics are its own. C++ generation is the
 reference compiler's current implementation strategy, not the language contract.
 
 The released compiler checks a complete GTI source graph, builds typed HIR and
-MIR, lowers it through a C++ backend, and invokes a native C++ compiler:
+MIR, and seals a backend-neutral `LoweredProgram`. The production C++ backend
+then invokes a native C++ compiler. A separately selectable LLVM backend has
+its build and driver foundation but deliberately emits no program yet:
 
 ```text
 source graph -> frontend -> checked AST -> typed HIR/MIR
-             -> GTI optimization -> C++ backend -> native compiler
+             -> GTI optimization -> LoweredProgram -> C++ backend -> native compiler
+                                                 \-> LLVM backend (foundation only)
 ```
 
 > [!IMPORTANT]
@@ -146,11 +149,14 @@ at configure time. `-DGTI_BUNDLE_LLVM=ON` instead downloads and builds the
 pinned LLVM release used for self-contained toolchains, with RTTI enabled
 automatically; that mode also requires an explicit `-DCMAKE_BUILD_TYPE`,
 which LLVM's own build insists on. Release builds force that acquisition
-mode. These are two ways to supply one mandatory dependency, not separate
-LLVM and non-LLVM compiler implementations. GTI links only the narrowly
-approved support libraries (`LLVMSupport`, `LLVMTargetParser`, and
-`LLVMDemangle`); LLVM is not GTI's code-generation backend. See
-[ADR 006](docs/decisions/006-llvm-support-adoption.md) for the boundary.
+mode. These are two ways to supply one mandatory dependency. The compiler core
+links only the narrowly approved support libraries (`LLVMSupport`,
+`LLVMTargetParser`, and `LLVMDemangle`). The independent foundational LLVM
+backend additionally owns the exact host `Core`/`nativecodegen` closure and is
+not yet capable of producing an executable. See
+[ADR 006](docs/decisions/006-llvm-support-adoption.md) and
+[ADR 031](docs/decisions/031-native-llvm-backend-foundation.md) for the two
+boundaries.
 
 ```sh
 git clone https://git.internal.howetotech.dev/gti-lang/gti.git gti
@@ -564,8 +570,9 @@ python3 scripts/install_neovim_local.py --activate-only --replace-config --repla
 
 This validates and activates the installed version; it does not rebuild it to
 the checkout's VERSION. For a new build, install supported LLVM (for example
-`brew install llvm@22`) and rerun the normal installer. LLVM 23 is not currently
-a supported build prerequisite.
+`brew install llvm`) and rerun the normal installer. LLVM 23.1.2 is included in
+the current system-build compatibility evidence; official release archives
+continue to use the pinned bundled version.
 
 Restart Neovim, run `:Lazy sync`, open a `.gti` file, and check `:GTIInfo`.
 Re-run the script after pulling changes. This system-LLVM build uses the same

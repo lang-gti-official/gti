@@ -1284,6 +1284,8 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
   addNativeEnvironmentIdentity(identity);
+  identity.add("backend.kind",
+               static_cast<std::uint64_t>(request.compilation().backend()));
   identity.add("backend.standard",
                static_cast<std::uint64_t>(request.compilation().cppStandard()));
   identity.add(
@@ -2295,6 +2297,10 @@ std::optional<std::string>
 nativeCacheBypassDetail(const ExecutableBuildRequest &request,
                         NativeLinkIdentityPlan &plan) {
   plan = {};
+  if (request.compilation().backend() != BackendKind::Cpp) {
+    return "native-object backend artifacts are not yet represented by the "
+           "build cache format";
+  }
   const NativeInputs &inputs = request.nativeInputs();
   if (!inputs.compilerArguments.empty() || !inputs.cCompilerArguments.empty() ||
       !inputs.linkerArguments.empty() || !inputs.trailingArguments.empty()) {
@@ -2496,7 +2502,7 @@ nativeObjectPath(const std::filesystem::path &generatedSource,
 std::optional<BuildRuntimeProvenance> captureBuildRuntimeProvenance(
     const ToolchainLayout &toolchain,
     const std::vector<std::filesystem::path> &dependencies,
-    std::string &errorMessage) {
+    bool requireRuntimeHeaders, std::string &errorMessage) {
   BuildRuntimeProvenance provenance;
   const std::filesystem::path runtimeRoot =
       normalizedAbsolute(toolchain.runtimeInclude / "gti");
@@ -2534,7 +2540,8 @@ std::optional<BuildRuntimeProvenance> captureBuildRuntimeProvenance(
               }
               return left.logicalIdentity < right.logicalIdentity;
             });
-  if (std::none_of(provenance.headers.begin(), provenance.headers.end(),
+  if (requireRuntimeHeaders &&
+      std::none_of(provenance.headers.begin(), provenance.headers.end(),
                    [](const BuildRuntimeHeaderProvenance &header) {
                      return header.kind == BuildRuntimeHeaderKind::Runtime;
                    })) {
@@ -3091,8 +3098,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   CompilationInputs compilationInputs =
       loadCompilationInputs(request.compilation(), progress);
   if (!compilationInputs.succeeded()) {
-    result.compilation = compileToCpp(request.compilation(),
-                                      std::move(compilationInputs), progress);
+    result.compilation = compileToSelectedBackend(
+        request.compilation(), std::move(compilationInputs), progress);
     result.status = ExecutableBuildStatus::CompilationFailure;
     return result;
   }
@@ -3320,8 +3327,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     }
   }
 
-  result.compilation = compileToCpp(request.compilation(),
-                                    std::move(compilationInputs), progress);
+  result.compilation = compileToSelectedBackend(
+      request.compilation(), std::move(compilationInputs), progress);
   if (!result.compilation.succeeded()) {
     if (result.compilation.backendFailureDetails) {
       result.backendDiagnosticLog =
@@ -3334,6 +3341,9 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   if (!prepareOutputDirectories()) {
     return result;
   }
+
+  const BackendArtifactKind backendArtifactKind =
+      result.compilation.artifact->kind;
 
   std::string generatedWriteError;
   if (!publishTextAtomically(request.generatedSource(),
@@ -3529,26 +3539,40 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   const StagedDebugBundleCleanup stagedSymbolsCleanup{
       std::filesystem::path(stagedOutput.string() + ".dSYM")};
   const std::filesystem::path nativeDependencyFile =
-      request.buildReport()
+      request.buildReport() &&
+              backendArtifactKind == BackendArtifactKind::Source
           ? temporaryArtifactPath(request.output(), ".build-report.d")
           : std::filesystem::path{};
-  TemporaryArtifact nativeDependencyCleanup(nativeDependencyFile,
-                                            request.buildReport().has_value());
-  const NativeCompileRequest nativeRequest(
-      request.nativeCompiler(), request.generatedSource(), stagedOutput,
-      request.compilation().cppStandard(), request.compilation().optimization(),
-      effectiveNativeInputs(request.toolchain(), request.nativeInputs(),
-                            nativeObjects),
-      request.buildReport()
-          ? std::optional<std::filesystem::path>(nativeDependencyFile)
-          : std::nullopt,
-      request.compilation().debugInfo());
-  result.nativeCommand = nativeToolchain.command(nativeRequest);
+  TemporaryArtifact nativeDependencyCleanup(
+      nativeDependencyFile,
+      request.buildReport().has_value() &&
+          backendArtifactKind == BackendArtifactKind::Source);
+  const NativeInputs effectiveInputs = effectiveNativeInputs(
+      request.toolchain(), request.nativeInputs(), nativeObjects);
   ProgressScope nativeProgress(progress, ProgressPhase::NativeLink,
                                request.nativeCompiler());
-  result.nativeProcess = nativeToolchain.invoke(
-      nativeRequest,
-      {.captureSuccessfulOutput = request.captureSuccessfulNativeOutput()});
+  if (backendArtifactKind == BackendArtifactKind::Source) {
+    const NativeCompileRequest nativeRequest(
+        request.nativeCompiler(), request.generatedSource(), stagedOutput,
+        request.compilation().cppStandard(),
+        request.compilation().optimization(), effectiveInputs,
+        request.buildReport()
+            ? std::optional<std::filesystem::path>(nativeDependencyFile)
+            : std::nullopt,
+        request.compilation().debugInfo());
+    result.nativeCommand = nativeToolchain.command(nativeRequest);
+    result.nativeProcess = nativeToolchain.invoke(
+        nativeRequest,
+        {.captureSuccessfulOutput = request.captureSuccessfulNativeOutput()});
+  } else {
+    const NativeLinkRequest nativeRequest(
+        request.nativeCompiler(), request.generatedSource(), stagedOutput,
+        effectiveInputs, request.compilation().debugInfo());
+    result.nativeCommand = nativeToolchain.command(nativeRequest);
+    result.nativeProcess = nativeToolchain.invoke(
+        nativeRequest,
+        {.captureSuccessfulOutput = request.captureSuccessfulNativeOutput()});
+  }
   nativeProgress.finish();
   if (result.nativeProcess->driverDiagnostic) {
     result.driverDiagnostic = result.nativeProcess->driverDiagnostic;
@@ -3558,8 +3582,13 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     result.generatedSourceRetained = true;
     result.status = ExecutableBuildStatus::NativeCompilerFailure;
     std::ostringstream evidence;
-    evidence << "GTI backend build failure\nBackend representation: C++\n"
-             << "Stage: native compilation and linking\nRepresentation: "
+    evidence << "GTI backend build failure\nBackend: "
+             << backendKindName(request.compilation().backend())
+             << "\nBackend representation: "
+             << (backendArtifactKind == BackendArtifactKind::Source
+                     ? "source"
+                     : "native object")
+             << "\nStage: native compilation and linking\nRepresentation: "
              << request.generatedSource().string()
              << "\nCommand: " << renderCommand(result.nativeCommand)
              << "\nExit code: " << result.nativeProcess->exitCode << '\n';
@@ -3574,30 +3603,36 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
 
   if (buildProvenance) {
     std::string provenanceError;
-    const std::optional<std::string> depfile =
-        readTextFile(nativeDependencyFile, provenanceError);
-    if (!depfile) {
-      generatedArtifact.keep();
-      result.generatedSourceRetained = true;
-      result.status = ExecutableBuildStatus::BuildReportCaptureFailure;
-      result.driverDiagnostic =
-          "gti: failed to read native build-report dependencies: " +
-          provenanceError;
-      return result;
-    }
-    std::optional<std::vector<std::filesystem::path>> dependencies =
-        parseNativeDependencyFile(*depfile, provenanceError);
-    if (!dependencies) {
-      generatedArtifact.keep();
-      result.generatedSourceRetained = true;
-      result.status = ExecutableBuildStatus::BuildReportCaptureFailure;
-      result.driverDiagnostic =
-          "gti: failed to parse native build-report dependencies: " +
-          provenanceError;
-      return result;
+    std::vector<std::filesystem::path> dependencies;
+    if (backendArtifactKind == BackendArtifactKind::Source) {
+      const std::optional<std::string> depfile =
+          readTextFile(nativeDependencyFile, provenanceError);
+      if (!depfile) {
+        generatedArtifact.keep();
+        result.generatedSourceRetained = true;
+        result.status = ExecutableBuildStatus::BuildReportCaptureFailure;
+        result.driverDiagnostic =
+            "gti: failed to read native build-report dependencies: " +
+            provenanceError;
+        return result;
+      }
+      std::optional<std::vector<std::filesystem::path>> parsedDependencies =
+          parseNativeDependencyFile(*depfile, provenanceError);
+      if (!parsedDependencies) {
+        generatedArtifact.keep();
+        result.generatedSourceRetained = true;
+        result.status = ExecutableBuildStatus::BuildReportCaptureFailure;
+        result.driverDiagnostic =
+            "gti: failed to parse native build-report dependencies: " +
+            provenanceError;
+        return result;
+      }
+      dependencies = std::move(*parsedDependencies);
     }
     std::optional<BuildRuntimeProvenance> runtime =
-        captureBuildRuntimeProvenance(request.toolchain(), *dependencies,
+        captureBuildRuntimeProvenance(request.toolchain(), dependencies,
+                                      backendArtifactKind ==
+                                          BackendArtifactKind::Source,
                                       provenanceError);
     const std::optional<std::filesystem::path> nativeCompiler =
         resolveExecutableForIdentity(request.nativeCompiler());

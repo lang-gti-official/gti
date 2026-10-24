@@ -103,6 +103,7 @@ public:
   [[nodiscard]] const TargetInfo &target() const;
   [[nodiscard]] OptimizationLevel optimization() const;
   [[nodiscard]] CppStandard cppStandard() const;
+  [[nodiscard]] BackendKind backend() const;
   [[nodiscard]] bool debugInfo() const;
   [[nodiscard]] RawPointerAuditMode rawPointerAudit() const;
   [[nodiscard]] bool rawPointerAuditLibraryFindings() const;
@@ -117,6 +118,7 @@ public:
   [[nodiscard]] CompilationRequest forExecutable() const;
   [[nodiscard]] bool requiresFunctionDefinitions() const;
   [[nodiscard]] CompilationRequest withDefinitionClosure() const;
+  [[nodiscard]] CompilationRequest withBackend(BackendKind backend) const;
 
 private:
   std::filesystem::path entryPath;
@@ -124,6 +126,7 @@ private:
   TargetInfo targetInfo;
   OptimizationLevel optimizationLevel;
   CppStandard backendStandard;
+  BackendKind selectedBackend = BackendKind::Cpp;
   std::vector<PackageSourceRoot> packageSourceRootSet;
   ConfigurationFlags configuredFlags;
   ConfigurationFlags declaredFlags;
@@ -216,6 +219,18 @@ compileToCpp(const CompilationRequest &request,
 [[nodiscard]] CompilationResult
 compileToCpp(const CompilationRequest &request, CompilationInputs inputs,
              ProgressObserver *progress = nullptr);
+
+// Selects the executable backend recorded by the immutable request. The C++
+// backend remains the default; inspection backends retain their explicit
+// entry points below.
+[[nodiscard]] CompilationResult
+compileToSelectedBackend(const CompilationRequest &request,
+                         ProgressObserver *progress = nullptr);
+
+[[nodiscard]] CompilationResult
+compileToSelectedBackend(const CompilationRequest &request,
+                         CompilationInputs inputs,
+                         ProgressObserver *progress = nullptr);
 
 [[nodiscard]] CompilationResult
 compileToNativeHeader(const CompilationRequest &request,

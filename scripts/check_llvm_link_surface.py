@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""Enforce the LLVM and Clang link surface of ADR 006 and ADR 021.
+"""Enforce the LLVM and Clang link surface of ADR 006, ADR 021, and ADR 031.
 
-GTI may link only the LLVM support libraries — LLVMSupport, LLVMTargetParser,
-and LLVMDemangle — plus libclang, the stable Clang C API the bindgen reader
-uses. Anything else — llvm/IR, MC, Target, CodeGen, clangAST, clang-cpp, and
-every other component — is out of scope by policy. This scans the build
-system's generated link commands and fails when any other LLVM or Clang
-library appears, so a new dependency cannot arrive silently.
+The compiler core may link only the LLVM support libraries. The independent
+LLVM backend may additionally link its configured Core/native-codegen closure.
+libclang remains the only Clang library. This scans generated link commands so
+neither surface can broaden silently.
 """
 
 import re
 import sys
 from pathlib import Path
 
-ALLOWED = {"LLVMSupport", "LLVMTargetParser", "LLVMDemangle"}
+BASE_ALLOWED = {"LLVMSupport", "LLVMTargetParser", "LLVMDemangle"}
 LIBRARY = re.compile(r"\b(?:lib)?(LLVM[A-Za-z0-9_]*)(?:\.(?:a|so|dylib|lib|tbd))?\b")
 CLANG_TOKEN = re.compile(r"(?<![A-Za-z0-9_])(?:-l)?(?:lib)?clang[A-Za-z0-9_.+-]*")
 # The C API library in its platform spellings: libclang.a/.so/.dylib/.tbd,
@@ -49,18 +47,21 @@ def scan_clang(text: str) -> set[str]:
     return violations
 
 
-def scan(path: Path) -> set[str]:
+def scan(path: Path, backend_allowed: set[str]) -> set[str]:
     violations: set[str] = set()
     try:
         text = path.read_text(errors="replace")
     except OSError:
         return violations
+    allowed = set(BASE_ALLOWED)
+    if "gti_llvm_backend" in text or path.parent.name == "gti_llvm_backend.dir":
+        allowed |= backend_allowed
     for match in LIBRARY.finditer(text):
         component = match.group(1)
         if component == "LLVM":
             # A monolithic libLLVM link would bundle every component.
             violations.add(component)
-        elif component not in ALLOWED:
+        elif component not in allowed:
             violations.add(component)
     violations |= scan_clang(text)
     return violations
@@ -72,7 +73,7 @@ def is_gti_ninja_output(value: str) -> bool:
     return name == "gti" or name.startswith("gti_") or name.startswith("libgti_")
 
 
-def scan_ninja(path: Path) -> tuple[set[str], int]:
+def scan_ninja(path: Path, backend_allowed: set[str]) -> tuple[set[str], int]:
     """Scan only top-level GTI build statements in a Ninja graph.
 
     A bundled LLVM build shares the top-level build.ninja and necessarily
@@ -125,9 +126,14 @@ def scan_ninja(path: Path) -> tuple[set[str], int]:
                 capture_continuation = block_line.rstrip().endswith("$")
 
         link_text = "\n".join(link_lines)
+        allowed = set(BASE_ALLOWED)
+        if "gti_llvm_backend" in link_text or any(
+            "gti_llvm_backend" in output for output in outputs
+        ):
+            allowed |= backend_allowed
         for match in LIBRARY.finditer(link_text):
             component = match.group(1)
-            if component == "LLVM" or component not in ALLOWED:
+            if component == "LLVM" or component not in allowed:
                 violations.add(component)
         violations |= scan_clang(link_text)
 
@@ -140,6 +146,19 @@ def main() -> None:
     build = Path(sys.argv[1])
     if not build.is_dir():
         raise SystemExit(f"missing build directory: {build}")
+
+    component_manifest = build / "gti-llvm-backend-components.txt"
+    if not component_manifest.is_file():
+        raise SystemExit(
+            f"missing LLVM backend component manifest: {component_manifest}"
+        )
+    backend_allowed = {
+        component.strip()
+        for component in component_manifest.read_text().splitlines()
+        if component.strip()
+    }
+    if not backend_allowed:
+        raise SystemExit("LLVM backend component manifest is empty")
 
     # Only GTI's own targets are constrained; LLVM's internal build graph
     # (under _deps or a bundled LLVM binary directory) links whatever its
@@ -157,9 +176,9 @@ def main() -> None:
 
     violations: set[str] = set()
     for path in link_files:
-        violations |= scan(path)
+        violations |= scan(path, backend_allowed)
     if not link_files and ninja.is_file():
-        ninja_violations, selected = scan_ninja(ninja)
+        ninja_violations, selected = scan_ninja(ninja, backend_allowed)
         violations |= ninja_violations
         if selected == 0:
             raise SystemExit("no GTI link commands found in build.ninja")
@@ -170,11 +189,14 @@ def main() -> None:
         raise SystemExit(
             "LLVM/Clang link surface violation: "
             + ", ".join(sorted(violations))
-            + " (allowed: LLVMSupport, LLVMTargetParser, LLVMDemangle, "
-            "libclang; see docs/decisions/006-llvm-support-adoption.md and "
-            "docs/decisions/021-libclang-c-import.md)"
+            + " (support libraries are global; Core/native-codegen components "
+            "require gti_llvm_backend; libclang is the only Clang library; "
+            "see ADR 006, ADR 021, and ADR 031)"
         )
-    print("LLVM/Clang link surface: only support libraries and libclang are linked")
+    print(
+        "LLVM/Clang link surface: support libraries are confined and the "
+        "native component closure is owned by gti_llvm_backend"
+    )
 
 
 if __name__ == "__main__":

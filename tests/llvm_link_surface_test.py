@@ -10,6 +10,10 @@ def run(checker: str, graph: str) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory(prefix="gti-llvm-link-surface-") as value:
         build = Path(value)
         (build / "build.ninja").write_text(graph)
+        (build / "gti-llvm-backend-components.txt").write_text(
+            "LLVMCore\nLLVMAArch64CodeGen\nLLVMAArch64Desc\n"
+            "LLVMAArch64Info\n"
+        )
         return subprocess.run(
             [sys.executable, checker, str(build)],
             check=False,
@@ -54,6 +58,17 @@ build gti: CXX_EXECUTABLE_LINKER main.o | libgti_compiler.a || _deps/llvm/libLLV
             + result.stderr
         )
 
+    backend_graph = """\
+build gti: CXX_EXECUTABLE_LINKER main.o | libgti_llvm_backend.a
+  LINK_LIBRARIES = libgti_driver.a libgti_llvm_backend.a libLLVMCore.a libLLVMAArch64CodeGen.a libLLVMAArch64Desc.a libLLVMAArch64Info.a libLLVMSupport.a
+"""
+    result = run(checker, backend_graph)
+    if result.returncode != 0:
+        raise AssertionError(
+            "the configured native closure should be admitted only through "
+            "gti_llvm_backend:\n" + result.stdout + result.stderr
+        )
+
     forbidden_graph = """\
 build gti: CXX_EXECUTABLE_LINKER main.o
   LINK_LIBRARIES = libLLVMSupport.a libLLVMCore.a
@@ -64,6 +79,17 @@ build gti: CXX_EXECUTABLE_LINKER main.o
             "a forbidden library in a GTI Ninja link rule must fail:\n"
             + result.stdout
             + result.stderr
+        )
+
+    broadened_backend_graph = """\
+build gti: CXX_EXECUTABLE_LINKER main.o | libgti_llvm_backend.a
+  LINK_LIBRARIES = libgti_llvm_backend.a libLLVMCore.a libLLVMExecutionEngine.a
+"""
+    result = run(checker, broadened_backend_graph)
+    if result.returncode == 0 or "LLVMExecutionEngine" not in result.stderr:
+        raise AssertionError(
+            "gti_llvm_backend must not admit components outside its generated "
+            "closure:\n" + result.stdout + result.stderr
         )
 
     libclang_graph = """\

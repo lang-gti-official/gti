@@ -289,6 +289,7 @@ int main() {
   expect(request.target().os == "linux" &&
              request.optimization() == lang::OptimizationLevel::O1 &&
              request.cppStandard() == lang::CppStandard::Cpp23 &&
+             request.backend() == lang::BackendKind::Cpp &&
              !request.optimizationOutputs().requested(),
          "compilation requests should retain target and backend policy");
 
@@ -296,6 +297,29 @@ int main() {
       lang::driver::compileToCpp(request);
   expect(result.succeeded(),
          "the driver should compile a valid whole-program request");
+  const lang::driver::CompilationResult selectedCpp =
+      lang::driver::compileToSelectedBackend(request);
+  expect(selectedCpp.succeeded() && selectedCpp.artifact && result.artifact &&
+             selectedCpp.artifact->contents == result.artifact->contents,
+         "the selected executable backend should default to C++");
+
+  const lang::driver::CompilationRequest llvmRequest =
+      request.withBackend(lang::BackendKind::Llvm);
+  const lang::driver::CompilationResult llvmResult =
+      lang::driver::compileToSelectedBackend(llvmRequest);
+  const auto llvmDiagnostic =
+      std::find_if(llvmResult.diagnostics.begin(), llvmResult.diagnostics.end(),
+                   [](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.code == "GTI-B0003";
+                   });
+  expect(request.backend() == lang::BackendKind::Cpp &&
+             llvmRequest.backend() == lang::BackendKind::Llvm &&
+             !llvmResult.succeeded() && !llvmResult.artifact &&
+             llvmDiagnostic != llvmResult.diagnostics.end() &&
+             llvmDiagnostic->message.find(
+                 "currently accepts only the host target") != std::string::npos,
+         "LLVM selection should be immutable and preserve a structured "
+         "foundation-limit diagnostic");
   RecordingProgress progress;
   const auto withProgress = lang::driver::compileToCpp(request, &progress);
   expect(withProgress.succeeded() && result.artifact && withProgress.artifact &&
@@ -883,6 +907,42 @@ void testNativeCommandConstruction() {
          "ordered native link operands should preserve mixed file, -l, and "
          "framework dependency order after the build-owned runtime and be "
          "authoritative over compatibility category vectors");
+
+  lang::driver::NativeInputs objectInputs;
+  objectInputs.targetPolicy = {.triple = "aarch64-unknown-linux-gnu",
+                               .sysroot = "target sysroot"};
+  objectInputs.compilerArguments = {"-DSOURCE_ONLY=1"};
+  objectInputs.libraryDirectories = {"native lib"};
+  objectInputs.orderedLinkOperands = {
+      {lang::driver::NativeLinkOperandKind::File, "native-provider.o"},
+      {lang::driver::NativeLinkOperandKind::Library, "target"},
+  };
+  objectInputs.linkerArguments = {"-pthread"};
+  objectInputs.finalLibraryFiles = {"libgti_runtime.a"};
+  const std::vector<std::string> objectCommand =
+      lang::driver::NativeToolchain().command(lang::driver::NativeLinkRequest(
+          "custom-c++", "generated.o", "program", std::move(objectInputs),
+          true));
+  std::vector<std::string> expectedObjectCommand{
+      "custom-c++",
+      "--target=aarch64-unknown-linux-gnu",
+      "--sysroot=target sysroot",
+      "generated.o",
+      "-Lnative lib",
+      "native-provider.o",
+      "-ltarget",
+      "-pthread",
+      "-o",
+      "program",
+      "libgti_runtime.a",
+      "-g",
+  };
+#if defined(__APPLE__)
+  expectedObjectCommand.emplace_back("-Wl,-reproducible");
+#endif
+  expect(objectCommand == expectedObjectCommand,
+         "backend-produced objects should link under driver-owned target and "
+         "dependency policy without inheriting C++ source flags");
 
   expect(lang::driver::isReservedNativeBuildArgument("-o") &&
              lang::driver::isReservedNativeBuildArgument(

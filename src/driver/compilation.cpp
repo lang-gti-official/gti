@@ -2,6 +2,7 @@
 
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/llvm_backend.h"
 #include "gti/lowered_program_builder.h"
 #include "gti/mir_backend.h"
 #include "gti/mir_printer.h"
@@ -11,6 +12,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -335,6 +337,8 @@ OptimizationLevel CompilationRequest::optimization() const {
 
 CppStandard CompilationRequest::cppStandard() const { return backendStandard; }
 
+BackendKind CompilationRequest::backend() const { return selectedBackend; }
+
 bool CompilationRequest::debugInfo() const { return sourceDebugInfo; }
 
 RawPointerAuditMode CompilationRequest::rawPointerAudit() const {
@@ -396,6 +400,12 @@ CompilationRequest CompilationRequest::withDefinitionClosure() const {
   return result;
 }
 
+CompilationRequest CompilationRequest::withBackend(BackendKind backend) const {
+  CompilationRequest result = *this;
+  result.selectedBackend = backend;
+  return result;
+}
+
 CompilationInputs loadCompilationInputs(const CompilationRequest &request,
                                         ProgressObserver *progress) {
   SourceLoader sourceLoader;
@@ -450,6 +460,54 @@ CompilationResult compileToCpp(const CompilationRequest &request,
                                ProgressObserver *progress) {
   CppBackend backend(request.cppStandard(), request.debugInfo());
   return compileWithBackend(request.withDefinitionClosure(), backend, progress);
+}
+
+namespace {
+
+LlvmCodegenOptimization
+llvmCodegenOptimization(OptimizationLevel optimization) {
+  switch (optimization) {
+  case OptimizationLevel::O0:
+    return LlvmCodegenOptimization::None;
+  case OptimizationLevel::O1:
+    return LlvmCodegenOptimization::Less;
+  case OptimizationLevel::O2:
+    return LlvmCodegenOptimization::Default;
+  case OptimizationLevel::O3:
+    return LlvmCodegenOptimization::Aggressive;
+  }
+  throw std::logic_error("unknown optimization level");
+}
+
+std::unique_ptr<Backend> selectedBackend(const CompilationRequest &request) {
+  switch (request.backend()) {
+  case BackendKind::Cpp:
+    return std::make_unique<CppBackend>(request.cppStandard(),
+                                        request.debugInfo());
+  case BackendKind::Llvm:
+    return std::make_unique<LlvmBackend>(LlvmBackendOptions{
+        .optimization = llvmCodegenOptimization(request.optimization()),
+        .debugInfo = request.debugInfo(),
+    });
+  }
+  throw std::logic_error("unknown executable backend selection");
+}
+
+} // namespace
+
+CompilationResult compileToSelectedBackend(const CompilationRequest &request,
+                                           ProgressObserver *progress) {
+  std::unique_ptr<Backend> backend = selectedBackend(request);
+  return compileWithBackend(request.withDefinitionClosure(), *backend,
+                            progress);
+}
+
+CompilationResult compileToSelectedBackend(const CompilationRequest &request,
+                                           CompilationInputs inputs,
+                                           ProgressObserver *progress) {
+  std::unique_ptr<Backend> backend = selectedBackend(request);
+  return compileWithLoadedInputs(request.withDefinitionClosure(),
+                                 std::move(inputs), *backend, progress);
 }
 
 CompilationResult compileToCpp(const CompilationRequest &request,
