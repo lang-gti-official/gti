@@ -48,8 +48,6 @@ enum class StructuralConstraintKind : std::uint8_t {
   DereferencesTo,
   WritableIterator,
   WritesTo,
-  BidirectionalIterator,
-  RandomAccessIterator,
   SubscriptsToMut,
   SizedSentinelFor,
   InputRange,
@@ -115,17 +113,13 @@ inline constexpr std::array<GenericConstraintKind, 21> genericConstraintKinds{{
 // complete fact inventory above also serves reflection and generic proofs.
 inline constexpr std::array<CompilerConstraintRecord, 0> compilerConstraints{};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 25>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 23>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
         {"dereferences_to", StructuralConstraintKind::DereferencesTo, 2},
         {"writable_iterator", StructuralConstraintKind::WritableIterator, 1},
         {"writes_to", StructuralConstraintKind::WritesTo, 2},
-        {"bidirectional_iterator",
-         StructuralConstraintKind::BidirectionalIterator, 1},
-        {"random_access_iterator",
-         StructuralConstraintKind::RandomAccessIterator, 1},
         {"subscripts_to_mut", StructuralConstraintKind::SubscriptsToMut, 2},
         {"sized_sentinel_for", StructuralConstraintKind::SizedSentinelFor, 2},
         {"input_range", StructuralConstraintKind::InputRange, 1},

@@ -18,6 +18,8 @@ static_assert(!lang::compilerStructuralConstraint("scales_by"));
 static_assert(!lang::compilerStructuralConstraint("enum_underlying"));
 static_assert(!lang::compilerStructuralConstraint("object_layout"));
 static_assert(!lang::compilerStructuralConstraint("independent_object"));
+static_assert(!lang::compilerStructuralConstraint("bidirectional_iterator"));
+static_assert(!lang::compilerStructuralConstraint("random_access_iterator"));
 static_assert([] {
   for (const std::string_view binding :
        {"numeric", "signed_numeric", "integral", "signed_integral",
@@ -314,6 +316,45 @@ int main() {
 )"),
            "comparison source policy preserves private access without "
            "excluding primitive equality");
+
+  accepted(check(root, directory, "source_mutation_requirements", R"(
+concept adjustable<T> = requires(mut T& value, int amount) {
+  { ++value } -> void;
+  { --value } -> void;
+  { value += amount } -> void;
+  { value -= amount } -> void;
+};
+struct Counter {
+  mut int value = 0;
+  void operator++() mut { this.value += 1; }
+  void operator--() mut { this.value -= 1; }
+  void operator+=(int amount) mut { this.value += amount; }
+  void operator-=(int amount) mut { this.value -= amount; }
+};
+void adjust<adjustable T>(mut T& value, int amount) {
+  ++value;
+  value += amount;
+  --value;
+  value -= amount;
+}
+int main() {
+  mut Counter value{};
+  adjust(value, 7);
+  return value.value;
+}
+)"),
+           "general mutation requirements prove operations on ordinary "
+           "source classes without an iterator capability");
+
+  rejected(check(root, directory, "mutation_requires_mutable_receiver", R"(
+concept adjustable<T> = requires(mut T& value, int amount) {
+  { value += amount } -> void;
+};
+void adjust<adjustable T>(T& value, int amount) { value += amount; }
+int main() { return 0; }
+)"),
+           "a mutation proof never grants mutable access to a shared receiver",
+           "GTI-S2029");
 
   accepted(check(root, directory, "construction", R"(
 concept defaults<T> = requires { { T() } -> T; };

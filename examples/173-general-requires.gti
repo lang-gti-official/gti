@@ -65,6 +65,28 @@ struct Doubler {
   int operator()(int& value) { return value * 2; }
 };
 
+// Mutation requirements describe operations on any source type, not just
+// iterator categories. A query never performs the mutation itself.
+concept adjustable<T> = requires(mut T& value, int amount) {
+  { ++value } -> void;
+  { --value } -> void;
+  { value += amount } -> void;
+  { value -= amount } -> void;
+};
+struct Tally {
+  mut int value = 0;
+  void operator++() mut { this.value += 1; }
+  void operator--() mut { this.value -= 1; }
+  void operator+=(int amount) mut { this.value += amount; }
+  void operator-=(int amount) mut { this.value -= amount; }
+};
+void adjust<adjustable T>(mut T& value, int amount) {
+  ++value;
+  value += amount;
+  --value;
+  value -= amount;
+}
+
 Result invoke<F, Arg, Result>(F& function, Arg& argument)
     requires invokes<F, Arg, Result> {
   return function(argument);
@@ -144,6 +166,9 @@ namespace query_hygiene {
 }
 
 int main() {
+  mut Tally tally{};
+  adjust(tally, 9);
+  if (tally.value != 0) { return 7; }
   if (query_hygiene::check() != 0) { return 4; }
   {
     DefaultResource resource = default_from_fact<DefaultResource>();

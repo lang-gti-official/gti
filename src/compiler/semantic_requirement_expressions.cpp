@@ -53,6 +53,8 @@ auto SemanticVisitor::Impl::collectRequirementTypeArguments(
   } else if (const auto *binary = exprAs<Binary>(expression)) {
     collectRequirementTypeArguments(binary->left().get(), types);
     collectRequirementTypeArguments(binary->right().get(), types);
+  } else if (const auto *assignment = exprAs<Assign>(expression)) {
+    collectRequirementTypeArguments(assignment->value().get(), types);
   } else if (const auto *logical = exprAs<Logical>(expression)) {
     collectRequirementTypeArguments(logical->left().get(), types);
     collectRequirementTypeArguments(logical->right().get(), types);
@@ -223,15 +225,16 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
   if (!query.isExpressionRequirement() ||
       arguments.size() <= query.parameters().size())
     return std::nullopt;
+  const auto binding = [&](const Token &name) -> std::optional<std::size_t> {
+    for (std::size_t index = 0; index < query.bindings().size(); ++index)
+      if (query.bindings()[index].lexeme == name.lexeme)
+        return index;
+    return std::nullopt;
+  };
   const auto parameter =
       [&](const Expr *expression) -> std::optional<std::size_t> {
     const auto *variable = exprAs<Variable>(expression);
-    if (!variable)
-      return std::nullopt;
-    for (std::size_t index = 0; index < query.bindings().size(); ++index)
-      if (query.bindings()[index].lexeme == variable->name().lexeme)
-        return index;
-    return std::nullopt;
+    return variable ? binding(variable->name()) : std::nullopt;
   };
   const Expr *expression = query.expression().get();
   bool requiresUnsafe = query.unsafeKeyword().has_value();
@@ -254,7 +257,20 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
     operands.push_back(*right);
   } else if (const auto *unary = exprAs<Unary>(expression)) {
     receiver = parameter(unary->right().get());
-    operation = unaryValueOperator(unary->oper().kind);
+    operation = unary->oper().kind == TokenKind::PLUS_PLUS
+                    ? std::optional(OverloadedOperator::PreIncrement)
+                : unary->oper().kind == TokenKind::MINUS_MINUS
+                    ? std::optional(OverloadedOperator::PreDecrement)
+                    : unaryValueOperator(unary->oper().kind);
+  } else if (const auto *assignment = exprAs<Assign>(expression)) {
+    if (assignment->path().segments.size() != 1)
+      return std::nullopt;
+    receiver = binding(assignment->name());
+    operation = compoundOperator(assignment->oper().kind);
+    const auto value = parameter(assignment->value().get());
+    if (!operation || !value)
+      return std::nullopt;
+    operands.push_back(*value);
   } else if (const auto *call = exprAs<Call>(expression)) {
     // A typed call has extra selection facts not represented by the existing
     // unparameterized structural call proof. Concrete probing still supports

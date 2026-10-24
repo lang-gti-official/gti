@@ -3697,6 +3697,8 @@ private:
     } else if (const auto *binary = exprAs<Binary>(expression)) {
       collectRequirementTypes(binary->left().get(), types);
       collectRequirementTypes(binary->right().get(), types);
+    } else if (const auto *assignment = exprAs<Assign>(expression)) {
+      collectRequirementTypes(assignment->value().get(), types);
     } else if (const auto *logical = exprAs<Logical>(expression)) {
       collectRequirementTypes(logical->left().get(), types);
       collectRequirementTypes(logical->right().get(), types);

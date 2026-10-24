@@ -247,7 +247,7 @@ is a teaching helper, not a production server.
 | `170-view-fields.gti` | a class and a struct whose text fields view a local string, a copy sharing that dependency, a field read yielding a view of the same owner, a temporary token read within its expression, a factory whose token views its argument's owner, reads through a returned text reference and a generic holder's accessor, an optional whose payload views the string through an implicit conversion and whose `->` calls that view's members, a parser whose failure views the string passed to it, a diagnostic nested in a returned result, and an ownerless token that keeps its method calls |
 | `171-recursive-text-relays.gti` | recursive and mutually recursive functions relaying a view parameter, a recursion relaying a value's text field, a recursive method relaying the receiver's field, and an ownerless result from a literal argument |
 | `172-deferred-assertions.gti` | source-defined always-on/debug assertions, lazy formatted messages, skipped owning moves, and an application-defined typed macro |
-| `173-general-requires.gti` | exact expression/construction requirements, constexpr reflection predicates and source concept composition over an unrelated domain type |
+| `173-general-requires.gti` | exact expression/construction and mutation requirements, constexpr reflection predicates and source concept composition over unrelated domain types |
 | `174-typed-macros.gti` | ordinary calls to typed `#macro` declarations, exact overloads, generic/default expression parameters, conditional/repeated evaluation, hygienic body lookup, and skipped owner movement |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
@@ -637,7 +637,9 @@ disjunction demonstrates common guarantees in generic arithmetic. Inline source
 constraints retain complete operation contracts. Source-defined standard
 comparison concepts accept its domain type, and method reflection exposes
 access, safety, generic and constraint facts. Requirements
-execute no user code and do not relax ownership rules.
+execute no user code and do not relax ownership rules. A separate source tally
+demonstrates prefix and compound mutation proofs through a mutable reference,
+using the same general mechanism as source-defined iterator movement policy.
 
 ## Complete projects
 

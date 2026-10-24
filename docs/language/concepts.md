@@ -497,6 +497,15 @@ the complete read/mutable/once-use and borrow/escape contract, retain their
 existing compiler facts. A single owned-result expression query is not a
 replacement for those complete relationships.
 
+Prefix mutation and compound assignment can also supply general operation
+proofs, for example `requires(mut T& value, int n) { { value += n } -> void; }`.
+The proof preserves the receiver's mutable-access requirement; it does not let
+a generic function modify a read-only reference. As with all expression
+queries, checking this requirement does not mutate any caller object.
+Iterator decrement and jump policies now use these ordinary source queries;
+their former private category bindings are removed. Borrowing iterator and
+range relationships still retain the facts described above.
+
 For example, `std::totally_ordered` remains source composition, and the iterator
 units still define public concepts over the necessary private structural facts:
 

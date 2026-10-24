@@ -6005,21 +6005,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
   case StructuralConstraintKind::WritesTo:
     return arguments.size() == 2 &&
            hasMutableDereference(arguments[0], &arguments[1]);
-  case StructuralConstraintKind::BidirectionalIterator:
-    return arguments.size() == 1 &&
-           hasVoidMutation(arguments.front(), OverloadedOperator::PreDecrement,
-                           {});
-  case StructuralConstraintKind::RandomAccessIterator: {
-    if (arguments.size() != 1) {
-      return false;
-    }
-    const SemanticType distance = SemanticType::Int64;
-    return hasVoidMutation(arguments.front(), OverloadedOperator::AddAssign,
-                           std::span<const SemanticType>(&distance, 1)) &&
-           hasVoidMutation(arguments.front(),
-                           OverloadedOperator::SubtractAssign,
-                           std::span<const SemanticType>(&distance, 1));
-  }
   case StructuralConstraintKind::SubscriptsToMut: {
     if (arguments.size() != 2) {
       return false;
@@ -6240,28 +6225,6 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
         candidate.receiverMutability = ReceiverMutability::Mutable;
         candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
         candidate.returnBorrowAccess = AccessMode::Mutable;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::BidirectionalIterator:
-      if (kind == OverloadedOperator::PreDecrement &&
-          requirement.arguments.size() == 1 &&
-          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
-        candidate.returnType = SemanticType::Void;
-        candidate.receiverMutability = ReceiverMutability::Mutable;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::RandomAccessIterator:
-      if ((kind == OverloadedOperator::AddAssign ||
-           kind == OverloadedOperator::SubtractAssign) &&
-          requirement.arguments.size() == 1 &&
-          requirement.arguments[0] == receiverType &&
-          argumentTypes.size() == 1 &&
-          argumentTypes[0] == SemanticType::Int64) {
-        candidate.returnType = SemanticType::Void;
-        candidate.parameterTypes = {SemanticType::Int64};
-        candidate.receiverMutability = ReceiverMutability::Mutable;
         matches = true;
       }
       break;
