@@ -1,4 +1,5 @@
 #include <std/testing>
+#include <std/vector>
 #include "events.gti"
 
 namespace engine::tests {
@@ -7,7 +8,17 @@ namespace engine::tests {
   [[test]]
   void fresh_scene_state() {
     executions++;
-    std::testing::check(executions == 1, "Each test gets a fresh process");
+    std::testing::check_eq(executions, 1, "Each test gets a fresh process");
+    std::testing::check_ne(executions, 0);
+    std::testing::check_string_eq("scene-ready", "scene-ready");
+    std::testing::check_approx(1.0, 1.001, 0.01);
+    mut std::vector<int> actual{};
+    actual.push_back(7);
+    mut std::vector<int> expected{};
+    expected.push_back(7);
+    auto actual_view = actual.as_span();
+    auto expected_view = expected.as_span();
+    std::testing::check_elements_eq(actual_view, expected_view);
   }
 
   [[test]]

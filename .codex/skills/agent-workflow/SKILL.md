@@ -1,30 +1,38 @@
 ---
 name: agent-workflow
-description: Carry GTI implementation tasks through isolated branches, published checkpoints, validated GitHub PR integration, local-main synchronization, and safe worktree cleanup. Use for repository changes and resuming unfinished implementation tasks; read-only discussions and audits do not create branches or PRs.
+description: Carry GTI implementation tasks through isolated branches, published checkpoints, validated Gitea PR integration, local-main synchronization, and safe worktree cleanup. Use for repository changes and resuming unfinished implementation tasks; read-only discussions and audits do not create branches or PRs.
 ---
 
 # GTI Agent Workflow
 
-The normal implementation outcome is a merged GitHub PR and a primary checkout
+The normal implementation outcome is a merged Gitea PR and a primary checkout
 on current `main`, ready for the user's local installer. The repository owner's
 standing authorization is in `AGENTS.md`. Explicit instructions such as
 "PR only", "leave local", "do not merge", or a release/install request override
 the default. Never infer permission to change other repositories or services.
 
-Use `scripts/agent_workflow.py` for shared Git/API operations. GitHub
-(`lang-gti-official/gti`, remote `origin`) is the canonical host for branches,
-PRs, issues, CI and releases; the self-hosted Gitea repository (remote
-`gitea`) is a backup mirror that `sync` updates and that never receives PRs or
-issues. The helper authenticates with the GitHub CLI (`gh auth token`) or
-`GTI_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`, including from the primary
+Use `scripts/agent_workflow.py` for shared Git/API operations. Gitea
+(`gti-lang/gti`, remote `origin`) is the canonical host for branches,
+PRs, issues, CI and releases at `git.internal.howetotech.dev`. The helper
+never pushes to GitHub or an automatic backup. It authenticates with
+`GTI_GITEA_TOKEN`/`GITEA_TOKEN`, including from the primary
 checkout's ignored `.env`, and keeps token-free recovery records in the common
 Git directory. Run it from any checkout of the repository, or pass
 `--repo <checkout>`; it always acts on the primary checkout it shares a Git
 directory with. Do not copy credentials into worktrees. Task records from
-before the GitHub move show as `legacy-gitea` in `status`; re-register such a
-worktree with `start --adopt`. Read
+the GitHub period show as `legacy-github` in `status`; use explicit
+`rehost <task> --pr <verified-imported-number>` to preserve their exact-source
+evidence and original identity. Wait for the validation owner to finish live
+runs first. Older Gitea records refer to the archived, distinct tracker, not
+the replacement repository; preserve them when using `start --adopt`. Read
 [the command contract](../../../docs/architecture/agent-workflow.md) when
 recovering interruptions or interpreting a refused operation.
+
+An older worktree may contain pre-cutover GitHub instructions and a GitHub-only
+helper. Read the current primary checkout's `AGENTS.md` and this skill there,
+and run that primary helper with `--repo <task-worktree>` until current main is
+reconciled. Do not restore a retired remote to satisfy a stale helper. Preserve
+in-flight runs; rehost their records only after the validation owner is finished.
 
 ## Execution discipline
 
@@ -101,7 +109,7 @@ For concurrent fixes, use the canonical
   then `batch resume`. Run `batch verify` on the combined source for each
   required platform. This executes the full suite and all members' required
   tests and rejects missing/skipped regressions. Use the ordinary `finish`
-  only after full exact-source/platform evidence passes. GitHub CI is advisory.
+  only after full exact-source/platform evidence passes. Gitea CI is advisory.
   Never merge `preview`.
 - Diagnose combined failures before changing tests. The owner of the violated
   invariant repairs its patch, or the integrator releases the batch with a
@@ -109,12 +117,15 @@ For concurrent fixes, use the canonical
   change inside a running batch. Preserve each attempt's evidence.
 - `batch withdraw` returns an unassigned component to independent validation;
   `batch release` closes a published unsuccessful batch while preserving its
-  work and returning its members to the queue. Normal sync/cleanup still
-  applies to all confirmed integrated original PRs after the umbrella merge.
+  work and returning its members to the queue. After the umbrella merge,
+  original-component `sync` verifies exact committed membership and full-platform
+  proof before closing a Gitea PR as integrated via that batch. It records the
+  umbrella link, not a fabricated remote merged state. Normal cleanup repeats
+  those checks; no heuristic/manual-merge override is needed.
 
 Draft/component CI skips full native builds and reports incomplete integration;
-the helper, not GitHub CI, blocks component merges until combined validation.
-Ready independent/candidate PRs start additional CI feedback. GitHub CI is
+the helper, not Gitea CI, blocks component merges until combined validation.
+Ready independent/candidate PRs start additional CI feedback. Gitea CI is
 advisory: never wait for it before merge, synchronization or completion, and do
 not duplicate validation because Actions is queued. Retain required optimized
 local/managed-runner coverage, including full combined/platform evidence.
@@ -155,8 +166,8 @@ pins while preserving strict PR freshness, admin enforcement and reviews.
 3. Write the final PR description to a temporary file, including behaviour,
    validation and limitations. Run `finish <task> --body-file <file>`.
    It marks the PR ready, checks validation and branch protection, merges through
-   GitHub with the exact tested head, then attempts a local-main fast-forward
-   and pushes `main` and the tags to the `gitea` mirror remote.
+   Gitea with the exact tested head, then attempts a local-main fast-forward.
+   It does not push to any backup remote.
    Use `--pr-only` when the user requested review before integration.
 4. Required reviews and PR freshness are respected; never force or administratively
    bypass a rejection. If old required CI contexts remain, apply the separately
@@ -192,7 +203,7 @@ deletes the integrated local branch. Unexpected commits stop deletion.
 interrupted request; PR lookup prevents duplicate creation, and confirmed merges
 can resume sync/cleanup without merging twice. Inspect a stale lock's owner
 before removing that exact lock directory; the lock is short, and a build-window
-slot whose owner exited is reclaimed on its own. Records are recovery aids; GitHub PRs
+slot whose owner exited is reclaimed on its own. Records are recovery aids; Gitea PRs
 and published Git commits remain the work inventory. Losing local records can
 be recovered by adopting the preserved branch and rediscovering its PR.
 

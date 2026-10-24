@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Exercise task lifecycle with real disposable Git repositories, a fake GitHub API and a Gitea mirror."""
+"""Exercise Gitea task lifecycle with real disposable Git repositories and no automatic backup pushes."""
 
 import copy
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,8 +25,8 @@ git = module.git
 Error = module.WorkflowError
 
 
-class GitHub:
-    """The subset of GitHub's REST/GraphQL surface the helper uses, with GitHub's response shapes."""
+class Gitea:
+    """The Gitea REST surface, including title-derived drafts and merge/protection shapes."""
 
     def __init__(self, remote):
         self.remote = remote
@@ -37,32 +39,33 @@ class GitHub:
         self.before_merge = None
         self.ready_calls = []
 
-    def request(self, method, path, payload=None, url=None):
-        if path == "/branches/main/protection":
+    def request(self, method, path, payload=None):
+        if path in {"/branch_protections", "/branch_protections/main"}:
             if method == "GET":
                 return self.rule
-            self.rule = {
-                "required_status_checks": payload["required_status_checks"],
-                "enforce_admins": {"enabled": payload["enforce_admins"]},
-                "required_pull_request_reviews": payload["required_pull_request_reviews"],
-                "allow_force_pushes": {"enabled": payload["allow_force_pushes"]},
-                "allow_deletions": {"enabled": payload["allow_deletions"]},
-                "required_linear_history": {"enabled": payload["required_linear_history"]},
-                "required_conversation_resolution": {"enabled": payload["required_conversation_resolution"]}}
+            if method not in {"POST", "PATCH"}:
+                raise AssertionError((method, path))
+            self.rule = {"status_check_contexts": [], "enable_status_check": False, **payload}
             return self.rule
         if path.startswith("/pulls?"):
+            query = module.urllib.parse.parse_qs(module.urllib.parse.urlsplit(path).query)
+            if query.get("limit") != ["50"] or "head" in query or "per_page" in query:
+                raise AssertionError(path)
+            page = int(query["page"][0])
             # The list view carries merged_at, never `merged`.
-            return [{k: v for k, v in pr.items() if k != "merged"} for pr in self.prs]
+            return [{k: v for k, v in pr.items() if k != "merged"}
+                    for pr in self.prs[(page - 1) * 50:page * 50]]
         if path == "/pulls":
             head = git(self.remote, "rev-parse", "refs/heads/" + payload["head"])
             if git(self.remote, "rev-list", "--count", "main.." + head) == "0":
-                # GitHub answers 422 Validation Failed for a branch without
-                # commits beyond the base.
+                # A PR needs commits beyond the base.
                 raise Error("Validation Failed: No commits between main and " + payload["head"])
             number = len(self.prs) + 1
-            pr = {**payload, "number": number, "node_id": f"PR_{number}",
+            if "draft" in payload:
+                raise AssertionError("Gitea CreatePullRequestOption has no draft flag")
+            pr = {**payload, "number": number,
                   "html_url": f"https://example.invalid/pull/{number}", "state": "open",
-                  "draft": bool(payload.get("draft")), "merged": False, "merge_commit_sha": None,
+                  "draft": payload["title"].startswith("WIP: "), "merged": False, "merge_commit_sha": None,
                   "head": {"ref": payload["head"], "sha": head,
                            "repo": {"full_name": module.REPOSITORY}},
                   "base": {"ref": "main", "repo": {"full_name": module.REPOSITORY}}}
@@ -71,24 +74,32 @@ class GitHub:
                 self.lose_create_response = False
                 raise Error("simulated lost create response")
             return pr
-        pr = self.prs[int(path.split("/")[2]) - 1]
+        pr = next(pr for pr in self.prs if pr["number"] == int(path.split("/")[2]))
         if not pr["merged"]:
-            pr["head"]["sha"] = git(self.remote, "rev-parse", "refs/heads/" + pr["head"]["ref"])
+            current = git(self.remote, "rev-parse", "--verify", "refs/heads/" + pr["head"]["ref"], check=False)
+            if current.returncode == 0:
+                pr["head"]["sha"] = current.stdout.strip()
         if method == "GET":
             return pr.copy()
         if method == "PATCH":
+            if "title" in payload:
+                draft = payload["title"].startswith("WIP: ")
+                if pr["draft"] and not draft:
+                    self.ready_calls.append(pr["number"])
+                pr["draft"] = draft
             pr.update(payload)
             if self.lose_close_response and payload.get("state") == "closed":
                 self.lose_close_response = False
                 raise Error("simulated lost close response")
             return pr
-        if method == "PUT" and path.endswith("/merge"):
+        if method == "POST" and path.endswith("/merge"):
             self.merge_payload = payload
             if self.before_merge:
                 self.before_merge()
             base = git(self.remote, "rev-parse", "main")
             head = pr["head"]["sha"]
-            if (self.reject_merge or payload["sha"] != head or payload["merge_method"] != "merge"
+            if (self.reject_merge or payload["head_commit_id"] != head or payload["do"] != "merge"
+                    or payload["force_merge"] or pr["draft"]
                     or git(self.remote, "merge-base", "--is-ancestor", base, head, check=False).returncode):
                 raise Error("server rejected pending checks or outdated branch")
             tree = git(self.remote, "rev-parse", head + "^{tree}")
@@ -98,9 +109,48 @@ class GitHub:
             return {"merged": True, "sha": commit}
         raise AssertionError((method, path, payload))
 
-    def ready(self, pr):
-        self.ready_calls.append(pr["number"])
-        self.prs[pr["number"] - 1]["draft"] = False
+class GiteaClient(unittest.TestCase):
+    def test_credential_selection_never_uses_github_cli_or_its_tokens(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with unittest.mock.patch.dict(os.environ, {"GH_TOKEN": "wrong-host"}, clear=True), \
+                    unittest.mock.patch.object(module.subprocess, "run") as run:
+                with self.assertRaisesRegex(Error, "GITEA_TOKEN"):
+                    module.Gitea(root)
+                run.assert_not_called()
+                (root / ".env").write_text('GITEA_TOKEN = "gitea-test-token"\n')
+                self.assertEqual(module.Gitea(root).token, "gitea-test-token")
+            with unittest.mock.patch.dict(os.environ, {"GTI_GITEA_TOKEN": "preferred"}, clear=True):
+                self.assertEqual(module.Gitea(root).token, "preferred")
+
+    def test_requests_pin_gitea_auth_host_and_refuse_redirects(self):
+        with unittest.mock.patch.dict(os.environ, {"GITEA_TOKEN": "secret"}, clear=True):
+            client = module.Gitea(Path("/nonexistent-test-checkout"))
+        opener = unittest.mock.MagicMock()
+        opener.open.return_value.__enter__.return_value.read.return_value = b'{"number": 1}'
+        with unittest.mock.patch.object(module.urllib.request, "build_opener", return_value=opener) as build:
+            self.assertEqual(client.request("GET", "/pulls/1"), {"number": 1})
+        operation = opener.open.call_args.args[0]
+        self.assertEqual(operation.full_url, module.API + "/pulls/1")
+        self.assertEqual(operation.get_header("Authorization"), "token secret")
+        self.assertIs(build.call_args.args[0], module.NoRedirect)
+        self.assertIsNone(module.NoRedirect().redirect_request(None, None, 302, "", {}, "https://example.invalid"))
+        with self.assertRaises(TypeError):
+            client.request("GET", "/pulls/1", url="https://example.invalid")
+
+    def test_only_missing_protection_is_optional_and_errors_redact_server_details(self):
+        with unittest.mock.patch.dict(os.environ, {"GITEA_TOKEN": "never-print-me"}, clear=True):
+            client = module.Gitea(Path("/nonexistent-test-checkout"))
+        opener = unittest.mock.MagicMock()
+        error = module.urllib.error.HTTPError(module.API, 404, "never-print-me", {}, None)
+        opener.open.side_effect = error
+        with unittest.mock.patch.object(module.urllib.request, "build_opener", return_value=opener):
+            self.assertIsNone(client.request("GET", "/branch_protections/main"))
+            with self.assertRaises(Error) as caught:
+                client.request("GET", "/pulls/1")
+            self.assertNotIn("never-print-me", str(caught.exception))
+            with self.assertRaises(Error):
+                client.request("POST", "/branch_protections/main", {})
 
 
 class Lifecycle(unittest.TestCase):
@@ -123,8 +173,8 @@ class Lifecycle(unittest.TestCase):
         git(self.primary, "push", "-u", "origin", "main")
         self.mirror = self.root / "mirror.git"
         subprocess.run(["git", "init", "--bare", str(self.mirror)], check=True, capture_output=True)
-        git(self.primary, "remote", "add", module.MIRROR_REMOTE, str(self.mirror))
-        self.api = GitHub(self.remote)
+        git(self.primary, "remote", "add", "github-backup", str(self.mirror))
+        self.api = Gitea(self.remote)
         self.env = unittest.mock.patch.dict(os.environ)
         self.env.start()
         for name in list(os.environ):
@@ -174,15 +224,14 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(state["phase"], "synced")
         self.assertEqual((self.primary / "base.txt").read_text(), "user edit\n")
         self.assertTrue((self.primary / "feature.txt").is_file())
-        self.assertEqual(self.api.merge_payload["merge_method"], "merge")
-        self.assertEqual(self.api.merge_payload["sha"], state["verified"]["head"])
+        self.assertEqual(self.api.merge_payload["do"], "merge")
+        self.assertFalse(self.api.merge_payload["force_merge"])
+        self.assertEqual(self.api.merge_payload["head_commit_id"], state["verified"]["head"])
         self.assertEqual(self.api.ready_calls, [1])
         self.assertFalse(self.api.prs[0]["draft"])
-        # The Gitea backup follows every integration.
-        self.assertEqual(git(self.mirror, "rev-parse", "main"), git(self.remote, "rev-parse", "main"))
-        self.assertEqual(state["mirror"]["remote"], module.MIRROR_REMOTE)
-        self.assertTrue(state["mirror"]["pushed"])
-        self.assertIsNone(state["mirror"]["error"])
+        # A separately configured backup is never a hidden publication target.
+        self.assertEqual(git(self.primary, "ls-remote", str(self.mirror)), "")
+        self.assertNotIn("mirror", state)
         self.assertEqual(git(self.primary, "ls-remote", str(self.mirror), "refs/heads/codex/*"), "")
         self.flow.cleanup("task")
         self.assertFalse(self.worktree.exists())
@@ -334,22 +383,31 @@ class Lifecycle(unittest.TestCase):
         self.assertTrue(self.worktree.exists())
 
     def test_protection_preserves_reviews_and_statuses(self):
-        self.api.rule = {"required_status_checks": {"strict": False, "contexts": ["Native toolchain"]},
-                         "enforce_admins": {"enabled": False},
-                         "required_pull_request_reviews": {"required_approving_review_count": 2,
-                                                           "dismiss_stale_reviews": True},
-                         "allow_force_pushes": {"enabled": True}, "allow_deletions": {"enabled": False}}
+        self.api.rule = {"rule_name": "main", "enable_status_check": True,
+                         "status_check_contexts": ["Native toolchain"], "enable_push": True,
+                         "enable_push_whitelist": True, "enable_force_push": True,
+                         "enable_force_push_allowlist": True, "enable_bypass_allowlist": True,
+                         "required_approvals": 2, "dismiss_stale_approvals": True,
+                         "block_on_rejected_reviews": True, "require_signed_commits": True,
+                         "merge_whitelist_teams": ["maintainers"], "enable_merge_whitelist": True}
         result = self.flow.protection(True)
-        self.assertEqual(result["required_pull_request_reviews"]["required_approving_review_count"], 2)
-        self.assertTrue(result["required_pull_request_reviews"]["dismiss_stale_reviews"])
-        self.assertEqual(result["required_status_checks"], {"strict": True, "contexts": ["Native toolchain"]})
-        self.assertTrue(result["enforce_admins"]["enabled"])
-        self.assertFalse(result["allow_force_pushes"]["enabled"])
-        self.assertFalse(result["allow_deletions"]["enabled"])
+        self.assertEqual(result["required_approvals"], 2)
+        self.assertTrue(result["dismiss_stale_approvals"])
+        self.assertTrue(result["block_on_rejected_reviews"])
+        self.assertTrue(result["require_signed_commits"])
+        self.assertTrue(result["enable_merge_whitelist"])
+        self.assertEqual(result["merge_whitelist_teams"], ["maintainers"])
+        self.assertTrue(result["enable_status_check"])
+        self.assertEqual(result["status_check_contexts"], ["Native toolchain"])
+        self.assertTrue(result["block_admin_merge_override"])
+        self.assertTrue(result["block_on_outdated_branch"])
+        for field in ("enable_push", "enable_push_whitelist", "enable_force_push",
+                      "enable_force_push_allowlist", "enable_bypass_allowlist"):
+            self.assertFalse(result[field])
         self.api.rule = None
         with self.assertRaisesRegex(Error, "protection --configure"):
             self.flow.protection()
-        self.api.rule = {**self.flow.protection(True), "enforce_admins": {"enabled": False}}
+        self.api.rule = {**self.flow.protection(True), "block_admin_merge_override": False}
         with self.assertRaisesRegex(Error, "protection --configure"):
             self.flow.protection()
 
@@ -361,14 +419,12 @@ class Lifecycle(unittest.TestCase):
         edits = [call for call in request.call_args_list if call.args[:2] == ("PATCH", "/pulls/1")]
         self.assertEqual(len(edits), 1)
 
-    def test_sync_reports_a_missing_or_failing_mirror_without_blocking(self):
-        git(self.primary, "remote", "remove", module.MIRROR_REMOTE)
+    def test_sync_needs_no_backup_remote_and_never_pushes_one(self):
+        git(self.primary, "remote", "remove", "github-backup")
         self.ready()
         state = self.flow.finish("task", "description")
         self.assertEqual(state["phase"], "synced")
-        self.assertIsNone(state["mirror"]["remote"])
-        self.assertFalse(state["mirror"]["pushed"])
-        self.assertIn(module.MIRROR_REMOTE, state["mirror"]["error"])
+        self.assertNotIn("mirror", state)
 
     def test_legacy_gitea_record_steps_aside_for_adoption(self):
         old = self.root / "old"
@@ -377,7 +433,7 @@ class Lifecycle(unittest.TestCase):
             "schema": 1, "task": "old", "title": "Old task", "branch": "codex/old",
             "worktree": str(old), "base": git(self.primary, "rev-parse", "main"),
             "phase": "active", "pr": 7, "pr_url": "https://git.example/pulls/7"}))
-        with self.assertRaisesRegex(Error, "predates the GitHub move"):
+        with self.assertRaisesRegex(Error, "predates the current Gitea repository"):
             self.flow.load("old")
         records = {s["task"]: s for s in self.flow.status()}
         self.assertEqual(records["old"]["remote_state"], "legacy-gitea")
@@ -385,9 +441,10 @@ class Lifecycle(unittest.TestCase):
         with self.assertRaisesRegex(Error, "start --adopt"):
             self.flow.start("old", "Old task", old, "codex/old")
         state = self.flow.start("old", "Old task", old, "codex/old", adopt=True)
-        self.assertEqual(state["host"], "github")
+        self.assertEqual(state["host"], "gitea")
+        self.assertEqual(state["schema"], 3)
         self.assertEqual(state["phase"], "active")
-        self.assertTrue((self.flow.state_dir / "old.legacy-gitea.json").is_file())
+        self.assertTrue((self.flow.state_dir / "evidence/old/legacy-gitea-record.json").is_file())
         self.assertTrue(git(self.primary, "ls-remote", "origin", "refs/heads/codex/old"))
 
     def test_lock_ownership_and_scope_guards(self):
@@ -406,10 +463,68 @@ class Lifecycle(unittest.TestCase):
         with self.assertRaisesRegex(Error, "canonical"):
             module.Workflow(self.primary, self.api)
         git(self.primary, "remote", "set-url", "origin", module.CANONICAL)
-        with self.assertRaisesRegex(Error, "Gitea mirror"):
+        git(self.primary, "remote", "set-url", "--push", "origin", "https://example.invalid/gti.git")
+        with self.assertRaisesRegex(Error, "canonical"):
             module.Workflow(self.primary, self.api)
-        git(self.primary, "remote", "set-url", module.MIRROR_REMOTE, module.MIRROR)
+        git(self.primary, "remote", "set-url", "--push", "origin", module.CANONICAL)
         module.Workflow(self.primary, self.api)
+
+    def legacy_github(self):
+        self.ready()
+        state = self.flow.load("task")
+        state.update(schema=2, host="github", pr_url="https://github.com/lang-gti-official/gti/pull/1")
+        self.flow.save(state)
+        return state
+
+    def test_rehost_preserves_exact_source_evidence_and_original_record(self):
+        original = self.legacy_github()
+        with self.assertRaisesRegex(Error, "predates the current Gitea"):
+            self.flow.load("task")
+        self.assertEqual(self.flow.status("task")[0]["remote_state"], "legacy-github")
+        state = self.flow.rehost("task", 1)
+        self.assertEqual(state["host"], "gitea")
+        self.assertEqual(state["schema"], 3)
+        self.assertEqual(state["verified"], original["verified"])
+        self.assertEqual(state["published_head"], original["published_head"])
+        self.assertEqual(state["hosting_migration"]["from_pr"], original["pr_url"])
+        recovery = Path(state["hosting_migration"]["recovery"])
+        self.assertEqual(json.loads(recovery.read_text()), original)
+        self.assertEqual(self.flow.rehost("task", 1), state)
+        with self.assertRaisesRegex(Error, "another Gitea PR"):
+            self.flow.rehost("task", 2)
+
+    def test_rehost_rejects_live_verification_mismatched_head_and_implicit_adoption(self):
+        original = self.legacy_github()
+        with self.assertRaisesRegex(Error, "Use rehost"):
+            self.flow.start("task", "Task outcome", self.worktree, self.branch, adopt=True)
+        self.flow.save(original, "verifying")
+        with self.assertRaisesRegex(Error, "still running"):
+            self.flow.rehost("task", 1)
+        self.flow.save(original, "ready")
+        original["published_head"] = "0" * 40
+        self.flow.save(original)
+        with self.assertRaisesRegex(Error, "published head differs"):
+            self.flow.rehost("task", 1)
+        self.assertEqual(self.flow.load("task", legacy=True)["host"], "github")
+
+    def test_rehost_rejects_archived_gitea_identity_even_if_numbers_collide(self):
+        original = self.legacy_github()
+        original.update(schema=1, host="gitea")
+        self.flow.save(original)
+        with self.assertRaisesRegex(Error, "Only an identified GitHub PR"):
+            self.flow.rehost("task", 1)
+
+    def test_pr_lookup_paginates_using_gitea_limit_and_checks_repository_identity(self):
+        self.start()
+        self.checkpoint()
+        actual = self.api.prs[0]
+        others = [{**copy.deepcopy(actual), "number": i + 2,
+                   "head": {"ref": "other-" + str(i), "repo": {"full_name": module.REPOSITORY}}}
+                  for i in range(55)]
+        self.api.prs = others + [actual]
+        with unittest.mock.patch.object(self.api, "request", wraps=self.api.request) as requests:
+            self.assertEqual(self.flow.find_pr(self.branch)["number"], 1)
+        self.assertTrue(any("page=2" in call.args[1] for call in requests.call_args_list))
 
     def test_literal_pathspecs_do_not_commit_unrelated_files(self):
         self.start()
@@ -758,10 +873,11 @@ class ValidationChecks(unittest.TestCase):
 
     def test_ci_automation_scope_is_conservative_and_has_its_own_gates(self):
         event = {"pull_request": {"draft": False}}
-        self.assertEqual(validation.ci_mode(event, ["scripts/validation_batch.py", "tests/agent_workflow_test.py", "docs/architecture/verification.md"]), "automation")
+        self.assertEqual(validation.ci_mode(event, ["scripts/validation_batch.py", "tests/agent_workflow_test.py",
+                                                  "tests/repository_hosting_test.py", "docs/architecture/verification.md"]), "automation")
         for paths in ([], ["src/compiler/parser.cpp"], ["tests/parser_tests.cpp"],
                       ["runtime/include/gti/runtime.h"], ["CMakeLists.txt"],
-                      [".github/workflows/release.yml"], [".gti-validation/batches/batch.json"]):
+                      [".gitea/workflows/release.yml"], [".gti-validation/batches/batch.json"]):
             self.assertEqual(validation.ci_mode(event, paths), "full")
         results = {name: {"result": "success"} for name in
                    ("validation-plan", "automation-tests", "formatting", "release-version", "tree-sitter")}
@@ -769,6 +885,20 @@ class ValidationChecks(unittest.TestCase):
         results["automation-tests"]["result"] = "failure"
         with self.assertRaises(ValueError):
             validation.admission("automation", results)
+
+    def test_gitea_edited_title_routes_validation_but_body_only_is_not_admission(self):
+        event = {"pull_request": {"draft": False}, "action": "edited",
+                 "changes": {"title": {"from": "WIP: Task"}}}
+        self.assertEqual(validation.ci_mode(event, ["src/compiler/parser.cpp"]), "full")
+        event["pull_request"]["draft"] = True
+        self.assertEqual(validation.ci_mode(event, ["src/compiler/parser.cpp"]), "draft")
+        event["changes"] = {"body": {"from": "old description"}}
+        self.assertEqual(validation.ci_mode(event, ["src/compiler/parser.cpp"]), "metadata")
+        with self.assertRaises(ValueError):
+            validation.admission("metadata", {})
+        event["changes"] = {}
+        event["pull_request"]["draft"] = False
+        self.assertEqual(validation.ci_mode(event, ["src/compiler/parser.cpp"]), "full")
 
     def test_platform_scoped_gates_keep_other_hosts_obligations(self):
         plan = batch_plan(platforms=["darwin", "linux"],
@@ -782,6 +912,135 @@ class ValidationChecks(unittest.TestCase):
         self.assertIn("regression", validation.plan_tests(plan, "linux"))
         self.assertEqual(validation.extra_checks(plan, "darwin"), [["common-check"], ["mac-check"]])
         self.assertEqual(validation.extra_checks(plan, "linux"), [["common-check"], ["linux-check"]])
+
+
+class CIEnvironment(unittest.TestCase):
+    def test_current_guidance_does_not_restore_retired_github_hosting(self):
+        retired = [re.compile(pattern, re.I) for pattern in (
+            r"\b(?:current|canonical)\s+GitHub\s+(?:workflow|PR\b|issue\b|remote\b)",
+            r"\bcurrent publication follows the GitHub\b",
+            r"\bGitea (?:is|only) (?:a |the )?backup mirror\b",
+            r"\bGitHub automation configure CMake\b",
+            r"\bGitHub Actions CI\s*\(`ubuntu-latest`",
+        )]
+        paths = [ROOT / name for name in ("AGENTS.md", "CLAUDE.md", "README.md")]
+        for directory in ("docs", ".codex/skills", ".claude/skills"):
+            paths.extend((ROOT / directory).rglob("*.md"))
+        violations = []
+        for path in paths:
+            relative = path.relative_to(ROOT).as_posix()
+            if relative.startswith(("docs/plans/archive/", "docs/third-party-audit/")):
+                continue
+            text = path.read_text()
+            for pattern in retired:
+                if pattern.search(text):
+                    violations.append(f"{relative}: {pattern.pattern}")
+        self.assertEqual(violations, [], "Active guidance must not restore retired hosting")
+
+    @staticmethod
+    def step(job, name):
+        workflow = (ROOT / ".gitea/workflows/ci.yml").read_text()
+        body = re.search(r"^  " + re.escape(job) + r":\n(.*?)(?=^  [\w-]+:\n|\Z)",
+                         workflow, re.M | re.S).group(1)
+        step = re.search(r"^      - name: " + re.escape(name) +
+                         r"\n(.*?)(?=^      - |\Z)", body, re.M | re.S)
+        if step is None:
+            raise AssertionError(f"Missing {job} step: {name}")
+        lines = step.group(1).split("        run: |\n", 1)[1].splitlines()
+        script = []
+        for line in lines:
+            if line and not line.startswith("          "):
+                break
+            script.append(line[10:] if line else "")
+        return step.group(1), "\n".join(script)
+
+    def test_classification_uses_context_event_without_prefixed_aliases(self):
+        step, script = self.step("validation-plan", "Classify candidate without weakening its merge gate")
+        with tempfile.TemporaryDirectory(prefix="gti-ci-context-") as temporary:
+            root = Path(temporary) / "runner workspace"
+            (root / "scripts").mkdir(parents=True)
+            shutil.copy2(ROOT / "scripts/validation_checks.py", root / "scripts/validation_checks.py")
+            git(root, "init", "-b", "main")
+            git(root, "config", "user.name", "CI Test")
+            git(root, "config", "user.email", "test@example.invalid")
+            git(root, "add", ".")
+            git(root, "commit", "-m", "baseline")
+            base = git(root, "rev-parse", "HEAD")
+            git(root, "update-ref", "refs/remotes/origin/main", base)
+            (root / "README.md").write_text("automation-only change\n")
+            git(root, "add", ".")
+            git(root, "commit", "-m", "documentation")
+            payload = root / "event payload.json"
+            output = root / "runner output"
+            env = {key: value for key, value in os.environ.items()
+                   if key not in {"GITEA_EVENT_PATH", "GITHUB_EVENT_PATH"}}
+            env.update(GTI_EVENT_PATH=str(payload), GTI_BASE_SHA=base, GITEA_OUTPUT=str(output))
+
+            def execute(success):
+                output.write_text("")
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script],
+                                        cwd=root, env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode == 0, success, result.stderr)
+                return output.read_text()
+
+            for event, expected, before in (({}, "automation", "0" * 40),
+                                           ({"pull_request": {"draft": True}}, "draft", base)):
+                with self.subTest(event=event):
+                    payload.write_text(json.dumps(event))
+                    env["GTI_BASE_SHA"] = before
+                    self.assertEqual(execute(True), f"mode={expected}\n")
+            for path in ("", str(root), str(root / "missing.json")):
+                with self.subTest(invalid_event_path=path):
+                    env["GTI_EVENT_PATH"] = path
+                    self.assertEqual(execute(False), "")
+            env["GTI_EVENT_PATH"] = str(payload)
+            payload.write_text("invalid JSON")
+            self.assertEqual(execute(False), "")
+        self.assertIn("GTI_EVENT_PATH: ${{ gitea.event_path }}", step)
+
+    @unittest.skipIf(os.name == "nt", "Gitea ubuntu-latest bootstrap uses POSIX tools")
+    def test_workflow_bootstrap_supplies_real_cmake_ctest_and_make(self):
+        _, script = self.step("automation-tests", "Install workflow test prerequisites")
+        binaries = {name: shutil.which(name) for name in ("cmake", "ctest", "make")}
+        self.assertTrue(all(binaries.values()), "Local verification requires CMake, CTest and Make")
+        with tempfile.TemporaryDirectory(prefix="gti-ci-bootstrap-") as temporary:
+            root = Path(temporary)
+            tools = root / "tools"
+            tools.mkdir()
+            calls = root / "apt-calls.json"
+            sudo = tools / "sudo"
+            # Intercept package installation locally; expose the real tools only
+            # when the workflow requests their actual Debian package names.
+            sudo.write_text(f"#!{sys.executable}\nimport json, pathlib, sys\n"
+                            f"tools=pathlib.Path({str(tools)!r})\nlog=pathlib.Path({str(calls)!r})\n"
+                            f"binaries={binaries!r}\n"
+                            "args=sys.argv[1:]\nassert args[0]=='apt-get'\n"
+                            "calls=json.loads(log.read_text()) if log.exists() else []\n"
+                            "calls.append(args)\nlog.write_text(json.dumps(calls))\n"
+                            "if args[1]=='install':\n"
+                            " for package, names in {'cmake':['cmake','ctest'],'make':['make']}.items():\n"
+                            "  if package in args:\n"
+                            "   for name in names: (tools/name).symlink_to(binaries[name])\n")
+            sudo.chmod(0o755)
+            env = dict(os.environ, PATH=str(tools))
+            with self.assertRaises(FileNotFoundError):
+                subprocess.run(["cmake", "--version"], env=env, check=True)
+            subprocess.run(["/bin/bash", "-e", "-o", "pipefail", "-c", script],
+                           cwd=root, env=env, check=True, capture_output=True, timeout=30)
+            installed = json.loads(calls.read_text())
+            self.assertEqual(installed[0], ["apt-get", "update"])
+            self.assertTrue(any(row[:2] == ["apt-get", "install"] and
+                                {"cmake", "make"} <= set(row) for row in installed))
+            (root / "CMakeLists.txt").write_text(
+                'cmake_minimum_required(VERSION 3.20)\nproject(CIBootstrap NONE)\n'
+                'enable_testing()\nadd_custom_target(workflow_fixture)\n'
+                f'add_test(NAME ci_bootstrap COMMAND "{sys.executable}" -c "pass")\n')
+            for argv in (["cmake", "-S", str(root), "-B", str(root / "build"), "-G", "Unix Makefiles"],
+                         ["cmake", "--build", str(root / "build"), "--target", "workflow_fixture"],
+                         ["ctest", "--test-dir", str(root / "build"), "--no-tests=error", "--output-on-failure"]):
+                subprocess.run(argv, cwd=root, env=env, check=True, capture_output=True, timeout=30)
+        job = (ROOT / ".gitea/workflows/ci.yml").read_text().split("  automation-tests:\n", 1)[1].split("  formatting:\n", 1)[0]
+        self.assertLess(job.index("Install workflow test prerequisites"), job.index("python3 tests/agent_workflow_test.py"))
 
 
 class BatchLifecycle(unittest.TestCase):
@@ -839,13 +1098,54 @@ class BatchLifecycle(unittest.TestCase):
             self.flow.finish("combined", "Must not merge focused-only batch")
         state = self.bind_full(state)
         self.flow.protection(True)
-        self.assertEqual(self.api.rule["required_status_checks"]["contexts"], [])
+        self.assertEqual(self.api.rule["status_check_contexts"], [])
         with unittest.mock.patch.object(self.api, "request", wraps=self.api.request) as requests:
-            self.flow.finish("combined", "Full combined tests passed; GitHub CI is advisory")
+            self.flow.finish("combined", "Full combined tests passed; CI is advisory")
         self.assertFalse(any("/actions/" in call.args[1] or "/check-runs" in call.args[1]
                              for call in requests.call_args_list))
         self.assertTrue(all(self.flow.ancestor(head, git(self.primary, "rev-parse", "HEAD")) for head in heads))
         self.assertEqual(self.flow.load("combined")["phase"], "synced")
+
+    def test_gitea_batch_components_close_with_explicit_proof_and_cleanup_safely(self):
+        state = self.bind_full(self.combined())
+        original = copy.deepcopy(self.flow.load("one")["admission"])
+        self.flow.protection(True)
+        self.flow.finish("combined", "Full combined platform evidence")
+        self.assertFalse(self.flow.pull(self.flow.load("one"))["merged"])
+        synced = self.flow.sync("one")
+        self.assertEqual(synced["admission"], original)
+        self.assertEqual(synced["integrated_via_batch"]["task"], "combined")
+        pr = self.flow.pull(synced)
+        self.assertEqual(pr["state"], "closed")
+        self.assertFalse(pr["merged"], "do not invent Gitea merged status")
+        self.assertIn(self.flow.load("combined")["pr_url"], pr["body"])
+        self.flow.cleanup("one")
+        self.assertFalse((self.root / "one").exists())
+        self.assertEqual(self.flow.load("one")["phase"], "completed")
+        self.assertTrue(self.flow.ancestor(original["head"], git(self.primary, "rev-parse", "main")))
+        self.flow.cleanup("one")  # interrupted/repeated cleanup is safe
+
+    def test_batch_component_sync_requires_merged_full_platform_exact_source_proof(self):
+        state = self.combined()
+        with self.assertRaisesRegex(Error, "full-platform proof"):
+            self.flow.sync("one")
+        state = self.bind_full(state)
+        self.flow.protection(True)
+        self.flow.finish("combined", "Full combined platform evidence")
+        accepted = copy.deepcopy(self.flow.load("combined"))
+        broken = copy.deepcopy(accepted)
+        broken["batch_verified"] = {}
+        self.flow.save(broken)
+        with self.assertRaisesRegex(Error, "full-platform proof"):
+            self.flow.sync("one")
+        self.assertEqual(self.flow.pull(self.flow.load("one"))["state"], "open")
+        self.flow.save(accepted)
+        member = self.flow.load("one")
+        member["published_head"] = "0" * 40
+        self.flow.save(member)
+        with self.assertRaisesRegex(Error, "full-platform proof"):
+            self.flow.sync("one")
+        self.assertEqual(self.flow.pull(member)["state"], "open")
 
     def test_batch_rejects_advanced_member_after_validation(self):
         self.bind_full(self.combined())
@@ -926,16 +1226,18 @@ class BatchLifecycle(unittest.TestCase):
         self.assertNotIn("integration_batch", self.flow.load("one"))
         self.assertEqual(self.flow.load("one")["phase"], "ready-for-integration")
 
-    def test_advisory_ci_removes_contexts_and_app_pins_but_preserves_reviews(self):
-        self.api.rule = {"required_status_checks": {"strict": True, "contexts": ["existing"],
-                         "checks": [{"context": "existing", "app_id": 42}]},
-                         "required_pull_request_reviews": {"required_approving_review_count": 2}}
+    def test_advisory_ci_removes_contexts_but_preserves_reviews(self):
+        self.api.rule = {"enable_status_check": True, "status_check_contexts": ["existing"],
+                         "required_approvals": 2, "block_on_official_review_requests": True}
         result = self.flow.protection(True, advisory_ci=True)
-        self.assertEqual(result["required_status_checks"], {"strict": True, "contexts": []})
-        self.assertEqual(result["required_pull_request_reviews"]["required_approving_review_count"], 2)
-        self.assertTrue(result["enforce_admins"]["enabled"])
-        self.assertFalse(result["allow_force_pushes"]["enabled"])
-        self.assertFalse(result["allow_deletions"]["enabled"])
+        self.assertFalse(result["enable_status_check"])
+        self.assertEqual(result["status_check_contexts"], [])
+        self.assertEqual(result["required_approvals"], 2)
+        self.assertTrue(result["block_on_official_review_requests"])
+        self.assertTrue(result["block_admin_merge_override"])
+        self.assertTrue(result["block_on_outdated_branch"])
+        self.assertFalse(result["enable_push"])
+        self.assertFalse(result["enable_force_push"])
 
     def test_batch_manifest_requires_ancestry_and_becomes_immutable(self):
         state = self.combined()

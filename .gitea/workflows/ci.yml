@@ -1,0 +1,400 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    # Gitea drafts change via WIP titles, so ready/draft transitions are edited.
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ gitea.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validation-plan:
+    name: Validation plan
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+    steps:
+      - uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Classify candidate without weakening its merge gate
+        id: plan
+        env:
+          GTI_EVENT_PATH: ${{ gitea.event_path }}
+          GTI_BASE_SHA: ${{ gitea.event_name == 'pull_request' && gitea.event.pull_request.base.sha || gitea.event.before }}
+        run: |
+          if [[ -z "${GTI_EVENT_PATH}" || ! -f "${GTI_EVENT_PATH}" ]]; then
+            echo "Gitea event payload must name an existing file." >&2
+            exit 1
+          fi
+          base="${GTI_BASE_SHA}"
+          if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
+            base="$(git rev-parse origin/main)"
+          fi
+          python3 scripts/validation_checks.py ci-mode \
+            --event "${GTI_EVENT_PATH}" --base "${base}" >> "${GITEA_OUTPUT}"
+
+  automation-tests:
+    name: Workflow regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install workflow test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake make
+      - name: Verify workflow, batch, preservation and resource rules
+        run: |
+          python3 tests/agent_workflow_test.py
+          python3 tests/preview_workflow_test.py
+          python3 tests/build_window_test.py
+          python3 tests/bounded_log_test.py
+          python3 tests/release_version_test.py scripts/check_release_version.py
+          python3 tests/ci_resources_test.py scripts/configure_ci_resources.sh
+          python3 tests/repository_hosting_test.py .
+
+  formatting:
+    name: Formatting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out GTI
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install pinned clang-format
+        run: |
+          python3 -m venv .format-tools
+          .format-tools/bin/pip install "clang-format==$(cat .clang-format-version)"
+
+      - name: Verify first-party C and C++ formatting
+        env:
+          GTI_CLANG_FORMAT: .format-tools/bin/clang-format
+        run: python3 scripts/clang_format.py --check
+
+  release-version:
+    name: Release version
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out GTI
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Require a version bump for shipped tooling changes
+        env:
+          GTI_BASE_SHA: ${{ gitea.event_name == 'pull_request' && gitea.event.pull_request.base.sha || gitea.event.before }}
+          GTI_HEAD_SHA: ${{ gitea.sha }}
+        run: |
+          base="${GTI_BASE_SHA}"
+          if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
+            base="$(git rev-parse HEAD^)"
+          fi
+          # A pull request's base.sha is the current tip of main, which is
+          # not an ancestor of a branch that main has advanced past. Judge
+          # the branch from where it forked instead.
+          base="$(git merge-base "${base}" "${GTI_HEAD_SHA}")"
+          python3 scripts/check_release_version.py "${base}" "${GTI_HEAD_SHA}"
+
+  tree-sitter:
+    name: Tree-sitter grammar
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out GTI
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install grammar tooling
+        run: npm ci
+        working-directory: tree-sitter-gti
+
+      - name: Verify generated parser and corpus
+        working-directory: tree-sitter-gti
+        run: |
+          npm run generate
+          npm test
+          npm run test:highlights
+          npm run test:shipped
+          npm run test:source-text
+          git diff --exit-code -- src
+
+  build-and-test:
+    name: Native toolchain
+    runs-on: ubuntu-latest
+    if: needs.validation-plan.outputs.mode == 'full'
+    # The formatting, release-version and Tree-sitter checks finish in a few
+    # minutes and a failure in any of them means the commit must change, so
+    # the hours this job takes are not spent on that head. The sanitizer job
+    # follows this one and inherits the same gates.
+    needs:
+      - validation-plan
+      - automation-tests
+      - formatting
+      - release-version
+      - tree-sitter
+
+    steps:
+      - name: Check out GTI
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 2048
+          # A CTest worker running a compound suite compiles generated C++
+          # for the largest standard-library fixtures; six such workers on
+          # a 12 GiB host thrashed. The compound suites' PROCESSORS
+          # reservations still cover the processors.
+          GTI_MEMORY_PER_TEST_MIB: 3072
+        run: bash scripts/configure_ci_resources.sh
+
+      - name: Install Linux build dependencies, Ninja, LLVM 18, and Clang
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ccache clang cmake ninja-build libcurl4-openssl-dev llvm-18-dev libclang-18-dev
+          echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITEA_ENV}"
+
+      - name: Install Ninja and LLVM 22
+        if: runner.os == 'macOS'
+        run: |
+          brew install ccache ninja llvm@22
+          echo "LLVM_DIR=$(brew --prefix llvm@22)/lib/cmake/llvm" >> "${GITEA_ENV}"
+
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/native
+        run: bash scripts/configure_ci_cache.sh
+
+      - name: Restore compiler object cache
+        id: cache
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: https://gitea.com/actions/cache/restore@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2 # cache service v1
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ gitea.sha }}-${{ gitea.run_id }}
+          restore-keys: |
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-
+
+      - name: Check runner sanitizer execution
+        run: python3 scripts/check_ci_sanitizers.py --sanitizer address,undefined
+
+      - name: Configure
+        # GitHub-hosted runners execute ASan/UBSan; ThreadSanitizer remains an
+        # explicit host capability that a dedicated runner enables after
+        # passing the TSAN preflight.
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+
+      - name: Check native driver compilation before the full build
+        run: >-
+          cmake --build build --config Release --parallel "${GTI_JOBS}"
+          --target CMakeFiles/gti_driver.dir/src/driver/build.cpp.o
+
+      - name: Build
+        run: cmake --build build --config Release --parallel "${GTI_JOBS}"
+
+      - name: Build compiler documentation producer in the native build tree
+        run: cmake --build build --config Release --parallel "${GTI_JOBS}" --target gti_docgen
+
+      - name: Verify deterministic API generation with the native build
+        run: |
+          build/gti_docgen --stdlib stdlib --output build/documentation-index.json
+          build/gti_docgen --stdlib stdlib --output build/documentation-index-repeat.json
+          cmp build/documentation-index.json build/documentation-index-repeat.json
+
+      - name: Test
+        env:
+          GTI_BASE_SHA: ${{ gitea.event_name == 'pull_request' && gitea.event.pull_request.base.sha || gitea.event.before }}
+        run: |
+          base="${GTI_BASE_SHA}"
+          if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
+            base="$(git rev-parse origin/main)"
+          fi
+          python3 scripts/build_window.py --kind suite -- \
+            python3 scripts/validation_checks.py full --build build \
+            --base "${base}" --jobs "${GTI_TEST_JOBS}" \
+            --report "${RUNNER_TEMP}/gti-validation.json"
+
+      - name: Stage system-LLVM toolchain
+        run: >-
+          cmake --install build --config Release
+          --prefix "${{ runner.temp }}/gti-system-stage"
+          --component gti_toolchain
+
+      - name: Test installed libraries with system LLVM
+        run: |
+          cmake \
+            -S tests/installed_library_smoke \
+            -B "${{ runner.temp }}/gti-system-library-smoke" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${{ runner.temp }}/gti-system-stage"
+          cmake --build \
+            "${{ runner.temp }}/gti-system-library-smoke" \
+            --config Release --parallel "${GTI_JOBS}"
+          ctest \
+            --test-dir "${{ runner.temp }}/gti-system-library-smoke" \
+            -C Release --parallel "${GTI_TEST_JOBS}" --output-on-failure
+
+      - name: Test installed source allocation provider
+        run: >-
+          python3 tests/process_resource_policy_test.py
+          "${{ runner.temp }}/gti-system-stage/bin/gti" --installed
+
+      - name: Report compiler cache statistics
+        if: always()
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; fi
+
+      - name: Save compiler object cache, including partial builds
+        if: always() && steps.cache.outputs.cache-primary-key != '' && steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: https://gitea.com/actions/cache/save@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+  compiler-sanitizers:
+    name: Compiler sanitizers
+    runs-on: ubuntu-latest
+    # Both heavy jobs size their compile and test parallelism for a whole
+    # runner. This job follows the native job, passed or failed, so a native
+    # test failure still yields the sanitizer signal; a native job skipped by
+    # its own gates skips this one too.
+    needs: build-and-test
+    if: ${{ needs.build-and-test.result == 'success' || needs.build-and-test.result == 'failure' }}
+
+    steps:
+      - name: Check out GTI
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          # ASan/UBSan instrumentation at -O1 -g needs more memory per
+          # unit than the plain native build, and an instrumented compiler
+          # test suite several times more than its plain run: six workers
+          # on a 12 GiB host had the ownership suite OOM-killed.
+          GTI_MEMORY_PER_JOB_MIB: 3072
+          GTI_MEMORY_PER_TEST_MIB: 4096
+        run: bash scripts/configure_ci_resources.sh
+
+      - name: Install Linux build dependencies, Ninja, LLVM 18, and Clang
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ccache clang cmake ninja-build libcurl4-openssl-dev libclang-rt-18-dev llvm-18-dev libclang-18-dev
+          echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITEA_ENV}"
+
+      - name: Install Ninja and LLVM 22
+        if: runner.os == 'macOS'
+        run: |
+          brew install ccache ninja llvm@22
+          echo "LLVM_DIR=$(brew --prefix llvm@22)/lib/cmake/llvm" >> "${GITEA_ENV}"
+          echo "$(brew --prefix llvm@22)/bin" >> "${GITHUB_PATH}"
+
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/sanitizers
+        run: bash scripts/configure_ci_cache.sh
+
+      - name: Restore compiler object cache
+        id: cache
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: https://gitea.com/actions/cache/restore@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2 # cache service v1
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-sanitizers-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ gitea.sha }}-${{ gitea.run_id }}
+          restore-keys: |
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-sanitizers-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-sanitizers-
+
+      - name: Check compiler sanitizer execution
+        run: python3 scripts/check_ci_sanitizers.py --cxx clang++ --sanitizer address,undefined
+
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: >-
+          cmake -S . -B build-sanitized -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DGTI_BUILD_LSP=OFF
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build
+        run: cmake --build build-sanitized --parallel "${GTI_JOBS}"
+
+      - name: Test compiler and driver libraries
+        # Instrumented suites run several times slower than plain ones, so
+        # tests without their own TIMEOUT get an hour instead of CTest's
+        # 1500-second default. The whole generated-C++ corpus and the
+        # failure-metadata matrix exceed even that under ASan and remain the
+        # plain native job's gates; here the emitter's preflight, text,
+        # lifecycle, census and protocol checks cover the emitter under
+        # ASan/UBSan.
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: >-
+          ctest --test-dir build-sanitized --output-on-failure
+          --parallel "${GTI_TEST_JOBS}" --timeout 3600
+          -R 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation|raw_pointer_pipeline|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$|cpp_mir_body_emitter_(preflight|text|lifecycle|census|corpus_protocol)$|cpp_mir_program_plan|cpp_mir_representation_snapshot'
+
+      - name: Report compiler cache statistics
+        if: always()
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; fi
+
+      - name: Save compiler object cache, including partial builds
+        if: always() && steps.cache.outputs.cache-primary-key != '' && steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: https://gitea.com/actions/cache/save@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+  validation-gate:
+    # Advisory feedback only. Exact-source local/remote validation gates merge;
+    # Gitea runner availability must not gate development or integration.
+    name: Validation summary
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [validation-plan, automation-tests, formatting, release-version, tree-sitter, build-and-test, compiler-sanitizers]
+    steps:
+      - uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Report integration CI evidence
+        env:
+          GTI_VALIDATION_MODE: ${{ needs.validation-plan.outputs.mode }}
+          GTI_VALIDATION_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 scripts/validation_checks.py ci-gate \
+            --mode "${GTI_VALIDATION_MODE}" --results "${GTI_VALIDATION_RESULTS}"

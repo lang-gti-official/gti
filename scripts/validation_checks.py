@@ -28,7 +28,7 @@ SHARED = ("include/gti/semantic", "include/gti/hir", "include/gti/mir",
           "src/compiler/semantic_generic", "src/compiler/mir_", "src/compiler/hir_",
           "src/compiler/cpp_", "src/compiler/optimization/", "runtime/")
 AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
-AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md", ".github/workflows/ci.yml"}
+AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md", ".gitea/workflows/ci.yml"}
 
 
 def git(root, *args):
@@ -116,6 +116,12 @@ def component_body(body, record=None):
 def ci_mode(event, paths):
     pr = event.get("pull_request")
     if pr:
+        # Gitea's WIP title transitions arrive as `edited`, not GitHub's
+        # ready_for_review. Only an identified body-only edit is metadata;
+        # unknown edit payloads stay conservative and title changes reclassify.
+        changes = event.get("changes")
+        if event.get("action") == "edited" and isinstance(changes, dict) and set(changes) == {"body"}:
+            return "metadata"
         if MARKER.search(pr.get("body") or ""):
             return "component"
         if pr.get("draft"):
@@ -125,7 +131,8 @@ def ci_mode(event, paths):
     automation_scripts = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
                           "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py"}
     automation_tests = {name.removesuffix(".py") + "_test.py" for name in automation_scripts}
-    automation_tests |= {"validation_ci_test.py", "release_version_test.py", "ci_resources_test.py"}
+    automation_tests |= {"validation_ci_test.py", "release_version_test.py", "ci_resources_test.py",
+                         "repository_hosting_test.py"}
     if paths and all(path in AUTOMATION_FILES or path.startswith(AUTOMATION) or
                      path in {"scripts/" + name for name in automation_scripts} or
                      path in {"tests/" + name for name in automation_tests} for path in paths):
@@ -297,6 +304,9 @@ def main(argv=None):
         print("mode=" + ci_mode(event, paths))
         return
     if args.command == "ci-gate":
+        if args.mode == "metadata":
+            print("Metadata-only PR edit: no compiler validation or integration acceptance is claimed.")
+            return
         admission(args.mode, json.loads(args.results))
         return
     if args.jobs < 1:

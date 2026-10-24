@@ -76,7 +76,7 @@ namespace sample {
         assert "sample::a_success ... passed" in output, output
         assert "sample::b_panic ... failed" in output, output
         assert "isolated panic" in output and "guard-cleaned" in output, output
-        assert "sample::c_signal ... failed" in output and "exit code 137" in output, output
+        assert "sample::c_signal ... crashed" in output and "exit code 137" in output, output
         assert "sample::d_after_panic ... passed" in output and "after-panic-ran" in output, output
         assert "Test result: 2 passed, 2 failed" in output, output
         assert "main.gti:" in output, output

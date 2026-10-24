@@ -161,15 +161,17 @@ package does not load a downstream LLVM package.
 
 ## Published Toolchain Channels
 
-GitHub (`lang-gti-official/gti`) is the Git, tag, workflow, and release
-authority; the self-hosted Gitea repository is a backup mirror and publishes
-nothing. Release archives are downloaded by the plugin from
-`https://github.com/lang-gti-official/gti/releases/download/<tag>/<asset>`.
+The self-hosted Gitea (`gti-lang/gti`) is the Git, tag, workflow, and release
+authority. No helper or workflow publishes to GitHub or a backup. Release
+archives are downloaded by the plugin from
+`https://git.internal.howetotech.dev/gti-lang/gti/releases/download/<tag>/<asset>`.
 The plugin uses a full HTTPS Git URL, not owner/repository shorthand. Archive
 shapes exist for Linux x64, Linux arm64, and macOS arm64, but an archive is
-published only by a configured native runner job. The release workflow
-packages `linux-x64` on `ubuntu-latest` and `darwin-arm64` on `macos-15`;
-Linux arm64 has no package job.
+published only after native validation. Existing Gitea Linux runners package
+`linux-x64` automatically. The owner selected manual Apple Silicon stable
+publication instead of installing a macOS Actions runner. Linux arm64 has no
+package job. The rolling nightly release is currently Linux-only; do not infer
+macOS availability from a tag or silently serve an older macOS nightly asset.
 Version `v0.299.0` is the final historical macOS x64 toolchain; source
 compilation can still target or run on Intel macOS when its prerequisites are
 supplied locally.
@@ -196,7 +198,7 @@ retained versions without assuming
 an Intel or Apple Silicon installation prefix. Existing build generators are
 preserved while configuration/install rules are refreshed.
 
-`--preview` selects the canonical GitHub `preview` commit directly and builds
+`--preview` selects the canonical Gitea `preview` commit directly and builds
 CLI, LSP and parser together in a persistent detached worktree under the
 primary checkout's sibling `gti-preview-installs/<full-commit>`. It never
 switches or resets the calling checkout or incorporates its uncommitted work.
@@ -246,7 +248,7 @@ at normal process priority. `--jobs N` overrides the job count; the dry-run and
 normal output both report the selected parallelism.
 
 A single toolchain-release workflow builds, tests, stages, and smoke-tests each
-GitHub `main` commit once per platform with bundled LLVM/Clang. That verified stage supplies
+Gitea `main` commit on Linux with bundled LLVM/Clang. That verified stage supplies
 nightly and, when `VERSION` changes, stable archives. Stable is archived before
 the nightly `BUILD_ID` stamp; the two channels retain separate artifact names.
 The stable publication job owns the matching immutable tag and versioned
@@ -255,13 +257,50 @@ move a stable tag to another commit. New main commits do not cancel stable
 publication.
 
 The `nightly` release is one mutable channel whose tag and `BUILD_ID` advance
-to each admitted GitHub `main` commit. Nightly publication is serialized and
+to each admitted Gitea `main` commit. Nightly publication is serialized and
 checks current remote main before changing the tag; a superseded build skips
 publication. Its publication step uploads the complete current asset set before a
-GitHub API pass (`scripts/sync_release_assets.py`) removes any asset not produced by that build. This exact
+Gitea API pass (`scripts/sync_release_assets.py`) removes any asset not produced by that build. This exact
 synchronization keeps retired platform archives from surviving a successful
 rolling publication while preserving current archives if upload is
 interrupted.
+
+### Manual macOS release publication
+
+No macOS background runner is configured or authorized by the hosting cutover.
+For an Apple Silicon **stable** release, use a clean, separate checkout of the
+exact immutable `v<VERSION>` commit advertised by canonical Gitea, not a newer
+`main` with the same archive name. Confirm its tag/commit and `VERSION` agree.
+Build with `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` and the documented
+macOS dependencies, using `scripts/build_window.py --kind build` for the full
+build and `--kind suite` for full CTest. Do not use an unoptimized compiler or
+drop required platform/runtime checks.
+
+Stage `gti_toolchain` into a fresh temporary directory with
+`cmake --install <build> --config Release --prefix <stage> --component gti_toolchain`.
+This is private packaging, not installation into the user's active toolchain.
+Run the same installed CLI/LSP/project, process-resource, managed-thread,
+atomic-runtime and installed-library consumer checks as the release workflow,
+against that stage. macOS installation must generate and verify
+`share/gti/host-runtime.json`; do not package a stage with unresolved Homebrew
+runtime dependencies. Then package the checked stage:
+
+```sh
+cmake -DGTI_SOURCE_DIR=<exact-source> -DGTI_STAGE_DIR=<validated-stage> \
+  -DGTI_OUTPUT_DIR=<output-directory> -DGTI_PLATFORM=darwin-arm64 \
+  -DGTI_EXPECTED_TAG=v<VERSION> -P cmake/PackageRelease.cmake
+```
+
+The packager checks the stage, version/tag agreement and macOS runtime manifest,
+and writes `gti-v<VERSION>-darwin-arm64.tar.gz` plus its `.sha256` file. Verify
+the checksum, retain exact-source build/test evidence, then use Gitea's release
+editor to attach **both** files to the existing matching stable release. Do not
+move its tag, create a competing version, delete Linux assets, or upload a
+system-LLVM-only local-install archive as a bundled release. Until those files
+are uploaded, a macOS download is unavailable; source/local installation remains
+available. Stable macOS publication is manual and is not a completed automated
+platform check. Nightly asset pruning intentionally removes archives outside
+its current Linux build rather than retaining misleading old macOS binaries.
 
 Stable versions describe user-visible toolchain behavior. Internal compiler or
 runtime work, tests, and documentation alone retain `VERSION` and reach users
@@ -674,10 +713,80 @@ Annotated test targets compile one suite, then execute each semantically selecte
 `[[test]] void` function in a separate captured child process. The driver retains
 the sorted qualified-name catalog from compilation, including on whole-program
 cache hits; cache schema `gti-build-cache-v4` stores and verifies its digest.
-Test mode is a distinct cache input. CLI presentation reports each function's
-status, elapsed time and captured diagnostics/output, with aggregate counts.
-Panic and signal termination stay confined to that child, and later cases run.
-Legacy test executables with `main` and no annotated functions execute once.
+Test mode is a distinct cache input. The reusable `runTestSuites` driver owns
+selection, the bounded scheduler and result accounting; the CLI owns options
+and presentation. Legacy test executables with `main` and no annotated functions
+execute once, using their target name as their test identity.
+In human mode these legacy programs inherit stdout and stderr, preserving their
+stream routing and existing coloured Passed/Failed target status. Their streams
+may interleave with concurrent children when `--jobs` exceeds one. JSON mode
+captures legacy output so stdout remains a stream of report events. Reusable
+driver callers capture both forms by default; `inheritLegacyOutput` opts into
+the human CLI policy without changing deadlines or process-group ownership.
+
+`gti test --filter <text>` selects qualified names by case-sensitive substring;
+`--exact` requires equality and a filter. Repeated `--skip <text>` exclusions
+apply after the filter. `--list` builds/discovers the selected suites and lists
+selected tests without launching them. Empty selections fail unless
+`--allow-empty` is explicit, including in list mode. `--jobs N` bounds concurrent
+test children (default one); suite builds remain sequential. Results are streamed
+in completion order; single-job runs retain target/declaration order. The first
+failing status always follows stable target/declaration order, independent of
+completion order. All selected tests continue after a child failure. CLI observers
+consume and release captured output after each completion, rather than retaining
+all suite output in memory. Reusable driver callers may retain it explicitly
+through the default `retainOutput` option. Metadata remains in declaration order.
+
+The per-child monotonic deadline defaults to five minutes. `--timeout Nms|Ns|Nm`
+overrides it; `0` explicitly disables it. The POSIX process owner creates a new
+process group, polls all active children, and kills the entire group on timeout
+before reaping the child. On ordinary completion `waitid(WNOWAIT)` observes the
+exit without releasing the child's identity; group cleanup then precedes the
+final reap, so a recycled PID cannot receive that cleanup signal. The caller
+must retain exclusive wait ownership; external reaping or SIGCHLD auto-reaping
+is unsupported, and observed lost ownership fails without signalling the
+released numeric ID. The group is also terminated on ordinary completion so
+background descendants do not escape the test lifetime. Descendants that
+explicitly detach into a new session/group are outside this boundary; process
+isolation is not an operating-system sandbox. Timeout status is 124 and forced
+termination does not promise source destructor cleanup. Normal GTI panic cleanup
+is unchanged. During execution the CLI records SIGINT/SIGTERM (and broken report
+pipes) in scoped signal handlers; the driver stops admission, kills/reaps active
+groups, and reports an incomplete run with status 128+signal. Unstarted selected
+cases do not receive fabricated completion records. Uncatchable parent death is
+outside this guarantee. Launch setup/exec failure uses a close-on-exec handshake, distinct
+from a program returning 127; signal status is derived from `waitpid`, not
+inferred from an integer exit value. Capture seek/size/read/premature-EOF/close
+errors produce driver diagnostics and runner errors, preserving available output
+and genuine nonzero child statuses; an otherwise successful child becomes status
+74. A valid empty capture still passes. Windows currently rejects bounded isolated
+execution explicitly; the shipped macOS and Linux platforms implement it.
+
+`--format json` emits UTF-8 JSON Lines exclusively on stdout; human build
+progress and diagnostics stay on stderr. Every event has `schema_version: 1`.
+`suite_discovered` records the target and every discovered test with `selected`
+and `skip_reason` (`filtered`, `skipped`, or null). `test_started` records each
+launch attempt; `test_finished` records its target/name, status (`passed`,
+`failed`, `crashed`, `timed_out`, `runner_error`), exit code, optional signal,
+duration, captured output and optional diagnostic. A failed launch is a completed
+runner error. Assertion/panic failures and ordinary nonzero exits are `failed`;
+the runner does not infer an assertion category from status 70. Invalid UTF-8
+output bytes become U+FFFD; valid Unicode and embedded control bytes are escaped
+without allowing extra events. Completion events follow observed completion
+order and are identified by target/name, not line position.
+
+`run_finished` includes discovered, selected, started, completed, passed, failed,
+crashed, timed_out, runner_errors and skipped counts, plus `list_only`, `complete`,
+exit_code and diagnostic. `skipped` includes all discovered-but-unselected tests.
+For execution, complete requires one start/completion per selected identity and
+consistent terminal counts; failure outcomes still constitute completed runs.
+Listing is explicitly complete with zero launches. Invalid catalogs, unexpected
+empty selections and build/resolution failures produce incomplete nonzero
+summaries. Argument parsing errors precede the event protocol. Output-stream
+failure returns nonzero even when all selected tests passed. These records
+establish runner completion,
+not proof against a compiler silently miscompiling both a test and its checks;
+independent compiler conformance oracles remain necessary.
 
 The frontend validates the attributes and selected-package source identities,
 then generates a dispatcher as ordinary GTI source in the suite's lexical
@@ -696,10 +805,10 @@ identities; ordinary user bodies retain their normal visibility rules.
 The cost model is one GTI/native build per suite and one process launch per
 selected function, including normal hosted argument ownership and capture of
 that child's output. Successful cases do not enter the panic path. Isolation
-intentionally repeats global initialization and teardown; resources are not
-shared between cases. The initial dispatcher compares qualified-name selectors
+intentionally repeats global initialization and teardown; process-local state is
+not shared between cases. The initial dispatcher compares qualified-name selectors
 once per child. No test-specific runtime, extra worker thread, or exception
-mechanism is involved. Ordinary non-test builds do not run test discovery or
+mechanism is involved; the parent polls a bounded set of child handles. Ordinary non-test builds do not run test discovery or
 the second semantic pass. Build/run comparisons must retain equivalent process
 isolation rather than compare this workflow with an in-process test harness.
 

@@ -68,6 +68,21 @@ def main():
         executable = root / "consumer"
         run([cli, source, "-o", executable], environment)
         assert "portable installed GTI" in run([executable], environment)
+        # Resolve the new testing helpers from relocated installed resources,
+        # with no source-tree stdlib or environment override.
+        tests = root / "installed-tests"
+        tests.mkdir()
+        (tests / "gti.toml").write_text('manifest-version = 1\n[package]\nname = "installed-tests"\n'
+                                       'version = "0.1.0"\n[targets.suite]\nkind = "test"\nroot = "tests.gti"\n')
+        (tests / "tests.gti").write_text('#include <std/testing>\n'
+            '[[test]] void first() { std::testing::check_eq(2, 2); std::testing::check_ne(2, 3); }\n'
+            '[[test]] void second() { std::testing::check_approx(1.0, 1.001, 0.01); '
+            'std::testing::check_string_eq("yes", "yes"); }\n')
+        events = [json.loads(line) for line in run(
+            [cli, "test", "--format", "json", "--jobs", "2", "--timeout", "5s"],
+            environment, cwd=tests).splitlines()]
+        assert events[-1]["complete"] and events[-1]["passed"] == events[-1]["selected"] == 2, events
+        assert sorted(event["name"] for event in events if event["event"] == "test_finished") == ["first", "second"]
         # Floating parsing must link from the relocated archive alone, including
         # the private parser selected by older SDKs or the forced-portable build.
         numeric = root / "installed-floating-input.gti"

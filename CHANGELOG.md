@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.469.0 — Thread-local storage
+## 0.470.0 — Thread-local storage
 
 - `thread_local` defines distinct per-thread storage at namespace scope, in a
   non-generic static data member, or inside an ordinary function. Both
@@ -44,6 +44,32 @@ for what minor and patch releases mean.
   owning temporaries and destructor effects; actual enum values retain cleanup.
 - See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
   and [runnable example 175](examples/175-thread-local-storage.gti).
+
+## 0.469.0 — Test selection, isolated execution and richer assertions
+
+- `gti test` can list, filter and skip individual tests, run bounded parallel
+  workers and enforce per-test deadlines. Process groups are cleaned up on
+  completion, timeout and interruption. Legacy human-mode test executables
+  retain their stdout/stderr streams and status formatting.
+- `--format json` emits versioned inventory, launch, completion and summary
+  events with exact accounting, captured output and distinct process outcomes.
+  Empty selections fail unless explicitly allowed.
+- Source-defined equality, string, approximate floating-point and span-element
+  checks report values and caller locations while retaining ordinary ownership
+  and deterministic panic cleanup. Equality macros evaluate operands once and
+  defer formatting and custom messages until failure.
+
+## 0.468.5 — Canonical Gitea hosting
+
+- Source, issues, PRs, Actions, tags, release downloads and agent tooling return
+  to `git.internal.howetotech.dev/gti-lang/gti`. GitHub workflows are retired;
+  integration never pushes to GitHub or an automatic backup.
+- Imported task records retain their original source/verification provenance
+  through explicit rehosting. The older distinct Gitea tracker is archived,
+  not overwritten or confused with imported issue numbers.
+- Linux releases remain automated on existing Gitea runners. Apple Silicon
+  stable archives are manually packaged, validated and attached to the matching
+  release; no macOS runner service or automatic macOS nightly is configured.
 
 ## 0.468.4 — Returning payload references from reference parameters
 
