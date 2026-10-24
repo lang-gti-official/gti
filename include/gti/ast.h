@@ -429,6 +429,7 @@ struct CompilerTypeBinding {
 };
 
 class MemberRequirement;
+class Expr;
 
 // A constraint leaf is either a named concept application or an exact member
 // requirement. The latter's arguments are the receiver referent and result.
@@ -436,6 +437,9 @@ struct ConceptApplication {
   NamePath name;
   std::vector<TypeRef> arguments;
   std::shared_ptr<const MemberRequirement> memberRequirement;
+  // An ordinary constexpr boolean call used as a constraint predicate.
+  // The frontend, not a backend expression probe, establishes its value.
+  std::shared_ptr<const Expr> predicate;
 };
 
 enum class ConstraintExpressionKind {
@@ -1490,6 +1494,16 @@ private:
 // the synthetic receiver nor the member invocation creates runtime storage.
 class MemberRequirement final : public ExprOfKind<ExprKind::MemberRequirement> {
 public:
+  MemberRequirement(Token keyword, ExprPtr expression, TypeRef result,
+                    std::vector<TypeRef> parameters,
+                    std::vector<Token> bindings,
+                    std::optional<Token> unsafeKeyword = std::nullopt)
+      : keyword_(std::move(keyword)), receiver_(keyword_),
+        result_(std::move(result)), parameters_(std::move(parameters)),
+        bindings_(std::move(bindings)),
+        unsafeKeyword_(std::move(unsafeKeyword)),
+        expression_(std::move(expression)) {}
+
   MemberRequirement(Token keyword, TypeRef receiver, Token binding,
                     Token receiverUse, Token member, TypeRef result,
                     std::vector<TypeRef> parameters = {},
@@ -1516,6 +1530,12 @@ public:
   const std::vector<Token> &bindings() const { return bindings_; }
   const std::vector<Token> &arguments() const { return arguments_; }
   const std::optional<Token> &unsafeKeyword() const { return unsafeKeyword_; }
+  // General exact expression requirements reuse the same boolean-query node
+  // and constant-lowering path as the earlier member-signature subset.
+  [[nodiscard]] bool isExpressionRequirement() const {
+    return expression_ != nullptr;
+  }
+  [[nodiscard]] const ExprPtr &expression() const { return expression_; }
 
 private:
   Token keyword_;
@@ -1528,6 +1548,7 @@ private:
   std::vector<Token> bindings_;
   std::vector<Token> arguments_;
   std::optional<Token> unsafeKeyword_;
+  ExprPtr expression_;
 };
 
 class LiteralExpr final : public ExprOfKind<ExprKind::LiteralExpr> {

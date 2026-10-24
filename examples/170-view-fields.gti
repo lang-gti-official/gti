@@ -1,14 +1,16 @@
 // A value may hold a view of a named local owner in a text field. The value
-// carries that owner's read-only dependency, much as a reference field
-// carries its referent's, so no text is copied or allocated. Such a value can
-// be copied, moved and read, and passed to functions and methods that keep
-// its text within the call or return it. It cannot be returned, captured or
-// stored itself. A temporary works the same way within its expression, and a
-// payload enum's text payload can hold such a view too. A function that
-// returns a fresh value over its text parameter hands the caller a value over
-// the argument's owner. A method that returns a reference to its text field,
-// even on a generic class, reads that field. A class can also hold the view
-// in a payload of an enum field, as `std::optional<std::string_view>` does.
+// carries that owner's read-only dependency, much as a reference field carries
+// its referent's, so no text is copied or allocated. Such a value can be
+// copied, moved and read, and passed to functions and methods that keep its
+// text within the call or return it. It cannot be captured or stored itself,
+// and a function returns one only over the text of a read-only reference
+// parameter. A temporary works the same way within its expression, and a
+// payload enum's text payload can hold such a view too. A function that returns
+// a fresh value over its text parameter hands the caller a value over the
+// argument's owner. A method that returns a reference to its text field, even
+// on a generic class, reads that field. A class can also hold the view in a
+// payload of an enum field, as `std::optional<std::string_view>` does. Implicit
+// conversions, such as a view into an optional, keep the owner too.
 #include <std/optional>
 #include <std/string>
 
@@ -49,6 +51,30 @@ uint64_t measure(Token token) { return token.text.size(); }
 // argument views.
 Token keyword(std::string_view text) { return Token(text, 2); }
 
+// A failure over the caller's string: each call's result views its argument.
+expected<int, std::string_view> parse(std::string& input) {
+  if (input.empty()) {
+    return 0;
+  }
+  return unexpected(input.view());
+}
+
+// A diagnostic over the caller's string nests inside the result that holds
+// it: its text keeps viewing the argument.
+class Diag {
+public:
+  std::string_view text;
+  int line;
+  Diag(std::string_view text, int line) : text(text), line(line) {}
+};
+
+expected<int, Diag> check(std::string& input) {
+  if (input.empty()) {
+    return 0;
+  }
+  return unexpected(Diag(input.view(), 1));
+}
+
 int main() {
   std::string line{"count = 42"};
 
@@ -88,11 +114,21 @@ int main() {
   }
 
   // An optional's payload views `line`: testing it and reading its value
-  // keep `line` borrowed.
-  std::optional<std::string_view> maybe =
-      std::optional<std::string_view>(line.view());
+  // keep `line` borrowed. `->` calls the payload view's own members.
+  std::optional<std::string_view> maybe = line.view();
   if (maybe) {
     std::println(*maybe);
+    std::println(maybe->size());
+  }
+
+  // The parser's failure views `line`, the string passed to it.
+  expected<int, std::string_view> parsed = parse(line);
+  if (!parsed) {
+    std::println(parsed.error().size());
+  }
+  expected<int, Diag> checked = check(line);
+  if (!checked) {
+    std::println(checked.error().text.size() + uint64_t(checked.error().line));
   }
 
   // While any of these values is live, `line` cannot be mutated, moved or

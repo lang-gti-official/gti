@@ -636,8 +636,34 @@ void SignaturePrinter::appendParameters(
 
 void SignaturePrinter::appendConceptApplication(
     std::string &result, const ConceptApplication &application) {
+  if (application.predicate) {
+    result += semantic_spelling::expressionSpelling(*application.predicate);
+    return;
+  }
   if (application.memberRequirement) {
     const auto &query = *application.memberRequirement;
+    if (query.isExpressionRequirement()) {
+      result += "requires";
+      if (!query.parameters().empty()) {
+        result += " (";
+        for (std::size_t index = 0; index < query.parameters().size();
+             ++index) {
+          if (index != 0)
+            result += ", ";
+          if (query.parameters()[index].referenceMutability)
+            result += "mut ";
+          result +=
+              semantic_spelling::typeRefSpelling(query.parameters()[index]) +
+              " " + query.bindings()[index].lexeme;
+        }
+        result += ")";
+      }
+      result += query.unsafeKeyword() ? " { unsafe { " : " { { ";
+      result += semantic_spelling::expressionSpelling(*query.expression());
+      result +=
+          " } -> " + semantic_spelling::typeRefSpelling(query.result()) + "; }";
+      return;
+    }
     result += "requires (" +
               (query.receiver().referenceMutability ? std::string("mut ")
                                                     : std::string()) +
@@ -730,6 +756,18 @@ void SignaturePrinter::appendRequirements(
       }
     }
     result += '>';
+    if (syntax[index].predicate) {
+      result += "(";
+      if (const auto *call = exprAs<Call>(syntax[index].predicate.get()))
+        for (std::size_t argument = 0; argument < call->arguments().size();
+             ++argument) {
+          if (argument != 0)
+            result += ", ";
+          result += semantic_spelling::expressionSpelling(
+              *call->arguments()[argument]);
+        }
+      result += ")";
+    }
   };
   result += " requires ";
   std::function<void(std::size_t, int)> appendNode = [&](std::size_t nodeIndex,

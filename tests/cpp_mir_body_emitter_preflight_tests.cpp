@@ -368,9 +368,16 @@ int main() {
         ++constructed;
         const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
                                            constructor.id};
+        // A passive payload over passive operands is failure-free (RT-12),
+        // so the constructor emits in the form its effect summary selects.
+        const auto emitBody = [&](const lang::CppMirBodyEmitter &emitter,
+                                  const char *name) {
+          return constructor.mayRaiseDefinedFailure
+                     ? emitter.emitFailureBodyText(address, name, 1)
+                     : emitter.emitBodyText(address, name, 1);
+        };
         const lang::CppMirBodyEmitter emitter(frontend.mir, map);
-        const auto text =
-            emitter.emitFailureBodyText(address, "passive-field", 1);
+        const auto text = emitBody(emitter, "passive-field");
         constexpr std::string_view publication =
             "direct passive payload field publication";
         expect(text.emitted() &&
@@ -436,8 +443,7 @@ int main() {
             break;
           }
           const lang::CppMirBodyEmitter rejected(forged, map);
-          const auto rejectedText =
-              rejected.emitFailureBodyText(address, "forged-passive-field", 1);
+          const auto rejectedText = emitBody(rejected, "forged-passive-field");
           expect(!rejectedText.emitted() ||
                      rejectedText.text.find(publication) == std::string::npos,
                  "passive publication rejects wrong fields, roots, effects, or "
@@ -6826,7 +6832,7 @@ int main() {
         const_cast<std::vector<lang::MirConstructorInstance> &>(
             frontend.mir.constructorInstances());
     for (lang::MirConstructorInstance &constructor : constructors) {
-      if (constructor.parameterTypes.size() == 1 &&
+      if (!constructor.parameterTypes.empty() &&
           constructor.parameterTypes.front().kind ==
               lang::SemanticType::Class &&
           !constructor.initializers.empty()) {
@@ -6857,9 +6863,6 @@ int main() {
     expect(emitter.supportsBodyText(address),
            "the exact passive class copy must enter the ordinary constructor "
            "form");
-    expect(emitter.supportsFailureBodyText(address),
-           "the exact passive class copy must enter the failure constructor "
-           "form");
     if (emitter.supportsBodyText(address)) {
       const std::string text =
           emitter.emitBodyText(address, "copy-parameter-field-v0", 1).text;
@@ -6868,6 +6871,46 @@ int main() {
              "the class parameter Load should be consumed by the exact "
              "member-initializer publication");
     }
+  }
+
+  // A passive class parameter alone is failure-free (RT-12); a checked
+  // division beside the same copy keeps the constructor fallible, and the
+  // copy must enter the failure constructor form there.
+  lang::FrontendResult checkedCopy =
+      analyzeWithStandardLibrary("cpp-mir-checked-copy-parameter-field.gti", R"(
+class Payload {
+public:
+  int32_t value;
+  Payload(int32_t value) : value(value) {}
+};
+
+class Holder {
+public:
+  Payload inner;
+  int32_t ratio;
+  Holder(Payload payload, int32_t divisor)
+      : inner(payload), ratio(12 / divisor) {}
+};
+
+int main() {
+  Holder holder = Holder(Payload(3), 4);
+  return holder.inner.value + holder.ratio - 6;
+}
+)");
+  expect(checkedCopy.canGenerateCode(),
+         "the checked copy-parameter fixture should pass the frontend");
+  if (lang::MirConstructorInstance *checkedConstructor =
+          checkedCopy.canGenerateCode() ? findHolderConstructor(checkedCopy)
+                                        : nullptr) {
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(checkedCopy, checkedCopy.mir, lang::CppStandard::Cpp23));
+    const lang::CppMirBodyEmitter emitter(checkedCopy.mir, map);
+    expect(checkedConstructor->mayRaiseDefinedFailure &&
+               emitter.supportsFailureBodyText(
+                   {.kind = lang::MirBodyKind::Constructor,
+                    .owner = checkedConstructor->id}),
+           "the exact passive class copy must enter the failure constructor "
+           "form");
   }
 
   lang::MirInstruction *copyLoad = nullptr;
@@ -6982,12 +7025,14 @@ public:
 class Holder {
 public:
   Payload inner;
-  Holder(Payload payload) : inner(std::move(payload)) {}
+  int32_t ratio;
+  Holder(Payload payload, int32_t divisor)
+      : inner(std::move(payload)), ratio(12 / divisor) {}
 };
 
 int main() {
-  Holder holder = Holder(Payload(3));
-  return holder.inner.value - 3;
+  Holder holder = Holder(Payload(3), 4);
+  return holder.inner.value + holder.ratio - 6;
 }
 )");
   expect(moveForm.canGenerateCode(),

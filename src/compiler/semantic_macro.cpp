@@ -191,7 +191,7 @@ auto SemanticVisitor::Impl::macroContext(const Token &token) const
 }
 
 auto SemanticVisitor::Impl::macroLocalScopeRange(const Token &token) const
-    -> std::pair<std::size_t, std::size_t> {
+    -> MacroLocalScopeRange {
   const auto *context = macroContext(token);
   // Lambda captures are initialized in the enclosing domain, but the body
   // owns a fresh scope stack. An enclosing argument's numeric bounds must
@@ -204,7 +204,9 @@ auto SemanticVisitor::Impl::macroLocalScopeRange(const Token &token) const
   const std::size_t begin = context && context->definition
                                 ? std::min(end, context->localScopeBegin)
                                 : 0;
-  return {begin, end};
+  return {begin, end,
+          context ? std::span(context->queryScopes)
+                  : std::span<const MacroLookupContext::ScopeOverlay>()};
 }
 
 SemanticVisitor::Impl::MacroLookupScope::MacroLookupScope(

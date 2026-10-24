@@ -53,9 +53,10 @@ def main() -> int:
         required = (
             "union NumberBits {",
             "std::is_union_v<NumberBits>",
-            "::gti_internal::backend::payload_variant<std::monostate",
+            "::gti_internal::backend::payload_variant<__gti_variant_0, "
+            "__gti_variant_1, __gti_variant_2, std::monostate> __gti_value;",
             ".__gti_value.index()",
-            "::gti_internal::backend::payload_get<2>(",
+            "::gti_internal::backend::payload_get<1>(",
         )
         if any(fragment not in generated for fragment in required):
             sys.stderr.write("generated C++ did not retain sum-type lowering\n")

@@ -566,6 +566,10 @@
       "suite": "text"
     },
     {
+      "name": "testOwningPayloadEnumReferentReplacement",
+      "suite": "text"
+    },
+    {
       "name": "testShortCircuitExpectedPayloadFieldView",
       "suite": "text"
     },
@@ -815,6 +819,10 @@
     },
     {
       "name": "testClassStoresIntoNamedPlaces",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testArrayFieldConstructorElements",
       "suite": "lifecycle"
     },
     {

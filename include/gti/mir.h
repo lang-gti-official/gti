@@ -1404,6 +1404,9 @@ struct MirFunctionInstance {
   std::vector<OwnerlessTextField> ownerlessTextFields;
   // Formals a returned fresh value holds in a direct text field (L-OWN-02).
   std::vector<PublishedTextField> publishedTextFields;
+  // The returned value views the referent of read-only reference formal
+  // returnBorrowParameter at the one returnBorrowFields path (L-OWN-02).
+  bool dependentTextReturn = false;
   std::vector<HirBindingId> parameterBindings;
   ProgramEntryKind entryKind = ProgramEntryKind::None;
   std::optional<HirFunctionInstanceId> entryArgumentAppendTarget;

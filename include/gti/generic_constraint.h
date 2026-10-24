@@ -55,10 +55,6 @@ enum class StructuralConstraintKind : std::uint8_t {
   RangeOf,
   MutableRangeOf,
   SizedRange,
-  Adds,
-  Subtracts,
-  Negates,
-  ScalesBy,
   ReadCallable,
   MutCallable,
   OnceCallable,
@@ -115,30 +111,16 @@ inline constexpr std::array<GenericConstraintKind, 20> genericConstraintKinds{{
     GenericConstraintKind::Reflectable,
 }};
 
-inline constexpr std::array<CompilerConstraintRecord, 20> compilerConstraints{{
-    {"numeric", GenericConstraintKind::Numeric},
-    {"signed_numeric", GenericConstraintKind::SignedNumeric},
-    {"integral", GenericConstraintKind::Integral},
-    {"signed_integral", GenericConstraintKind::SignedIntegral},
-    {"unsigned_integral", GenericConstraintKind::UnsignedIntegral},
-    {"floating_point", GenericConstraintKind::FloatingPoint},
-    {"copy_constructible", GenericConstraintKind::CopyConstructible},
-    {"move_constructible", GenericConstraintKind::MoveConstructible},
-    {"copyable", GenericConstraintKind::Copyable},
-    {"movable", GenericConstraintKind::Movable},
-    {"relocatable", GenericConstraintKind::Relocatable},
-    {"bitwise_relocatable", GenericConstraintKind::BitwiseRelocatable},
-    {"transferable", GenericConstraintKind::Transferable},
-    {"shareable", GenericConstraintKind::Shareable},
-    {"default_initializable", GenericConstraintKind::DefaultInitializable},
+// Only facts still bound by private concept declarations belong here. The
+// complete fact inventory above also serves reflection and generic proofs.
+inline constexpr std::array<CompilerConstraintRecord, 4> compilerConstraints{{
     {"equality_comparable", GenericConstraintKind::EqualityComparable},
     {"relationally_ordered", GenericConstraintKind::RelationallyOrdered},
     {"atomic_scalar", GenericConstraintKind::AtomicScalar},
-    {"integral_enum", GenericConstraintKind::IntegralEnum},
     {"meta_reflectable", GenericConstraintKind::Reflectable},
 }};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 32>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 27>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
@@ -155,10 +137,6 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 32>
         {"range_of", StructuralConstraintKind::RangeOf, 2},
         {"mutable_range_of", StructuralConstraintKind::MutableRangeOf, 2},
         {"sized_range", StructuralConstraintKind::SizedRange, 1},
-        {"adds", StructuralConstraintKind::Adds, 1},
-        {"subtracts", StructuralConstraintKind::Subtracts, 1},
-        {"negates", StructuralConstraintKind::Negates, 1},
-        {"scales_by", StructuralConstraintKind::ScalesBy, 2},
         {"read_callable", StructuralConstraintKind::ReadCallable, 3},
         {"mut_callable", StructuralConstraintKind::MutCallable, 3},
         {"once_callable", StructuralConstraintKind::OnceCallable, 3},
@@ -172,14 +150,13 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 32>
         {"indirect_operation", StructuralConstraintKind::IndirectOperation, 3},
         {"range_predicate", StructuralConstraintKind::RangePredicate, 2},
         {"range_operation", StructuralConstraintKind::RangeOperation, 3},
-        {"enum_underlying", StructuralConstraintKind::EnumUnderlying, 2},
         {"object_layout", StructuralConstraintKind::ObjectLayout, 1},
         {"independent_object", StructuralConstraintKind::IndependentObject, 1},
         {"inline_polymorphic_payload",
          StructuralConstraintKind::InlinePolymorphicPayload, 2},
     }};
 
-static_assert(compilerConstraints.size() + 2 ==
+static_assert(genericConstraintKinds.size() + 2 ==
               static_cast<std::uint8_t>(GenericConstraintKind::Count));
 
 [[nodiscard]] constexpr GenericConstraintSet

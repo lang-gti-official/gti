@@ -2436,6 +2436,30 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       }
       if (argument == nullptr || !*argument)
         continue;
+      // A class formal whose text field the constructor stores re-roots the
+      // argument's owner dependency at that field to the stored path, and
+      // one it stores whole nests every path under it (L-OWN-02).
+      if (input.sourceField != 0 || input.wholeValue) {
+        if (!potentialPackView && index < arguments.size())
+          relayConstructorTextField(
+              constructedType, *selected.constructor->declaration, input,
+              *argument, textOrigins, contextualConstruction);
+        // A fresh value this function returns relays a class formal its
+        // constructor stores whole in a field (L-OWN-02 phase 3).
+        if (input.wholeValue && input.payload == 0 && !potentialPackView &&
+            index < arguments.size() && construction != nullptr &&
+            initializer->target.name.segments.size() == 1)
+          if (const ClassInfo *owner = classInfo(constructedType)) {
+            const auto member =
+                owner->members.find(initializer->target.name.last().lexeme);
+            if (member != owner->members.end())
+              (void)relayReturnedTextFormal(
+                  *construction, constructedType,
+                  selected.constructor->declaration, *argument,
+                  toolingSymbolFor(member->second.symbol));
+          }
+        continue;
+      }
       const bool conditionalText =
           index < selected.parameterTypes.size() &&
           selected.parameterTypes[index].kind == SemanticType::TypeParameter;
@@ -2468,8 +2492,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       // A class whose fields other code reads keeps the ownerless rule.
       bool restrictedOwner = false;
       bool readingConstructor = false;
-      if (!potentialPackView && !contextualConstruction &&
-          index < arguments.size()) {
+      if (!potentialPackView && index < arguments.size()) {
         auto dependencies = textFieldInitializerDependencies(
             constructedType, *initializer, *argument, input.payload);
         restrictedOwner =
@@ -2650,8 +2673,13 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
             selected.constructor->requiresUnsafe);
   } else if (contextualConstruction) {
     // The initializer keeps its own construction, call and occurrence records.
+    // A converted value that holds its argument's owner is a dependent value
+    // that only its consumer may keep (L-OWN-02).
+    const bool dependent = resolved.dependentTextPublication;
     semanticModel.recordContextualConstruction(*construction,
                                                std::move(resolved), paren);
+    if (dependent)
+      noteTextDependentValue(*construction);
   } else {
     semanticModel.record(*construction, std::move(resolved));
     recordSelectedConstructionOccurrence(*construction);
@@ -2773,7 +2801,7 @@ auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
     std::vector<const ExprPtr *> inputs{&member.object()};
     for (const auto &argument : call.arguments())
       inputs.push_back(&argument);
-    std::vector<SemanticType> types{semanticModel.typeOf(*member.object())};
+    std::vector<SemanticType> types{memberAccessObjectType(member)};
     types.insert(types.end(), argumentTypes.begin(), argumentTypes.end());
     if (inputs.size() != factory->parameterTypes.size()) {
       report(paren,
@@ -4533,7 +4561,9 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
       initializer ? semanticModel.findExpression(*initializer) : nullptr;
   const bool textDependentValue =
       (type.kind == SemanticType::Class || type.kind == SemanticType::Enum) &&
-      initializerInfo != nullptr && isTextDependentValue(*initializerInfo);
+      initializerInfo != nullptr &&
+      (isTextDependentValue(*initializerInfo) ||
+       contextualTextValue(*initializer, type));
   if (!isDirectStoredReferenceType(type) &&
       type.kind != SemanticType::StringView &&
       type.kind != SemanticType::CString && !textDependentValue) {
@@ -4884,7 +4914,12 @@ auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
                                                      readInfo->category,
                                                      readInfo->access));
         const auto *group = exprAs<Grouping>(read);
-        read = group == nullptr ? nullptr : group->expression().get();
+        const auto *move = exprAs<Call>(read);
+        read = group != nullptr ? group->expression().get()
+               : move != nullptr && move->arguments().size() == 1 &&
+                       resolvedIntrinsicKind(*move) == IntrinsicKind::Move
+                   ? move->arguments().front().get()
+                   : nullptr;
       }
       return;
     }
@@ -5777,6 +5812,14 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
   }
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {
     return hasStableBorrowStorage(grouping->expression(), visiting);
+  }
+  // A moved value's text relays still view its owner's storage (L-OWN-02);
+  // a consuming method cannot return a reference into the moved value.
+  if (const ExprPtr *moved = explicitMoveSource(expression);
+      moved != nullptr && *moved) {
+    const ExpressionInfo *info = semanticModel.findExpression(**moved);
+    if (info != nullptr && isTextDependentValue(*info))
+      return hasStableBorrowStorage(*moved, visiting);
   }
   if (const auto dependencies =
           semanticModel.findBorrowDependencies(*expression);
@@ -7035,16 +7078,32 @@ auto SemanticVisitor::Impl::resolveRequirements(
        applicationIndex < clause->requirements().size(); ++applicationIndex) {
     const ConceptApplication &application =
         clause->requirements()[applicationIndex];
+    if (application.predicate) {
+      AppliedConceptRequirement requirement{.syntax = &application,
+                                            .expression = &clause->expression,
+                                            .expressionApplication =
+                                                applicationIndex,
+                                            .lookupScope = scope};
+      for (const auto &argument : application.arguments) {
+        argumentsToValidate.push_back(&argument);
+        requirement.arguments.push_back(typeOf(argument, scope));
+      }
+      result.push_back(std::move(requirement));
+      continue;
+    }
     if (application.memberRequirement) {
       recordMemberRequirementReceiver(
           *application.memberRequirement,
-          typeOf(application.memberRequirement->receiver(), scope));
+          application.memberRequirement->isExpressionRequirement()
+              ? SemanticType::Unknown
+              : typeOf(application.memberRequirement->receiver(), scope));
       AppliedConceptRequirement requirement{
           .syntax = &application,
           .expression = &clause->expression,
           .expressionApplication = applicationIndex,
           .trustedMemberAccess = isCompilerTrustedRequester(
-              application.memberRequirement->member())};
+              application.memberRequirement->keyword()),
+          .lookupScope = scope};
       for (const auto &argument : application.arguments) {
         argumentsToValidate.push_back(&argument);
         requirement.arguments.push_back(typeOf(argument, scope));

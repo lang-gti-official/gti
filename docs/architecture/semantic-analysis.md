@@ -601,6 +601,17 @@ may carry requirements: each concrete element passes ordinary instantiation and
 constraint checking before a resolved fold can enter HIR. Signature requirements
 do not create a second executable call path or bypass actual borrow checking.
 
+A member call selects required, fixed-array and text-view members on the
+receiver type of its written member access (`memberAccessObjectType`): the
+object's type for `.`, and for a checked `->` the referent of the selected
+`operator->` result. A `T&` arrow into a constrained parameter therefore uses
+`T`'s requirement facts, and a `std::string_view&` arrow reaches the builtin
+view members. Keying these on the written object instead let `b->size()` fall
+through to ordinary symbol lookup, which recorded no call and no diagnostic;
+the target-less call then reached the C++ backend as `GTI-B0001`. A rejected
+arrow step has already been diagnosed by the callee's analysis and selects no
+member.
+
 Semantic analysis is GTI's authoritative language layer. It resolves meaning
 over the syntax-preserving AST and records facts in `SemanticModel`; HIR, MIR,
 backends, and language queries consume those facts rather than repeating
@@ -1038,7 +1049,37 @@ result type) that `analyzeMetaIntrinsicCall`, `metaIntrinsicConstant` and
 `metaQueryConstant` share; enumerator, payload, base and argument queries use
 the same table (`metaEnumeratorFacts` reads `enumTypeFor`, so generic enum
 instances are substituted), and `meta_type_trait<T, N>` carries the boolean
-traits (payload enum, generic instance, reflectable, signed integral).
+traits. Payload-enum and generic-instance queries inspect canonical declaration
+metadata; the lifecycle, relocation, transfer/share and scalar-classification
+selectors delegate the ordinary `satisfiesAtomicConstraint` rules. The private
+`semantic_reflection_traits.h` selector mapping is also consumed when a
+constraint transports an established type fact into an open generic body;
+public wrapper spellings never establish facts. The two-subject
+`meta_type_relation<T, U, N>` query shares the same shape/constant service for
+exact type identity and exact integral-enum underlying representation; the
+latter reuses the ordinary structural `EnumUnderlying` rule. These queries
+fold through the existing constant-substitution path and add no separate
+constant interpreter or executable reflection operation.
+
+The category query can fold a known outer nominal/array/reference/pointer
+shape even when nested arguments remain open, because those arguments cannot
+change that category. Bare type/pack parameters and deferred compiler-computed
+type projections remain dependent. Both direct analysis and constant execution
+use the same `metaQueryConstant` answer; partial kind knowledge does not infer
+layout, lifecycle eligibility or the contents of a generic argument.
+
+An early namespace-function declaration index belongs to the same request-local
+`SemanticCatalog`, including its sealed shape and snapshot/copy contract. It
+exists because concepts are resolved before ordinary callable registration.
+Proof discovery follows only a unique visible, safe, no-value-argument
+`constexpr bool` source wrapper whose single return expression is another such
+call, terminating at an identity-bound reflection fact query. Namespace aliases
+and declaration visibility use the ordinary lookup policy; wrapper arguments
+are resolved in the caller, then declaration lookup hides the caller's generic
+and class scopes. Cycles, ambiguity and opaque computations supply no implied
+type fact. This index never selects executable calls or interprets an arbitrary
+predicate; concrete predicate validation and constant execution remain the
+ordinary semantic/constexpr path.
 `field_attributes`, `type_attributes`, `enumerator_list`, `payload_list`,
 `payload_type`, `base_list` and `argument_list` are further computed
 compiler types rewritten by `rewriteCompilerType`.
@@ -2289,6 +2330,31 @@ synthetic runtime calls. Neither the constant evaluator nor the backend decides
 whether a type supports cloning. `std::clone` and vector element duplication
 remain ordinary source-defined generic bodies and verified-MIR calls.
 
+General expression requirements extend that query mechanism without adding
+runtime expression execution. Their synthetic parameter and exact-result types
+are resolved before an isolated semantic worker checks the ordinary AST. The
+worker uses a speculative model delta, isolated flow/effect/query journals and
+declaration-owned lookup; diagnostics become a failed requirement rather than
+escaping as invalid executable HIR. General queries retain ordinary ownership,
+access and unsafe rules and reject reference or borrow-bearing results. The
+historical direct member shape still uses its exact signature checker.
+
+Direct bound-operand operator/call shapes normalize to `ReadMember` facts with
+the existing operator identity; direct type construction uses an internal
+construction relationship. Only these bounded guaranteed facts admit
+operations in an open generic body. Arbitrary compound expressions are concrete
+filters, not inferred proofs of their subexpressions. The selected concrete
+instance still resolves every executable call/constructor normally. Query
+recursion is bounded to 64 active checks.
+
+Constexpr Boolean-call leaves use existing constant evaluation. Trusted
+reflection fact identity, including unambiguous transparent source wrappers,
+can transport unary or exact relational proof. Opaque predicates only filter
+concrete viability. Calls and expression checks preserve their distinct kind,
+ordered parameter/result type roles and source provenance in AST-free
+`LoweredConceptRequirement` records; neither HIR nor the backend evaluates
+constraints anew.
+
 A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
 application, and exact semantic type arguments. Arguments may be visible
@@ -2739,8 +2805,9 @@ set is recorded for it.
   fixed.
 - A non-consuming `switch` subject consumes the value for confinement.
   `dependentTextPayloadLoan` finds the subject's loan when it designates an
-  arm binding's text payload; a by-value binding then carries that loan, and
-  an `auto&` binding is `GTI-S2045`.
+  arm binding's text payload; a by-value binding then carries that loan and
+  records it as its retained loan, as a local initialized from a published
+  field read does, and an `auto&` binding is `GTI-S2045`.
 
 Phase 2b publishes through payload-enum fields at a path `[field, payload]`:
 - `ownerlessTextConstructorInputs` also recognizes, from declarations, an
@@ -2764,15 +2831,20 @@ Phase 2b publishes through payload-enum fields at a path `[field, payload]`:
   (`contractPayloadBinding`), whether the subject names the field
   (`formal.field`) or calls the formal's accessor for it
   (`formal.accessor()`, or an implicit `accessor()` on the receiver). An
-  accessor designates a field (`accessorReceiverField`) when it is a
+  accessor designates fields (`accessorReceiverFields`) when it is a
   read-only, non-virtual method whose every return is `this.field` or a call
   `this.other()` of another argument-free such accessor; the implicit `field`
-  and `other()` count only in a parameterless body that declares nothing.
-  A text payload bound through any other call whose reference result borrows
-  a contract formal (an accessor returning one of several fields, say) is a
-  whole use of that formal (`callBorrowedTextFormal`). MIR derives a
-  requirement through an accessor only where semantics names its field or
-  records that whole use. In a generic class, a type-parameter payload
+  and `other()` count only in a parameterless body that declares nothing. Its
+  own returns require nothing (`notePayloadFieldRead`): a caller outside a
+  contract scope keeps the result dependent on each returned field
+  (`dependentReferenceResult`), and a use of the call on a contract formal
+  reads each field (`contractEnumFields`). A `switch` observes a single
+  designated field in place; on an accessor designating several it reads
+  them all. A text payload bound through any other call whose reference
+  result borrows a contract formal (an accessor returning one of several
+  fields, say) is a whole use of that formal (`callBorrowedTextFormal`). MIR
+  derives a requirement through an accessor only where semantics names its
+  fields or records that whole use. In a generic class, a type-parameter payload
   requires it conditionally. A whole use requires every text payload too
   (`textPayloadFields`), and `contractTextPath` filters open requirements for
   an instance. A relay is decided against each designated path.
@@ -2790,6 +2862,67 @@ Phase 2b publishes through payload-enum fields at a path `[field, payload]`:
   analysis. An instance requires every text field and payload of a
   publishable argument type there, and a call relays and forwards nothing
   into it, so a container cannot store a dependent value.
+
+Phase 2c publishes through conversions, constructor field relays and
+returns:
+- A contextual construction's one expression node is both the argument and
+  the converted value. `recordContextualConstruction` notes a dependent
+  conversion, `contextualTextValue` classifies the converted value, and
+  `storedBorrowDependencies` reads the argument's dependency while
+  `contextualTextArgument` names it. `publishTextDependency` does not parent a
+  dependency on a local view carrier's own StoredValue loan, so a value over
+  a view binding depends on the binding's owner.
+- `ConstructorTextInput::sourceField` records a constructor initializer that
+  stores a by-value class formal's text field, as `formal.f` or as a
+  zero-argument accessor whose sole statement returns `this.f`.
+  `relayConstructorTextField` re-roots the argument's dependency at `[f]` to
+  the stored path (`BorrowedFieldOrigin::sourceFields = {f}`). The formal must
+  be mentioned once and the constructor must keep published text.
+- A consuming receiver is a contract receiver (`contractReceiver`): a write
+  into a text field already requires ownerless text, so a moved field holds
+  what the caller published. Moving a view keeps its source's owner
+  dependence, and `ownerlessTextForwardingField` sees through the move.
+- `noteDependentTextReturn` records `FunctionInfo::dependentTextReturn` when
+  a returned value's single dependency designates the referent of one
+  read-only reference formal: an Argument return summary at the text path.
+  `publishTextReturnResult` gives each call that summary. Ownerless returns
+  are alternatives beside it.
+- `notePayloadFieldRead` requires every text payload of a contract formal's
+  or receiver's payload-enum field at any read other than the switch subject
+  being analyzed (`observedSwitchSubject`). An instance analysis reads its
+  receiver at the instance type, so a type-parameter field that is a payload
+  enum there is covered. Before 0.468.0, copying, borrowing or storing such
+  a field let a dependent value's payload escape.
+
+Phase 3 nests dependent values in fields and payloads:
+- `ConstructorTextInput::wholeValue` records an initializer storing a
+  by-value formal of a nested text class (`nestedTextClass`: a publishable
+  class with a text path under it) whole in a field or payload of its type,
+  and `sourceField` may name a class-typed field of a formal. At a call,
+  `relayConstructorTextField` re-roots the argument's one path `P` through the
+  stored part `S` to `D + P[|S|..]`, with `sourceFields = P`.
+  `publishTextCallResult` nests a dependent class argument that a generic
+  function returns whole, as `unexpected` does, and `relayReturnedTextFormal`
+  admits such a formal.
+- A field read of a nested class, a reference relay to one, and a
+  dereference through an operator relay are dependent places with the
+  relayed prefix stripped (`nestedTextRelay`). `textReferenceReturnSummary`
+  and `payloadReferenceRelayArm` admit references to nested text classes.
+  Copying a dependent place other than a named value out is `GTI-S2045`.
+- A field contract names a prefix (`contractPrefix`): a text field exactly,
+  or a payload-enum field's payload, which covers every path below a nested
+  text class payload. A path through a nested class field has no contract,
+  so relaying it is `GTI-S2045`. Class payloads holding text take
+  requirements wherever text payloads do, and `contractTextPath` keeps them
+  in instances.
+- A contract formal's reference relay to a nested text class, and field
+  chains under it, are noted (`noteContractRelayUse`). A text read under one
+  is dynamic and forwards the prefix (`ownerlessTextForwardingField`); any
+  use but a field projection requires the prefix when contracts are
+  finalized.
+- A value initialized from a construction or call that publishes dependent
+  text is a new value: it does not continue a moved carrier's loan, and a
+  publishing direct initialization re-roots its argument.
 
 A temporary needs no further model. Its construction publishes as above, and
 its expression is a dependent value that a field read, a relay or a receiver

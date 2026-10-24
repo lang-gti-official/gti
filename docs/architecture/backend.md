@@ -163,7 +163,7 @@ statement spans against the **optimized** MIR's retained HIR identities.
 Each `LoweredBody::sourceLocations` row owns its source path/span and exact
 block/instruction identity; instruction zero identifies a terminator. These
 optional rows are verified and sealed with the lowered contract (current printer
-version 17; debug rows were introduced in version 13), survive destruction of
+version 24; debug rows were introduced in version 13), survive destruction of
 AST/HIR, and are never executable,
 ownership, type, or optimization authority. The default contract has no rows.
 
@@ -193,7 +193,7 @@ remain later slices; this metadata does not bypass MIR verification.
 
 Terminal and caller-tracking contracts are sealed declaration facts, also
 checked against the embedded MIR. The current lowered-program inspection format
-is version 17 and retains both flags and optional source debug locations.
+is version 24 and retains both flags and optional source debug locations.
 The C++ representation
 passes an explicit artifact-local caller-site parameter through supported
 tracked signatures and calls. An
@@ -387,6 +387,16 @@ slot. Only a successful result activates the replacement stage, so
 receiver failure cannot overwrite the old destination, and failed replacement
 cleanup destroys the unpublished result without committing it.
 
+A construction whose only use is the Return publishes inline at the Return
+unless the failure form can fail in between. When an Invoke or a
+defined-failure source lies on a path from the construction to that Return,
+as fallible scope-exit destructors do after a failure-free `expected`
+construction (RT-12), the failure form builds the result in the out-parameter
+at its MIR position, as it does for a result with a `ReturnResult`
+obligation. Its staged inputs are then consumed where MIR consumes them, so a
+later failure finds no input slot still live; a result with no obligation is
+passive and needs no cleanup on that path.
+
 A member or closure receiver moved out of a named binding materializes at its
 `Move`: the backend constructs the receiver's lifetime slot from the binding
 there, and the Receiver `MoveValue` input and the call only alias that slot.
@@ -517,6 +527,17 @@ contains:
 - concrete class, function, constructor, destructor, and lambda instances with
   exact type/value substitutions and source provenance; and
 - exhaustive generated-item identities, payloads, roots, and dependencies.
+
+Generic requirement leaves have explicit `Concept`, `Member`, `Expression`,
+or `Predicate` kinds. A concept keeps its declaration identity; an exact member
+keeps its actual name and receiver-access facts. A general expression instead
+owns ordered synthetic-parameter types, its exact owned result type and any
+explicit expression type arguments, with a checked result index separating
+those groups. Predicate leaves retain their resolved type arguments and source
+provenance, not a fabricated member name. These are static declaration facts:
+the lowered value contains no source expression or AST pointer, and a backend
+must not evaluate predicates or reconstruct expression validity. Semantics
+checks admissibility and concrete instantiation before this boundary.
 
 `verifyLoweredProgram` rejects missing, duplicate, stale, reordered, unrooted,
 or cyclic records and an invalid construction seal. `LoweredProgramPrinter`
@@ -1214,9 +1235,21 @@ out-of-line helper frame, not in one caller-frame local per terminal block.
 GNU-compatible compilers use cold/noinline hints; MSVC uses noinline. The helper
 is not noexcept because managed-worker emergency handoff can unwind through it.
 
-Every emitted `Invoke` failure alternate is an `[[unlikely]]` branch, so native
-block placement and call-site frequencies treat the failure path as cold. A
-detector's failure record and its incoming-cleanup check are one out-of-line
+Every emitted `Invoke` failure alternate is cold for native block placement
+and call-site frequencies. The emitter spells it `[[unlikely]]`, except for a
+failure-form call whose callee carries the always-inline small-source hint
+(`cppMirSmallSourceBody`, the same predicate that spells the declaration). That
+alternate begins with the cold, noinline incoming-cleanup check, and once the
+callee inlines, its own failure path ends in a cold publication or check call.
+A weight on the success flag would instead survive inlining as a claim about
+the data condition that success reduces to, such as a payload tag; native jump
+threading then moved it onto the unrelated branch that selected the tag, and
+with the trailing payload-enum tag (RT-11) a `has_value()`/`value()` loop ran
+about twice as slowly. Calls the native inliner may decline keep the weight,
+which informs that decision: dropping it everywhere cost about 10% on a
+string-producing payload-enum loop.
+
+A detector's failure record and its incoming-cleanup check are one out-of-line
 call to `mir_publish_failure_v1`. It writes exactly the record the inline
 sequence wrote, taking the artifact identity from the program's descriptor,
 keeps a propagated inner record, and then performs the same check. A panic
@@ -1566,6 +1599,43 @@ Neither route requires an independently default-constructed SSA array, even
 when its elements delete default construction. Arrays without an exact
 argument, result, or lifetime-slot publication proof remain rejected rather
 than falling back to native value initialization.
+
+A fixed-array element that MIR stages by copying or moving one whole named
+binding, such as a by-value constructor parameter or a local, is spelled
+inside the array's braced initializer instead: `Polygon(Point a, Point b) :
+corners({a, std::move(b)})` constructs the field once as
+`std::array<Point, 2>{a, std::move(b)}`, so each element is copied or moved
+once, directly into the array's storage. A braced initializer evaluates its
+elements left to right, so the elements keep their operand order; what moves
+is the point of each copy or move, from its `Load` or `Move` to the aggregate.
+The proof (`inlineFixedArrayElements`) admits that only when nothing in
+between can tell. Producer and aggregate share one block, and every
+instruction between them is failure-free. None of them writes the binding (or,
+for a move, names it at all), and the body neither lends it mutably nor takes
+its address, so nothing writes it unnamed. An
+instruction in between that is not itself an inlined element later in the
+same aggregate may run user code, so the element's transfer must then be
+observation-free: the generated copy of a passive generated-copy class, or a
+generated move. A copy also needs a copy constructor on the element's leaf
+class; semantics currently lets a class without one appear as a copied array
+element, and the body is then refused rather than spelled. A moved class
+element carries a value obligation that the `Move` takes from the binding and
+the aggregate transfers out, so it needs no storage. A move with no lifecycle
+event, as MIR records for a cleanup-free array, is admitted only for a
+cleanup-free element, because the binding's own obligation stays in force.
+The rule names representations, not types: rows of a two-dimensional array
+(`cells({top, std::move(bottom)})`), elements of nested rows
+(`{{a, b}, {c, std::move(d)}}`) and moves of a class with a source destructor
+use it alike. The inline spelling applies only where the aggregate constructs
+its final storage: a passive staged binding, or the owning route's binding,
+constructor field, nested element slot or argument slot. That owning route
+accepts obligation-free elements beside transferred ones, so an inlined copy,
+or a cleanup-free copy in its sequenced local, can sit next to a fresh
+construction (`corners({a, Point(5, 4)})`). An element outside the proof keeps
+its staged route. A plain constructor stages a by-value array parameter of
+passive generated-copy classes, like `top`, in a lifetime slot just as it
+stages one such class: the array moves and is destroyed element-wise by
+generated members, which run no user code.
 
 For a verified `MoveBorrowedTemporary` ordinary call or constructor input, the body emitter
 publishes the exact producer call result into its MIR value-rooted lifetime
@@ -2330,8 +2400,18 @@ not a shadowing, not-yet-initialized local. Both ordinary and secondary failure
 reports are checked by the composition runtime matrix.
 
 Payload enum rows use backend-private `payload_variant`: a recursive native
-union and compact active tag, with direct tag-dispatched native retirement.
-Constrained-default special members preserve trivial copy/move/assignment and
+union followed by a compact active tag, with direct tag-dispatched native
+retirement. Native alternative `k` is verified MIR variant `k`, unshifted, and
+the backend-private empty shell is the final native alternative, so the live
+discriminants of a two-alternative enum are 0 and 1. Construction,
+`payload_get`, switch cases and cleanup recipes all spell the MIR ordinal
+directly. A small passive carrier often travels whole, as one native scalar,
+through call results, matches and `?` propagation. A leading tag, or ordinals
+shifted past a private alternative zero, kept native optimizers from folding a
+later tag test back into the branch that selected the alternative; the
+trailing tag and unshifted ordinals are the layout Clang folds. GCC 15 instead
+loses 6–10% on scalar tag loops with the unshifted ordinals; the RT-11 row in
+the optimization plan records that open tradeoff. Constrained-default special members preserve trivial copy/move/assignment and
 destruction for passive members, including inert byte transport. Ordinary
 integer enums are unchanged. Payload enums are accessed through
 `payload_get<Index>` selected from the sealed variant inventory, under the
@@ -2351,7 +2431,7 @@ enable GTI assignment: semantic traits and MIR admission still reject assignment
 of a construction-only source type. Throwing-copy or nontrivially destructible
 alternatives do not receive this passive fallback.
 
-The carrier starts with only its private empty alternative active. Construction
+The carrier starts with only its private empty (final) alternative active. Construction
 starts the selected union-member lifetime, then publishes its tag; an exception
 before publication leaves no complete alternative to destroy. Recursive empty
 union tails contain no resource. Native moves retain a valid moved-from member
@@ -2435,8 +2515,8 @@ An admitted direct class/struct field uses the class initializer schedule's
 exact payload construction, `This.field` publication, value-rooted reparenting,
 full-expression endpoint, and construction-rollback row. A transformed
 failure-capable constructor may require a temporarily disengaged native shell;
-the C++ representation therefore reserves a private `std::monostate`
-alternative. It is neither a source variant nor observable tag state. Field
+the C++ representation therefore reserves a private `std::monostate` as the
+final alternative. It is neither a source variant nor observable tag state. Field
 publication retires only that proved empty shell and placement-move-constructs
 the enum from its exact value slot. Its generated transfer must be failure-free;
 neither publication nor rollback reconstruction requires enum assignment. An
@@ -3562,6 +3642,17 @@ active-cleanup RHS value obligation; validating only present lifecycle events
 is insufficient, because a missing transfer could leave the published source
 scheduled for cleanup. This requirement is independent of the destination's
 representation or whether it owns a body-local drop obligation.
+
+Owning payload-enum assignment uses the same two referent witnesses. Its
+value slot (a fresh payload construction, call result or moved binding)
+replaces either a place this body tracks, through that place's `Reinitialize`
+ownership event, or the complete referent of a checked mutable reference
+carrier or source mutable call-result loan, where MIR records no local
+ownership event and the `Replace` keeps target zero. The paired
+`CleanupBeforeAssign` drains the old alternative and retires its native shell;
+the commit move-assigns the slot into the same referent spelling and destroys
+only the moved-from slot shell. A borrowed form naming a local `Replace`
+target fails closed.
 
 Requiring a destination obligation for an element, owned field or checked referent
 would retire the same storage twice, so either publication fails closed when

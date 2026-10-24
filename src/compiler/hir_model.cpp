@@ -1279,6 +1279,17 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                         return parameter.kind == SemanticType::UniqueOwner ||
                                parameter.kind == SemanticType::SharedPointer;
                       });
+      // A conversion publishing its argument's owner is a dependent value
+      // (L-OWN-02): borrowed state, neither reassignable nor transferable.
+      SemanticTypeTraits expectedTraits =
+          owner != nullptr ? owner->traits : SemanticTypeTraits{};
+      if (construction != nullptr && construction->dependentTextPublication) {
+        expectedTraits.copyAssignable = false;
+        expectedTraits.moveAssignable = false;
+        expectedTraits.containsBorrowedState = true;
+        expectedTraits.transferCapable = false;
+        expectedTraits.shareCapable = false;
+      }
       if (value == nullptr || construction == nullptr || target == nullptr ||
           owner == nullptr || !listed.insert(entry.value).second ||
           value->kind != HirValueKind::DirectInitializer ||
@@ -1300,7 +1311,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value->info != ExpressionInfo{.type = owner->type,
                                         .category = ValueCategory::Value,
                                         .access = AccessMode::ReadOnly,
-                                        .traits = owner->traits} ||
+                                        .traits = expectedTraits} ||
+          value->dependentTextPublication !=
+              construction->dependentTextPublication ||
           value->parameterTypes != construction->parameterTypes ||
           value->operands.size() != value->parameterTypes.size() ||
           value->operands.size() != 1 + construction->defaultArguments.size() ||

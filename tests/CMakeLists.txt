@@ -987,6 +987,15 @@ set_tests_properties(instance_reuse PROPERTIES TIMEOUT 900)
 add_executable(gti_reflection_tests "${PROJECT_SOURCE_DIR}/tests/reflection_tests.cpp")
 target_link_libraries(gti_reflection_tests PRIVATE gti_compiler)
 add_test(NAME reflection_semantics COMMAND gti_reflection_tests)
+add_executable(gti_general_requires_tests general_requires_tests.cpp)
+target_link_libraries(gti_general_requires_tests PRIVATE gti_compiler)
+add_test(NAME general_requires_semantics
+  COMMAND gti_general_requires_tests "${PROJECT_SOURCE_DIR}")
+set_tests_properties(general_requires_semantics PROPERTIES TIMEOUT 120)
+add_test(NAME general_requires_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/173-general-requires.gti" --include-o1)
+set_tests_properties(general_requires_runtime PROPERTIES TIMEOUT 180)
 add_executable(gti_callable_return_type_tests "${PROJECT_SOURCE_DIR}/tests/callable_return_type_tests.cpp")
 target_link_libraries(gti_callable_return_type_tests PRIVATE gti_cpp_backend)
 add_test(NAME callable_return_type COMMAND gti_callable_return_type_tests)
@@ -1199,6 +1208,21 @@ add_test(NAME view_field_payloads_runtime
                  "${PROJECT_SOURCE_DIR}/tests/view_field_payloads_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(view_field_payloads_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME view_field_conversions_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/view_field_conversions_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(view_field_conversions_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME dependent_reference_results_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/dependent_reference_results_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(dependent_reference_results_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME view_field_nesting_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/view_field_nesting_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(view_field_nesting_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME recursive_text_relays_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/recursive_text_relays_runtime_test.py"
@@ -1209,6 +1233,11 @@ add_test(NAME failure_free_passive_moves_runtime
                  "${PROJECT_SOURCE_DIR}/tests/failure_free_passive_moves_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(failure_free_passive_moves_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME failure_free_passive_constructors_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/failure_free_passive_constructors_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(failure_free_passive_constructors_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME constructor_copy_after_formal_write_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/constructor_copy_after_formal_write_runtime_test.py"
@@ -1224,6 +1253,11 @@ add_test(NAME class_store_destinations_runtime
                  "${PROJECT_SOURCE_DIR}/tests/class_store_destinations_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(class_store_destinations_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME array_field_constructor_elements_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/array_field_constructor_elements_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(array_field_constructor_elements_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME assignment_result_whole_value_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/assignment_result_whole_value_runtime_test.py"
@@ -1254,6 +1288,11 @@ add_test(NAME reference_owned_field_replacement_runtime
                  "${PROJECT_SOURCE_DIR}/tests/reference_owned_field_replacement_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(reference_owned_field_replacement_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME payload_enum_reference_assignment_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/payload_enum_reference_assignment_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(payload_enum_reference_assignment_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME raw_owned_field_replacement_runtime
          COMMAND ${Python3_EXECUTABLE}
                  "${PROJECT_SOURCE_DIR}/tests/raw_owned_field_replacement_runtime_test.py"
@@ -2796,6 +2835,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_deferred_range.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_defaults.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_class_assertions.gti"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_type_facts.gti"
   )
   set_tests_properties(reflection_runtime PROPERTIES TIMEOUT 900)
   add_test(
@@ -4952,6 +4992,11 @@ if(Python3_Interpreter_FOUND)
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/generic_contract_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME general_requires_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/general_requires_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(general_requires_lsp PROPERTIES TIMEOUT 60)
     add_test(
       NAME source_text_lsp
       COMMAND "${Python3_EXECUTABLE}"

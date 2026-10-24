@@ -1,5 +1,329 @@
 # Compiler Verification
 
+## Dependent reference results (0.468.1)
+
+`view_fields` covers the use-after-free closed in 0.468.1 in
+`testDependentReferenceResults`. On 0.465.2-0.468.0 a reference that a call
+returned into a value over a local owner's text was not that value's
+dependent field: passing it to a function that stores the text, copying or
+moving it out, storing it in a global, binding a reference local and passing
+that, or returning a copy compiled, and the returned copy read freed memory
+at run time. Each of those shapes is now `GTI-S2045` (`GTI-S2017` when the
+owner is changed while the reference lives), never `GTI-B`. Switching on the
+result in place, through a reference local, or through a reference local
+bound to another, and every escape over literal text, still compile and
+verify. A callee whose returns are not field paths of its origin is refused
+over dynamic text with `GTI-S2045`.
+
+An accessor returning one of several receiver fields (`either`) relays them
+again, as it did before 0.468.0's payload-field rule: `switch
+(owned.either(true))` over a local owner's text compiles, and its escapes
+are refused. The test checks that `either` declares nothing and that each of
+four uses on a contract formal (passing, a storing `switch`, and the same
+inside the class) requires both fields, with MIR deriving each requirement
+independently (clearing it fails verification). Passing an accessor's
+result on a formal uses only the field it designates: with a second text
+field holding a local owner's text, `keepWordRef(pair.wordRef())` compiles,
+where 0.465.2-0.468.0 reported `GTI-B0001` because MIR counted the reference
+as a whole use of the formal. `dependent_reference_results_runtime` runs the
+accepted forms in every mode.
+
+## Failure-free passive constructors (RT-12, 0.468.0)
+
+`optimizer_foundation` covers the owned failure closure's passive values in
+`testPassiveValueConstructorFailureEffects`, over user types unrelated to
+`expected`.
+- `Slot(int32_t)`, `Slot()` and `Slot(mut Token)` build a payload enum over
+  an integral enum, a scalar and a consuming `Token::take() &&` call;
+  `Token(Mode, int32_t)` and `Holder(Stamp, Mode)` take an integral enum and
+  a passive record. Each is failure-free, and `ready_slot` constructs its
+  `Slot` with no failure edge.
+- `Divided` (a checked division beside the payload) and `Keeper` (a payload
+  alternative holding a class with a destructor) stay may-raise.
+- Five forgeries turn the derivation conservative and fail verification: a
+  payload construction with borrowed state or a missing alternative, a
+  receiver call that is not consuming or drops its slot transfer, and an
+  actively cleaned record formal.
+
+`failure_free_passive_constructors_runtime` runs the same shapes in every
+mode, including a move-only record moved into a payload and a field read
+through a construction that consumed a prepared record, beside a division
+that still fails at its source location. With the probe in
+`docs/plans/optimization.md`'s RT-12 row, the 0.448.4 result builders are
+failure-free again: `expected<int32_t, E>` over an integral enum,
+`expected<void, int32_t>`, `expected<Record, int32_t>` and `unexpected(E)`.
+`std::string` results stay may-raise.
+
+Two backend gaps surfaced, each a `GTI-B0001` on existing fixtures and fixed
+in the C++ emitter: a plain constructor did not accept a move-only passive
+class parameter (`reference_expected_assignment.gti`), and a field read
+through a failure-free construction that consumed a prepared argument had no
+staging slot (`Wrap(build(raw)).outer.inner.id`). Emitter tests that pinned
+the fallible publication form for passive results now accept the plain form
+(`slot.construct_from(...)`, `slot.construct(...)`) or keep a checked sibling
+that stays fallible, so the failure-form vocabulary keeps its coverage.
+Batch admission then caught a third: `shared_exit_cleanup_runtime` aborted
+with "lifetime slot escaped without Drop" when a destructor failed during
+the scope-exit cleanup of `return unexpected(Err::Late);`. The now
+failure-free `expected` construction was deferred to the Return, leaving its
+staged `unexpected_value` live on the destructor's failure path. The failure
+form now builds a returned construction at its MIR position whenever a
+failure can occur before the Return (`returnConstructCrossesFailure`).
+
+## Nested dependent values (0.468.0)
+
+`view_fields` covers phase 3a in `testNestedValues`.
+- A `Report` storing a `Diag` whole, an `Outer` holding a `Report`, an
+  `std::optional<Token>` read through `*o` and `value()`, and an
+  `expected<int, Diag>` built from `unexpected(Diag(...))` and returned by
+  `check(std::string&)` verify over a local owner. Read-only callees taking
+  the optional or expected by reference accept them, and storing callees
+  accept literal values.
+- MIR rejects each nested publication with its leaf dropped from the path,
+  and each of `keepDeref`, `keepCopy` and `keepError` with its prefix
+  requirement cleared: it derives the requirement from the callee's
+  returned class reference itself.
+- Storing nested text, copying a nested value out (`Diag d = r.diag;`,
+  `Token t = *o;`), passing a value whose text sits in a class field to a
+  function, passing the optional or expected to a storing callee, and
+  appending to the owner while the value or a copied view lives are each
+  rejected at source (`GTI-S2045` or `GTI-S2017`), never with `GTI-B`.
+
+`view_field_nesting_runtime` runs the fixture in every mode. Two 2c defects
+surfaced while testing this phase. An explicit construction from a moved
+dependent value, `expected<int, std::string_view>(std::move(u))`, continued
+`u`'s loan with `u`'s path, so `kept = r.error();` compiled into a
+use-after-free (ASan). And MIR derived whole-value relays for owned classes
+that semantics never declared, a `GTI-B0001` on `owned_expected_error`. Both
+are fixed, and `testContextualConstruction` covers the first.
+
+## Conversions, field relays and returns (0.468.0)
+
+`view_fields` covers phase 2c in four tests.
+- `testContextualConstruction`: `std::optional<std::string_view> maybe =
+  input.view()`, a `Token` over a view binding, `expected<int,
+  std::string_view> failed = unexpected(input.view())` and
+  `std::move(failure).error()` verify. Storing the optional's or the failure's
+  text, appending to the owner while the value or a copied view lives, and
+  returning a converted view of a local owner are rejected at source
+  (`GTI-S2045` or `GTI-S2017`), never with `GTI-B`.
+- `testFieldRelays`: `Wrap(token)` storing `token.text` as a payload,
+  `Copy` over a temporary and a moved token, and `Named` reading the field
+  through an accessor verify. MIR rejects each of the five relays, `parse`'s
+  conversion into `expected` included, when its path is extended or its
+  source field is cleared. A constructor that also stores the field
+  (`Leaky`), stores it twice (`Twice`), and storing the relayed text are
+  `GTI-S2045`.
+- `testDependentReturns`: `parse`, `parseAgain` returning `parse(input)`,
+  `tokenOf`, `viaLocal`, `wordOf` and `find` verify, with `return 0;` and
+  `std::nullopt` as ownerless alternatives. MIR rejects each of the six
+  functions with its `dependentTextReturn` flag cleared, or with its path
+  removed. Storing the result, appending to or moving the owner while it
+  lives, and a temporary owner are rejected at source. So are returns over a
+  local, by-value, `mut` or second-formal owner, and a return of `parse`
+  over the returning function's own local.
+- `testPayloadFieldUses`: methods that copy, pass by value or by reference,
+  store, return a reference to, or move and switch on a payload-enum field,
+  and consuming methods that store or return a moved text field, verify over
+  literal values. MIR rejects each of these functions with its requirements
+  cleared, so it derives them independently. Over a local owner each use is
+  `GTI-S2045`; appending to the owner while a relayed view lives is
+  `GTI-S2017`.
+
+`view_field_conversions_runtime` runs the fixture in every mode. The two
+tests that asserted a dependent value cannot be returned now return one over
+a reference formal and reject one over a local owner.
+
+0.463.0 compiled a heap-use-after-free: a read-only method copied
+`this.word` into a local, switched on it and stored the payload in a
+global, and ASan reported it once the owner reallocated. Passing the field
+by value or by reference, storing it, and passing on a returned reference to
+it escaped the same way. `testPayloadFieldUses` covers each shape.
+
+## Payload enums replaced through references (0.467.4)
+
+`payload_enum_reference_assignment_runtime` runs
+`payload_enum_reference_assignment.gti`.
+- A payload enum whose alternatives own cleanup (a noisy class, a
+  `std::string`) is replaced through a member call's `mut slot&` result, a
+  free function's reference result, a reference local, a reference parameter,
+  `std::optional<slot>::value()` and a reference local bound from it.
+- Each old alternative's destructor reports once, before the new value moves
+  in, and each referent's owner drops the final value once at its own end.
+- When the old alternative's cleanup raises (`GTI-R0001`, exit status 70),
+  only the unpublished replacement drops; the retired referent drops nothing.
+- Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan.
+  The main compiler (`2490f92b`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`, `testOwningPayloadEnumReferentReplacement`
+checks:
+- a call's mutable reference result, a reference local and a reference
+  parameter each drain the old alternative in exactly one replacement cleanup,
+  then move the staged slot into the same `(*carrier)` spelling and destroy
+  only the slot's shell;
+- a payload whose cleanup cannot fail uses the same shape in the plain form;
+- a borrowed Assign forged to name a local `Replace` target is refused.
+
+Mutation checks:
+- without the `Replace` target-zero requirement, the forgery is accepted;
+- with main's proof, the three replacements and the plain form are refused.
+
+An `--emit-cpp` differential against main `2490f92b`, with one
+`GTI_STDLIB_PATH` for both compilers, covered all 1,835 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O1, and the 137 of them
+that declare an `enum class` at O0 and O3:
+- 1,464 programs at O1 and 127 at each of O0 and O3 emit byte-identical C++;
+  the 370 (O1) and 9 (O0, O3) pairs refused or timing out with both compilers
+  report identical diagnostics;
+- only the new fixture changes status, from `GTI-B0001` to success.
+Previously admitted assignments take the unchanged tracked-place branch of
+the proof, so only programs main refuses can change.
+
+The `std::optional` cases construct the optional explicitly. On main, an
+implicit conversion from a payload enum into any class (`wrap t =
+shape::circle(3)`, `std::optional<label> t = label::text(...)`) gives the class
+value the enum's borrow alternatives, and MIR verification then fails with
+"complete dependency set does not match its typed result domain" at the first
+receiver use, independent of assignment. That is tracked separately.
+
+## Array fields from constructor parameters (0.467.3)
+
+`array_field_constructor_elements_runtime` runs
+`array_field_constructor_elements.gti`. Constructors of user-defined structs
+build a fixed-array field from copied parameters (`corners({a, b})`), from a
+moved and a copied parameter beside a fresh element, from nested rows of a
+copy and a move, and from whole array parameters as rows; a class with a
+counting destructor moves both parameters into its array field; and a local
+array takes a moved element. Fields are read at a run-time index. The output
+shows each element's value, that copied parameters are still readable, and
+that every counted object is destroyed exactly once, as an element. With an
+argument the first index is out of range and fails with `GTI-R0007` (exit
+status 70). Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and
+ASan/UBSan. The 0.467.2 compiler stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_lifecycle`, `testArrayFieldConstructorElements`
+checks that the constructors spell their parameters inside the field's
+initializer (`std::array<Point, 2>{a, std::move(b)}`, a whole row beside a
+nested row, `std::move` of both counted owners) with no staged local. An
+element class without a copy constructor, a moved element whose obligation
+does not leave at the aggregate, a lifecycle-free move of a class with a
+destructor, and a failure site on a moved element each refuse the body.
+
+An emitted-C++ differential against the 0.465.6 emitter, run on every program
+under `tests/fixtures`, `tests/coverage` and `examples` at O0 and O3 with one
+`GTI_STDLIB_PATH` (1832 programs, 3664 runs; `namespace-depth-63` excluded
+for its compile time), leaves 2906 runs identical and 740 refused by both
+with the same codes. No program is newly refused or changes its refusal, and
+nothing times out. Only the new fixture becomes accepted. Text changes in 8
+programs. Six spell staged element copies inline: `012-fixed-arrays`, three
+`a42-*` reproducers, `passive_fixed_array_values` and `raw_record_containers`.
+`class_array_arguments` and `storage_fixed_array_emplacement` gain a plain
+constructor for a by-value array of passive classes, so their callers drop a
+dead failure branch. The owning runtime tests of all eight pass.
+
+## Copied dependent payload views (0.467.2)
+
+`view_fields` covers the copy in `testCopiedPayloadBindings`.
+- A switch's by-value binding of a dependent payload is copied into a local,
+  and that local is copied again. Both copies verify and carry the payload's
+  `Stored` loan.
+- Dropping either copy from the loan's carriers is rejected: MIR derives
+  that each copy holds the owner's text (`verifyDependentTextCarriers`), so
+  it must carry a loan that retains the owner.
+- `view_field_payloads_runtime` runs copies of a local enum's binding and of
+  a `line.word` binding in every mode.
+
+Fourteen probes ran on main's compiler and this change's. Seven reported
+`GTI-B0001` on main and now build and run: the plain copy, a copy chain, a
+`default` arm, a generic enum, a payload enum held in a field, a loop, and a
+two-payload variant. Five source rejections are unchanged: assigning the view
+into an existing binding, storing it, republishing it in a payload or
+constructor, and mutating the owner while a copy is live (`GTI-S2045`,
+`GTI-S2017`). Two already built and still do: `id(value)` with
+`std::string_view& r = value;`, and the carrier program of PR #297's
+`testDerivedCarriers`.
+## Text members through checked `operator->` (0.467.1)
+
+`testArrowNonClassReferents` in the `ownership` suite analyzes a class with
+`std::string_view& operator->()` and a `std::optional<std::string_view>`.
+`label->size()`, `maybe->size()`, `label->end()` and `label->empty()` verify,
+lower to the `StringViewSize` and `StringViewEmpty` intrinsics, and leave no
+MIR value of unknown type, which was the backend's refusal before the fix.
+`->` through an `int&` or `c_string&` result, as a call or a field read, is
+`GTI-S2000`; an unknown `string_view` member or a `size(1)` is `GTI-S2035`;
+none reports `GTI-B`.
+
+`operator_relay_runtime` runs `arrow_text_members.gti` in all eight native
+modes, including the sanitized one. It covers literal-backed and owner-backed
+views behind a user class, a paired read-only/`mut` arrow, a reference
+parameter, `end()`/`rend()` (which take the arrow's view as their first
+argument), `std::optional<std::string_view>`, and a generic `Handle<T>` whose
+`T&` arrow reaches an unrelated `Counter` through a `countable<T>`
+requirement. A second run calls `->size()` on an empty optional and expects
+its `GTI-R0008` failure from `<std/optional>` before the member runs.
+Example 170 adds `maybe->size()`.
+
+The census gains one body for example 170, the `optional<string_view>`
+`operator->` instance: 163 bodies, 110 generated items and 59 concrete
+instance adapters. The unit test fails three expectations against main's
+three changed units, including that main gave `l->size(1)` no diagnostic.
+
+The same-root differential against main at 0.465.1 emitted C++ for 1,852
+programs in `tests/` and `examples/` at `-O0` and `-O3`, excluding
+`namespace-depth-63.gti`. All 2,950 compiles that main accepts emit
+byte-identical C++. Only example 170 and `arrow_text_members.gti` change:
+main refused both with `GTI-B0001`, and both now build.
+
+`maybe->begin()` still reports `GTI-B0001` in MIR construction, as
+`maybe.value().begin()` and `b.get().begin()` did before this change: an
+iterator that stores a view reference returned by a call gets no stored
+dependency for the view's owner. Binding the reference first works.
+
+## Derived dependent-text carriers (internal)
+
+`view_fields` `testDerivedCarriers` publishes one local owner through a class
+construction, a payload construction and a constructor that stores a
+payload-enum field. Fourteen local bindings then hold its text:
+- the value, a copy and a move;
+- a designated field read and a copy of that view;
+- a relay `first(token)`, a method relay `token.name()` and a formal relay
+  `id(field)`;
+- a view copied through `token.ref()`;
+- a relayed temporary `first(Token(input.view(), 2))`;
+- the payload enum and the nested-path class;
+- two bound payloads, one of them through `line.word`.
+
+The program verifies. MIR rejects each of these mutations with "local binding
+holding dependent text does not carry a loan that retains its owner":
+- dropping any binding from a loan it carries;
+- moving the binding onto the uncarried loan of the owner's first `view()`
+  call;
+- clearing the stored dependency of `token.ref()`'s result loan.
+
+The same mutations run against main at 0.465.0, its `mir_text_contracts.cpp`
+linked into this build:
+- 12 of the 14 drops, 13 of the 14 moves and the cleared dependency verified;
+- the rest failed unrelated shape checks.
+
+`ownerless_text_contracts` `testTextReferenceRelays` now expects MIR to reject
+the copied view without its carrier, and the relay loan without its stored
+dependency. Before, its comment recorded both as semantic decisions.
+
+An `int` read through a dependent value's `int&` accessor also verifies. An
+earlier draft of the rule rejected it, because that accessor's loan has the
+publication as its stored dependency; holding is now typed.
+
+A same-root differential compares this head's compiler with the same build
+linked against main's `mir_text_contracts.cpp`, its only compiled difference.
+Both use one `GTI_STDLIB_PATH`. Against main at 0.465.3 it emitted C++ at -O0
+and -O3 for all 1,853 programs under `tests/` and `examples/`, which is 3,706
+compiles per compiler. `namespace-depth-63`, which times out with both
+compilers, is excluded. Every exit status, refusal code set and emitted C++
+byte matched: both compilers accepted 2,956 compiles and refused 750. Main's
+next change before integration, batched validation, changed no compiled
+source.
+
+
 ## Passive class moved beside a passive copy (0.465.6)
 
 `passive_class_move_and_copy_runtime` runs `passive_class_move_and_copy.gti`.
@@ -38,6 +362,7 @@ An `--emit-cpp` differential against main `6333da11`, with one
 - 3,644 of 3,646 compilations emit byte-identical C++, and failing pairs
   report identical diagnostics;
 - only the new fixture changes status, from `GTI-B0001` to success.
+
 
 ## Classes holding function items (0.465.3)
 
@@ -84,6 +409,7 @@ An `--emit-cpp` differential against main `6333da11`, with one
 No existing program, including the standard library's generic callable
 adapters, changes text. Closure captures and call inputs of a function-item
 class emit the same C++ as before.
+
 
 ## Class stores into named places and element fields (0.465.1)
 
@@ -311,8 +637,9 @@ remain regression coverage for the shared completion and lexical paths.
   and storing `result.value()` are `GTI-S2045`. Appending to the owner while
   a copied view lives is `GTI-S2017`. Before the dereference relay was
   classified, `std::string_view view = *maybe;` followed by an append
-  compiled into a dangling view. MIR still does not check binding carriers,
-  so only these source rules prevent that.
+  compiled into a dangling view. At 0.463.0 MIR did not yet check binding
+  carriers, so only these source rules prevented that; see
+  [Derived dependent-text carriers](#derived-dependent-text-carriers-internal).
 - `testTypeParameterFormals`: `std::vector<Token>::push_back` of a literal
   value verifies (`GTI-B0001` in 0.462.0), MIR rejects its instance with the
   whole-formal requirement cleared, and pushing a value over a local owner

@@ -222,6 +222,7 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   const RegistrationFloor &floor = registrationFloor;
   registerNamespaces(declarations, {});
   registerNamespaceAliases(declarations, {});
+  registerConstraintPredicateDeclarations(declarations, {});
   registerTypeAliases(declarations, {});
   registerEnums(declarations, {});
   registerConcepts(declarations, {});
@@ -1960,6 +1961,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     beginTypeParameterScope(constructorInfo->genericParameters);
     requirementsValid = beginRequirementScope(constructorInfo);
   }
+  if (stmt.requiresClause())
+    recordConstraintPredicateUses(stmt.requiresClause()->requirements());
   const SemanticType ownerType = SemanticType::classType(owner.id);
   const SymbolId symbol = recordToolingSymbol(
       stmt.name(), SymbolKind::Constructor,
@@ -3020,6 +3023,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   const bool staticMethod =
       functionInfo != nullptr && functionInfo->staticMember;
   const bool requirementsValid = beginRequirementScope(functionInfo);
+  if (stmt.requiresClause())
+    recordConstraintPredicateUses(stmt.requiresClause()->requirements());
   // A conversion operator is named by its target, whose tokens are type
   // references of their own, so its occurrence is the `operator` keyword.
   const bool conversionOperator =
@@ -3466,7 +3471,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         (result.kind == SemanticType::Reference ||
          typeTraits(result).containsBorrowedState ||
          (functionInfo != nullptr &&
-          functionInfo->returnBorrowOrigin != BorrowOriginKind::None))) {
+          functionInfo->returnBorrowOrigin != BorrowOriginKind::None &&
+          !receiverTextFieldResult(result, functionInfo->returnBorrowOrigin,
+                                   functionInfo->returnBorrowFields)))) {
       report(stmt.name(),
              std::string("A consuming ") +
                  (stmt.operatorName() ? "operator" : "method") +
@@ -4810,6 +4817,7 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
   const SemanticType valueType =
       analyzeInitializer(stmt.value(), currentReturnType, false, true);
   contextualReturnValue = enclosingReturnValue;
+  noteDependentTextReturn(stmt.value());
   const bool contextualInitialization =
       recordsDeclarationConversion(*stmt.value());
   recordRawResult(stmt.value());
@@ -4890,7 +4898,13 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   loanFlow.switchBoundaries.push_back({.region = loanFlow.currentRegion,
                                        .order = loanFlow.currentOrder,
                                        .statement = &stmt});
+  // A payload-enum field subject is observed in place, not copied out.
+  const Expr *subject = stmt.expression().get();
+  while (const auto *group = exprAs<Grouping>(subject))
+    subject = group->expression() ? group->expression().get() : nullptr;
+  const Expr *enclosingSubject = std::exchange(observedSwitchSubject, subject);
   const SemanticType subjectType = analyze(stmt.expression());
+  observedSwitchSubject = enclosingSubject;
   if (!instanceAnalysisActive) {
     const auto *receiver = receiverStateSymbol();
     const auto *subjectPlace = semanticModel.findPlace(*stmt.expression());
@@ -5319,6 +5333,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           else if (Symbol *carrier = resolveMutable(*payload.name)) {
             attachLoanCarrier(textLoan->id, *carrier, symbol, false);
             payload.binding.traits.containsBorrowedState = true;
+            payload.binding.retainedLoan = textLoan->id;
           }
         }
         if (!rawPointerFieldPaths(payload.binding.type).empty())
@@ -5824,6 +5839,7 @@ auto SemanticVisitor::Impl::visitConceptDecl(const ConceptDecl &stmt) -> void {
     return;
   }
   const RegisteredConcept &conceptInfo = concepts[found->second - 1];
+  recordConstraintPredicateUses(stmt.requirements());
   attachDeclarationDocumentation(conceptInfo.symbol, stmt);
   semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
                                   .span = tokenSpan(stmt.name()),
@@ -6147,12 +6163,17 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   }
   // A value whose text field or payload holds dynamic text carries that
   // dependency itself (L-OWN-02). Only a local binding can retain it.
+  // A contextual construction that publishes its argument's owner converts
+  // the initializer into such a value of the declared type.
+  const bool contextualText =
+      initializer && contextualTextValue(*initializer, declaredType);
   const bool ownerDependentValue = !ownerDependentText &&
                                    (declaredType.kind == SemanticType::Class ||
                                     declaredType.kind == SemanticType::Enum) &&
                                    initializerInfo != nullptr &&
-                                   isTextDependentValue(*initializerInfo) &&
-                                   initializerInfo->type == declaredType;
+                                   ((isTextDependentValue(*initializerInfo) &&
+                                     initializerInfo->type == declaredType) ||
+                                    contextualText);
   // A dependent field of a dependent value has no loan of its own yet: a
   // switch observes it in place.
   const Expr *source = initializer.get();
@@ -6166,7 +6187,21 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     else
       break;
   }
-  if (ownerDependentValue && exprAs<Get>(source) != nullptr) {
+  // So does a reference relay to a nested text class: a dependent place
+  // other than a named value is observed, not copied out. A reference local
+  // bound to such a place is that place.
+  const auto *sourceVariable = exprAs<Variable>(source);
+  const Symbol *sourceSymbol =
+      sourceVariable == nullptr ? nullptr : resolve(sourceVariable->name());
+  const bool aliasSource =
+      sourceSymbol != nullptr &&
+      sourceSymbol->type.kind == SemanticType::Reference &&
+      sourceSymbol->variableDeclaration != nullptr &&
+      dependentReferenceAliases.contains(sourceSymbol->variableDeclaration);
+  if (ownerDependentValue && !contextualText &&
+      (exprAs<Get>(source) != nullptr || aliasSource ||
+       (sourceVariable == nullptr &&
+        initializerInfo->category == ValueCategory::Place))) {
     consumeTextDependentValue(initializer);
     report(expressionToken(initializer),
            "This field holds dynamic text from a local owner; a switch on "
@@ -6184,8 +6219,29 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
              "GTI-S2045");
     }
     BindingInfo updated = *semanticModel.findBinding(stmt);
-    updated.traits = initializerInfo->traits;
+    updated.traits = contextualText
+                         ? textDependentValueInfo(declaredType).traits
+                         : initializerInfo->traits;
     semanticModel.record(stmt, std::move(updated));
+  }
+
+  // A reference local bound to a call's dependent reference result, or to
+  // another such local, aliases it (L-OWN-02). A reference to a dependent
+  // value's own field stays unsupported.
+  if ((exprAs<Call>(source) != nullptr || aliasSource) &&
+      declaredType.kind == SemanticType::Reference &&
+      declaredType.arguments.size() == 1 && initializerInfo != nullptr &&
+      initializerInfo->category == ValueCategory::Place &&
+      isTextDependentValue(*initializerInfo) &&
+      initializerInfo->type == declaredType.arguments.front()) {
+    consumeTextDependentValue(initializer);
+    if (globalStorage || instanceField)
+      report(stmt.name(),
+             "A reference into a value holding dynamic text cannot be "
+             "stored because the value's owner dependency is local.",
+             "GTI-S2045");
+    else
+      dependentReferenceAliases[&stmt] = initializer.get();
   }
 
   // A contextual construction or conversion is a fresh value of the declared
@@ -7485,19 +7541,27 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   }
 
   if (const auto *member = exprAs<Get>(expr.callee().get())) {
-    const SemanticType *objectType = semanticModel.findType(*member->object());
-    if (objectType && containsOpenTypeParameter(*objectType)) {
+    // `->` designates the place its one checked access step returns, so a
+    // builtin or required member is looked up on that place's type exactly
+    // as `.` looks it up on the written object. A rejected step has already
+    // been diagnosed by the callee's analysis.
+    const SemanticType receiverType =
+        member->access().kind == TokenKind::ARROW &&
+                calleeType == SemanticType::Unknown
+            ? SemanticType::Unknown
+            : memberAccessObjectType(*member);
+    if (containsOpenTypeParameter(receiverType)) {
       if (const auto result = symbolicReadMemberReturnType(
-              *objectType, member->name().lexeme)) {
+              receiverType, member->name().lexeme)) {
         std::optional<ExpandedStructuralRequirement> selected;
         bool ambiguous = false;
         for (const auto &requirement : activeStructuralRequirements()) {
           if (requirement.kind != StructuralConstraintKind::ReadMember ||
               requirement.memberName != member->name().lexeme ||
               requirement.arguments.size() != argumentTypes.size() + 2 ||
-              requirement.arguments[0] != *objectType ||
+              requirement.arguments[0] != receiverType ||
               (requirement.mutableReceiver &&
-               !isMutableObject(member->object())))
+               !memberReceiverIsMutable(*member)))
             continue;
           bool matches = true;
           for (std::size_t index = 0; index < argumentTypes.size(); ++index)
@@ -7541,14 +7605,13 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         return;
       }
     }
-    if (objectType != nullptr &&
-        objectType->kind == SemanticType::TypeParameter) {
+    if (receiverType.kind == SemanticType::TypeParameter) {
       const bool generatedRangeEndpoint =
           member->name().generated && (member->name().lexeme == "begin" ||
                                        member->name().lexeme == "begin_mut" ||
                                        member->name().lexeme == "end");
       const std::optional<SemanticType> result =
-          symbolicRangeMemberReturnType(*objectType, member->name().lexeme);
+          symbolicRangeMemberReturnType(receiverType, member->name().lexeme);
       if (result &&
           (member->name().lexeme == "size" || generatedRangeEndpoint)) {
         if (hasExplicitGenericArguments) {
@@ -7578,7 +7641,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         return;
       }
     }
-    if (objectType != nullptr && objectType->kind == SemanticType::Array) {
+    if (receiverType.kind == SemanticType::Array) {
       if (hasExplicitGenericArguments) {
         report(expr.paren(),
                "Fixed array member functions do not take generic arguments.");
@@ -7590,7 +7653,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       analyzeArrayMemberCall(expr, *member, argumentTypes, expr.paren());
       return;
     }
-    if (objectType != nullptr && objectType->kind == SemanticType::StringView) {
+    if (receiverType.kind == SemanticType::StringView) {
       if (hasExplicitGenericArguments) {
         report(expr.paren(),
                "String-view member functions do not take generic arguments.",
@@ -8043,6 +8106,68 @@ auto SemanticVisitor::Impl::analyzeTypeParameterCall(
            "GTI-S2029");
     valid = false;
   }
+  if (valid && targetType.kind == SemanticType::Class) {
+    // Concrete construction replaces the open type-parameter intrinsic.
+    // Retaining both would publish a callable intrinsic and a constructor
+    // selection for one expression, with incompatible HIR/MIR contracts.
+    semanticModel.suppressInheritedCall(expr);
+    auto arguments = analyzeContextualCallArguments(expr.arguments());
+    if (expr.arguments().size() == 1 &&
+        analyzeExplicitConversion(expr, expr.arguments().front(),
+                                  arguments.types.front(), targetType,
+                                  expr.paren()))
+      return;
+    analyzeConstructorCall(expr, targetType.classId, targetType.arguments,
+                           targetType.valueArguments, arguments.types,
+                           expr.arguments(), expr.paren());
+    return;
+  }
+  if (valid && targetType.kind == SemanticType::TypeParameter) {
+    std::vector<ExpandedStructuralRequirement> constructions;
+    for (const auto &requirement : activeStructuralRequirements())
+      if (requirement.kind == StructuralConstraintKind::ReadMember &&
+          requirement.memberName == "$construct" &&
+          requirement.arguments.size() == expr.arguments().size() + 2 &&
+          requirement.arguments[0] == targetType &&
+          requirement.arguments[1] == targetType)
+        constructions.push_back(requirement);
+    if (!constructions.empty()) {
+      const auto arguments = analyzeContextualCallArguments(expr.arguments());
+      for (const auto &requirement : constructions) {
+        bool matches = true;
+        for (std::size_t index = 0; index < arguments.types.size(); ++index)
+          matches =
+              matches && callArgumentMatches(requirement.arguments[index + 2],
+                                             arguments.types[index],
+                                             expr.arguments()[index]);
+        if (!matches)
+          continue;
+        if (requirement.requiresUnsafe && unsafeDepth == 0) {
+          report(expr.paren(),
+                 "The required construction needs an unsafe block.",
+                 "GTI-S2029");
+          currentType = SemanticType::Unknown;
+          return;
+        }
+        const std::span parameters(requirement.arguments.begin() + 2,
+                                   requirement.arguments.end());
+        validateMutableCallArgumentLoans(parameters, expr.arguments(),
+                                         expr.paren());
+        validateCallPlaceExclusivity(parameters, expr.arguments(),
+                                     expr.paren());
+        // This is open-body proof only. Concrete reanalysis above selects the
+        // real constructor/conversion before any HIR/MIR executable call
+        // exists.
+        currentType = targetType;
+        return;
+      }
+      report(expr.paren(),
+             "The active requirements do not prove this exact construction.",
+             "GTI-S2029");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+  }
   if (!expr.arguments().empty() &&
       exprAs<PackExpansion>(expr.arguments().back().get()) != nullptr) {
     const ContextualCallArguments analysis =
@@ -8115,18 +8240,6 @@ auto SemanticVisitor::Impl::analyzeTypeParameterCall(
                  "' requires the default-initialization capability.",
              "GTI-S2029");
       valid = false;
-    }
-    // Generic instance analysis substitutes T before revisiting T(). Once
-    // that substitution is a class, resolve the exact zero-argument
-    // constructor like any other class construction. Leaving the generic
-    // intrinsic in place loses the constructor instance from HIR/MIR and
-    // can produce a declaration with no definition after the MIR cutover.
-    if (valid && targetType.kind == SemanticType::Class) {
-      semanticModel.suppressInheritedCall(expr);
-      analyzeConstructorCall(expr, targetType.classId, targetType.arguments,
-                             targetType.valueArguments, {}, expr.arguments(),
-                             expr.paren());
-      return;
     }
     currentType = valid ? targetType : SemanticType::Unknown;
     if (valid) {
@@ -10226,6 +10339,58 @@ auto SemanticVisitor::Impl::visitLayoutQueryExpr(const LayoutQuery &expr)
 
 auto SemanticVisitor::Impl::recordMemberRequirementReceiver(
     const MemberRequirement &query, const SemanticType &type) -> void {
+  if (query.isExpressionRequirement()) {
+    std::unordered_map<std::string, std::pair<SymbolId, SemanticType>>
+        parameters;
+    for (std::size_t index = 0; index < query.parameters().size(); ++index) {
+      const auto parameterType = typeOf(query.parameters()[index]);
+      const auto &binding = query.bindings()[index];
+      const auto symbol = recordToolingSymbol(
+          binding, SymbolKind::RequirementParameter,
+          qualifiedName(currentNamespace, binding.lexeme), parameterType);
+      parameters.emplace(binding.lexeme, std::pair{symbol, parameterType});
+      semanticModel.recordOccurrence(
+          {.sourceUnit = sourceUnitFor(binding),
+           .span = tokenSpan(binding),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = symbol,
+           .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+           .name = binding.lexeme,
+           .type = parameterType});
+    }
+    std::function<void(const Expr &)> recordUses = [&](const Expr &expression) {
+      if (const auto *variable = exprAs<Variable>(&expression)) {
+        const auto found = parameters.find(variable->name().lexeme);
+        if (found != parameters.end())
+          semanticModel.recordOccurrence(
+              {.sourceUnit = sourceUnitFor(variable->name()),
+               .span = tokenSpan(variable->name()),
+               .kind = SemanticOccurrenceKind::Symbol,
+               .symbol = found->second.first,
+               .roles = OccurrenceRole::Reference,
+               .name = variable->name().lexeme,
+               .type = found->second.second});
+      } else if (const auto *binary = exprAs<Binary>(&expression)) {
+        recordUses(*binary->left());
+        recordUses(*binary->right());
+      } else if (const auto *unary = exprAs<Unary>(&expression)) {
+        recordUses(*unary->right());
+      } else if (const auto *group = exprAs<Grouping>(&expression)) {
+        recordUses(*group->expression());
+      } else if (const auto *get = exprAs<Get>(&expression)) {
+        recordUses(*get->object());
+      } else if (const auto *call = exprAs<Call>(&expression)) {
+        recordUses(*call->callee());
+        for (const auto &argument : call->arguments())
+          recordUses(*argument);
+      } else if (const auto *index = exprAs<Index>(&expression)) {
+        recordUses(*index->object());
+        recordUses(*index->index());
+      }
+    };
+    recordUses(*query.expression());
+    return;
+  }
   const auto symbol = recordToolingSymbol(
       query.binding(), SymbolKind::RequirementParameter,
       qualifiedName(currentNamespace, query.binding().lexeme), type);
@@ -10274,6 +10439,36 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
     const MemberRequirement &expr) -> void {
   currentType = SemanticType::Bool;
   const auto before = diagnostics.size();
+  if (expr.isExpressionRequirement()) {
+    std::vector<SemanticType> arguments;
+    for (const auto &parameter : expr.parameters()) {
+      validateType(parameter);
+      recordTypeUse(parameter);
+      arguments.push_back(typeOf(parameter));
+    }
+    validateType(expr.result());
+    recordTypeUse(expr.result());
+    arguments.push_back(typeOf(expr.result()));
+    std::vector<const TypeRef *> extraTypes;
+    collectRequirementTypeArguments(expr.expression().get(), extraTypes);
+    for (const auto *argument : extraTypes) {
+      validateType(*argument);
+      recordTypeUse(*argument);
+      arguments.push_back(typeOf(*argument));
+    }
+    recordMemberRequirementReceiver(expr, SemanticType::Unknown);
+    if (diagnostics.size() != before)
+      return;
+    if (std::any_of(arguments.begin(), arguments.end(),
+                    containsOpenTypeParameter)) {
+      if (analyzingDependentConstantCondition)
+        constantConditionGenericDependency = true;
+      return;
+    }
+    semanticModel.recordConstant(
+        expr, ConstantValue{expressionRequirementSatisfied(expr, arguments)});
+    return;
+  }
   validateType(expr.receiver());
   validateType(expr.result());
   recordTypeUse(expr.receiver());

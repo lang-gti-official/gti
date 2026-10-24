@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.467.0 — Macro results and written expression metadata
+## 0.469.0 — Macro results and written expression metadata
 
 - Value macros use `#macro Result NAME(typed parameters)` and ordinary calls.
   Macro-local `return` statements publish their result without exiting the
@@ -19,6 +19,161 @@ for what minor and patch releases mean.
 - `std::expression_text(expression)` in `<std/source_location>` obtains
   literal-backed written argument text without evaluating the expression.
   Default assertion messages include their original condition text.
+
+## 0.468.1 — References into values over a local owner's text
+
+- Fixed a use-after-free present since 0.465.2. A reference that a method or
+  function returns into a value holding a local string's text, as in
+  `Word& wordRef() { return this.word; }` called on `Line line =
+  Line(input.view());`, could be passed to a function that stores the text,
+  copied or moved out, stored in a global, bound to a reference local and
+  passed on, or returned as a copy, leaving a view of freed memory. Each now
+  reports `error[GTI-S2045]`, as `line.word` already did. Switching on the
+  result in place, or on a reference local bound to it, still works:
+
+  ```gti
+  Word& word = line.wordRef();
+  switch (word) { case Word::text(value): std::println(value); break; ... }
+  keepWordRef(line.wordRef());   // now error[GTI-S2045]
+  ```
+
+- A method returning one of several fields by reference, such as
+  `Word& either(bool first)`, can again be switched on in place over a local
+  owner's text, as before 0.468.0.
+- A function taking a class by reference can pass on the reference one of
+  its methods returns, as in `keepWordRef(line.wordRef())`, while another
+  field of the class holds a local owner's text; this was an internal
+  compiler error (`GTI-B0001`).
+
+## 0.468.0 — Views of the caller's string in results and nested values
+
+- A function can now return a value over the text of one of its read-only
+  reference parameters, and each call's result views that call's argument:
+
+  ```gti
+  expected<int, std::string_view> parse(std::string& input) {
+    if (input.empty()) {
+      return 0;
+    }
+    return unexpected(input.view());
+  }
+  ```
+
+  This used to report `error[GTI-S2045]`. The caller can read
+  `parsed.error()`, and changing or moving the string while the result is
+  still used reports `error[GTI-S2017]`. The same works for your own classes
+  and enums, as in `Token tokenOf(std::string& input) { return
+  Token(input.view(), 1); }`, and for `std::optional<std::string_view>` with
+  `return std::nullopt;` on another path. A view of a local, a by-value or
+  `mut` parameter, or the method's own receiver still reports
+  `error[GTI-S2045]`.
+- Implicit conversions keep the text's owner, so
+  `std::optional<std::string_view> o = input.view();` and
+  `expected<int, std::string_view> r = unexpected(input.view());` no longer
+  report `error[GTI-S2045]`. A value built over a `std::string_view` local,
+  such as `Token(view, 1)` after `std::string_view view = input.view();`,
+  used to report `error[GTI-B0001]` (an internal compiler error); it now
+  views `input`.
+- A value that holds a class or enum with a view inside now keeps that view's
+  owner too. `Outer(Report(Diag(input.view(), 4), 5))`,
+  `std::optional<Token> maybe = Token(input.view(), 6);` and an
+  `expected<int, Diag> check(std::string& input)` that returns
+  `unexpected(Diag(input.view(), 3))` used to report `error[GTI-S2045]`;
+  reading `outer.report.diag.text`, `(*maybe).text` or
+  `checked.error().text` now works.
+- A constructor that stores a text field of one of its class parameters, such
+  as `Wrap(Token token) : word(Word::text(token.text)) {}`, now passes the
+  argument's text on instead of requiring a literal, and
+  `std::move(failure).error()` reads an `unexpected_value` over a local
+  string. A consuming method that returns its moved text field, like
+  `std::string_view take() && { return std::move(this.text); }`, works the
+  same way.
+- Copying a payload binding into a local view, as in `std::string_view view =
+  value;` inside `case Word::text(value):`, used to report `error[GTI-B0001]`;
+  it now works.
+- Fixed a 0.463.0 soundness bug that could leave a dangling view. A method
+  that copied an enum field holding a view of a local string, passed it on or
+  stored it, directly or through an accessor like `Word& wordRef() { return
+  this.word; }`, as in `void keep() { Word w = this.word; switch (w) { case
+  Word::text(v): kept = v; break; ... } }`, compiled when called on such a
+  value. It now reports `error[GTI-S2045]`; over literal text it still works,
+  and switching on the field or the accessor in place still relays its text.
+- Programs that use `std::vector` run at 0.448.4 speed again. Since 0.449.0 a
+  checked loop over a vector ran about 8 to 10 times slower, and a game-style
+  update loop about 3 times slower, because the optimizer lost what it knew
+  about values returned through `expected`.
+- Functions and constructors that build an `expected`, `unexpected(...)` or
+  your own enum-holding class from numbers, enums or plain records, such as
+  `Slot(int32_t n) : state(slot_state::ready(n)) {}`, are again known not to
+  fail, as in 0.448.4, so their callers no longer check for a failure.
+
+## 0.467.4 — Replacing a payload enum through a reference
+
+- A payload enum whose alternatives need cleanup, such as one holding a
+  `std::string`, can now be assigned through a mutable reference: a member or
+  free function's `mut T&` result (`b.ref() = label::blank;`, including
+  `std::optional<T>::value()`), a `mut T&` local or a `mut T&` parameter.
+  These assignments used to report `error[GTI-B0001]` (an internal compiler
+  error). The old alternative is dropped exactly once before the new value
+  moves in; if dropping it fails, only the unpublished new value is dropped.
+
+## 0.467.3 — Array fields built from constructor parameters
+
+- A constructor that initializes a fixed-array field from its by-value
+  parameters, as in `Polygon(Point a, Point b) : corners({a, b})`, used to
+  report `error[GTI-B0001]` (an internal compiler error). It now compiles and
+  runs, including moved parameters (`corners({std::move(a), b})`), a fresh
+  element beside them, nested arrays (`cells({{a, b}, {c, d}})`), whole array
+  parameters as rows (`cells({top, bottom})`) and classes with a destructor.
+  Each element is copied or moved once, straight into the field.
+- The same elements in a local array, such as
+  `Point[2] corners = {a, std::move(b)};` or `Point[2][2] g = {{a, b}, {c, d}};`,
+  also reported `GTI-B0001` and now work.
+
+## 0.467.2 — Copying a payload view that holds a local owner's text
+
+- In a `switch` over a payload enum whose `string_view` payload views a local
+  owner, as in `Word word = Word::text(input.view());`, copying the arm's
+  binding into a local (`case Word::text(value): std::string_view v = value;`)
+  used to report `error[GTI-B0001]` (an internal compiler error). The copy now
+  compiles and keeps `input` borrowed while it is live, as a copy of a class's
+  published text field does. This also covers copies of copies, a payload
+  enum held in a field (`switch (line.word)`), generic enums, `default` arms
+  and loops.
+## 0.467.1 — Text members through `operator->`
+
+- When an `operator->` returns a `std::string_view&`, its members can be
+  called through `->`. For a class with `std::string_view& operator->()`,
+  `b->size()` used to report `error[GTI-B0001]` (an internal compiler error);
+  it now calls the view's `size()`. The same holds for `empty()` and for
+  `end()`/`rend()`, and for `std::optional<std::string_view>`, whose
+  `o->size()` now works like `(*o).size()`. On an empty optional, `o->size()`
+  reports its defined `empty_owner_access` failure.
+- A referent without members is reported at the call: `->` through an
+  `int&` or `c_string&` result reports `GTI-S2000`, and an unknown
+  `string_view` member reports `GTI-S2035`.
+- Not yet supported: building a text iterator directly from a returned view
+  reference, as in `o->begin()` or `o.value().begin()`, still reports
+  `GTI-B0001`. Bind the reference first (`std::string_view& view =
+  o.value();`) and iterate `view`.
+
+## 0.467.0 — Source-defined requirements and general type facts
+
+- `requires` queries can check ordinary expressions and construction with exact
+  owned results, optional synthetic parameters and multiple checks. Queries
+  execute no code and retain normal access, ownership and unsafe obligations.
+- Concepts and trailing clauses can compose constexpr Boolean calls, including
+  general `std::meta` classification, lifecycle, relocation, transfer/share,
+  exact-type and enum-representation predicates. Existing compiler facts stay
+  authoritative; arbitrary predicates do not invent safety proofs.
+- Prelude numeric/lifecycle/enum concepts now compose reflection queries, and
+  domain arithmetic concepts use source expression requirements. Strict
+  comparison and borrowed-result contracts retain their necessary compiler
+  support. Exact member requirements remain compatible; overload ranking and
+  subsumption are unchanged.
+- Hover signatures, requirement parameter navigation/rename, formatting and
+  Tree-sitter support cover the extended syntax. Example 173 demonstrates it.
+
 
 ## 0.466.0 — Typed macros
 
@@ -42,6 +197,7 @@ for what minor and patch releases mean.
 - Diagnostics include nested expansion context. Neovim's read-only
   `:GTIExpandMacro` view explains the checked expansion and local bindings.
 
+
 ## 0.465.6 — Moving one class and copying another after fallible work
 
 - A constructor can now move one class into a field and copy another into a
@@ -54,6 +210,7 @@ for what minor and patch releases mean.
   or the constructor body fails, each field already built is dropped exactly
   once.
 
+
 ## 0.465.5 — Test-target editor diagnostics
 
 - The language server recognizes `kind = "test"` and no longer asks valid
@@ -61,6 +218,7 @@ for what minor and patch releases mean.
   suites, invalid test signatures and conflicting user-written entry points.
   Changing a target between executable and test refreshes editor diagnostics.
   Generated test dispatchers stay out of editor source snapshots and symbols.
+
 
 ## 0.465.4 — Text relays through accessor switch subjects
 
@@ -79,6 +237,7 @@ for what minor and patch releases mean.
   view. It now reports `error[GTI-S2045]`, exactly as through
   `switch (this.word)`.
 
+
 ## 0.465.3 — Moving classes that hold function items
 
 - A generic class whose field holds a function item, such as `class Op<F> {
@@ -91,6 +250,7 @@ for what minor and patch releases mean.
 - Such a class can also now be chosen by a conditional, as in `Op<F> chosen =
   pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
   can be assigned into a field. Each used to report `error[GTI-B0001]`.
+
 
 ## 0.465.2 — Switching over a payload enum returned by reference
 
@@ -107,6 +267,7 @@ for what minor and patch releases mean.
   `switch (Holder(3).shapeRef())`, is now rejected with `error[GTI-S2017]`
   instead of an internal compiler error, as `Shape& s = Holder(3).shapeRef();`
   already was. Bind the owner to a local first.
+
 ## 0.465.1 — Class stores into globals, captures and element fields
 
 - Assigning a class value to a global, through a `[mut &p]` capture, or

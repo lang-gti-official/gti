@@ -635,23 +635,40 @@ int main() {
   if (!result.canGenerateCode())
     return;
   // The copied view carries the relay's result loan, whose stored
-  // dependency is the owner's loan designating the relayed field. Like a view
-  // copied from a field read, its retention is a semantic decision: MIR
-  // checks the loan's shape, not which bindings must carry it.
-  bool carried = false;
+  // dependency is the owner's loan designating the relayed field. MIR derives
+  // that the view holds the owner's text through the reference, so the view
+  // must carry a loan that retains that publication.
+  const lang::MirFunctionInstance *carrier = nullptr;
+  std::size_t carried = 0;
   for (const auto &function : result.mir.functionInstances()) {
     const auto &loans = function.body.loans;
-    for (const auto &loan : loans)
-      carried =
-          carried ||
-          (loan.kind == lang::MirLoanKind::CallResult &&
-           loan.carriers.size() == 1 && loan.storedDependency != 0 &&
-           loan.storedDependency <= loans.size() &&
-           loans[loan.storedDependency - 1].kind == lang::MirLoanKind::Stored &&
-           loans[loan.storedDependency - 1].designatedFields.size() == 1);
+    for (std::size_t index = 0; index < loans.size(); ++index) {
+      const auto &loan = loans[index];
+      if (loan.kind == lang::MirLoanKind::CallResult &&
+          loan.carriers.size() == 1 && loan.storedDependency != 0 &&
+          loan.storedDependency <= loans.size() &&
+          loans[loan.storedDependency - 1].kind == lang::MirLoanKind::Stored &&
+          loans[loan.storedDependency - 1].designatedFields.size() == 1) {
+        carrier = &function;
+        carried = index;
+      }
+    }
   }
-  expect(carried, "the copied view carries the relay's loan, which depends "
-                  "on the owner's loan");
+  expect(carrier != nullptr, "the copied view carries the relay's loan, "
+                             "which depends on the owner's loan");
+  if (carrier != nullptr) {
+    const auto mutated = [&](const auto &change) {
+      auto changed = result.mir;
+      change(const_cast<lang::MirFunctionInstance *>(
+                 changed.findFunctionInstance(carrier->id))
+                 ->body.loans[carried]);
+      return lang::verifyMirProgram(changed).valid();
+    };
+    expect(!mutated([](lang::MirLoan &loan) { loan.carriers.clear(); }),
+           "a view copied through a relayed reference must carry its loan");
+    expect(!mutated([](lang::MirLoan &loan) { loan.storedDependency = 0; }),
+           "a relayed reference's loan must retain the owner's loan");
+  }
 
   struct Case {
     const char *body;
@@ -943,9 +960,99 @@ int main() { return leak().size() == 5 ? 0 : 1; }
   }
 }
 
+// Any use of an accessor's result but a switch on it reads the field it
+// returns: passing it on or copying it out may carry a text payload away, so
+// it requires the field's payloads ownerless, in semantics and in MIR. The
+// accessor itself, whose every return borrows the field, requires nothing.
+const std::string kAccessorEscapes = R"gti(
+#include <std/string>
+mut std::string_view kept = "";
+enum Word { text(std::string_view value), none };
+void keepWord(Word& w) {
+  switch (w) {
+  case Word::text(v): kept = v; break;
+  case Word::none: break;
+  }
+}
+class Line {
+public:
+  Word word;
+  Line(std::string_view value) : word(Word::text(value)) {}
+  Word& wordRef() { return this.word; }
+  Word& pick(int index) { return this.word; }
+  void passOut() { keepWord(this.wordRef()); }
+  void passPick() { keepWord(this.pick(0)); }
+  void copyOut() {
+    Word w = this.wordRef();
+    switch (w) {
+    case Word::text(v): kept = v; break;
+    case Word::none: break;
+    }
+  }
+};
+)gti";
+
+void testAccessorFieldEscapes() {
+  const auto literal = analyzeText(kAccessorEscapes + R"gti(
+int main() {
+  Line("literal").passOut();
+  Line("literal").passPick();
+  Line("literal").copyOut();
+  return 0;
+}
+)gti");
+  expect(literal.canGenerateCode(),
+         "an accessor's result may escape over ownerless text");
+  if (literal.canGenerateCode()) {
+    std::size_t escapes = 0;
+    for (const auto &function : literal.mir.functionInstances()) {
+      if (function.definitionKind != lang::MirDefinitionKind::Source ||
+          !function.owner)
+        continue;
+      if (function.returnType.kind == lang::SemanticType::Reference) {
+        expect(function.ownerlessTextFields.empty(),
+               "the accessor itself requires nothing");
+        continue;
+      }
+      if (!function.parameterTypes.empty())
+        continue;
+      if (function.ownerlessTextFields.empty())
+        continue;
+      ++escapes;
+      auto changed = literal.mir;
+      const_cast<lang::MirFunctionInstance *>(
+          changed.findFunctionInstance(function.id))
+          ->ownerlessTextFields.clear();
+      expect(functionError(lang::verifyMirProgram(changed), function.id,
+                           "ownerless text field contract omits an "
+                           "independently derived requirement"),
+             "MIR derives an accessor escape's requirement");
+    }
+    expect(escapes == 3,
+           "passOut, passPick and copyOut each require the payload");
+  }
+  for (const std::string call :
+       {"line.passOut();", "line.passPick();", "line.copyOut();"}) {
+    const auto rejected =
+        analyzeText(kAccessorEscapes +
+                    "int main() { std::string input{\"dynamic\"}; Line line = "
+                    "Line(input.view()); " +
+                    call + " return 0; }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, "GTI-S2045") &&
+               std::none_of(rejected.diagnostics.begin(),
+                            rejected.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code.starts_with("GTI-B");
+                            }),
+           "an accessor escape over a local owner is rejected at source: " +
+               call);
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testOwnerlessForwarding", testOwnerlessForwarding},
     {"testAccessorSubjectRelays", testAccessorSubjectRelays},
+    {"testAccessorFieldEscapes", testAccessorFieldEscapes},
     {"testTextReferenceAccessors", testTextReferenceAccessors},
     {"testTextReferenceRelays", testTextReferenceRelays},
     {"testNativeCStringProducer", testNativeCStringProducer},

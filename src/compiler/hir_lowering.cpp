@@ -644,6 +644,7 @@ private:
          .ownerlessTextParameters = declaration.ownerlessTextParameters,
          .ownerlessTextFields = declaration.ownerlessTextFields,
          .publishedTextFields = declaration.publishedTextFields,
+         .dependentTextReturn = declaration.dependentTextReturn,
          .entryKind = declaration.entryKind,
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
          .explicitReturnBorrowOrigin = declaration.explicitReturnBorrowOrigin,
@@ -2149,6 +2150,8 @@ private:
           concrete->ownerlessTextFields;
       output.program.functions[index].publishedTextFields =
           concrete->publishedTextFields;
+      output.program.functions[index].dependentTextReturn =
+          concrete->dependentTextReturn;
       output.program.functions[index].ownerlessTextContractProof =
           model->ownerlessTextContractProof(*concrete->declaration);
       output.program.functions[index].returnBorrowOrigin =
@@ -4254,7 +4257,11 @@ private:
           !input->info.traits.movable ||
           (input->info.traits.containsBorrowedState &&
            (input->info.type.kind != SemanticType::Class ||
-            !input->borrowDependencies))) {
+            (!input->borrowDependencies &&
+             // A dependent text value's class holds no borrowed state of
+             // its own (L-OWN-02); the callee's field contract governs it.
+             instanceProvider->traitsFor(input->info.type)
+                 .containsBorrowedState)))) {
         return std::nullopt;
       }
       while (input->kind == HirValueKind::Grouping &&
@@ -4396,6 +4403,24 @@ private:
     }
     value.callPlan = HirCallPlan{.receiver = *plannedReceiver,
                                  .arguments = *plannedArguments};
+  }
+
+  // The selected checked access step of a `->` member whose receiver is an
+  // ordinary argument. Its reference result is the place the member names.
+  [[nodiscard]] HirValueId
+  lowerArrowAccessCall(HirValueId receiver,
+                       const ResolvedOperatorInfo &resolved, const Expr &member,
+                       HirBody &body) {
+    HirValue arrowCall{.id = nextValueId++,
+                       .kind = HirValueKind::Call,
+                       .source = &member,
+                       .operands = {receiver}};
+    configureOperatorCall(arrowCall, resolved, body);
+    (void)enqueueClass(arrowCall.info.type);
+    const HirValueId arrowId = arrowCall.id;
+    body.values.push_back(std::move(arrowCall));
+    output.program.sourceValueIds[&member].push_back(arrowId);
+    return arrowId;
   }
 
   [[nodiscard]] HirValueId splitOverloadedArrowProjection(
@@ -5170,6 +5195,17 @@ private:
         .dependentTextPublication = construction.dependentTextPublication,
         .constructorKind = construction.kind,
     };
+    // A conversion that publishes its argument's owner gives a dependent
+    // value, as semantics classifies an explicit publishing construction
+    // (L-OWN-02): it carries borrowed state and cannot be reassigned.
+    if (construction.dependentTextPublication) {
+      auto &traits = value.info.traits;
+      traits.copyAssignable = false;
+      traits.moveAssignable = false;
+      traits.containsBorrowedState = true;
+      traits.transferCapable = false;
+      traits.shareCapable = false;
+    }
     if (construction.contextualBorrowDependencies) {
       value.borrowDependencies = construction.contextualBorrowDependencies;
       for (auto &dependency : value.borrowDependencies->dependencies)
@@ -5594,7 +5630,23 @@ private:
         lifecycleValid = false;
       for (std::size_t index = 0;
            index < resolvedCallArgumentCount(*call, resolved); ++index) {
+        const std::size_t lowered = operands.size();
         lowerOperand(*resolvedCallArgument(*call, resolved, index));
+        // A normalized receiver written with `->` is the place its selected
+        // access step designates, not the written object.
+        const auto *member = exprAs<Get>(call->callee().get());
+        if (index != 0 || resolved == nullptr ||
+            resolved->argumentReceiver == nullptr || member == nullptr ||
+            member->access().kind != TokenKind::ARROW)
+          continue;
+        const ResolvedOperatorInfo *arrow = model.findOperator(*member);
+        if (arrow == nullptr || arrow->kind != OverloadedOperator::Arrow ||
+            operands.size() != lowered + 1) {
+          lifecycleValid = false;
+          continue;
+        }
+        operands.back() =
+            lowerArrowAccessCall(operands.back(), *arrow, *member, body);
       }
     } else if (const auto *conditional = exprAs<ConditionalExpr>(raw)) {
       kind = HirValueKind::Conditional;

@@ -57,14 +57,24 @@ ordinary copying or explicit movement rules still apply. This does not extend
 the checked-reference specialization described below.
 
 A `std::string_view` or `c_string` alternative is stored text, so it follows
-the ownerless storage rule for text fields in
-[ownership and lifetimes](ownership-and-lifetimes.md): it must be ownerless,
-such as a string literal or a view forwarded from one. A view of a dynamic
-string, even one the caller owns, is rejected (`GTI-S2045`); return an owned
-`std::string` for such text. Owner-tracked view fields do not yet extend to
-`expected` itself: `unexpected(input.view())` gives an `unexpected_value`
-that views `input`, but converting it to an `expected` is planned work
-(phase 2 of `L-OWN-02`).
+the owner-tracked view rules in
+[ownership and lifetimes](ownership-and-lifetimes.md#conversions-field-relays-and-returns).
+An expected over a string literal is ownerless and may be stored or returned
+anywhere. One over a local string's view stays in that string's body, and a
+function may return one over the text of a read-only reference parameter:
+
+```gti
+expected<int, std::string_view> parse(std::string& input) {
+  if (input.empty()) {
+    return 0;
+  }
+  return unexpected(input.view());    // the caller's input
+}
+```
+
+Any other dynamic view, such as one of a local string returned from its
+function, is rejected (`GTI-S2045`); return an owned `std::string` for such
+text.
 
 `unexpected(error)` checks ownership when it constructs the error payload,
 including in returns, initializers and call arguments. A noncopyable place is

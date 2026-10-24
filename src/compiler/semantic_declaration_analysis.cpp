@@ -1291,9 +1291,72 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
                .name = argumentToken.lexeme});
         }
       }
+      if (requirement.predicate) {
+        std::vector<SemanticType> types;
+        for (const auto &argument : argumentMap)
+          types.push_back(
+              argument.parameter
+                  ? SemanticType::typeParameter(
+                        conceptInfo.parameterIds[*argument.parameter])
+                  : argument.concrete);
+        const auto capability = predicateCapabilityFor(requirement, types);
+        bool unary = false;
+        if (capability && capability->atomic != GenericConstraintKind::None &&
+            capability->arguments.size() == 1) {
+          for (std::size_t index = 0; index < conceptInfo.parameterIds.size();
+               ++index)
+            if (capability->arguments.front() ==
+                SemanticType::typeParameter(conceptInfo.parameterIds[index])) {
+              leafParameterConstraints[requirementIndex][index] |=
+                  constraintBit(capability->atomic);
+              unary = true;
+            }
+        } else if (capability &&
+                   capability->structural != StructuralConstraintKind::None) {
+          RegisteredConcept::StructuralPattern pattern;
+          pattern.kind = capability->structural;
+          for (const auto &type : capability->arguments)
+            pattern.arguments.push_back({.concrete = type});
+          leafStructuralConstraints[requirementIndex].push_back(
+              std::move(pattern));
+        }
+        leafHasStructural[requirementIndex] = !unary;
+        conceptInfo.definitionRequirements.push_back(
+            {.syntax = &requirement,
+             .arguments = std::move(argumentMap),
+             .expressionApplication = requirementIndex});
+        continue;
+      }
       if (requirement.memberRequirement) {
         recordMemberRequirementReceiver(*requirement.memberRequirement,
                                         SemanticType::Unknown);
+        if (requirement.memberRequirement->isExpressionRequirement()) {
+          std::vector<SemanticType> types;
+          for (const auto &argument : argumentMap)
+            types.push_back(
+                argument.parameter
+                    ? SemanticType::typeParameter(
+                          conceptInfo.parameterIds[*argument.parameter])
+                    : argument.concrete);
+          if (auto fact = expressionRequirementFact(
+                  *requirement.memberRequirement, types)) {
+            RegisteredConcept::StructuralPattern pattern;
+            pattern.kind = fact->kind;
+            pattern.memberName = fact->memberName;
+            pattern.mutableReceiver = fact->mutableReceiver;
+            pattern.requiresUnsafe = fact->requiresUnsafe;
+            for (const auto &type : fact->arguments)
+              pattern.arguments.push_back({.concrete = type});
+            leafStructuralConstraints[requirementIndex].push_back(
+                std::move(pattern));
+          }
+          leafHasStructural[requirementIndex] = true;
+          conceptInfo.definitionRequirements.push_back(
+              {.syntax = &requirement,
+               .arguments = std::move(argumentMap),
+               .expressionApplication = requirementIndex});
+          continue;
+        }
         RegisteredConcept::StructuralPattern pattern;
         pattern.kind = StructuralConstraintKind::ReadMember;
         pattern.arguments = argumentMap;
@@ -7368,11 +7431,10 @@ auto SemanticVisitor::Impl::predeclaredTextFieldSource(
         return index;
     return std::nullopt;
   };
-  // Only a read-only receiver or formal takes a relayed value, so only its
-  // fields can hold a caller's dynamic text.
-  const bool receiver =
-      function.ownerClass != 0 && !function.staticMember &&
-      declaration.receiverMutability() == ReceiverMutability::ReadOnly;
+  // Only a read-only formal or a read-only or consuming receiver takes a
+  // relayed value, so only its fields can hold a caller's dynamic text.
+  const bool receiver = function.ownerClass != 0 && !function.staticMember &&
+                        contractReceiver(declaration.receiverMutability());
   struct Origin {
     PredeclaredTextBorrowSource source;
     SemanticType type;
@@ -7539,8 +7601,7 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
               function.declaration, function.bodyDeclaration(),
               function.virtualMethod || function.overrideMethod,
               function.ownerClass) &&
-          function.bodyDeclaration()->receiverMutability() ==
-              ReceiverMutability::ReadOnly &&
+          contractReceiver(function.bodyDeclaration()->receiverMutability()) &&
           textPublicationOwner(owner) && directTextField(owner, field))
         return PredeclaredTextBorrowSource{.known = true,
                                            .ownerDependent = true,
@@ -7891,9 +7952,12 @@ auto SemanticVisitor::Impl::textReferenceReturnSummary(
   const bool conditional =
       type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
       type.arguments.front().kind == SemanticType::TypeParameter;
+  // A reference to a nested text class relays the paths under it (L-OWN-02
+  // phase 3).
   if (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
       (type.arguments.front().kind != SemanticType::StringView &&
-       type.arguments.front().kind != SemanticType::CString && !conditional) ||
+       type.arguments.front().kind != SemanticType::CString && !conditional &&
+       !nestedTextClass(type.arguments.front())) ||
       function.intrinsic != IntrinsicKind::None ||
       function.declaration == nullptr ||
       function.bodyDeclaration()->body() == nullptr)
@@ -8068,7 +8132,7 @@ auto SemanticVisitor::Impl::payloadReferenceRelayArm(
     const auto type = substituteType(candidate.payloadTypes[*index],
                                      enumSubstitution(fieldType));
     if (type.kind != SemanticType::StringView &&
-        type.kind != SemanticType::CString &&
+        type.kind != SemanticType::CString && !nestedTextClass(type) &&
         !(conditional && type.kind == SemanticType::TypeParameter))
       return std::nullopt;
     return OwnerlessTextField{
@@ -8113,6 +8177,15 @@ auto SemanticVisitor::Impl::accessorReceiverField(
     const FunctionInfo &accessor,
     std::vector<const FunctionInfo *> &visiting) const
     -> std::optional<std::string> {
+  const auto fields = accessorReceiverFields(accessor, visiting);
+  return fields && fields->size() == 1 ? std::optional{fields->front()}
+                                       : std::nullopt;
+}
+
+auto SemanticVisitor::Impl::accessorReceiverFields(
+    const FunctionInfo &accessor,
+    std::vector<const FunctionInfo *> &visiting) const
+    -> std::optional<std::vector<std::string>> {
   const FunctionDecl *body = accessor.bodyDeclaration();
   if (accessor.ownerClass == 0 || accessor.staticMember ||
       accessor.virtualMethod || accessor.overrideMethod || body == nullptr ||
@@ -8145,13 +8218,13 @@ auto SemanticVisitor::Impl::accessorReceiverField(
       declarationFree(declarationFree, body->body().get());
   const ClassInfo &owner = classInfo(accessor.ownerClass);
   visiting.push_back(&accessor);
-  std::optional<std::string> result;
+  std::vector<std::string> result;
   bool valid = true;
   for (const ExprPtr *returned : returns) {
     const Expr *current = returned == nullptr ? nullptr : returned->get();
     while (const auto *group = exprAs<Grouping>(current))
       current = group->expression() ? group->expression().get() : nullptr;
-    std::optional<std::string> field;
+    std::optional<std::vector<std::string>> fields;
     const auto *variable = exprAs<Variable>(current);
     const auto member = variable == nullptr
                             ? owner.members.end()
@@ -8159,28 +8232,40 @@ auto SemanticVisitor::Impl::accessorReceiverField(
     if (const auto *get = exprAs<Get>(current);
         get != nullptr && get->access().kind != TokenKind::ARROW &&
         get->object() && exprAs<This>(get->object().get()) != nullptr)
-      field = get->name().lexeme;
+      fields = std::vector{get->name().lexeme};
     else if (implicitMembers && member != owner.members.end() &&
              !member->second.symbol.staticMember &&
              member->second.symbol.bindingKind == SemanticBindingKind::Field)
-      field = variable->name().lexeme;
+      fields = std::vector{variable->name().lexeme};
     else if (current != nullptr)
-      field = receiverAccessorField(*current, accessor.ownerClass, visiting,
-                                    implicitMembers);
-    if (!field || (result && *result != *field)) {
+      fields = receiverAccessorFields(*current, accessor.ownerClass, visiting,
+                                      implicitMembers);
+    if (!fields) {
       valid = false;
       break;
     }
-    result = field;
+    result.insert(result.end(), fields->begin(), fields->end());
   }
   visiting.pop_back();
-  return valid ? result : std::nullopt;
+  std::sort(result.begin(), result.end());
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return valid ? std::optional{std::move(result)} : std::nullopt;
 }
 
 auto SemanticVisitor::Impl::receiverAccessorField(
     const Expr &subject, ClassId owner,
     std::vector<const FunctionInfo *> &visiting, bool implicitMembers) const
     -> std::optional<std::string> {
+  const auto fields =
+      receiverAccessorFields(subject, owner, visiting, implicitMembers);
+  return fields && fields->size() == 1 ? std::optional{fields->front()}
+                                       : std::nullopt;
+}
+
+auto SemanticVisitor::Impl::receiverAccessorFields(
+    const Expr &subject, ClassId owner,
+    std::vector<const FunctionInfo *> &visiting, bool implicitMembers) const
+    -> std::optional<std::vector<std::string>> {
   const Expr *current = &subject;
   while (const auto *group = exprAs<Grouping>(current))
     current = group->expression() ? group->expression().get() : nullptr;
@@ -8200,7 +8285,7 @@ auto SemanticVisitor::Impl::receiverAccessorField(
       owner,
       implicit != nullptr ? implicit->name().lexeme : member->name().lexeme);
   return accessor == nullptr ? std::nullopt
-                             : accessorReceiverField(*accessor, visiting);
+                             : accessorReceiverFields(*accessor, visiting);
 }
 
 auto SemanticVisitor::Impl::globalReturnBorrowPlace(
