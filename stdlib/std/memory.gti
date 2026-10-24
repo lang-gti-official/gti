@@ -2,6 +2,7 @@
 // declaration-bound private capabilities.
 
 #include <std/detail/iterator>
+#include <std/meta>
 
 namespace gti_internal {
 namespace runtime {
@@ -19,9 +20,6 @@ erased_object& erase_reference<T>(T& object);
 mut erased_object& erase_reference_mut<T>(mut T& object);
 unsafe T& restore_reference<T>(erased_object& object);
 unsafe mut T& restore_reference_mut<T>(mut erased_object& object);
-
-@compiler_constraint("object_layout") concept object_layout_capability<T>;
-@compiler_constraint("independent_object") concept independent_object<T>;
 
 uint64_t object_size<T>();
 uint64_t object_alignment<T>();
@@ -83,9 +81,11 @@ unsafe mut T& restore_mut<T>(mut erased_object& object) {
   unsafe { return gti_internal::restore_reference_mut<T>(object); }
 }
 /// Complete object types supported by the runtime representation query.
-concept layout_queryable<T> = gti_internal::object_layout_capability<T>;
+[[unsatisfied("The type must have a complete object representation; copying and moving are not required.")]]
+concept layout_queryable<T> = std::meta::has_object_layout<T>();
 /// Complete storage elements that retain no checked external owner borrow.
-concept storage_element<T> = layout_queryable<T> && gti_internal::independent_object<T>;
+[[unsatisfied("The element must be a complete object type without checked borrowed state. Raw pointers retain their unsafe validity obligations; copying or moving is not required.")]]
+concept storage_element<T> = layout_queryable<T> && std::meta::is_borrow_free<T>();
 
 /// End one live object's lifetime without releasing its storage.
 /// The caller guarantees a live, writable, correctly aligned complete object,

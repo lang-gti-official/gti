@@ -70,6 +70,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   if (this == &other)
     return *this;
   SemanticCatalog copy;
+  copy.compilerTypeClasses = other.compilerTypeClasses;
   copy.namespaces = other.namespaces;
   copy.namespaceToolingSymbols = other.namespaceToolingSymbols;
   copy.namespaceAliases = other.namespaceAliases;
@@ -125,6 +126,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
     -> SemanticCatalog {
   assertUnchangedSinceSeal();
   SemanticCatalog copy;
+  copy.compilerTypeClasses = compilerTypeClasses;
   copy.namespaces = namespaces;
   copy.namespaceToolingSymbols = namespaceToolingSymbols;
   copy.namespaceAliases = namespaceAliases;

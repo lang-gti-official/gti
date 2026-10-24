@@ -27,8 +27,6 @@ namespace gti_internal {
   class c_intptr_t {};
   class c_uintptr_t {};
 
-  @compiler_constraint("equality_comparable") concept equality_comparable_capability<T>;
-  @compiler_constraint("relationally_ordered") concept relationally_ordered_capability<T>;
   // The identity-bound public logical-size check raises index_out_of_bounds
   // when `index >= size`, so container indexing reports the logical bound
   // rather than leaking the private storage invariant.
@@ -134,8 +132,70 @@ namespace std {
   concept copy_constructible<T> = std::meta::is_copy_constructible<T>();
   concept copyable<T> = std::copy_constructible<T> && std::meta::is_copyable<T>() && std::movable<T>;
   concept default_initializable<T> = std::meta::is_default_initializable<T>();
-  concept equality_comparable<T> = gti_internal::equality_comparable_capability<T>;
-  concept totally_ordered<T> = std::equality_comparable<T> && gti_internal::relationally_ordered_capability<T>;
+  namespace detail {
+    // Library policy over declaration metadata. The expression requirements
+    // below separately check actual safe use, including ambiguity and access.
+    constexpr bool read_comparison_members<T, uint64_t Required>() {
+      if constexpr (std::meta::is_class<T>() || std::meta::is_struct<T>() ||
+                    std::meta::type<T>().is_interface() ||
+                    std::meta::type<T>().is_union()) {
+        mut uint64_t found = 0;
+        constexpr for (auto member : std::meta::lookup_operators_of<T>()) {
+          if constexpr (member.is_public() && !member.is_static() &&
+                        !member.is_mutating() && !member.is_consuming() &&
+                        !member.is_unsafe() && !member.is_generic() &&
+                        !member.is_constrained() &&
+                        member.parameter_count() == uint64_t(1) &&
+                        member.result().is_bool()) {
+            constexpr for (auto parameter : member.parameters()) {
+              if constexpr (parameter.type().is_same<T&>()) {
+                if constexpr (member.name() == "operator==") { found |= 1; }
+                if constexpr (member.name() == "operator!=") { found |= 2; }
+                if constexpr (member.name() == "operator<") { found |= 4; }
+                if constexpr (member.name() == "operator<=") { found |= 8; }
+                if constexpr (member.name() == "operator>") { found |= 16; }
+                if constexpr (member.name() == "operator>=") { found |= 32; }
+              }
+            }
+          }
+        }
+        return (found & Required) == Required;
+      } else {
+        // Preserve the primitive equality domain; ordering is admitted by
+        // its separate numeric predicate. Raw-pointer validity is unchanged.
+        return Required == uint64_t(3) &&
+               (std::meta::is_numeric<T>() || std::meta::is_bool<T>() ||
+                std::meta::type<T>().is_char() ||
+                std::meta::type<T>().is_enum() ||
+                std::meta::is_same<T, std::string_view>() ||
+                std::meta::is_raw_pointer<T>() ||
+                (requires { { nullptr } -> T; }));
+      }
+    }
+    constexpr bool read_equality_members<T>() {
+      return read_comparison_members<T, 3>();
+    }
+    constexpr bool read_ordering_members<T>() {
+      return read_comparison_members<T, 60>();
+    }
+  }
+  [[unsatisfied("Provide safe, public, read-only bool == and != operators with exact T& parameters and no method-level generic requirements.")]]
+  concept equality_comparable<T> =
+      (std::meta::is_numeric<T>() || std::meta::is_bool<T>() ||
+       detail::read_equality_members<T>()) &&
+      requires(T& left, T& right) {
+        { left == right } -> bool;
+        { left != right } -> bool;
+      };
+  [[unsatisfied("Provide equality and safe, public, read-only bool <, <=, > and >= operators with exact T& parameters and no method-level generic requirements.")]]
+  concept totally_ordered<T> = std::equality_comparable<T> &&
+      (std::meta::is_numeric<T>() || detail::read_ordering_members<T>()) &&
+      requires(T& left, T& right) {
+        { left < right } -> bool;
+        { left <= right } -> bool;
+        { left > right } -> bool;
+        { left >= right } -> bool;
+      };
   concept ordered<T> = std::totally_ordered<T>;
   concept numeric<T> = std::meta::is_numeric<T>() && std::totally_ordered<T> && std::copyable<T> && std::default_initializable<T> && std::bitwise_relocatable<T>;
   concept signed_numeric<T> = std::meta::is_signed_numeric<T>() && std::numeric<T>;

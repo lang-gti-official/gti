@@ -1,0 +1,39 @@
+==================
+Inferred expression and reference requirements
+==================
+concept reads<I> = requires(I& cursor) { { *cursor }; };
+concept edits<I> = requires(mut I& cursor) {
+  { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+};
+---
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (unary_expression
+          (primary_expression
+            (identifier))))))
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (unary_expression
+          (primary_expression
+            (identifier)))
+        (type
+          (reference_declarator))
+        (identifier)))))

@@ -985,34 +985,6 @@ auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
   deferringTypeAliasConstraints = false;
 }
 
-auto SemanticVisitor::Impl::validateTypeAliasConstraints() -> void {
-  const SourceUnitId enclosingUnit = currentSourceUnit;
-  const auto enclosingNamespace = currentNamespace;
-  const auto enclosingClass = currentClass;
-  for (const RegisteredTypeAlias &alias :
-       registering(typeAliases, registrationFloor.typeAliases)) {
-    if (alias.resolution != TypeAliasResolution::Resolved) {
-      continue;
-    }
-    currentSourceUnit = alias.sourceUnit;
-    currentNamespace = alias.lookupScope;
-    currentClass = alias.ownerClass == 0
-                       ? std::nullopt
-                       : std::optional<ClassId>(alias.ownerClass);
-    if (currentClass) {
-      beginTypeParameterScope(classInfo(*currentClass).genericParameters);
-    }
-    validateType(alias.declaration->target(),
-                 alias.declaration->target().isNativeFunction());
-    if (currentClass) {
-      endTypeParameterScope();
-    }
-  }
-  currentSourceUnit = enclosingUnit;
-  currentNamespace = enclosingNamespace;
-  currentClass = enclosingClass;
-}
-
 auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
                                              std::vector<std::string> scope)
     -> void {
@@ -1157,43 +1129,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
     resolveProtocolConcept(conceptInfo, valid);
   } else if (declaration.compilerBinding()) {
     const CompilerConstraintBinding &binding = *declaration.compilerBinding();
-    const bool trustedAtomicConstraint =
-        (isAtomicLibraryUnit(conceptInfo.sourceUnit) &&
-         binding.name == "atomic_scalar") ||
-        (isMetaLibraryUnit(conceptInfo.sourceUnit) &&
-         binding.name == "meta_reflectable");
-    const bool trustedMemoryConstraint =
-        (isMemoryLibraryUnit(conceptInfo.sourceUnit) &&
-         (binding.name == "object_layout" ||
-          binding.name == "independent_object")) ||
-        (isPolymorphicLibraryUnit(conceptInfo.sourceUnit) &&
-         binding.name == "inline_polymorphic_payload");
-    const bool trustedIteratorConstraint =
-        isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
-        (binding.name == "input_iterator" || binding.name == "sentinel_for" ||
-         binding.name == "dereferences_to" ||
-         binding.name == "writable_iterator" || binding.name == "writes_to" ||
-         binding.name == "bidirectional_iterator" ||
-         binding.name == "random_access_iterator" ||
-         binding.name == "subscripts_to_mut" ||
-         binding.name == "sized_sentinel_for" ||
-         binding.name == "input_range" || binding.name == "range_of" ||
-         binding.name == "mutable_range_of" || binding.name == "sized_range");
-    const bool trustedFunctionalConstraint =
-        isFunctionalLibraryUnit(conceptInfo.sourceUnit) &&
-        (binding.name == "read_callable" || binding.name == "mut_callable" ||
-         binding.name == "once_callable" ||
-         binding.name == "read_binary_callable" ||
-         binding.name == "mut_binary_callable" ||
-         binding.name == "once_binary_callable" ||
-         binding.name == "once_action" ||
-         binding.name == "indirect_predicate" ||
-         binding.name == "indirect_operation" ||
-         binding.name == "range_predicate" ||
-         binding.name == "range_operation");
-    if ((!isPreludeUnit(conceptInfo.sourceUnit) && !trustedAtomicConstraint &&
-         !trustedIteratorConstraint && !trustedFunctionalConstraint &&
-         !trustedMemoryConstraint) ||
+    if (!isPreludeUnit(conceptInfo.sourceUnit) ||
         conceptInfo.namespaceScope !=
             std::vector<std::string>{"gti_internal"}) {
       report(binding.attribute,
@@ -1345,6 +1281,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
             pattern.memberName = fact->memberName;
             pattern.mutableReceiver = fact->mutableReceiver;
             pattern.requiresUnsafe = fact->requiresUnsafe;
+            pattern.borrowSource = fact->borrowSource;
             for (const auto &type : fact->arguments)
               pattern.arguments.push_back({.concrete = type});
             leafStructuralConstraints[requirementIndex].push_back(
@@ -1467,6 +1404,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         mapped.memberName = pattern.memberName;
         mapped.mutableReceiver = pattern.mutableReceiver;
         mapped.requiresUnsafe = pattern.requiresUnsafe;
+        mapped.borrowSource = pattern.borrowSource;
         std::vector<SemanticType> mappedTypes;
         for (const auto &argument : argumentMap)
           mappedTypes.push_back(
@@ -1489,15 +1427,9 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
           mapped.arguments.push_back(argumentMap[*argument.parameter]);
         }
         if (mapped.arguments.size() == pattern.arguments.size()) {
-          for (StructuralConstraintKind guaranteed :
-               guaranteedStructuralKinds(mapped.kind)) {
-            RegisteredConcept::StructuralPattern implied = mapped;
-            implied.kind = guaranteed;
-            auto &leaf = leafStructuralConstraints[requirementIndex];
-            if (std::find(leaf.begin(), leaf.end(), implied) == leaf.end()) {
-              leaf.emplace_back(std::move(implied));
-            }
-          }
+          auto &leaf = leafStructuralConstraints[requirementIndex];
+          if (std::find(leaf.begin(), leaf.end(), mapped) == leaf.end())
+            leaf.emplace_back(std::move(mapped));
         }
       }
     }
@@ -1554,8 +1486,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         return result;
       }
       for (std::size_t index = 0; index < result.parameters.size(); ++index) {
-        result.parameters[index] =
-            left.parameters[index] & right.parameters[index];
+        result.parameters[index] = impliedConstraints(left.parameters[index]) &
+                                   impliedConstraints(right.parameters[index]);
       }
       for (const RegisteredConcept::StructuralPattern &candidate :
            left.structural) {
@@ -2001,7 +1933,7 @@ auto SemanticVisitor::Impl::registerEnumGenericParameters() -> void {
     currentNamespace = info.namespaceScope;
     info.genericParameters =
         makeGenericParameters(info.declaration->genericParameters(), info.name,
-                              info.namespaceScope, true, false);
+                              info.namespaceScope, false);
     for (std::size_t index = 0; index < info.genericParameters.size();
          ++index) {
       const auto &parameter = info.genericParameters[index];
@@ -2756,7 +2688,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       std::vector<GenericParameterInfo> genericParameters =
           classDecl->genericArgumentPatterns().empty()
               ? makeGenericParameters(classDecl->genericParameters(),
-                                      classDecl->name(), scope, true, false)
+                                      classDecl->name(), scope, false)
               : makeClassPatternParameters(*classDecl, scope);
       for (std::size_t index = 0; index < genericParameters.size(); ++index) {
         if (genericParameters[index].pack &&
@@ -3147,6 +3079,8 @@ auto SemanticVisitor::Impl::compilerTypeKind(std::string_view binding)
        CompilerTypeKind::MetaConstructorParameter},
       {"meta_method_list", CompilerTypeKind::MetaMethodList},
       {"meta_operator_list", CompilerTypeKind::MetaOperatorList},
+      {"meta_lookup_method_list", CompilerTypeKind::MetaLookupMethodList},
+      {"meta_lookup_operator_list", CompilerTypeKind::MetaLookupOperatorList},
       {"meta_parameter_list", CompilerTypeKind::MetaParameterList},
       {"meta_parameter_type", CompilerTypeKind::MetaParameterType},
       {"meta_return_type", CompilerTypeKind::MetaReturnType},
@@ -3418,6 +3352,52 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
     }
     return SemanticType::classType(list, std::move(elements));
   }
+  case CompilerTypeKind::MetaLookupMethodList:
+  case CompilerTypeKind::MetaLookupOperatorList: {
+    const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
+    const ClassId method = compilerTypeClass(CompilerTypeKind::MetaMethod);
+    if (list == 0 || method == 0 || type.arguments.size() != 1 ||
+        !metaHasStableDeclarations(type.arguments.front()))
+      return type;
+    const SemanticType &subject = type.arguments.front();
+    const ClassInfo *owner = classInfo(subject);
+    std::vector<SemanticType> elements;
+    if (owner) {
+      // Reflect the same resolved member set as lookup, including inherited
+      // overloads and replacing overridden declarations. Keep each existing
+      // method metaobject's declaration index and exact instantiated owner;
+      // declaration-only reflection retains its original meaning and order.
+      std::vector<std::string> names;
+      for (const auto &[name, member] : owner->members)
+        if (member.symbol.type == SemanticType::Function)
+          names.push_back(name);
+      std::sort(names.begin(), names.end());
+      for (const auto &name : names) {
+        const auto resolved =
+            substituteSymbol(owner->members.at(name).symbol, subject);
+        for (const auto &candidate : resolved.overloads) {
+          if (!candidate.declaration ||
+              (info.compilerType == CompilerTypeKind::MetaLookupOperatorList &&
+               !candidate.declaration->operatorName()))
+            continue;
+          const SemanticType declaring = candidate.dispatchOwner;
+          const auto declarations = metaMethodDeclarations(declaring);
+          const auto found = std::find(declarations.begin(), declarations.end(),
+                                       candidate.declaration);
+          if (found == declarations.end())
+            continue;
+          auto descriptor = SemanticType::classType(
+              method, {declaring},
+              {CompileTimeValue::uint64(static_cast<std::uint64_t>(
+                  std::distance(declarations.begin(), found)))});
+          if (std::find(elements.begin(), elements.end(), descriptor) ==
+              elements.end())
+            elements.push_back(std::move(descriptor));
+        }
+      }
+    }
+    return SemanticType::classType(list, std::move(elements));
+  }
   case CompilerTypeKind::MetaMethodList:
   case CompilerTypeKind::MetaOperatorList:
   case CompilerTypeKind::MetaConstructorList: {
@@ -3428,7 +3408,8 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
         compilerTypeClass(constructors ? CompilerTypeKind::MetaConstructor
                                        : CompilerTypeKind::MetaMethod);
     if (list == 0 || element == 0 || type.arguments.size() != 1 ||
-        containsOpenTypeParameter(type.arguments.front())) {
+        (constructors ? containsOpenTypeParameter(type.arguments.front())
+                      : !metaHasStableDeclarations(type.arguments.front()))) {
       return type;
     }
     const SemanticType &subject = type.arguments.front();
@@ -3467,7 +3448,8 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
     if (list == 0 || element == 0 || type.arguments.size() != 1 ||
         type.valueArguments.size() != 1 ||
         type.valueArguments.front().kind != CompileTimeValue::UInt64 ||
-        containsOpenTypeParameter(type.arguments.front())) {
+        (constructors ? containsOpenTypeParameter(type.arguments.front())
+                      : !metaHasStableDeclarations(type.arguments.front()))) {
       return type;
     }
     const SemanticType &subject = type.arguments.front();
@@ -3500,7 +3482,9 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
     if (type.arguments.size() != 1 || type.valueArguments.size() != 2 ||
         type.valueArguments[0].kind != CompileTimeValue::UInt64 ||
         type.valueArguments[1].kind != CompileTimeValue::UInt64 ||
-        containsOpenTypeParameter(type.arguments.front())) {
+        (info.compilerType == CompilerTypeKind::MetaConstructorParameterType
+             ? containsOpenTypeParameter(type.arguments.front())
+             : !metaHasStableDeclarations(type.arguments.front()))) {
       return type;
     }
     const std::uint64_t position = type.valueArguments[1].value;
@@ -3520,8 +3504,7 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
   case CompilerTypeKind::MetaListFirst:
   case CompilerTypeKind::MetaListRest: {
     const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
-    if (list == 0 || type.arguments.size() != 1 ||
-        containsOpenTypeParameter(type.arguments.front())) {
+    if (list == 0 || type.arguments.size() != 1) {
       return type;
     }
     const std::optional<std::vector<SemanticType>> elements =
@@ -3551,7 +3534,7 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
   case CompilerTypeKind::MetaReturnType: {
     if (type.arguments.size() != 1 || type.valueArguments.size() != 1 ||
         type.valueArguments.front().kind != CompileTimeValue::UInt64 ||
-        containsOpenTypeParameter(type.arguments.front())) {
+        !metaHasStableDeclarations(type.arguments.front())) {
       return type;
     }
     const std::optional<MetaMethodFacts> facts = metaMethodFacts(
@@ -3607,7 +3590,11 @@ auto SemanticVisitor::Impl::metaMethodFacts(const SemanticType &type,
           : declaration.operatorName()->kind == OverloadedOperator::Conversion
               ? "operator " + typeSpelling(substituteType(function->returnType,
                                                           substitution))
-              : "operator" + declaration.operatorName()->symbol.lexeme,
+          : declaration.operatorName()->kind ==
+                  OverloadedOperator::ContextualBool
+              ? "operatorbool"
+              : std::string(
+                    operatorSourceSpelling(declaration.operatorName()->kind)),
       .declaration = &declaration,
       .staticMember = function->staticMember,
       .operatorMethod = declaration.operatorName().has_value(),
@@ -3615,6 +3602,11 @@ auto SemanticVisitor::Impl::metaMethodFacts(const SemanticType &type,
       .virtualMethod = function->virtualMethod,
       .mutableReceiver =
           declaration.receiverMutability() != ReceiverMutability::ReadOnly,
+      .consumingReceiver =
+          declaration.receiverMutability() == ReceiverMutability::Consuming,
+      .requiresUnsafe = function->requiresUnsafe,
+      .generic = !function->genericParameters.empty(),
+      .constrained = !function->requirements.empty(),
       .returnType = substituteType(function->returnType, substitution)};
   const auto member = owner->members.find(declaration.name().lexeme);
   if (member != owner->members.end()) {

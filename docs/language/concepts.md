@@ -67,10 +67,10 @@ T lower<sortable T>(T left, T right) {
 }
 ```
 
-The named concept must have one type parameter. On function parameters it
-must reduce to unary capabilities; structural function contracts use the
-trailing clause below. Class and struct parameters also accept unary
-structural concepts:
+The named concept must have one type parameter. Functions, constructors,
+classes and structs accept source-defined unary concepts, including structural
+queries and predicates. The full concept contract is preserved, not just its
+classification facts:
 
 ```gti
 concept readable<T> = requires(T& source) { { source.read() } -> int; };
@@ -252,11 +252,84 @@ concept defaults<T> = requires { { T() } -> T; };
 
 The parameter list is optional. Each binding has an exact type; `mut` is
 permitted only on a reference parameter. A block contains one or more checks,
-all of which must hold. Each `-> R` names an exact owned, non-borrowed result
-type, including `void`; it is not a result concept or an implicit conversion.
+all of which must hold. An unannotated `-> R` names an exact owned, non-borrowed
+result type, including `void`; it is not a result concept or an implicit
+conversion. A checked reference result instead names its borrowed input:
+
+```gti
+concept readable<C, T> = requires(C& owner) {
+  { *owner } -> T& [[borrowed_from(owner)]];
+};
+concept editable<C, T> = requires(mut C& owner) {
+  { owner.edit() } -> mut T& [[borrowed_from(owner)]];
+};
+```
+
+The result's referent and access must match exactly, and every possible checked
+origin must belong to the named synthetic parameter. That parameter must itself
+be borrowed; a mutable result additionally needs a mutable input. Merely
+returning the correct reference type from a different input does not satisfy
+the contract. The annotation cannot authorize a temporary to escape, make an
+owned local a borrowed input, or turn read-only access into mutable access.
+Omitting the origin does not admit reference results. This slice describes
+checked references, not conditional reference-bearing wrapper results.
+
+A simple requirement omits the result contract: `{ expression };` checks
+whether the expression is valid but promises no particular result type,
+ownership category or borrowed origin. In an open generic body, a direct
+operation has a deferred result, not an invented owned value or reference;
+concrete instantiation must resolve it before executable lowering.
+
+An inferred reference requirement instead spells
+`{ expression } -> auto& [[borrowed_from(input)]];` (or `mut auto&`). It checks
+the same exact access and input-origin rules as a typed borrowed requirement,
+while leaving the referent inferred. A value result cannot satisfy this check,
+and inference never changes a read-only input into a mutable borrowed origin.
+Use a simple requirement, not `-> auto`, when no result contract is wanted.
+
 The same query is a Boolean expression usable in `static_assert` and
 `if constexpr`. Example [173](../../examples/173-general-requires.gti) demonstrates
 operators, construction, composition and reflection on an unrelated user type.
+
+An iteration requirement checks an ordinary range loop without executing it:
+
+```gti
+concept readable_range<R> = requires(R& range) {
+  for (auto& element : range) {}
+};
+concept writable_int_range<R> = requires(mut R& range) {
+  for (mut int& element : range) {}
+};
+```
+
+The body may be empty or contain `static_assert` checks, including nested
+expression requirements that refer to the loop's element binding:
+
+```gti
+concept visits<F, R, Result> = requires(mut F& function, R& range) {
+  for (auto& element : range) {
+    static_assert(requires { { function(element) } -> Result; });
+  }
+};
+```
+
+This checks the actual loop binding, not a call on the raw dereference result.
+In particular, a value-producing iterator's local element can be passed by
+read-only reference without extending a temporary's lifetime outside the loop.
+Other statements are not supported in the query body. The checks do not execute
+the loop; their normal compile-time evaluation remains bounded. A provisional
+iteration fact alone cannot prove additional assertions in a different query.
+
+`auto` infers the element type; an explicit element
+type must match exactly, rather than becoming valid through a conversion.
+The check uses the same range analysis as an executable loop, including fixed
+arrays, endpoint selection, temporary lifetime, access and cleanup obligations.
+It neither consumes the caller's range nor publishes an element loan. Direct
+borrowed-parameter range queries preserve provisional iteration facts in an
+open generic body; concrete instantiation rechecks the actual loop. This is a
+general source-language query, not a binding to a standard-library concept.
+An explicitly `unsafe for` query is currently a concrete filter only: it does
+not grant a safe generic body permission to perform unsafe iteration operations.
 
 Semantic analysis checks general expressions using ordinary GTI resolution,
 access, ownership, mutability and lifetime rules in an isolated unevaluated
@@ -281,11 +354,19 @@ a reference receiver and direct `T(arguments...)` construction requirements
 supply exact provisional
 operation facts. These facts do not create executable call targets: concrete
 instances resolve and validate ordinary operations again before HIR/MIR.
+For a direct member call, dereference or subscript, the provisional fact retains
+the named receiver/argument origin and reference access. Composition and
+disjunction cannot erase that lifetime contract or substitute another input.
 Owned receiver queries are concrete filters until an exact consuming-access
 proof is available; they never manufacture a borrowed receiver capability.
 Compound expressions may filter concrete types, but do not manufacture proofs
 for arbitrary subexpressions in an open generic body. Conjunction unions
-guaranteed facts; disjunction retains only common facts. Recursive query
+guaranteed operation facts; disjunction retains only common operation facts.
+Constraint satisfaction also preserves the alternatives themselves: a source
+concept or transparent predicate wrapper can prove an equivalent disjunction
+regardless of alternative order. Every possible provided branch must imply
+the required alternative; one successful branch is insufficient. This bounded
+implication check does not execute or infer arbitrary predicate bodies. Recursive query
 checking is bounded to 64 active checks.
 
 ### Constexpr reflection predicates
@@ -307,6 +388,47 @@ names are not special: the fact originates at a trusted declaration identity.
 Lexical lookup belongs to the predicate declaration rather than the caller's
 generic bindings. No separate constexpr interpreter or native template probing
 is involved.
+
+Type aliases and conformance-block types validate their constraints even when
+unused. Predicates requiring source-body execution follow the normal constexpr
+definition-before-use rule at the alias or block's lexical position;
+registering type identities does not execute those bodies. Transparent reflected
+fact aliases retain the declaration-level proof behavior described above.
+
+Alternatives retain common consequences as well as identical predicates. For
+example, `is_signed_integral<T>() || is_unsigned_integral<T>()` proves that `T`
+is integral; it does not prove either particular signedness. Likewise,
+`is_bool<T>() || is_integral<T>()` supplies the scalar-domain evidence needed
+by atomic storage. Adding a floating-point alternative removes that evidence.
+These implications depend on compiler-verified type categories, not concept or
+wrapper names.
+
+`std::meta::has_object_layout<T>()` answers whether a complete object
+representation is available to the general object-lifetime operations.
+`std::meta::is_borrow_free<T>()` answers whether a value retains no checked
+external-owner borrow according to the type's structural ownership contract.
+They are separate facts: a class containing a checked reference can have a
+layout while retaining a borrow. The query is not a per-value lifetime check;
+all ordinary provenance and escape checks still apply to view values. A raw
+pointer can be borrow-free without being valid, owned,
+or safe to dereference. Neither predicate relaxes unsafe obligations. Both
+queries also have methods on `std::meta::type<T>`.
+
+`std::meta::has_active_cleanup<T>()` reports whether destruction has active
+work, including source destructor bodies and recursively owned state. A false
+answer does not permit skipping object lifetime transitions.
+`std::meta::is_polymorphic<T>()` reports resolved virtual dispatch, and
+`std::meta::is_public_base_of<Base, Derived>()` reports the public base relation
+used by ordinary GTI conversion. The latter is false for identical types and
+non-class types. The corresponding type-metaobject methods are
+`has_active_cleanup()`, `is_polymorphic()` and `has_public_base<Base>()`.
+These are metadata queries, not casts or permissions to access an object.
+
+`std::inline_polymorphic_payload<Model, Interface>` now composes these facts,
+object layout, movable/relocatable, borrow-free and concurrency facts in source.
+The trusted storage operation still independently validates its concrete
+lifetime and erasure invariants; removing a private concept does not remove
+those checks or make the storage operation a public escape hatch.
 
 ### Exact member signature compatibility
 
@@ -338,7 +460,7 @@ compiler-private member, meaning any member of a `gti_internal` type or a
 public member whose signature names one, satisfies a direct query or a trailing
 `requires requires` leaf only in compiler-trusted source, which could call it
 there. Trusted source can therefore probe a private helper type whose method is
-constrained directly by a raw `@compiler_constraint` capability. A named concept
+constrained by source predicates over compiler-verified facts. A named concept
 is a public predicate. Its member requirements never admit a compiler-private
 member, even when trusted source declares or applies the concept, and the
 failure reports that the member is compiler-private rather than nonpublic.
@@ -371,9 +493,12 @@ requirement from its declared members after ordinary substitution, with the
 same exact matching, even when the required result or parameters name the
 enclosing parameters. A bare type parameter proves one only through an
 enclosing requirement.
-Function inline generic-parameter constraints still exclude structural
-concepts; use a trailing clause. Class parameters accept unary structural
-annotations as described above. Borrowed-result contracts remain unsupported.
+Unary source concepts may annotate function, constructor and class generic
+parameters inline, including composed expression, signature and predicate
+requirements. Their full contracts enter the generic scope and are checked
+again for concrete arguments; they are not reduced to unary classification
+bits. Relational concepts and protocol concepts with bodies still use a
+trailing clause. Borrowed-result contracts remain unsupported.
 
 An ordinary requirement proves a safe call and rejects an unsafe member.
 Prefix the compound signature with `unsafe` to describe a member whose caller
@@ -443,23 +568,63 @@ Their obsolete declaration-binding labels have been removed; the underlying
 compiler fact kinds remain the authority for reflection and proof checking.
 The exact enum-underlying relation likewise uses reflection rather than a
 separate private concept binding.
+`std::meta::reflectable` now directly uses `is_reflectable<T>()`.
+`std::atomic_scalar` selects Boolean or integral types in source and composes
+the lifecycle and concurrency concepts. `std::layout_queryable` and
+`std::storage_element` compose object-layout and borrow-free facts. Their
+former private concept binding labels are removed; actual reflection access,
+native atomic operations and object lifetimes remain compiler-checked.
 Arithmetic domain concepts use source requirements for the actual operations.
 Their `[[unsatisfied(...)]]` explanations also live in source, so constraint
 diagnostics retain useful guidance without recognizing those concept names.
 The former `adds`, `subtracts`, `negates`, and `scales_by` compiler bindings
 and dedicated proof branches have been removed. Their generic-body operation
 facts now use the same general expression-requirement path as user concepts.
-The exact equality and relational declaration-shape contracts remain private:
-ordinary expression viability cannot yet prove their requirement-free,
-read-only, exact-reference signature policy. Replacing them needs general
-receiver/requirement metadata, not weaker acceptance or a renamed private trait.
+Equality and ordering policy now also lives in source. Ordinary safe expression
+queries prove the operations; a source metadata scan retains the public,
+read-only, nongeneric, requirement-free, exact-reference declaration policy for
+classes. General method predicates expose consuming access, unsafe obligations,
+generic declarations and method requirements. Primitive comparisons remain
+value operations, not hypothetical reference-taking member calls. The old
+comparison capability bindings and dedicated class-policy checker are removed.
+The policies use `std::meta::lookup_methods_of<T>()` and
+`lookup_operators_of<T>()` when inherited declarations matter. These return
+the resolved member set, including inherited overloads and excluding
+overridden base declarations. Each metaobject retains its exact instantiated
+declaring owner and original declaration index. Names are sorted lexically;
+overloads retain lookup order. Existing `methods_of<T>()`, `operators_of<T>()`
+and `type<T>::method_count()` remain declaration-only. Metadata alone never
+grants access or permission to invoke a method; expression queries still check
+the actual use on `T`.
+An open generic class can provide this metadata when its declaration inventory
+is fixed independently of its arguments. This lets a source predicate inspect
+an iterator's declared reference result without needing its element type to be
+concrete. Possible specializations or other unresolved declaration choices do
+not establish that proof. Likewise, `is_same<T, T>()` is true while a comparison
+between two unrelated open parameters is still unknown, not automatically false.
+Expression queries preserve proofs available from the checked generic context;
+an unproven symbolic query waits for concrete analysis rather than disabling
+the operation's ownership, access or lifetime checks.
+`std::meta::is_raw_pointer<T>()` and `type<T>::is_raw_pointer()` classify a
+concrete type using the existing type-category metadata. They do not establish
+pointer validity, lifetime, access rights, or permission to dereference it.
 Iterator relations returning checked borrows, and callable relations carrying
-the complete read/mutable/once-use and borrow/escape contract, retain their
-existing compiler facts. A single owned-result expression query is not a
-replacement for those complete relationships.
+the complete read/mutable/once-use and borrow/escape contract, compose source
+queries. The compiler still owns the origin, access and lifetime facts that
+those queries verify; an owned-result-only query cannot replace a complete
+borrowed relationship.
+
+Prefix mutation and compound assignment can also supply general operation
+proofs, for example `requires(mut T& value, int n) { { value += n } -> void; }`.
+The proof preserves the receiver's mutable-access requirement; it does not let
+a generic function modify a read-only reference. As with all expression
+queries, checking this requirement does not mutate any caller object.
+Iterator decrement and jump policies now use these ordinary source queries;
+their former private category bindings are removed. Borrowing iterator and
+range relationships still retain the facts described above.
 
 For example, `std::totally_ordered` remains source composition, and the iterator
-units still define public concepts over the necessary private structural facts:
+units define public concepts over general source requirements and reflection:
 
 ```gti
 namespace std {
@@ -500,30 +665,43 @@ The current structural capability set is intentionally small:
   checked reference and public `void operator++() mut`; transferring an
   iterator into an algorithm is checked separately by ordinary parameter
   ownership rules;
-- `sentinel_for<S, I>` requires an exact public read-only
-  `bool I::operator!=(S&)`; and
+- `sentinel_for<S, I>` is source-defined: declaration metadata requires one
+  exact public safe read-only `bool I::operator!=(S&)` or copyable by-value
+  `S` parameter, and an expression query proves the named-operand call; and
 - `dereferences_to<I, T>` requires public read-only `I::operator*()` to return
   a checked reference whose referent is exactly `T`;
 - `writable_iterator<I>` requires public `mut I::operator*() mut` returning a
   mutable checked reference plus public `void operator++() mut`; the public
   spelling is `std::output_iterator<I>`;
-- `writes_to<I, T>` refines the mutable dereference referent to exactly `T`;
+- `writes_to<I, T>` is a source-defined requirement for mutable dereference
+  returning exactly `mut T&`, borrowed from the mutable cursor parameter;
 - `bidirectional_iterator<I>` requires public `void operator--() mut`;
 - `random_access_iterator<I>` requires public
   `void operator+=(std::ptrdiff_t) mut` and
   `void operator-=(std::ptrdiff_t) mut`;
 - `subscripts_to_mut<I, T>` requires public
-  `mut T& I::operator[](std::ptrdiff_t) mut` with exactly `T`;
-- `sized_sentinel_for<S, I>` requires public read-only
-  `std::ptrdiff_t I::operator-(S&)`, the signed distance from the iterator to
-  the sentinel;
-- `input_range<R>` derives exact public read-only `begin()`/`end()` endpoints
-  and requires their iterator/sentinel pair to satisfy the input protocol;
-- `range_of<R, T>` refines that range to an exact read-only `T&` dereference,
-  while `mutable_range_of<R, T>` requires exact mutable `begin_mut()` and
-  `mut T&` dereference;
-- `sized_range<R>` requires exact public read-only
-  `std::size_t R::size()`; fixed arrays satisfy it from their exact extent;
+  `mut T& I::operator[](std::ptrdiff_t) mut` with exactly `T`. Source metadata
+  checks the exact by-value offset declaration, and a borrowed expression
+  requirement checks its result access and cursor origin;
+- `sized_sentinel_for<S, I>` composes the sentinel policy with source
+  metadata and a query for exact public read-only
+  `std::ptrdiff_t I::operator-(S&)` or copyable by-value `S`, the signed
+  distance from the iterator to the sentinel. Neither sentinel policy has
+  a private compiler binding;
+- `input_range<R>` is a source iteration requirement for
+  `for (auto& element : range) {}`. `range_of<R, T>` additionally checks an
+  exact `T` element, and `mutable_range_of<R, T>` composes that with
+  `for (mut T& element : range) {}` on a mutable borrowed range. These policies
+  use actual loop semantics, including fixed arrays and safe materialized
+  value yields. This deliberately supersedes the old private declaration-only
+  range checker: a viable ordinary loop, rather than a second hand-maintained
+  overload filter, establishes the protocol;
+- `sized_range<R>` composes input iteration with an ordinary expression query
+  for `range.size()` through a read-only borrow, returning exactly
+  `std::size_t`. Fixed arrays satisfy that expression through their checked
+  extent operation. The parenthesized expression query deliberately uses
+  ordinary overload resolution rather than the older declaration-only member
+  query, so callable constrained/generic members can qualify too;
 - `forward_iterator<I>` is the source-defined conjunction of input iteration,
   copy construction, and use of `I` as its own sentinel; the public
   bidirectional and random-access concepts compose their movement facts over
@@ -537,22 +715,43 @@ The current structural capability set is intentionally small:
   Ordinary call viability applies: a by-value operand cannot copy a move-only
   borrowed value merely because a signature exists;
 - `read_callable<F, A, R>`, `mut_callable<F, A, R>`, and
-  `once_callable<F, A, R>` require one exact unary callable signature whose
-  result is the owned, non-borrowed `R` and whose readable argument is either
-  `A` or `A&`. Nominal targets provide a public `operator()`; exact lambdas
-  and eligible GTI function items provide their selected signature. The
+  `once_callable<F, A, R>` are source expression queries for a safe unary
+  invocation returning exactly the owned, non-borrowed `R`, with either a
+  borrowed `A&` argument or a consumed owned `A`. Nominal targets provide a
+  public `operator()`; lambdas and GTI function items use ordinary resolution. The
   invocation capability is respectively read-only, repeatable
   read-only/mutable, or usable once through owned access;
 - the corresponding `read_binary_callable`, `mut_binary_callable`, and
-  `once_binary_callable` relationships name two exact readable arguments;
-- `once_action<F>` is the nullary exact-`void` consuming-use relation;
-- `indirect_predicate<F, I>` derives the exact referent of `I::operator*()` and
-  requires a repeatable `bool` callable for it; and
-- `indirect_operation<F, I, R>` derives the same referent and requires a
-  repeatable exact owned `R` operation; and
+  `once_binary_callable` relationships test both arguments, including mixed
+  borrowed/consumed forms;
+- `once_action<F>` is the source-defined nullary exact-`void` consuming-use
+  relation: `requires(F action) { { std::move(action)() } -> void; }`;
+- `indirect_predicate<F, I>` queries the ordinary `function(*position)`
+  composition in source and requires a safe repeatable `bool` invocation; and
+- `indirect_operation<F, I, R>` uses that same composition with an exact owned
+  `R` result; and
 - `range_predicate<F, R>` and `range_operation<F, R, Result>` derive the exact
   read-only element of a complete range and apply the same repeatable callable
-  rules without exposing an associated iterator type.
+  rules without exposing an associated iterator type. These are source-defined
+  queries over `*range.begin()`, or indexing for fixed arrays only; an unrelated
+  indexing overload on a class cannot substitute for its iterated element.
+
+The unary/binary source policies deliberately replace the former declaration
+census with usable expression queries. A callable may therefore qualify through
+a valid owned-argument form even when its borrowed form is ambiguous. The
+concept does not choose the argument form for a caller: the actual invocation
+must still satisfy exact overload selection, copying/movement, access and
+lifetime checks. An ambiguous named-argument call remains an error at the call
+site. Generic code that needs one specific form can state that expression
+directly in a requirement. No unary/binary callable compiler bindings remain.
+
+The iterator-aware queries likewise preserve the actual dereference expression's
+value category rather than a private approximation based only on its referent
+type. Owned yields, checked loans, callable access, and any copy or move must
+satisfy ordinary expression rules. Their whole-range counterparts additionally
+require the input-range contract. All callable concept policy is source-defined;
+the compiler retains the general invocation and ownership rules these queries
+ask about.
 
 In a generic body the writable capability supplies the mutable-dereference
 form of `*output = value`, and `subscripts_to_mut` supplies
@@ -561,8 +760,9 @@ form when the active requirements prove both a read-only and a mutable one,
 mirroring concrete member selection.
 
 Complete-range requirements additionally supply private symbolic
-iterator/sentinel carriers for a range-based `for`, plus the exact zero-argument
-`size()` result under `sized_range`. These carriers are compiler proof objects,
+iterator/sentinel carriers for a range-based `for`. The ordinary expression
+requirement supplies the exact zero-argument `size()` result independently.
+These carriers are compiler proof objects,
 not source-visible associated types. Concrete generic reanalysis must replace
 them with the selected nominal endpoint declarations or fixed-array strategy
 before HIR and verified MIR are built.
@@ -584,12 +784,23 @@ lambda whose signature names `T`, satisfies a relation through its substituted
 `operator()` signature. A bare type parameter satisfies one only through an
 enclosing requirement.
 
+The nullary `once_action` policy no longer has a compiler concept binding.
+Its ordinary expression requirement selects the call and checks public access,
+safe invocation, ownership transfer and the exact `void` result. Ordinary call
+viability decides this nullary relation; the query does not relax operator
+declaration restrictions or make an otherwise unavailable overload callable.
+A query neither invokes nor consumes a runtime value;
+an actual `invoke_once` call still transfers ownership and performs deterministic
+cleanup. Unary, binary, iterator-aware and range-aware callable policies use
+the same ordinary query machinery rather than private signature checkers.
+
 An exact callable argument describes a readable source value. A concrete
 target may copy it by value or observe it through an exact read-only reference.
-Library implementations therefore present readable lvalues at these sites;
-they do not use native reference binding or implicit conversion to widen the
-contract. Results may not be references, lambdas, or values carrying tracked
-borrowed state because the bounded relation has no result-owner parameter.
+Library implementations select the borrowed or consumed form that their
+algorithm needs; qualification alone does not make a different form viable.
+They do not use native reference binding to widen the contract. These policies
+require owned, non-borrowed results because they have no result-owner parameter;
+callable-valued results also retain the ordinary callable escape checks.
 
 A borrowed operator result does not satisfy these capabilities: the produced
 value would be tied to a receiver whose lifetime the requirement cannot name.
@@ -621,26 +832,20 @@ C++ conversion or expression probing must not fill that gap implicitly.
 
 ## Trusted bindings
 
-The prelude and selected canonical standard-library units use reserved syntax
-to connect an internal declaration to one compiler fact. For example,
-`<std/iterator>` owns its exact sentinel relationship:
+All standard-library concepts are now source-defined. No
+`@compiler_constraint` binding remains registered. Its old spelling is reserved
+and rejected, rather than available to application code as a way to invent
+facts. Classification, lifecycle, comparison, callable, iterator, sentinel,
+range and borrowed-result policies compose general requirements and reflection
+queries in ordinary source.
 
-```gti
-namespace gti_internal {
-@compiler_constraint("sentinel_for")
-concept sentinel_for_capability<S, I>;
-}
-```
-
-`@compiler_constraint` is accepted only inside `gti_internal` in the implicit
-prelude or in the exact trusted unit assigned to that binding. Atomic scalar
-facts belong to `<std/atomic>`, iterator relationships to `<std/iterator>`, and
-callable relationships to `<std/functional>`; core type and operator facts
-remain in the prelude. Each unit composes its private declarations into public
-concepts. Application source cannot forge a binding, name the private
-capability, or expose it through a public signature. Binding names and bound
-declarations are compiler/standard-library integration details, not a public
-language API.
+This does not remove compiler ownership of irreducible facts. Exact type and
+declaration identities, layout, object lifetime, structural relocation,
+transfer/share safety and checked borrow origins still come from semantic
+analysis through identity-bound private operations. Source policy composes those
+facts; it cannot override them. An application can define the same kind of
+concept using public `std::meta` queries and `requires` expressions, without
+access to private declarations or any nominal recognition of a public concept.
 
 ## Frontend and backend contract
 

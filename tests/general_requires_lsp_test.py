@@ -12,9 +12,20 @@ SOURCE = """#include <std/meta>
 // UTF-16 positioning: 🧮
 concept sums<T> = requires(T& left, T& right) { { left + right } -> T; };
 concept integer_value<T> = std::meta::is_integral<T>();
-T add<T>(T& left, T& right) requires sums<T> { return left + right; }
+concept complete_object<T> = std::meta::has_object_layout<T>();
+concept detached_object<T> = complete_object<T> && std::meta::is_borrow_free<T>();
+concept cleanup_needed<T> = std::meta::has_active_cleanup<T>();
+concept dynamic_object<T> = std::meta::is_polymorphic<T>();
+concept integer_domain<T> = std::meta::is_signed_integral<T>() || std::meta::is_unsigned_integral<T>();
+T increment<T>(T value) requires integer_domain<T> { return value + 1; }
+T add<sums T>(T& left, T& right) { return left + right; }
 T twice<T>(T value) requires std::meta::is_integral<T>() { return value + value; }
 concept raw_read<T> = requires(T& value) { { unsafe { value.raw() } } -> int; };
+concept editable<C, T> = requires(mut C& owner) { { owner.edit() } -> mut T& [[borrowed_from(owner)]]; };
+concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
+concept loop_checked<F, R, Result> = requires(mut F& function, R& range) { for (auto& element : range) { static_assert(requires { { function(element) } -> Result; }); } };
+concept observes<I> = requires(I& cursor) { { *cursor }; };
+concept changes<I> = requires(mut I& cursor) { { *cursor } -> mut auto& [[borrowed_from(cursor)]]; };
 int main() { int left = 3; int right = 4; return add(left, right) == twice(left) + 1 ? 0 : 1; }
 """
 
@@ -59,7 +70,7 @@ def main():
                 "textDocument": {"publishDiagnostics": {"relatedInformation": True}}}})
             session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
             assert change(SOURCE, 1) == []
-            contract = hover(SOURCE, SOURCE.index("sums<T> {"))
+            contract = hover(SOURCE, SOURCE.index("sums T>"))
             assert "left + right" in str(contract) and "-> T" in str(contract), contract
             predicate = hover(SOURCE, SOURCE.index("integer_value<T>"))
             assert "std::meta::is_integral<T>()" in str(predicate), predicate
@@ -71,10 +82,49 @@ def main():
                 "position": lsp_position(SOURCE, callee_position)})
             location = definition[0] if isinstance(definition, list) else definition
             assert location["uri"].endswith("/std/meta.gti"), definition
+            for name in ("has_object_layout", "is_borrow_free", "has_active_cleanup", "is_polymorphic"):
+                position = SOURCE.index(name + "<T>")
+                query = hover(SOURCE, position)
+                assert name in str(query) and "bool" in str(query), query
+                definition = request("textDocument/definition", {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(SOURCE, position)})
+                location = definition[0] if isinstance(definition, list) else definition
+                assert location["uri"].endswith("/std/meta.gti"), definition
             selected = hover(SOURCE, SOURCE.rindex("twice(left)"))
             assert "is_integral<int32_t>()" in str(selected), selected
             raw_contract = hover(SOURCE, SOURCE.index("raw_read<T>"))
             assert "unsafe { value.raw() }" in str(raw_contract), raw_contract
+            borrowed_contract = hover(SOURCE, SOURCE.index("editable<C, T>"))
+            assert "-> mut T&" in str(borrowed_contract) and "borrowed_from(owner)" in str(borrowed_contract), borrowed_contract
+            origin_position = SOURCE.index("owner)]]")
+            origin_definition = request("textDocument/definition", {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(SOURCE, origin_position)})
+            origin_location = origin_definition[0] if isinstance(origin_definition, list) else origin_definition
+            assert origin_location["range"]["start"] == lsp_position(SOURCE, SOURCE.index("owner) {")), origin_definition
+            origin_rename = request("textDocument/rename", {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(SOURCE, origin_position), "newName": "source"})
+            assert len(origin_rename["changes"][uri]) == 3, origin_rename
+            iteration_contract = hover(SOURCE, SOURCE.index("iterable<R>"))
+            assert "for (auto& element : range) {}" in str(iteration_contract), iteration_contract
+            checked_loop = hover(SOURCE, SOURCE.index("loop_checked<F"))
+            assert "static_assert(requires { { function(element) } -> Result; });" in str(checked_loop), checked_loop
+            inferred_contract = hover(SOURCE, SOURCE.index("observes<I>"))
+            assert "*cursor };" in str(inferred_contract) and "->" not in str(inferred_contract), inferred_contract
+            mutable_contract = hover(SOURCE, SOURCE.index("changes<I>"))
+            assert "-> mut auto&" in str(mutable_contract) and "borrowed_from(cursor)" in str(mutable_contract), mutable_contract
+            range_use = SOURCE.index(": range)") + 2
+            range_definition = request("textDocument/definition", {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(SOURCE, range_use)})
+            range_location = range_definition[0] if isinstance(range_definition, list) else range_definition
+            assert range_location["range"]["start"] == lsp_position(SOURCE, SOURCE.index("range) {")), range_definition
+            range_rename = request("textDocument/rename", {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(SOURCE, range_use), "newName": "input"})
+            assert len(range_rename["changes"][uri]) == 2, range_rename
             use_position = lsp_position(SOURCE, SOURCE.index("left + right"))
             definition = request("textDocument/definition", {
                 "textDocument": {"uri": uri}, "position": use_position})

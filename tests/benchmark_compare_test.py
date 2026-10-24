@@ -1673,8 +1673,9 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         runtime = build_provenance["native"]["runtime"]
         require(
             any(header["kind"] == "runtime" for header in runtime["headers"])
-            and runtime["archive"]["canonical_path"]
-            in build_provenance["native"]["argv"],
+            and any(Path(argument).resolve()
+                    == Path(runtime["archive"]["canonical_path"]).resolve()
+                    for argument in build_provenance["native"]["argv"]),
             f"{name} provenance omitted used runtime material",
         )
         materials = [
@@ -1728,7 +1729,10 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
     archive_path = Path(
         sequential_report["native"]["runtime"]["archive"]["canonical_path"]
     )
-    archive_index = sequential_report["native"]["argv"].index(str(archive_path))
+    archive_index = next(
+        index for index, argument in enumerate(sequential_report["native"]["argv"])
+        if Path(argument).resolve() == archive_path.resolve()
+    )
     selected_gti = module.Tool(str(gti), gti, (str(gti), "--version"), "gti")
     selected_cxx = module.Tool(str(cxx), cxx.resolve(strict=True),
                                (str(cxx), "--version"), "cxx", cxx.absolute())

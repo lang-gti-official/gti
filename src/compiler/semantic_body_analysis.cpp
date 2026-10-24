@@ -70,6 +70,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   reachedPreambleBodies.clear();
   registrationFloor = {};
   stagedWorker = {};
+  primitiveRequirementProofs.clear();
+  primitiveRequirementProofCount = 0;
   currentNamespace.clear();
   currentSourceUnit = 0;
   structuredBindingElements.clear();
@@ -275,8 +277,6 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   validateInterfaceCapabilities();
   recordClassTypes();
   recordClassLifecycles();
-  validateTypeAliasConstraints();
-  validateConformanceTypes();
   registerDesignatedConstructors();
 }
 
@@ -1052,8 +1052,9 @@ auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
 // elements are the pack's types. Each element gets its own copy of
 // `{ binding; body }`, analysed in order in a scope of its own with the
 // binding initialized to a default-constructed element. A sequence type that
-// depends on an open generic parameter defers the expansion to concrete
-// reanalysis, exactly like a dependent `if constexpr` condition.
+// with unresolved cardinality or element storage defers to concrete reanalysis.
+// A fixed list of empty constexpr descriptors can already be expanded even
+// when the types they describe remain symbolic.
 auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
     -> void {
   const PhaseTimeScope timeScope("constexpr-for");
@@ -1062,14 +1063,25 @@ auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
     semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
     return;
   }
-  if (containsOpenTypeParameter(sequenceType)) {
+  const std::optional<std::vector<SemanticType>> elements =
+      compileTimeSequenceElements(sequenceType);
+  const bool symbolicElementStorage =
+      elements &&
+      std::any_of(
+          elements->begin(), elements->end(), [&](const SemanticType &element) {
+            if (!containsOpenTypeParameter(element))
+              return false;
+            const auto *owner = classInfo(element);
+            return !owner || !owner->fields.empty() || !owner->bases.empty() ||
+                   !isConstexprDefaultConstructible(element);
+          });
+  if ((!elements || symbolicElementStorage) &&
+      containsOpenTypeParameter(sequenceType)) {
     semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
     loanFlow.deferredGenericFlow = true;
     requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
     return;
   }
-  const std::optional<std::vector<SemanticType>> elements =
-      compileTimeSequenceElements(sequenceType);
   if (!elements) {
     report(stmt.colon(),
            "A 'constexpr for' sequence must be a value of a class whose "
@@ -2815,7 +2827,8 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
       !(rangeType.kind == SemanticType::StringView &&
         textViewMemberFactory("begin").has_value() &&
         textViewMemberFactory("end").has_value()) &&
-      rangeType.kind != SemanticType::Class && !symbolicReadRange) {
+      rangeType.kind != SemanticType::Class && !symbolicReadRange &&
+      !(mutableElementRequested && symbolicMutableRange)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2083", DiagnosticPhase::Semantics, stmt.colon(),
         std::string(mutableElementRequested ? "Mutable" : "Read-only") +
@@ -5811,6 +5824,12 @@ auto SemanticVisitor::Impl::visitStructuredBindingDecl(
 
 auto SemanticVisitor::Impl::visitTypeAliasDecl(const TypeAliasDecl &stmt)
     -> void {
+  const DeclarationOrderScope declarationOrder{*this, stmt};
+  // Identities are registered up front, but source-defined constraints may
+  // execute constexpr predicates. Check them at this declaration's lexical
+  // position, after preceding definitions have been analyzed, even if the
+  // alias is never used. Registration cannot supply those body-derived facts.
+  validateType(stmt.target(), stmt.target().isNativeFunction());
   const TypeAliasInfo *info = semanticModel.findTypeAlias(stmt);
   const SemanticType type =
       info == nullptr ? SemanticType::Unknown : info->type;
@@ -6914,6 +6933,22 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
   const auto [leftType, rightType] = analyzeBinaryOperands(expr);
   validateSequencedTransientLoans(expr.left(), expr.right(), expr.oper());
 
+  // An existence-only requirement can establish an operand operation without
+  // knowing its result yet. Do not turn a dependent comparison into a bool
+  // proof (or a false incompatibility): concrete reanalysis must resolve both
+  // operands and select/check the comparison before executable lowering.
+  if ((leftType == SemanticType::Unknown ||
+       rightType == SemanticType::Unknown) &&
+      (expr.oper().kind == TokenKind::EQUAL_EQUAL ||
+       expr.oper().kind == TokenKind::BANG_EQUAL ||
+       expr.oper().kind == TokenKind::LESS ||
+       expr.oper().kind == TokenKind::LESS_EQUAL ||
+       expr.oper().kind == TokenKind::GREATER ||
+       expr.oper().kind == TokenKind::GREATER_EQUAL)) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+
   if ((expr.oper().kind == TokenKind::PLUS ||
        expr.oper().kind == TokenKind::MINUS) &&
       (leftType.kind == SemanticType::RawPointer ||
@@ -7576,7 +7611,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           if (selected && !selected->mutableReceiver &&
               requirement.mutableReceiver)
             selected.reset();
-          if (selected && selected->arguments != requirement.arguments)
+          if (selected && (selected->arguments != requirement.arguments ||
+                           selected->borrowSource != requirement.borrowSource))
             ambiguous = true;
           if (selected && selected->arguments == requirement.arguments &&
               !selected->requiresUnsafe && requirement.requiresUnsafe)
@@ -7595,13 +7631,23 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           requireUnsafe(expr, UnsafeOperationKind::DeclaredUnsafeCall,
                         expr.paren(), "Calling an unsafe required member");
         }
-        semanticModel.record(
-            expr, ResolvedCallInfo{.returnType = selected->arguments[1],
-                                   .receiverMode =
-                                       selected->mutableReceiver
-                                           ? CallReceiverMode::MutablePlace
-                                           : CallReceiverMode::ReadOnlyPlace});
-        currentType = selected->arguments[1];
+        ResolvedCallInfo resolved{
+            .returnType = selected->arguments[1],
+            .parameterTypes = std::vector<SemanticType>(
+                selected->arguments.begin() + 2, selected->arguments.end()),
+            .receiverMode = selected->mutableReceiver
+                                ? CallReceiverMode::MutablePlace
+                                : CallReceiverMode::ReadOnlyPlace};
+        if (selected->borrowSource) {
+          resolved.borrowOrigin = *selected->borrowSource == 0
+                                      ? BorrowOriginKind::Receiver
+                                      : BorrowOriginKind::Argument;
+          resolved.borrowArgument =
+              *selected->borrowSource == 0 ? 0 : *selected->borrowSource - 2;
+          resolved.borrowAccess = resolved.returnType.referenceAccess;
+        }
+        semanticModel.record(expr, std::move(resolved));
+        currentType = callExpressionType(selected->arguments[1]);
         return;
       }
     }
@@ -7612,8 +7658,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                                        member->name().lexeme == "end");
       const std::optional<SemanticType> result =
           symbolicRangeMemberReturnType(receiverType, member->name().lexeme);
-      if (result &&
-          (member->name().lexeme == "size" || generatedRangeEndpoint)) {
+      if (result && generatedRangeEndpoint) {
         if (hasExplicitGenericArguments) {
           report(expr.paren(),
                  "Structural range members do not take generic arguments.",
@@ -10389,6 +10434,18 @@ auto SemanticVisitor::Impl::recordMemberRequirementReceiver(
       }
     };
     recordUses(*query.expression());
+    if (query.borrowedFrom()) {
+      const auto found = parameters.find(query.borrowedFrom()->lexeme);
+      if (found != parameters.end())
+        semanticModel.recordOccurrence(
+            {.sourceUnit = sourceUnitFor(*query.borrowedFrom()),
+             .span = tokenSpan(*query.borrowedFrom()),
+             .kind = SemanticOccurrenceKind::Symbol,
+             .symbol = found->second.first,
+             .roles = OccurrenceRole::Reference,
+             .name = query.borrowedFrom()->lexeme,
+             .type = found->second.second});
+    }
     return;
   }
   const auto symbol = recordToolingSymbol(
@@ -10446,11 +10503,13 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
       recordTypeUse(parameter);
       arguments.push_back(typeOf(parameter));
     }
-    validateType(expr.result());
-    recordTypeUse(expr.result());
-    arguments.push_back(typeOf(expr.result()));
+    const auto resultArgument = expr.resultArgumentType();
+    validateType(resultArgument);
+    recordTypeUse(resultArgument);
+    arguments.push_back(typeOf(resultArgument));
     std::vector<const TypeRef *> extraTypes;
     collectRequirementTypeArguments(expr.expression().get(), extraTypes);
+    collectIterationRequirementTypeArguments(expr, extraTypes);
     for (const auto *argument : extraTypes) {
       validateType(*argument);
       recordTypeUse(*argument);
@@ -10459,14 +10518,17 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
     recordMemberRequirementReceiver(expr, SemanticType::Unknown);
     if (diagnostics.size() != before)
       return;
-    if (std::any_of(arguments.begin(), arguments.end(),
-                    containsOpenTypeParameter)) {
+    const bool satisfied = expressionRequirementSatisfied(expr, arguments);
+    // A symbolic argument does not erase a proof already available from the
+    // checked declaration/constraint environment. Absence of a proof is not
+    // false, however: a concrete substitution may add the missing operation.
+    if (!satisfied && std::any_of(arguments.begin(), arguments.end(),
+                                  containsOpenTypeParameter)) {
       if (analyzingDependentConstantCondition)
         constantConditionGenericDependency = true;
       return;
     }
-    semanticModel.recordConstant(
-        expr, ConstantValue{expressionRequirementSatisfied(expr, arguments)});
+    semanticModel.recordConstant(expr, ConstantValue{satisfied});
     return;
   }
   validateType(expr.receiver());

@@ -1497,12 +1497,16 @@ public:
   MemberRequirement(Token keyword, ExprPtr expression, TypeRef result,
                     std::vector<TypeRef> parameters,
                     std::vector<Token> bindings,
-                    std::optional<Token> unsafeKeyword = std::nullopt)
+                    std::optional<Token> unsafeKeyword = std::nullopt,
+                    std::optional<Token> borrowedFrom = std::nullopt,
+                    StmtPtr iteration = nullptr, bool inferredResult = false)
       : keyword_(std::move(keyword)), receiver_(keyword_),
         result_(std::move(result)), parameters_(std::move(parameters)),
         bindings_(std::move(bindings)),
         unsafeKeyword_(std::move(unsafeKeyword)),
-        expression_(std::move(expression)) {}
+        expression_(std::move(expression)),
+        borrowedFrom_(std::move(borrowedFrom)),
+        iteration_(std::move(iteration)), inferredResult_(inferredResult) {}
 
   MemberRequirement(Token keyword, TypeRef receiver, Token binding,
                     Token receiverUse, Token member, TypeRef result,
@@ -1526,6 +1530,17 @@ public:
   const Token &receiverUse() const { return receiverUse_; }
   const Token &member() const { return member_; }
   const TypeRef &result() const { return result_; }
+  [[nodiscard]] bool inferredResult() const { return inferredResult_; }
+  // Inference is query syntax, not an unresolved type argument passed to a
+  // concrete instance. The void slot carries no claimed result type.
+  [[nodiscard]] TypeRef resultArgumentType() const {
+    if (!inferredResult_)
+      return result_;
+    Token token = result_.name.last();
+    token.kind = TokenKind::VOID;
+    token.lexeme = "void";
+    return TypeRef(std::move(token));
+  }
   const std::vector<TypeRef> &parameters() const { return parameters_; }
   const std::vector<Token> &bindings() const { return bindings_; }
   const std::vector<Token> &arguments() const { return arguments_; }
@@ -1536,6 +1551,12 @@ public:
     return expression_ != nullptr;
   }
   [[nodiscard]] const ExprPtr &expression() const { return expression_; }
+  // An iteration query retains the ordinary lowered range-for statement.
+  // expression() is its source range, used for lexical/proof inspection only.
+  [[nodiscard]] const StmtPtr &iteration() const { return iteration_; }
+  [[nodiscard]] const std::optional<Token> &borrowedFrom() const {
+    return borrowedFrom_;
+  }
 
 private:
   Token keyword_;
@@ -1549,6 +1570,9 @@ private:
   std::vector<Token> arguments_;
   std::optional<Token> unsafeKeyword_;
   ExprPtr expression_;
+  std::optional<Token> borrowedFrom_;
+  StmtPtr iteration_;
+  bool inferredResult_ = false;
 };
 
 class LiteralExpr final : public ExprOfKind<ExprKind::LiteralExpr> {
@@ -2256,14 +2280,16 @@ public:
                const VariableDecl *iteratorBinding,
                const VariableDecl *sentinelBinding,
                const VariableDecl *elementBinding, const ForStmt *coreLoop,
-               const VariableDecl *elementOwnerBinding = nullptr)
+               const VariableDecl *elementOwnerBinding = nullptr,
+               const Stmt *sourceBody = nullptr)
       : keyword_(std::move(keyword)), bindingMutability_(bindingMutability),
         bindingType_(std::move(bindingType)),
         bindingName_(std::move(bindingName)), colon_(std::move(colon)),
         lowered_(std::move(lowered)), ownerBinding_(ownerBinding),
         rangeBinding_(rangeBinding), iteratorBinding_(iteratorBinding),
         sentinelBinding_(sentinelBinding), elementBinding_(elementBinding),
-        coreLoop_(coreLoop), elementOwnerBinding_(elementOwnerBinding) {}
+        coreLoop_(coreLoop), elementOwnerBinding_(elementOwnerBinding),
+        sourceBody_(sourceBody) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitRangeForStmt(*this);
@@ -2293,6 +2319,8 @@ public:
     return elementBinding_;
   }
   [[nodiscard]] const ForStmt *coreLoop() const { return coreLoop_; }
+  // The user-written body is owned by lowered(), not a second AST subtree.
+  [[nodiscard]] const Stmt *sourceBody() const { return sourceBody_; }
   [[nodiscard]] const VariableDecl *elementOwnerBinding() const {
     return elementOwnerBinding_;
   }
@@ -2311,6 +2339,7 @@ private:
   const VariableDecl *elementBinding_ = nullptr;
   const ForStmt *coreLoop_ = nullptr;
   const VariableDecl *elementOwnerBinding_ = nullptr;
+  const Stmt *sourceBody_ = nullptr;
 };
 
 class FunctionDecl final : public StmtOfKind<StmtKind::FunctionDecl> {

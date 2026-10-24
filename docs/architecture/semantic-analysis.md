@@ -960,11 +960,19 @@ runtime effect.
 
 ## Compile-Time Iteration And Reflection
 
+Trusted computed-type identities belong to the sealed `SemanticCatalog`, not
+to an individual analysis visitor. Macro probes, expression-requirement probes,
+constant-evaluation workers and body-effect workers inherit the same registry
+with their catalog snapshot. Speculation does not lose metadata-list reduction
+or publish changes back to the caller's declaration environment.
+
 `constexpr for` is expanded by semantic analysis and is gone afterwards.
 `visitConstexprForStmt` analyzes the sequence expression, requires a class
 type with one type-pack argument list (`compileTimeSequenceElements`), and
-defers when the type contains an open generic parameter, using the same
-deferral marks as a dependent `if constexpr`. Otherwise it clones the body
+defers when the cardinality or element storage remains symbolic, using the same
+deferral marks as a dependent `if constexpr`. A fixed list of empty,
+constexpr-default-constructible descriptor classes can expand while the types
+they describe are still open. Otherwise it clones the body
 once per element with `cloneStmt` (`ast_clone.cpp`), builds the element
 binding `[constexpr] auto name = <element>()`, wraps both in a block and
 analyzes the block. Every copy's tokens carry an expansion id
@@ -992,6 +1000,23 @@ to name, and `meta_field_list` and `meta_field_type` are computed types that
 `rewriteCompilerType` rewrites in `selectExactClassSpecialization`, the
 canonicalization point both `typeOf` and `substituteType` pass through, as
 soon as their arguments are concrete.
+
+Method/parameter/return metadata can also reduce for an open class with a fixed
+declaration inventory. Alternate class definitions, possible exact
+specializations, unresolved bases, conversion names with dependent targets and
+unexpanded parameter packs retain their deferred boundary. Known type identity,
+outer categories and reference/pointer access distinctions can establish a
+symbolic equality result; unrelated type parameters do not establish inequality.
+These are semantic constant kernels. Source predicates still execute through
+the existing staged verified-MIR path; no AST execution rule is added.
+Expression requirements may retain a proven true result with open arguments;
+failure to prove a symbolic query remains deferred, not a false constant.
+Each request memoizes at most 1024 positive, closed primitive-expression proofs
+by query identity and exact parameter/result types (including reference access).
+Only unary/binary operations on the query's own bindings qualify. Ordinary
+semantic analysis establishes the first proof; calls, nominal or symbolic types,
+macro queries, borrowed results and iteration are excluded. The cache is cleared
+on request reset and does not publish speculative flow or declaration facts.
 
 `meta_callable_return_type` projects the exact logical result already recorded
 on a function item, native function pointer, function signature or lambda.
@@ -1080,6 +1105,13 @@ and class scopes. Cycles, ambiguity and opaque computations supply no implied
 type fact. This index never selects executable calls or interprets an arbitrary
 predicate; concrete predicate validation and constant execution remain the
 ordinary semantic/constexpr path.
+Unary fact sets are closed over semantic implications before disjunctions are
+intersected, both while registering concepts and while checking active
+requirements. This retains common guarantees of distinct primitive categories
+without treating either alternative as mandatory. Boolean, complete-object
+layout and absence of stored checked borrows are individual reflection facts;
+source storage concepts compose them. An independent-object operation requires
+both layout and borrow-free evidence; copyability alone supplies neither.
 `field_attributes`, `type_attributes`, `enumerator_list`, `payload_list`,
 `payload_type`, `base_list` and `argument_list` are further computed
 compiler types rewritten by `rewriteCompilerType`.
@@ -1093,9 +1125,10 @@ of that result (`foldAttributeMemberRead`): the read is aliased to a literal
 of the field's type (`constantLiteralExpression`: string, bool, character,
 float, a typed integer conversion, or an enumerator path) and recorded as a
 constant, so the constructed object is never materialised for it. The
-`std::meta::reflectable` constraint is `GenericConstraintKind::Reflectable`
-(`isReflectableType`), bound by `@compiler_constraint("meta_reflectable")`
-in the meta unit.
+`std::meta::reflectable` concept is source-defined through `is_reflectable<T>()`.
+The predicate transports `GenericConstraintKind::Reflectable`, whose answer
+still belongs to `isReflectableType`; there is no separate private concept
+binding.
 
 A direct-initialized class temporary consumed by a projection (the alias
 above, `return {.x = 1}` consumers and the like) is a fresh SSA value that
@@ -2336,8 +2369,36 @@ are resolved before an isolated semantic worker checks the ordinary AST. The
 worker uses a speculative model delta, isolated flow/effect/query journals and
 declaration-owned lookup; diagnostics become a failed requirement rather than
 escaping as invalid executable HIR. General queries retain ordinary ownership,
-access and unsafe rules and reject reference or borrow-bearing results. The
+access and unsafe rules. A reference result requires an explicit synthetic
+parameter origin; other borrow-bearing result shapes remain unsupported. The
 historical direct member shape still uses its exact signature checker.
+
+`MemberRequirement::borrowedFrom` retains the source token. The isolated worker
+checks the expression's exact place access and referent, then verifies every
+resolved loan place against that borrowed parameter's declaration identity.
+An owned parameter or mismatched origin cannot satisfy the query. Normalized
+`ReadMember` facts carry the origin's ordered receiver/operand index alongside
+the exact reference type; composition, disjunction and candidate deduplication
+preserve it. Symbolic member/operator calls copy the origin and access into
+their ordinary resolved call facts. Concrete instances still resolve real
+declarations, so no synthetic target reaches executable HIR. Lowered requirement
+records retain the origin parameter index for verification and inspection;
+backends do not reconstruct ownership from the attribute spelling.
+
+`writes_to` and `subscripts_to_mut` now compose these general borrowed-result
+queries in source. Subscript policy also uses operator metadata to retain the
+exact by-value offset parameter; neither public concept has a private binding.
+Reflection uses canonical operator spellings, including both tokens of
+`operator[]` and `operator()`, rather than only the leading punctuation token.
+
+Sentinel comparison and distance policies likewise combine source declaration
+metadata with ordinary expression queries. Their former private bindings and
+symbolic cases are removed. Source range queries reuse ordinary endpoint
+selection and checked loop analysis, rather than a private category-admission
+policy. Overload
+filtering retains source predicate failure details even when no primitive or
+structural capability tag failed, so a rejected predicate reports its concept
+contract instead of falling back to a generic no-matching-overload diagnostic.
 
 Direct bound-operand operator/call shapes normalize to `ReadMember` facts with
 the existing operator identity; direct type construction uses an internal
@@ -2352,13 +2413,54 @@ Isolated query workers and typed-macro selection probes inherit that active
 identity stack without sharing mutable runtime flow or capture state. Changing
 concrete generic arguments remain distinct checks within the existing budget.
 
+The nullary consuming-use concept is now a source expression query over an
+owned synthetic binding and `std::move(binding)()`. Its compound shape remains
+an opaque filter (not a fabricated borrowed `operator()` proof). Ordinary
+deferred-call inference checks the actual generic body, and concrete reanalysis
+performs invocation/ownership validation. Forwarding the identical requirement
+retains its declaration identity. The former `OnceAction` structural binding,
+checker and special diagnostic have been removed; the source concept supplies
+its diagnostic guidance.
+
 Constexpr Boolean-call leaves use existing constant evaluation. Trusted
 reflection fact identity, including unambiguous transparent source wrappers,
-can transport unary or exact relational proof. Opaque predicates only filter
-concrete viability. Calls and expression checks preserve their distinct kind,
+can transport unary or exact relational proof. Other predicates filter viability
+without inferring new primitive facts from arbitrary source code; their result
+can be decidable over a structurally known generic declaration. Calls and
+expression checks preserve their distinct kind,
 ordered parameter/result type roles and source provenance in AST-free
 `LoweredConceptRequirement` records; neither HIR nor the backend evaluates
 constraints anew.
+
+Bounded implication forwards identical opaque predicate leaves through nested
+source-concept conjunctions as well as disjunctions. It compares declaration
+identity and exact substituted arguments; it does not infer equivalence from
+matching names or one observed result, nor assume one branch of an alternative.
+
+Isolated query and staged constant workers preserve the declaration-bound
+reflection type registry alongside their catalog snapshot. This lets generic
+source predicates reduce computed metadata sequences without sharing caller
+flow. Unary source concepts may annotate function and constructor parameters
+inline: `GenericParameterInfo::conceptId` retains the full contract, the type
+parameter scope imports its facts, and concrete admission rechecks it.
+Comparison policy uses source metadata filtering plus ordinary expression
+queries; no comparison concept binding or class-policy checker remains.
+Primitive-category facts retain native value comparisons even when a source
+requirement was written with reference bindings.
+Cleanup and erasure policy can query independent semantic facts through
+`has_active_cleanup`, `is_polymorphic` and the public-base type relation. These
+queries read the existing recursive cleanup and resolved class/base facts;
+they neither execute destruction nor create an adjusted object pointer.
+The inline-payload concept is source policy over those facts and the existing
+layout/ownership/concurrency predicates. Its former structural binding is
+removed. The trusted polymorphic-storage primitive retains its concrete
+admission check: metadata truth alone never authorizes a lifetime transition.
+Lookup reflection derives its method sequence from the resolved `ClassInfo`
+member set. The computed sequence reuses method metaobjects with the selected
+declaration's exact substituted `dispatchOwner` and declaration index; it does
+not flatten inherited methods into the original declaration-only sequence.
+This preserves override selection and generic base substitutions while source
+comparison and movement policies retain their declaration-level contracts.
 
 A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
@@ -2374,12 +2476,58 @@ clause assertion cannot replace a closed argument's actual capabilities.
 During symbolic body analysis, a
 requirement scope contributes unary facts to ordinary constrained operations
 and supplies synthetic exact operator or callable candidates for the bounded
-structural relationships. Callable requirements carry unary/binary argument
-and owned-result types plus read, repeatable mutable, or consuming-use
-capability; iterator-aware predicate and operation relations derive the exact
-checked-dereference referent privately. This is semantic proof, not text-based
+structural relationships. Unary and binary callable concepts compose source
+expression queries over read-only, mutable, or consumed receivers and borrowed
+or consumed arguments. Query facts retain the exact operand/result types and
+access contracts; alternative argument forms do not invent a common receiver
+or borrow proof. Iterator-aware callable policies query the complete ordinary
+`function(*position)` expression in source. Range callable policies compose
+`input_range` with a source iteration query over the actual loop-bound element.
+This preserves the ordinary loop's local materialization of value-producing
+iterators before a callback borrows the element.
+All former private callable concept bindings and their duplicate signature
+admission paths are removed. This is semantic proof, not text-based
 operator guessing. The AST application is retained for source-facing
 diagnostics and tooling occurrences.
+
+An iteration requirement retains an ordinary parser-lowered `RangeForStmt`
+whose body is empty or contains only `static_assert` checks, and analyzes it in
+the same isolated query worker. Its
+synthetic bindings are local even when the query is declared at namespace
+scope. The source range expression supplies lexical occurrences; exact element
+bindings are checked against the resolved iteration record, not an implicit
+conversion. A direct borrowed range normalizes to a general iteration fact
+with element/access information. It grants no executable call target; concrete
+instances recheck the real loop. Unsafe or compound-range queries remain
+concrete filters when they cannot supply a safe direct operation proof.
+An iteration fact alone never proves additional body assertions. Those checks
+reuse ordinary static-assert analysis against the actual element binding; their
+nested requirements are unevaluated. Types referenced only in body checks are
+retained as query arguments for substitution, and the AST clone preserves the
+original body within the parser-lowered loop. No new runtime loop or separate
+constant-execution rule is introduced.
+The lowered boundary records an explicit iteration requirement kind: its
+element slot is not an escaping reference result. The former private input,
+exact-element and mutable-range bindings and duplicate endpoint checker are
+removed; the actual loop semantics and synthetic open-body carriers remain
+compiler-owned.
+
+Simple expression requirements retain an unknown result in open-body facts;
+they do not turn a potentially owned result into a fictitious reference.
+Inferred checked-reference requirements additionally retain exact access and
+the named borrowed-input origin while leaving only the referent unknown.
+Conjunctive exact-result facts refine compatible weaker facts without creating
+extra overloads or discarding differing origins/unsafe obligations. An unresolved
+compound expression is not evidence of validity: concrete instances must resolve
+it, and a query cannot manufacture proof from its own requested operation.
+Lowered metadata distinguishes inferred expressions from exact-result and loop
+queries, with a resolved void placeholder rather than an executable unknown type.
+
+The source iterator policies use these general queries and declaration metadata.
+The size policy uses ordinary call analysis, including the existing checked
+fixed-array size operation. All private concept binding registries are empty;
+the compiler still owns general category/lifecycle/reflection facts and checked
+operation/loan authority, not standard-library policy or public concept names.
 
 Registration-time constraint diagnostics use the canonical semantic type
 printer with a read-only lookup into declaration-owned generic parameter
@@ -2406,10 +2554,15 @@ candidates or change the exact-overload identity rule.
 
 The current structural checks are deliberately identity- and shape-based:
 iterator movement/read/write relationships, exact domain-value operators, and
-exact public callable signatures. A callable result must be the requested
-owned non-borrowed type. Each readable argument is accepted either by exact
-value or exact read-only reference, and receiver implication follows the
-existing `Read` -> repeatable `Mutable` -> `Once` use-site lattice. Concrete
+callable expression queries. An unannotated result requirement demands the
+requested owned non-borrowed type: the selected call's reference return or
+borrow origin cannot disappear merely because expression analysis exposes its
+referent type. Reference results instead require an explicit checked-origin
+contract. Source callable policies try named read-only and explicitly consumed
+argument forms and compose read, repeatable mutable, and owned receiver queries.
+A callable with an ambiguous borrowed form can qualify through an unambiguous
+consumed form; the ambiguous invocation itself remains an overload error.
+Concrete
 reanalysis still selects one exact lambda or `operator()` target and retains
 its identity and capability in HIR/MIR. Adding a relationship requires one new
 irreducible semantic question and a source-defined public client; it must not
@@ -2460,9 +2613,11 @@ identity, which includes the generated namespace.
    each operation's function from the generated namespace and compares both
    signatures in the block's parameter space, with projections of the block's
    own pattern resolved to its types.
-3. `validateConformanceTypes` runs with the type-alias constraint check,
-   after every block is registered and each class's members and lifecycle
-   are recorded. It validates each block's patterns and `using` types once,
+3. `validateConformanceTypes` runs when the lexical body walk reaches each
+   block, as type aliases also validate at their lexical positions. Every
+   block is already registered and each class's members and lifecycle are
+   recorded; preceding constexpr definitions are now available to execute
+   source-defined constraint predicates. It validates patterns and `using` types once,
    whether or not the block registered. A concrete type's constraints and a
    projection through a block declared later are therefore decided as in any
    other declaration. The restated requires clause on each block function is
@@ -3117,6 +3272,15 @@ substitutes for those identities. One execution context carries concrete
 generic substitutions, automatic values, and an optional read-only receiver
 through constexpr calls and constructors while enforcing the existing shared
 4096-step and 64-call-depth limits.
+
+Staged class discovery distinguishes generic type-argument identity from an
+executed object layout. A metadata carrier or ordinary user-defined type tag
+may name a polymorphic, inherited or otherwise runtime-only class without
+constructing it. Such arguments preserve exact enum identities but do not
+eagerly enqueue class layouts. Actual fields, parameters, results and executed
+construction discover their required layouts normally and retain the constant
+profile's restrictions. This is a general identity/representation distinction,
+not an exemption for named reflection types.
 
 Only fully initialized structural aggregates enter this representation.
 Semantics rejects bases, polymorphism, stored references, union state, active

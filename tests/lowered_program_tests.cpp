@@ -1348,6 +1348,25 @@ void expression<T>() requires requires(T& value) {
   { value + value } -> T;
 } {}
 void nullary<T>() requires requires { { T() } -> T; } {}
+void inferred<T>() requires requires(T& value) { { value + value }; } {}
+void iteration<T>() requires requires(mut T& range) {
+  for (mut int32_t& element : range) {}
+} {}
+void checked_iteration<T, Result>() requires requires(T& range) {
+  for (auto& element : range) {
+    static_assert(requires { { element + element } -> Result; });
+  }
+} {}
+struct Cell {
+  mut int32_t value = 0;
+  mut int32_t& edit() mut { return this.value; }
+};
+void borrowed<T>() requires requires(mut T& owner) {
+  { owner.edit() } -> mut int32_t& [[borrowed_from(owner)]];
+} {}
+void inferred_borrow<T>() requires requires(mut T& owner) {
+  { owner.edit() } -> mut auto& [[borrowed_from(owner)]];
+} {}
 class Reader {
 public:
   int32_t read() { return 7; }
@@ -1364,6 +1383,11 @@ int main() {
   predicate<int32_t>();
   expression<int32_t>();
   nullary<int32_t>();
+  inferred<int32_t>();
+  iteration<int32_t[3]>();
+  checked_iteration<int32_t[3], int32_t>();
+  borrowed<Cell>();
+  inferred_borrow<Cell>();
   member<Reader>();
   Box box = Box(1);
   return 0;
@@ -1399,10 +1423,55 @@ int main() {
       findPayload<lang::LoweredFunctionDeclaration>(program, "nullary");
   const auto *predicate =
       findPayload<lang::LoweredFunctionDeclaration>(program, "predicate");
+  const auto *borrowed =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "borrowed");
+  const auto *inferred =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "inferred");
+  const auto *inferredBorrow =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "inferred_borrow");
+  expect(inferred && inferred->requirements.size() == 1 &&
+             inferred->requirements[0].kind ==
+                 lang::LoweredRequirementKind::InferredExpression &&
+             !inferred->requirements[0].resultOriginParameter &&
+             !inferred->requirements[0].inferredResultAccess &&
+             inferredBorrow && inferredBorrow->requirements.size() == 1 &&
+             inferredBorrow->requirements[0].inferredResultAccess ==
+                 lang::AccessMode::Mutable &&
+             inferredBorrow->requirements[0].resultOriginParameter == 0 &&
+             inferredBorrow->requirements[0].arguments[1] ==
+                 lang::SemanticType::Void,
+         "inferred queries retain contracts without publishing unknown "
+         "executable types");
+  const auto *iteration =
+      findPayload<lang::LoweredFunctionDeclaration>(program, "iteration");
+  expect(iteration && iteration->requirements.size() == 1 &&
+             iteration->requirements[0].kind ==
+                 lang::LoweredRequirementKind::Iteration &&
+             iteration->requirements[0].mutableReceiver &&
+             iteration->requirements[0].resultArgument == 1 &&
+             !iteration->requirements[0].resultOriginParameter,
+         "loop queries retain element/access facts without inventing an "
+         "escaping reference result");
+  const auto *checkedIteration = findPayload<lang::LoweredFunctionDeclaration>(
+      program, "checked_iteration");
+  expect(checkedIteration && checkedIteration->requirements.size() == 1 &&
+             checkedIteration->requirements[0].kind ==
+                 lang::LoweredRequirementKind::Iteration &&
+             checkedIteration->requirements[0].arguments.size() >= 3 &&
+             checkedIteration->requirements[0].resultArgument == 1 &&
+             !checkedIteration->requirements[0].resultOriginParameter,
+         "loop-body result types survive detached requirement metadata");
   expect(named && member && expression && nullary && predicate,
          "all requirement declaration rows are retained");
   if (!named || !member || !expression || !nullary || !predicate)
     return;
+  expect(borrowed && borrowed->requirements.size() == 1 &&
+             borrowed->requirements[0].resultOriginParameter == 0 &&
+             borrowed->requirements[0].arguments[1].kind ==
+                 lang::SemanticType::Reference &&
+             borrowed->requirements[0].arguments[1].referenceAccess ==
+                 lang::AccessMode::Mutable,
+         "borrowed requirements retain their exact input origin and access");
   expect(
       named->requirements.size() == 1 &&
           named->requirements[0].kind ==
@@ -1453,7 +1522,7 @@ int main() {
       ++checkedFunctions;
     else
       ++checkedConstructors;
-    for (int mutation = 0; mutation < 7; ++mutation) {
+    for (int mutation = 0; mutation < 8; ++mutation) {
       auto forged = program;
       auto &payload =
           lang::LoweredProgramTestAccess::declarations(forged)[row].payload;
@@ -1475,9 +1544,11 @@ int main() {
       else if (mutation == 5) {
         requirement.kind = lang::LoweredRequirementKind::Expression;
         requirement.resultArgument.reset();
-      } else {
+      } else if (mutation == 6) {
         requirement.kind = lang::LoweredRequirementKind::Predicate;
         requirement.requiresUnsafe = true;
+      } else {
+        requirement.resultOriginParameter = requirement.arguments.size();
       }
       expect(
           hasIssue(lang::verifyLoweredProgram(forged),
@@ -1486,6 +1557,9 @@ int main() {
           "unresolved types are rejected before backend consumption");
     }
     if ((*requirements)[0].kind == lang::LoweredRequirementKind::Expression ||
+        (*requirements)[0].kind ==
+            lang::LoweredRequirementKind::InferredExpression ||
+        (*requirements)[0].kind == lang::LoweredRequirementKind::Iteration ||
         (*requirements)[0].kind == lang::LoweredRequirementKind::Predicate) {
       auto forged = program;
       auto &payload =
@@ -1502,6 +1576,23 @@ int main() {
           "general requirement leaves must retain source provenance");
     }
     if ((*requirements)[0].kind == lang::LoweredRequirementKind::Expression) {
+      if ((*requirements)[0].resultOriginParameter) {
+        auto forged = program;
+        auto &payload =
+            lang::LoweredProgramTestAccess::declarations(forged)[row].payload;
+        auto &requirement =
+            function ? std::get<lang::LoweredFunctionDeclaration>(payload)
+                           .requirements[0]
+                     : std::get<lang::LoweredConstructorDeclaration>(payload)
+                           .requirements[0];
+        requirement.arguments[*requirement.resultOriginParameter]
+            .referenceAccess = lang::AccessMode::ReadOnly;
+        expect(
+            hasIssue(
+                lang::verifyLoweredProgram(forged),
+                lang::LoweredProgramIssueKind::InvalidDeclarationInventory),
+            "a mutable result cannot acquire a read-only origin in lowering");
+      }
       auto forged = program;
       auto &payload =
           lang::LoweredProgramTestAccess::declarations(forged)[row].payload;
@@ -1511,7 +1602,10 @@ int main() {
                    : std::get<lang::LoweredConstructorDeclaration>(payload)
                          .requirements[0];
       auto &result = requirement.arguments[*requirement.resultArgument];
-      result = lang::SemanticType::referenceTo(result);
+      if (requirement.resultOriginParameter)
+        requirement.resultOriginParameter.reset();
+      else
+        result = lang::SemanticType::referenceTo(result);
       expect(
           hasIssue(lang::verifyLoweredProgram(forged),
                    lang::LoweredProgramIssueKind::InvalidDeclarationInventory),

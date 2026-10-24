@@ -361,6 +361,27 @@ lowerRequirements(const std::vector<AppliedConceptRequirement> &requirements) {
           lowered.kind = LoweredRequirementKind::Expression;
           lowered.expressionParameterCount = query->parameters().size();
           lowered.resultArgument = query->parameters().size();
+          if (query->inferredResult()) {
+            lowered.kind = LoweredRequirementKind::InferredExpression;
+            if (query->borrowedFrom())
+              lowered.inferredResultAccess = query->result().referenceMutability
+                                                 ? AccessMode::Mutable
+                                                 : AccessMode::ReadOnly;
+          }
+          if (const auto *loop =
+                  stmtAs<RangeForStmt>(query->iteration().get())) {
+            lowered.kind = LoweredRequirementKind::Iteration;
+            lowered.mutableReceiver =
+                loop->bindingMutability() == Mutability::Mutable &&
+                loop->bindingType().reference.has_value();
+          }
+          if (query->borrowedFrom()) {
+            for (std::size_t index = 0; index < query->bindings().size();
+                 ++index)
+              if (query->bindings()[index].lexeme ==
+                  query->borrowedFrom()->lexeme)
+                lowered.resultOriginParameter = index;
+          }
         } else {
           lowered.kind = LoweredRequirementKind::Member;
           lowered.memberName = query->member().lexeme;

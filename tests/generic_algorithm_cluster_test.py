@@ -314,8 +314,9 @@ def main() -> int:
                 "generic_algorithm_bad_equality.gti",
                 "GTI-S2029",
                 (
-                    "does not satisfy concept 'std::equality_comparable<",
-                    "Constraint on generic parameter 'T' is declared here.",
+                    "do not satisfy any alternative in concept 'std::equality_comparable'",
+                    "Required application 'std::equality_comparable<value>'.",
+                    "Provide safe, public, read-only bool == and != operators",
                 ),
             ),
             (

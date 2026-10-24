@@ -242,21 +242,24 @@ access and invalidation attempts.
 `<std/iterator>` exposes bounded structural concepts for generic code that
 wants the complete owner rather than an iterator/sentinel pair:
 
-- `std::input_range<Range>` proves the exact public read-only `begin()` and
-  `end()` protocol plus input iteration and sentinel comparison;
+- `std::input_range<Range>` checks an ordinary read-only range loop, including
+  its endpoint, access, lifetime and cleanup requirements;
 - `std::range_of<Range, T>` additionally proves the exact readable element
   `T`, either through `T&` or an independent eligible `T` value;
 - `std::mutable_range_of<Range, T>` proves the exact mutable `begin_mut()`
   endpoint and `mut T&` dereference; and
-- `std::sized_range<Range>` proves one exact public read-only `size()` returning
-  `std::size_t`.
+- `std::sized_range<Range>` additionally checks an ordinary `range.size()`
+  expression through a read-only borrow with an exact owned `std::size_t`
+  result.
 
 Fixed arrays satisfy these concepts through their checked indexed range plan;
-they do not acquire members or decay to pointers. A nominal range satisfies
-them only through one exact accessible non-static overload for each required
-member and iterator operation. Return conversions, native lookup, ambiguous
-overloads, private/compiler-private members, and generic endpoint methods do
-not satisfy the first bounded contract.
+they do not decay to pointers. Their existing checked `.size()` operation
+participates in the size query without a nominal class declaration. A nominal
+range satisfies the loop queries through ordinary GTI range semantics, not a
+second declaration-only filter. This revises the earlier bounded restriction:
+callable generic/constrained endpoints may qualify when ordinary resolution
+accepts them. Access, ambiguity, exact element/result types and checked lifetime
+rules still apply; a query does not add conversions or native lookup.
 
 The constrained generic body may iterate `Range&`, `mut Range&`, or call the
 proven zero-argument `size()` member directly. Symbolic analysis uses private

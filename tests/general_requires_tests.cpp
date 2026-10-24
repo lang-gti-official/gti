@@ -16,25 +16,42 @@ static_assert(!lang::compilerStructuralConstraint("subtracts"));
 static_assert(!lang::compilerStructuralConstraint("negates"));
 static_assert(!lang::compilerStructuralConstraint("scales_by"));
 static_assert(!lang::compilerStructuralConstraint("enum_underlying"));
+static_assert(!lang::compilerStructuralConstraint("object_layout"));
+static_assert(!lang::compilerStructuralConstraint("independent_object"));
+static_assert(!lang::compilerStructuralConstraint("bidirectional_iterator"));
+static_assert(!lang::compilerStructuralConstraint("random_access_iterator"));
+static_assert(!lang::compilerStructuralConstraint("once_action"));
+static_assert(!lang::compilerStructuralConstraint("writes_to"));
+static_assert(!lang::compilerStructuralConstraint("subscripts_to_mut"));
+static_assert(!lang::compilerStructuralConstraint("sentinel_for"));
+static_assert(!lang::compilerStructuralConstraint("sized_sentinel_for"));
+static_assert(!lang::compilerStructuralConstraint("indirect_predicate"));
+static_assert(!lang::compilerStructuralConstraint("indirect_operation"));
+static_assert(!lang::compilerStructuralConstraint("range_predicate"));
+static_assert(!lang::compilerStructuralConstraint("range_operation"));
+static_assert(!lang::compilerStructuralConstraint("input_range"));
+static_assert(!lang::compilerStructuralConstraint("range_of"));
+static_assert(!lang::compilerStructuralConstraint("mutable_range_of"));
+static_assert(!lang::compilerStructuralConstraint("input_iterator"));
+static_assert(!lang::compilerStructuralConstraint("dereferences_to"));
+static_assert(!lang::compilerStructuralConstraint("writable_iterator"));
+static_assert(!lang::compilerStructuralConstraint("sized_range"));
+static_assert(lang::compilerConstraints.empty());
+static_assert(lang::compilerStructuralConstraints.empty());
 static_assert([] {
   for (const std::string_view binding :
        {"numeric", "signed_numeric", "integral", "signed_integral",
         "unsigned_integral", "floating_point", "copy_constructible",
         "move_constructible", "copyable", "movable", "relocatable",
         "bitwise_relocatable", "transferable", "shareable",
-        "default_initializable", "integral_enum"})
+        "default_initializable", "integral_enum", "atomic_scalar",
+        "meta_reflectable"})
     if (lang::compilerConstraint(binding))
       return false;
   return true;
 }());
-static_assert(lang::compilerConstraint("equality_comparable") ==
-              lang::GenericConstraintKind::EqualityComparable);
-static_assert(lang::compilerConstraint("relationally_ordered") ==
-              lang::GenericConstraintKind::RelationallyOrdered);
-static_assert(lang::compilerConstraint("atomic_scalar") ==
-              lang::GenericConstraintKind::AtomicScalar);
-static_assert(lang::compilerConstraint("meta_reflectable") ==
-              lang::GenericConstraintKind::Reflectable);
+static_assert(!lang::compilerConstraint("equality_comparable"));
+static_assert(!lang::compilerConstraint("relationally_ordered"));
 
 int failures = 0;
 
@@ -47,12 +64,17 @@ void expect(bool condition, const std::string &message) {
 
 lang::FrontendResult check(const std::filesystem::path &root,
                            const std::filesystem::path &directory,
-                           const std::string &name, const std::string &source) {
+                           const std::string &name, const std::string &source,
+                           bool concurrent = false) {
   const auto file = directory / (name + ".gti");
   std::ofstream(file) << source;
   lang::FrontendOptions options;
   options.stopAfter = lang::FrontendPhase::Hir;
   options.analyzeRecoveredProgram = true;
+  if (concurrent) {
+    options.target.executionProfile = lang::ExecutionProfile::Concurrent;
+    options.target.runtimeCapabilities.threads = true;
+  }
   return lang::Frontend(options).analyze(
       file, std::nullopt, {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
 }
@@ -65,8 +87,12 @@ void accepted(const lang::FrontendResult &result, const std::string &name) {
                   });
   expect(!errors && result.hirValid, name);
   if (errors)
-    for (const auto &item : result.diagnostics)
-      std::cerr << "  " << item.code << ": " << item.message << '\n';
+    for (const auto &item : result.diagnostics) {
+      std::cerr << "  " << item.code << " at " << item.primary.line << ": "
+                << item.message << '\n';
+      for (const auto &note : item.related)
+        std::cerr << "    " << note.message << '\n';
+    }
 }
 
 void rejected(const lang::FrontendResult &result, const std::string &name,
@@ -75,9 +101,15 @@ void rejected(const lang::FrontendResult &result, const std::string &name,
       std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
                    [&](const auto &item) { return item.code == code; });
   expect(diagnostic != result.diagnostics.end(), name + " diagnostic");
+  if (diagnostic == result.diagnostics.end())
+    for (const auto &item : result.diagnostics)
+      std::cerr << "  " << item.code << ": " << item.message << '\n';
   if (diagnostic != result.diagnostics.end())
     expect(diagnostic->primary.line > 0, name + " source location");
-  expect(!result.hirValid, name + " cannot publish executable HIR");
+  if (code.starts_with("GTI-P"))
+    expect(!result.canGenerateCode(), name + " cannot generate recovered code");
+  else
+    expect(!result.hirValid, name + " cannot publish executable HIR");
   expect(
       std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
                    [](const auto &item) { return item.code == "GTI-B0001"; }),
@@ -92,6 +124,550 @@ int main(int argc, char **argv) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("gti-general-requires-" + std::to_string(getpid()));
   std::filesystem::create_directories(directory);
+
+  accepted(check(root, directory, "macro_reflected_constraint", R"GTI(
+struct Key {
+  bool operator==(Key& other) { return true; }
+  bool operator!=(Key& other) { return false; }
+};
+#macro inspect<T>(T value) requires std::equality_comparable<T> {
+  if (value == value) {}
+}
+int main() { Key key{}; inspect(key); return 0; }
+)GTI"),
+           "macro probes retain computed reflection declaration identities");
+
+  accepted(check(root, directory, "predicate_alias_lexical_order", R"GTI(
+#include <std/meta>
+constexpr bool accepts<T>() { bool result = std::meta::is_integral<T>(); return result; }
+concept integer_type<T> = accepts<T>();
+class Box<integer_type T> {};
+using IntBox = Box<int>;
+class Holder { public: using Value = Box<int>; };
+int main() { IntBox value{}; return 0; }
+)GTI"),
+           "aliases evaluate source predicates after preceding definitions");
+  rejected(check(root, directory, "predicate_unused_alias_rejection", R"GTI(
+constexpr bool accepts<T>() { return false; }
+concept rejected_type<T> = accepts<T>();
+class Box<rejected_type T> {};
+using Unused = Box<int>;
+int main() { return 0; }
+)GTI"),
+           "unused aliases still validate source-defined constraints");
+  rejected(check(root, directory, "predicate_alias_later_definition", R"GTI(
+constexpr bool accepts<T>();
+concept accepted_type<T> = accepts<T>();
+class Box<accepted_type T> {};
+using TooSoon = Box<int>;
+constexpr bool accepts<T>() { return true; }
+int main() { return 0; }
+)GTI"),
+           "alias predicates cannot consume a later constexpr definition");
+  accepted(check(root, directory, "numeric_pack_forwarding", R"GTI(
+int count<std::numeric Ts...>(Ts... values) { return 1; }
+int forward<std::numeric Ts...>(Ts... values) { return count(values...); }
+int main() { return forward(1, 2, 3) - 1; }
+)GTI"),
+           "source numeric constraints quantify over forwarded pack elements");
+  rejected(check(root, directory, "numeric_pack_missing_proof", R"GTI(
+int count<std::numeric Ts...>(Ts... values) { return 1; }
+int forward<Ts...>(Ts... values) { return count(values...); }
+int main() { return forward(1); }
+)GTI"),
+           "pack forwarding does not invent missing element constraints");
+
+  accepted(
+      check(root, directory, "symbolic_declaration_predicate", R"GTI(
+#include <std/meta>
+struct Cell<T> {
+  T value;
+  Cell(T input) : value(input) {}
+  T& operator*() { return value; }
+};
+constexpr bool has_reference_result<T>() {
+  mut bool found = false;
+  constexpr for (auto member : std::meta::lookup_operators_of<T>()) {
+    if constexpr (member.name() == "operator*") {
+      found = member.result().is_reference();
+    }
+  }
+  return found;
+}
+constexpr bool readable_expression<T>() {
+  return requires(T& cell) { { *cell } -> auto& [[borrowed_from(cell)]]; };
+}
+concept readable_cell<T> = has_reference_result<T>() && readable_expression<T>();
+int consume<readable_cell C>(C& cell) { return 1; }
+int forward<T>(Cell<T>& cell) { return consume(cell); }
+int main() { Cell<int> value{1}; return forward(value) - 1; }
+)GTI"),
+      "symbolic declaration metadata and existing expression proofs compose");
+  accepted(check(root, directory, "symbolic_identity_predicate", R"GTI(
+#include <std/meta>
+struct Cell<T> {};
+struct End {};
+constexpr bool identities<T>() {
+  return std::meta::is_same<Cell<T>&, Cell<T>&>() &&
+         !std::meta::is_same<Cell<T>&, End&>() &&
+         !std::meta::is_same<Cell<T>&, Cell<T>>();
+}
+concept stable<T> = identities<T>();
+int accepts<stable T>(T value) { return 1; }
+int forward<T>(T value) { return accepts(value); }
+constexpr bool equal<T, U>() { return std::meta::is_same<T, U>(); }
+int main() {
+  static_assert(equal<int, int>());
+  static_assert(!equal<int, bool>());
+  return forward(1) - 1;
+}
+)GTI"),
+           "symbolic type identities preserve equality and outer distinctions");
+  rejected(check(root, directory, "symbolic_unknown_equality", R"GTI(
+#include <std/meta>
+constexpr bool equal<T, U>() { return std::meta::is_same<T, U>(); }
+concept same<T, U> = equal<T, U>();
+void accepts<T, U>(T& left, U& right) requires same<T, U> {}
+void forward<T, U>(T& left, U& right) { accepts(left, right); }
+int main() { return 0; }
+)GTI"),
+           "distinct symbolic identities do not establish equality");
+  rejected(check(root, directory, "symbolic_unknown_inequality", R"GTI(
+#include <std/meta>
+constexpr bool unequal<T, U>() { return !std::meta::is_same<T, U>(); }
+concept different<T, U> = unequal<T, U>();
+void accepts<T, U>(T& left, U& right) requires different<T, U> {}
+void forward<T, U>(T& left, U& right) { accepts(left, right); }
+int main() { return 0; }
+)GTI"),
+           "distinct symbolic identities do not establish inequality either");
+  rejected(check(root, directory, "primitive_query_cache_exact_type", R"GTI(
+concept subtractable<T> = requires(T& left, T& right) {
+  { left - right } -> T;
+};
+T difference<subtractable T>(T left, T right) { return left - right; }
+int main() {
+  int good = difference(3, 1);
+  bool bad = difference(true, false);
+  return good;
+}
+)GTI"),
+           "cached primitive proofs never authorize a different type domain");
+  rejected(
+      check(root, directory, "symbolic_specialization_inventory", R"GTI(
+#include <std/meta>
+namespace shapes {
+struct Cell<T> { T value; T& operator*() { return value; } };
+}
+struct shapes::Cell<bool> {};
+constexpr bool readable<T>() {
+  mut bool found = false;
+  constexpr for (auto member : std::meta::lookup_operators_of<T>()) {
+    if constexpr (member.name() == "operator*") { found = true; }
+  }
+  return found;
+}
+concept reads<T> = readable<T>();
+void consume<reads C>(C& cell) {}
+void forward<T>(shapes::Cell<T>& cell) { consume(cell); }
+int main() { return 0; }
+)GTI"),
+      "symbolic metadata cannot assume an unresolved specialization inventory");
+
+  accepted(
+      check(root, directory, "inferred_requirement_results", R"GTI(
+concept observes<I> = requires(I& cursor) { { *cursor }; };
+concept edits<I> = requires(mut I& cursor) {
+  { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+};
+struct Cell {
+  mut int value = 1;
+  int& operator*() { return this.value; }
+  mut int& operator*() mut { return this.value; }
+};
+struct Value { int operator*() { return 2; } };
+struct Empty {};
+T read<I,T>(I& cursor) requires observes<I> { return *cursor; }
+void write<I,T>(mut I& cursor, T value) requires edits<I> { *cursor = value; }
+bool same<I>(I& cursor, int value) requires observes<I> { return *cursor == value; }
+void exact<I>(mut I& cursor) requires edits<I> && requires(mut I& input) {
+  { *input } -> mut int& [[borrowed_from(input)]];
+} { *cursor = 3; }
+int main() {
+  static_assert(requires(Cell& cursor) { { *cursor }; });
+  static_assert(requires(Value& cursor) { { *cursor }; });
+  static_assert(!(requires(Empty& cursor) { { *cursor }; }));
+  static_assert(!(requires(mut Value& cursor) {
+    { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+  }));
+  static_assert(!(requires(Cell& cursor) {
+    { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+  }));
+  static_assert(!(requires(Cell& left, Cell& right) {
+    { *right } -> auto& [[borrowed_from(left)]];
+  }));
+  mut Cell cell{};
+  Value value{};
+  write(cell, 3);
+  exact(cell);
+  if (!same(cell, 3)) { return 9; }
+  return read<Cell,int>(cell) + read<Value,int>(value) - 5;
+}
+)GTI"),
+      "inferred results preserve existence, access and exact borrowed origins");
+
+  rejected(check(root, directory, "inferred_comparison_rechecked", R"GTI(
+concept observes<I> = requires(I& cursor) { { *cursor }; };
+struct Uncomparable {};
+struct Reader { Uncomparable operator*() { return Uncomparable(); } };
+bool same<I>(I& cursor, int value) requires observes<I> { return *cursor == value; }
+int main() { Reader reader{}; return same(reader, 2) ? 0 : 1; }
+)GTI"),
+           "a deferred comparison must resolve in the concrete instance",
+           "GTI-S2022");
+
+  accepted(check(root, directory, "iteration_binding_checks", R"GTI(
+#include <std/algorithm>
+#include <std/string_view>
+struct End {};
+struct Cursor {
+  int operator*() { return 3; }
+  void operator++() mut {}
+  bool operator!=(End& end) { return false; }
+};
+struct Values { Cursor begin() { return Cursor(); } End end() { return End(); } };
+bool positive(int& value) { return value > 0; }
+struct Count { void operator()(char& value) mut {} };
+concept bound_call<F, R, Result> = requires(mut F& function, R& range) {
+  for (auto& element : range) {
+    static_assert(requires { { function(element) } -> Result; });
+  }
+};
+bool accepts<F, R, Result>() requires bound_call<F, R, Result> { return true; }
+concept matching_layout<R, T> = requires(R& range) {
+  for (auto& element : range) {
+    static_assert(sizeof(T) == sizeof(int));
+    static_assert(alignof(T) == alignof(int));
+  }
+};
+bool sized<R, T>() requires matching_layout<R, T> { return true; }
+concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
+bool check_false<R>() requires iterable<R> {
+  return requires(R& range) {
+    for (auto& element : range) { static_assert(false); }
+  };
+}
+int main() {
+  static_assert(requires { { accepts<Count, std::string_view, void>() } -> bool; });
+  static_assert(!(requires { { accepts<Count, std::string_view, bool>() } -> bool; }));
+  static_assert(requires { { sized<Values, int>() } -> bool; });
+  static_assert(!(requires { { sized<Values, bool>() } -> bool; }));
+  static_assert(requires(Values& range) {
+    for (auto& element : range) {
+      static_assert(requires { { positive(element) } -> bool; });
+    }
+  });
+  static_assert(!(requires(Values& range) {
+    for (auto& element : range) { static_assert(false); }
+  }));
+  static_assert(!(requires(Values& range) {
+    for (mut auto& element : range) { static_assert(true); }
+  }));
+  static_assert(!(requires(Values& range) {
+    for (auto& element : range) {
+      static_assert(requires { { positive(element) } -> int; });
+    }
+  }));
+  Values values{};
+  std::string_view text = "abc";
+  auto count = std::for_each(text, Count());
+  return std::all_of(values, positive) && !check_false<Values>() ? 0 : 1;
+}
+)GTI"),
+           "iteration checks use the actual materialized loop binding and "
+           "cannot invent body proofs");
+
+  rejected(
+      check(root, directory, "iteration_fact_cannot_prove_body", R"GTI(
+concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
+concept impossible<R> = requires(R& range) {
+  for (auto& element : range) { static_assert(false); }
+};
+void needs<R>() requires impossible<R> {}
+void bad<R>() requires iterable<R> { needs<R>(); }
+int main() { return 0; }
+)GTI"),
+      "a simple iteration guarantee cannot prove an additional body check");
+
+  rejected(check(root, directory, "iteration_query_runtime_statement", R"GTI(
+concept invalid<R> = requires(R& range) {
+  for (auto& element : range) { element; }
+};
+int main() { return 0; }
+)GTI"),
+           "iteration query bodies reject runtime statements", "GTI-P0001");
+
+  accepted(
+      check(root, directory, "iteration_requirements", R"GTI(
+#include <std/vector>
+concept readable<R> = requires(R& range) { for (auto& element : range) {} };
+concept ints<R> = requires(R& range) { for (int& element : range) {} };
+concept editable<R> = requires(mut R& range) { for (mut int& element : range) {} };
+int sum<R>(R& range) requires ints<R> {
+  mut int total = 0;
+  for (int& element : range) { total += element; }
+  return total;
+}
+void clear<R>(mut R& range) requires editable<R> {
+  for (mut int& element : range) { element = 0; }
+}
+struct Empty {};
+int main() {
+  static_assert(requires(int[3]& range) { for (auto& element : range) {} });
+  static_assert(requires(mut int[3]& range) { for (mut int& element : range) {} });
+  static_assert(!(requires(int[3]& range) { for (mut int& element : range) {} }));
+  static_assert(!(requires(int[3]& range) { for (bool& element : range) {} }));
+  static_assert(!(requires(Empty& range) { for (auto& element : range) {} }));
+  static_assert(requires(std::vector<int>& range) { for (auto& element : range) {} });
+  mut std::vector<int> values{};
+  values.push_back(3);
+  int result = sum(values);
+  clear(values);
+  return result == 3 ? 0 : 1;
+}
+)GTI"),
+      "iteration requirements reuse loop analysis and export generic proofs");
+
+  accepted(check(root, directory, "source_sized_range_policy", R"GTI(
+#include <std/iterator>
+#include <std/vector>
+std::size_t measured<R>(R& range) requires std::sized_range<R> {
+  return range.size();
+}
+struct Cursor {
+  int value = 0;
+  int& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(Cursor& other) { return false; }
+};
+struct WrongSize {
+  Cursor begin() { return Cursor(); }
+  Cursor end() { return Cursor(); }
+  int size() { return 1; }
+};
+struct MutableSize {
+  Cursor begin() { return Cursor(); }
+  Cursor end() { return Cursor(); }
+  std::size_t size() mut { return std::size_t(1); }
+};
+int main() {
+  static_assert(!(requires(WrongSize& range) { { measured(range) } -> std::size_t; }));
+  static_assert(!(requires(MutableSize& range) { { measured(range) } -> std::size_t; }));
+  int[3] fixed = {1, 2, 3};
+  std::vector<int> dynamic{};
+  return measured(fixed) == std::size_t(3) && measured(dynamic) == std::size_t(0) ? 0 : 1;
+}
+)GTI"),
+           "source sized_range preserves checked fixed-array size and exact "
+           "read-only results");
+
+  accepted(
+      check(root, directory, "dependent_borrowed_query_result", R"GTI(
+#include <std/meta>
+struct Reader { int value = 1; int& operator*() { return this.value; } };
+constexpr bool result_matches<I, R>(std::meta::type<I> owner, std::meta::type<R> result) {
+  if constexpr (std::meta::type<R>().is_reference()) {
+    return requires(I& input) { { *input } -> R [[borrowed_from(input)]]; };
+  } else { return requires(I& input) { { *input } -> R; }; }
+}
+constexpr bool inspect<I>() {
+  mut bool good = false;
+  constexpr for (auto op : std::meta::lookup_operators_of<I>()) {
+    if constexpr (op.name() == "operator*") {
+      good = result_matches(std::meta::type<I>(), op.result());
+    }
+  }
+  return good;
+}
+int main() { static_assert(inspect<Reader>()); return 0; }
+)GTI"),
+      "dependent borrowed result attributes are distinct from array suffixes");
+
+  accepted(check(root, directory, "source_range_callable_policy", R"GTI(
+#include <std/functional>
+#include <std/algorithm>
+#include <std/meta>
+struct End {};
+struct Cursor {
+  int value = 1;
+  int& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(End& end) { return false; }
+};
+struct Range {
+  Cursor begin() { return Cursor(); }
+  End end() { return End(); }
+  bool operator[](std::size_t index) { return false; }
+};
+struct WantsInt { bool operator()(int& value) { return value > 0; } };
+struct WantsBool { bool operator()(bool& value) { return value; } };
+struct Consumes { bool operator()(int& value) && { return true; } };
+int main() {
+  static_assert(std::meta::is_array<int[3]>());
+  static_assert(std::meta::type<int[0]>().is_array());
+  static_assert(!std::meta::is_array<Range>());
+  static_assert(requires(Range& range) { { std::all_of(range, WantsInt()) } -> bool; });
+  static_assert(!(requires(Range& range) { { std::all_of(range, WantsBool()) } -> bool; }));
+  static_assert(!(requires(Range& range) { { std::all_of(range, Consumes()) } -> bool; }));
+  int[3] numbers = {1, 2, 3};
+  return std::all_of(numbers, WantsInt()) ? 0 : 1;
+}
+)GTI"),
+           "source range callable queries inspect the actual element, not "
+           "unrelated indexing");
+
+  rejected(check(root, directory, "overload_predicate_diagnostic", R"GTI(
+constexpr bool available<T>() { return false; }
+[[unsatisfied("Use a type accepted by the source policy.")]]
+concept admitted<T> = available<T>();
+int pick<T>(T value) requires admitted<T> { return 1; }
+int pick<T>(T value, int extra) { return extra; }
+int main() { return pick(3); }
+)GTI"),
+           "overload filtering retains ordinary source-predicate failures",
+           "GTI-S2029");
+
+  accepted(check(root, directory, "source_sentinel_policy", R"GTI(
+#include <std/iterator>
+struct End { int position = 8; };
+struct Cursor {
+  int position = 3;
+  bool operator!=(End& end) { return this.position != end.position; }
+  std::ptrdiff_t operator-(End& end) { return std::ptrdiff_t(this.position - end.position); }
+};
+struct CopiedEnd {
+  bool operator!=(End end) { return true; }
+  std::ptrdiff_t operator-(End end) { return std::ptrdiff_t(-1); }
+};
+struct Ambiguous {
+  bool operator!=(End& end) { return true; }
+  bool operator!=(End end) { return true; }
+};
+struct WrongDistance {
+  bool operator!=(End& end) { return true; }
+  uint64_t operator-(End& end) { return uint64_t(1); }
+};
+class Hidden { bool operator!=(End& end) { return true; } };
+bool differs<I, S>(I& position, S& end) requires std::sentinel_for<S, I> {
+  return position != end;
+}
+std::ptrdiff_t offset<I, S>(I& position, S& end) requires std::sized_sentinel_for<S, I> {
+  return position - end;
+}
+int main() {
+  static_assert(requires(Cursor& p, End& e) { { differs(p, e) } -> bool; });
+  static_assert(requires(Cursor& p, End& e) { { offset(p, e) } -> std::ptrdiff_t; });
+  static_assert(requires(CopiedEnd& p, End& e) { { offset(p, e) } -> std::ptrdiff_t; });
+  static_assert(!(requires(Ambiguous& p, End& e) { { differs(p, e) } -> bool; }));
+  static_assert(!(requires(WrongDistance& p, End& e) { { offset(p, e) } -> std::ptrdiff_t; }));
+  static_assert(!(requires(Hidden& p, End& e) { { differs(p, e) } -> bool; }));
+  static_assert(!(requires(int& p, int& e) { { differs(p, e) } -> bool; }));
+  Cursor position{}; End end{};
+  return differs(position, end) && offset(position, end) == std::ptrdiff_t(-5) ? 0 : 1;
+}
+)GTI"),
+           "sentinel policies are source-defined exact safe expression "
+           "requirements");
+
+  accepted(
+      check(root, directory, "source_scalar_policy", R"(
+#include <std/atomic>
+#include <std/meta>
+constexpr bool truth_type<T>() { return std::meta::is_bool<T>(); }
+concept integer_or_boolean<T> = std::meta::is_integral<T>() || truth_type<T>();
+concept signed_or_unsigned<T> = std::meta::is_signed_integral<T>() ||
+                               std::meta::is_unsigned_integral<T>();
+T load<T>(std::atomic<T>& value) requires integer_or_boolean<T> {
+  return value.load();
+}
+T load_truth<T>(std::atomic<T>& value) requires truth_type<T>() {
+  return value.load();
+}
+T increment<T>(T value) requires signed_or_unsigned<T> { return value + 1; }
+struct Record { int value = 0; };
+concept public_record<T> = std::meta::is_reflectable<T>();
+uint64_t fields<T>() requires public_record<T> {
+  return std::meta::type<T>().field_count();
+}
+int main() {
+  static_assert(std::meta::is_bool<bool>());
+  static_assert(!std::meta::is_bool<int>());
+  std::atomic<bool> truth{true};
+  std::atomic<int> number{7};
+  return load<bool>(truth) && load_truth<bool>(truth) && load<int>(number) == 7 &&
+         increment<int>(3) == 4 && fields<Record>() == uint64_t(1) ? 0 : 1;
+}
+)",
+            true),
+      "source scalar policies transport common proofs across alternatives");
+
+  rejected(check(root, directory, "disjunction_does_not_invent_scalar", R"(
+#include <std/atomic>
+#include <std/meta>
+concept integer_or_float<T> = std::meta::is_integral<T>() ||
+                              std::meta::is_floating_point<T>();
+T load<T>(std::atomic<T>& value) requires integer_or_float<T> {
+  return value.load();
+}
+int main() { return 0; }
+)",
+                 true),
+           "one non-atomic alternative cannot justify atomic storage");
+
+  accepted(check(root, directory, "source_storage_policy", R"(
+#include <std/memory>
+#include <std/meta>
+struct Payload { int value = 0; };
+struct Borrowed {
+  int& value;
+  Borrowed(int& source) : value(source) {}
+};
+concept complete_object<T> = std::meta::has_object_layout<T>();
+concept independent<T> = complete_object<T> && std::meta::is_borrow_free<T>();
+uint64_t bytes<T>() requires complete_object<T> { return std::layout_of<T>().bytes; }
+unsafe void retire<T>(T* address) requires complete_object<T> {
+  unsafe { std::destroy_at<T>(address); }
+}
+std::uninitialized<T> slot<T>() requires independent<T> && std::bitwise_relocatable<T> {
+  return std::uninitialized<T>();
+}
+int main() {
+  static_assert(std::meta::has_object_layout<Payload>());
+  static_assert(std::meta::has_object_layout<Borrowed>());
+  static_assert(!std::meta::has_object_layout<void>());
+  static_assert(std::meta::is_borrow_free<Payload>());
+  static_assert(!std::meta::is_borrow_free<Borrowed>());
+  static_assert(!std::meta::is_borrow_free<int&>());
+  static_assert(std::meta::is_borrow_free<int*>());
+  static_assert(std::meta::is_raw_pointer<int*>());
+  static_assert(std::meta::type<void*>().is_raw_pointer());
+  static_assert(!std::meta::is_raw_pointer<int>());
+  static_assert(!std::meta::is_raw_pointer<int&>());
+  static_assert(!std::meta::is_raw_pointer<std::unique_ptr<int>>());
+  auto vacant = slot<Payload>();
+  return bytes<Payload>() > uint64_t(0) ? 0 : 1;
+}
+)"),
+           "independent source object-layout and borrow-state policies");
+
+  rejected(check(root, directory, "copying_does_not_prove_storage", R"(
+#include <std/memory>
+std::uninitialized<T> slot<T>() requires std::copyable<T> {
+  return std::uninitialized<T>();
+}
+int main() { return 0; }
+)"),
+           "copyability alone does not establish independent storage");
 
   accepted(check(root, directory, "operators", R"(
 concept adds_to<L, R, V> = requires(L& left, R& right) {
@@ -116,6 +692,558 @@ int main() {
 }
 )"),
            "heterogeneous operator result and grouped checks");
+
+  accepted(
+      check(root, directory, "inline_source_requirements", R"(
+concept reads<T> = requires(T& value) { { value.read() } -> int; };
+concept sums<T> = requires(T& left, T& right) { { left + right } -> int; };
+struct Counter {
+  int value = 4;
+  int read() { return this.value; }
+  int operator+(Counter& other) { return this.value + other.value; }
+};
+int read<reads T>(T& value) { return value.read(); }
+int sum<sums T = Counter>(T& left, T& right) { return left + right; }
+class Reader {
+public:
+  int read<reads T>(T& value) { return value.read(); }
+};
+int main() {
+  Counter a{}; Counter b{}; Reader reader{};
+  return read(a) + sum(a, b) + reader.read(a) == 16 ? 0 : 1;
+}
+)"),
+      "inline source concepts preserve full signature and operator proofs");
+
+  rejected(check(root, directory, "inline_source_requirement_rejection", R"(
+concept reads<T> = requires(T& value) { { value.read() } -> int; };
+struct Wrong { bool read() { return true; } };
+int read<reads T>(T& value) { return value.read(); }
+int main() { Wrong value; return read(value); }
+)"),
+           "inline source concepts validate the full concrete requirement");
+
+  accepted(check(root, directory, "source_comparison_policy", R"(
+#include <std/meta>
+struct Key {
+  int value = 0;
+  bool operator==(Key& other) { return this.value == other.value; }
+  bool operator!=(Key& other) { return this.value != other.value; }
+  bool operator<(Key& other) { return this.value < other.value; }
+  bool operator<=(Key& other) { return this.value <= other.value; }
+  bool operator>(Key& other) { return this.value > other.value; }
+  bool operator>=(Key& other) { return this.value >= other.value; }
+};
+bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
+bool before<std::totally_ordered T>(T& a, T& b) { return a < b; }
+concept ordered_alias<T> = std::totally_ordered<T>;
+bool aliased_before<T>(T& a, T& b) requires ordered_alias<T> {
+  return before(a, b);
+}
+bool ordered_same<std::totally_ordered T>(T& a, T& b) { return same(a, b); }
+bool integer_before<T>(T& a, T& b) requires std::meta::is_integral<T>() {
+  return before(a, b);
+}
+struct Contracts {
+  int read() { return 0; }
+  unsafe int raw() { return 0; }
+  int operator()() && { return 0; }
+  int checked<T>(T& value) requires std::integral<T> { return 0; }
+};
+int main() {
+  static_assert(!std::meta::method<Contracts, 0>().is_consuming());
+  static_assert(!std::meta::method<Contracts, 0>().is_unsafe());
+  static_assert(std::meta::method<Contracts, 1>().is_unsafe());
+  static_assert(std::meta::method<Contracts, 2>().is_consuming());
+  static_assert(std::meta::method<Contracts, 3>().is_generic());
+  static_assert(std::meta::method<Contracts, 3>().is_constrained());
+  static_assert(std::detail::read_equality_members<Key>());
+  static_assert(std::detail::read_ordering_members<Key>());
+  Key a{.value = 1}; Key b{.value = 2};
+  int x = 1; int y = 2;
+  return !same(a, b) && !ordered_same(a, b) && before(a, b) &&
+         aliased_before(a, b) && integer_before(x, y) ? 0 : 1;
+}
+)"),
+           "source comparison policy uses general declaration facts and "
+           "operation proofs");
+
+  rejected(check(root, directory, "source_comparison_policy_exactness", R"(
+struct ValueParameter {
+  bool operator==(ValueParameter other) { return true; }
+  bool operator!=(ValueParameter other) { return false; }
+};
+bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
+int main() { ValueParameter value{}; return same(value, value) ? 0 : 1; }
+)"),
+           "source comparison policy retains its exact read-reference "
+           "parameter contract");
+
+  rejected(check(root, directory, "unproven_comparison_policy", R"(
+bool before<std::totally_ordered T>(T& a, T& b) { return a < b; }
+bool missing_proof<T>(T& a, T& b) { return before(a, b); }
+int main() { return 0; }
+)"),
+           "isolated expression queries cannot assume their own comparison "
+           "capability");
+
+  accepted(check(root, directory, "comparison_policy_boundaries", R"(
+class Hidden {
+  bool operator==(Hidden& other) { return true; }
+  bool operator!=(Hidden& other) { return false; }
+};
+bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
+int main() {
+  static_assert(!(requires(Hidden& a, Hidden& b) { { same(a, b) } -> bool; }));
+  static_assert(requires(bool& a, bool& b) { { same(a, b) } -> bool; });
+  static_assert(requires(int*& a, int*& b) { { same(a, b) } -> bool; });
+  return 0;
+}
+)"),
+           "comparison source policy preserves private access without "
+           "excluding primitive equality");
+
+  accepted(check(root, directory, "source_mutation_requirements", R"(
+#include <std/iterator>
+#include <std/meta>
+concept adjustable<T> = requires(mut T& value, int amount) {
+  { ++value } -> void;
+  { --value } -> void;
+  { value += amount } -> void;
+  { value -= amount } -> void;
+};
+struct Counter {
+  mut int value = 0;
+  void operator++() mut { this.value += 1; }
+  void operator--() mut { this.value -= 1; }
+  void operator+=(int amount) mut { this.value += amount; }
+  void operator-=(int amount) mut { this.value -= amount; }
+};
+struct Inherited : public Counter {};
+struct CursorBase<T> {
+  mut int position = 0;
+  int operator*() { return this.position; }
+  void operator++() mut { this.position += 1; }
+  void operator--() mut { this.position -= 1; }
+  void operator+=(std::ptrdiff_t amount) mut { this.position += int(amount); }
+  void operator-=(std::ptrdiff_t amount) mut { this.position -= int(amount); }
+};
+struct Cursor : public CursorBase<int> {};
+void jump<std::random_access_cursor I>(mut I& iterator, std::ptrdiff_t amount) {
+  iterator += amount;
+  --iterator;
+}
+void adjust<adjustable T>(mut T& value, int amount) {
+  ++value;
+  value += amount;
+  --value;
+  value -= amount;
+}
+int main() {
+  mut Counter value{};
+  adjust(value, 7);
+  mut Inherited inherited{};
+  adjust(inherited, 2);
+  mut Cursor cursor{};
+  jump(cursor, std::ptrdiff_t(4));
+  static_assert(std::meta::type<Cursor>().method_count() == uint64_t(0));
+  return value.value == 0 && inherited.value == 0 && cursor.position == 3 ? 0 : 1;
+}
+)"),
+           "general mutation requirements prove operations on ordinary "
+           "source classes without an iterator capability");
+
+  accepted(check(root, directory, "source_once_action", R"(
+#include <std/functional>
+concept task<F> = requires(F action) { { std::move(action)() } -> void; };
+void run<F>(F action) requires task<F> { std::move(action)(); }
+void forward<F>(F action) requires std::once_action<F> {
+  std::invoke_once(std::move(action));
+}
+struct Once { void operator()() && {} };
+struct Read { void operator()() {} };
+struct Mutable { void operator()() mut {} };
+struct Wrong { int operator()() && { return 1; } };
+struct NeedsArgument { void operator()(int value) {} };
+unsafe void unsafe_action() {}
+class Hidden { void operator()() {} };
+int main() {
+  run(Once());
+  forward(Once());
+  forward(Read());
+  forward(Mutable());
+  forward([]() -> void {});
+  static_assert(!(requires(Wrong action) { { std::move(action)() } -> void; }));
+  static_assert(!(requires(NeedsArgument action) { { std::move(action)() } -> void; }));
+  static_assert(!(requires { { unsafe_action() } -> void; }));
+  static_assert(!(requires(Hidden action) { { std::move(action)() } -> void; }));
+  return 0;
+}
+)"),
+           "source consuming-call requirements preserve ordinary access, "
+           "safety, arity and exact result checks");
+
+  rejected(check(root, directory, "source_once_action_rejects_arity", R"(
+#include <std/functional>
+struct NeedsArgument { void operator()(int value) {} };
+int main() { std::invoke_once(NeedsArgument()); return 0; }
+)"),
+           "source once_action does not invent a missing argument");
+
+  rejected(check(root, directory, "source_once_action_rejects_result", R"(
+#include <std/functional>
+struct Wrong { int operator()() && { return 1; } };
+int main() { std::invoke_once(Wrong()); return 0; }
+)"),
+           "source once_action requires exactly void");
+
+  accepted(check(root, directory, "lookup_reflection_overrides", R"(
+#include <std/meta>
+class Parent<T> {
+public:
+  virtual int sample() { return 1; }
+  T identity(T& value) { return value; }
+};
+class Child : public Parent<int> {
+public:
+  int sample() override { return 2; }
+};
+constexpr bool exact_lookup<T>() {
+  mut int samples = 0;
+  mut int identities = 0;
+  mut bool exact = true;
+  constexpr for (auto method : std::meta::lookup_methods_of<T>()) {
+    if constexpr (method.name() == "sample") {
+      samples += 1;
+      if constexpr (!method.result().is_same<int>()) { exact = false; }
+    }
+    if constexpr (method.name() == "identity") {
+      identities += 1;
+      constexpr for (auto parameter : method.parameters()) {
+        if constexpr (!parameter.type().is_same<int&>()) { exact = false; }
+      }
+    }
+  }
+  return exact && samples == 1 && identities == 1;
+}
+struct Tag<T> {
+  constexpr Tag() {}
+  constexpr int id() { return 7; }
+};
+constexpr int type_only<T>() {
+  Tag<T> tag{};
+  return tag.id();
+}
+int main() {
+  static_assert(exact_lookup<Child>());
+  static_assert(type_only<Child>() == 7);
+  // Exact descriptor identity also proves that the overridden Parent::sample
+  // is absent, and that the inherited identity owner retains its int argument.
+  static_assert(std::meta::is_same<std::meta::lookup_method_list<Child>,
+      std::meta::list<std::meta::method<Parent<int>, 1>,
+                      std::meta::method<Child, 0>>>());
+  static_assert(std::meta::is_same<std::meta::parameter_type<Parent<int>, 1, 0>, int&>());
+  return 0;
+}
+)"),
+           "lookup metadata substitutes inherited owners and excludes "
+           "overridden declarations without changing declaration reflection");
+
+  rejected(check(root, directory, "type_only_is_not_object_permission", R"(
+class Virtual {
+public:
+  constexpr Virtual() {}
+  virtual int value() { return 7; }
+};
+struct Holder<T> {
+  T value;
+  constexpr Holder() : value(T()) {}
+};
+constexpr int construct() { Holder<Virtual> holder{}; return 1; }
+int main() { static_assert(construct() == 1); return 0; }
+)"),
+           "type-only constant arguments do not admit polymorphic objects",
+           "GTI-S2057");
+
+  accepted(
+      check(root, directory, "borrowed_expression_requirements", R"(
+struct Box {
+  mut int value = 7;
+  int& read() { return this.value; }
+  mut int& edit() mut { return this.value; }
+  int& operator*() { return this.value; }
+  mut int& operator[](int index) mut { return this.value; }
+};
+[[borrowed_from(left)]] int& select(int& left, int& right) { return left; }
+concept readable<C, T> = requires(C& owner) {
+  { *owner } -> T& [[borrowed_from(owner)]];
+};
+concept editable<C, T> = requires(mut C& owner, int offset) {
+  { owner.edit() } -> mut T& [[borrowed_from(owner)]];
+  { owner[offset] } -> mut T& [[borrowed_from(owner)]];
+};
+[[borrowed_from(owner)]] T& peek<C, T>(C& owner) requires readable<C, T> {
+  return *owner;
+}
+[[borrowed_from(owner)]] mut T& edit<C, T>(mut C& owner) requires editable<C, T> {
+  return owner.edit();
+}
+void store<C, T>(mut C& owner, T value) requires editable<C, T> {
+  mut T& slot = owner[0];
+  slot = value;
+}
+int main() {
+  mut Box box{};
+  store<Box, int>(box, 9);
+  if (peek<Box, int>(box) != 9) { return 1; }
+  {
+    mut int& value = edit<Box, int>(box);
+    value = 11;
+  }
+  if (peek<Box, int>(box) != 11) { return 2; }
+  static_assert(requires(Box& box) {
+    { box.read() } -> int& [[borrowed_from(box)]];
+    { *box } -> int& [[borrowed_from(box)]];
+  });
+  static_assert(requires(mut Box& box, int index) {
+    { box.edit() } -> mut int& [[borrowed_from(box)]];
+    { box[index] } -> mut int& [[borrowed_from(box)]];
+  });
+  static_assert(requires(int& left, int& right) {
+    { select(left, right) } -> int& [[borrowed_from(left)]];
+  });
+  static_assert(!(requires(int& left, int& right) {
+    { select(left, right) } -> int& [[borrowed_from(right)]];
+  }));
+  static_assert(!(requires(Box& box, Box& other) {
+    { box.read() } -> int& [[borrowed_from(other)]];
+  }));
+  static_assert(!(requires(Box box) {
+    { box.read() } -> int& [[borrowed_from(box)]];
+  }));
+  static_assert(!(requires(Box& box) {
+    { box.edit() } -> mut int& [[borrowed_from(box)]];
+  }));
+  static_assert(!(requires(Box& box) {
+    { box.read() } -> mut int& [[borrowed_from(box)]];
+  }));
+  static_assert(!(requires(Box& box) { { box.read() } -> int&; }));
+  return 0;
+}
+)"),
+      "checked borrowed queries preserve exact owner, access and referent");
+
+  accepted(
+      check(root, directory, "source_mutable_cursor_policy", R"GTI(
+#include <std/iterator>
+#include <std/meta>
+struct Cursor {
+  mut int value = 0;
+  mut int& operator*() mut { return this.value; }
+  mut int& operator[](std::ptrdiff_t offset) mut { return this.value; }
+  int operator()() { return this.value; }
+};
+constexpr bool paired_operator_names() {
+  mut bool index = false;
+  mut bool call = false;
+  constexpr for (auto member : std::meta::operators_of<Cursor>()) {
+    if constexpr (member.name() == "operator[]") { index = true; }
+    if constexpr (member.name() == "operator()") { call = true; }
+  }
+  return index && call;
+}
+void store<I>(mut I& cursor, int value) requires std::writes_to<I, int> {
+  *cursor = value;
+}
+void store_at<I>(mut I& cursor, std::ptrdiff_t offset, int value)
+    requires std::subscripts_to_mut<I, int> {
+  cursor[offset] = value;
+}
+int main() {
+  static_assert(paired_operator_names());
+  mut Cursor cursor{};
+  store(cursor, 9);
+  store_at(cursor, std::ptrdiff_t(0), 11);
+  return cursor.value == 11 ? 0 : 1;
+}
+)GTI"),
+      "source cursor policies use general owner-aware reference requirements");
+
+  accepted(check(root, directory, "source_erased_owner_policy", R"(
+#include <std/meta>
+#include <std/polymorphic>
+#include <std/string>
+interface Measure { int read(); };
+class Point : public Measure {
+public:
+  Point() {}
+  int read() override { return 7; }
+};
+class Noisy : public Measure {
+public:
+  Noisy() {}
+  ~Noisy() {}
+  int read() override { return 8; }
+};
+struct Owning { std::string text; };
+int main() {
+  static_assert(std::meta::is_polymorphic<Measure>());
+  static_assert(std::meta::type<Point>().is_polymorphic());
+  static_assert(!std::meta::is_polymorphic<int>());
+  static_assert(std::meta::is_public_base_of<Measure, Point>());
+  static_assert(std::meta::type<Point>().has_public_base<Measure>());
+  static_assert(!std::meta::is_public_base_of<Point, Measure>());
+  static_assert(!std::meta::is_public_base_of<Point, Point>());
+  static_assert(!std::meta::is_public_base_of<int, Point>());
+  static_assert(!std::meta::has_active_cleanup<Point>());
+  static_assert(!std::meta::has_active_cleanup<int>());
+  static_assert(std::meta::has_active_cleanup<Noisy>());
+  static_assert(std::meta::type<Owning>().has_active_cleanup());
+  static_assert(requires(std::detail::inline_payload_probe<Point, Measure>& p) {
+    { p.matches() } -> bool;
+  });
+  static_assert(!(requires(std::detail::inline_payload_probe<Noisy, Measure>& p) {
+    { p.matches() } -> bool;
+  }));
+  return 0;
+}
+)"),
+           "source policy composes independent cleanup and public-base facts");
+
+  accepted(check(root, directory, "source_cursor_policy_implication", R"(
+#include <std/iterator>
+void retreat<I>(mut I& cursor) requires std::bidirectional_cursor<I> {
+  --cursor;
+}
+void jump_then_retreat<I>(mut I& cursor)
+    requires std::random_access_cursor<I> && std::writes_to<I, int> {
+  cursor += std::ptrdiff_t(2);
+  retreat(cursor);
+  std::advance(cursor, std::ptrdiff_t(-1));
+}
+int main() { return 0; }
+)"),
+           "nested conjunctions preserve opaque source predicate proofs");
+
+  rejected(check(root, directory, "source_mutable_cursor_exact_index", R"(
+#include <std/iterator>
+struct Cursor {
+  mut int value = 0;
+  mut int& operator[](std::ptrdiff_t& offset) mut { return this.value; }
+};
+void require_cursor<I>() requires std::subscripts_to_mut<I, int> {}
+int main() { require_cursor<Cursor>(); return 0; }
+)"),
+           "source index policy retains the exact by-value offset signature");
+
+  const auto unknownOrigin =
+      check(root, directory, "unknown_query_borrow_origin", R"(
+int main() {
+  static_assert(requires(int& value) {
+    { value } -> int& [[borrowed_from(other)]];
+  });
+  return 0;
+}
+)");
+  expect(!unknownOrigin.syntaxValid && !unknownOrigin.canGenerateCode() &&
+             std::any_of(unknownOrigin.diagnostics.begin(),
+                         unknownOrigin.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-P0001";
+                         }),
+         "borrow origin must resolve in its query (recovered HIR is not "
+         "executable)");
+
+  rejected(check(root, directory, "borrow_contract_is_not_shared_mutation", R"(
+concept editable<C, T> = requires(mut C& owner) {
+  { owner.edit() } -> mut T& [[borrowed_from(owner)]];
+};
+void broken<C, T>(C& owner, T value) requires editable<C, T> {
+  mut T& slot = owner.edit();
+  slot = value;
+}
+int main() { return 0; }
+)"),
+           "a mutable result proof does not grant mutable receiver access");
+
+  rejected(check(root, directory, "mutation_requires_mutable_receiver", R"(
+concept adjustable<T> = requires(mut T& value, int amount) {
+  { value += amount } -> void;
+};
+void adjust<adjustable T>(T& value, int amount) { value += amount; }
+int main() { return 0; }
+)"),
+           "a mutation proof never grants mutable access to a shared receiver",
+           "GTI-S2029");
+
+  rejected(check(root, directory, "borrowed_query_local_escape", R"(
+concept readable<C> = requires(C& owner) {
+  { owner.read() } -> int& [[borrowed_from(owner)]];
+};
+[[borrowed_from(input)]] int& escape<C>(C& input)
+    requires readable<C> && std::default_initializable<C> {
+  C local = C();
+  return local.read();
+}
+int main() { return 0; }
+)"),
+           "a generic borrowed result cannot escape its local owner",
+           "GTI-S2017");
+
+  rejected(check(root, directory, "borrowed_query_live_alias", R"(
+concept editable<C> = requires(mut C& owner) {
+  { owner.edit() } -> mut int& [[borrowed_from(owner)]];
+};
+void alias<C>(mut C& owner) requires editable<C> {
+  mut int& first = owner.edit();
+  mut int& second = owner.edit();
+  first = 1;
+  second = 2;
+}
+int main() { return 0; }
+)"),
+           "generic result origins retain exclusive-loan conflicts",
+           "GTI-S2017");
+
+  rejected(check(root, directory, "borrowed_query_disjoint_origins", R"(
+concept from_receiver<C> = requires(C& owner, int& input) {
+  { owner.select(input) } -> int& [[borrowed_from(owner)]];
+};
+concept from_argument<C> = requires(C& owner, int& input) {
+  { owner.select(input) } -> int& [[borrowed_from(input)]];
+};
+[[borrowed_from(owner)]] int& select<C>(C& owner, int& input)
+    requires from_receiver<C> || from_argument<C> {
+  return owner.select(input);
+}
+int main() { return 0; }
+)"),
+           "alternative result origins cannot invent a common owner",
+           "GTI-S2000");
+
+  accepted(check(root, directory, "borrowed_call_is_not_owned_result", R"(
+[[borrowed_from(value)]] int& reference(int& value) { return value; }
+class Borrower {
+  int value = 1;
+public:
+  [[borrowed_from(input)]] int& operator()(int& input) { return input; }
+  int& operator*() { return this.value; }
+  int& operator[](int index) { return this.value; }
+};
+int main() {
+  static_assert(!(requires(int& input) { { reference(input) } -> int; }));
+  static_assert(!(requires(Borrower& f, int& input) { { f(input) } -> int; }));
+  static_assert(!(requires(Borrower& f, int& input) { { (f(input)) } -> int; }));
+  static_assert(!(requires(Borrower& f) { { *f } -> int; }));
+  static_assert(!(requires(Borrower& f, int index) { { f[index] } -> int; }));
+  static_assert(requires(Borrower& f, int& input) {
+    { f(input) } -> int& [[borrowed_from(input)]];
+  });
+  static_assert(requires(Borrower& f) { { *f } -> int& [[borrowed_from(f)]]; });
+  return 0;
+}
+)"),
+           "owned-result queries cannot erase selected call/operator borrows");
 
   accepted(check(root, directory, "construction", R"(
 concept defaults<T> = requires { { T() } -> T; };
@@ -571,6 +1699,8 @@ int read<T>(T& value) requires raw_read<T> { return value.raw(); }
   const std::string formatting =
       R"(concept sum<T>=requires(T& a,T& b){{a+b}->T;{a==b}->bool;};
 concept ints<T>=std::meta::is_integral<T>();
+concept editable<T>=requires(mut T& owner){{owner.edit()}->mut int& [[borrowed_from(owner)]];};
+concept iterable<R>=requires(R& range){for(auto& element:range){}};
 )";
   const auto formatted = lang::Formatter().format(formatting);
   expect(lang::Formatter().format(formatted) == formatted,

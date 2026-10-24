@@ -324,7 +324,8 @@ private:
         return std::make_unique<MemberRequirement>(
             tok(node.keyword()), expr(node.expression()), type(node.result()),
             types(node.parameters()), toks(node.bindings()),
-            tok(node.unsafeKeyword()));
+            tok(node.unsafeKeyword()), tok(node.borrowedFrom()),
+            stmt(node.iteration()), node.inferredResult());
       return std::make_unique<MemberRequirement>(
           tok(node.keyword()), type(node.receiver()), tok(node.binding()),
           tok(node.receiverUse()), tok(node.member()), type(node.result()),
@@ -539,7 +540,8 @@ private:
           std::move(lowered), mapped(node.ownerBinding()),
           mapped(node.rangeBinding()), mapped(node.iteratorBinding()),
           mapped(node.sentinelBinding()), mapped(node.elementBinding()),
-          mapped(node.coreLoop()), mapped(node.elementOwnerBinding()));
+          mapped(node.coreLoop()), mapped(node.elementOwnerBinding()),
+          mapped(node.sourceBody()));
     }
     case StmtKind::ReturnStmt: {
       const auto &node = static_cast<const ReturnStmt &>(statement);

@@ -975,59 +975,6 @@ auto SemanticVisitor::Impl::acceptsArgumentShape(
   return arguments.size() >= fixed;
 }
 
-auto SemanticVisitor::Impl::hasExactComparisonOperator(
-    const SemanticType &type, OverloadedOperator operation) const -> bool {
-  const ClassInfo *owner = classInfo(type);
-  if (owner == nullptr) {
-    return false;
-  }
-  const auto member =
-      owner->members.find(std::string(operatorFunctionName(operation)));
-  if (member == owner->members.end() ||
-      member->second.symbol.type != SemanticType::Function) {
-    return false;
-  }
-
-  const SemanticType parameter = SemanticType::referenceTo(type);
-  const Symbol overloadSet = substituteSymbol(member->second.symbol, type);
-  return std::any_of(overloadSet.overloads.begin(), overloadSet.overloads.end(),
-                     [&](const CallableCandidate &candidate) {
-                       return !candidate.staticMember &&
-                              candidate.access == AccessModifier::Public &&
-                              candidate.requirements.empty() &&
-                              candidate.receiverMutability ==
-                                  ReceiverMutability::ReadOnly &&
-                              candidate.returnType == SemanticType::Bool &&
-                              candidate.parameterTypes.size() == 1 &&
-                              candidate.parameterTypes.front() == parameter;
-                     });
-}
-
-auto SemanticVisitor::Impl::isEqualityComparableConstraintType(
-    const SemanticType &type) const -> bool {
-  if (type.kind == SemanticType::Class) {
-    return hasExactComparisonOperator(type, OverloadedOperator::Equal) &&
-           hasExactComparisonOperator(type, OverloadedOperator::NotEqual);
-  }
-  return isInteger(type) || semanticFloatFormat(type).has_value() ||
-         type == SemanticType::Bool || type == SemanticType::Char ||
-         type == SemanticType::StringView || type == SemanticType::NullPtr ||
-         type.kind == SemanticType::RawPointer ||
-         type.kind == SemanticType::Enum;
-}
-
-auto SemanticVisitor::Impl::isRelationallyOrderedConstraintType(
-    const SemanticType &type) const -> bool {
-  if (isInteger(type) || semanticFloatFormat(type).has_value()) {
-    return true;
-  }
-  return type.kind == SemanticType::Class &&
-         hasExactComparisonOperator(type, OverloadedOperator::Less) &&
-         hasExactComparisonOperator(type, OverloadedOperator::LessEqual) &&
-         hasExactComparisonOperator(type, OverloadedOperator::Greater) &&
-         hasExactComparisonOperator(type, OverloadedOperator::GreaterEqual);
-}
-
 auto SemanticVisitor::Impl::satisfiesAtomicConstraint(
     const SemanticType &argument, GenericConstraintKind constraint) const
     -> bool {
@@ -1037,10 +984,6 @@ auto SemanticVisitor::Impl::satisfiesAtomicConstraint(
     return true;
   }
   switch (constraint) {
-  case GenericConstraintKind::EqualityComparable:
-    return isEqualityComparableConstraintType(argument);
-  case GenericConstraintKind::RelationallyOrdered:
-    return isRelationallyOrderedConstraintType(argument);
   case GenericConstraintKind::Numeric:
     return isInteger(argument) || semanticFloatFormat(argument).has_value();
   case GenericConstraintKind::SignedNumeric:
@@ -1054,6 +997,13 @@ auto SemanticVisitor::Impl::satisfiesAtomicConstraint(
            !enums[argument.enumId - 1].payload;
   case GenericConstraintKind::Reflectable:
     return isReflectableType(argument);
+  case GenericConstraintKind::Boolean:
+    return argument == SemanticType::Bool;
+  case GenericConstraintKind::ObjectLayout:
+    return runtimeObjectLayoutType(argument);
+  case GenericConstraintKind::BorrowFree:
+    return argument.kind != SemanticType::Reference &&
+           !typeTraits(argument).containsBorrowedState;
   case GenericConstraintKind::SignedIntegral:
     return isSignedInteger(argument);
   case GenericConstraintKind::UnsignedIntegral:
@@ -1194,24 +1144,6 @@ auto SemanticVisitor::Impl::firstConstraintFailure(
   return std::nullopt;
 }
 
-auto SemanticVisitor::Impl::guaranteedStructuralKinds(
-    StructuralConstraintKind kind) -> std::vector<StructuralConstraintKind> {
-  switch (kind) {
-  case StructuralConstraintKind::ReadCallable:
-    return {kind, StructuralConstraintKind::MutCallable,
-            StructuralConstraintKind::OnceCallable};
-  case StructuralConstraintKind::MutCallable:
-    return {kind, StructuralConstraintKind::OnceCallable};
-  case StructuralConstraintKind::ReadBinaryCallable:
-    return {kind, StructuralConstraintKind::MutBinaryCallable,
-            StructuralConstraintKind::OnceBinaryCallable};
-  case StructuralConstraintKind::MutBinaryCallable:
-    return {kind, StructuralConstraintKind::OnceBinaryCallable};
-  default:
-    return {kind};
-  }
-}
-
 auto SemanticVisitor::Impl::conceptSubstitution(
     const RegisteredConcept &conceptInfo,
     std::span<const SemanticType> arguments) const -> TypeSubstitution {
@@ -1279,7 +1211,8 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
           .application = requirement.syntax,
           .memberName = pattern.memberName,
           .mutableReceiver = pattern.mutableReceiver,
-          .requiresUnsafe = pattern.requiresUnsafe};
+          .requiresUnsafe = pattern.requiresUnsafe,
+          .borrowSource = pattern.borrowSource};
       bool valid = true;
       for (const RegisteredConcept::StructuralPattern::Argument &argument :
            pattern.arguments) {
@@ -1296,12 +1229,7 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
             requirement.arguments[*argument.parameter]);
       }
       if (valid) {
-        for (StructuralConstraintKind guaranteed :
-             guaranteedStructuralKinds(expanded.kind)) {
-          ExpandedStructuralRequirement implied = expanded;
-          implied.kind = guaranteed;
-          result.emplace_back(std::move(implied));
-        }
+        result.emplace_back(std::move(expanded));
       }
     }
     return result;
@@ -1329,6 +1257,7 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
     return left.kind == right.kind && left.arguments == right.arguments &&
            left.memberName == right.memberName &&
            left.mutableReceiver == right.mutableReceiver &&
+           left.borrowSource == right.borrowSource &&
            left.requiresUnsafe == right.requiresUnsafe;
   };
   std::function<std::vector<ExpandedStructuralRequirement>(std::size_t)>
@@ -1383,6 +1312,51 @@ auto SemanticVisitor::Impl::activeStructuralRequirements() const
         expandStructuralRequirements(scope);
     result.insert(result.end(), std::make_move_iterator(expanded.begin()),
                   std::make_move_iterator(expanded.end()));
+  }
+  // An inferred result is a weaker description of the same operation, not a
+  // second overload. Refine it only with identical inputs/access and a stronger
+  // result contract; unrelated origins or unsafe obligations never disappear.
+  std::vector<bool> superseded(result.size(), false);
+  bool any = false;
+  for (std::size_t index = 0; index < result.size(); ++index) {
+    const auto &broad = result[index];
+    if (broad.kind != StructuralConstraintKind::ReadMember ||
+        broad.arguments.size() < 2)
+      continue;
+    const auto &value = broad.arguments[1];
+    const bool inferredReference =
+        value.kind == SemanticType::Reference && value.arguments.size() == 1 &&
+        value.arguments.front() == SemanticType::Unknown;
+    if (value != SemanticType::Unknown && !inferredReference)
+      continue;
+    for (const auto &narrow : result) {
+      if (narrow.kind != broad.kind || narrow.memberName != broad.memberName ||
+          narrow.mutableReceiver != broad.mutableReceiver ||
+          (narrow.requiresUnsafe && !broad.requiresUnsafe) ||
+          narrow.arguments.size() != broad.arguments.size() ||
+          narrow.arguments[0] != broad.arguments[0] ||
+          !std::equal(narrow.arguments.begin() + 2, narrow.arguments.end(),
+                      broad.arguments.begin() + 2) ||
+          narrow.arguments[1] == value ||
+          narrow.arguments[1] == SemanticType::Unknown)
+        continue;
+      const auto &exact = narrow.arguments[1];
+      if (inferredReference &&
+          (exact.kind != SemanticType::Reference ||
+           exact.referenceAccess != value.referenceAccess ||
+           narrow.borrowSource != broad.borrowSource))
+        continue;
+      superseded[index] = any = true;
+      break;
+    }
+  }
+  if (any) {
+    std::vector<ExpandedStructuralRequirement> refined;
+    refined.reserve(result.size());
+    for (std::size_t index = 0; index < result.size(); ++index)
+      if (!superseded[index])
+        refined.push_back(std::move(result[index]));
+    return refined;
   }
   return result;
 }
@@ -1453,8 +1427,9 @@ auto SemanticVisitor::Impl::activeAtomicConstraints(
       }
       const GenericConstraintSet left = atomicForNode(node.left);
       const GenericConstraintSet right = atomicForNode(node.right);
-      return node.kind == ConstraintExpressionKind::Conjunction ? left | right
-                                                                : left & right;
+      return node.kind == ConstraintExpressionKind::Conjunction
+                 ? left | right
+                 : impliedConstraints(left) & impliedConstraints(right);
     };
     result |= atomicForNode(expression->root);
   }
@@ -1464,76 +1439,186 @@ auto SemanticVisitor::Impl::activeAtomicConstraints(
 auto SemanticVisitor::Impl::structuralRequirementAvailable(
     StructuralConstraintKind kind,
     std::span<const SemanticType> arguments) const -> bool {
-  // These declaration-bound capabilities admit only complete, borrow-free
-  // scalar values. Their generic uses retain those structural guarantees;
-  // movement/copying alone says nothing about layout or stored borrows.
-  if ((kind == StructuralConstraintKind::ObjectLayout ||
-       kind == StructuralConstraintKind::IndependentObject) &&
-      arguments.size() == 1) {
-    const auto constraints = constraintOf(arguments.front());
-    if (!invalidConstraintSet(constraints)) {
-      for (const auto scalar : {GenericConstraintKind::Numeric,
-                                GenericConstraintKind::SignedNumeric,
-                                GenericConstraintKind::Integral,
-                                GenericConstraintKind::SignedIntegral,
-                                GenericConstraintKind::UnsignedIntegral,
-                                GenericConstraintKind::FloatingPoint,
-                                GenericConstraintKind::AtomicScalar,
-                                GenericConstraintKind::IntegralEnum}) {
-        if (hasConstraint(constraints, scalar))
+  const std::vector<ExpandedStructuralRequirement> active =
+      activeStructuralRequirements();
+  return std::any_of(active.begin(), active.end(),
+                     [&](const auto &requirement) {
+                       if (requirement.arguments.size() != arguments.size() ||
+                           !std::equal(requirement.arguments.begin(),
+                                       requirement.arguments.end(),
+                                       arguments.begin(), arguments.end())) {
+                         return false;
+                       }
+                       return requirement.kind == kind;
+                     });
+}
+
+auto SemanticVisitor::Impl::activeRequirementsImply(
+    std::span<const AppliedConceptRequirement> requirements,
+    const ConstraintExpression &expression, std::size_t root) const -> bool {
+  // Retain alternatives as propositions: intersecting their common unary
+  // consequences alone loses the fact that one of the alternatives holds.
+  // This is bounded, conservative implication, not predicate execution or a
+  // solver for arbitrary constexpr code. Failure to prove grants no capability.
+  struct Proof {
+    ConstraintExpressionKind kind = ConstraintExpressionKind::Application;
+    std::size_t left = 0;
+    std::size_t right = 0;
+    AppliedConceptRequirement leaf;
+    std::optional<PredicateCapability> capability;
+  };
+  std::vector<Proof> proofs(1);
+  std::size_t budget = 8192;
+  bool exhausted = false;
+  const auto append = [&](Proof proof) -> std::size_t {
+    if (proofs.size() >= 2048) {
+      exhausted = true;
+      return 0;
+    }
+    proofs.emplace_back(std::move(proof));
+    return proofs.size() - 1;
+  };
+  const auto combine = [&](ConstraintExpressionKind kind, std::size_t left,
+                           std::size_t right) -> std::size_t {
+    if (!left || !right)
+      return 0;
+    return append(Proof{.kind = kind, .left = left, .right = right});
+  };
+  std::function<std::size_t(const AppliedConceptRequirement &, unsigned)> leaf;
+  std::function<std::size_t(std::span<const AppliedConceptRequirement>,
+                            const ConstraintExpression &, std::size_t,
+                            unsigned)>
+      tree;
+  tree = [&](std::span<const AppliedConceptRequirement> set,
+             const ConstraintExpression &shape, std::size_t index,
+             unsigned depth) -> std::size_t {
+    if (depth > 64 || budget == 0) {
+      exhausted = true;
+      return 0;
+    }
+    --budget;
+    if (index >= shape.nodes.size())
+      return 0;
+    const auto &node = shape.nodes[index];
+    if (node.kind == ConstraintExpressionKind::Application) {
+      const auto found =
+          std::find_if(set.begin(), set.end(), [&](const auto &item) {
+            return item.expression == &shape &&
+                   item.expressionApplication == node.application;
+          });
+      return found == set.end() ? 0 : leaf(*found, depth + 1);
+    }
+    const auto left = tree(set, shape, node.left, depth + 1);
+    const auto right = tree(set, shape, node.right, depth + 1);
+    return combine(node.kind, left, right);
+  };
+  leaf = [&](const AppliedConceptRequirement &item,
+             unsigned depth) -> std::size_t {
+    if (depth > 64 || budget == 0) {
+      exhausted = true;
+      return 0;
+    }
+    --budget;
+    if (item.conceptId && item.conceptId <= concepts.size() &&
+        !(item.syntax &&
+          (item.syntax->predicate || item.syntax->memberRequirement))) {
+      const auto &conceptInfo = concepts[item.conceptId - 1];
+      if (!conceptInfo.protocol && conceptInfo.definitionExpression &&
+          !conceptInfo.definitionRequirements.empty()) {
+        const auto substitution =
+            conceptSubstitution(conceptInfo, item.arguments);
+        std::vector<AppliedConceptRequirement> expanded;
+        for (const auto &pattern : conceptInfo.definitionRequirements) {
+          AppliedConceptRequirement applied{
+              .conceptId = pattern.conceptId,
+              .syntax = pattern.syntax,
+              .expression = conceptInfo.definitionExpression,
+              .expressionApplication = pattern.expressionApplication,
+              .lookupScope = conceptInfo.namespaceScope};
+          for (const auto &argument : pattern.arguments) {
+            if (!argument.parameter)
+              applied.arguments.push_back(
+                  substituteType(argument.concrete, substitution));
+            else if (*argument.parameter < item.arguments.size())
+              applied.arguments.push_back(item.arguments[*argument.parameter]);
+            else
+              return 0;
+          }
+          expanded.emplace_back(std::move(applied));
+        }
+        return tree(expanded, *conceptInfo.definitionExpression,
+                    conceptInfo.definitionExpression->root, depth + 1);
+      }
+    }
+    Proof proof{.leaf = item};
+    if (item.syntax && item.syntax->predicate)
+      proof.capability = predicateCapabilityFor(
+          *item.syntax, item.arguments,
+          item.lookupScope ? &*item.lookupScope : nullptr);
+    return append(std::move(proof));
+  };
+  const auto required = tree(requirements, expression, root, 0);
+  std::function<bool(std::size_t, std::size_t)> implies =
+      [&](std::size_t provided, std::size_t wanted) -> bool {
+    if (!provided || !wanted || exhausted || budget == 0)
+      return false;
+    --budget;
+    const auto &a = proofs[provided];
+    const auto &b = proofs[wanted];
+    // A required conjunction needs both guarantees. Every possible provided
+    // branch must entail the goal, even when the goal is also a disjunction.
+    if (b.kind == ConstraintExpressionKind::Conjunction)
+      return implies(provided, b.left) && implies(provided, b.right);
+    if (a.kind == ConstraintExpressionKind::Disjunction)
+      return implies(a.left, wanted) && implies(a.right, wanted);
+    // A conjunct can preserve a complete disjunction. Splitting the wanted
+    // disjunction first would incorrectly require one particular alternative
+    // from `(A || B) && C`. If neither conjunct proves it alone, still try each
+    // wanted alternative against the complete conjunction below (A and C may
+    // be supplied by different conjuncts).
+    if (a.kind == ConstraintExpressionKind::Conjunction &&
+        (implies(a.left, wanted) || implies(a.right, wanted)))
+      return true;
+    if (b.kind == ConstraintExpressionKind::Disjunction)
+      return implies(provided, b.left) || implies(provided, b.right);
+    if (a.kind == ConstraintExpressionKind::Conjunction)
+      return false;
+    if (a.capability && b.capability &&
+        a.capability->atomic != GenericConstraintKind::None &&
+        b.capability->atomic != GenericConstraintKind::None &&
+        a.capability->arguments == b.capability->arguments)
+      return constraintImplies(constraintBit(a.capability->atomic),
+                               b.capability->atomic);
+    // Opaque predicates and member queries retain declaration identity. Equal
+    // spelling, or equal results on one concrete type, is not a proof.
+    const auto special = [](const AppliedConceptRequirement &item) {
+      return item.syntax &&
+             (item.syntax->predicate || item.syntax->memberRequirement);
+    };
+    return a.leaf.arguments == b.leaf.arguments &&
+           (special(a.leaf) || special(b.leaf)
+                ? a.leaf.syntax == b.leaf.syntax
+                : a.leaf.conceptId != 0 &&
+                      a.leaf.conceptId == b.leaf.conceptId);
+  };
+  for (const auto &scope : requirementScopes) {
+    const auto shaped =
+        std::find_if(scope.begin(), scope.end(),
+                     [](const auto &item) { return item.expression; });
+    if (shaped != scope.end()) {
+      const auto provided =
+          tree(scope, *shaped->expression, shaped->expression->root, 0);
+      if (implies(provided, required))
+        return true;
+    } else {
+      for (const auto &item : scope) {
+        const auto provided = leaf(item, 0);
+        if (implies(provided, required))
           return true;
       }
     }
   }
-  const std::vector<ExpandedStructuralRequirement> active =
-      activeStructuralRequirements();
-  const auto callableCapability = [](StructuralConstraintKind candidate)
-      -> std::optional<CallableInvocationCapability> {
-    switch (candidate) {
-    case StructuralConstraintKind::ReadCallable:
-    case StructuralConstraintKind::ReadBinaryCallable:
-      return CallableInvocationCapability::Read;
-    case StructuralConstraintKind::MutCallable:
-    case StructuralConstraintKind::MutBinaryCallable:
-      return CallableInvocationCapability::Mutable;
-    case StructuralConstraintKind::OnceCallable:
-    case StructuralConstraintKind::OnceBinaryCallable:
-      return CallableInvocationCapability::Once;
-    default:
-      return std::nullopt;
-    }
-  };
-  const auto callableArity = [](StructuralConstraintKind candidate) {
-    switch (candidate) {
-    case StructuralConstraintKind::ReadCallable:
-    case StructuralConstraintKind::MutCallable:
-    case StructuralConstraintKind::OnceCallable:
-      return 1;
-    case StructuralConstraintKind::ReadBinaryCallable:
-    case StructuralConstraintKind::MutBinaryCallable:
-    case StructuralConstraintKind::OnceBinaryCallable:
-      return 2;
-    default:
-      return 0;
-    }
-  };
-  return std::any_of(
-      active.begin(), active.end(), [&](const auto &requirement) {
-        if (requirement.arguments.size() != arguments.size() ||
-            !std::equal(requirement.arguments.begin(),
-                        requirement.arguments.end(), arguments.begin(),
-                        arguments.end())) {
-          return false;
-        }
-        if (requirement.kind == kind) {
-          return true;
-        }
-        const auto provided = callableCapability(requirement.kind);
-        const auto required = callableCapability(kind);
-        return provided && required &&
-               callableArity(requirement.kind) == callableArity(kind) &&
-               callableCapabilitySatisfies(*provided, *required);
-      });
+  return false;
 }
 
 auto SemanticVisitor::Impl::firstRequirementFailure(
@@ -1671,12 +1756,23 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
     if (!right) {
       return std::nullopt;
     }
+    if (activeRequirementsImply(requirements, *expression, nodeIndex)) {
+      return std::nullopt;
+    }
     return ConstraintFailure{.parameter = left->parameter,
                              .argument = left->argument,
                              .disjunction = &node.operation,
                              .alternatives = {*left, *right}};
   };
-  return failureFor(expression->root);
+  auto failure = failureFor(expression->root);
+  // A source concept can imply another through nested conjunctions, including
+  // opaque predicate leaves whose declaration identity is preserved. Do not
+  // re-evaluate those predicates on an unknown type and discard an existing
+  // proof merely because the requested expression has no disjunction.
+  if (failure &&
+      activeRequirementsImply(requirements, *expression, expression->root))
+    return std::nullopt;
+  return failure;
 }
 
 auto SemanticVisitor::Impl::firstConceptApplicationFailure(
@@ -1876,6 +1972,23 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
   if (conceptInfo.protocol) {
     return protocolConformanceFailure(requirement);
   }
+  if (std::any_of(requirement.arguments.begin(), requirement.arguments.end(),
+                  containsOpenTypeParameter)) {
+    // Inline generic annotations have no enclosing ConstraintExpression.
+    // Prove their named application through the same bounded source formula
+    // path as a trailing clause, including aliases and opaque predicate leaves.
+    // The temporary shape grants no facts of its own and never escapes this
+    // query. Closed arguments still undergo concrete admission below.
+    ConstraintExpression shape;
+    shape.nodes.push_back(
+        {.kind = ConstraintExpressionKind::Application, .application = 0});
+    shape.root = 0;
+    AppliedConceptRequirement wanted = requirement;
+    wanted.expression = &shape;
+    wanted.expressionApplication = 0;
+    if (activeRequirementsImply(std::span(&wanted, 1), shape, shape.root))
+      return std::nullopt;
+  }
   const auto substitution =
       conceptSubstitution(conceptInfo, requirement.arguments);
   if (conceptInfo.definitionExpression != nullptr &&
@@ -2048,7 +2161,7 @@ auto SemanticVisitor::Impl::hasConstraintFailure(
     const ConstraintFailure &failure) -> bool {
   return failure.failed != GenericConstraintKind::None ||
          failure.structural != StructuralConstraintKind::None ||
-         !failure.alternatives.empty();
+         failure.expressionFailure.has_value() || !failure.alternatives.empty();
 }
 
 auto SemanticVisitor::Impl::reportConstraintFailure(
@@ -5324,36 +5437,6 @@ auto SemanticVisitor::Impl::argumentResultUses(
   return uses;
 }
 
-auto SemanticVisitor::Impl::selectStructuralOperator(
-    const SemanticType &receiver, OverloadedOperator kind,
-    std::span<const SemanticType> parameterTypes, bool mutableReceiver) const
-    -> std::optional<CallableCandidate> {
-  std::vector<CallableCandidate> candidates =
-      structuralOperatorCandidates(receiver, kind);
-  std::erase_if(candidates, [&](const CallableCandidate &candidate) {
-    return !std::equal(candidate.parameterTypes.begin(),
-                       candidate.parameterTypes.end(), parameterTypes.begin(),
-                       parameterTypes.end());
-  });
-  if (!mutableReceiver) {
-    std::erase_if(candidates, [](const CallableCandidate &candidate) {
-      return candidate.receiverMutability == ReceiverMutability::Mutable;
-    });
-  } else if (std::any_of(candidates.begin(), candidates.end(),
-                         [](const CallableCandidate &candidate) {
-                           return candidate.receiverMutability ==
-                                  ReceiverMutability::Mutable;
-                         })) {
-    std::erase_if(candidates, [](const CallableCandidate &candidate) {
-      return candidate.receiverMutability == ReceiverMutability::ReadOnly;
-    });
-  }
-  if (candidates.size() != 1) {
-    return std::nullopt;
-  }
-  return candidates.front();
-}
-
 auto SemanticVisitor::Impl::symbolicReadMemberReturnType(
     const SemanticType &receiver, std::string_view member) const
     -> std::optional<SemanticType> {
@@ -5402,7 +5485,7 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
                   containsOpenTypeParameter)) {
     for (const auto &requirement : activeStructuralRequirements()) {
       if (requirement.kind == StructuralConstraintKind::ReadMember &&
-          requirement.memberName == member &&
+          requirement.memberName == member && !requirement.borrowSource &&
           requirement.mutableReceiver == mutableReceiver &&
           (requiresUnsafe || !requirement.requiresUnsafe) &&
           requirement.arguments.size() == parameters.size() + 2 &&
@@ -5500,7 +5583,6 @@ auto SemanticVisitor::Impl::symbolicRangeMemberReturnType(
 
   bool readable = false;
   bool writable = false;
-  bool sized = false;
   for (const ExpandedStructuralRequirement &requirement :
        activeStructuralRequirements()) {
     if (requirement.arguments.empty() ||
@@ -5508,18 +5590,9 @@ auto SemanticVisitor::Impl::symbolicRangeMemberReturnType(
       continue;
     }
     switch (requirement.kind) {
-    case StructuralConstraintKind::InputRange:
-    case StructuralConstraintKind::RangeOf:
-    case StructuralConstraintKind::RangePredicate:
-    case StructuralConstraintKind::RangeOperation:
-      readable = true;
-      break;
-    case StructuralConstraintKind::MutableRangeOf:
-      readable = true;
-      writable = true;
-      break;
-    case StructuralConstraintKind::SizedRange:
-      sized = true;
+    case StructuralConstraintKind::Iteration:
+      readable = !requirement.mutableReceiver || readable;
+      writable = requirement.mutableReceiver || writable;
       break;
     default:
       break;
@@ -5534,11 +5607,8 @@ auto SemanticVisitor::Impl::symbolicRangeMemberReturnType(
     return symbolicRangeCarrierType(rangeType,
                                     SymbolicRangeCarrier::MutableIterator);
   }
-  if (member == "end" && readable) {
+  if (member == "end" && (readable || writable)) {
     return symbolicRangeCarrierType(rangeType, SymbolicRangeCarrier::Sentinel);
-  }
-  if (member == "size" && sized) {
-    return SemanticType::UInt64;
   }
   return std::nullopt;
 }
@@ -5577,496 +5647,16 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     }
   }
 
-  const auto selectedDereference = [&](const SemanticType &iterator) {
-    return selectStructuralOperator(iterator, OverloadedOperator::Dereference,
-                                    {}, false);
-  };
-  const auto readableElement =
-      [&](const CallableCandidate &candidate) -> std::optional<SemanticType> {
-    const auto &result = candidate.returnType;
-    if (result.kind == SemanticType::Reference && result.arguments.size() == 1)
-      return result.arguments.front();
-    if (candidate.receiverMutability == ReceiverMutability::ReadOnly &&
-        candidate.returnBorrowOrigin == BorrowOriginKind::None &&
-        readableIteratorValue(result))
-      return result;
-    return std::nullopt;
-  };
-  const auto selectedSentinelOperator = [&](const SemanticType &iterator,
-                                            OverloadedOperator operation,
-                                            const SemanticType &sentinel) {
-    const SemanticType reference =
-        SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
-    auto borrowed = selectStructuralOperator(
-        iterator, operation, std::span<const SemanticType>(&reference, 1),
-        false);
-    auto copied = selectStructuralOperator(
-        iterator, operation, std::span<const SemanticType>(&sentinel, 1),
-        false);
-    // Both forms accept a named sentinel. The requirement must not claim
-    // a usable operation when that ordinary call would be ambiguous, or
-    // when its by-value parameter cannot copy the named argument.
-    if (borrowed &&
-        borrowed->receiverMutability != ReceiverMutability::ReadOnly)
-      borrowed.reset();
-    if (copied && copied->receiverMutability != ReceiverMutability::ReadOnly)
-      copied.reset();
-    if (borrowed && copied)
-      return std::optional<CallableCandidate>{};
-    return copied && typeTraits(sentinel).copyable ? copied : borrowed;
-  };
-  const auto hasDereference = [&](const SemanticType &iterator,
-                                  const SemanticType *referent) {
-    const std::optional<CallableCandidate> candidate =
-        selectedDereference(iterator);
-    if (!candidate) {
-      return false;
-    }
-    const auto element = readableElement(*candidate);
-    return element && (referent == nullptr || *element == *referent);
-  };
-  const auto mutableReference = [](const CallableCandidate &candidate,
-                                   const SemanticType *referent) {
-    if (candidate.receiverMutability != ReceiverMutability::Mutable ||
-        candidate.returnType.kind != SemanticType::Reference ||
-        candidate.returnType.referenceAccess != AccessMode::Mutable ||
-        candidate.returnType.arguments.size() != 1) {
-      return false;
-    }
-    return referent == nullptr ||
-           candidate.returnType.arguments.front() == *referent;
-  };
-  const auto hasMutableDereference = [&](const SemanticType &iterator,
-                                         const SemanticType *referent) {
-    const std::optional<CallableCandidate> candidate = selectStructuralOperator(
-        iterator, OverloadedOperator::Dereference, {}, true);
-    return candidate && mutableReference(*candidate, referent);
-  };
-  const auto hasVoidMutation = [&](const SemanticType &iterator,
-                                   OverloadedOperator mutation,
-                                   std::span<const SemanticType> parameters) {
-    const std::optional<CallableCandidate> candidate =
-        selectStructuralOperator(iterator, mutation, parameters, true);
-    return candidate && candidate->returnType == SemanticType::Void &&
-           candidate->receiverMutability == ReceiverMutability::Mutable;
-  };
-  const auto selectedRangeMember =
-      [&](const SemanticType &range, std::string_view name,
-          ReceiverMutability receiver) -> std::optional<CallableCandidate> {
-    if (range == SemanticType::StringView &&
-        receiver == ReceiverMutability::ReadOnly) {
-      auto factory = textViewMemberFactory(name);
-      if (factory && factory->parameterTypes.size() == 1) {
-        // Structural member queries consume the same trusted declaration
-        // identity as written member calls; its first input is the receiver.
-        factory->parameterTypes.clear();
-        return factory;
-      }
-      if (name == "size")
-        return CallableCandidate{.returnType = SemanticType::UInt64};
-      return std::nullopt;
-    }
-    const ClassInfo *owner = classInfo(range);
-    if (owner == nullptr) {
-      return std::nullopt;
-    }
-    const auto found = owner->members.find(std::string(name));
-    if (found == owner->members.end() ||
-        found->second.symbol.type != SemanticType::Function) {
-      return std::nullopt;
-    }
-    const Symbol overloadSet = substituteSymbol(found->second.symbol, range);
-    std::vector<CallableCandidate> candidates;
-    for (const CallableCandidate &candidate : overloadSet.overloads) {
-      if (!candidate.staticMember &&
-          candidate.access == AccessModifier::Public &&
-          !candidate.compilerPrivate && candidate.requirements.empty() &&
-          candidate.parameterTypes.empty() &&
-          candidate.receiverMutability == receiver) {
-        candidates.emplace_back(candidate);
-      }
-    }
-    return candidates.size() == 1
-               ? std::optional<CallableCandidate>{candidates.front()}
-               : std::nullopt;
-  };
-  struct ReadRangeShape {
-    SemanticType iterator;
-    SemanticType sentinel;
-  };
-  const auto readRangeShape =
-      [&](const SemanticType &range) -> std::optional<ReadRangeShape> {
-    const std::optional<CallableCandidate> begin =
-        selectedRangeMember(range, "begin", ReceiverMutability::ReadOnly);
-    const std::optional<CallableCandidate> end =
-        selectedRangeMember(range, "end", ReceiverMutability::ReadOnly);
-    if (!begin || !end || begin->returnType.kind == SemanticType::Reference ||
-        end->returnType.kind == SemanticType::Reference ||
-        begin->returnType == SemanticType::Void ||
-        end->returnType == SemanticType::Void) {
-      return std::nullopt;
-    }
-    return ReadRangeShape{.iterator = begin->returnType,
-                          .sentinel = end->returnType};
-  };
-  const auto mutableRangeShape =
-      [&](const SemanticType &range) -> std::optional<ReadRangeShape> {
-    const std::optional<CallableCandidate> begin =
-        selectedRangeMember(range, "begin_mut", ReceiverMutability::Mutable);
-    const std::optional<CallableCandidate> end =
-        selectedRangeMember(range, "end", ReceiverMutability::ReadOnly);
-    if (!begin || !end || begin->returnType.kind == SemanticType::Reference ||
-        end->returnType.kind == SemanticType::Reference ||
-        begin->returnType == SemanticType::Void ||
-        end->returnType == SemanticType::Void) {
-      return std::nullopt;
-    }
-    return ReadRangeShape{.iterator = begin->returnType,
-                          .sentinel = end->returnType};
-  };
-
-  const auto readableCallableParameter = [](const SemanticType &parameter,
-                                            const SemanticType &argument) {
-    return parameter == argument ||
-           (parameter.kind == SemanticType::Reference &&
-            parameter.referenceAccess == AccessMode::ReadOnly &&
-            parameter.arguments.size() == 1 &&
-            parameter.arguments.front() == argument);
-  };
-  const auto callableCandidates = [&](const SemanticType &callable) {
-    if (callable.kind == SemanticType::Class) {
-      return structuralOperatorCandidates(callable, OverloadedOperator::Call);
-    }
-    std::vector<CallableCandidate> result;
-    if (callable.hasFunctionItemShape()) {
-      const FunctionInfo *function =
-          semanticModel.findFunction(callable.functionId);
-      if (function == nullptr && instanceBaseModel != nullptr) {
-        function = instanceBaseModel->findFunction(callable.functionId);
-      }
-      const SemanticType *returnType = callable.functionItemReturnType();
-      if (function != nullptr && returnType != nullptr &&
-          function->ownerClass == 0 && !function->entryPoint &&
-          function->linkage == LanguageLinkage::Gti &&
-          function->returnType == *returnType &&
-          function->parameterTypes.size() ==
-              callable.functionItemParameterTypes().size() &&
-          std::equal(function->parameterTypes.begin(),
-                     function->parameterTypes.end(),
-                     callable.functionItemParameterTypes().begin())) {
-        result.push_back({.id = function->id,
-                          .returnType = function->returnType,
-                          .parameterTypes = function->parameterTypes,
-                          .receiverMutability = ReceiverMutability::ReadOnly,
-                          .access = AccessModifier::Public});
-      }
-      return result;
-    }
-    if (callable.kind != SemanticType::Lambda) {
-      return result;
-    }
-    const LambdaInfo *lambda = semanticModel.findLambda(callable.lambdaId);
-    if (lambda == nullptr && instanceBaseModel != nullptr) {
-      lambda = instanceBaseModel->findLambda(callable.lambdaId);
-    }
-    if (lambda != nullptr) {
-      result.push_back(
-          {.returnType = lambda->returnType,
-           .parameterTypes = lambda->parameterTypes,
-           .receiverMutability =
-               lambda->capability == CallableInvocationCapability::Mutable
-                   ? ReceiverMutability::Mutable
-                   : ReceiverMutability::ReadOnly,
-           .access = AccessModifier::Public});
-    }
-    return result;
-  };
-  const auto callableSatisfies = [&](const SemanticType &callable,
-                                     std::span<const SemanticType> parameters,
-                                     const SemanticType &result,
-                                     CallableInvocationCapability required,
-                                     bool referenceArguments = true) {
-    if (result.kind == SemanticType::Reference ||
-        typeTraits(result).containsBorrowedState ||
-        containsLambdaType(result)) {
-      return false;
-    }
-    std::vector<CallableCandidate> candidates = callableCandidates(callable);
-    std::erase_if(candidates, [&](const CallableCandidate &candidate) {
-      if (candidate.returnType != result ||
-          candidate.returnBorrowOrigin != BorrowOriginKind::None ||
-          candidate.parameterTypes.size() != parameters.size() ||
-          !callableCapabilitySatisfies(
-              callableInvocationCapability(candidate.receiverMutability),
-              required)) {
-        return true;
-      }
-      for (std::size_t index = 0; index < parameters.size(); ++index) {
-        if (referenceArguments
-                ? !readableCallableParameter(candidate.parameterTypes[index],
-                                             parameters[index])
-                : candidate.parameterTypes[index] != parameters[index]) {
-          return true;
-        }
-      }
-      return false;
-    });
-    if (required == CallableInvocationCapability::Once &&
-        std::any_of(candidates.begin(), candidates.end(),
-                    [](const CallableCandidate &candidate) {
-                      return candidate.receiverMutability ==
-                             ReceiverMutability::Consuming;
-                    })) {
-      std::erase_if(candidates, [](const CallableCandidate &candidate) {
-        return candidate.receiverMutability != ReceiverMutability::Consuming;
-      });
-    } else if (required != CallableInvocationCapability::Read &&
-               std::any_of(candidates.begin(), candidates.end(),
-                           [](const CallableCandidate &candidate) {
-                             return candidate.receiverMutability ==
-                                    ReceiverMutability::Mutable;
-                           })) {
-      std::erase_if(candidates, [](const CallableCandidate &candidate) {
-        return candidate.receiverMutability == ReceiverMutability::ReadOnly;
-      });
-    }
-    return candidates.size() == 1;
-  };
-  const auto unaryCallable = [&](CallableInvocationCapability capability) {
-    return arguments.size() == 3 &&
-           callableSatisfies(arguments[0],
-                             std::span<const SemanticType>(&arguments[1], 1),
-                             arguments[2], capability);
-  };
-  const auto binaryCallable = [&](CallableInvocationCapability capability) {
-    return arguments.size() == 4 &&
-           callableSatisfies(arguments[0], arguments.subspan(1, 2),
-                             arguments[3], capability);
-  };
-  const auto readableRangeElement =
-      [&](const SemanticType &range) -> std::optional<SemanticType> {
-    if (range.kind == SemanticType::Array && range.arguments.size() == 1) {
-      return range.arguments.front();
-    }
-    const std::optional<ReadRangeShape> shape = readRangeShape(range);
-    if (!shape) {
-      return std::nullopt;
-    }
-    const std::array<SemanticType, 1> iteratorArguments{shape->iterator};
-    const std::array<SemanticType, 2> sentinelArguments{shape->sentinel,
-                                                        shape->iterator};
-    if (!structuralConstraintSatisfied(StructuralConstraintKind::InputIterator,
-                                       iteratorArguments) ||
-        !structuralConstraintSatisfied(StructuralConstraintKind::SentinelFor,
-                                       sentinelArguments)) {
-      return std::nullopt;
-    }
-    const std::optional<CallableCandidate> dereference =
-        selectedDereference(shape->iterator);
-    if (!dereference) {
-      return std::nullopt;
-    }
-    const auto &result = dereference->returnType;
-    if (result.kind == SemanticType::Reference &&
-        result.arguments.size() == 1 &&
-        result.referenceAccess == AccessMode::ReadOnly)
-      return result.arguments.front();
-    if (result.kind != SemanticType::Reference)
-      return readableElement(*dereference);
-    return std::nullopt;
-  };
-
   switch (kind) {
-  case StructuralConstraintKind::InputIterator: {
-    if (arguments.size() != 1) {
-      return false;
-    }
-    const SemanticType &iterator = arguments.front();
-    if (!hasDereference(iterator, nullptr)) {
-      return false;
-    }
-    const std::optional<CallableCandidate> increment = selectStructuralOperator(
-        iterator, OverloadedOperator::PreIncrement, {}, true);
-    return increment && increment->returnType == SemanticType::Void &&
-           increment->receiverMutability == ReceiverMutability::Mutable;
-  }
-  case StructuralConstraintKind::SentinelFor: {
-    if (arguments.size() != 2) {
-      return false;
-    }
-    const SemanticType &sentinel = arguments[0];
-    const SemanticType &iterator = arguments[1];
-    const std::optional<CallableCandidate> comparison =
-        selectedSentinelOperator(iterator, OverloadedOperator::NotEqual,
-                                 sentinel);
-    return comparison && comparison->returnType == SemanticType::Bool &&
-           comparison->receiverMutability == ReceiverMutability::ReadOnly;
-  }
-  case StructuralConstraintKind::DereferencesTo:
-    return arguments.size() == 2 && hasDereference(arguments[0], &arguments[1]);
-  case StructuralConstraintKind::WritableIterator:
-    return arguments.size() == 1 &&
-           hasMutableDereference(arguments.front(), nullptr) &&
-           hasVoidMutation(arguments.front(), OverloadedOperator::PreIncrement,
-                           {});
-  case StructuralConstraintKind::WritesTo:
-    return arguments.size() == 2 &&
-           hasMutableDereference(arguments[0], &arguments[1]);
-  case StructuralConstraintKind::BidirectionalIterator:
-    return arguments.size() == 1 &&
-           hasVoidMutation(arguments.front(), OverloadedOperator::PreDecrement,
-                           {});
-  case StructuralConstraintKind::RandomAccessIterator: {
-    if (arguments.size() != 1) {
-      return false;
-    }
-    const SemanticType distance = SemanticType::Int64;
-    return hasVoidMutation(arguments.front(), OverloadedOperator::AddAssign,
-                           std::span<const SemanticType>(&distance, 1)) &&
-           hasVoidMutation(arguments.front(),
-                           OverloadedOperator::SubtractAssign,
-                           std::span<const SemanticType>(&distance, 1));
-  }
-  case StructuralConstraintKind::SubscriptsToMut: {
-    if (arguments.size() != 2) {
-      return false;
-    }
-    const SemanticType index = SemanticType::Int64;
-    const std::optional<CallableCandidate> subscript = selectStructuralOperator(
-        arguments[0], OverloadedOperator::Subscript,
-        std::span<const SemanticType>(&index, 1), true);
-    return subscript && mutableReference(*subscript, &arguments[1]);
-  }
-  case StructuralConstraintKind::SizedSentinelFor: {
-    if (arguments.size() != 2) {
-      return false;
-    }
-    const SemanticType &sentinel = arguments[0];
-    const SemanticType &iterator = arguments[1];
-    const std::optional<CallableCandidate> difference =
-        selectedSentinelOperator(iterator, OverloadedOperator::Minus, sentinel);
-    return difference && difference->returnType == SemanticType::Int64 &&
-           difference->receiverMutability == ReceiverMutability::ReadOnly;
-  }
-  case StructuralConstraintKind::InputRange:
-    return arguments.size() == 1 &&
-           readableRangeElement(arguments.front()).has_value();
-  case StructuralConstraintKind::RangeOf: {
-    if (arguments.size() != 2) {
-      return false;
-    }
-    const std::optional<SemanticType> element =
-        readableRangeElement(arguments[0]);
-    return element && *element == arguments[1];
-  }
-  case StructuralConstraintKind::MutableRangeOf: {
-    if (arguments.size() != 2) {
-      return false;
-    }
-    if (arguments[0].kind == SemanticType::Array &&
-        arguments[0].arguments.size() == 1) {
-      return arguments[0].arguments.front() == arguments[1];
-    }
-    const std::optional<ReadRangeShape> shape = mutableRangeShape(arguments[0]);
-    if (!shape) {
-      return false;
-    }
-    const std::array<SemanticType, 1> iteratorArguments{shape->iterator};
-    const std::array<SemanticType, 2> sentinelArguments{shape->sentinel,
-                                                        shape->iterator};
-    const std::array<SemanticType, 2> writeArguments{shape->iterator,
-                                                     arguments[1]};
-    return structuralConstraintSatisfied(
-               StructuralConstraintKind::WritableIterator, iteratorArguments) &&
-           structuralConstraintSatisfied(StructuralConstraintKind::SentinelFor,
-                                         sentinelArguments) &&
-           structuralConstraintSatisfied(StructuralConstraintKind::WritesTo,
-                                         writeArguments);
-  }
-  case StructuralConstraintKind::SizedRange: {
-    if (arguments.size() != 1) {
-      return false;
-    }
-    if (arguments.front().kind == SemanticType::Array &&
-        arguments.front().arguments.size() == 1) {
-      return true;
-    }
-    const std::optional<CallableCandidate> size = selectedRangeMember(
-        arguments.front(), "size", ReceiverMutability::ReadOnly);
-    return size && size->returnType == SemanticType::UInt64;
-  }
   case StructuralConstraintKind::EnumUnderlying:
     return arguments.size() == 2 && arguments[0].kind == SemanticType::Enum &&
            satisfiesAtomicConstraint(arguments[0],
                                      GenericConstraintKind::IntegralEnum) &&
            enums[arguments[0].enumId - 1].underlyingType == arguments[1];
-  case StructuralConstraintKind::ObjectLayout:
-    return arguments.size() == 1 && runtimeObjectLayoutType(arguments.front());
-  case StructuralConstraintKind::IndependentObject:
-    return arguments.size() == 1 &&
-           runtimeObjectLayoutType(arguments.front()) &&
-           !typeTraits(arguments.front()).containsBorrowedState;
-  case StructuralConstraintKind::InlinePolymorphicPayload:
-    return arguments.size() == 2 &&
-           inlinePolymorphicPayload(arguments[0], arguments[1]);
-  case StructuralConstraintKind::ReadCallable:
-    return unaryCallable(CallableInvocationCapability::Read);
-  case StructuralConstraintKind::MutCallable:
-    return unaryCallable(CallableInvocationCapability::Mutable);
-  case StructuralConstraintKind::OnceCallable:
-    return unaryCallable(CallableInvocationCapability::Once);
-  case StructuralConstraintKind::ReadBinaryCallable:
-    return binaryCallable(CallableInvocationCapability::Read);
-  case StructuralConstraintKind::MutBinaryCallable:
-    return binaryCallable(CallableInvocationCapability::Mutable);
-  case StructuralConstraintKind::OnceBinaryCallable:
-    return binaryCallable(CallableInvocationCapability::Once);
-  case StructuralConstraintKind::OnceAction:
-    return arguments.size() == 1 &&
-           callableSatisfies(arguments[0], {}, SemanticType::Void,
-                             CallableInvocationCapability::Once);
-  case StructuralConstraintKind::IndirectPredicate:
-  case StructuralConstraintKind::IndirectOperation: {
-    if (arguments.size() !=
-        (kind == StructuralConstraintKind::IndirectPredicate ? 2 : 3)) {
-      return false;
-    }
-    const std::optional<CallableCandidate> dereference =
-        selectedDereference(arguments[1]);
-    const auto element =
-        dereference ? readableElement(*dereference) : std::nullopt;
-    if (!element) {
-      return false;
-    }
-    const SemanticType &result =
-        kind == StructuralConstraintKind::IndirectPredicate ? SemanticType::Bool
-                                                            : arguments[2];
-    return callableSatisfies(
-        arguments[0], std::span<const SemanticType>(&*element, 1), result,
-        CallableInvocationCapability::Mutable,
-        dereference->returnType.kind == SemanticType::Reference);
-  }
-  case StructuralConstraintKind::RangePredicate:
-  case StructuralConstraintKind::RangeOperation: {
-    if (arguments.size() !=
-        (kind == StructuralConstraintKind::RangePredicate ? 2 : 3)) {
-      return false;
-    }
-    const std::optional<SemanticType> element =
-        readableRangeElement(arguments[1]);
-    if (!element) {
-      return false;
-    }
-    const SemanticType &result =
-        kind == StructuralConstraintKind::RangePredicate ? SemanticType::Bool
-                                                         : arguments[2];
-    return callableSatisfies(arguments[0],
-                             std::span<const SemanticType>(&*element, 1),
-                             result, CallableInvocationCapability::Mutable);
-  }
   case StructuralConstraintKind::None:
     return true;
   case StructuralConstraintKind::ReadMember:
+  case StructuralConstraintKind::Iteration:
     // Exact member requirements also carry a name, and are checked by
     // readMemberRequirementSatisfied rather than this name-free interface.
     return false;
@@ -6085,136 +5675,12 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
     CallableCandidate candidate;
     bool matches = false;
     switch (requirement.kind) {
-    case StructuralConstraintKind::InputIterator:
-      if (requirement.arguments.size() == 1 &&
-          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
-        if (kind == OverloadedOperator::PreIncrement) {
-          candidate.returnType = SemanticType::Void;
-          candidate.receiverMutability = ReceiverMutability::Mutable;
-          matches = true;
-        } else if (kind == OverloadedOperator::Dereference) {
-          candidate.returnType = SemanticType::referenceTo(
-              SemanticType::Unknown, AccessMode::ReadOnly);
-          candidate.receiverMutability = ReceiverMutability::ReadOnly;
-          candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
-          candidate.returnBorrowAccess = AccessMode::ReadOnly;
-          matches = true;
-        }
-      }
-      break;
-    case StructuralConstraintKind::SentinelFor:
-      if (kind == OverloadedOperator::NotEqual &&
-          requirement.arguments.size() == 2 &&
-          requirement.arguments[1] == receiverType &&
-          argumentTypes.size() == 1 &&
-          argumentTypes[0] == requirement.arguments[0]) {
-        candidate.returnType = SemanticType::Bool;
-        candidate.parameterTypes = {SemanticType::referenceTo(
-            requirement.arguments[0], AccessMode::ReadOnly)};
-        candidate.receiverMutability = ReceiverMutability::ReadOnly;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::DereferencesTo:
-      if (kind == OverloadedOperator::Dereference &&
-          requirement.arguments.size() == 2 &&
-          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
-        candidate.returnType = SemanticType::referenceTo(
-            requirement.arguments[1], AccessMode::ReadOnly);
-        candidate.receiverMutability = ReceiverMutability::ReadOnly;
-        candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
-        candidate.returnBorrowAccess = AccessMode::ReadOnly;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::WritableIterator:
-      if (requirement.arguments.size() == 1 &&
-          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
-        if (kind == OverloadedOperator::PreIncrement) {
-          candidate.returnType = SemanticType::Void;
-          candidate.receiverMutability = ReceiverMutability::Mutable;
-          matches = true;
-        } else if (kind == OverloadedOperator::Dereference) {
-          candidate.returnType = SemanticType::referenceTo(
-              SemanticType::Unknown, AccessMode::Mutable);
-          candidate.receiverMutability = ReceiverMutability::Mutable;
-          candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
-          candidate.returnBorrowAccess = AccessMode::Mutable;
-          matches = true;
-        }
-      }
-      break;
-    case StructuralConstraintKind::WritesTo:
-      if (kind == OverloadedOperator::Dereference &&
-          requirement.arguments.size() == 2 &&
-          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
-        candidate.returnType = SemanticType::referenceTo(
-            requirement.arguments[1], AccessMode::Mutable);
-        candidate.receiverMutability = ReceiverMutability::Mutable;
-        candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
-        candidate.returnBorrowAccess = AccessMode::Mutable;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::BidirectionalIterator:
-      if (kind == OverloadedOperator::PreDecrement &&
-          requirement.arguments.size() == 1 &&
-          requirement.arguments[0] == receiverType && argumentTypes.empty()) {
-        candidate.returnType = SemanticType::Void;
-        candidate.receiverMutability = ReceiverMutability::Mutable;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::RandomAccessIterator:
-      if ((kind == OverloadedOperator::AddAssign ||
-           kind == OverloadedOperator::SubtractAssign) &&
-          requirement.arguments.size() == 1 &&
-          requirement.arguments[0] == receiverType &&
-          argumentTypes.size() == 1 &&
-          argumentTypes[0] == SemanticType::Int64) {
-        candidate.returnType = SemanticType::Void;
-        candidate.parameterTypes = {SemanticType::Int64};
-        candidate.receiverMutability = ReceiverMutability::Mutable;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::SubscriptsToMut:
-      if (kind == OverloadedOperator::Subscript &&
-          requirement.arguments.size() == 2 &&
-          requirement.arguments[0] == receiverType &&
-          argumentTypes.size() == 1 &&
-          argumentTypes[0] == SemanticType::Int64) {
-        candidate.returnType = SemanticType::referenceTo(
-            requirement.arguments[1], AccessMode::Mutable);
-        candidate.parameterTypes = {SemanticType::Int64};
-        candidate.receiverMutability = ReceiverMutability::Mutable;
-        candidate.returnBorrowOrigin = BorrowOriginKind::Receiver;
-        candidate.returnBorrowAccess = AccessMode::Mutable;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::SizedSentinelFor:
-      if (kind == OverloadedOperator::Minus &&
-          requirement.arguments.size() == 2 &&
-          requirement.arguments[1] == receiverType &&
-          argumentTypes.size() == 1 &&
-          argumentTypes[0] == requirement.arguments[0]) {
-        candidate.returnType = SemanticType::Int64;
-        candidate.parameterTypes = {SemanticType::referenceTo(
-            requirement.arguments[0], AccessMode::ReadOnly)};
-        candidate.receiverMutability = ReceiverMutability::ReadOnly;
-        matches = true;
-      }
-      break;
-    case StructuralConstraintKind::InputRange:
-    case StructuralConstraintKind::RangeOf:
-    case StructuralConstraintKind::MutableRangeOf: {
+    case StructuralConstraintKind::Iteration: {
       if (!rangeCarrier || requirement.arguments.empty() ||
           requirement.arguments.front() != rangeCarrier->first) {
         break;
       }
-      const bool mutableRange =
-          requirement.kind == StructuralConstraintKind::MutableRangeOf;
+      const bool mutableRange = requirement.mutableReceiver;
       const SymbolicRangeCarrier expectedCarrier =
           mutableRange ? SymbolicRangeCarrier::MutableIterator
                        : SymbolicRangeCarrier::ReadIterator;
@@ -6252,30 +5718,10 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       }
       break;
     }
-    case StructuralConstraintKind::SizedRange:
-      // size() is a generated member-call fact rather than an operator.
-      break;
     case StructuralConstraintKind::EnumUnderlying:
-    case StructuralConstraintKind::ObjectLayout:
-    case StructuralConstraintKind::IndependentObject:
-    case StructuralConstraintKind::InlinePolymorphicPayload:
       // Enum representation classification grants no numeric operators.
       break;
 
-    case StructuralConstraintKind::ReadCallable:
-    case StructuralConstraintKind::MutCallable:
-    case StructuralConstraintKind::OnceCallable:
-    case StructuralConstraintKind::ReadBinaryCallable:
-    case StructuralConstraintKind::MutBinaryCallable:
-    case StructuralConstraintKind::OnceBinaryCallable:
-    case StructuralConstraintKind::OnceAction:
-    case StructuralConstraintKind::IndirectPredicate:
-    case StructuralConstraintKind::IndirectOperation:
-    case StructuralConstraintKind::RangePredicate:
-    case StructuralConstraintKind::RangeOperation:
-      // Callable requirements constrain ordinary invocation rather than a
-      // member operator expression synthesized by this table.
-      break;
     case StructuralConstraintKind::ReadMember:
       if (requirement.memberName == operatorFunctionName(kind) &&
           requirement.arguments.size() == argumentTypes.size() + 2 &&
@@ -6298,6 +5744,15 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
                                              ? ReceiverMutability::Mutable
                                              : ReceiverMutability::ReadOnly;
           candidate.requiresUnsafeFact = requirement.requiresUnsafe;
+          if (requirement.borrowSource) {
+            candidate.returnBorrowOrigin = *requirement.borrowSource == 0
+                                               ? BorrowOriginKind::Receiver
+                                               : BorrowOriginKind::Argument;
+            candidate.returnBorrowParameter =
+                *requirement.borrowSource == 0 ? 0
+                                               : *requirement.borrowSource - 2;
+            candidate.returnBorrowAccess = candidate.returnType.referenceAccess;
+          }
           matches = true;
         }
       }
@@ -6311,8 +5766,8 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
     }
   }
 
-  // An exact-referent dereference or subscript relation (dereferences_to,
-  // writes_to, subscripts_to_mut) refines the unknown-referent form from
+  // An exact-referent dereference or subscript requirement refines the
+  // unknown-referent form from
   // the unary capability with the same receiver mutability; the refined
   // candidate replaces only its own mutability's unknown form so a
   // read-only refinement never erases a mutable capability or vice versa.
@@ -6350,6 +5805,10 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
           return existing.returnType == candidate.returnType &&
                  existing.parameterTypes == candidate.parameterTypes &&
                  existing.receiverMutability == candidate.receiverMutability &&
+                 existing.returnBorrowOrigin == candidate.returnBorrowOrigin &&
+                 existing.returnBorrowParameter ==
+                     candidate.returnBorrowParameter &&
+                 existing.returnBorrowAccess == candidate.returnBorrowAccess &&
                  existing.requiresUnsafeFact == candidate.requiresUnsafeFact;
         });
     if (!duplicate) {
@@ -6362,6 +5821,23 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
 auto SemanticVisitor::Impl::hasSymbolicOperatorRequirement(
     OverloadedOperator kind, const SemanticType &receiverType,
     std::span<const SemanticType> argumentTypes) const -> bool {
+  if (receiverType.kind == SemanticType::TypeParameter &&
+      argumentTypes.size() == 1 && argumentTypes.front() == receiverType) {
+    const bool equality = kind == OverloadedOperator::Equal ||
+                          kind == OverloadedOperator::NotEqual;
+    const bool ordering = kind == OverloadedOperator::Less ||
+                          kind == OverloadedOperator::LessEqual ||
+                          kind == OverloadedOperator::Greater ||
+                          kind == OverloadedOperator::GreaterEqual;
+    // A primitive comparison remains a value operation. A source query using
+    // reference bindings must not turn it into a hypothetical member call,
+    // which would incorrectly reject temporary operands or invent loans.
+    if ((equality || ordering) && isNumeric(receiverType))
+      return false;
+    if (equality && constraintImplies(constraintOf(receiverType),
+                                      GenericConstraintKind::AtomicScalar))
+      return false;
+  }
   return !symbolicOperatorRequirements(kind, receiverType, argumentTypes)
               .empty();
 }

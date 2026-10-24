@@ -1,4 +1,5 @@
 #include "gti/parser.h"
+#include "gti/ast_clone.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -718,8 +719,9 @@ private:
         std::vector<TypeRef> arguments;
         if (requirement->isExpressionRequirement()) {
           arguments = requirement->parameters();
-          arguments.push_back(requirement->result());
+          arguments.push_back(requirement->resultArgumentType());
           collectRequirementTypes(requirement->expression().get(), arguments);
+          collectIterationRequirementTypes(*requirement, arguments);
         } else {
           TypeRef receiver = requirement->receiver();
           receiver.reference.reset();
@@ -2423,7 +2425,11 @@ private:
   }
 
   void parseArrayTypeSuffix(TypeRef &type) {
-    while (match({TokenKind::LEFT_BRACKET})) {
+    // An attribute following a dependent result type is not an array suffix.
+    // Its owner (for example a borrowed-result requirement) parses the [[...]].
+    while (check(TokenKind::LEFT_BRACKET) &&
+           peekAt(1).kind != TokenKind::LEFT_BRACKET &&
+           match({TokenKind::LEFT_BRACKET})) {
       type.arrayExtents.emplace_back(arrayExtentExpression());
       consume(TokenKind::RIGHT_BRACKET, "Expect ']' after fixed array extent.");
     }
@@ -3202,6 +3208,7 @@ private:
   StmtPtr makeRangeForStatement(Token keyword, Mutability bindingMutability,
                                 TypeRef bindingType, Token bindingName,
                                 Token colon, ExprPtr range, StmtPtr body) {
+    const Stmt *sourceBody = body.get();
     const bool mutableElementLoan =
         bindingMutability == Mutability::Mutable && bindingType.reference;
     const std::string suffix = std::to_string(++generatedNameCounter);
@@ -3290,7 +3297,8 @@ private:
         std::move(bindingName), std::move(colon),
         std::make_unique<BlockStmt>(std::move(lowered)), ownerBindingPointer,
         rangeBindingPointer, iteratorBindingPointer, sentinelBindingPointer,
-        elementBindingPointer, coreLoopPointer, elementOwnerBindingPointer);
+        elementBindingPointer, coreLoopPointer, elementOwnerBindingPointer,
+        sourceBody);
   }
 
   StmtPtr switchStatement() {
@@ -3708,6 +3716,16 @@ private:
     return arguments;
   }
 
+  void collectIterationRequirementTypes(const MemberRequirement &query,
+                                        std::vector<TypeRef> &types) {
+    const auto *loop = stmtAs<RangeForStmt>(query.iteration().get());
+    const auto *body = loop ? stmtAs<BlockStmt>(loop->sourceBody()) : nullptr;
+    if (body)
+      for (const auto &statement : body->statements())
+        if (const auto *check = stmtAs<StaticAssertDecl>(statement.get()))
+          collectRequirementTypes(check->condition().get(), types);
+  }
+
   void collectRequirementTypes(const Expr *expression,
                                std::vector<TypeRef> &types) {
     if (const auto *call = exprAs<Call>(expression)) {
@@ -3719,6 +3737,8 @@ private:
     } else if (const auto *binary = exprAs<Binary>(expression)) {
       collectRequirementTypes(binary->left().get(), types);
       collectRequirementTypes(binary->right().get(), types);
+    } else if (const auto *assignment = exprAs<Assign>(expression)) {
+      collectRequirementTypes(assignment->value().get(), types);
     } else if (const auto *logical = exprAs<Logical>(expression)) {
       collectRequirementTypes(logical->left().get(), types);
       collectRequirementTypes(logical->right().get(), types);
@@ -3729,6 +3749,8 @@ private:
     } else if (const auto *conversion = exprAs<Conversion>(expression)) {
       types.push_back(conversion->targetType());
       collectRequirementTypes(conversion->value().get(), types);
+    } else if (const auto *layout = exprAs<LayoutQuery>(expression)) {
+      types.push_back(layout->type());
     } else if (const auto *qualified = exprAs<QualifiedName>(expression)) {
       if (qualified->ownerType())
         types.push_back(*qualified->ownerType());
@@ -3741,6 +3763,15 @@ private:
       collectRequirementTypes(group->expression().get(), types);
     } else if (const auto *get = exprAs<Get>(expression)) {
       collectRequirementTypes(get->object().get(), types);
+    } else if (const auto *query = exprAs<MemberRequirement>(expression)) {
+      if (!query->isExpressionRequirement())
+        types.push_back(query->receiver());
+      types.insert(types.end(), query->parameters().begin(),
+                   query->parameters().end());
+      if (!query->inferredResult())
+        types.push_back(query->result());
+      collectRequirementTypes(query->expression().get(), types);
+      collectIterationRequirementTypes(*query, types);
     }
   }
 
@@ -3786,13 +3817,100 @@ private:
       std::optional<Token> unsafeKeyword;
       if (match({TokenKind::UNSAFE}))
         unsafeKeyword = previous();
+      if (match({TokenKind::FOR})) {
+        const Token loop = previous();
+        consume(TokenKind::LEFT_PAREN, "Expect '(' after required 'for'.");
+        const Mutability access = match({TokenKind::MUT})
+                                      ? Mutability::Mutable
+                                      : Mutability::Immutable;
+        TypeRef element = parseType();
+        const Token name = consume(TokenKind::IDENTIFIER,
+                                   "Expect required element binding name.");
+        const Token colon = consume(TokenKind::COLON,
+                                    "An iteration requirement needs a range.");
+        ExprPtr range = expression();
+        consume(TokenKind::RIGHT_PAREN, "Expect ')' after required range.");
+        consume(TokenKind::LEFT_BRACE,
+                "Expect a body after an iteration requirement.");
+        StmtList checks;
+        while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+          if (!match({TokenKind::STATIC_ASSERT}))
+            throw error(peek(), "Iteration requirement bodies contain only "
+                                "static_assert checks.");
+          checks.push_back(staticAssertDeclaration(previous()));
+        }
+        consume(TokenKind::RIGHT_BRACE, "Expect '}' after iteration checks.");
+        TypeRef requiredResult = element;
+        // Void is an existential element slot, not a void element type. The
+        // actual binding retains auto and is inferred by normal loop analysis.
+        if (element.name.last().kind == TokenKind::AUTO)
+          requiredResult =
+              TypeRef(generatedToken(TokenKind::VOID, "void", loop));
+        ExprPtr source = cloneExpr(*range);
+        StmtPtr iteration = makeRangeForStatement(
+            loop, access, std::move(element), name, colon, std::move(range),
+            std::make_shared<BlockStmt>(std::move(checks)));
+        result.push_back(std::make_unique<MemberRequirement>(
+            keyword, std::move(source), std::move(requiredResult), parameters,
+            bindings, unsafeKeyword, std::nullopt, std::move(iteration)));
+        continue;
+      }
       consume(TokenKind::LEFT_BRACE, "Expect '{' before required expression.");
       ExprPtr expression = assignment();
       consume(TokenKind::RIGHT_BRACE, "Expect '}' after required expression.");
+      if (match({TokenKind::SEMICOLON})) {
+        result.push_back(std::make_unique<MemberRequirement>(
+            keyword, std::move(expression),
+            TypeRef(generatedToken(TokenKind::AUTO, "auto", keyword)),
+            parameters, bindings, unsafeKeyword, std::nullopt, nullptr, true));
+        continue;
+      }
       consume(TokenKind::ARROW,
               "Expect '->' before exact required result type.");
+      std::optional<Token> resultAccess;
+      if (match({TokenKind::MUT}))
+        resultAccess = previous();
       TypeRef requiredResult = parseType();
+      if (resultAccess && !requiredResult.reference)
+        throw error(
+            *resultAccess,
+            "A mutable requirement result must be a checked reference.");
+      requiredResult.referenceMutability = resultAccess;
+      std::optional<Token> borrowedFrom;
+      if (match({TokenKind::LEFT_BRACKET})) {
+        consume(TokenKind::LEFT_BRACKET, "Expect '[[' before borrow origin.");
+        const Token attribute =
+            consume(TokenKind::IDENTIFIER, "Expect 'borrowed_from' attribute.");
+        if (attribute.lexeme != "borrowed_from")
+          throw error(attribute,
+                      "A requirement result supports only 'borrowed_from'.");
+        consume(TokenKind::LEFT_PAREN, "Expect '(' before borrow origin.");
+        borrowedFrom =
+            consume(TokenKind::IDENTIFIER,
+                    "Expect a requirement parameter as borrow origin.");
+        if (std::none_of(bindings.begin(), bindings.end(),
+                         [&](const Token &binding) {
+                           return binding.lexeme == borrowedFrom->lexeme;
+                         }))
+          throw error(*borrowedFrom,
+                      "Borrow origin must name a requirement parameter.");
+        consume(TokenKind::RIGHT_PAREN, "Expect ')' after borrow origin.");
+        consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after borrow origin.");
+        consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after borrow origin.");
+      }
       consume(TokenKind::SEMICOLON, "Expect ';' after required result type.");
+      const bool inferredResult =
+          requiredResult.name.last().kind == TokenKind::AUTO;
+      if (inferredResult &&
+          (!requiredResult.reference || !borrowedFrom ||
+           requiredResult.reference->kind != TokenKind::AMPERSAND ||
+           !requiredResult.pointers.empty() ||
+           !requiredResult.arrayExtents.empty() ||
+           !requiredResult.arguments.empty()))
+        throw error(requiredResult.name.last(),
+                    "An inferred result uses 'auto&' with borrowed_from; "
+                    "omit '-> type' to check an expression without a result "
+                    "type contract.");
 
       // Preserve the earlier exact-member contract as a subset. Every other
       // expression is checked by the ordinary semantic expression analyzer.
@@ -3800,8 +3918,8 @@ private:
       const auto *get = call ? exprAs<Get>(call->callee().get()) : nullptr;
       const auto *receiver =
           get ? exprAs<Variable>(get->object().get()) : nullptr;
-      bool exactMember = !parameters.empty() && parameters[0].reference &&
-                         receiver &&
+      bool exactMember = !borrowedFrom && !parameters.empty() &&
+                         parameters[0].reference && receiver &&
                          receiver->name().lexeme == bindings[0].lexeme &&
                          call->typeArguments().empty() &&
                          call->arguments().size() + 1 == bindings.size();
@@ -3824,7 +3942,8 @@ private:
       } else {
         result.push_back(std::make_unique<MemberRequirement>(
             keyword, std::move(expression), std::move(requiredResult),
-            parameters, bindings, std::move(unsafeKeyword)));
+            parameters, bindings, std::move(unsafeKeyword),
+            std::move(borrowedFrom), nullptr, inferredResult));
       }
     }
     if (result.empty())

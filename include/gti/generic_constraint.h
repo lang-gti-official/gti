@@ -25,14 +25,15 @@ enum class GenericConstraintKind : std::uint8_t {
   Transferable,
   Shareable,
   DefaultInitializable,
-  EqualityComparable,
-  RelationallyOrdered,
   AtomicScalar,
   MoveConstructible,
   IntegralEnum,
   // Every instance field of a struct or class is readable through
   // reflection where the constraint is checked (std::meta::reflectable).
   Reflectable,
+  Boolean,
+  ObjectLayout,
+  BorrowFree,
   Count,
 };
 
@@ -42,34 +43,8 @@ enum class GenericConstraintKind : std::uint8_t {
 enum class StructuralConstraintKind : std::uint8_t {
   None,
   ReadMember,
-  InputIterator,
-  SentinelFor,
-  DereferencesTo,
-  WritableIterator,
-  WritesTo,
-  BidirectionalIterator,
-  RandomAccessIterator,
-  SubscriptsToMut,
-  SizedSentinelFor,
-  InputRange,
-  RangeOf,
-  MutableRangeOf,
-  SizedRange,
-  ReadCallable,
-  MutCallable,
-  OnceCallable,
-  ReadBinaryCallable,
-  MutBinaryCallable,
-  OnceBinaryCallable,
-  OnceAction,
-  IndirectPredicate,
-  IndirectOperation,
-  RangePredicate,
-  RangeOperation,
+  Iteration,
   EnumUnderlying,
-  ObjectLayout,
-  IndependentObject,
-  InlinePolymorphicPayload,
 };
 
 using GenericConstraintSet = std::uint32_t;
@@ -88,7 +63,7 @@ struct CompilerStructuralConstraintRecord {
   std::size_t arity;
 };
 
-inline constexpr std::array<GenericConstraintKind, 20> genericConstraintKinds{{
+inline constexpr std::array<GenericConstraintKind, 21> genericConstraintKinds{{
     GenericConstraintKind::Numeric,
     GenericConstraintKind::SignedNumeric,
     GenericConstraintKind::Integral,
@@ -104,57 +79,20 @@ inline constexpr std::array<GenericConstraintKind, 20> genericConstraintKinds{{
     GenericConstraintKind::Transferable,
     GenericConstraintKind::Shareable,
     GenericConstraintKind::DefaultInitializable,
-    GenericConstraintKind::EqualityComparable,
-    GenericConstraintKind::RelationallyOrdered,
     GenericConstraintKind::AtomicScalar,
     GenericConstraintKind::IntegralEnum,
     GenericConstraintKind::Reflectable,
+    GenericConstraintKind::Boolean,
+    GenericConstraintKind::ObjectLayout,
+    GenericConstraintKind::BorrowFree,
 }};
 
 // Only facts still bound by private concept declarations belong here. The
 // complete fact inventory above also serves reflection and generic proofs.
-inline constexpr std::array<CompilerConstraintRecord, 4> compilerConstraints{{
-    {"equality_comparable", GenericConstraintKind::EqualityComparable},
-    {"relationally_ordered", GenericConstraintKind::RelationallyOrdered},
-    {"atomic_scalar", GenericConstraintKind::AtomicScalar},
-    {"meta_reflectable", GenericConstraintKind::Reflectable},
-}};
+inline constexpr std::array<CompilerConstraintRecord, 0> compilerConstraints{};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 27>
-    compilerStructuralConstraints{{
-        {"input_iterator", StructuralConstraintKind::InputIterator, 1},
-        {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
-        {"dereferences_to", StructuralConstraintKind::DereferencesTo, 2},
-        {"writable_iterator", StructuralConstraintKind::WritableIterator, 1},
-        {"writes_to", StructuralConstraintKind::WritesTo, 2},
-        {"bidirectional_iterator",
-         StructuralConstraintKind::BidirectionalIterator, 1},
-        {"random_access_iterator",
-         StructuralConstraintKind::RandomAccessIterator, 1},
-        {"subscripts_to_mut", StructuralConstraintKind::SubscriptsToMut, 2},
-        {"sized_sentinel_for", StructuralConstraintKind::SizedSentinelFor, 2},
-        {"input_range", StructuralConstraintKind::InputRange, 1},
-        {"range_of", StructuralConstraintKind::RangeOf, 2},
-        {"mutable_range_of", StructuralConstraintKind::MutableRangeOf, 2},
-        {"sized_range", StructuralConstraintKind::SizedRange, 1},
-        {"read_callable", StructuralConstraintKind::ReadCallable, 3},
-        {"mut_callable", StructuralConstraintKind::MutCallable, 3},
-        {"once_callable", StructuralConstraintKind::OnceCallable, 3},
-        {"read_binary_callable", StructuralConstraintKind::ReadBinaryCallable,
-         4},
-        {"mut_binary_callable", StructuralConstraintKind::MutBinaryCallable, 4},
-        {"once_binary_callable", StructuralConstraintKind::OnceBinaryCallable,
-         4},
-        {"once_action", StructuralConstraintKind::OnceAction, 1},
-        {"indirect_predicate", StructuralConstraintKind::IndirectPredicate, 2},
-        {"indirect_operation", StructuralConstraintKind::IndirectOperation, 3},
-        {"range_predicate", StructuralConstraintKind::RangePredicate, 2},
-        {"range_operation", StructuralConstraintKind::RangeOperation, 3},
-        {"object_layout", StructuralConstraintKind::ObjectLayout, 1},
-        {"independent_object", StructuralConstraintKind::IndependentObject, 1},
-        {"inline_polymorphic_payload",
-         StructuralConstraintKind::InlinePolymorphicPayload, 2},
-    }};
+inline constexpr std::array<CompilerStructuralConstraintRecord, 0>
+    compilerStructuralConstraints{};
 
 static_assert(genericConstraintKinds.size() + 2 ==
               static_cast<std::uint8_t>(GenericConstraintKind::Count));

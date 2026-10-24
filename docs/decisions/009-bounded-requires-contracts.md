@@ -2,6 +2,18 @@
 
 Status: Accepted
 
+Implementation revision (2026-10-24): the owned-result-only boundary is
+superseded by exact checked-reference results with a named borrowed-input
+origin, inferred-result validity queries, and unevaluated ordinary range-loop
+requirements. Reflection exposes declaration safety/consumption, inherited
+lookup, cleanup and polymorphism facts independently. These general facilities
+replace all remaining private concept policies, including comparisons,
+callables, iterators, sentinels, ranges and inline-payload eligibility. No
+private concept bindings remain; irreducible type, layout, lifecycle and borrow
+facts are still compiler-owned. Generic instances recheck concrete operations,
+and a query does not execute user code or grant unproved access or lifetimes.
+This revision does not add constraint-based overload ranking or specialization.
+
 Implementation revision (2026-10-23): unevaluated expression/construction
 requirements and constexpr Boolean-call leaves are now supported. This
 explicitly supersedes the expression-probing exclusion below: ordinary GTI

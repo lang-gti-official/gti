@@ -1,12 +1,10 @@
-namespace gti_internal {
-@compiler_constraint("atomic_scalar") concept atomic_scalar_capability<T>;
-}
+#include <std/meta>
 
 namespace std {
 /// A scalar domain with a stable public atomic contract: bool and the
 /// fixed-width signed and unsigned integer types.
 concept atomic_scalar<T> =
-    gti_internal::atomic_scalar_capability<T> && std::copyable<T> &&
+    (std::meta::is_bool<T>() || std::meta::is_integral<T>()) && std::copyable<T> &&
     std::default_initializable<T> && std::transferable<T> &&
     std::shareable<T>;
 
