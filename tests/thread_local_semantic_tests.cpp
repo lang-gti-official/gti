@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/instance_analysis_cache.h"
 #include "gti/semantic_analyzer.h"
 
 #include <algorithm>
@@ -23,10 +24,13 @@ void expect(bool condition, std::string_view message) {
 }
 
 lang::FrontendResult analyze(std::string source, bool concurrent = true,
-                             bool executableRepresentation = false) {
+                             bool executableRepresentation = false,
+                             lang::TrustedBodyAnalysis trustedBodies =
+                                 lang::TrustedBodyAnalysis::Complete) {
   lang::FrontendOptions options;
   options.requireFunctionDefinitions = executableRepresentation;
   options.target = lang::TargetInfo::host();
+  options.trustedBodies = trustedBodies;
   if (concurrent) {
     options.target.executionProfile = lang::ExecutionProfile::Concurrent;
     options.target.runtimeCapabilities.threads = true;
@@ -1028,50 +1032,59 @@ void selected<uint64_t Mode>() {
 }
 
 void invalidEffectQueryDiagnostics() {
-  for (const bool borrowed : {false, true}) {
-    const std::string source = R"(
+  for (const auto bodies : {lang::TrustedBodyAnalysis::Complete,
+                            lang::TrustedBodyAnalysis::Reachable})
+    for (const bool borrowed : {false, true}) {
+      for (const bool reverse : {false, true}) {
+        const std::string good =
+            "[[discard]] read().transform([](int value) -> void {}); ";
+        const std::string bad = "[[discard]] read().transform_error(mapper); ";
+        const std::string source =
+            R"(
 thread_local mut int guarded = 1;
 expected<int, int> read() { return unexpected(7); }
 void mapper(int value) {}
 int main() {
 )" + std::string(borrowed ? "int& held = guarded; " : "") +
-                               "[[discard]] read().transform_error(mapper); " +
-                               (borrowed ? "return held; }" : "return 0; }");
-    const auto result = analyze(source, true, true);
-    const auto member = source.rfind("transform_error");
-    const auto atMember = [&](std::string_view message) {
-      return std::count_if(
-                 result.diagnostics.begin(), result.diagnostics.end(),
-                 [&](const auto &diagnostic) {
-                   return diagnostic.code == "GTI-S2079" &&
-                          diagnostic.message == message &&
-                          diagnostic.primary.source ==
-                              std::filesystem::weakly_canonical(
-                                  "thread-local-semantics.gti")
-                                  .string() &&
-                          diagnostic.primary.start == member &&
-                          diagnostic.primary.end == member + 15 &&
-                          std::any_of(
-                              diagnostic.related.begin(),
-                              diagnostic.related.end(),
-                              [](const auto &related) {
-                                return related.message ==
-                                       "Reported inside this library instance.";
-                              });
-                 }) == 1;
-    };
-    expect(!result.canGenerateCode() && !result.semanticValid &&
-               result.diagnostics.size() == 2 &&
-               atMember("Static assertion failed. A 'transform_error' mapper "
-                        "must return an error value, not 'void'.") &&
-               atMember("Static assertion failed. An 'expected' error type "
-                        "cannot be 'void'.") &&
-               !code(result, "GTI-S2045") && !code(result, "GTI-B0001") &&
-               result.mir.functionInstances().empty(),
-           "failed effect queries preserve canonical library diagnostic "
-           "origins and independent body/result-type assertions, with or "
-           "without a retained TLS borrow");
-  }
+            (reverse ? good + bad : bad + good) +
+            (borrowed ? "return held; }" : "return 0; }");
+        const auto result = analyze(source, true, true, bodies);
+        const auto *entry =
+            result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+        const auto member = source.rfind("transform_error");
+        const auto atMember = [&](std::string_view message) {
+          return std::count_if(
+                     result.diagnostics.begin(), result.diagnostics.end(),
+                     [&](const auto &diagnostic) {
+                       return diagnostic.code == "GTI-S2079" &&
+                              diagnostic.message == message && entry &&
+                              diagnostic.primary.source ==
+                                  entry->path.string() &&
+                              diagnostic.primary.start == member &&
+                              diagnostic.primary.end == member + 15 &&
+                              std::any_of(diagnostic.related.begin(),
+                                          diagnostic.related.end(),
+                                          [](const auto &related) {
+                                            return related.message ==
+                                                   "Reported inside this "
+                                                   "library instance.";
+                                          });
+                     }) == 1;
+        };
+        expect(
+            !result.canGenerateCode() && !result.semanticValid &&
+                result.diagnostics.size() == 2 &&
+                atMember("Static assertion failed. A 'transform_error' mapper "
+                         "must return an error value, not 'void'.") &&
+                atMember("Static assertion failed. An 'expected' error type "
+                         "cannot be 'void'.") &&
+                !code(result, "GTI-S2045") && !code(result, "GTI-B0001") &&
+                result.mir.functionInstances().empty(),
+            "failed effect queries preserve canonical library diagnostic "
+            "origins and independent body/result-type assertions, with or "
+            "without a retained TLS borrow or a later independent valid query");
+      }
+    }
 
   const std::string assertion =
       "static_assert(sizeof(T) == uint64_t(4), \"exact instance body\"); ";
@@ -1247,6 +1260,250 @@ void check<T, uint64_t Width>() {
                "different valid staged key or permit MIR in either demand "
                "order");
       }
+    }
+  }
+}
+
+void concreteQueryDiagnosticOwnership() {
+  // A failed required constant is never a runtime effect root. Its existing
+  // discovery/constant diagnostics must not acquire another effect budget
+  // error, nor suppress an independent executable hidden-storage conflict.
+  const std::string constant = R"(
+constexpr uint64_t depth<uint64_t N>() {
+  if constexpr (N == 0) { return 0; }
+  else { return depth<N - 1>() + 1; }
+}
+constexpr uint64_t invalid = depth<200>();
+)";
+  const auto rejected =
+      analyze(constant + "int main() { return int32_t(invalid); }", true, true);
+  expect(!rejected.canGenerateCode() && rejected.diagnostics.size() == 2 &&
+             code(rejected, "GTI-S2105") && code(rejected, "GTI-S2057") &&
+             std::none_of(rejected.diagnostics.begin(),
+                          rejected.diagnostics.end(),
+                          [](const auto &d) {
+                            return d.message.find("initializer-effect") !=
+                                   std::string::npos;
+                          }) &&
+             !code(rejected, "GTI-B0001"),
+         "a failed required constant retains only its canonical discovery "
+         "and evaluation errors");
+  const auto independent = analyze(constant + R"(
+thread_local mut int guarded = 1;
+void modify() { guarded = 2; }
+int main() { int& held = guarded; modify(); return held; }
+)",
+                                   true, true);
+  expect(!independent.canGenerateCode() && code(independent, "GTI-S2045") &&
+             code(independent, "GTI-S2057") && !code(independent, "GTI-B0001"),
+         "discarding a failed constant's nonexecuting effect root preserves "
+         "independent executable storage obligations");
+
+  for (const auto bodies : {lang::TrustedBodyAnalysis::Complete,
+                            lang::TrustedBodyAnalysis::Reachable}) {
+    const auto reflection = analyze(R"(
+#include <std/meta>
+class Node<T> {
+  static_assert(std::meta::type<Node<T>>().field_count() == uint64_t(2),
+                "outer reflection assertion");
+  T value;
+public:
+  Node(T value) : value(value) {}
+};
+int main() { Node<int32_t> value{1}; return 0; }
+)",
+                                    true, true, bodies);
+    const auto errors =
+        std::count_if(reflection.diagnostics.begin(),
+                      reflection.diagnostics.end(), [](const auto &d) {
+                        return d.severity == lang::DiagnosticSeverity::Error;
+                      });
+    expect(!reflection.canGenerateCode() && errors == 1 &&
+               code(reflection, "GTI-S2079") &&
+               !code(reflection, "GTI-S2057") &&
+               !code(reflection, "GTI-B0001") &&
+               reflection.mir.functionInstances().empty(),
+           "a recursive same-key reflection query supplies facts while its "
+           "outer provider reports the failed assertion exactly once");
+  }
+
+  // The effect budget is an uncertified exact query, not an empty-effects
+  // proof. Direct provider calls do not run recursive HIR discovery, so this
+  // exercises the retained failure when that ordinary body would be valid.
+  const std::string chain = R"(
+void chain<uint64_t N>() {
+  if constexpr (N != 0) { chain<N - 1>(); }
+}
+int main() { chain<65>(); return 0; }
+)";
+  lang::FrontendOptions options;
+  options.stopAfter = lang::FrontendPhase::Semantics;
+  const auto parsed =
+      lang::Frontend(options).analyze("query-budget.gti", chain);
+  lang::SemanticVisitor semantic(lang::TargetInfo::host(), &parsed.sourceGraph,
+                                 false, nullptr, &parsed.sources);
+  expect(semantic.check(parsed.program),
+         "effect-query budget exhaustion defers diagnostic ownership to "
+         "ordinary concrete discovery");
+  lang::FunctionId function = 0;
+  for (const auto &statement : parsed.program.declarations())
+    if (const auto *declaration =
+            lang::stmtAs<lang::FunctionDecl>(statement.get());
+        declaration && declaration->name().lexeme == "chain")
+      if (const auto *info = semantic.model().findFunction(*declaration))
+        function = info->id;
+  expect(function != 0, "the budget fixture resolves its exact generic owner");
+  if (function == 0)
+    return;
+  for (const bool reverse : {false, true}) {
+    const auto check = [&](std::uint64_t value) {
+      return semantic.analyzeFunctionInstance(
+          function, {}, {}, {}, {lang::CompileTimeValue::uint64(value)});
+    };
+    const auto first = check(reverse ? 1 : 0);
+    const auto second = check(reverse ? 0 : 1);
+    const auto &good = reverse ? second : first;
+    const auto &bad = reverse ? first : second;
+    expect(good.valid() && !bad.valid() &&
+               std::any_of(bad.diagnostics.begin(), bad.diagnostics.end(),
+                           [](const auto &d) {
+                             return d.code == "GTI-S2105" &&
+                                    d.message.find(
+                                        "initializer-effect-depth") !=
+                                        std::string::npos;
+                           }),
+           "a retained effect-budget failure gates its exact value key on "
+           "fresh/repeated provider requests without poisoning other keys");
+  }
+}
+
+void lateConcreteQueryContexts() {
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto trustedPath =
+      std::filesystem::weakly_canonical(library / "std/functional.gti");
+  const std::string declarations = R"(
+struct Relay<T> {
+  void invoke<F>(F& callback, T value) { callback(value); }
+  void invoke<F>(F& callback) { callback(); }
+};
+F retain<F>(F& callback) { return callback; }
+void escape<F>(F& callback) { auto held = retain(callback); held(); }
+)";
+  const std::string calls = R"(
+#include <std/functional>
+#include <std/panic>
+thread_local mut int guarded = 1;
+void selected<F>(F& callback) { Relay<int> relay{}; relay.invoke(callback, 4); }
+void empty<F>(F& callback) { Relay<int> relay{}; relay.invoke(callback); }
+expected<int, int> compute(bool fail) {
+  if (fail) { return unexpected(7); }
+  return 42;
+}
+expected<void, int> perform(bool fail) {
+  if (fail) { return unexpected(7); }
+  return;
+}
+expected<void, int> next() { return; }
+void finish() {}
+[[noreturn, track_caller]] void terminal(int value) { std::panic("terminal"); }
+int main() {
+  int& held = guarded;
+  auto one = [](int value) -> void {};
+  auto zero = []() -> void {};
+  selected(one);
+  empty(zero);
+  auto first = compute(false).transform(one);
+  auto second = perform(false).transform(zero);
+  int snapshot = held;
+  auto third = perform(false).transform(finish).and_then(next);
+  auto fourth = compute(true).transform(terminal);
+  return snapshot;
+}
+)";
+  const std::string invalid = R"(
+#include <std/functional>
+thread_local mut int guarded = 1;
+int main() {
+  int& held = guarded;
+  auto callback = []() -> void {};
+  escape(callback);
+  return held;
+}
+)";
+  const std::string failingBody = R"(
+#include <std/functional>
+thread_local mut int guarded = 1;
+int main() {
+  int& held = guarded;
+  auto callback = []() -> void {};
+  selected(callback);
+  return held;
+}
+void selected<F>(F& callback) { Relay<int> relay{}; relay.invoke(callback); }
+)";
+  const std::string unresolved = R"(
+thread_local mut int guarded = 1;
+expected<void, int> perform() { return; }
+void finish() {}
+int main() {
+  int& held = guarded;
+  auto result = perform().transform(finish);
+  return held;
+}
+)";
+  std::ifstream input(trustedPath);
+  const std::string original((std::istreambuf_iterator<char>(input)),
+                             std::istreambuf_iterator<char>{});
+  expect(!original.empty(),
+         "the trusted relay fixture preserves its original library context");
+  const std::unordered_map<std::string, std::string> trusted = {
+      {trustedPath.string(), original + "\n" + declarations}};
+  for (const auto bodies : {lang::TrustedBodyAnalysis::Complete,
+                            lang::TrustedBodyAnalysis::Reachable}) {
+    lang::FrontendOptions options;
+    options.requireFunctionDefinitions = true;
+    options.trustedBodies = bodies;
+    options.cache = std::make_shared<lang::FrontendCache>();
+    options.instanceCache = std::make_shared<lang::InstanceAnalysisCache>();
+    options.preambleCache = std::make_shared<lang::SemanticPreambleCache>();
+    const auto load = [&](const std::string &source, bool cached = false) {
+      auto selected = options;
+      if (!cached) {
+        selected.instanceCache.reset();
+        selected.preambleCache.reset();
+      }
+      return lang::Frontend(selected).analyze("late-query-context.gti", source,
+                                              {library / "prelude.gti"},
+                                              trusted, {library});
+    };
+    for (const bool cached : {false, true}) {
+      const auto first = load(calls, cached);
+      const auto repeated = load(calls + "\n// later snapshot\n", cached);
+      if (!first.canGenerateCode() || !repeated.canGenerateCode())
+        for (const auto *result : {&first, &repeated})
+          for (const auto &d : result->diagnostics)
+            std::cerr << d.code << ": " << d.message << '\n';
+      expect(first.canGenerateCode() && repeated.canGenerateCode(),
+             "concrete effect queries retain pending trusted callable "
+             "contracts for void/zero-argument/noreturn mapping and unrelated "
+             "user relays in complete/reachable/cached/preamble contexts");
+      const auto escaped = load(invalid, cached);
+      expect(!escaped.canGenerateCode() && code(escaped, "GTI-S2046") &&
+                 !code(escaped, "GTI-B0001") &&
+                 escaped.mir.functionInstances().empty(),
+             "late callable contract finalization does not make a genuinely "
+             "escaping callable confined");
+      const auto later = load(failingBody, cached);
+      expect(later.canGenerateCode(),
+             "an invalid query or failed pending batch does not poison a "
+             "later independent request using the same caches");
+      const auto open = load(unresolved, cached);
+      expect(!open.canGenerateCode() && code(open, "GTI-S2045") &&
+                 !code(open, "GTI-S2046") && !code(open, "GTI-B0001"),
+             "a signature-erased function item remains an unknown ambient "
+             "target under a live TLS loan after its callable contract is "
+             "correctly finalized");
     }
   }
 }
@@ -2337,6 +2594,8 @@ int main() {
   concreteEffectObligationReplay();
   invalidEffectQueryDiagnostics();
   stagedEffectQueryDiagnostics();
+  concreteQueryDiagnosticOwnership();
+  lateConcreteQueryContexts();
   reflectedQueryEffects();
   reflectionRegistrySnapshots();
   emptyPackDestructorProvider();

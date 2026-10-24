@@ -1,6 +1,7 @@
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
@@ -817,6 +818,8 @@ int main() { return same(1, true); }
 // A Call operand prepared by an argument CallInput that borrows a derived
 // class place for an exact base-reference parameter.
 struct DerivedReferenceArgument {
+  lang::MirBody *body = nullptr;
+  lang::HirFunctionInstanceId owner = 0;
   lang::MirInstruction *call = nullptr;
   std::size_t index = 0;
   const lang::MirInstruction *input = nullptr;
@@ -864,8 +867,11 @@ derivedReferenceArguments(lang::MirProgram &program) {
               borrow.type == parameter &&
               place->type.kind == lang::SemanticType::Class &&
               place->type != parameter.arguments.front()) {
-            result.push_back(
-                {.call = &instruction, .index = index, .input = input->second});
+            result.push_back({.body = &instance.body,
+                              .owner = instance.id,
+                              .call = &instruction,
+                              .index = index,
+                              .input = input->second});
           }
         }
       }
@@ -969,15 +975,22 @@ int main() { return invoke(inspect) + invoke_mut(update) - 83; }
   if (!staged.empty()) {
     staged.front().call->operands[staged.front().index] =
         staged.front().input->operands.front();
+    expect(lang::rebuildMirValueUses(*staged.front().body),
+           "the unstaged function-item mutation retains a coherent use index");
     const lang::MirVerificationResult direct = lang::verifyMirProgram(mir);
-    expect(std::any_of(direct.errors.begin(), direct.errors.end(),
-                       [](const lang::MirVerificationError &error) {
-                         return error.message.find(
-                                    "direct reference argument does not "
-                                    "match") != std::string::npos;
-                       }),
-           "MIR still rejects a derived place passed directly as a base "
-           "reference call operand");
+    expect(!direct.valid() &&
+               std::any_of(
+                   direct.errors.begin(), direct.errors.end(),
+                   [&](const lang::MirVerificationError &error) {
+                     return error.bodyKind == lang::MirBodyKind::Function &&
+                            error.owner == staged.front().owner &&
+                            error.instruction == staged.front().input->id &&
+                            error.message ==
+                                "call input must have exactly one executable "
+                                "use or be abandoned by a terminal argument";
+                   }),
+           "MIR rejects replacing an ordered base-reference input with a "
+           "bare derived place even when the public-base conversion is valid");
   }
 
   for (const auto level :

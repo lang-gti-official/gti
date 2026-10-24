@@ -1,5 +1,6 @@
 #include "../src/compiler/cpp_mir_body_emitter.h"
 #include "compiler_test_fixture.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
 
 #include <unordered_map>
@@ -112,6 +113,7 @@ void checkConsumingLambda(const std::string &name, bool pack) {
 struct LambdaBaseReferenceArgument {
   lang::HirFunctionInstanceId function = 0;
   lang::MirInstructionId call = 0;
+  lang::MirInstructionId input = 0;
   std::size_t index = 0;
   lang::MirOperand borrow;
 };
@@ -153,6 +155,7 @@ lambdaBaseReferenceArguments(const lang::MirProgram &program) {
               place->type != parameter.arguments.front())
             result.push_back({.function = function.id,
                               .call = call.id,
+                              .input = input->id,
                               .index = index,
                               .borrow = borrow});
         }
@@ -251,14 +254,30 @@ void checkLambdaBaseReferenceArguments() {
     auto forged = frontend.mir;
     auto *body = lang::findMirBody(
         forged, {lang::MirBodyKind::Function, staged.front().function});
+    bool changed = false;
     for (auto &block : body->blocks)
       for (auto &instruction : block.instructions)
-        if (instruction.id == staged.front().call)
+        if (instruction.id == staged.front().call) {
           instruction.operands[staged.front().index] = staged.front().borrow;
-    expect(hasMirVerificationError(lang::verifyMirProgram(forged),
-                                   "direct reference argument does not match"),
-           "MIR still rejects a derived place passed directly as a lambda's "
-           "base reference operand");
+          changed = true;
+        }
+    expect(changed && lang::rebuildMirValueUses(*body),
+           "the unstaged lambda mutation changes its exact argument and "
+           "retains a coherent use index");
+    const auto direct = lang::verifyMirProgram(forged);
+    expect(!direct.valid() &&
+               std::any_of(
+                   direct.errors.begin(), direct.errors.end(),
+                   [&](const lang::MirVerificationError &error) {
+                     return error.bodyKind == lang::MirBodyKind::Function &&
+                            error.owner == staged.front().function &&
+                            error.instruction == staged.front().input &&
+                            error.message ==
+                                "call input must have exactly one executable "
+                                "use or be abandoned by a terminal argument";
+                   }),
+           "MIR rejects replacing a lambda's ordered base-reference input "
+           "with a bare derived place despite a valid public-base conversion");
   }
 
   // A once invocation of a cleanup-free moved parameter has an ordinary value

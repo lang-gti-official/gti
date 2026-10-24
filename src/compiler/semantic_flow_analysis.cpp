@@ -324,10 +324,24 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
   const auto state = requestSession.programConcreteEffects;
   if (!state)
     return;
+  // Failed required constants have no executable initializer. Mark that exact
+  // source owner before the all-body root sweep as well as the plan walk below;
+  // a second storage plan must not revive the rejected constant's call graph.
+  for (const auto &step : plan.steps) {
+    if (!step.declaration || !step.declaration->isConstexpr())
+      continue;
+    const auto *binding = semanticModel.findBinding(*step.declaration);
+    if (!binding || !binding->constant)
+      programEffects[{.kind = ProgramEffectOwnerKind::Initializer,
+                      .id = step.symbol}]
+          .invalidBody = true;
+  }
   std::unique_ptr<Impl> worker;
   std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> visited;
   std::set<std::size_t> selectedQueries;
   const auto selectQueries = [&](const ProgramEffectSummary &summary) {
+    if (summary.invalidBody)
+      return;
     for (const auto &edge : summary.edges)
       if (edge.target.kind == ProgramEffectOwnerKind::ConcreteInstance)
         selectedQueries.insert(edge.target.id);
@@ -336,6 +350,37 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
   // an ignored speculative probe can register a query without executing it.
   for (const auto &[_, summary] : programEffects)
     selectQueries(summary);
+  const auto rejectQuery = [&](ProgramEffectOwner owner,
+                               std::vector<SemanticDiagnostic> errors) {
+    auto &query = state->queries[owner.id - 1];
+    programEffects[owner].invalidBody = true;
+    query.complete = true;
+    for (auto &diagnostic : errors)
+      if (diagnostic.severity == DiagnosticSeverity::Error)
+        query.invalidDiagnostics.push_back(std::move(diagnostic));
+    InstanceAnalysisKey key{.declaration = query.target.id,
+                            .classTypes = query.owner.arguments,
+                            .classValues = query.owner.valueArguments,
+                            .types = query.types,
+                            .values = query.values};
+    switch (query.target.kind) {
+    case ProgramEffectOwnerKind::Function:
+      key.kind = InstanceAnalysisKind::Function;
+      break;
+    case ProgramEffectOwnerKind::Constructor:
+      key.kind = InstanceAnalysisKind::Constructor;
+      break;
+    case ProgramEffectOwnerKind::Destructor:
+      key.kind = InstanceAnalysisKind::Destructor;
+      break;
+    case ProgramEffectOwnerKind::FieldInitializers:
+      key.kind = InstanceAnalysisKind::ClassFieldInitializers;
+      break;
+    default:
+      return; // Only independently registered concrete query kinds reach here.
+    }
+    state->invalidInstances[std::move(key)].push_back(owner.id);
+  };
   const auto visit = [&](const auto &self, ProgramEffectOwner owner,
                          std::size_t depth) -> void {
     if (!visited.insert(owner).second)
@@ -344,22 +389,33 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
         owner.id != 0 && owner.id <= state->queries.size()) {
       const auto query = state->queries[owner.id - 1];
       if (!query.complete) {
-        if (depth >= 64 || state->analyzed >= 16384) {
-          diagnostics.push_back(makeDiagnostic(
-              DiagnosticId::GenericInstantiationLimit, query.site,
-              {depth >= 64 ? "initializer-effect-depth"
-                           : "initializer-effect-instance",
-               depth >= 64 ? "64" : "16384"}));
+        if (query.target.kind != ProgramEffectOwnerKind::Function &&
+            query.target.kind != ProgramEffectOwnerKind::Constructor &&
+            query.target.kind != ProgramEffectOwnerKind::Destructor &&
+            query.target.kind != ProgramEffectOwnerKind::FieldInitializers) {
           programEffects[owner].unknown.push_back(
               {.span = query.site,
-               .reason = "concrete effect resource exhaustion"});
+               .reason = "unsupported concrete effect owner"});
+          state->queries[owner.id - 1].complete = true;
+          return;
+        }
+        if (depth >= 64 || state->analyzed >= 16384) {
+          // This query is uncertified, not an empty effect set. Ordinary HIR
+          // discovery owns its canonical budget diagnostic; if it can analyse
+          // this exact request, the retained failure still gates that provider.
+          rejectQuery(owner,
+                      {makeDiagnostic(
+                          DiagnosticId::GenericInstantiationLimit, query.site,
+                          {depth >= 64 ? "initializer-effect-depth"
+                                       : "initializer-effect-instance",
+                           depth >= 64 ? "64" : "16384"})});
           return;
         }
         ++state->analyzed;
         if (!worker) {
-          worker = std::make_unique<Impl>(target, sourceGraph, false,
-                                          workMetrics, sources, rawPointerAudit,
-                                          requireFunctionDefinitions);
+          worker = std::make_unique<Impl>(
+              target, sourceGraph, false, workMetrics, sources, rawPointerAudit,
+              requireFunctionDefinitions, trustedBodies);
           worker->catalog = catalog.snapshotForInstanceAnalysis();
           worker->semanticModel = semanticModel;
           worker->macroLookup = macroLookup;
@@ -377,36 +433,100 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
           worker->nextLambdaId = nextLambdaId;
           worker->requestSession.constexprWork = requestSession.constexprWork;
           worker->requestSession.programConcreteEffects = state;
+          // An isolated query needs the same pending-body facts as ordinary
+          // concrete discovery. Finalize only actually consulted late bodies
+          // before certifying a callable/access contract as invalid.
+          worker->deferredBodies = deferredBodies;
+          worker->deferredBodyIndex = deferredBodyIndex;
+          worker->analyzedBodies = analyzedBodies;
+          worker->visitedFunctionDeclarations = visitedFunctionDeclarations;
+          worker->demandedFunctions = demandedFunctions;
+          worker->lateDemandReady =
+              trustedBodies == TrustedBodyAnalysis::Reachable;
+          worker->adoptedPreamble = adoptedPreamble;
+          worker->reachedPreambleBodies = reachedPreambleBodies;
+          worker->requestSession.preambleBodies = requestSession.preambleBodies;
+          worker->requestSession.preambleBodyOrder =
+              requestSession.preambleBodyOrder;
         }
-        worker->programEffects.clear();
-        worker->requestSession.programStorageBorrowChecks.clear();
-        SemanticInstanceAnalysis analysis;
-        switch (query.target.kind) {
-        case ProgramEffectOwnerKind::Function:
-          analysis = worker->analyzeFunctionInstance(
-              query.target.id, query.owner.arguments,
-              query.owner.valueArguments, query.types, query.values);
-          break;
-        case ProgramEffectOwnerKind::Constructor:
-          analysis = worker->analyzeConstructorInstance(
-              query.target.id, query.owner.arguments,
-              query.owner.valueArguments, query.types, query.values);
-          break;
-        case ProgramEffectOwnerKind::Destructor:
-          analysis = worker->analyzeDestructorInstance(
-              query.target.id, query.owner.arguments,
-              query.owner.valueArguments);
-          break;
-        case ProgramEffectOwnerKind::FieldInitializers:
-          analysis = worker->analyzeClassFieldInitializers(
-              query.target.id, query.owner.arguments,
-              query.owner.valueArguments);
-          break;
-        default:
-          programEffects[owner].unknown.push_back(
-              {.span = query.site,
-               .reason = "unsupported concrete effect owner"});
+        using EffectGraph = decltype(requestSession.programEffects);
+        using BorrowChecks =
+            decltype(requestSession.programStorageBorrowChecks);
+        EffectGraph instanceEffects;
+        BorrowChecks instanceChecks;
+        const auto primaryCheckBegin =
+            worker->requestSession.programStorageBorrowChecks.size();
+        // Instance attempts are speculative, whereas successfully demanded
+        // primary bodies extend this worker's canonical context. Keep their
+        // journals separate so a retry discards its provisional obligations
+        // without losing the newly finalized body facts that caused it.
+        struct InstanceEffectsScope {
+          Impl &worker;
+          EffectGraph &effects;
+          BorrowChecks &checks;
+          EffectGraph savedEffects;
+          BorrowChecks savedChecks;
+          InstanceEffectsScope(Impl &worker, EffectGraph &effects,
+                               BorrowChecks &checks)
+              : worker(worker), effects(effects), checks(checks),
+                savedEffects(std::move(worker.programEffects)),
+                savedChecks(std::move(
+                    worker.requestSession.programStorageBorrowChecks)) {
+            worker.programEffects.clear();
+            worker.requestSession.programStorageBorrowChecks.clear();
+          }
+          ~InstanceEffectsScope() {
+            effects = std::move(worker.programEffects);
+            checks =
+                std::move(worker.requestSession.programStorageBorrowChecks);
+            worker.programEffects = std::move(savedEffects);
+            worker.requestSession.programStorageBorrowChecks =
+                std::move(savedChecks);
+          }
+        };
+        auto analysis = worker->withLateDemand([&]()
+                                                   -> SemanticInstanceAnalysis {
+          const InstanceEffectsScope attempt(*worker, instanceEffects,
+                                             instanceChecks);
+          switch (query.target.kind) {
+          case ProgramEffectOwnerKind::Function:
+            return worker->analyzeFunctionInstance(
+                query.target.id, query.owner.arguments,
+                query.owner.valueArguments, query.types, query.values);
+          case ProgramEffectOwnerKind::Constructor:
+            return worker->analyzeConstructorInstance(
+                query.target.id, query.owner.arguments,
+                query.owner.valueArguments, query.types, query.values);
+          case ProgramEffectOwnerKind::Destructor:
+            return worker->analyzeDestructorInstance(
+                query.target.id, query.owner.arguments,
+                query.owner.valueArguments);
+          case ProgramEffectOwnerKind::FieldInitializers:
+            return worker->analyzeClassFieldInitializers(
+                query.target.id, query.owner.arguments,
+                query.owner.valueArguments);
+          default:
+            return {}; // Unsupported owners were classified before analysis.
+          }
+        });
+        if (worker->lateDemandFailed && !worker->lateDemandedBodies.empty()) {
+          // The pending-body batch changed facts used by this attempt. Use
+          // the frontend's bounded required-body retry before certifying any
+          // effects or publishing provisional callable diagnostics. HIR may
+          // discover dependencies, but MIR cannot be published from this pass.
+          lateDemandFailed = true;
+          lateDemandedBodies.insert(lateDemandedBodies.end(),
+                                    worker->lateDemandedBodies.begin(),
+                                    worker->lateDemandedBodies.end());
+          programEffects[owner].invalidBody = true;
+          state->queries[owner.id - 1].complete = true;
+          worker.reset();
           return;
+        }
+        if (worker->hadError()) {
+          analysis.diagnostics.insert(analysis.diagnostics.end(),
+                                      worker->diagnostics.begin(),
+                                      worker->diagnostics.end());
         }
         if (!analysis.valid()) {
           // Effect demand is not ordinary concrete discovery. Publishing its
@@ -414,33 +534,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
           // discovery and its canonical user-origin diagnostic aggregation.
           // Keep this exact node uncertified and retain errors for the normal
           // provider boundary, including a fail-closed late-demand mismatch.
-          programEffects[owner].invalidBody = true;
-          auto &retained = state->queries[owner.id - 1].invalidDiagnostics;
-          for (auto &diagnostic : analysis.diagnostics)
-            if (diagnostic.severity == DiagnosticSeverity::Error)
-              retained.push_back(std::move(diagnostic));
-          InstanceAnalysisKey key{.declaration = query.target.id,
-                                  .classTypes = query.owner.arguments,
-                                  .classValues = query.owner.valueArguments,
-                                  .types = query.types,
-                                  .values = query.values};
-          switch (query.target.kind) {
-          case ProgramEffectOwnerKind::Function:
-            key.kind = InstanceAnalysisKind::Function;
-            break;
-          case ProgramEffectOwnerKind::Constructor:
-            key.kind = InstanceAnalysisKind::Constructor;
-            break;
-          case ProgramEffectOwnerKind::Destructor:
-            key.kind = InstanceAnalysisKind::Destructor;
-            break;
-          case ProgramEffectOwnerKind::FieldInitializers:
-            key.kind = InstanceAnalysisKind::ClassFieldInitializers;
-            break;
-          default:
-            break; // The query-kind switch above already rejects this shape.
-          }
-          state->invalidInstances[std::move(key)].push_back(owner.id);
+          rejectQuery(owner, std::move(analysis.diagnostics));
         } else {
           // Instance-local lambda/default owners can reuse source IDs in the
           // next delta. Preserve the exact graph (including cycles, failure
@@ -455,8 +549,13 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
             if (source.kind == ProgramEffectOwnerKind::ConcreteInstance ||
                 source.kind == ProgramEffectOwnerKind::Initializer)
               return source;
-            const auto found = worker->programEffects.find(source);
-            if (found == worker->programEffects.end())
+            const auto instance = instanceEffects.find(source);
+            const auto primary = worker->programEffects.find(source);
+            const ProgramEffectSummary *found =
+                instance != instanceEffects.end()         ? &instance->second
+                : primary != worker->programEffects.end() ? &primary->second
+                                                          : nullptr;
+            if (found == nullptr)
               return source;
             if (const auto existing = exported.find(source);
                 existing != exported.end())
@@ -466,7 +565,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
                 .kind = ProgramEffectOwnerKind::ConcreteLocal,
                 .id = state->localOwners.size()};
             exported.emplace(source, destination);
-            auto summary = found->second;
+            auto summary = *found;
             for (auto &edge : summary.edges)
               edge.target = exportSelf(exportSelf, edge.target);
             selectQueries(summary);
@@ -474,13 +573,13 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
             return destination;
           };
           // An absent selected root is an empty body, not its open primary.
-          if (worker->programEffects.contains(query.target))
+          if (instanceEffects.contains(query.target))
             programEffects[owner].edges.push_back(
                 {.target = exportOwner(exportOwner, query.target),
                  .span = query.site});
-          for (const auto &[source, _] : worker->programEffects)
+          for (const auto &[source, _] : instanceEffects)
             (void)exportOwner(exportOwner, source);
-          for (auto check : worker->requestSession.programStorageBorrowChecks) {
+          const auto exportCheck = [&](ProgramStorageBorrowCheck check) {
             for (auto &target : check.targets)
               target = exportOwner(exportOwner, target);
             if (check.failureCondition) {
@@ -492,14 +591,23 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
             }
             requestSession.programStorageBorrowChecks.push_back(
                 std::move(check));
-          }
+          };
+          for (std::size_t index = primaryCheckBegin;
+               index < worker->requestSession.programStorageBorrowChecks.size();
+               ++index)
+            exportCheck(
+                worker->requestSession.programStorageBorrowChecks[index]);
+          for (auto &check : instanceChecks)
+            exportCheck(std::move(check));
         }
         state->queries[owner.id - 1].complete = true;
+        if (worker->lateDemandFailed || worker->hadError())
+          worker.reset(); // A failed primary batch is not a reusable context.
         ++depth;
       }
     }
     const auto found = programEffects.find(owner);
-    if (found != programEffects.end()) {
+    if (found != programEffects.end() && !found->second.invalidBody) {
       const auto edges = found->second.edges;
       for (const auto &edge : edges)
         self(self, edge.target, depth);
@@ -542,6 +650,14 @@ auto SemanticVisitor::Impl::preserveInvalidProgramEffectDiagnostics(
     -> void {
   const auto state = requestSession.programConcreteEffects;
   if (!analysis.valid() || !state || state->invalidInstances.empty())
+    return;
+  // A recursive staged query may supply facts while an exact outer analysis
+  // owns its diagnostics (notably a class asserting on its own reflection).
+  // That outer provider is still gated after its key leaves the open chain.
+  if (requestSession.openReanalyses &&
+      std::find(requestSession.openReanalyses->begin(),
+                requestSession.openReanalyses->end(),
+                key) != requestSession.openReanalyses->end())
     return;
   const auto found = state->invalidInstances.find(key);
   if (found == state->invalidInstances.end())

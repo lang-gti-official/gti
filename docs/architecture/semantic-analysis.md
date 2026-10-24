@@ -1375,7 +1375,12 @@ registering a query in a speculative cache is not a root; discarded
 calls retain their graph edges, and source constructor/destructor/field effects
 use the same exact instance identity. Query expansion is bounded by 64 generic
 ancestry steps and 16,384 analyzed distinct instances, with located `GTI-S2105`
-diagnostics. Open substitutions, dynamic dispatch, and protocol/combinator paths
+diagnostics. Exhaustion leaves an uncertified exact query, not an empty summary;
+ordinary discovery owns its canonical diagnostic when it independently reaches
+the limit, and retained query errors otherwise gate the exact provider result.
+Failed required constants have no executable initializer and are excluded from
+effect-root selection without suppressing independent executable obligations.
+Open substitutions, dynamic dispatch, and protocol/combinator paths
 without exact selected generic arguments remain conservatively unknown.
 
 Instance-local effect owners are exported under the selecting query and local
@@ -1397,6 +1402,18 @@ proof. This admission check also applies to the isolated provider used by staged
 constant evaluation: its results are checked against the requesting analysis's
 exact failed-instance keys without sharing mutable effect-graph state. Missing
 or open effects remain unknown and retain their normal rejection.
+
+The isolated effect worker preserves the ordinary pending trusted-body context
+and uses the existing late-demand mechanism before certifying a result. Each
+concrete attempt has a separate effect/check journal: a provisional attempt is
+discarded, while successfully finalized primary-body facts remain available.
+A nonconverged batch forwards its exact required bodies to the frontend's
+bounded fresh-semantic retry; it exports no effect certificate. Required bodies
+invalidate partial HIR, and failed demand cannot populate the reusable instance
+cache. A failed batch with no retry roots retains its actual errors. Recursive
+same-key staging may supply facts while its open outer analysis owns assertion
+diagnostics; the final outer provider still checks retained failures after that
+key leaves the open chain.
 
 Persistent-storage loan checks reuse that exact effect graph and the ordinary
 structured loan endpoint scheduler. A request-local full-expression frame is

@@ -200,6 +200,12 @@ ordinary instance-publication path. They must not short-circuit independent
 body/result-type assertion discovery or publish library-internal locations in
 place of the user's instantiation site. Retained errors are keyed by the exact
 instance and remain a refusal if later analysis would otherwise admit it.
+Pending trusted-body contracts are finalized or retried before such a failure
+is retained; a provisional forwarding error is not an invalid-body certificate.
+An exact open outer analysis owns its recursive assertion diagnostics, but must
+still pass the retained-error gate when it completes. Effect-query exhaustion
+uses ordinary discovery's budget diagnostic when available, otherwise its exact
+retained limit error; failed required constants are not runtime effect roots.
 
 `GTI-S2105` reports deterministic concrete-instance discovery exhaustion (64
 new-instance levels or 16,384 distinct generic instances in one HIR request). It anchors
