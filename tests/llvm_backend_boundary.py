@@ -28,13 +28,15 @@ FORBIDDEN_IDENTIFIER = re.compile(
 )
 INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"\n]+)[>"]', re.M)
 COMMENT = re.compile(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/', re.S)
+COMPILED_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".mm"}
+HEADER_SUFFIXES = {".h", ".hpp", ".def", ".inc", ".inl"}
 
 
 def code_without_comments(text: str) -> str:
     return COMMENT.sub(lambda m: m.group() if m.group().startswith('"') else " ", text)
 
 
-def audit(root: Path) -> list[str]:
+def audit(root: Path, source_manifest: Path | None = None) -> list[str]:
     root = root.resolve()
     failures = []
     cmake = code_without_comments((root / "CMakeLists.txt").read_text())
@@ -47,16 +49,36 @@ def audit(root: Path) -> list[str]:
         cmake,
     )
     compiled = set()
+    manifest_owned = set()
     for block in blocks:
         for token in re.findall(r'"[^"]*"|\S+', block):
             token = token.strip('"')
             if token in {"STATIC", "PRIVATE", "PUBLIC", "INTERFACE"}:
                 continue
-            if not re.fullmatch(r"[A-Za-z0-9_./-]+\.(?:cpp|cc|cxx|h|hpp|def)", token):
+            if not re.fullmatch(r"[A-Za-z0-9_./-]+\.(?:c|cpp|cc|cxx|mm|h|hpp|def|inc|inl)", token):
                 failures.append(f"gti_llvm_backend: nonliteral source ownership: {token}")
                 continue
-            if token.endswith((".cpp", ".cc", ".cxx")):
+            if Path(token).suffix in COMPILED_SUFFIXES:
                 compiled.add(token)
+    if source_manifest is not None:
+        compiled.clear()
+        if not source_manifest.is_file():
+            failures.append(f"missing configured LLVM source manifest: {source_manifest}")
+        else:
+            for source in source_manifest.read_text().splitlines():
+                path = (root / source).resolve()
+                if not source:
+                    continue
+                if path.suffix not in COMPILED_SUFFIXES | HEADER_SUFFIXES:
+                    failures.append(f"unclassified configured LLVM source: {source}")
+                    continue
+                if not path.is_relative_to(root):
+                    failures.append(f"LLVM source cannot be audited outside repository: {source}")
+                else:
+                    name = path.relative_to(root).as_posix()
+                    manifest_owned.add(name)
+                    if path.suffix in COMPILED_SUFFIXES:
+                        compiled.add(name)
     if not compiled:
         failures.append("gti_llvm_backend: no compiled source ownership")
 
@@ -64,9 +86,10 @@ def audit(root: Path) -> list[str]:
     owned.update(p.relative_to(root).as_posix() for p in (root / "include/gti").glob("llvm_*.h"))
     owned.update(p.relative_to(root).as_posix() for p in (root / "src/compiler").glob("llvm_*.cpp"))
     owned.update(p.relative_to(root).as_posix() for p in (root / "src/compiler/llvm").rglob("*")
-                 if p.suffix in {".cpp", ".cc", ".cxx", ".h", ".hpp", ".def"})
+                 if p.suffix in COMPILED_SUFFIXES | HEADER_SUFFIXES)
     owned.update(compiled)
-    discovered_cpp = {p for p in owned if p.endswith((".cpp", ".cc", ".cxx"))}
+    owned.update(manifest_owned)
+    discovered_cpp = {p for p in owned if Path(p).suffix in COMPILED_SUFFIXES}
     for missing in sorted(discovered_cpp - compiled):
         failures.append(f"{missing}: LLVM source is not owned by gti_llvm_backend")
 

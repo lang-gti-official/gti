@@ -4386,7 +4386,9 @@ that optional span through the existing driver diagnostic path. A forged
 No artifact is emitted or published on a limitation, and an existing output
 file is preserved.
 
-The dependency gate discovers the backend's literal CMake sources, all public
+The configured dependency gate uses CMake's generated final target source list,
+including sources introduced by included build files. The source-only lint
+also checks literal root declarations. It discovers all public
 `llvm_*.h` headers and private `src/compiler/llvm/` helpers. It follows private
 project includes, rejecting frontend construction, optimizer and C++ helpers
 even behind an innocently named local header. The sealed contract headers stop

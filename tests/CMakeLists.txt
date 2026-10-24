@@ -2124,6 +2124,7 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/backend_boundary_test.py"
             "${PROJECT_SOURCE_DIR}"
+            "${CMAKE_BINARY_DIR}/gti_llvm_backend_sources.txt"
   )
   add_test(
     NAME llvm_backend_dependency_controls

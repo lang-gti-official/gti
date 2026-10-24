@@ -62,6 +62,15 @@ def main() -> None:
         write(root, "include/gti/llvm_detail.h", '#include "gti/backend.h"\n')
         write(root, "include/gti/backend.h", '#include <llvm/IR/Type.h>\n')
         assert any("public contract exposes LLVM" in failure for failure in audit(root))
+        write(root, "include/gti/backend.h", "class LoweredProgram;\n")
+        write(root, "src/other/hidden.cpp", "HirValue expression;\n")
+        manifest = root / "configured-sources.txt"
+        manifest.write_text("src/compiler/llvm_backend.cpp\nsrc/compiler/llvm/helper.cpp\n"
+                            "src/compiler/llvm/unlisted.cpp\nsrc/other/hidden.cpp\n")
+        assert any("hidden.cpp" in failure and "forbidden LLVM authority" in failure
+                   for failure in audit(root, manifest))
+        assert any("missing configured LLVM source manifest" in failure
+                   for failure in audit(root, root / "absent-manifest.txt"))
     print("LLVM dependency discovery and transitive mutation controls passed")
 
 

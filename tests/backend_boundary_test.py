@@ -88,8 +88,8 @@ def without_comments(source: str) -> str:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: backend_boundary_test.py <repo-root>", file=sys.stderr)
+    if len(sys.argv) not in {2, 3}:
+        print("usage: backend_boundary_test.py <repo-root> [configured-source-manifest]", file=sys.stderr)
         return 2
     root = Path(sys.argv[1]).resolve()
     failures: list[str] = []
@@ -126,7 +126,7 @@ def main() -> int:
                 f"{relative}: formatting writer performs program lookup: {match.group(0)}"
             )
 
-    failures.extend(audit_llvm_backend(root))
+    failures.extend(audit_llvm_backend(root, Path(sys.argv[2]) if len(sys.argv) == 3 else None))
 
     backend_header = (root / "include/gti/backend.h").read_text(encoding="utf-8")
     if not re.search(

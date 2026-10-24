@@ -604,6 +604,11 @@ add_library(
   "src/compiler/llvm/admission.cpp"
   "src/compiler/llvm/coverage.cpp"
 )
+file(
+  GENERATE
+  OUTPUT "${CMAKE_BINARY_DIR}/gti_llvm_backend_sources.txt"
+  CONTENT "$<JOIN:$<TARGET_PROPERTY:gti_llvm_backend,SOURCES>,\n>\n"
+)
 target_include_directories(
   "gti_llvm_backend"
   PUBLIC
