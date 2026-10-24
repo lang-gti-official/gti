@@ -2790,15 +2790,20 @@ Phase 2b publishes through payload-enum fields at a path `[field, payload]`:
   (`contractPayloadBinding`), whether the subject names the field
   (`formal.field`) or calls the formal's accessor for it
   (`formal.accessor()`, or an implicit `accessor()` on the receiver). An
-  accessor designates a field (`accessorReceiverField`) when it is a
+  accessor designates fields (`accessorReceiverFields`) when it is a
   read-only, non-virtual method whose every return is `this.field` or a call
   `this.other()` of another argument-free such accessor; the implicit `field`
-  and `other()` count only in a parameterless body that declares nothing.
-  A text payload bound through any other call whose reference result borrows
-  a contract formal (an accessor returning one of several fields, say) is a
-  whole use of that formal (`callBorrowedTextFormal`). MIR derives a
-  requirement through an accessor only where semantics names its field or
-  records that whole use. In a generic class, a type-parameter payload
+  and `other()` count only in a parameterless body that declares nothing. Its
+  own returns require nothing (`notePayloadFieldRead`): a caller outside a
+  contract scope keeps the result dependent on each returned field
+  (`dependentReferenceResult`), and a use of the call on a contract formal
+  reads each field (`contractEnumFields`). A `switch` observes a single
+  designated field in place; on an accessor designating several it reads
+  them all. A text payload bound through any other call whose reference
+  result borrows a contract formal (an accessor returning one of several
+  fields, say) is a whole use of that formal (`callBorrowedTextFormal`). MIR
+  derives a requirement through an accessor only where semantics names its
+  fields or records that whole use. In a generic class, a type-parameter payload
   requires it conditionally. A whole use requires every text payload too
   (`textPayloadFields`), and `contractTextPath` filters open requirements for
   an instance. A relay is decided against each designated path.
