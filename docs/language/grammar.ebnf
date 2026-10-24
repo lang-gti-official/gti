@@ -259,7 +259,7 @@ requirement-parameter  = [ "mut" ] type IDENTIFIER ;
 requirement-check      = [ "unsafe" ] "{" assignment-expression "}"
                          [ "->" [ "mut" ] type [ requirement-borrow-origin ] ] ";"
                        | [ "unsafe" ] "for" "(" [ "mut" ] type IDENTIFIER
-                         ":" assignment-expression ")" "{" "}" ;
+                         ":" assignment-expression ")" "{" { static-assert-declaration } "}" ;
 requirement-borrow-origin
                        = "[[" "borrowed_from" "(" IDENTIFIER ")" "]]" ;
 (* A requirement's `mut` parameters must be references. A written result is an
@@ -267,7 +267,8 @@ requirement-borrow-origin
    names a borrowed query parameter. A mutable result requires a mutable origin.
    `auto&` (optionally mut) with borrowed_from infers only the referent; omitting
    the arrow checks expression validity without promising a result type or
-   category. A loop query has an empty body and uses ordinary range analysis;
+   category. A loop query uses ordinary range analysis and may contain
+   static_assert checks of the actual bound element;
    its element binding may be auto or an exact type with checked access.
    These are not C++ result concepts. Ordinary expression rules
    apply without executing code or mutating caller flow. The historical direct

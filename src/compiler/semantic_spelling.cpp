@@ -3,6 +3,64 @@
 namespace lang::semantic_spelling {
 
 std::string expressionSpelling(const Expr &expression) {
+  if (const auto *query = exprAs<MemberRequirement>(&expression)) {
+    const auto type = [](const TypeRef &value) {
+      return (value.referenceMutability ? std::string("mut ") : std::string()) +
+             typeRefSpelling(value);
+    };
+    std::string result = "requires";
+    if (!query->isExpressionRequirement() || !query->parameters().empty()) {
+      result += " (";
+      if (!query->isExpressionRequirement())
+        result += type(query->receiver()) + " " + query->binding().lexeme;
+      for (std::size_t i = 0; i < query->parameters().size(); ++i) {
+        if (i || !query->isExpressionRequirement())
+          result += ", ";
+        result +=
+            type(query->parameters()[i]) + " " + query->bindings()[i].lexeme;
+      }
+      result += ")";
+    }
+    result += " { ";
+    if (query->unsafeKeyword())
+      result += "unsafe ";
+    if (const auto *loop = stmtAs<RangeForStmt>(query->iteration().get())) {
+      result += "for (";
+      if (loop->bindingMutability() == Mutability::Mutable)
+        result += "mut ";
+      result += typeRefSpelling(loop->bindingType()) + " " +
+                loop->bindingName().lexeme + " : " +
+                expressionSpelling(*query->expression()) + ") {";
+      if (const auto *body = stmtAs<BlockStmt>(loop->sourceBody()))
+        for (const auto &statement : body->statements())
+          if (const auto *check = stmtAs<StaticAssertDecl>(statement.get())) {
+            result +=
+                " static_assert(" + expressionSpelling(*check->condition());
+            if (check->messageToken())
+              result += ", " + check->messageToken()->lexeme;
+            result += "); ";
+          }
+      return result + "} }";
+    }
+    result += "{ ";
+    if (query->isExpressionRequirement()) {
+      result += expressionSpelling(*query->expression());
+    } else {
+      result += query->binding().lexeme + "." + query->member().lexeme + "(";
+      for (std::size_t i = 0; i < query->arguments().size(); ++i) {
+        if (i)
+          result += ", ";
+        result += query->arguments()[i].lexeme;
+      }
+      result += ")";
+    }
+    result += " }";
+    if (!query->inferredResult() || query->borrowedFrom())
+      result += " -> " + type(query->result());
+    if (query->borrowedFrom())
+      result += " [[borrowed_from(" + query->borrowedFrom()->lexeme + ")]]";
+    return result + "; }";
+  }
   if (const auto *variable = exprAs<Variable>(&expression))
     return variable->name().lexeme;
   if (const auto *qualified = exprAs<QualifiedName>(&expression))

@@ -9377,6 +9377,13 @@
           "value": "{"
         },
         {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "static_assert_declaration"
+          }
+        },
+        {
           "type": "STRING",
           "value": "}"
         }

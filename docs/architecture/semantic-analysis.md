@@ -2454,15 +2454,17 @@ or consumed arguments. Query facts retain the exact operand/result types and
 access contracts; alternative argument forms do not invent a common receiver
 or borrow proof. Iterator-aware callable policies query the complete ordinary
 `function(*position)` expression in source. Range callable policies compose
-`input_range` with a source query over the actual begin/dereference result,
-or fixed-array indexing under the independent array classification fact.
+`input_range` with a source iteration query over the actual loop-bound element.
+This preserves the ordinary loop's local materialization of value-producing
+iterators before a callback borrows the element.
 All former private callable concept bindings and their duplicate signature
 admission paths are removed. This is semantic proof, not text-based
 operator guessing. The AST application is retained for source-facing
 diagnostics and tooling occurrences.
 
 An iteration requirement retains an ordinary parser-lowered `RangeForStmt`
-with an empty body and analyzes it in the same isolated query worker. Its
+whose body is empty or contains only `static_assert` checks, and analyzes it in
+the same isolated query worker. Its
 synthetic bindings are local even when the query is declared at namespace
 scope. The source range expression supplies lexical occurrences; exact element
 bindings are checked against the resolved iteration record, not an implicit
@@ -2470,6 +2472,12 @@ conversion. A direct borrowed range normalizes to a general iteration fact
 with element/access information. It grants no executable call target; concrete
 instances recheck the real loop. Unsafe or compound-range queries remain
 concrete filters when they cannot supply a safe direct operation proof.
+An iteration fact alone never proves additional body assertions. Those checks
+reuse ordinary static-assert analysis against the actual element binding; their
+nested requirements are unevaluated. Types referenced only in body checks are
+retained as query arguments for substitution, and the AST clone preserves the
+original body within the parser-lowered loop. No new runtime loop or separate
+constant-execution rule is introduced.
 The lowered boundary records an explicit iteration requirement kind: its
 element slot is not an escaping reference result. The former private input,
 exact-element and mutable-range bindings and duplicate endpoint checker are

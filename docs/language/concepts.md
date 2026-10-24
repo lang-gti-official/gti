@@ -302,7 +302,25 @@ concept writable_int_range<R> = requires(mut R& range) {
 };
 ```
 
-Its body must be empty. `auto` infers the element type; an explicit element
+The body may be empty or contain `static_assert` checks, including nested
+expression requirements that refer to the loop's element binding:
+
+```gti
+concept visits<F, R, Result> = requires(mut F& function, R& range) {
+  for (auto& element : range) {
+    static_assert(requires { { function(element) } -> Result; });
+  }
+};
+```
+
+This checks the actual loop binding, not a call on the raw dereference result.
+In particular, a value-producing iterator's local element can be passed by
+read-only reference without extending a temporary's lifetime outside the loop.
+Other statements are not supported in the query body. The checks do not execute
+the loop; their normal compile-time evaluation remains bounded. A provisional
+iteration fact alone cannot prove additional assertions in a different query.
+
+`auto` infers the element type; an explicit element
 type must match exactly, rather than becoming valid through a conversion.
 The check uses the same range analysis as an executable loop, including fixed
 arrays, endpoint selection, temporary lifetime, access and cleanup obligations.

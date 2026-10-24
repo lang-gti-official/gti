@@ -530,15 +530,11 @@ public:
       };
   namespace detail {
     constexpr bool range_call_expression<F, Range, Result>() {
-      if constexpr (std::meta::is_array<Range>()) {
-        return requires(mut F& function, Range& range, std::size_t index) {
-          { function(range[index]) } -> Result;
-        };
-      } else {
-        return requires(mut F& function, Range& range) {
-          { function(*range.begin()) } -> Result;
-        };
-      }
+      return requires(mut F& function, Range& range) {
+        for (auto& element : range) {
+          static_assert(requires { { function(element) } -> Result; });
+        }
+      };
     }
   }
   [[unsatisfied("The complete range's read-only element must be accepted by a safe repeatable public callable returning bool.")]]

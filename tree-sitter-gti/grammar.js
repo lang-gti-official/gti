@@ -1531,7 +1531,7 @@ module.exports = grammar({
 
     iteration_requirement: ($) => seq(
       "for", "(", field("binding", $.range_for_declaration), ":",
-      field("range", $.expression), ")", "{", "}",
+      field("range", $.expression), ")", "{", repeat($.static_assert_declaration), "}",
     ),
 
     layout_query_expression: ($) =>

@@ -3658,6 +3658,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "static_assert_declaration",
+          "named": true
+        }
+      ]
     }
   },
   {

@@ -40,6 +40,17 @@ void bindQueryType(const TypeRef &syntax, SemanticType type,
 }
 } // namespace
 
+auto SemanticVisitor::Impl::collectIterationRequirementTypeArguments(
+    const MemberRequirement &query, std::vector<const TypeRef *> &types)
+    -> void {
+  const auto *loop = stmtAs<RangeForStmt>(query.iteration().get());
+  const auto *body = loop ? stmtAs<BlockStmt>(loop->sourceBody()) : nullptr;
+  if (body)
+    for (const auto &statement : body->statements())
+      if (const auto *check = stmtAs<StaticAssertDecl>(statement.get()))
+        collectRequirementTypeArguments(check->condition().get(), types);
+}
+
 auto SemanticVisitor::Impl::collectRequirementTypeArguments(
     const Expr *expression, std::vector<const TypeRef *> &types) -> void {
   // Keep the same pre-order as Parser::collectRequirementTypes: applied
@@ -77,6 +88,15 @@ auto SemanticVisitor::Impl::collectRequirementTypeArguments(
     collectRequirementTypeArguments(group->expression().get(), types);
   } else if (const auto *get = exprAs<Get>(expression)) {
     collectRequirementTypeArguments(get->object().get(), types);
+  } else if (const auto *query = exprAs<MemberRequirement>(expression)) {
+    if (!query->isExpressionRequirement())
+      types.push_back(&query->receiver());
+    for (const auto &parameter : query->parameters())
+      types.push_back(&parameter);
+    if (!query->inferredResult())
+      types.push_back(&query->result());
+    collectRequirementTypeArguments(query->expression().get(), types);
+    collectIterationRequirementTypeArguments(*query, types);
   }
 }
 
@@ -403,13 +423,18 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     return reject("The required expression has unresolved parameter types.");
   std::vector<const TypeRef *> extraTypes;
   collectRequirementTypeArguments(query.expression().get(), extraTypes);
+  collectIterationRequirementTypeArguments(query, extraTypes);
   if (arguments.size() != query.parameters().size() + 1 + extraTypes.size())
     return reject(
         "The required expression has incomplete explicit type arguments.");
   if (std::any_of(arguments.begin(), arguments.end(),
                   containsOpenTypeParameter)) {
     const auto wanted = expressionRequirementFact(query, arguments);
-    if (wanted)
+    const auto *loop = stmtAs<RangeForStmt>(query.iteration().get());
+    const auto *body = loop ? stmtAs<BlockStmt>(loop->sourceBody()) : nullptr;
+    // An iteration fact proves that the loop can bind its element, not that
+    // additional checks inside this particular query succeed.
+    if (wanted && (!body || body->statements().empty()))
       for (const auto &active : activeStructuralRequirements())
         if (active.kind == wanted->kind &&
             active.arguments == wanted->arguments &&

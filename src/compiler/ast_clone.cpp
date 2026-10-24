@@ -540,7 +540,8 @@ private:
           std::move(lowered), mapped(node.ownerBinding()),
           mapped(node.rangeBinding()), mapped(node.iteratorBinding()),
           mapped(node.sentinelBinding()), mapped(node.elementBinding()),
-          mapped(node.coreLoop()), mapped(node.elementOwnerBinding()));
+          mapped(node.coreLoop()), mapped(node.elementOwnerBinding()),
+          mapped(node.sourceBody()));
     }
     case StmtKind::ReturnStmt: {
       const auto &node = static_cast<const ReturnStmt &>(statement);

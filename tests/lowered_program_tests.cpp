@@ -1352,6 +1352,11 @@ void inferred<T>() requires requires(T& value) { { value + value }; } {}
 void iteration<T>() requires requires(mut T& range) {
   for (mut int32_t& element : range) {}
 } {}
+void checked_iteration<T, Result>() requires requires(T& range) {
+  for (auto& element : range) {
+    static_assert(requires { { element + element } -> Result; });
+  }
+} {}
 struct Cell {
   mut int32_t value = 0;
   mut int32_t& edit() mut { return this.value; }
@@ -1380,6 +1385,7 @@ int main() {
   nullary<int32_t>();
   inferred<int32_t>();
   iteration<int32_t[3]>();
+  checked_iteration<int32_t[3], int32_t>();
   borrowed<Cell>();
   inferred_borrow<Cell>();
   member<Reader>();
@@ -1446,6 +1452,15 @@ int main() {
              !iteration->requirements[0].resultOriginParameter,
          "loop queries retain element/access facts without inventing an "
          "escaping reference result");
+  const auto *checkedIteration = findPayload<lang::LoweredFunctionDeclaration>(
+      program, "checked_iteration");
+  expect(checkedIteration && checkedIteration->requirements.size() == 1 &&
+             checkedIteration->requirements[0].kind ==
+                 lang::LoweredRequirementKind::Iteration &&
+             checkedIteration->requirements[0].arguments.size() >= 3 &&
+             checkedIteration->requirements[0].resultArgument == 1 &&
+             !checkedIteration->requirements[0].resultOriginParameter,
+         "loop-body result types survive detached requirement metadata");
   expect(named && member && expression && nullary && predicate,
          "all requirement declaration rows are retained");
   if (!named || !member || !expression || !nullary || !predicate)

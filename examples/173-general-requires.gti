@@ -21,7 +21,8 @@ struct IsPositive {
 struct CountEnd {};
 struct CountCursor {
   mut int value = 1;
-  int& operator*() { return this.value; }
+  // Value-producing iterators are materialized by the ordinary range loop.
+  int operator*() { return this.value; }
   void operator++() mut { this.value++; }
   bool operator!=(CountEnd& end) { return this.value <= 3; }
 };
@@ -35,6 +36,11 @@ std::size_t measured_size<R>(R& range) requires std::sized_range<R> {
 }
 concept integer_range<R> = requires(R& range) {
   for (int& value : range) {}
+};
+concept positive_elements<R> = requires(R& range) {
+  for (auto& element : range) {
+    static_assert(requires { { IsPositive()(element) } -> bool; });
+  }
 };
 int count_sum<R>(R& range) requires integer_range<R> {
   mut int total = 0;
@@ -310,6 +316,11 @@ int main() {
   assign_cell(inferred, 11);
   if (!matches_cell(inferred, 11)) { return 21; }
   Counts counts{};
+  static_assert(requires(Counts& range) {
+    for (auto& element : range) {
+      static_assert(requires { { IsPositive()(element) } -> bool; });
+    }
+  });
   if (count_sum(counts) != 6) { return 20; }
   int[3] fixed_counts = {1, 2, 3};
   if (measured_size(counts) != measured_size(fixed_counts)) { return 22; }

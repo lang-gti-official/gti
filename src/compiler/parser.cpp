@@ -721,6 +721,7 @@ private:
           arguments = requirement->parameters();
           arguments.push_back(requirement->resultArgumentType());
           collectRequirementTypes(requirement->expression().get(), arguments);
+          collectIterationRequirementTypes(*requirement, arguments);
         } else {
           TypeRef receiver = requirement->receiver();
           receiver.reference.reset();
@@ -3207,6 +3208,7 @@ private:
   StmtPtr makeRangeForStatement(Token keyword, Mutability bindingMutability,
                                 TypeRef bindingType, Token bindingName,
                                 Token colon, ExprPtr range, StmtPtr body) {
+    const Stmt *sourceBody = body.get();
     const bool mutableElementLoan =
         bindingMutability == Mutability::Mutable && bindingType.reference;
     const std::string suffix = std::to_string(++generatedNameCounter);
@@ -3295,7 +3297,8 @@ private:
         std::move(bindingName), std::move(colon),
         std::make_unique<BlockStmt>(std::move(lowered)), ownerBindingPointer,
         rangeBindingPointer, iteratorBindingPointer, sentinelBindingPointer,
-        elementBindingPointer, coreLoopPointer, elementOwnerBindingPointer);
+        elementBindingPointer, coreLoopPointer, elementOwnerBindingPointer,
+        sourceBody);
   }
 
   StmtPtr switchStatement() {
@@ -3713,6 +3716,16 @@ private:
     return arguments;
   }
 
+  void collectIterationRequirementTypes(const MemberRequirement &query,
+                                        std::vector<TypeRef> &types) {
+    const auto *loop = stmtAs<RangeForStmt>(query.iteration().get());
+    const auto *body = loop ? stmtAs<BlockStmt>(loop->sourceBody()) : nullptr;
+    if (body)
+      for (const auto &statement : body->statements())
+        if (const auto *check = stmtAs<StaticAssertDecl>(statement.get()))
+          collectRequirementTypes(check->condition().get(), types);
+  }
+
   void collectRequirementTypes(const Expr *expression,
                                std::vector<TypeRef> &types) {
     if (const auto *call = exprAs<Call>(expression)) {
@@ -3748,6 +3761,15 @@ private:
       collectRequirementTypes(group->expression().get(), types);
     } else if (const auto *get = exprAs<Get>(expression)) {
       collectRequirementTypes(get->object().get(), types);
+    } else if (const auto *query = exprAs<MemberRequirement>(expression)) {
+      if (!query->isExpressionRequirement())
+        types.push_back(query->receiver());
+      types.insert(types.end(), query->parameters().begin(),
+                   query->parameters().end());
+      if (!query->inferredResult())
+        types.push_back(query->result());
+      collectRequirementTypes(query->expression().get(), types);
+      collectIterationRequirementTypes(*query, types);
     }
   }
 
@@ -3807,10 +3829,15 @@ private:
         ExprPtr range = expression();
         consume(TokenKind::RIGHT_PAREN, "Expect ')' after required range.");
         consume(TokenKind::LEFT_BRACE,
-                "Expect an empty body after an iteration requirement.");
-        consume(TokenKind::RIGHT_BRACE,
-                "Iteration requirements have an empty body; test element "
-                "operations with separate expression requirements.");
+                "Expect a body after an iteration requirement.");
+        StmtList checks;
+        while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+          if (!match({TokenKind::STATIC_ASSERT}))
+            throw error(peek(), "Iteration requirement bodies contain only "
+                                "static_assert checks.");
+          checks.push_back(staticAssertDeclaration(previous()));
+        }
+        consume(TokenKind::RIGHT_BRACE, "Expect '}' after iteration checks.");
         TypeRef requiredResult = element;
         // Void is an existential element slot, not a void element type. The
         // actual binding retains auto and is inferred by normal loop analysis.
@@ -3820,7 +3847,7 @@ private:
         ExprPtr source = cloneExpr(*range);
         StmtPtr iteration = makeRangeForStatement(
             loop, access, std::move(element), name, colon, std::move(range),
-            std::make_shared<BlockStmt>(StmtList{}));
+            std::make_shared<BlockStmt>(std::move(checks)));
         result.push_back(std::make_unique<MemberRequirement>(
             keyword, std::move(source), std::move(requiredResult), parameters,
             bindings, unsafeKeyword, std::nullopt, std::move(iteration)));

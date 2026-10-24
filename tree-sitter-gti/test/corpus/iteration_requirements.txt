@@ -43,3 +43,51 @@ concept editable<R, T> = requires(mut R& range) { for (mut T& element : range) {
             (identifier))
           (primary_expression
             (identifier)))))))
+
+==================
+Loop-bound element checks
+==================
+concept visits<F, R, Result> = requires(mut F& function, R& range) {
+  for (auto& element : range) {
+    static_assert(requires { { function(element) } -> Result; });
+  }
+};
+---
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (iteration_requirement
+          (range_for_declaration
+            (type
+              (reference_declarator))
+            (identifier))
+          (primary_expression
+            (identifier))
+          (static_assert_declaration
+            (primary_expression
+              (member_requirement_expression
+                (call_expression
+                  (primary_expression
+                    (identifier))
+                  (argument_list
+                    (primary_expression
+                      (identifier))))
+                (type
+                  (user_type
+                    (identifier)))))))))))

@@ -149,8 +149,14 @@ void AstPrinter::visitMemberRequirementExpr(const MemberRequirement &expr) {
                     loop->bindingName().lexeme + " : "
               : "") +
         printPtr(expr.expression()) + " " + typeToString(expr.result()) + ")";
-    if (loop)
-      result += ")";
+    if (loop) {
+      std::string text = result;
+      if (const auto *body = stmtAs<BlockStmt>(loop->sourceBody()))
+        for (const auto &statement : body->statements())
+          if (const auto *check = stmtAs<StaticAssertDecl>(statement.get()))
+            text += " (static_assert " + printPtr(check->condition()) + ")";
+      result = text + ")";
+    }
     return;
   }
   result = "(requires " + typeToString(expr.receiver()) + " " +

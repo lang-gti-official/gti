@@ -10491,6 +10491,7 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
     arguments.push_back(typeOf(resultArgument));
     std::vector<const TypeRef *> extraTypes;
     collectRequirementTypeArguments(expr.expression().get(), extraTypes);
+    collectIterationRequirementTypeArguments(expr, extraTypes);
     for (const auto *argument : extraTypes) {
       validateType(*argument);
       recordTypeUse(*argument);

@@ -17,6 +17,12 @@ not guarantee a shared operation. Concrete instantiation must recheck operations
 that are dependent during initial analysis. Alias and inline-constraint cases
 also guard the proof rule `(A || B) && C => A || B`: no particular alternative
 may be invented, and aliases must not discard the complete disjunction.
+Iteration-body assertions additionally test the actual loop-bound element,
+including a borrowed local materialized from a value-yielding user iterator.
+A simple iteration fact must not prove an extra body assertion. The unchanged
+`text_view_iterator_completion.gti` regression covers the same behavior in
+`for_each` and `all_of`; checking only the raw dereference expression is not an
+equivalent policy. Runtime statements in an iteration query are rejected.
 
 `lowered_program_contract` checks the corresponding non-executable requirement
 inventory and rejects malformed result/access/origin records.

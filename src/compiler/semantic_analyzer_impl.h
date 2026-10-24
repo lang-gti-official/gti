@@ -3110,6 +3110,9 @@ private:
   static void
   collectRequirementTypeArguments(const Expr *expression,
                                   std::vector<const TypeRef *> &types);
+  static void
+  collectIterationRequirementTypeArguments(const MemberRequirement &query,
+                                           std::vector<const TypeRef *> &types);
   void prepareRequirementLookup(const std::vector<std::string> *lookupScope,
                                 SourceUnitId unit);
   [[nodiscard]] std::unique_ptr<Impl> unevaluatedExpressionWorker() const;

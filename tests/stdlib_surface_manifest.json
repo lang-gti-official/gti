@@ -21,7 +21,7 @@
     "stdlib/std/filesystem.gti": "c023d1f5d67afe2662bc2c84c1eff7cde9b285b9dba3025735c28e04c4dcb932",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
     "stdlib/std/forward_list.gti": "56e3d1660bc62d0603a1664d9431cc9a3ae4c25a5ef4b00f4e0af6a2d896d6cd",
-    "stdlib/std/functional.gti": "b0e23ca41cb4d8699fe5fcec5e003a5b09ea0079d9a832280b1defd9bfb14071",
+    "stdlib/std/functional.gti": "985983d8df8a7e430a061948ceb2933f2c6eef8d5a3826068c2d905ebebba242",
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/io.gti": "ca3b82df27c3d06bf64a06748a8c0666ccd0972dc1ec693727aec09201a3a1ee",
     "stdlib/std/iterator.gti": "9641543c2277f66c243f0f9eaa934c6c05e5d6af56b0d97c41409b7ef808f205",

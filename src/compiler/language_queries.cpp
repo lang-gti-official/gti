@@ -641,71 +641,8 @@ void SignaturePrinter::appendConceptApplication(
     return;
   }
   if (application.memberRequirement) {
-    const auto &query = *application.memberRequirement;
-    if (query.isExpressionRequirement()) {
-      result += "requires";
-      if (!query.parameters().empty()) {
-        result += " (";
-        for (std::size_t index = 0; index < query.parameters().size();
-             ++index) {
-          if (index != 0)
-            result += ", ";
-          if (query.parameters()[index].referenceMutability)
-            result += "mut ";
-          result +=
-              semantic_spelling::typeRefSpelling(query.parameters()[index]) +
-              " " + query.bindings()[index].lexeme;
-        }
-        result += ")";
-      }
-      if (const auto *loop = stmtAs<RangeForStmt>(query.iteration().get())) {
-        result += query.unsafeKeyword() ? " { unsafe for (" : " { for (";
-        if (loop->bindingMutability() == Mutability::Mutable)
-          result += "mut ";
-        result += semantic_spelling::typeRefSpelling(loop->bindingType()) +
-                  " " + loop->bindingName().lexeme + " : " +
-                  semantic_spelling::expressionSpelling(*query.expression()) +
-                  ") {} }";
-        return;
-      }
-      result += query.unsafeKeyword() ? " { unsafe { " : " { { ";
-      result += semantic_spelling::expressionSpelling(*query.expression());
-      if (query.inferredResult() && !query.borrowedFrom()) {
-        result += " }; }";
-        return;
-      }
-      result += " } -> ";
-      if (query.result().referenceMutability)
-        result += "mut ";
-      result += semantic_spelling::typeRefSpelling(query.result());
-      if (query.borrowedFrom())
-        result += " [[borrowed_from(" + query.borrowedFrom()->lexeme + ")]]";
-      result += "; }";
-      return;
-    }
-    result += "requires (" +
-              (query.receiver().referenceMutability ? std::string("mut ")
-                                                    : std::string()) +
-              semantic_spelling::typeRefSpelling(query.receiver()) + " " +
-              query.binding().lexeme;
-    for (std::size_t index = 0; index < query.parameters().size(); ++index)
-      result +=
-          ", " +
-          (query.parameters()[index].referenceMutability ? std::string("mut ")
-                                                         : std::string()) +
-          semantic_spelling::typeRefSpelling(query.parameters()[index]) + " " +
-          query.bindings()[index].lexeme;
-    result += ") { ";
-    if (query.unsafeKeyword())
-      result += "unsafe ";
-    result += "{ " + query.binding().lexeme + "." + query.member().lexeme + "(";
-    for (std::size_t index = 0; index < query.arguments().size(); ++index) {
-      if (index != 0)
-        result += ", ";
-      result += query.arguments()[index].lexeme;
-    }
     result +=
-        ") } -> " + semantic_spelling::typeRefSpelling(query.result()) + "; }";
+        semantic_spelling::expressionSpelling(*application.memberRequirement);
     return;
   }
   result += path(application.name);

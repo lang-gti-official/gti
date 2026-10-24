@@ -106,7 +106,10 @@ void rejected(const lang::FrontendResult &result, const std::string &name,
       std::cerr << "  " << item.code << ": " << item.message << '\n';
   if (diagnostic != result.diagnostics.end())
     expect(diagnostic->primary.line > 0, name + " source location");
-  expect(!result.hirValid, name + " cannot publish executable HIR");
+  if (code.starts_with("GTI-P"))
+    expect(!result.canGenerateCode(), name + " cannot generate recovered code");
+  else
+    expect(!result.hirValid, name + " cannot publish executable HIR");
   expect(
       std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
                    [](const auto &item) { return item.code == "GTI-B0001"; }),
@@ -173,6 +176,78 @@ int main() { Reader reader{}; return same(reader, 2) ? 0 : 1; }
 )GTI"),
            "a deferred comparison must resolve in the concrete instance",
            "GTI-S2022");
+
+  accepted(check(root, directory, "iteration_binding_checks", R"GTI(
+#include <std/algorithm>
+#include <std/string_view>
+struct End {};
+struct Cursor {
+  int operator*() { return 3; }
+  void operator++() mut {}
+  bool operator!=(End& end) { return false; }
+};
+struct Values { Cursor begin() { return Cursor(); } End end() { return End(); } };
+bool positive(int& value) { return value > 0; }
+struct Count { void operator()(char& value) mut {} };
+concept bound_call<F, R, Result> = requires(mut F& function, R& range) {
+  for (auto& element : range) {
+    static_assert(requires { { function(element) } -> Result; });
+  }
+};
+bool accepts<F, R, Result>() requires bound_call<F, R, Result> { return true; }
+concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
+bool check_false<R>() requires iterable<R> {
+  return requires(R& range) {
+    for (auto& element : range) { static_assert(false); }
+  };
+}
+int main() {
+  static_assert(requires { { accepts<Count, std::string_view, void>() } -> bool; });
+  static_assert(!(requires { { accepts<Count, std::string_view, bool>() } -> bool; }));
+  static_assert(requires(Values& range) {
+    for (auto& element : range) {
+      static_assert(requires { { positive(element) } -> bool; });
+    }
+  });
+  static_assert(!(requires(Values& range) {
+    for (auto& element : range) { static_assert(false); }
+  }));
+  static_assert(!(requires(Values& range) {
+    for (mut auto& element : range) { static_assert(true); }
+  }));
+  static_assert(!(requires(Values& range) {
+    for (auto& element : range) {
+      static_assert(requires { { positive(element) } -> int; });
+    }
+  }));
+  Values values{};
+  std::string_view text = "abc";
+  auto count = std::for_each(text, Count());
+  return std::all_of(values, positive) && !check_false<Values>() ? 0 : 1;
+}
+)GTI"),
+           "iteration checks use the actual materialized loop binding and "
+           "cannot invent body proofs");
+
+  rejected(
+      check(root, directory, "iteration_fact_cannot_prove_body", R"GTI(
+concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
+concept impossible<R> = requires(R& range) {
+  for (auto& element : range) { static_assert(false); }
+};
+void needs<R>() requires impossible<R> {}
+void bad<R>() requires iterable<R> { needs<R>(); }
+int main() { return 0; }
+)GTI"),
+      "a simple iteration guarantee cannot prove an additional body check");
+
+  rejected(check(root, directory, "iteration_query_runtime_statement", R"GTI(
+concept invalid<R> = requires(R& range) {
+  for (auto& element : range) { element; }
+};
+int main() { return 0; }
+)GTI"),
+           "iteration query bodies reject runtime statements", "GTI-P0001");
 
   accepted(
       check(root, directory, "iteration_requirements", R"GTI(

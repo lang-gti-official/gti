@@ -2280,14 +2280,16 @@ public:
                const VariableDecl *iteratorBinding,
                const VariableDecl *sentinelBinding,
                const VariableDecl *elementBinding, const ForStmt *coreLoop,
-               const VariableDecl *elementOwnerBinding = nullptr)
+               const VariableDecl *elementOwnerBinding = nullptr,
+               const Stmt *sourceBody = nullptr)
       : keyword_(std::move(keyword)), bindingMutability_(bindingMutability),
         bindingType_(std::move(bindingType)),
         bindingName_(std::move(bindingName)), colon_(std::move(colon)),
         lowered_(std::move(lowered)), ownerBinding_(ownerBinding),
         rangeBinding_(rangeBinding), iteratorBinding_(iteratorBinding),
         sentinelBinding_(sentinelBinding), elementBinding_(elementBinding),
-        coreLoop_(coreLoop), elementOwnerBinding_(elementOwnerBinding) {}
+        coreLoop_(coreLoop), elementOwnerBinding_(elementOwnerBinding),
+        sourceBody_(sourceBody) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitRangeForStmt(*this);
@@ -2317,6 +2319,8 @@ public:
     return elementBinding_;
   }
   [[nodiscard]] const ForStmt *coreLoop() const { return coreLoop_; }
+  // The user-written body is owned by lowered(), not a second AST subtree.
+  [[nodiscard]] const Stmt *sourceBody() const { return sourceBody_; }
   [[nodiscard]] const VariableDecl *elementOwnerBinding() const {
     return elementOwnerBinding_;
   }
@@ -2335,6 +2339,7 @@ private:
   const VariableDecl *elementBinding_ = nullptr;
   const ForStmt *coreLoop_ = nullptr;
   const VariableDecl *elementOwnerBinding_ = nullptr;
+  const Stmt *sourceBody_ = nullptr;
 };
 
 class FunctionDecl final : public StmtOfKind<StmtKind::FunctionDecl> {
