@@ -8,6 +8,13 @@ compiler-owned, backend-neutral `LoweredProgram`; they do not receive the AST,
 C++. The backend chooses target representation, but it cannot recover missing
 language meaning from an upstream representation or from host C++ behavior.
 
+Typed macro results reach this boundary only as verified ordinary MIR
+initialization, lifecycle, cleanup and join transport. The C++ backend never
+executes a HIR result region or interprets a macro-local return as a native
+function return. Written-expression metadata is normalized to a static text
+literal before MIR; a leaked source-query capability is rejected, not emitted
+as a runtime function or evaluated argument.
+
 Body-template presentation substitutes the family label and indentation with
 two append-only passes, in that order. It does not admit operations or consult
 MIR/semantic state. This avoids repeatedly shifting a large cleanup body for
@@ -1550,14 +1557,28 @@ when its exact initialization and complete use chain satisfy that proof.
 Neither change reconstructs a call or its evaluation order from source syntax.
 
 A lambda local's storage follows the instruction that produces its value.
-`constructedLambdaDestination` names the exact binding that a lambda value
-publishes into, unless an admitted fused closure chain carries that value. Such
+`constructedLambdaDestination` names the exact binding or verified temporary
+result slot that a lambda value publishes into, unless an admitted fused
+closure chain carries that value. Such
 a producer can be a materialized Closure, a copy `Load`, a `Move` or a
 closure-returning call. The declaration (`lifetimeSlotPlace`), the producer's
 construction, the destination `Initialize` and the vocabulary admission all
 consult this one proof. So `F g = f;` in a deduced-callable body declares and
 constructs one lifetime slot even though the body creates no literal of type
-`F`. A passive closure's slot is representation-only. Before each construction,
+`F`. A passive closure's local-binding slot is representation-only. A joined
+result retains its explicit `Value` obligation even when capture cleanup is
+trivial: its exact `Initialize`/`Reparent` publication, later `Move` and `Drop`
+remain the lifetime authority. Nested results reparent the exact moved-from
+temporary's `Value` obligation, not a fabricated SSA-rooted lifetime. Several
+forcing edges share an environment
+factory only for the same exact semantic lambda type and the same independently
+verified concrete lambda instance/body/layout; each edge constructs from its
+own capture operands at that edge's `Closure` step. Distinct concrete generic
+instances do not share an environment by source span alone.
+When `Reparent` hands off a hidden result's obligation, the destination is
+already constructed by its producing `Move`; the publication retires only
+the disarmed source representation, including passive environments.
+Before each representation-only construction,
 its producer retires any previous representation, as a representation-only
 class publication does, so a loop can rebuild the local without a semantic
 Drop. A fused chain's carriers still allocate no storage. When neither a
@@ -2021,6 +2042,13 @@ obligation; repeated evaluation resets only their representation storage.
 Class captures retain their lexical lifetime obligation even when destruction
 is passive. Thus scalar moves and class copies occur before the branch too.
 Other frozen passive closures still use the existing checked fused representation.
+An immediate passive scalar-copy closure may also fuse into one same-block
+invocation when only its exact receiver staging separates construction and
+use. This preserves the MIR capture-time snapshot even if later instructions
+write the source, including a later loop iteration. Any intervening computation,
+argument evaluation, write, call, cleanup or failure boundary blocks that proof;
+delayed or repeated uses retain the existing frozen-source requirement. Owning
+move and class captures retain their distinct lifetime/consumption proofs.
 Taking a checked local reference prevents that fusion: the closure factory
 materializes its environment once, and the ordinary MIR loan/pointer carrier
 aliases it. The body-local closure type also names reference carriers and

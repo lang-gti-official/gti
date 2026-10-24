@@ -248,7 +248,7 @@ is a teaching helper, not a production server.
 | `171-recursive-text-relays.gti` | recursive and mutually recursive functions relaying a view parameter, a recursion relaying a value's text field, a recursive method relaying the receiver's field, and an ownerless result from a literal argument |
 | `172-deferred-assertions.gti` | source-defined always-on/debug assertions, lazy formatted messages, skipped owning moves, and an application-defined typed macro |
 | `173-general-requires.gti` | exact expression/construction and mutation requirements, constexpr reflection predicates and source concept composition over unrelated domain types |
-| `174-typed-macros.gti` | ordinary calls to typed `#macro` declarations, exact overloads, generic/default expression parameters, conditional/repeated evaluation, hygienic body lookup, and skipped owner movement |
+| `174-typed-macros.gti` | typed `#macro` calls, lazy scalar/owning results and initializer contexts, local returns and evaluate-once bindings, fresh lambda captures, written expression text, hygienic lookup, and skipped owner movement |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

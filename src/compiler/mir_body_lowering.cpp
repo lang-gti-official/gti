@@ -77,6 +77,29 @@ public:
         programInitialization(programInitialization),
         loweredProgramInitialization(loweredProgramInitialization) {
     output.kind = kind;
+    if (kind == MirBodyKind::Module && programInitialization != nullptr)
+      for (const auto &step : programInitialization->steps)
+        nonLexicalBindings.insert(step.binding);
+    if (kind == MirBodyKind::FieldInitializers ||
+        kind == MirBodyKind::StaticFieldInitializers) {
+      for (const HirClassInstance &candidate : program.classInstances())
+        if ((kind == MirBodyKind::FieldInitializers &&
+             &candidate.fieldInitializers == &source) ||
+            (kind == MirBodyKind::StaticFieldInitializers &&
+             &candidate.staticFieldInitializers == &source)) {
+          const auto &fields = kind == MirBodyKind::FieldInitializers
+                                   ? candidate.fields
+                                   : candidate.staticFields;
+          for (const HirClassField &field : fields)
+            nonLexicalBindings.insert(field.binding);
+          if (kind == MirBodyKind::FieldInitializers)
+            fieldInitializerOwner = &candidate;
+          break;
+        }
+      if (kind == MirBodyKind::FieldInitializers &&
+          fieldInitializerOwner == nullptr)
+        valid = false;
+    }
     output.hasCallerLocation = function != nullptr && function->tracksCaller;
     output.placeDomain = source.placeDomain;
     output.returnType = std::move(returnType);
@@ -118,7 +141,8 @@ public:
         if (!inserted && entry->second != statement.id)
           entry->second = 0;
       }
-      if (statement.kind == HirStatementKind::Return) {
+      if (statement.kind == HirStatementKind::Return &&
+          statement.resultRegion == 0) {
         ++exitCount;
       }
     }
@@ -2326,7 +2350,58 @@ private:
     }
   }
 
+  void canonicalizeFullExpressions() {
+    // Nested result regions finish their own expressions before the enclosing
+    // expression. Publication order is therefore not source identity order.
+    // Canonicalize once per completed candidate, repairing body-local and
+    // startup-plan references rather than weakening the ordering rule.
+    if (std::is_sorted(output.fullExpressions.begin(),
+                       output.fullExpressions.end(),
+                       [](const auto &left, const auto &right) {
+                         return left.hirExpression < right.hirExpression;
+                       }))
+      return;
+    std::vector<HirFullExpressionId> remap(output.fullExpressions.size() + 1);
+    std::sort(output.fullExpressions.begin(), output.fullExpressions.end(),
+              [](const auto &left, const auto &right) {
+                return left.hirExpression < right.hirExpression;
+              });
+    fullExpressionIds.clear();
+    for (std::size_t index = 0; index < output.fullExpressions.size();
+         ++index) {
+      auto &expression = output.fullExpressions[index];
+      if (expression.id == 0 || expression.id >= remap.size() ||
+          remap[expression.id] != 0) {
+        valid = false;
+        return;
+      }
+      remap[expression.id] = index + 1;
+      expression.id = index + 1;
+      fullExpressionIds.emplace(expression.hirExpression, expression.id);
+    }
+    const auto repair = [&](HirFullExpressionId &id) {
+      if (id >= remap.size() || (id != 0 && remap[id] == 0))
+        valid = false;
+      else
+        id = remap[id];
+    };
+    for (auto &drop : output.dropObligations)
+      repair(drop.fullExpression);
+    for (auto &block : output.blocks)
+      for (auto &instruction : block.instructions)
+        repair(instruction.fullExpressionEnd);
+    if (loweredProgramInitialization)
+      for (auto &step : loweredProgramInitialization->steps) {
+        repair(step.fullExpression);
+        for (auto &id : step.nestedFullExpressions)
+          repair(id);
+        std::sort(step.nestedFullExpressions.begin(),
+                  step.nestedFullExpressions.end());
+      }
+  }
+
   void finishBodyVerification() {
+    canonicalizeFullExpressions();
     rebuildMirReachability(output);
     valid = rebuildMirValueUses(output) && valid;
     valid = validateSourceProvenance() && valid;
@@ -2349,6 +2424,11 @@ private:
       return;
     }
     MirBody unshared = output;
+    const auto unsharedFullExpressionIds = fullExpressionIds;
+    const auto unsharedInitialization =
+        loweredProgramInitialization
+            ? std::optional(*loweredProgramInitialization)
+            : std::nullopt;
     const MirInvokeContinuations continuations = invokeContinuations;
     const MirInstructionId instruction = nextInstruction;
     const bool previouslyValid = valid;
@@ -2358,6 +2438,9 @@ private:
       return;
     }
     output = std::move(unshared);
+    fullExpressionIds = unsharedFullExpressionIds;
+    if (unsharedInitialization)
+      *loweredProgramInitialization = *unsharedInitialization;
     invokeContinuations = continuations;
     nextInstruction = instruction;
     valid = previouslyValid;
@@ -4213,6 +4296,7 @@ private:
     case HirValueKind::Call:
     case HirValueKind::Propagation:
     case HirValueKind::Conditional:
+    case HirValueKind::ScopedResult:
       place = loanOrValuePlace(*value);
       break;
     case HirValueKind::Unary:
@@ -4657,6 +4741,7 @@ private:
     case HirValueKind::Call:
     case HirValueKind::Propagation:
     case HirValueKind::Conditional:
+    case HirValueKind::ScopedResult:
     case HirValueKind::Grouping:
     case HirValueKind::Index:
     case HirValueKind::MemberAccess:
@@ -4954,7 +5039,8 @@ private:
     if (isCallLike(*value) || value->kind == HirValueKind::DirectInitializer ||
         value->kind == HirValueKind::Move ||
         value->kind == HirValueKind::Propagation ||
-        value->kind == HirValueKind::Conditional) {
+        value->kind == HirValueKind::Conditional ||
+        value->kind == HirValueKind::ScopedResult) {
       emitValue(id);
       return;
     }
@@ -5287,8 +5373,8 @@ private:
                                 : AccessMode::ReadOnly;
   }
 
-  // The value-rooted slot of a materialized temporary whose obligation is
-  // still active, or zero.
+  // The exact slot of a materialized temporary whose obligation is still
+  // active, including a join's existing hidden slot, or zero.
   [[nodiscard]] MirPlaceId temporarySlot(HirValueId id) {
     const HirValue *temporary = findValue(id);
     const MirDropObligationId obligation =
@@ -5301,7 +5387,10 @@ private:
         drop == nullptr ? nullptr : output.findPlace(drop->place);
     if (drop == nullptr || !temporaryIsActive(obligation) ||
         drop->kind != MirDropObligationKind::Value || drop->value != id ||
-        slot == nullptr || slot->root != MirPlaceRootKind::Value ||
+        slot == nullptr ||
+        (slot->root != MirPlaceRootKind::Value &&
+         !(slot->root == MirPlaceRootKind::Temporary &&
+           findMirTemporaryMaterialization(output, *slot, id))) ||
         !slot->projections.empty()) {
       return 0;
     }
@@ -5363,6 +5452,7 @@ private:
     // is a transport identity, not a second materialization.
     const bool conditionalResult =
         (temporary->kind == HirValueKind::Conditional ||
+         temporary->kind == HirValueKind::ScopedResult ||
          isAssignmentExpression(temporary->kind)) &&
         materialized != nullptr &&
         materialized->root == MirPlaceRootKind::Temporary &&
@@ -6521,6 +6611,12 @@ private:
     if (role == MirCallInputRole::Argument &&
         inputKind == HirCallInputKind::ReadTemporaryBorrow) {
       const MirPlace *source = output.findPlace(input.operands.front().place);
+      auto materialization =
+          source ? findMirTemporaryMaterialization(output, *source, sourceValue)
+                 : MirTemporaryMaterialization{};
+      if (!materialization && source)
+        materialization =
+            findMirMovedTemporaryMaterialization(output, *source, sourceValue);
       if (type.kind != SemanticType::Reference ||
           type.referenceAccess != AccessMode::ReadOnly ||
           type.arguments.size() != 1 ||
@@ -6530,8 +6626,7 @@ private:
            type.arguments.front().kind != SemanticType::FunctionItem) ||
           input.operands.front().kind != MirOperandKind::BorrowRead ||
           input.operands.front().type != type || source == nullptr ||
-          source->root != MirPlaceRootKind::Value ||
-          !source->projections.empty() ||
+          !materialization || !source->projections.empty() ||
           source->type != type.arguments.front() ||
           source->access != AccessMode::Mutable ||
           source->sourceValue != sourceValue || scopes.empty()) {
@@ -9333,6 +9428,194 @@ private:
     std::unordered_map<MirLoanId, HirStatementId> transfers;
   };
 
+  struct ResultRegion {
+    const HirValue *value = nullptr;
+    MirPlaceId destination = 0;
+    MirDropObligationId obligation = 0;
+    std::vector<Scope> incomingScopes;
+    std::vector<TemporaryDrop> incomingTemporaries;
+    std::unordered_map<HirBindingId, MirLoanId> incomingBindings;
+    std::unordered_map<MirLoanId, HirStatementId> incomingTransfers;
+    std::vector<OpenBranch> exits;
+    std::vector<std::vector<TemporaryDrop>> exitTemporaries;
+    std::vector<std::unordered_map<HirBindingId, MirLoanId>> exitBindings;
+  };
+
+  void emitRegionReturn(const HirStatement &statement) {
+    if (resultRegions.empty() ||
+        statement.resultRegion != resultRegions.back().value->id) {
+      valid = false;
+      return;
+    }
+    // Evaluating a return expression may itself enter another result region,
+    // so retain indices/identities, not references into the region stack.
+    const std::size_t index = resultRegions.size() - 1;
+    const auto *regionValue = resultRegions[index].value;
+    const auto incomingScopes = scopes;
+    if (regionValue->info.type != SemanticType::Void) {
+      if (!statement.value) {
+        valid = false;
+        return;
+      }
+      const MirOperand operand = valueOperand(*statement.value);
+      if (terminated())
+        return;
+      MirInstruction initialize{.kind = MirInstructionKind::Initialize,
+                                .hirValue = regionValue->id,
+                                .hirStatement = statement.id,
+                                .destination = resultRegions[index].destination,
+                                .operands = {operand},
+                                .info = {.type = regionValue->info.type,
+                                         .category = ValueCategory::Place,
+                                         .access = AccessMode::Mutable,
+                                         .traits = regionValue->info.traits}};
+      const auto sourceDrop = dropObligationForValue(*statement.value);
+      const auto resultDrop = resultRegions[index].obligation;
+      if (resultDrop != 0) {
+        if (temporaryIsActive(sourceDrop)) {
+          appendReparentOrTypedTransfer(initialize, sourceDrop, resultDrop);
+          (void)removeTemporary(sourceDrop);
+        } else {
+          appendLifecycle(initialize,
+                          {.kind = MirLifecycleEventKind::Initialize,
+                           .target = resultDrop});
+        }
+        registerTemporary(resultDrop);
+      }
+      (void)appendInstruction(std::move(initialize));
+    } else if (statement.value) {
+      emitValue(*statement.value);
+      if (terminated())
+        return;
+    }
+    endReturnExpressionLoans(incomingScopes);
+    auto retained = resultRegions[index].incomingTemporaries;
+    const auto resultDrop = resultRegions[index].obligation;
+    for (const auto &temporary : temporaryDrops)
+      if (temporary.obligation == resultDrop)
+        retained.push_back(temporary);
+    // The published result already has its outer full-expression lifetime.
+    // Keep it in failure cleanup while destroying macro-local temporaries
+    // and locals. A cleanup panic must still destroy it exactly once.
+    emitTemporaryDrops(retained, statement.value.value_or(0), statement.id);
+    emitScopeExit(resultRegions[index].incomingScopes.size());
+    const MirBlockId bridge = appendBlock();
+    terminate({.kind = MirTerminatorKind::Goto,
+               .hirStatement = statement.id,
+               .target = bridge});
+    auto exitedScopes = scopes;
+    exitedScopes.resize(resultRegions[index].incomingScopes.size());
+    resultRegions[index].exits.push_back(
+        {.end = bridge,
+         .scopes = std::move(exitedScopes),
+         .transfers = callTransferredLoanEndpoints});
+    resultRegions[index].exitTemporaries.push_back(temporaryDrops);
+    resultRegions[index].exitBindings.push_back(projectOuterBindingLoans(
+        resultRegions[index].incomingBindings, bindingLoans));
+  }
+
+  void emitScopedResult(const HirValue &value) {
+    if (!value.regionBody || value.info.category != ValueCategory::Value ||
+        std::any_of(
+            resultRegions.begin(), resultRegions.end(),
+            [&](const auto &region) { return region.value == &value; }) ||
+        value.info.traits.containsBorrowedState) {
+      valid = false;
+      return;
+    }
+    if ((value.info.type.kind == SemanticType::Class ||
+         value.info.type.kind == SemanticType::Lambda) &&
+        !value.dropObligation) {
+      // Result-slot initialization is a language lifetime fact, including
+      // passive objects, not a pattern for the backend to reconstruct.
+      valid = false;
+      return;
+    }
+    const MirBlockId merge = appendBlock();
+    const bool hasResult = value.info.type != SemanticType::Void;
+    const MirPlaceId destination = hasResult ? conditionalTemporary(value) : 0;
+    resultRegions.push_back(
+        {.value = &value,
+         .destination = destination,
+         .obligation =
+             hasResult ? dropObligationForValue(value.id, destination) : 0,
+         .incomingScopes = scopes,
+         .incomingTemporaries = temporaryDrops,
+         .incomingBindings = bindingLoans,
+         .incomingTransfers = callTransferredLoanEndpoints});
+    lowerStatement(*value.regionBody);
+    if (!terminated()) {
+      if (hasResult) {
+        valid = false;
+      } else {
+        const MirBlockId bridge = appendBlock();
+        terminate({.kind = MirTerminatorKind::Goto, .target = bridge});
+        resultRegions.back().exits.push_back(
+            {.end = bridge,
+             .scopes = scopes,
+             .transfers = callTransferredLoanEndpoints});
+        resultRegions.back().exitTemporaries.push_back(temporaryDrops);
+        resultRegions.back().exitBindings.push_back(projectOuterBindingLoans(
+            resultRegions.back().incomingBindings, bindingLoans));
+      }
+    }
+    auto region = std::move(resultRegions.back());
+    resultRegions.pop_back();
+    std::vector<OpenBranch *> branches;
+    for (auto &exit : region.exits)
+      branches.push_back(&exit);
+    const auto consumed = joinConsumedBranches(branches, region.incomingScopes,
+                                               region.incomingTransfers, merge);
+    scopes = region.incomingScopes;
+    for (const auto &[loan, endpoint] : consumed)
+      removeLoanFromState(loan, scopes, bindingLoans);
+    current = merge;
+    callTransferredLoanEndpoints = region.incomingTransfers;
+    temporaryDrops = region.incomingTemporaries;
+    bindingLoans = region.incomingBindings;
+    for (auto &bindings : region.exitBindings)
+      for (const auto &[loan, endpoint] : consumed)
+        std::erase_if(bindings,
+                      [&](const auto &entry) { return entry.second == loan; });
+    if (region.exits.empty()) {
+      terminate({.kind = MirTerminatorKind::Unreachable});
+      emittedValues.insert(value.id);
+      return;
+    }
+    callTransferredLoanEndpoints = region.exits.front().transfers;
+    temporaryDrops = region.exitTemporaries.front();
+    bindingLoans = region.exitBindings.front();
+    scopes = region.exits.front().scopes;
+    for (std::size_t index = 1; index < region.exits.size(); ++index) {
+      if (!sameScopeState(scopes, region.exits[index].scopes) ||
+          bindingLoans != region.exitBindings[index])
+        valid = false;
+      callTransferredLoanEndpoints = intersectTransferredLoanEndpoints(
+          callTransferredLoanEndpoints, region.exits[index].transfers);
+      temporaryDrops =
+          mergeTemporaryDrops(temporaryDrops, region.exitTemporaries[index]);
+    }
+    if (hasResult) {
+      // A fresh object result uses an owned transport even when its generated
+      // move is trivial. A Load denotes a copied place observation, which is
+      // not the producer contract selected by a later by-value call stage.
+      const bool move = value.info.type.kind == SemanticType::Class ||
+                        value.info.type.kind == SemanticType::Lambda ||
+                        value.info.traits.drop != DropKind::Trivial ||
+                        !value.info.traits.copyable;
+      (void)appendInstruction(
+          {.kind = move ? MirInstructionKind::Move : MirInstructionKind::Load,
+           .hirValue = value.id,
+           .result = resultFor(value),
+           .operands = {{.kind =
+                             move ? MirOperandKind::Move : MirOperandKind::Copy,
+                         .place = destination,
+                         .type = value.info.type}},
+           .info = value.info});
+    }
+    emittedValues.insert(value.id);
+  }
+
   [[nodiscard]] std::unordered_map<MirLoanId, HirStatementId>
   joinConsumedBranches(
       std::vector<OpenBranch *> branches, const std::vector<Scope> &incoming,
@@ -9685,6 +9968,11 @@ private:
       valid = false;
       return;
     }
+    // Recursive operand emission may add nested result-region expressions and
+    // rehash the baseline maps. Keep the entry state, not invalidated
+    // iterators.
+    const auto initialTemporaryDrops = temporaryBaseline->second;
+    const auto initialScopes = scopeBaseline->second;
     // A named operand that the consuming steps take by value, such as an
     // enum without cleanup, is read once before the branch, so both steps
     // receive that one dominating value; a copied class instead copies at
@@ -9721,8 +10009,8 @@ private:
     if (!terminated()) {
       const MirDropObligationId enclosingPendingReturnDrop = pendingReturnDrop;
       prepareReturnOwnership(returnedValue, result);
-      endReturnExpressionLoans(scopeBaseline->second);
-      emitTemporaryDrops(temporaryBaseline->second, value.id, 0, 0, true);
+      endReturnExpressionLoans(initialScopes);
+      emitTemporaryDrops(initialTemporaryDrops, value.id, 0, 0, true);
       emitScopeExit(0);
       publishReturnOwnership(returnedValue);
       pendingReturnDrop = enclosingPendingReturnDrop;
@@ -10502,6 +10790,10 @@ private:
     }
     if (value->kind == HirValueKind::Conditional) {
       emitConditional(*value);
+      return;
+    }
+    if (value->kind == HirValueKind::ScopedResult) {
+      emitScopedResult(*value);
       return;
     }
     if (value->kind == HirValueKind::PackFold) {
@@ -11456,7 +11748,7 @@ private:
   }
 
   void registerDrop(HirBindingId bindingId, MirPlaceId place) {
-    if (scopes.empty() || !tracksLocalDrops()) {
+    if (scopes.empty() || nonLexicalBindings.contains(bindingId)) {
       return;
     }
     const HirBinding *binding = findBinding(bindingId);
@@ -11470,13 +11762,6 @@ private:
       }
       scopes.back().drops.push_back(place);
     }
-  }
-
-  [[nodiscard]] bool tracksLocalDrops() const {
-    return output.kind == MirBodyKind::Function ||
-           output.kind == MirBodyKind::Constructor ||
-           output.kind == MirBodyKind::Destructor ||
-           output.kind == MirBodyKind::Lambda;
   }
 
   [[nodiscard]] bool bodylessDefinition() const {
@@ -11508,9 +11793,6 @@ private:
   }
 
   void seedParameterDrops() {
-    if (!tracksLocalDrops()) {
-      return;
-    }
     for (const HirBinding &binding : source.bindings) {
       if (binding.parameter == nullptr) {
         continue;
@@ -12216,6 +12498,15 @@ private:
 
     std::vector<HirStatementId> expectedRoots;
     std::unordered_set<HirBindingId> plannedBindings;
+    std::unordered_set<HirBindingId> initializerLocalBindings;
+    std::vector<std::vector<HirValueId>> initializerRoots;
+    initializerRoots.reserve(programInitialization->steps.size());
+    for (const auto &step : programInitialization->steps)
+      initializerRoots.push_back(step.initializer
+                                     ? std::vector{*step.initializer}
+                                     : std::vector<HirValueId>{});
+    const auto initializerInventories =
+        hirInitializerReachabilityBatch(source, initializerRoots);
     loweredProgramInitialization->steps.reserve(
         programInitialization->steps.size());
     for (std::size_t index = 0; index < programInitialization->steps.size();
@@ -12301,8 +12592,26 @@ private:
         expectedRoots.push_back(step.statement);
         lowered.statement = step.statement;
         lowered.initializer = step.initializer.value_or(0);
+        const auto &reachable = initializerInventories[index];
+        if (!reachable.complete)
+          valid = false;
+        std::vector<HirBindingId> locals(reachable.bindings.begin(),
+                                         reachable.bindings.end());
+        std::sort(locals.begin(), locals.end());
         lowered.storageInitialization =
             statement == nullptr ? 0 : lowerVariable(*statement);
+        for (const HirBindingId id : locals) {
+          const HirBinding *local = findBinding(id);
+          const MirPlaceId place = placeForBinding(id);
+          if (local == nullptr || place == 0 ||
+              nonLexicalBindings.contains(id) ||
+              !initializerLocalBindings.insert(id).second) {
+            valid = false;
+            continue;
+          }
+          lowered.locals.push_back(
+              {.binding = id, .symbol = local->info.symbol, .place = place});
+        }
         const auto fullExpression =
             initializer == nullptr
                 ? fullExpressionIds.end()
@@ -12311,6 +12620,17 @@ private:
           valid = false;
         } else {
           lowered.fullExpression = fullExpression->second;
+        }
+        for (const HirFullExpression &expression : source.fullExpressions) {
+          if (!reachable.statements.contains(expression.statement))
+            continue;
+          const auto nested = fullExpressionIds.find(expression.id);
+          if (nested == fullExpressionIds.end() ||
+              nested->second == lowered.fullExpression) {
+            valid = false;
+            continue;
+          }
+          lowered.nestedFullExpressions.push_back(nested->second);
         }
       } else {
         valid = false;
@@ -12326,6 +12646,8 @@ private:
       output.entry = appendBlock();
       current = output.entry;
     }
+    plannedBindings.insert(initializerLocalBindings.begin(),
+                           initializerLocalBindings.end());
     if (source.roots != expectedRoots ||
         source.bindings.size() != plannedBindings.size() ||
         std::any_of(source.bindings.begin(), source.bindings.end(),
@@ -12363,6 +12685,11 @@ private:
   void lowerStatement(HirStatementId id) {
     const HirStatement *statement = findStatement(id);
     if (statement == nullptr) {
+      valid = false;
+      return;
+    }
+    if (statement->kind != HirStatementKind::Return &&
+        statement->resultRegion != 0) {
       valid = false;
       return;
     }
@@ -12438,7 +12765,10 @@ private:
                  .target = continueContexts.back().target});
       return;
     case HirStatementKind::Return:
-      lowerReturn(*statement);
+      if (!resultRegions.empty() || statement->resultRegion != 0)
+        emitRegionReturn(*statement);
+      else
+        lowerReturn(*statement);
       return;
     case HirStatementKind::Empty:
       return;
@@ -12909,10 +13239,25 @@ private:
       const MirPlace *destinationPlace = output.findPlace(destination);
       const MirDropObligation *sourceDrop =
           output.findDropObligation(sourceObligation);
+      const bool exactField =
+          fieldInitializerOwner != nullptr && destinationPlace != nullptr &&
+          sourceDrop != nullptr && binding != nullptr &&
+          std::any_of(fieldInitializerOwner->fields.begin(),
+                      fieldInitializerOwner->fields.end(),
+                      [&](const HirClassField &field) {
+                        return field.binding == destinationPlace->binding &&
+                               field.declaration == binding->variable &&
+                               field.info.symbol == destinationPlace->symbol &&
+                               field.info.type == destinationPlace->type &&
+                               field.info.type == sourceDrop->dropType.type;
+                      });
       if (destinationPlace != nullptr && sourceDrop != nullptr &&
           destinationPlace->root == MirPlaceRootKind::Binding &&
           destinationPlace->binding != 0 &&
-          destinationPlace->projections.empty()) {
+          destinationPlace->projections.empty() && exactField) {
+        // Passive aggregate temporaries still have an object-lifetime
+        // obligation. Preserve its exact field transfer too: trivial cleanup
+        // does not make the publication an unarmed ownership transfer.
         const MirDropObligationId rollback = output.dropObligations.size() + 1;
         output.dropObligations.push_back(
             {.id = rollback,
@@ -12924,6 +13269,9 @@ private:
         (void)removeTemporary(sourceObligation);
         constructorRollback.push_back(rollback);
       } else {
+        // A lexical initializer-local must have its own Binding obligation.
+        // Never reinterpret its missing obligation as a field subobject.
+        valid = false;
         appendLifecycle(initialize, {.kind = MirLifecycleEventKind::TransferOut,
                                      .source = sourceObligation});
         (void)removeTemporary(sourceObligation);
@@ -13580,7 +13928,7 @@ private:
                                      .target = target});
       }
     } else if (binding->info.traits.drop == DropKind::Lexical &&
-               tracksLocalDrops()) {
+               !nonLexicalBindings.contains(*statement.binding)) {
       valid = false;
     }
     (void)appendInstruction(std::move(initialize));
@@ -14878,6 +15226,10 @@ private:
   // Constructor MIR copies only the resulting active rollback descriptors;
   // it never re-executes or interprets the initializer body.
   const MirClassInstance *constructorOwner = nullptr;
+  // The exact HIR class catalog distinguishes its storage bindings from
+  // lexical locals evaluated inside a field's initializer expression.
+  const HirClassInstance *fieldInitializerOwner = nullptr;
+  std::unordered_set<HirBindingId> nonLexicalBindings;
   const HirProgramInitializationPlan *programInitialization = nullptr;
   MirProgramInitializationPlan *loweredProgramInitialization = nullptr;
   MirBody output;
@@ -14947,6 +15299,7 @@ private:
   std::unordered_set<HirValueId> emittedValues;
   std::unordered_set<HirValueId> checkedPlacePrefixes;
   std::vector<Scope> scopes;
+  std::vector<ResultRegion> resultRegions;
   std::vector<TemporaryDrop> temporaryDrops;
   std::vector<BreakContext> breakContexts;
   std::vector<ContinueContext> continueContexts;

@@ -252,16 +252,36 @@ The current implemented foundation includes:
 - `<std/assert>` provides always-on `std::assert`, configuration-controlled
   `std::debug_assert` and `constexpr bool std::debug_assertions_enabled`.
   Both check an exact `bool`, evaluating it once when enabled, and use
-  `std::panic` on failure. Optional literal or formatted messages are evaluated
-  only on failure. `NDEBUG` disables all debug-assert argument evaluation, not
+  `std::panic` on failure. Their default messages include the exact written
+  condition through `std::expression_text`, or the explicit description
+  `assertion condition` for synthesized macro expressions. The default helper
+  captures this inert metadata before evaluating the condition, so a consuming
+  condition is not re-checked after its owner has moved. Optional literal or
+  formatted messages are evaluated only on failure. `NDEBUG` disables all
+  debug-assert argument evaluation, not
   their type checking; it never disables `std::assert`. The built-in release
   project profile defines `NDEBUG`; direct compilation can use `-D NDEBUG`,
   independently of optimization. These are source-defined
   [typed statement macros](execution.md#typed-statement-macros), a
   facility available equally to application APIs. `static_assert` remains the
   unqualified compile-time language construct; and
-- `<std/testing>` provides caller-tracked `std::testing::check`, reporting a
-  failed condition through cleanup-preserving panic. Manifest test suites
+- `<std/testing>` provides caller-tracked checks that report failures through
+  cleanup-preserving panic. `std::testing::check` checks a boolean;
+  `check_eq` and `check_ne` compare equally typed, equality-comparable values
+  through their source-defined `std::formatter<T>` and show actual/expected
+  values only on failure. These source-defined typed macros evaluate scalar
+  operands once into values and borrow object operands through ordinary
+  reference-holding source types; literal expectations need no local binding.
+  Messages are evaluated only on failure, and user equality is called once. `check_string_eq` compares string views, quoting
+  newlines, tabs, zero bytes, quotes and backslashes and reporting lengths and
+  the first differing UTF-8 byte index. `check_approx` accepts floating-point
+  values and explicit absolute tolerance, plus optional relative tolerance;
+  either tolerance may establish equality. Tolerances must be finite and
+  nonnegative; NaNs fail, equal infinities pass and unequal infinities fail.
+  `check_elements_eq` compares two borrowed contiguous `std::span<T>` values,
+  reporting the first differing index and values or unequal lengths; bind
+  `container.as_span()` results to locals first. These checks neither consume
+  borrowed operands nor format successful comparisons. Manifest test suites
   discover `[[test]] void` functions and run each in its own process; see
   [annotated test suites](programs-and-targets.md#annotated-test-suites); and
 - `<std/build>` host-side package build-program support through
@@ -608,7 +628,26 @@ The current implemented foundation includes:
   MIR retains base/field caller facts even for state-bearing constructor
   compositions that the current C++ backend does not yet admit; this is a
   separate constructor-rollback coverage limit, not a fallback to the
-  declaration location; and
+  declaration location. It also provides the source-defined value macro
+  `std::expression_text(expression)`, returning a literal-backed
+  `std::string_view` with static lifetime and no runtime allocation. Its
+  expression must type-check, but is never evaluated, moved, copied or
+  runtime-borrowed. The text contains the exact source bytes from the first
+  through the last expression token, including parentheses, interior whitespace,
+  comments, newlines and UTF-8 spelling; surrounding argument trivia is excluded.
+  Forwarding a complete argument through nested typed macros retains the
+  original caller text. Defaulted arguments retain the spelling of their
+  declaration's default expression. A compound expression built by substituting
+  children, or syntax without an available written source origin, is rejected
+  rather than given a reconstructed spelling. The result is read-only metadata,
+  with no token substitution or token-pasting operation.
+  The overload `std::expression_text(expression, fallback)` uses the exact text
+  when available and otherwise returns the explicit fallback. The fallback must
+  be compile-time literal-backed `std::string_view` text, even when the exact
+  expression origin is available. Both arguments are type-checked without
+  runtime evaluation, moves, copies or loans; the fallback uses the existing
+  constant-evaluation service. The one-argument form retains its fail-closed
+  requirement; and
 - `<std/format>` heterogeneous automatic or numeric-indexed replacement for
   booleans, characters, fixed-width integers, integral enums, binary32/binary64 values, string
   views, and transferred owning strings through source-defined `std::format`,

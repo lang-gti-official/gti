@@ -3,6 +3,10 @@
 Canonical GTI knowledge lives here. Source code and tests remain authoritative
 for the current implementation when a document is stale or ambiguous.
 
+Canonical source, PRs, issues, CI and releases are on
+[Gitea](https://git.internal.howetotech.dev/gti-lang/gti), not GitHub. Historical
+hosting statements do not override the current [agent workflow](architecture/agent-workflow.md).
+
 GTI is an independent systems language with strong C++ syntax familiarity,
 excellent safety as a design goal, and source-defined public library policy over
 general language facilities. The reference C++ backend implements GTI semantics;

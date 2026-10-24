@@ -39,6 +39,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   instanceTypeSubstitution.clear();
   instanceValueSubstitution.clear();
   nextLambdaId = 1;
+  requestSession.sourceLambdaIdentities.clear();
   nextSemanticLoanId = 1;
   nextPlaceSelectionId = 1;
   instanceSymbolCeiling = 0;
@@ -3070,10 +3071,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   if (stmt.isMacro()) {
     const Token &keyword = *stmt.macroKeyword();
     if (functionInfo == nullptr || functionInfo->ownerClass != 0 ||
-        isEntryPoint || functionInfo->returnType != SemanticType::Void ||
-        stmt.hasCLinkage() || stmt.runtimeBinding() || !stmt.body() ||
-        stmt.isConstexpr() || stmt.unsafeKeyword() || stmt.operatorName() ||
-        stmt.hasFunctionAttribute("noreturn") ||
+        isEntryPoint || stmt.hasCLinkage() || stmt.runtimeBinding() ||
+        !stmt.body() || stmt.isConstexpr() || stmt.unsafeKeyword() ||
+        stmt.operatorName() || stmt.hasFunctionAttribute("noreturn") ||
         stmt.hasFunctionAttribute("test") ||
         stmt.hasFunctionAttribute("thread_confined_callback") ||
         std::any_of(stmt.parameters().begin(), stmt.parameters().end(),
@@ -3083,13 +3083,14 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                     })) {
       reportContract(keyword,
                      "A typed macro requires a defined, safe, non-constexpr "
-                     "namespace-scope void statement template with value "
+                     "namespace-scope template with typed expression "
                      "parameters.");
     } else if (!validMacroBody(*stmt.body())) {
       reportContract(keyword,
                      "A macro body supports automatic locals, expressions, "
                      "blocks, if and local loops. Break and continue must "
-                     "target a loop within that macro; returns, propagation, "
+                     "target a loop within that macro; returns are local to "
+                     "the macro. Propagation, "
                      "lambdas, static storage and generated declarations "
                      "require an ordinary helper.");
     }
@@ -4710,6 +4711,8 @@ auto SemanticVisitor::Impl::visitNamespaceDecl(const NamespaceDecl &stmt)
 
 auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
   semanticModel.recordFullExpression(stmt, stmt.value());
+  if (analyzeMacroReturn(stmt))
+    return;
   if (functionDepth == 0) {
     report(stmt.keyword(), "Cannot return from outside a function.");
     return;
@@ -7088,6 +7091,8 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
 }
 
 auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
+  if (analyzeMacroCall(expr))
+    return;
   // How this call's result is used decides an accessor pair below; read it
   // before any child analysis supplies its own contexts.
   const std::optional<ResultUse> callUse = resultUseFor(expr);
@@ -9585,8 +9590,22 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       instanceAnalysisActive && instanceBaseModel != nullptr
           ? instanceBaseModel->findLambda(expr)
           : nullptr;
-  const LambdaId id =
-      lexicalLambda == nullptr ? nextLambdaId++ : lexicalLambda->id;
+  const auto *context = macroContext(expr.bracket());
+  const auto sourceExpansion = context && context->callableSourceExpansion
+                                   ? *context->callableSourceExpansion
+                                   : expr.bracket().expansion;
+  const auto sourceKey = std::tuple{expr.bracket().source,
+                                    expr.bracket().position, sourceExpansion};
+  auto [sourceIdentity, inserted] =
+      requestSession.sourceLambdaIdentities.try_emplace(sourceKey);
+  if (inserted) {
+    nextLambdaId = std::max(nextLambdaId, instanceLambdaCeiling);
+    sourceIdentity->second = {
+        .id = lexicalLambda == nullptr ? nextLambdaId++ : lexicalLambda->id,
+        .declaration = &expr};
+  }
+  const LambdaId id = sourceIdentity->second.id;
+  nextLambdaId = std::max(nextLambdaId, id + 1);
   if (expr.returnType().name.last().kind == TokenKind::AUTO) {
     report(expr.returnType().name.last(),
            "Lambda return types must be explicit; 'auto' return deduction "
@@ -14295,8 +14314,12 @@ auto SemanticVisitor::Impl::summarizeFlow(
             .normalReturn = returns ? returned : nullptr};
   }
   if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
-    if (const Stmt *expanded = semanticModel.findMacroExpansion(*expression))
-      return summarizeFlow(expanded, normalReturns, structural);
+    if (const Stmt *expanded = semanticModel.findMacroExpansion(*expression)) {
+      const auto flow = summarizeFlow(expanded, nullptr, structural);
+      // A macro-local return resumes this statement's caller; it is never
+      // evidence of a return from the surrounding function or loop.
+      return {.canFallThrough = flow.canFallThrough || flow.normalReturn};
+    }
     return {.canFallThrough =
                 !expressionNeverReturns(expression->expression().get())};
   }

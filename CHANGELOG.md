@@ -9,6 +9,31 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.470.0 — Macro results and written expression metadata
+
+- Value macros use `#macro Result NAME(typed parameters)` and ordinary calls.
+  Macro-local `return` statements publish their result without exiting the
+  caller, with checked movement and deterministic local/failure cleanup.
+- Fresh lambda arguments retain lexical callable identity and initialize
+  their captures only where the argument expression is evaluated.
+- `std::expression_text(expression)` in `<std/source_location>` obtains
+  literal-backed written argument text without evaluating the expression.
+  Default assertion messages include their original condition text.
+
+## 0.469.0 — Test selection, isolated execution and richer assertions
+
+- `gti test` can list, filter and skip individual tests, run bounded parallel
+  workers and enforce per-test deadlines. Process groups are cleaned up on
+  completion, timeout and interruption. Legacy human-mode test executables
+  retain their stdout/stderr streams and status formatting.
+- `--format json` emits versioned inventory, launch, completion and summary
+  events with exact accounting, captured output and distinct process outcomes.
+  Empty selections fail unless explicitly allowed.
+- Source-defined equality, string, approximate floating-point and span-element
+  checks report values and caller locations while retaining ordinary ownership
+  and deterministic panic cleanup. Equality macros evaluate operands once and
+  defer formatting and custom messages until failure.
+
 ## 0.468.5 — Canonical Gitea hosting
 
 - Source, issues, PRs, Actions, tags, release downloads and agent tooling return

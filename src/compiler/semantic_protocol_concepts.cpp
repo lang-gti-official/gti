@@ -53,7 +53,9 @@ applicationText(const std::string &name,
                 const std::vector<SemanticType> &arguments, Spell spell) {
   std::string text = name + "<";
   for (std::size_t index = 0; index < arguments.size(); ++index) {
-    text += (index == 0 ? "" : ", ") + spell(arguments[index]);
+    if (index != 0)
+      text += ", ";
+    text += spell(arguments[index]);
   }
   return text + ">";
 }

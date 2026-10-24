@@ -48,6 +48,34 @@ obligation. The specialized sparse capability type, intrinsic family, adoption
 marker, native bitmap and backend storage helpers are retired. This implementation
 change is verified separately from the remaining allocation families below.
 
+### Written expression metadata
+
+The `source_expression_text` declaration in the trusted source-location unit
+is an identity-bound compiler capability, unavailable to application source.
+Its operand is checked through the same isolated request-session fork as typed
+macro selection. The caller receives no speculative moves, copies, loans,
+writes or execution effects. Semantics reads only the parser-retained complete
+written origin against its owning source buffer, then records a string constant.
+Missing or substituted compound origins fail closed with `GTI-S2019`; no AST
+printer supplies a guessed replacement. Full argument forwarding retains the
+original caller's origin, and defaults retain their declaration's source.
+An explicit fallback overload binds a second exact private declaration to the
+same capability. It validates fallback text with the existing constant service
+in a separate isolated probe, requiring a literal-backed string-view constant
+even when exact written text is available. A missing origin selects only that
+explicit constant; the strict form still rejects missing provenance. Neither
+operand publishes runtime ownership, loan or execution effects.
+
+`std::expression_text` is an ordinary value-producing typed macro over that
+capability. HIR normalizes its checked capability call to a literal before
+lowering any operand; MIR and production emission see only the existing
+literal-backed string-view representation. No runtime intrinsic, backend source
+inspection, new constexpr execution rule or allocation is involved. The
+successful result has static lifetime. Assertion macros use this public API in
+their default failure messages; explicit messages retain their source policy.
+Their explicit `assertion condition` fallback keeps synthesized conditions in
+application-defined macros usable without inventing a source spelling.
+
 ### Allocation inventory and remaining boundaries
 
 Inbound C-string import is source-defined scanning, byte conversion, terminated

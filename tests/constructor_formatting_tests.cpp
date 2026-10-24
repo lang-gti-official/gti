@@ -98,6 +98,19 @@ int main() {
         "namespace app\n{\n  #macro CHECK(bool condition)\n  {\n    if "
         "(condition)\n    {\n      use();\n    }\n  }\n}\n",
         macroAllman);
+  check("#macro int select(bool enabled,int first,int second){"
+        "if(enabled){return first;}return second;}",
+        "#macro int select(bool enabled, int first, int second) {\n"
+        "  if (enabled) {\n    return first;\n  }\n  return second;\n}\n",
+        {});
+  check("[[track_caller]]#macro T choose<T>(bool enabled,T first,T second){"
+        "return enabled?first:second;}",
+        "[[track_caller]] #macro T choose<T>(bool enabled, T first, T second) "
+        "{\n  return enabled ? first : second;\n}\n",
+        {});
+  check("#macro std::optional<T> maybe<T>(T value){return value;}",
+        "#macro std::optional<T> maybe<T>(T value) {\n  return value;\n}\n",
+        {});
 
   check("namespace tea{class Box{public:Box(int x):a(x),b(choose(1,2)){use();}"
         "Box():a(0),b(0){}int value(){return a;}};}",

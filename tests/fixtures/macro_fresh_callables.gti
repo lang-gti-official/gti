@@ -1,0 +1,94 @@
+mut int calls = 0;
+mut int drops = 0;
+
+class Owner {
+  int value;
+public:
+  Owner(int value) : value(value) {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() { drops += 1; }
+  int read() { return this.value; }
+};
+
+#macro when<F>(bool enabled, F action) {
+  if (enabled) { action(); }
+}
+#macro when_mut<F>(bool enabled, F action) {
+  if (enabled) { mut F callback = action; callback(); }
+}
+#macro twice<F>(F action) { action(); action(); }
+#macro relay<F>(F action) { when(true, action); }
+#macro ignore<F>(F action) {}
+#macro int snapshot<F>(F action) { return action(); }
+#macro F keep<F>(F expression) { return expression; }
+#macro F nested_keep<F>(F expression) { return keep(expression); }
+#macro F choose_keep<F>(bool enabled, F expression) {
+  if (enabled) { return expression; }
+  return expression;
+}
+
+int choose_snapshot(bool enabled) {
+  mut int value = 13;
+  auto callback = choose_keep(enabled, [value]() -> int { return value; });
+  value = 99;
+  return callback();
+}
+
+void observe<T>(T value) { calls += 1; }
+void generic<T>(T value) {
+  relay([value]() -> void { observe(value); });
+}
+
+int main() {
+  {
+    Owner skipped{5};
+    ignore([owned = std::move(skipped)]() -> void { calls += owned.read(); });
+    when(false, [owned = std::move(skipped)]() -> void { calls += owned.read(); });
+    if (skipped.read() != 5 || drops != 0 || calls != 0) { return 1; }
+  }
+  if (drops != 1) { return 2; }
+  {
+    Owner consumed{7};
+    when(true, [owned = std::move(consumed)]() -> void { calls += owned.read(); });
+    if (drops != 2 || calls != 7) { return 3; }
+  }
+  if (drops != 2) { return 4; }
+  int count = 2;
+  twice([count]() -> void { calls += count; });
+  relay([]() -> void { calls += 3; });
+  generic(4);
+  generic(true);
+  auto named = []() -> void { calls += 1; };
+  when(true, named);
+  mut int borrowed = 5;
+  when_mut(false, [mut &borrowed]() -> void { borrowed += 100; });
+  borrowed += 1;
+  when_mut(true, [mut &borrowed]() -> void { borrowed += 1; });
+  if (borrowed != 7 || calls != 17 || drops != 2) { return 5; }
+  mut int source = 2;
+  mut int sum = 0;
+  for (mut int index = 0; index < 3; ++index) {
+    sum += snapshot([source]() -> int { return source; });
+    source += 1;
+  }
+  if (sum != 9 || source != 5) { return 6; }
+  int direct = ([source]() -> int { return source; })();
+  source = 99;
+  if (direct != 5) { return 7; }
+  mut int captured = 7;
+  auto callback = keep([captured]() -> int { return captured; });
+  captured = 99;
+  if (callback() != 7) { return 8; }
+  auto nested = nested_keep([captured]() -> int { return captured; });
+  captured = 101;
+  if (nested() != 99) { return 9; }
+  if (choose_snapshot(true) != 13 || choose_snapshot(false) != 13) { return 10; }
+  {
+    Owner moved{17};
+    auto owned = keep([value = std::move(moved)]() -> int { return value.read(); });
+    if (drops != 2 || std::move(owned)() != 17) { return 11; }
+  }
+  if (drops != 3) { return 12; }
+  return 0;
+}

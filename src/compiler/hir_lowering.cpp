@@ -140,7 +140,11 @@ public:
     lowerEmbeddingPlan();
     lowerProgramInitializationPlan();
     lowerHostedProgramEntryPlan();
-    finalizeLifetimes(output.program.moduleBody, *baseModel, false);
+    std::unordered_set<HirBindingId> programStorageBindings;
+    for (const auto &step : output.program.programInitialization.steps)
+      programStorageBindings.insert(step.binding);
+    finalizeLifetimes(output.program.moduleBody, *baseModel,
+                      programStorageBindings);
     lowerLoans(*baseModel, output.program.moduleBody);
     processPendingInstances();
     const InstanceCounts reachable = instanceCounts();
@@ -1720,6 +1724,7 @@ private:
     output.program.classes[index].typeAliases = std::move(aliases);
     std::vector<HirClassField> fields;
     HirBody fieldInitializers;
+    std::unordered_set<HirBindingId> fieldBindings;
     fields.reserve(declaration->fields.size());
     for (const ClassFieldTypeInfo &field : declaration->fields) {
       SemanticType type = substitute(field.type, substitution);
@@ -1744,6 +1749,7 @@ private:
           field.declaration == nullptr
               ? 0
               : lowerBinding(*field.declaration, info, fieldInitializers);
+      fieldBindings.insert(binding);
       const std::optional<HirValueId> initializer =
           field.declaration == nullptr
               ? std::nullopt
@@ -1767,12 +1773,13 @@ private:
                             instanceProvider->requiresActiveCleanupFor(type)});
     }
     output.program.classes[index].fields = std::move(fields);
-    finalizeLifetimes(fieldInitializers, *model, false);
+    finalizeLifetimes(fieldInitializers, *model, fieldBindings);
     lowerLoans(*model, fieldInitializers);
     output.program.classes[index].fieldInitializers =
         std::move(fieldInitializers);
     std::vector<HirClassField> staticFields;
     HirBody staticFieldInitializers;
+    std::unordered_set<HirBindingId> staticFieldBindings;
     staticFields.reserve(declaration->staticFields.size());
     for (const ClassFieldTypeInfo &field : declaration->staticFields) {
       const SemanticType type = substitute(field.type, substitution);
@@ -1824,9 +1831,10 @@ private:
            .info = info,
            .requiresActiveCleanup =
                instanceProvider->requiresActiveCleanupFor(type)});
+      staticFieldBindings.insert(lowered.binding);
     }
     output.program.classes[index].staticFields = std::move(staticFields);
-    finalizeLifetimes(staticFieldInitializers, *model, false);
+    finalizeLifetimes(staticFieldInitializers, *model, staticFieldBindings);
     lowerLoans(*model, staticFieldInitializers);
     output.program.classes[index].staticFieldInitializers =
         std::move(staticFieldInitializers);
@@ -2201,7 +2209,7 @@ private:
           lowerStatements(bodyDeclaration->body()->statements(), *model,
                           classArguments, classValueArguments, body);
     }
-    finalizeLifetimes(body, *model, true);
+    finalizeLifetimes(body, *model);
     lowerLoans(*model, body, bodyDeclaration);
     std::vector<HirCallableParameter> callableParameters;
     callableParameters.reserve(declaration->callableParameters.size());
@@ -2595,7 +2603,7 @@ private:
       body.roots =
           lowerStatements(snapshot.source->body()->statements(), bodyModel,
                           classArguments, classValueArguments, body);
-    finalizeLifetimes(body, bodyModel, true, initializers);
+    finalizeLifetimes(body, bodyModel, {}, initializers);
     lowerLoans(bodyModel, body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
@@ -2648,7 +2656,7 @@ private:
     body.roots =
         lowerStatements(snapshot.source->body()->statements(), *model,
                         owner.typeArguments, owner.valueArguments, body);
-    finalizeLifetimes(body, *model, true);
+    finalizeLifetimes(body, *model);
     lowerLoans(*model, body, snapshot.source);
     output.program.destructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
@@ -2961,6 +2969,7 @@ private:
     case HirValueKind::Binary:
     case HirValueKind::Call:
     case HirValueKind::Conditional:
+    case HirValueKind::ScopedResult:
     case HirValueKind::Move:
     case HirValueKind::NativeCallback:
     case HirValueKind::FunctionItem:
@@ -3130,7 +3139,8 @@ private:
   }
 
   void finalizeLifetimes(
-      HirBody &body, const SemanticModel &model, bool lexicalBindings,
+      HirBody &body, const SemanticModel &model,
+      const std::unordered_set<HirBindingId> &nonLexicalBindings = {},
       const std::vector<HirConstructorInitializer> &initializers = {}) {
     body.fullExpressions.clear();
     body.dropObligations.clear();
@@ -3230,43 +3240,47 @@ private:
                            pending.constructorInitializer);
     }
 
-    if (lexicalBindings) {
-      for (HirBinding &binding : body.bindings) {
-        if (binding.parameter != nullptr &&
-            binding.info.type.kind == SemanticType::TypePack &&
-            binding.info.type.concretePack) {
-          for (std::size_t element = 0;
-               element < binding.info.type.arguments.size(); ++element) {
-            const SemanticType &type = binding.info.type.arguments[element];
-            if (instanceProvider->traitsFor(type).drop != DropKind::Lexical)
-              continue;
-            const HirDropObligationId id = body.dropObligations.size() + 1;
-            body.dropObligations.push_back(
-                {.id = id,
-                 .constructionOrder = id,
-                 .kind = HirDropObligationKind::Binding,
-                 .binding = binding.id,
-                 .packElement = element,
-                 .dropType = dropTypeFor(type),
-                 .initiallyActive = true});
-          }
-          continue;
+    // Initializer bodies contain both externally owned storage and ordinary
+    // lexical locals inside result regions. Exempt only the exact storage
+    // bindings; a body-wide exemption would leak those locals or mistake them
+    // for completed field subobjects during MIR rollback staging.
+    for (HirBinding &binding : body.bindings) {
+      if (nonLexicalBindings.contains(binding.id))
+        continue;
+      if (binding.parameter != nullptr &&
+          binding.info.type.kind == SemanticType::TypePack &&
+          binding.info.type.concretePack) {
+        for (std::size_t element = 0;
+             element < binding.info.type.arguments.size(); ++element) {
+          const SemanticType &type = binding.info.type.arguments[element];
+          if (instanceProvider->traitsFor(type).drop != DropKind::Lexical)
+            continue;
+          const HirDropObligationId id = body.dropObligations.size() + 1;
+          body.dropObligations.push_back(
+              {.id = id,
+               .constructionOrder = id,
+               .kind = HirDropObligationKind::Binding,
+               .binding = binding.id,
+               .packElement = element,
+               .dropType = dropTypeFor(type),
+               .initiallyActive = true});
         }
-        if (binding.info.type.kind == SemanticType::Reference ||
-            binding.info.staticStorage ||
-            binding.info.traits.drop != DropKind::Lexical) {
-          continue;
-        }
-        const HirDropObligationId id = body.dropObligations.size() + 1;
-        body.dropObligations.push_back(
-            {.id = id,
-             .constructionOrder = id,
-             .kind = HirDropObligationKind::Binding,
-             .binding = binding.id,
-             .dropType = dropTypeFor(binding.info.type),
-             .initiallyActive = binding.parameter != nullptr});
-        binding.dropObligation = id;
+        continue;
       }
+      if (binding.info.type.kind == SemanticType::Reference ||
+          binding.info.staticStorage ||
+          binding.info.traits.drop != DropKind::Lexical) {
+        continue;
+      }
+      const HirDropObligationId id = body.dropObligations.size() + 1;
+      body.dropObligations.push_back(
+          {.id = id,
+           .constructionOrder = id,
+           .kind = HirDropObligationKind::Binding,
+           .binding = binding.id,
+           .dropType = dropTypeFor(binding.info.type),
+           .initiallyActive = binding.parameter != nullptr});
+      binding.dropObligation = id;
     }
 
     std::unordered_set<HirValueId> temporaryBorrowValues;
@@ -3296,8 +3310,15 @@ private:
       }
     }
     for (HirValue &value : body.values) {
+      // A result region publishes a real object from one of its return paths.
+      // Even a passive class/closure needs an explicit lifetime identity for
+      // definite initialization, subsequent movement and prepared arguments.
+      // Trivial cleanup remains trivial; the obligation is not a destructor.
+      const bool scopedObject = value.kind == HirValueKind::ScopedResult &&
+                                (value.info.type.kind == SemanticType::Class ||
+                                 value.info.type.kind == SemanticType::Lambda);
       if (value.fullExpression == 0 ||
-          (!materializesDropValue(value, body) &&
+          (!materializesDropValue(value, body) && !scopedObject &&
            !temporaryBorrowValues.contains(value.id) &&
            !borrowedMoveValues.contains(value.id))) {
         continue;
@@ -3461,19 +3482,16 @@ private:
       return std::nullopt;
     }
     if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
-      if (auto expanded = model.shareMacroExpansion(*expression)) {
-        // Instance-local models can die before MIR consumes HIR source
-        // pointers. Retain exact reached roots, including nested/inherited
-        // expansions, independently of the model and this lowerer.
-        if (retainedSourceStatements.insert(expanded.get()).second)
-          output.program.sourceStatementOwners_.push_back(expanded);
+      if (auto expansion = model.shareMacroExpansion(*expression)) {
+        // A void template with no local return needs no result join. Preserve
+        // the existing statement-only lowering and its exact loan endpoints.
+        if (retainedSourceStatements.insert(expansion.get()).second)
+          output.program.sourceStatementOwners_.push_back(expansion);
         std::vector<HirStatementId> statements;
         if (const auto child =
-                lowerStatement(expanded.get(), model, classArguments,
+                lowerStatement(expansion.get(), model, classArguments,
                                classValueArguments, body))
           statements.push_back(*child);
-        // Preserve both endpoint domains. The caller statement can end an
-        // existing loan; the checked expansion has its own nested endpoints.
         return appendStatement({.kind = HirStatementKind::Block,
                                 .source = statement,
                                 .statements = std::move(statements)},
@@ -3674,7 +3692,8 @@ private:
       }
       return appendStatement({.kind = HirStatementKind::Return,
                               .source = statement,
-                              .value = returned},
+                              .value = returned,
+                              .resultRegion = activeResultRegion},
                              body);
     }
     if (const auto *switchStatement = stmtAs<SwitchStmt>(statement)) {
@@ -3964,10 +3983,12 @@ private:
     for (const Parameter &parameter : lambda.parameters()) {
       parameterBindings.push_back(lowerBinding(parameter, model, body));
     }
+    const auto enclosingResultRegion = std::exchange(activeResultRegion, 0);
     body.roots = lowerStatements(lambda.body(), model, classArguments,
                                  classValueArguments, body);
+    activeResultRegion = enclosingResultRegion;
     currentSourceFunctionName = enclosingSourceFunctionName;
-    finalizeLifetimes(body, model, true);
+    finalizeLifetimes(body, model);
     lowerLoans(model, body, nullptr, info->captures);
     std::vector<bool> captureRequiresActiveCleanup;
     captureRequiresActiveCleanup.reserve(info->captures.size());
@@ -4766,6 +4787,32 @@ private:
                            classValueArguments, body);
   }
 
+  [[nodiscard]] std::optional<HirFunctionInstanceId>
+  contextualConversionInstance(
+      const Expr &source, const SemanticModel &model,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments) {
+    const auto *resolved = model.findContextualConversion(source);
+    const auto *target = resolved && resolved->function
+                             ? baseModel->findFunction(resolved->function)
+                             : nullptr;
+    if (!target)
+      return std::nullopt;
+    SemanticType receiverType = resolved->dispatchOwner;
+    if (receiverType.kind != SemanticType::Class ||
+        receiverType.classId != target->ownerClass)
+      receiverType = model.typeOf(source);
+    const auto &ownerArguments = receiverType.kind == SemanticType::Class
+                                     ? receiverType.arguments
+                                     : classArguments;
+    const auto &ownerValueArguments = receiverType.kind == SemanticType::Class
+                                          ? receiverType.valueArguments
+                                          : classValueArguments;
+    return enqueueFunction(*target, ownerArguments, ownerValueArguments, {}, {},
+                           resolved->returnType, resolved->parameterTypes,
+                           operatorInstantiationSite(&source));
+  }
+
   // Calls the conversion operator on an already lowered receiver value; the
   // call is the source's last value, so the context consumes its result.
   [[nodiscard]] HirValueId appendContextualConversion(
@@ -5276,6 +5323,42 @@ private:
                                            body);
       }
     }
+    // A macro result is an ordinary source producer: preserve caller-selected
+    // defaults and contextual construction before entering its local region.
+    // lowerContextualConstruction re-enters with its exact inner guard, just
+    // as it does for a function-call producer.
+    if (const auto *call = exprAs<Call>(&expression)) {
+      if (auto expansion = model.shareMacroExpansion(*call)) {
+        const auto *info = model.findExpression(expression);
+        if (!info) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        if (retainedSourceStatements.insert(expansion.get()).second)
+          output.program.sourceStatementOwners_.push_back(expansion);
+        const HirValueId id = nextValueId++;
+        const HirValueId enclosing = std::exchange(activeResultRegion, id);
+        const auto region = lowerStatement(
+            expansion.get(), model, classArguments, classValueArguments, body);
+        activeResultRegion = enclosing;
+        if (!region) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        body.values.push_back({.id = id,
+                               .kind = HirValueKind::ScopedResult,
+                               .source = &expression,
+                               .info = *info,
+                               .regionBody = *region});
+        output.program.sourceValueIds[&expression].push_back(id);
+        if (const auto target = contextualConversionInstance(
+                expression, model, classArguments, classValueArguments))
+          return appendContextualConversion(
+              expression, *model.findContextualConversion(expression), *target,
+              id, body);
+        return id;
+      }
+    }
     if (const Expr *alias = model.findExpressionAlias(expression)) {
       // A reflected field access lowers as the field projection it denotes.
       const auto id = lowerExpression(*alias, model, classArguments,
@@ -5387,6 +5470,33 @@ private:
       }
     }
     const Expr *raw = &expression;
+    if (const auto *call = exprAs<Call>(raw)) {
+      const ResolvedCallInfo *resolved = model.findCall(*call);
+      if (resolved &&
+          resolved->intrinsic == IntrinsicKind::SourceExpressionText) {
+        const ExpressionInfo *info = model.findExpression(*raw);
+        const auto constant = model.findConstant(*raw);
+        const auto *text =
+            constant ? std::get_if<std::string>(&*constant) : nullptr;
+        if (!info || info->type != SemanticType::StringView || !text) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        // Source metadata is already a semantic literal. In particular, do
+        // not lower its checked expression argument or its callee into an
+        // executable value, call, move, loan, or failure edge.
+        const HirValueId id = nextValueId++;
+        body.values.push_back({.id = id,
+                               .kind = HirValueKind::Literal,
+                               .source = raw,
+                               .info = *info,
+                               .literal = Literal{*text},
+                               .constant = constant,
+                               .programConstantSubstitution = true});
+        output.program.sourceValueIds[raw].push_back(id);
+        return id;
+      }
+    }
     HirValueKind kind = HirValueKind::Literal;
     std::vector<HirValueId> operands;
     std::optional<TokenKind> operation;
@@ -6613,29 +6723,8 @@ private:
     }
     // The conversion applied to this value is a further call; its dispatch
     // and borrow facts belong to that call, not to the converted value.
-    if (const ResolvedOperatorInfo *resolved =
-            model.findContextualConversion(*raw);
-        resolved != nullptr && resolved->function != 0) {
-      if (const FunctionInfo *target =
-              baseModel->findFunction(resolved->function)) {
-        SemanticType receiverType = resolved->dispatchOwner;
-        if (receiverType.kind != SemanticType::Class ||
-            receiverType.classId != target->ownerClass) {
-          receiverType = model.typeOf(*raw);
-        }
-        const std::vector<SemanticType> ownerArguments =
-            receiverType.kind == SemanticType::Class ? receiverType.arguments
-                                                     : classArguments;
-        const std::vector<CompileTimeValue> ownerValueArguments =
-            receiverType.kind == SemanticType::Class
-                ? receiverType.valueArguments
-                : classValueArguments;
-        contextualConversionTarget =
-            enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
-                            {}, resolved->returnType, resolved->parameterTypes,
-                            operatorInstantiationSite(raw));
-      }
-    }
+    contextualConversionTarget = contextualConversionInstance(
+        *raw, model, classArguments, classValueArguments);
     // A function target is this instance's exact selection. A generic
     // callable call inherits its deferred record from the primary analysis,
     // but once the instance selects operator() or a function item, that
@@ -6989,6 +7078,7 @@ private:
   const SemanticModel *baseModel = nullptr;
   HirLoweringResult output;
   HirValueId nextValueId = 1;
+  HirValueId activeResultRegion = 0;
   HirBindingId nextBindingId = 1;
   HirStatementId nextStatementId = 1;
   std::size_t placeSnapshotId = 0;

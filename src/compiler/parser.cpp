@@ -1440,6 +1440,13 @@ private:
 
   StmtPtr macroDeclaration(Token keyword,
                            std::vector<FunctionAttribute> attributes = {}) {
+    Token implicitVoid = keyword;
+    implicitVoid.kind = TokenKind::VOID;
+    implicitVoid.lexeme = "void";
+    implicitVoid.generated = true;
+    TypeRef resultType = isTypedDeclaration()
+                             ? parseType(false)
+                             : TypeRef(std::move(implicitVoid));
     Token name =
         consume(TokenKind::IDENTIFIER, "Expect a macro name after '#macro'.");
     std::vector<GenericParameter> genericParameters;
@@ -1447,16 +1454,11 @@ private:
       genericParameters = genericParameterList();
     }
     consume(TokenKind::LEFT_PAREN, "Expect '(' after the macro name.");
-    Token implicitVoid = keyword;
-    implicitVoid.kind = TokenKind::VOID;
-    implicitVoid.lexeme = "void";
-    implicitVoid.generated = true;
     StmtPtr result = functionDeclaration(
-        TypeRef(std::move(implicitVoid)), std::move(name),
-        std::move(genericParameters), std::nullopt, false,
-        Mutability::Immutable, std::nullopt, std::nullopt, std::nullopt,
-        LanguageLinkage::Gti, std::nullopt, std::nullopt, std::nullopt,
-        std::nullopt, std::move(attributes));
+        std::move(resultType), std::move(name), std::move(genericParameters),
+        std::nullopt, false, Mutability::Immutable, std::nullopt, std::nullopt,
+        std::nullopt, LanguageLinkage::Gti, std::nullopt, std::nullopt,
+        std::nullopt, std::nullopt, std::move(attributes));
     auto &declaration = static_cast<FunctionDecl &>(*result);
     declaration.setMacroKeyword(keyword);
     if (!declaration.body()) {
@@ -3377,7 +3379,22 @@ private:
                                             std::move(discardAttribute));
   }
 
-  ExprPtr expression() { return comma(); }
+  ExprPtr writtenExpression(ExprPtr value, const Token &first) {
+    const Token &last = previous();
+    if (value && !first.generated && !last.generated && !first.source.empty() &&
+        first.source == last.source && first.position <= last.position) {
+      value->setWrittenOrigin({.source = first.source,
+                               .start = first.position,
+                               .end = last.position + last.lexeme.size(),
+                               .line = first.line});
+    }
+    return value;
+  }
+
+  ExprPtr expression() {
+    const Token first = peek();
+    return writtenExpression(comma(), first);
+  }
 
   ExprPtr comma() {
     ExprPtr expr = assignment();
@@ -3389,6 +3406,11 @@ private:
   }
 
   ExprPtr assignment() {
+    const Token first = peek();
+    return writtenExpression(assignmentValue(), first);
+  }
+
+  ExprPtr assignmentValue() {
     const NestingGuard nesting = enterNesting(peek());
     ExprPtr expr = conditional();
 

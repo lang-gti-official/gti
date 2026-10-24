@@ -4,7 +4,7 @@
     "stdlib/prelude.gti": "3e9103f299258a52198bce6c80abdbda5b3566df07376f70f4bfc945536722be",
     "stdlib/std/algorithm.gti": "e99485de4cf40d0e1e5be0d10f86780bc38f170c388473b994bb1a6f786ba656",
     "stdlib/std/array.gti": "2b892b6049d85bf53b146b4b8d1c019477c6657591774f8ef93138cee921510a",
-    "stdlib/std/assert.gti": "e7996ec91748812a5a0daafcbaf954a6bff27cf023981d8de30096bbbac91453",
+    "stdlib/std/assert.gti": "3a2ce83cc942a9d506e3934de5bc14290b532a4d6258d6fb55fb691656e17015",
     "stdlib/std/atomic.gti": "b1cd7da3c6b53c1f4ac860ffabdd48a027afa3c5371a196bbbd33b6ad1150409",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "546221ebd010d869a41ca0829f4cd823c27c7773dc5e66c27bea53d22ec8d474",
@@ -43,12 +43,12 @@
     "stdlib/std/resource_vector.gti": "168647ac6a6b78f5559884bd2860dfb2b6f52e5187914ac445fe4d7dbb8910c3",
     "stdlib/std/set.gti": "79607e9740ba8b226c6c58773fbd5dc6dce6df1197cd6b1e867efd52b97ab2fa",
     "stdlib/std/simd.gti": "9db37c0d480f519cfcfb44b22a478cf51f19e0c11334e85caf76e23bbe107f3b",
-    "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
+    "stdlib/std/source_location.gti": "8d27724cadabe286d7ac2ced211f61bc93fafea12aa5b2f324de39ef0e58be56",
     "stdlib/std/span.gti": "430adc5e18fd0325a8e7abba92c7edfa031d956d64c16fbb7327da3776d21c6e",
     "stdlib/std/string.gti": "f283b464bce49ba83e36478c02ba2732933ef0a514063fd24c4a058279811569",
     "stdlib/std/string_view.gti": "db84934530d41115374ab9f76978a276e7c2c6789b6f2848a25dacf295beba27",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
-    "stdlib/std/testing.gti": "18cf2151c6ef75c12f5adb4a52bd95435d23dce84d5e29fbaabade33bedb2ae0",
+    "stdlib/std/testing.gti": "ddcea5b0cfb4928bab496de35a203fe715063a73fcee5bd181e28d1e2264b385",
     "stdlib/std/thread.gti": "34553ae1d585d24b6eb4e6cd41f749b29da53fb907656614c614935f705f4aa4",
     "stdlib/std/unordered_map.gti": "64818406362ff0b99c30986dc7a0c25f30018eb8c28f4e1f4a3adb2d12571692",
     "stdlib/std/unordered_set.gti": "53125c982b172a3a0fc8264551d67faa34deaacd46fe1fe187b2a0a220d2b536",
@@ -953,8 +953,15 @@
       "id": "deferred-assertions",
       "mode": "run",
       "source": "tests/fixtures/deferred_assertions.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "encoding",
@@ -995,6 +1002,20 @@
       "expected": {
         "exit_code": 0,
         "stdout": "4\n42\nempty\nkept\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "expression-text",
+      "mode": "run",
+      "source": "tests/fixtures/expression_text.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
         "stderr": ""
       }
     },
@@ -2939,7 +2960,9 @@
         "std::debug_assert",
         "std::debug_assertions_enabled"
       ],
-      "case_ids": ["deferred-assertions"],
+      "case_ids": [
+        "deferred-assertions"
+      ],
       "required_instantiations": [
         "boolean-only and formatted assertions",
         "disabled NDEBUG argument moves and messages",
@@ -5862,6 +5885,29 @@
       ]
     },
     {
+      "id": "source-location.expression-text",
+      "source": "stdlib/std/source_location.gti",
+      "status": "executable",
+      "operations": [
+        "std::expression_text"
+      ],
+      "case_ids": [
+        "expression-text"
+      ],
+      "required_instantiations": [
+        "unevaluated scalar and owning expressions",
+        "nested generic forwarding and declaration defaults",
+        "exact text and explicit constant fallback for synthesized expressions",
+        "UTF-8, grouping, comments and multiline source bytes"
+      ],
+      "evidence": [
+        "tests/fixtures/expression_text.gti",
+        "tests/expression_text_tests.cpp",
+        "tests/expression_text_runtime_test.py",
+        "stdlib/std/source_location.gti"
+      ]
+    },
+    {
       "id": "span.checked-iteration",
       "source": "stdlib/std/span.gti",
       "status": "executable",
@@ -6208,18 +6254,27 @@
       "source": "stdlib/std/testing.gti",
       "status": "executable",
       "operations": [
-        "std::testing::check"
+        "std::testing::check",
+        "std::testing::check_approx",
+        "std::testing::check_elements_eq",
+        "std::testing::check_eq",
+        "std::testing::check_ne",
+        "std::testing::check_string_eq"
       ],
       "case_ids": [
         "testing"
       ],
       "required_instantiations": [
-        "explicit and default messages; source attribution and failure cleanup in isolated tests"
+        "explicit/default and lazy messages; scalar literal single evaluation; borrowed noncopyable object operands; source attribution and deterministic failure cleanup",
+        "quoted string differences and first byte/length; floating absolute/relative tolerances, NaNs and infinities; span element/length differences",
+        "successful comparisons do not call user formatters; failing equality calls user comparison once and formats borrowed values"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_testing.gti",
         "tests/annotated_test_suite_test.py",
-        "examples/annotated-tests/tests/main.gti"
+        "examples/annotated-tests/tests/main.gti",
+        "tests/fixtures/testing_assertions.gti",
+        "tests/testing_assertions_runtime_test.py"
       ]
     },
     {

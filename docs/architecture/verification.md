@@ -518,6 +518,42 @@ corners({a, b})`).
 
 ## Typed macros and assertions
 
+`macro_result_parser` covers explicit result types and macro-local returns.
+`macro_values_semantic_ir` checks scalar and owning results, nested result
+regions, contextual conversions, initializer bodies, and caller-written `?`.
+Independent HIR/MIR mutations reject missing or cross-region return identities,
+uninitialized result slots, missing lifetime activation, forged temporary
+borrows, and premature cleanup. Passive objects still require a live object
+lifetime even when their destruction has no observable effect. Startup-local
+and decomposition tests reject projected uses before their physical owner is
+initialized; a valid generic body alone cannot authorize an invalid startup
+schedule.
+`macro_values_runtime` checks these paths at C++20/C++23 O0/O1/O2/O3,
+disabled elision and native ASan/UBSan. `macro_fresh_callables` checks that
+type discovery does not execute captures or publish speculative executable
+bindings, that concrete callable identities survive repeated and nested forcing,
+and that recursive constraint queries terminate without rejecting finite queries
+whose exact argument types change. `macro_fresh_callable_runtime` checks
+capture timing, skipped captures, caller ownership and exactly-once cleanup.
+
+`expression_text_semantic_ir` checks exact parser extents, origin-preserving
+clones and forwarding, default-expression provenance, missing source buffers,
+private capability access, static operand errors, strict synthetic-composition
+rejection and explicit constant fallback selection. Dynamic fallbacks are
+rejected even for operands with available written origins. Its HIR/MIR assertions
+require literal normalization before operand lowering: no metadata intrinsic or
+argument call may reach execution.
+`expression_text_runtime` checks untouched side effects and owner moves,
+absence of retained runtime loans, nested generic wrappers, static result
+lifetime, synthesized fallback without owner consumption or loans,
+UTF-8/comments/newlines and ordinary generic definition-site spelling
+at C++20/C++23 O0/O1/O3 plus ASan/UBSan. The stdlib surface manifest registers
+the same public operation and focused O0/O3 fixture.
+`expression_text_lsp` checks value-result hover signatures and exact helper
+definition identities, UTF-16 argument diagnostic spans, synthetic-source
+diagnostics, explicit fallback recovery, dynamic-fallback diagnostic clearing,
+incomplete source and reopen.
+
 The existing `deferred_assertions*` gate names are retained for continuity after
 the public syntax migration to `#macro`; no old attribute support remains.
 `deferred_assertions` checks the general typed statement macro rule
@@ -553,6 +589,14 @@ panic, break and continue. Examples are identified by their selected
 paths, not a numeric-prefix convention, so renumbering cannot change the expected
 output policy.
 
+`macro_result_failures` checks an unrelated move-only resource returned through
+a typed macro result region. Its six exact stderr traces cover normal result
+publication, failure before result creation, macro-local cleanup failure after
+result initialization, failure in a later caller argument, double failure while
+cleaning the pending result, and ordinary cleanup failure after publication.
+The matrix uses C++20/C++23 at O0/O3, disabled elision and native ASan/UBSan;
+failure cases require status 70 and the original primary/secondary sites.
+
 `deferred_assertions_lsp` covers unsaved/incomplete text, UTF-16 spans, static
 argument errors, macro hover/definition identity, qualified overload selection
 and recovery from the removed attribute. `macro_expansion_queries` checks
@@ -565,7 +609,9 @@ Tree-sitter corpus and shipped-source parsing cover the new header, module,
 declaration and example inventories.
 
 `deferred_assertions_cost` compares the same complete-state workload with
-handwritten control flow. Zero observed successful-path allocations and cold
+handwritten control flow, including scalar results, passive objects passed by
+value, and nested returned callbacks with captured snapshots. Zero observed
+successful-path allocations and cold
 message calls are correctness gates; `--measure` adds two warmups and nine
 interleaved samples, native/generated size, build time and child peak memory.
 Timing samples are reported rather than gated on noisy shared hosts. Macro
@@ -2098,6 +2144,42 @@ instances. It rejects the carrier and the gate when the `concreteGenericClass`
 representation fact of either the derived or the base class is cleared.
 
 ## Annotated test suites
+
+`testing_assertions_runtime` checks the source-only equality macros, scalar
+capture and literal ergonomics, borrowed noncopyable objects, exactly-once
+operand/equality evaluation, lazy success messages/formatting, string byte/length
+differences, approximate comparison limits, and borrowed span mismatch/length.
+Independent host assertions require the panic status, user caller line, diagnostic
+values and deterministic cleanup at C++20/O0 and C++23/O3; invalid generic uses
+must be rejected. The annotated example and stdlib surface inventory remain
+registered with the extended testing API.
+
+`test_runner` independently exercises driver selection/listing/empty/duplicate
+catalog rules, bounded overlapping children, timeout progress, exact signal versus
+ordinary status (including 127 and 143), failed exec, moved process ownership and
+background descendant termination on both completion and timeout. It uses native
+host children, so its outcome does not depend on GTI-generated checks.
+Streaming observers must receive complete payloads before the driver releases
+their allocated storage; retained result facts preserve stable failure selection.
+`test_report` parses serialized events with Python's JSON implementation,
+including control bytes, valid/invalid UTF-8, hostile output, all status variants,
+large counts and non-C numeric locales.
+`test_command_controls` uses an optimized host compiler to exercise fresh/cached
+suite selection, exact filters/skips/listing, no-selection refusal/override,
+parallel assertions/crashes/timeouts, later-test continuation, legacy executables,
+invalid options and incomplete build-failure reports at GTI O0/O3. It checks
+inventory/start/completion identity equality and exact terminal counts externally.
+SIGINT and SIGTERM during execution must terminate/reap isolated children, emit
+incomplete summaries, and preserve interruption status. Closed standard streams
+must not alias private capture or exec-handshake descriptors.
+Parallel human reports include target identities when different targets contain
+the same qualified test name.
+`process_capture_failure` injects actual stdio failures around real child
+processes: seek, tell, partial read and close errors must become runner errors,
+while empty output and a genuine status 127 preserve their distinct outcomes.
+`macos_installed_runtime` also executes an annotated test project through relocated
+installed resources, covering the source-defined checks and JSON worker results
+without source-tree standard-library overrides.
 
 `annotated_test_suites` checks the runnable `examples/annotated-tests` project
 at O0/C++20 and O3/C++23, included test declarations, independent global state,
@@ -6346,6 +6428,13 @@ checks and preserve existing executable/representation bytes. A test-only
 renderer probe holds HIR and MIR phases open until the pseudo-terminal observes
 the elapsed row, then releases them. It requires `Checking` for check mode and
 `Building` for build mode without depending on a program's compilation speed.
+The native-phase probe publishes durable dependency messages while the heartbeat
+is active and verifies complete lines followed by resumed elapsed telemetry.
+`cli_native_dependency_progress` additionally runs actual dependency build scripts:
+one reused dependency precedes one deliberately rebuilt dependency, a native
+compiler is held until the PTY observes a live row, and both summaries must
+remain separate durable lines. It also checks quiet/plain output and verbose
+script output lacking a final newline, without suppressing later build phases.
 
 The native-detail assertion accepts the intended elapsed-time suffix and
 rejects explicit backend/tool labels. Pure positive and negative cases keep
@@ -6989,12 +7078,13 @@ Status: Current test and audit structure.
 
 ## Agent task lifecycle
 
-`agent_workflow` uses disposable real Git repositories, a fake GitHub API and a Gitea mirror to
+`agent_workflow` uses disposable real Git repositories and a fake Gitea REST API to
 exercise branch publication, draft creation/retry, successful PR integration,
 upstream reconciliation, exact head/base validation, server merge races and
-required-check refusal. It checks preservation of dirty/divergent local main,
+protected-merge refusal. It checks preservation of dirty/divergent local main,
 cleanup refusal for new commits/ignored/source files, conditional branch
 deletion, abandonment, locks and preservation of existing protection settings.
+An unused backup remote verifies that lifecycle operations never publish there.
 It performs no production network request or GTI compilation. Live lifecycle
 delivery verifies the actual instance's draft, protection and merge APIs. It
 also checks that `verify` releases the metadata lock while its checks run,
@@ -9992,7 +10082,7 @@ and missing-platform refusal, complete CTest inventories/results, required
 regression skips, optimized build ownership, and advisory CI classification. Workflow-only
 changes use these tests and their affected tooling gates rather than a full
 GTI semantic suite. CI still runs full native/sanitizer coverage for compiler
-integration candidates as advisory feedback. GitHub Actions never gates local
+integration candidates as advisory feedback. Gitea Actions never gates local
 validation, integration or completion; preserve exact-source local/managed-runner
 coverage and required platform/performance evidence, and report pending/failed
 CI separately rather than waiting for runner capacity or calling it passed.
@@ -10442,10 +10532,10 @@ instrumentation retained.
 
 ## Repository Build Generator
 
-First-party developer instructions and GitHub automation configure CMake
+First-party developer instructions and Gitea automation configure CMake
 with the Ninja generator. CMake remains the portable configuration and build
 entry point; workflows invoke `cmake --build` rather than calling `ninja`
-directly. Every fresh first-party build tree, including sanitizer, release, and
+directly. Every fresh production build tree, including sanitizer, release, and
 installed-consumer smoke trees, selects `-G Ninja`, and each runner provisions
 Ninja explicitly before configuration. This keeps dependency discovery,
 parallel scheduling, and incremental behavior consistent across local, CI,
@@ -10455,14 +10545,17 @@ CMake generators are fixed when a build tree is created. A pre-existing
 Makefile build directory must not be reconfigured in place with Ninja; create a
 new build directory or deliberately remove the old generated tree first. The
 CMake project itself remains generator-agnostic for downstream IDE integration,
-but non-Ninja generators are outside the first-party verification path.
+but non-Ninja production builds are outside the first-party verification path.
+Disposable `project(... NONE)` workflow fixtures are not compiler builds:
+they exercise the explicit CMake/CTest/Make bootstrap without compiling GTI.
 
 ## Platform Signal
 
-Local verification runs on the macOS/AppleClang host. GitHub Actions CI
-(`ubuntu-latest`, GCC/libstdc++) is the accepted first Linux signal; there is
-no local Linux gate in the pre-push loop. Two mitigations keep that gap
-narrow. First, all first-party targets compile with `-Wall -Wextra
+Local verification uses macOS/AppleClang and the configured Linux managed
+runners where the changed invariant requires Linux evidence. Gitea Actions
+(`ubuntu-latest`, GCC/libstdc++) supplies advisory feedback, not a replacement
+for required exact-source local/managed-runner platform checks. Two additional
+mitigations catch platform differences. First, all first-party targets compile with `-Wall -Wextra
 -Werror`, which turns the compiler-divergence class that previously
 surfaced only on GCC — for example C++20 designated-initializer
 declaration order, which AppleClang merely warns about — into local build

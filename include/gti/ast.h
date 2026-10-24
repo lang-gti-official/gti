@@ -732,6 +732,24 @@ public:
 
   [[nodiscard]] virtual ExprKind exprKind() const = 0;
   virtual void accept(ExprVisitor &visitor) const = 0;
+
+  // The exact parser-owned written expression extent, excluding surrounding
+  // argument trivia. Synthetic expressions have no written origin. A clone
+  // that substitutes the whole expression preserves its replacement's origin;
+  // composing substituted children cannot invent a new written expression.
+  [[nodiscard]] const std::shared_ptr<const SourceSpan> &writtenOrigin() const {
+    return writtenOrigin_;
+  }
+  void setWrittenOrigin(SourceSpan origin) {
+    if (!writtenOrigin_ || *writtenOrigin_ != origin)
+      writtenOrigin_ = std::make_shared<const SourceSpan>(std::move(origin));
+  }
+  void setWrittenOrigin(std::shared_ptr<const SourceSpan> origin) {
+    writtenOrigin_ = std::move(origin);
+  }
+
+private:
+  std::shared_ptr<const SourceSpan> writtenOrigin_;
 };
 
 template <ExprKind Kind> class ExprOfKind : public Expr {

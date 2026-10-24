@@ -20,6 +20,55 @@ add_test(NAME code_snippets COMMAND gti_code_snippet_tests)
 add_executable(gti_macro_expansion_query_tests macro_expansion_query_tests.cpp)
 target_link_libraries(gti_macro_expansion_query_tests PRIVATE gti_compiler)
 add_test(NAME macro_expansion_queries COMMAND gti_macro_expansion_query_tests)
+add_executable(gti_macro_fresh_callable_tests macro_fresh_callable_tests.cpp)
+target_link_libraries(gti_macro_fresh_callable_tests PRIVATE gti_compiler)
+add_test(NAME macro_fresh_callables COMMAND gti_macro_fresh_callable_tests)
+set_tests_properties(macro_fresh_callables PROPERTIES TIMEOUT 60)
+add_test(NAME macro_fresh_callable_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/macro_fresh_callables.gti"
+    --ownership-checks)
+set_tests_properties(macro_fresh_callable_runtime PROPERTIES TIMEOUT 1200)
+add_test(NAME macro_result_failures
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/macro_result_failure_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(macro_result_failures PROPERTIES TIMEOUT 1200)
+add_executable(gti_macro_result_parser_tests macro_result_parser_tests.cpp)
+target_link_libraries(gti_macro_result_parser_tests PRIVATE gti_compiler)
+add_test(NAME macro_result_parser COMMAND gti_macro_result_parser_tests)
+find_program(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE nvim)
+if(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE)
+  add_test(NAME macro_neovim_syntax
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
+      "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test/state"
+      "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test/cache"
+      "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test/data"
+      "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-macro-syntax.log"
+      "${GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
+      -l "${PROJECT_SOURCE_DIR}/tests/macro_syntax_test.lua")
+  set_tests_properties(macro_neovim_syntax PROPERTIES TIMEOUT 30)
+endif()
+add_executable(gti_expression_text_tests expression_text_tests.cpp)
+add_executable(gti_macro_value_tests macro_value_tests.cpp)
+target_link_libraries(gti_macro_value_tests PRIVATE gti_compiler)
+add_test(NAME macro_values_semantic_ir COMMAND gti_macro_value_tests)
+add_test(NAME macro_values_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/macro_values.gti" --ownership-checks)
+set_tests_properties(macro_values_runtime PROPERTIES TIMEOUT 1200)
+target_link_libraries(gti_expression_text_tests PRIVATE gti_compiler)
+add_test(NAME expression_text_semantic_ir COMMAND gti_expression_text_tests)
+add_test(NAME expression_text_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expression_text_runtime_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(expression_text_runtime PROPERTIES TIMEOUT 1200)
+if(TARGET gti_lsp)
+  add_test(NAME expression_text_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expression_text_lsp_test.py"
+      $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(expression_text_lsp PROPERTIES TIMEOUT 180)
+endif()
 if(TARGET gti_lsp)
   add_test(NAME lsp_code_snippets
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_code_snippets_test.py"
@@ -468,6 +517,23 @@ add_test(NAME driver_library_boundary COMMAND gti_driver_library_smoke)
 add_executable("gti_driver_tests" "${PROJECT_SOURCE_DIR}/tests/driver_tests.cpp")
 target_link_libraries("gti_driver_tests" PRIVATE gti_driver)
 add_test(NAME driver_pipeline COMMAND gti_driver_tests)
+add_executable(gti_test_runner_tests test_runner_tests.cpp)
+target_link_libraries(gti_test_runner_tests PRIVATE gti_driver)
+add_test(NAME test_runner COMMAND gti_test_runner_tests)
+set_tests_properties(test_runner PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+add_executable(gti_test_report_tests test_report_tests.cpp)
+target_link_libraries(gti_test_report_tests PRIVATE gti_driver)
+add_test(NAME test_report COMMAND "${Python3_EXECUTABLE}"
+  "${PROJECT_SOURCE_DIR}/tests/test_report_test.py" "$<TARGET_FILE:gti_test_report_tests>")
+set_tests_properties(test_report PROPERTIES TIMEOUT 30)
+add_executable(gti_process_capture_failure_tests process_capture_failure_tests.cpp)
+target_link_libraries(gti_process_capture_failure_tests PRIVATE gti_driver ${CMAKE_DL_LIBS})
+add_test(NAME process_capture_failure COMMAND gti_process_capture_failure_tests)
+set_tests_properties(process_capture_failure PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+add_executable(gti_process_group_identity_tests process_group_identity_tests.cpp)
+target_link_libraries(gti_process_group_identity_tests PRIVATE gti_driver ${CMAKE_DL_LIBS})
+add_test(NAME process_group_identity COMMAND gti_process_group_identity_tests)
+set_tests_properties(process_group_identity PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
 add_test(NAME source_debug_info
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_debug_info_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(source_debug_info PROPERTIES TIMEOUT 180)
@@ -4532,6 +4598,12 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(cli_progress PROPERTIES TIMEOUT 180)
   add_test(
+    NAME cli_native_dependency_progress
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cli_native_dependency_progress_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(cli_native_dependency_progress PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+  add_test(
     NAME cli_install
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cli_install_test.py"
             "$<TARGET_FILE:gti>"
@@ -4550,6 +4622,14 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(annotated_test_suites PROPERTIES TIMEOUT 600)
+  add_test(NAME test_command_controls
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_command_controls_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(test_command_controls PROPERTIES TIMEOUT 600)
+  add_test(NAME testing_assertions_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/testing_assertions_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(testing_assertions_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME scoped_configuration_defines
     COMMAND "${Python3_EXECUTABLE}"
