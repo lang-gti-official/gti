@@ -1140,7 +1140,10 @@ for concept wrapped<box<Coin>> {
 };
 int main() { return 0; }
 )gti";
-  rejected(uncomparedBox, "GTI-S2029", "Type 'Coin' does not satisfy");
+  // Source equality policy is a disjunction; its notes retain the failed
+  // subject while these span checks still require the exact Coin occurrences.
+  rejected(uncomparedBox, "GTI-S2029",
+           "any alternative in concept 'std::equality_comparable'");
   reportedOnce(uncomparedBox, "GTI-S2029", "concept wrapped<box<", "Coin");
   reportedOnce(uncomparedBox, "GTI-S2029", "unwrap(box<", "Coin");
   // A block without operations validates its pattern too.

@@ -101,7 +101,7 @@ def main() -> int:
             (
                 "generic_callable_bad_comparator.gti",
                 "std::comparator",
-                "exact public binary operator()",
+                "safe repeatable binary call",
             ),
             (
                 "generic_callable_consuming_predicate.gti",
@@ -111,7 +111,7 @@ def main() -> int:
             (
                 "generic_callable_bad_action.gti",
                 "std::once_action",
-                "exact public void operator()()",
+                "safe no-argument call returning exactly void",
             ),
         )
         for filename, concept, hint in negative_cases:
@@ -132,7 +132,8 @@ def main() -> int:
                 rejected.returncode != 65
                 or rejected.stdout != "Diagnostics: 1 error, 0 warnings\n"
                 or "error[GTI-S2029]" not in rejected.stderr
-                or f"concept '{concept}'" not in rejected.stderr
+                or (f"concept '{concept}'" not in rejected.stderr and
+                    f"concept '{concept}<" not in rejected.stderr)
                 or hint not in rejected.stderr
             ):
                 return fail(filename, rejected)

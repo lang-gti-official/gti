@@ -2320,7 +2320,10 @@ static methods included and constructors and destructors excluded;
 declared constructors as `std::meta::constructor<T, I>`. A method reports
 `name()` (an operator as its spelling, `operator==`), `index()`,
 `is_static()`, `is_operator()`, `is_constexpr()`, `is_virtual()`,
-`is_mutating()` (a `mut` receiver), `is_public()`, `parameter_count()`,
+`is_mutating()` (non-read-only receiver), `is_public()`,
+`is_consuming()` (an `&&` receiver), `is_unsafe()` (caller obligation),
+`is_generic()` (method-owned generic parameters), `is_constrained()`
+(method requirements), `parameter_count()`,
 `parameters()` (a list of `std::meta::parameter<T, I, P>` with `name()`,
 `index()` and `type()`, backed by the computed `parameter_type<T, I, P>`)
 and `result()` (a type metaobject of `return_type<T, I>`); a constructor

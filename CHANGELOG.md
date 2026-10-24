@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.471.0 — Thread-local storage
+## 0.473.0 — Thread-local storage
 
 - `thread_local` defines distinct per-thread storage at namespace scope, in a
   non-generic static data member, or inside an ordinary function. Both
@@ -44,6 +44,36 @@ for what minor and patch releases mean.
   owning temporaries and destructor effects; actual enum values retain cleanup.
 - See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
   and [runnable example 175](examples/175-thread-local-storage.gti).
+
+## 0.472.0 — Source-defined concept policies
+
+- All standard-library concepts are defined in ordinary GTI source, composing
+  expression requirements and reflection predicates. The compiler continues to
+  own irreducible type, layout, lifetime, relocation and transfer/share facts.
+- Requirements can check borrowed results with exact access and a named origin,
+  infer an expression result without inventing an ownership contract, and check
+  ordinary range iteration without executing it. Generic instances recheck the
+  concrete operations and retain ordinary ownership and cleanup enforcement.
+- General reflection exposes method safety/consumption/generic/constraint facts,
+  inherited lookup and independent layout, borrow-state, cleanup and polymorphism
+  facts. Iterator, callable, sentinel, storage and inline-owner policies compose
+  these facilities without private concept implementations.
+
+## 0.471.0 — Native LLVM backend foundation
+
+- The compiler now has an independent installed `LlvmBackend` beside the
+  production `CppBackend`. Both receive only the sealed, verified
+  `LoweredProgram`; frontend, optimizer-private and C++ representation state
+  cannot enter the LLVM backend.
+- Direct compilation accepts `--backend cpp|llvm`, with C++ unchanged as the
+  default. LLVM selection currently returns the classified `GTI-B0003`
+  limitation that executable lowering is not implemented and publishes no
+  artifact; no dummy program or instruction lowering is included.
+- LLVM IR/native-code-generation dependencies, host initialization, package
+  exports and release archives are isolated behind `gti_llvm_backend`. The
+  compiler core retains its narrow support-library link surface, and the next
+  backend phase can begin real scalar-to-object lowering from the existing
+  driver and artifact boundaries.
 
 ## 0.470.1 — Nested constructor argument staging
 

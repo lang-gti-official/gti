@@ -6317,8 +6317,7 @@ auto SemanticVisitor::Impl::applyGenericDefaults(
 auto SemanticVisitor::Impl::makeGenericParameters(
     const std::vector<GenericParameter> &parameters,
     const Token &declarationName, const std::vector<std::string> &fromScope,
-    bool allowStructural, bool resolveDefaults)
-    -> std::vector<GenericParameterInfo> {
+    bool resolveDefaults) -> std::vector<GenericParameterInfo> {
   std::vector<GenericParameterInfo> result;
   result.reserve(parameters.size());
   std::unordered_set<std::string> names;
@@ -6407,13 +6406,6 @@ auto SemanticVisitor::Impl::makeGenericParameters(
             // constraint's atomic facts cannot express.
             report(parameter.constraint->last(),
                    "A concept with a body must be written in a trailing "
-                   "requires clause.",
-                   "GTI-S2029");
-            constraints = constraintBit(GenericConstraintKind::Invalid);
-          } else if (conceptInfo.hasStructuralRequirements &&
-                     !allowStructural) {
-            report(parameter.constraint->last(),
-                   "Structural concepts must be written in a trailing "
                    "requires clause.",
                    "GTI-S2029");
             constraints = constraintBit(GenericConstraintKind::Invalid);

@@ -1,6 +1,7 @@
 #include "gti/backend.h"
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/llvm_backend.h"
 #include "gti/lowered_program.h"
 #include "gti/mir_backend.h"
 #include "gti/native_header.h"
@@ -77,6 +78,7 @@ int main() { return 0; }
   const lang::LoweredProgram original =
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
   lang::CppBackend cpp;
+  lang::LlvmBackend llvm;
   lang::MirBackend mir;
   lang::NativeHeaderBackend nativeHeader;
   expect(!cpp.generate(original).contents.empty() &&
@@ -93,6 +95,7 @@ int main() { return 0; }
   expect(!lang::verifyLoweredProgram(wrongKind).empty(),
          "a forged program kind must fail the complete verifier");
   expectRejected(cpp, wrongKind, "program kind without an embedding plan");
+  expectRejected(llvm, wrongKind, "program kind without an embedding plan");
   expectRejected(mir, wrongKind, "program kind without an embedding plan");
   expectRejected(nativeHeader, wrongKind,
                  "program kind without an embedding plan");
@@ -104,6 +107,7 @@ int main() { return 0; }
   if (!declarations.empty()) {
     declarations.front().name += "_forged";
     expectRejected(cpp, staleSeal, "stale construction seal");
+    expectRejected(llvm, staleSeal, "stale construction seal");
     expectRejected(mir, staleSeal, "stale construction seal");
     expectRejected(nativeHeader, staleSeal, "stale construction seal");
   }
@@ -116,6 +120,7 @@ int main() { return 0; }
   if (!generated.empty()) {
     generated.pop_back();
     expectRejected(cpp, missingGeneratedItem, "missing generated item");
+    expectRejected(llvm, missingGeneratedItem, "missing generated item");
     expectRejected(mir, missingGeneratedItem, "missing generated item");
     expectRejected(nativeHeader, missingGeneratedItem,
                    "missing generated item");

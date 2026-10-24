@@ -38,7 +38,62 @@ void bindQueryType(const TypeRef &syntax, SemanticType type,
     for (std::size_t index = 0; index < syntax.arguments.size(); ++index)
       bindQueryType(syntax.arguments[index], type.arguments[index], bindings);
 }
+
+bool closedPrimitive(const SemanticType &type) {
+  if (type.kind == SemanticType::Reference)
+    return type.arguments.size() == 1 &&
+           closedPrimitive(type.arguments.front());
+  switch (type.kind) {
+  case SemanticType::Int8:
+  case SemanticType::Int16:
+  case SemanticType::Int32:
+  case SemanticType::Int64:
+  case SemanticType::UInt8:
+  case SemanticType::UInt16:
+  case SemanticType::UInt32:
+  case SemanticType::UInt64:
+  case SemanticType::Float:
+  case SemanticType::Double:
+  case SemanticType::Bool:
+  case SemanticType::Char:
+  case SemanticType::Void:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// This is cache eligibility, not a second expression checker. Only operations
+// on the query's own primitive parameters qualify; ordinary analysis supplies
+// the first proof, including operator legality, mutability and exact result.
+bool primitiveQueryExpression(const Expr *expression,
+                              const MemberRequirement &query) {
+  if (const auto *variable = exprAs<Variable>(expression))
+    return std::any_of(query.bindings().begin(), query.bindings().end(),
+                       [&](const Token &binding) {
+                         return binding.lexeme == variable->name().lexeme;
+                       });
+  if (const auto *group = exprAs<Grouping>(expression))
+    return primitiveQueryExpression(group->expression().get(), query);
+  if (const auto *unary = exprAs<Unary>(expression))
+    return primitiveQueryExpression(unary->right().get(), query);
+  if (const auto *binary = exprAs<Binary>(expression))
+    return primitiveQueryExpression(binary->left().get(), query) &&
+           primitiveQueryExpression(binary->right().get(), query);
+  return false;
+}
 } // namespace
+
+auto SemanticVisitor::Impl::collectIterationRequirementTypeArguments(
+    const MemberRequirement &query, std::vector<const TypeRef *> &types)
+    -> void {
+  const auto *loop = stmtAs<RangeForStmt>(query.iteration().get());
+  const auto *body = loop ? stmtAs<BlockStmt>(loop->sourceBody()) : nullptr;
+  if (body)
+    for (const auto &statement : body->statements())
+      if (const auto *check = stmtAs<StaticAssertDecl>(statement.get()))
+        collectRequirementTypeArguments(check->condition().get(), types);
+}
 
 auto SemanticVisitor::Impl::collectRequirementTypeArguments(
     const Expr *expression, std::vector<const TypeRef *> &types) -> void {
@@ -53,6 +108,8 @@ auto SemanticVisitor::Impl::collectRequirementTypeArguments(
   } else if (const auto *binary = exprAs<Binary>(expression)) {
     collectRequirementTypeArguments(binary->left().get(), types);
     collectRequirementTypeArguments(binary->right().get(), types);
+  } else if (const auto *assignment = exprAs<Assign>(expression)) {
+    collectRequirementTypeArguments(assignment->value().get(), types);
   } else if (const auto *logical = exprAs<Logical>(expression)) {
     collectRequirementTypeArguments(logical->left().get(), types);
     collectRequirementTypeArguments(logical->right().get(), types);
@@ -63,6 +120,8 @@ auto SemanticVisitor::Impl::collectRequirementTypeArguments(
   } else if (const auto *conversion = exprAs<Conversion>(expression)) {
     types.push_back(&conversion->targetType());
     collectRequirementTypeArguments(conversion->value().get(), types);
+  } else if (const auto *layout = exprAs<LayoutQuery>(expression)) {
+    types.push_back(&layout->type());
   } else if (const auto *qualified = exprAs<QualifiedName>(expression)) {
     if (qualified->ownerType())
       types.push_back(&*qualified->ownerType());
@@ -75,6 +134,15 @@ auto SemanticVisitor::Impl::collectRequirementTypeArguments(
     collectRequirementTypeArguments(group->expression().get(), types);
   } else if (const auto *get = exprAs<Get>(expression)) {
     collectRequirementTypeArguments(get->object().get(), types);
+  } else if (const auto *query = exprAs<MemberRequirement>(expression)) {
+    if (!query->isExpressionRequirement())
+      types.push_back(&query->receiver());
+    for (const auto &parameter : query->parameters())
+      types.push_back(&parameter);
+    if (!query->inferredResult())
+      types.push_back(&query->result());
+    collectRequirementTypeArguments(query->expression().get(), types);
+    collectIterationRequirementTypeArguments(*query, types);
   }
 }
 
@@ -222,15 +290,16 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
   if (!query.isExpressionRequirement() ||
       arguments.size() <= query.parameters().size())
     return std::nullopt;
+  const auto binding = [&](const Token &name) -> std::optional<std::size_t> {
+    for (std::size_t index = 0; index < query.bindings().size(); ++index)
+      if (query.bindings()[index].lexeme == name.lexeme)
+        return index;
+    return std::nullopt;
+  };
   const auto parameter =
       [&](const Expr *expression) -> std::optional<std::size_t> {
     const auto *variable = exprAs<Variable>(expression);
-    if (!variable)
-      return std::nullopt;
-    for (std::size_t index = 0; index < query.bindings().size(); ++index)
-      if (query.bindings()[index].lexeme == variable->name().lexeme)
-        return index;
-    return std::nullopt;
+    return variable ? binding(variable->name()) : std::nullopt;
   };
   const Expr *expression = query.expression().get();
   bool requiresUnsafe = query.unsafeKeyword().has_value();
@@ -241,6 +310,25 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
   ExpandedStructuralRequirement fact{.kind =
                                          StructuralConstraintKind::ReadMember,
                                      .requiresUnsafe = requiresUnsafe};
+  if (const auto *loop = stmtAs<RangeForStmt>(query.iteration().get())) {
+    const auto range = parameter(expression);
+    // The current symbolic loop carrier has no unsafe operation bit. An
+    // explicitly unsafe iteration query is therefore a concrete filter only,
+    // never permission to use its operations in a safe generic body.
+    if (requiresUnsafe || !range ||
+        arguments[*range].kind != SemanticType::Reference)
+      return std::nullopt;
+    fact.kind = StructuralConstraintKind::Iteration;
+    fact.mutableReceiver = loop->bindingMutability() == Mutability::Mutable &&
+                           loop->bindingType().reference.has_value();
+    if (fact.mutableReceiver &&
+        arguments[*range].referenceAccess != AccessMode::Mutable)
+      return std::nullopt;
+    fact.arguments = {referent(arguments[*range])};
+    if (arguments[query.parameters().size()] != SemanticType::Void)
+      fact.arguments.push_back(referent(arguments[query.parameters().size()]));
+    return fact;
+  }
   std::optional<std::size_t> receiver;
   std::optional<OverloadedOperator> operation;
   std::vector<std::size_t> operands;
@@ -253,7 +341,29 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
     operands.push_back(*right);
   } else if (const auto *unary = exprAs<Unary>(expression)) {
     receiver = parameter(unary->right().get());
-    operation = unaryValueOperator(unary->oper().kind);
+    operation = unary->oper().kind == TokenKind::PLUS_PLUS
+                    ? std::optional(OverloadedOperator::PreIncrement)
+                : unary->oper().kind == TokenKind::MINUS_MINUS
+                    ? std::optional(OverloadedOperator::PreDecrement)
+                : unary->oper().kind == TokenKind::STAR
+                    ? std::optional(OverloadedOperator::Dereference)
+                    : unaryValueOperator(unary->oper().kind);
+  } else if (const auto *index = exprAs<Index>(expression)) {
+    receiver = parameter(index->object().get());
+    const auto offset = parameter(index->index().get());
+    if (!offset)
+      return std::nullopt;
+    operation = OverloadedOperator::Subscript;
+    operands.push_back(*offset);
+  } else if (const auto *assignment = exprAs<Assign>(expression)) {
+    if (assignment->path().segments.size() != 1)
+      return std::nullopt;
+    receiver = binding(assignment->name());
+    operation = compoundOperator(assignment->oper().kind);
+    const auto value = parameter(assignment->value().get());
+    if (!operation || !value)
+      return std::nullopt;
+    operands.push_back(*value);
   } else if (const auto *call = exprAs<Call>(expression)) {
     // A typed call has extra selection facts not represented by the existing
     // unparameterized structural call proof. Concrete probing still supports
@@ -292,6 +402,14 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
       return std::nullopt;
     fact.arguments = {referent(arguments[*receiver]),
                       arguments[query.parameters().size()]};
+    if (query.inferredResult())
+      fact.arguments[1] =
+          query.borrowedFrom()
+              ? SemanticType::referenceTo(SemanticType::Unknown,
+                                          query.result().referenceMutability
+                                              ? AccessMode::Mutable
+                                              : AccessMode::ReadOnly)
+              : SemanticType::Unknown;
     fact.mutableReceiver =
         arguments[*receiver].kind == SemanticType::Reference &&
         arguments[*receiver].referenceAccess == AccessMode::Mutable;
@@ -300,8 +418,28 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
   }
   if (operation)
     fact.memberName = operatorFunctionName(*operation);
+  if (fact.memberName.empty())
+    return std::nullopt;
   for (const auto operand : operands)
     fact.arguments.push_back(arguments[operand]);
+  if (query.borrowedFrom()) {
+    const auto origin = binding(*query.borrowedFrom());
+    const auto &result = fact.arguments[1];
+    if (!receiver || !origin || result.kind != SemanticType::Reference ||
+        arguments[*origin].kind != SemanticType::Reference ||
+        (result.referenceAccess == AccessMode::Mutable &&
+         arguments[*origin].referenceAccess != AccessMode::Mutable))
+      return std::nullopt;
+    if (*origin == *receiver) {
+      fact.borrowSource = 0;
+    } else {
+      const auto found = std::find(operands.begin(), operands.end(), *origin);
+      if (found == operands.end())
+        return std::nullopt;
+      fact.borrowSource =
+          2 + static_cast<std::size_t>(found - operands.begin());
+    }
+  }
   return fact;
 }
 
@@ -317,9 +455,26 @@ auto SemanticVisitor::Impl::requirementQueryIdentity(
 }
 
 auto SemanticVisitor::Impl::expressionRequirementSatisfied(
-    const MemberRequirement &query, std::span<const SemanticType> arguments,
-    std::string *reason, const std::vector<std::string> *lookupScope) const
-    -> bool {
+    const MemberRequirement &query,
+    std::span<const SemanticType> inputArguments, std::string *reason,
+    const std::vector<std::string> *lookupScope) const -> bool {
+  // A constraint on a forwarded open pack is universally quantified over
+  // its elements. Probe one symbolic element with that pack's identity and
+  // established facts, not a runtime pack value. Ordinary expressions outside
+  // this unevaluated query retain all pack-expansion restrictions.
+  const auto elementType = [](const auto &self,
+                              SemanticType type) -> SemanticType {
+    if (type.kind == SemanticType::TypePack && !type.concretePack)
+      return SemanticType::typeParameter(type.genericParameterId);
+    for (auto &argument : type.arguments)
+      argument = self(self, std::move(argument));
+    return type;
+  };
+  std::vector<SemanticType> elementArguments;
+  elementArguments.reserve(inputArguments.size());
+  for (const auto &argument : inputArguments)
+    elementArguments.push_back(elementType(elementType, argument));
+  const std::span<const SemanticType> arguments(elementArguments);
   const auto reject = [&](std::string message) {
     if (reason)
       *reason = std::move(message);
@@ -329,22 +484,43 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     return reject("The required expression has unresolved parameter types.");
   std::vector<const TypeRef *> extraTypes;
   collectRequirementTypeArguments(query.expression().get(), extraTypes);
+  collectIterationRequirementTypeArguments(query, extraTypes);
   if (arguments.size() != query.parameters().size() + 1 + extraTypes.size())
     return reject(
         "The required expression has incomplete explicit type arguments.");
+  const bool cacheable =
+      !query.inferredResult() && !query.borrowedFrom() && !query.iteration() &&
+      !macroContext(query.keyword()) &&
+      std::all_of(arguments.begin(), arguments.end(), closedPrimitive) &&
+      primitiveQueryExpression(query.expression().get(), query);
+  if (cacheable) {
+    const auto cached = primitiveRequirementProofs.find(&query);
+    if (cached != primitiveRequirementProofs.end())
+      for (const auto &proof : cached->second)
+        if (std::equal(arguments.begin(), arguments.end(), proof.begin(),
+                       proof.end()))
+          return true;
+  }
   if (std::any_of(arguments.begin(), arguments.end(),
                   containsOpenTypeParameter)) {
     const auto wanted = expressionRequirementFact(query, arguments);
-    if (wanted)
+    const auto *loop = stmtAs<RangeForStmt>(query.iteration().get());
+    const auto *body = loop ? stmtAs<BlockStmt>(loop->sourceBody()) : nullptr;
+    // An iteration fact proves that the loop can bind its element, not that
+    // additional checks inside this particular query succeed.
+    if (wanted && (!body || body->statements().empty()))
       for (const auto &active : activeStructuralRequirements())
         if (active.kind == wanted->kind &&
             active.arguments == wanted->arguments &&
             active.memberName == wanted->memberName &&
             active.mutableReceiver == wanted->mutableReceiver &&
+            active.borrowSource == wanted->borrowSource &&
             (wanted->requiresUnsafe || !active.requiresUnsafe))
           return true;
-    return reject("The required expression is not guaranteed for the open type "
-                  "parameters.");
+    // Ordinary symbolic analysis can also prove built-in operations from
+    // classification facts (for example integer comparisons). Do not invent
+    // an operation from the query being asked: only the enclosing worker's
+    // existing constraints participate, and concrete instances recheck it.
   }
   ActiveRequirementQuery identity = requirementQueryIdentity(&query, arguments);
   if (std::find(activeRequirementQueries.begin(),
@@ -368,12 +544,28 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
   std::unordered_map<std::string, SemanticType> bindings;
   for (std::size_t index = 0; index < query.parameters().size(); ++index)
     bindQueryType(query.parameters()[index], arguments[index], bindings);
-  bindQueryType(query.result(), arguments[query.parameters().size()], bindings);
+  if (!query.inferredResult())
+    bindQueryType(query.result(), arguments[query.parameters().size()],
+                  bindings);
   for (std::size_t index = 0; index < extraTypes.size(); ++index)
     bindQueryType(*extraTypes[index],
                   arguments[query.parameters().size() + 1 + index], bindings);
   worker->prepareRequirementLookup(lookupScope, sourceUnitFor(query.keyword()));
+  // Declaration lookup must not capture caller scopes, but substituted type
+  // arguments still carry their proven primitive facts. Preserve those facts
+  // explicitly rather than lending the query the caller's entire requires
+  // clause or allowing it to assume its own desired expression.
+  const auto retainArgumentFacts = [&](const auto &self,
+                                       const SemanticType &type) -> void {
+    if (type.kind == SemanticType::TypeParameter)
+      worker->genericConstraints[type.genericParameterId] |= constraintOf(type);
+    for (const auto &argument : type.arguments)
+      self(self, argument);
+  };
+  for (const auto &argument : arguments)
+    retainArgumentFacts(retainArgumentFacts, argument);
   worker->typeParameterScopes.push_back(std::move(bindings));
+  worker->typePackScopes.emplace_back();
   worker->beginScope();
   if (!query.parameters().empty() && macroContext(query.keyword())) {
     // Caller syntax retains its independent macro lookup domain. Admit only
@@ -398,9 +590,12 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
       return token;
     };
     (void)cloneExpr(*query.expression(), 0, inspection);
+    if (query.iteration())
+      (void)cloneStmt(*query.iteration(), 0, inspection);
   }
   worker->unsafeDepth = query.unsafeKeyword() ? 1 : 0;
   worker->valueFlow.extendBody(worker->catalog);
+  std::vector<SymbolId> parameterIdentities;
   for (std::size_t index = 0; index < query.parameters().size(); ++index) {
     const auto &binding = query.bindings()[index];
     Symbol symbol;
@@ -412,13 +607,93 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     symbol.bindingKind = SemanticBindingKind::Parameter;
     symbol.toolingSymbol = worker->recordToolingSymbol(
         binding, SymbolKind::RequirementParameter, binding.lexeme, symbol.type);
+    parameterIdentities.push_back(symbol.toolingSymbol);
     worker->scopes.back().emplace(binding.lexeme, std::move(symbol));
+  }
+  if (const auto *loop = stmtAs<RangeForStmt>(query.iteration().get())) {
+    // Query bindings and the loop's synthetic owners are local even when the
+    // requirement is declared at namespace scope. No executable function or
+    // caller-owned state is published by this isolated worker.
+    worker->functionDepth = std::max<std::size_t>(worker->functionDepth, 1);
+    worker->analyze(query.iteration());
+    for (const auto &diagnostic : worker->diagnostics)
+      if (diagnostic.severity == DiagnosticSeverity::Error)
+        return reject(diagnostic.message);
+    const auto *iteration = worker->semanticModel.findRangeIteration(*loop);
+    const auto &required = arguments[query.parameters().size()];
+    if (!iteration || (required != SemanticType::Void &&
+                       iteration->elementType != referent(required)))
+      return reject("The range does not have the exact required element type.");
+    return true;
   }
   const SemanticType actual = worker->analyze(query.expression());
   for (const auto &diagnostic : worker->diagnostics)
     if (diagnostic.severity == DiagnosticSeverity::Error)
       return reject(diagnostic.message);
-  const auto &required = arguments[query.parameters().size()];
+  if (query.inferredResult() && actual == SemanticType::Unknown)
+    return reject("The expression's operation remains unresolved. An inferred "
+                  "result does not prove an unresolved compound operation.");
+  const auto required =
+      query.inferredResult() && query.borrowedFrom()
+          ? SemanticType::referenceTo(actual, query.result().referenceMutability
+                                                  ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly)
+          : arguments[query.parameters().size()];
+  if (query.borrowedFrom()) {
+    const auto origin =
+        std::find_if(query.bindings().begin(), query.bindings().end(),
+                     [&](const Token &binding) {
+                       return binding.lexeme == query.borrowedFrom()->lexeme;
+                     });
+    if (origin == query.bindings().end())
+      return reject("The borrow origin is not a requirement parameter.");
+    const auto index =
+        static_cast<std::size_t>(origin - query.bindings().begin());
+    if (required.kind != SemanticType::Reference ||
+        required.arguments.size() != 1 ||
+        arguments[index].kind != SemanticType::Reference)
+      return reject("A borrowed requirement result needs a checked reference "
+                    "result and a borrowed parameter origin.");
+    const auto *info =
+        worker->semanticModel.findExpression(*query.expression());
+    if (actual != required.arguments.front() || !info ||
+        info->category != ValueCategory::Place ||
+        info->access != required.referenceAccess)
+      return reject("The expression does not produce the exact required "
+                    "checked reference access and referent.");
+    if (required.referenceAccess == AccessMode::Mutable &&
+        arguments[index].referenceAccess != AccessMode::Mutable)
+      return reject("A mutable result requires a mutable borrowed origin.");
+    const auto places = worker->loanPlaces(query.expression());
+    if (places.empty() || parameterIdentities[index] == 0 ||
+        std::any_of(places.begin(), places.end(),
+                    [&](const SemanticLoanPlace &place) {
+                      return !place.valid() || place.receiver ||
+                             place.root != parameterIdentities[index];
+                    }))
+      return reject("The checked result is not borrowed from the named "
+                    "requirement parameter.");
+    return true;
+  }
+  if (query.inferredResult())
+    return true;
+  // Call expressions expose their referent as the ordinary expression type.
+  // That value-facing view must not erase a selected declaration's borrowed
+  // result when proving an exact owned-result requirement.
+  const Expr *resultExpression = query.expression().get();
+  while (const auto *group = exprAs<Grouping>(resultExpression))
+    resultExpression = group->expression().get();
+  const auto borrowedResult = [](const auto *resolved) {
+    return resolved && (resolved->returnType.kind == SemanticType::Reference ||
+                        resolved->borrowOrigin != BorrowOriginKind::None);
+  };
+  if (borrowedResult(worker->semanticModel.findOperator(*resultExpression)))
+    return reject(
+        "The selected operation returns a borrow, not an owned result.");
+  if (const auto *call = exprAs<Call>(resultExpression);
+      call && (borrowedResult(worker->semanticModel.findCall(*call)) ||
+               borrowedResult(worker->semanticModel.findLambdaCall(*call))))
+    return reject("The selected call returns a borrow, not an owned result.");
   if (actual != required)
     return reject(
         "The expression does not have the exact required owned result type.");
@@ -426,6 +701,11 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
       worker->typeTraits(actual).containsBorrowedState)
     return reject("Expression requirements currently require an owned, "
                   "non-borrowed result.");
+  if (cacheable && primitiveRequirementProofCount < 1024) {
+    primitiveRequirementProofs[&query].emplace_back(arguments.begin(),
+                                                    arguments.end());
+    ++primitiveRequirementProofCount;
+  }
   return true;
 }
 
@@ -474,6 +754,15 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
   auto worker = unevaluatedExpressionWorker();
   worker->prepareRequirementLookup(lookupScope,
                                    sourceUnitFor(application.name.last()));
+  const auto retainArgumentFacts = [&](const auto &self,
+                                       const SemanticType &type) -> void {
+    if (type.kind == SemanticType::TypeParameter)
+      worker->genericConstraints[type.genericParameterId] |= constraintOf(type);
+    for (const auto &argument : type.arguments)
+      self(self, argument);
+  };
+  for (const auto &argument : arguments)
+    retainArgumentFacts(retainArgumentFacts, argument);
   worker->unsafeDepth = 0;
   std::unordered_map<std::string, SemanticType> bindings;
   for (std::size_t index = 0;
@@ -481,6 +770,7 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
        ++index)
     bindQueryType(application.arguments[index], arguments[index], bindings);
   worker->typeParameterScopes.push_back(std::move(bindings));
+  worker->typePackScopes.emplace_back();
   worker->analyzingDependentConstantCondition = true;
   worker->constantConditionGenericDependency = false;
   const auto type = worker->analyze(*application.predicate);
@@ -492,6 +782,9 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
   auto context = worker->makeConstexprInterpreter();
   const auto evaluated =
       worker->evaluateConstexprExpression(*application.predicate, context);
+  for (const auto &diagnostic : worker->diagnostics)
+    if (diagnostic.severity == DiagnosticSeverity::Error)
+      return reject(diagnostic.message);
   const bool *value =
       evaluated ? std::get_if<bool>(&*evaluated.value) : nullptr;
   if (!value)

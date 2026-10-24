@@ -186,7 +186,9 @@ def main():
         assert runtime["headers"] and all(
             header["kind"] == "runtime" for header in runtime["headers"]
         )
-        assert runtime["archive"]["canonical_path"] in native["argv"]
+        archive = pathlib.Path(runtime["archive"]["canonical_path"]).resolve()
+        assert any(pathlib.Path(argument).resolve() == archive
+                   for argument in native["argv"])
         assert not list(root.glob(".build-report.gti-stage-*"))
         run([str(reported_executable)])
 

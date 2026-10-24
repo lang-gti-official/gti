@@ -329,6 +329,10 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                                                   "'."});
           }
           appendMemberReason(diagnostic, alternative);
+          if (alternative.expressionFailure &&
+              !alternative.expressionFailure->empty())
+            diagnostic.related.push_back(
+                {tokenSpan(*location), *alternative.expressionFailure});
         };
     for (const SemanticConstraintFailure &alternative : failure.alternatives) {
       appendAlternatives(alternative);
@@ -433,146 +437,15 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
             "through this requirement still need an explicit unsafe context.");
       break;
     }
-    case StructuralConstraintKind::InputIterator:
+    case StructuralConstraintKind::Iteration:
       diagnostic.hints.emplace_back(
-          "The iterator must provide public read-only operator*() returning "
-          "a checked reference and public void operator++() mut.");
-      break;
-    case StructuralConstraintKind::SentinelFor:
-      diagnostic.hints.emplace_back(
-          "The iterator must provide one unambiguous public read-only bool "
-          "operator!=(S&) or operator!=(S) with copyable S for the exact "
-          "sentinel type.");
-      break;
-    case StructuralConstraintKind::DereferencesTo:
-      diagnostic.hints.emplace_back(
-          "The iterator's read-only dereference must return a checked "
-          "reference whose referent is exactly the required type.");
-      break;
-    case StructuralConstraintKind::WritableIterator:
-      diagnostic.hints.emplace_back(
-          "The iterator must provide public mut operator*() returning a "
-          "mutable checked reference and public void operator++() mut.");
-      break;
-    case StructuralConstraintKind::WritesTo:
-      diagnostic.hints.emplace_back(
-          "The iterator's mut operator*() must return a mutable checked "
-          "reference whose referent is exactly the required type.");
-      break;
-    case StructuralConstraintKind::BidirectionalIterator:
-      diagnostic.hints.emplace_back(
-          "The iterator must provide public void operator--() mut.");
-      break;
-    case StructuralConstraintKind::RandomAccessIterator:
-      diagnostic.hints.emplace_back(
-          "The iterator must provide public void operator+=(std::ptrdiff_t) "
-          "mut and public void operator-=(std::ptrdiff_t) mut.");
-      break;
-    case StructuralConstraintKind::SubscriptsToMut:
-      diagnostic.hints.emplace_back(
-          "The iterator's mut operator[](std::ptrdiff_t) must return a "
-          "mutable checked reference whose referent is exactly the required "
-          "type.");
-      break;
-    case StructuralConstraintKind::SizedSentinelFor:
-      diagnostic.hints.emplace_back(
-          "The iterator must provide public read-only "
-          "std::ptrdiff_t operator-(S&) or operator-(S) with copyable S "
-          "for the exact sentinel type, "
-          "returning the signed distance from the iterator to the sentinel.");
-      break;
-    case StructuralConstraintKind::InputRange:
-      diagnostic.hints.emplace_back(
-          "The range must provide exact public read-only begin()/end(); its "
-          "returned iterator and sentinel must satisfy the input-iterator "
-          "and exact-sentinel contracts.");
-      break;
-    case StructuralConstraintKind::RangeOf:
-      diagnostic.hints.emplace_back(
-          "The complete read-only range must dereference to a checked "
-          "reference whose referent is exactly the required element type.");
-      break;
-    case StructuralConstraintKind::MutableRangeOf:
-      diagnostic.hints.emplace_back(
-          "The mutable range must provide exact public begin_mut()/end(); "
-          "mutable dereference must return the required exact element "
-          "reference and prefix increment must return void.");
-      break;
-    case StructuralConstraintKind::SizedRange:
-      diagnostic.hints.emplace_back(
-          "The range must provide one exact public read-only size() returning "
-          "std::size_t.");
+          "Provide the operations and checked access required by the range "
+          "loop in this source requirement.");
       break;
     case StructuralConstraintKind::EnumUnderlying:
       diagnostic.hints.emplace_back(
           "The first type must be an integral enum and the second its exact "
           "declared underlying integer type.");
-      break;
-    case StructuralConstraintKind::ObjectLayout:
-      diagnostic.hints.emplace_back(
-          "The type must be a scalar, raw pointer, integral enum, positive "
-          "concrete array, or complete non-abstract class, struct or passive "
-          "union. Copying and moving are not required.");
-      break;
-    case StructuralConstraintKind::InlinePolymorphicPayload:
-      diagnostic.hints.emplace_back(
-          "The payload must be a concrete class publicly derived from the "
-          "polymorphic interface, with failure-free relocation, no source "
-          "destructor or owning cleanup, no checked borrowed state, and no "
-          "concurrency capability the interface would add.");
-      break;
-    case StructuralConstraintKind::IndependentObject:
-      diagnostic.hints.emplace_back(
-          "The element must be a complete object type without checked borrowed "
-          "state. Raw pointers remain nonowning and retain their unsafe "
-          "validity "
-          "obligations; copying or moving the element is not required.");
-      break;
-    case StructuralConstraintKind::ReadCallable:
-    case StructuralConstraintKind::MutCallable:
-    case StructuralConstraintKind::OnceCallable:
-      diagnostic.hints.emplace_back(
-          "The callable must provide one exact public unary operator() with "
-          "the declared owned result and argument taken by value or "
-          "read-only reference; its receiver capability must satisfy the "
-          "declared read, mut, or once use site.");
-      break;
-    case StructuralConstraintKind::ReadBinaryCallable:
-    case StructuralConstraintKind::MutBinaryCallable:
-    case StructuralConstraintKind::OnceBinaryCallable:
-      diagnostic.hints.emplace_back(
-          "The callable must provide one exact public binary operator() with "
-          "the declared owned result and arguments taken by value or "
-          "read-only reference; its receiver capability must satisfy the "
-          "declared read, mut, or once use site.");
-      break;
-    case StructuralConstraintKind::OnceAction:
-      diagnostic.hints.emplace_back(
-          "The action must provide one exact public void operator()() usable "
-          "through a consuming receiver; read-only and mutable reusable "
-          "targets also satisfy this once-only use site.");
-      break;
-    case StructuralConstraintKind::IndirectPredicate:
-      diagnostic.hints.emplace_back(
-          "The iterator's read-only dereference result must be accepted by "
-          "one exact repeatable public callable returning bool.");
-      break;
-    case StructuralConstraintKind::IndirectOperation:
-      diagnostic.hints.emplace_back(
-          "The iterator's read-only dereference result must be accepted by "
-          "one exact repeatable public callable returning the required owned "
-          "result type.");
-      break;
-    case StructuralConstraintKind::RangePredicate:
-      diagnostic.hints.emplace_back(
-          "The complete range's read-only element must be accepted by one "
-          "exact repeatable public callable returning bool.");
-      break;
-    case StructuralConstraintKind::RangeOperation:
-      diagnostic.hints.emplace_back(
-          "The complete range's read-only element must be accepted by one "
-          "exact repeatable public callable returning the required owned "
-          "result type.");
       break;
     case StructuralConstraintKind::None:
       break;
@@ -613,16 +486,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                    "' is declared here."});
   }
   switch (failure.failed) {
-  case GenericConstraintKind::EqualityComparable:
-    diagnostic.hints.emplace_back(
-        "Class types must provide public, read-only bool operator==(" +
-        typeSpelling(failure.argument) + "& other) and operator!= overloads.");
-    break;
-  case GenericConstraintKind::RelationallyOrdered:
-    diagnostic.hints.emplace_back(
-        "Class types must provide exact public, read-only bool overloads "
-        "for <, <=, >, and >=.");
-    break;
   case GenericConstraintKind::CopyConstructible:
     diagnostic.hints.emplace_back(
         "The required concept needs an available copy constructor; copy "
@@ -692,6 +555,9 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
   case GenericConstraintKind::SignedIntegral:
   case GenericConstraintKind::UnsignedIntegral:
   case GenericConstraintKind::FloatingPoint:
+  case GenericConstraintKind::Boolean:
+  case GenericConstraintKind::ObjectLayout:
+  case GenericConstraintKind::BorrowFree:
     break;
   }
   publish(std::move(diagnostic));

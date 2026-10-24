@@ -13,6 +13,9 @@ struct Player {
 enum class color { red = 1, green = 2 };
 
 enum class fail { nope };
+class QueryBase { public: virtual int read() { return 1; } };
+class QueryLeaf : public QueryBase {};
+class QueryCleanup { public: ~QueryCleanup() {} };
 struct fixed_producer {
   expected<std::meta::field_type<T, I>, fail> produce<T, uint64_t I>(std::meta::field<T, I> field) mut {
     if constexpr (std::meta::type_of<std::meta::field_type<T, I>>().is_bool()) {
@@ -24,6 +27,12 @@ struct fixed_producer {
 };
 
 int main() {
+  static_assert(std::meta::has_active_cleanup<QueryCleanup>());
+  static_assert(!std::meta::type<QueryLeaf>().has_active_cleanup());
+  static_assert(std::meta::is_polymorphic<QueryBase>());
+  static_assert(std::meta::type<QueryLeaf>().is_polymorphic());
+  static_assert(std::meta::is_public_base_of<QueryBase, QueryLeaf>());
+  static_assert(std::meta::type<QueryLeaf>().has_public_base<QueryBase>());
   Player player = {.health = uint32_t(7), .alive = false};
   mut uint64_t checksum = 0;
   constexpr for (auto field : std::meta::fields_of<Player>()) {

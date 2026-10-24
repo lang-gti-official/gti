@@ -142,9 +142,21 @@ void AstPrinter::visitMemberRequirementExpr(const MemberRequirement &expr) {
     for (std::size_t index = 0; index < expr.parameters().size(); ++index)
       parameters += " " + typeToString(expr.parameters()[index]) + " " +
                     expr.bindings()[index].lexeme;
+    const auto *loop = stmtAs<RangeForStmt>(expr.iteration().get());
     result =
         "(requires" + parameters + (expr.unsafeKeyword() ? " unsafe " : " ") +
+        (loop ? "(for " + typeToString(loop->bindingType()) + " " +
+                    loop->bindingName().lexeme + " : "
+              : "") +
         printPtr(expr.expression()) + " " + typeToString(expr.result()) + ")";
+    if (loop) {
+      std::string text = result;
+      if (const auto *body = stmtAs<BlockStmt>(loop->sourceBody()))
+        for (const auto &statement : body->statements())
+          if (const auto *check = stmtAs<StaticAssertDecl>(statement.get()))
+            text += " (static_assert " + printPtr(check->condition()) + ")";
+      result = text + ")";
+    }
     return;
   }
   result = "(requires " + typeToString(expr.receiver()) + " " +

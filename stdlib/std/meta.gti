@@ -46,13 +46,12 @@ uint64_t meta_declaration_line<T, uint64_t Kind, uint64_t I>();
 std::string_view meta_declaration_file<T>();
 std::string_view meta_type_primary_name<T>();
 T meta_construct<T, Values...>(Values... values);
-@compiler_constraint("meta_reflectable") concept meta_reflectable_capability<T>;
 }
 
 namespace std {
 namespace meta {
 
-/// The category of a type, as `type<T>::kind()` reports it.
+/// The categories used by the reflection classification predicates.
 enum class kind {
   unknown = 0,
   structure = 1,
@@ -127,6 +126,13 @@ public:
 /// The subset of `method_list<T>` whose methods are overloaded operators.
 @compiler_type("meta_operator_list") struct operator_list<T> {};
 
+/// The resolved method set of T, including inherited overloads and excluding
+/// overridden base declarations. Elements retain their exact declaring owner
+/// and declaration index; names are ordered lexically, overloads by lookup.
+/// Metadata grants no access or invocation permission.
+@compiler_type("meta_lookup_method_list") struct lookup_method_list<T> {};
+@compiler_type("meta_lookup_operator_list") struct lookup_operator_list<T> {};
+
 /// `list<parameter<T, I, 0>, ...>` over the parameters of method `I`.
 @compiler_type("meta_parameter_list") struct parameter_list<T, uint64_t I> {};
 
@@ -155,7 +161,7 @@ public:
 /// Satisfied when every instance field of `T` is readable through
 /// reflection: `T` is a struct or class whose instance fields are all public,
 /// or one declared `[[reflect_private]]`.
-concept reflectable<T> = gti_internal::meta_reflectable_capability<T>;
+concept reflectable<T> = std::meta::is_reflectable<T>();
 
 /// Describes the type `T`.
 @compiler_type("meta_type") struct type<T> {
@@ -170,11 +176,15 @@ public:
   constexpr bool is_enum() { return gti_internal::meta_type_kind<T>() == uint64_t(5); }
   constexpr bool is_integral() { return gti_internal::meta_type_trait<T, 17>(); }
   constexpr bool is_floating_point() { return gti_internal::meta_type_trait<T, 18>(); }
-  constexpr bool is_bool() { return gti_internal::meta_type_kind<T>() == uint64_t(8); }
+  constexpr bool is_bool() { return gti_internal::meta_type_trait<T, 19>(); }
   constexpr bool is_char() { return gti_internal::meta_type_kind<T>() == uint64_t(9); }
   constexpr bool is_text() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
   /// Whether T is a checked reference (the access mode is not changed).
   constexpr bool is_reference() { return gti_internal::meta_type_kind<T>() == uint64_t(11); }
+  /// Whether T is a fixed array (not a container with indexing methods).
+  constexpr bool is_array() { return gti_internal::meta_type_kind<T>() == uint64_t(12); }
+  /// A raw data address, not an owning pointer or a callable address.
+  constexpr bool is_raw_pointer() { return gti_internal::meta_type_kind<T>() == uint64_t(13); }
   /// Whether T denotes absence of a result, rather than an object type.
   constexpr bool is_void() { return gti_internal::meta_type_kind<T>() == uint64_t(17); }
   /// The number of instance fields when `T` is a struct or class, else 0.
@@ -212,10 +222,22 @@ public:
   constexpr bool is_unsigned_integral() { return gti_internal::meta_type_trait<T, 14>(); }
   constexpr bool is_numeric() { return gti_internal::meta_type_trait<T, 15>(); }
   constexpr bool is_signed_numeric() { return gti_internal::meta_type_trait<T, 16>(); }
+  /// Whether a complete object representation is available for lifetime operations.
+  constexpr bool has_object_layout() { return gti_internal::meta_type_trait<T, 20>(); }
+  /// Whether the value retains no checked external-owner borrow (not raw-pointer validity).
+  constexpr bool is_borrow_free() { return gti_internal::meta_type_trait<T, 21>(); }
+  /// Whether destroying T requires active cleanup, including nested owned state.
+  /// A false answer does not authorize skipping object lifetime transitions.
+  constexpr bool has_active_cleanup() { return gti_internal::meta_type_trait<T, 22>(); }
+  /// Whether the resolved class/interface has virtual dispatch.
+  constexpr bool is_polymorphic() { return gti_internal::meta_type_trait<T, 23>(); }
   /// Exact type identity, not conversion compatibility.
   constexpr bool is_same<U>() { return gti_internal::meta_type_relation<T, U, 0>(); }
   /// Exact declared integral-enum representation, false for other types.
   constexpr bool has_underlying_type<U>() { return gti_internal::meta_type_relation<T, U, 1>(); }
+  /// Whether Base is a resolved public base of T (not T itself).
+  /// This describes the relation, not permission to access or extend an object.
+  constexpr bool has_public_base<Base>() { return gti_internal::meta_type_relation<T, Base, 2>(); }
   /// The number of enumerators when `T` is an enum, else 0.
   constexpr uint64_t enumerator_count() { return gti_internal::meta_enumerator_count<T>(); }
   /// The enumerators of `T`, as a `list` of `enumerator` metaobjects.
@@ -277,6 +299,11 @@ public:
   /// Whether the method takes its receiver mutably.
   constexpr bool is_mutating() { return gti_internal::meta_method_trait<T, I, 4>(); }
   constexpr bool is_public() { return gti_internal::meta_method_trait<T, I, 5>(); }
+  /// Declaration facts; none of these predicates authorizes an invocation.
+  constexpr bool is_consuming() { return gti_internal::meta_method_trait<T, I, 6>(); }
+  constexpr bool is_unsafe() { return gti_internal::meta_method_trait<T, I, 7>(); }
+  constexpr bool is_generic() { return gti_internal::meta_method_trait<T, I, 8>(); }
+  constexpr bool is_constrained() { return gti_internal::meta_method_trait<T, I, 9>(); }
   constexpr uint64_t parameter_count() { return gti_internal::meta_method_parameter_count<T, I>(); }
   constexpr parameter_list<T, I> parameters() { return parameter_list<T, I>(); }
   constexpr type<return_type<T, I>> result() {
@@ -404,6 +431,8 @@ constexpr argument_list<T> arguments_of<T>() { return argument_list<T>(); }
 /// The methods and declared constructors of `T`, as metaobjects.
 constexpr method_list<T> methods_of<T>() { return method_list<T>(); }
 constexpr operator_list<T> operators_of<T>() { return operator_list<T>(); }
+constexpr lookup_method_list<T> lookup_methods_of<T>() { return lookup_method_list<T>(); }
+constexpr lookup_operator_list<T> lookup_operators_of<T>() { return lookup_operator_list<T>(); }
 constexpr constructor_list<T> constructors_of<T>() { return constructor_list<T>(); }
 
 namespace detail {
@@ -442,7 +471,9 @@ constexpr bool is_class<T>() { return gti_internal::meta_type_kind<T>() == uint6
 constexpr bool is_enum<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(5); }
 constexpr bool is_integral<T>() { return gti_internal::meta_type_trait<T, 17>(); }
 constexpr bool is_floating_point<T>() { return gti_internal::meta_type_trait<T, 18>(); }
-constexpr bool is_bool<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(8); }
+constexpr bool is_bool<T>() { return gti_internal::meta_type_trait<T, 19>(); }
+constexpr bool is_array<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(12); }
+constexpr bool is_raw_pointer<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(13); }
 constexpr bool is_text<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
 constexpr bool is_payload_enum<T>() { return gti_internal::meta_type_trait<T, 0>(); }
 constexpr bool is_generic_instance<T>() { return gti_internal::meta_type_trait<T, 1>(); }
@@ -465,6 +496,19 @@ constexpr bool is_integral_enum<T>() { return gti_internal::meta_type_trait<T, 1
 constexpr bool is_unsigned_integral<T>() { return gti_internal::meta_type_trait<T, 14>(); }
 constexpr bool is_numeric<T>() { return gti_internal::meta_type_trait<T, 15>(); }
 constexpr bool is_signed_numeric<T>() { return gti_internal::meta_type_trait<T, 16>(); }
+/// Whether a complete object representation is available for lifetime operations.
+constexpr bool has_object_layout<T>() { return gti_internal::meta_type_trait<T, 20>(); }
+/// Whether the value retains no checked external-owner borrow. This does not
+/// establish validity, provenance, or ownership of any raw pointer it stores.
+constexpr bool is_borrow_free<T>() { return gti_internal::meta_type_trait<T, 21>(); }
+/// Includes nested owning state and source cleanup, not merely a declared destructor.
+/// This fact does not permit skipping destruction or a lifetime transition.
+constexpr bool has_active_cleanup<T>() { return gti_internal::meta_type_trait<T, 22>(); }
+/// Whether the resolved class/interface participates in virtual dispatch.
+constexpr bool is_polymorphic<T>() { return gti_internal::meta_type_trait<T, 23>(); }
+/// Whether Base is a resolved public base of Derived (identity is false).
+/// No object access, conversion, or lifetime extension occurs in this query.
+constexpr bool is_public_base_of<Base, Derived>() { return gti_internal::meta_type_relation<Derived, Base, 2>(); }
 /// Exact type identity, without widening, implicit conversion or inheritance.
 constexpr bool is_same<T, U>() { return gti_internal::meta_type_relation<T, U, 0>(); }
 /// Whether E is a payload-free enum with exactly U as its declared domain.

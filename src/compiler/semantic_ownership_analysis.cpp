@@ -13177,8 +13177,71 @@ metaQueryShape(IntrinsicKind intrinsic) {
 
 } // namespace
 
+auto SemanticVisitor::Impl::metaHasStableDeclarations(
+    const SemanticType &subject) const -> bool {
+  const auto stable = [&](const auto &self, const SemanticType &subject,
+                          std::size_t depth) -> bool {
+    // Invalid cyclic bases may still be present during diagnostic recovery.
+    if (depth > classes.size())
+      return false;
+    if (!containsOpenTypeParameter(subject))
+      return true;
+    const auto *owner = classInfo(subject);
+    if (subject.kind != SemanticType::Class || !owner ||
+        owner->compilerType != CompilerTypeKind::None ||
+        owner->definitionFamilyMembers.size() > 1 ||
+        (owner->definitionFamilyPrimary != 0 &&
+         owner->definitionFamilyPrimary != owner->id) ||
+        std::any_of(exactClassSpecializations.begin(),
+                    exactClassSpecializations.end(),
+                    [&](const ExactClassSpecialization &specialization) {
+                      return specialization.primary == owner->id;
+                    }))
+      return false;
+    const auto substitution = classSubstitution(subject);
+    for (const auto &base : owner->bases)
+      if (!self(self, substituteType(base.type, substitution), depth + 1))
+        return false;
+    for (const auto *declaration : metaMethodDeclarations(subject)) {
+      const auto *function = semanticModel.findFunction(*declaration);
+      if (!function)
+        return false;
+      // Conversion names include their target spelling. An unexpanded pack
+      // also prevents a fixed parameter inventory from being established.
+      if (declaration->operatorName() &&
+          declaration->operatorName()->kind == OverloadedOperator::Conversion &&
+          containsOpenTypeParameter(
+              substituteType(function->returnType, substitution)))
+        return false;
+      for (const auto &parameter : function->parameterTypes)
+        if (substituteType(parameter, substitution).kind ==
+            SemanticType::TypePack)
+          return false;
+    }
+    // A known class declaration has a fixed member inventory even when the
+    // types in its signatures remain symbolic. Alternate definitions and
+    // dependent bases must first be selected by ordinary instantiation.
+    return true;
+  };
+  return stable(stable, subject, 0);
+}
+
 auto SemanticVisitor::Impl::metaQueryAcceptsOpenSubject(
     IntrinsicKind intrinsic, const SemanticType &subject) const -> bool {
+  switch (intrinsic) {
+  case IntrinsicKind::MetaTypeRelation:
+    // The relation kernel distinguishes a proof from an unknown symbolic
+    // relationship. In particular, equal symbolic identities are still equal.
+    return true;
+  case IntrinsicKind::MetaMethodCount:
+  case IntrinsicKind::MetaMethodName:
+  case IntrinsicKind::MetaMethodTrait:
+  case IntrinsicKind::MetaMethodParameterCount:
+  case IntrinsicKind::MetaParameterName:
+    return metaHasStableDeclarations(subject);
+  default:
+    break;
+  }
   if (intrinsic != IntrinsicKind::MetaTypeKind ||
       subject.kind == SemanticType::Unknown ||
       subject.kind == SemanticType::TypeParameter ||
@@ -13227,6 +13290,13 @@ auto SemanticVisitor::Impl::metaQueryConstant(
           (subject.kind == SemanticType::Class ||
            subject.kind == SemanticType::Enum) &&
           (!subject.arguments.empty() || !subject.valueArguments.empty())};
+    case 22:
+      return ConstantValue{requiresActiveCleanupFor(subject)};
+    case 23: {
+      const ClassInfo *owner =
+          subject.kind == SemanticType::Class ? classInfo(subject) : nullptr;
+      return ConstantValue{owner && owner->polymorphic};
+    }
     default:
       return std::nullopt;
     }
@@ -13236,13 +13306,63 @@ auto SemanticVisitor::Impl::metaQueryConstant(
       return std::nullopt;
     }
     switch (*index) {
-    case 0:
+    case 0: {
+      if (subject == *attribute)
+        return ConstantValue{true};
+      if (containsOpenTypeParameter(subject) ||
+          containsOpenTypeParameter(*attribute)) {
+        const auto knownOuterKind = [&](const SemanticType &type) {
+          if (type.kind == SemanticType::Unknown ||
+              type.kind == SemanticType::TypeParameter ||
+              type.kind == SemanticType::TypePack)
+            return false;
+          const auto *owner = classInfo(type);
+          return type.kind != SemanticType::Class ||
+                 (owner && owner->compilerType == CompilerTypeKind::None);
+        };
+        // Do not confuse unequal symbolic identities (T and U) with a proof
+        // of inequality: instantiation can make them equal. Different known
+        // outer constructors, such as I and I&, cannot become the same type.
+        if (subject.kind != attribute->kind && knownOuterKind(subject) &&
+            knownOuterKind(*attribute))
+          return ConstantValue{false};
+        if (subject.kind == SemanticType::Class &&
+            attribute->kind == SemanticType::Class &&
+            subject.classId != attribute->classId &&
+            metaHasStableDeclarations(subject) &&
+            metaHasStableDeclarations(*attribute))
+          return ConstantValue{false};
+        if ((subject.kind == SemanticType::Reference ||
+             subject.kind == SemanticType::RawPointer) &&
+            subject.kind == attribute->kind && subject.arguments.size() == 1 &&
+            attribute->arguments.size() == 1) {
+          if ((subject.kind == SemanticType::Reference &&
+               subject.referenceAccess != attribute->referenceAccess) ||
+              (subject.kind == SemanticType::RawPointer &&
+               subject.pointerAccess != attribute->pointerAccess))
+            return ConstantValue{false};
+          return metaQueryConstant(intrinsic, subject.arguments.front(),
+                                   attribute->arguments.front(), index, second);
+        }
+        return std::nullopt;
+      }
       return ConstantValue{subject == *attribute};
+    }
     case 1: {
+      if (containsOpenTypeParameter(subject) ||
+          containsOpenTypeParameter(*attribute))
+        return std::nullopt;
       const std::array<SemanticType, 2> arguments{subject, *attribute};
       return ConstantValue{structuralConstraintSatisfied(
           StructuralConstraintKind::EnumUnderlying, arguments)};
     }
+    case 2:
+      if (containsOpenTypeParameter(subject) ||
+          containsOpenTypeParameter(*attribute))
+        return std::nullopt;
+      return ConstantValue{subject.kind == SemanticType::Class &&
+                           attribute->kind == SemanticType::Class &&
+                           isPublicBaseConversion(subject, *attribute)};
     default:
       return std::nullopt;
     }
@@ -13290,6 +13410,14 @@ auto SemanticVisitor::Impl::metaQueryConstant(
         return ConstantValue{facts->mutableReceiver};
       case 5:
         return ConstantValue{facts->publicAccess};
+      case 6:
+        return ConstantValue{facts->consumingReceiver};
+      case 7:
+        return ConstantValue{facts->requiresUnsafe};
+      case 8:
+        return ConstantValue{facts->generic};
+      case 9:
+        return ConstantValue{facts->constrained};
       default:
         return std::nullopt;
       }
@@ -13599,7 +13727,8 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
   semanticModel.record(expr, resolved);
   if ((containsOpenTypeParameter(*subject) &&
        !metaQueryAcceptsOpenSubject(intrinsic, *subject)) ||
-      (attribute && containsOpenTypeParameter(*attribute)) ||
+      (attribute && containsOpenTypeParameter(*attribute) &&
+       intrinsic != IntrinsicKind::MetaTypeRelation) ||
       std::any_of(indices.begin(), indices.end(),
                   [](const CompileTimeValue &index) {
                     return index.kind != CompileTimeValue::UInt64;
@@ -13613,6 +13742,9 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
   const std::optional<ConstantValue> constant =
       metaQueryConstant(intrinsic, *subject, attribute, index, second);
   if (!constant) {
+    if (containsOpenTypeParameter(*subject) ||
+        (attribute && containsOpenTypeParameter(*attribute)))
+      return;
     const auto [code, message] =
         metaQueryFailure(intrinsic, *subject, index, second);
     report(expr.paren(), message, code);
@@ -13660,7 +13792,8 @@ auto SemanticVisitor::Impl::metaIntrinsicConstant(
   std::optional<SemanticType> attribute;
   if (types == 2) {
     attribute = constexprType(call.typeArguments[1], context);
-    if (containsOpenTypeParameter(*attribute)) {
+    if (containsOpenTypeParameter(*attribute) &&
+        call.intrinsic != IntrinsicKind::MetaTypeRelation) {
       return std::nullopt;
     }
   }

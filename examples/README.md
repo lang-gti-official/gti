@@ -248,7 +248,7 @@ is a teaching helper, not a production server.
 | `170-view-fields.gti` | a class and a struct whose text fields view a local string, a copy sharing that dependency, a field read yielding a view of the same owner, a temporary token read within its expression, a factory whose token views its argument's owner, reads through a returned text reference and a generic holder's accessor, an optional whose payload views the string through an implicit conversion and whose `->` calls that view's members, a parser whose failure views the string passed to it, a diagnostic nested in a returned result, and an ownerless token that keeps its method calls |
 | `171-recursive-text-relays.gti` | recursive and mutually recursive functions relaying a view parameter, a recursion relaying a value's text field, a recursive method relaying the receiver's field, and an ownerless result from a literal argument |
 | `172-deferred-assertions.gti` | source-defined always-on/debug assertions, lazy formatted messages, skipped owning moves, and an application-defined typed macro |
-| `173-general-requires.gti` | exact expression/construction requirements, constexpr reflection predicates and source concept composition over an unrelated domain type |
+| `173-general-requires.gti` | exact expression/construction and mutation requirements, constexpr reflection predicates, symbolic declaration proofs and source concept composition over unrelated domain types |
 | `174-typed-macros.gti` | typed `#macro` calls, lazy scalar/owning results and initializer contexts, local returns and evaluate-once bindings, fresh lambda captures, written expression text, hygienic lookup, and skipped owner movement |
 | `175-thread-local-storage.gti` | namespace, static-field and block `thread_local` storage, independent worker values and owning class cleanup before join; requires `--execution-profile concurrent` |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
@@ -632,8 +632,20 @@ Address validity, extent and termination remain the caller's unsafe obligations.
 [`173-general-requires.gti`](173-general-requires.gti) defines source concepts
 for exact operator results and construction, composes them with constexpr
 reflection predicates, and uses them in generic algorithms over an unrelated
-user-defined value. It also demonstrates multi-check queries and exact result
-rejection. Requirements execute no user code and do not relax ownership rules.
+user-defined value. A generic cell demonstrates declaration metadata and
+checked expression proofs while its payload type remains symbolic. The example
+also demonstrates multi-check queries and exact result
+rejection, inferred results, checked borrowed origins, ordinary range loops,
+and one sized-range function used with both a fixed array and a user range.
+Independent object-layout and borrow-state predicates let its own
+storage policy use the same facts as `std/memory`; a signed-or-unsigned
+disjunction demonstrates common guarantees in generic arithmetic. Inline source
+constraints retain complete operation contracts. Source-defined standard
+comparison concepts accept its domain type, and method reflection exposes
+access, safety, generic and constraint facts. Requirements
+execute no user code and do not relax ownership rules. A separate source tally
+demonstrates prefix and compound mutation proofs through a mutable reference,
+using the same general mechanism as source-defined iterator movement policy.
 
 ## Complete projects
 

@@ -401,7 +401,16 @@ private:
       }
     }
     for (const SemanticType &argument : resolvedType.arguments) {
-      (void)enqueueClass(argument, site);
+      if (constantClosure && resolvedType.kind == SemanticType::Class) {
+        // A type argument identifies an instantiation; it is not an object
+        // executed by that instantiation. Metadata and user-defined type tags
+        // may name runtime-only types without constructing them. Actual fields,
+        // signatures and operations discover their own required layouts below.
+        // Keep exact enum identities even when no class layout is required.
+        (void)seedEnumIdentities(argument);
+      } else {
+        (void)enqueueClass(argument, site);
+      }
     }
     if (resolvedType.kind == SemanticType::Enum) {
       enqueueEnum(resolvedType);

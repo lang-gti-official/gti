@@ -135,6 +135,8 @@ enum class LoweredRequirementKind {
   Concept,
   Member,
   Expression,
+  InferredExpression,
+  Iteration,
   Predicate,
   Count,
 };
@@ -152,8 +154,17 @@ struct LoweredConceptRequirement {
   // A general expression's arguments are its ordered synthetic parameter
   // types, its exact owned result, then explicit expression type arguments.
   // These are static proven types, never a backend expression to evaluate.
+  // Iteration uses the same ordering, but its result slot is the exact element
+  // binding type (possibly a reference), or void for inferred auto. It does
+  // not produce a reference result or publish a loan to an enclosing scope.
   std::size_t expressionParameterCount = 0;
   std::optional<std::size_t> resultArgument;
+  // A checked reference result is bounded by this synthetic input's lifetime.
+  // This is a semantic contract, not permission for backend origin inference.
+  std::optional<std::size_t> resultOriginParameter;
+  // Only inferred reference queries use this field. Their placeholder result
+  // slot is void, not an unresolved type that may enter executable lowering.
+  std::optional<AccessMode> inferredResultAccess;
   SourceSpan source;
 
   friend bool operator==(const LoweredConceptRequirement &,

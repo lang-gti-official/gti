@@ -4330,8 +4330,7 @@ int use() {
          "unsupported operations and concrete constraint violations should "
          "fail before backend entry");
   expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "does not satisfy generic constraint") &&
+             hasDiagnostic(invalid.diagnostics, "does not satisfy concept") &&
              hasDiagnostic(invalid.diagnostics,
                            "Unknown generic concept 'std::mystery'") &&
              hasDiagnostic(invalid.diagnostics,
@@ -4356,9 +4355,10 @@ int use() {
          "constraint diagnostics should cover declarations, propagation, "
          "calls, conversions, and required operator capabilities");
   expect(hasDiagnosticHint(invalid.diagnostics,
-                           "public, read-only bool operator==") &&
-             hasDiagnosticHint(invalid.diagnostics,
-                               "exact public, read-only bool overloads") &&
+                           "public, read-only bool == and != operators") &&
+             hasDiagnosticHint(
+                 invalid.diagnostics,
+                 "public, read-only bool <, <=, > and >= operators") &&
              hasDiagnosticHint(invalid.diagnostics,
                                "available copy constructor") &&
              hasDiagnosticHint(invalid.diagnostics,
@@ -5312,13 +5312,12 @@ int main() {
 void testCompilerPrivateMemberRequirements() {
   // Trusted source may name a compiler-private probe type, so its direct
   // member queries must see that type's members exactly as a call written
-  // there would, including a member constrained by a raw compiler-bound
-  // concept rather than its public alias.
+  // there would, including a member constrained by a private source concept.
+  // Equality policy no longer has a raw compiler-bound declaration.
   const auto trusted =
       analyzeTrustedPreludeFixture("compiler-private-member-probe.gti", R"(
 namespace gti_internal {
-@compiler_constraint("equality_comparable")
-concept probe_equality<E>;
+concept probe_equality<E> = std::equality_comparable<E>;
 struct plain_probe<T> {
   bool matches() { return true; }
 };
@@ -5375,7 +5374,7 @@ int main() {
                        });
   };
   expect(instantiated("inline_width") && !instantiated("boxed_width"),
-         "a raw compiler-bound member constraint must select the satisfied "
+         "a private source member constraint must select the satisfied "
          "if-constexpr probe branch, not silently fall back");
 
   // A named concept is a public predicate: it never observes a
@@ -6557,7 +6556,8 @@ T invalid_forward<Iterator, Sentinel, std::numeric T>(
   expect(
       !unprovenForward.canGenerateCode() &&
           hasDiagnosticCode(unprovenForward.diagnostics, "GTI-S2029") &&
-          hasDiagnostic(unprovenForward.diagnostics, "'std::input_iterator'") &&
+          hasDiagnostic(unprovenForward.diagnostics,
+                        "'std::input_iterator<Iterator>'") &&
           hasRelatedDiagnostic(unprovenForward.diagnostics,
                                "Required application "
                                "'std::input_iterator<Iterator>'.") &&
@@ -6759,26 +6759,36 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(
+  const bool iteratorDiagnostics =
       !invalid.canGenerateCode() &&
-          hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
-          hasDiagnostic(invalid.diagnostics, "concept 'std::input_iterator'") &&
-          hasDiagnostic(invalid.diagnostics, "concept 'std::sentinel_for'") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "concept 'std::accumulates_into'") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Prefix operator++ must return void") &&
-          hasDiagnosticHint(invalid.diagnostics,
-                            "public read-only operator*() returning") &&
-          hasDiagnosticHint(invalid.diagnostics,
-                            "public read-only bool operator!=") &&
-          hasDiagnosticHint(invalid.diagnostics,
-                            "referent is exactly the required type") &&
-          hasRelatedDiagnostic(
-              invalid.diagnostics,
-              "Required here as 'std::input_iterator<Iterator>'"),
-      "structural requirements should diagnose missing or inexact "
-      "iterator, sentinel, and element operations before backend entry");
+      hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
+      hasDiagnostic(invalid.diagnostics, "concept 'std::input_iterator<") &&
+      (hasDiagnostic(invalid.diagnostics, "concept 'std::sentinel_for'") ||
+       hasDiagnostic(invalid.diagnostics, "concept 'std::sentinel_for<")) &&
+      hasDiagnostic(invalid.diagnostics, "concept 'std::accumulates_into<") &&
+      hasDiagnostic(invalid.diagnostics,
+                    "Prefix operator++ must return void") &&
+      hasDiagnosticHint(invalid.diagnostics,
+                        "public, safe read-only operator*() yielding") &&
+      hasDiagnosticHint(invalid.diagnostics,
+                        "public read-only bool operator!=") &&
+      hasDiagnosticHint(invalid.diagnostics,
+                        "dereference must yield exactly T") &&
+      hasRelatedDiagnostic(invalid.diagnostics,
+                           "Required application 'std::input_iterator<"
+                           "MissingDereference>'");
+  if (!iteratorDiagnostics) {
+    for (const auto &diagnostic : invalid.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      for (const auto &hint : diagnostic.hints)
+        std::cerr << "  hint: " << hint << '\n';
+      for (const auto &note : diagnostic.related)
+        std::cerr << "  note: " << note.message << '\n';
+    }
+  }
+  expect(iteratorDiagnostics,
+         "structural requirements should diagnose missing or inexact "
+         "iterator, sentinel, and element operations before backend entry");
 
   const lang::FrontendResult missingIncrement = lang::Frontend().analyze(
       "missing-increment.gti", R"(
@@ -6807,7 +6817,7 @@ int main() {
   expect(!missingIncrement.canGenerateCode() &&
              hasDiagnosticCode(missingIncrement.diagnostics, "GTI-S2029") &&
              hasDiagnostic(missingIncrement.diagnostics,
-                           "concept 'std::input_iterator'") &&
+                           "concept 'std::input_iterator<MissingIncrement>'") &&
              hasDiagnosticHint(missingIncrement.diagnostics,
                                "public void operator++() mut"),
          "input_iterator should reject an otherwise exact iterator that is "
@@ -6841,8 +6851,9 @@ int main() {
   expect(
       !mutableOnlyDereference.canGenerateCode() &&
           hasDiagnosticCode(mutableOnlyDereference.diagnostics, "GTI-S2029") &&
-          hasDiagnostic(mutableOnlyDereference.diagnostics,
-                        "concept 'std::input_iterator'"),
+          hasDiagnostic(
+              mutableOnlyDereference.diagnostics,
+              "concept 'std::input_iterator<MutableOnlyDereference>'"),
       "input_iterator and accumulates_into should require a read-only "
       "dereference even when the caller owns a mutable iterator value");
 
@@ -7057,9 +7068,12 @@ int main() {
       }
     }
     expect(!result.canGenerateCode() &&
-               hasDiagnostic(result.diagnostics, std::string("concept '") +
-                                                     std::string(conceptName) +
-                                                     "'") &&
+               (hasDiagnostic(result.diagnostics, std::string("concept '") +
+                                                      std::string(conceptName) +
+                                                      "'") ||
+                hasDiagnostic(result.diagnostics, std::string("concept '") +
+                                                      std::string(conceptName) +
+                                                      "<")) &&
                hasDiagnosticHint(result.diagnostics, std::string(hintFragment)),
            std::string(message));
   };
@@ -7076,7 +7090,7 @@ bool inspect<Function>(int32_t value, Function function)
 }
 int main() { return inspect(1, mutable_only()) ? 0 : 1; }
 )",
-          "std::read_callable", "receiver capability",
+          "std::read_callable", "read-only access",
           "a mutable-only target should not satisfy a read-only callable "
           "use site");
 
@@ -7092,7 +7106,7 @@ bool inspect<Function>(int32_t value, mut Function function)
 }
 int main() { return inspect(1, once_only()) ? 0 : 1; }
 )",
-          "std::predicate", "receiver capability",
+          "std::predicate", "safe repeatable unary call",
           "a consuming target should not satisfy a repeatable predicate use "
           "site");
 
@@ -7108,7 +7122,7 @@ bool inspect<Function>(int32_t value, mut Function function)
 }
 int main() { return inspect(1, integer_result()) ? 0 : 1; }
 )",
-          "std::predicate", "declared owned result",
+          "std::predicate", "exact owned result",
           "a predicate should require an exact owned bool result");
 
   rejects("borrowed-operation-result.gti", R"(
@@ -7123,11 +7137,12 @@ int32_t transform<Function>(int32_t value, mut Function function)
 }
 int main() { return transform(1, borrowed_result()) - 1; }
 )",
-          "std::operation", "declared owned result",
+          "std::operation", "exact owned result",
           "an operation should not satisfy an owned-result relation with a "
           "borrowed result");
 
-  rejects("ambiguous-callable-relation.gti", R"(
+  const auto ambiguous = lang::Frontend().analyze(
+      "ambiguous-callable-use.gti", R"(
 #include <std/functional>
 class ambiguous {
 public:
@@ -7140,9 +7155,11 @@ bool inspect<Function>(int32_t value, Function function)
 }
 int main() { return inspect(1, ambiguous()) ? 0 : 1; }
 )",
-          "std::read_callable", "one exact public unary operator()",
-          "a callable relation should reject an ambiguous exact readable "
-          "signature");
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!ambiguous.canGenerateCode() &&
+             hasDiagnosticCode(ambiguous.diagnostics, "GTI-S2022"),
+         "an owned-call alternative does not authorize an ambiguous borrowed "
+         "call");
 
   // A dependent compound subject keeps its declaration inside a generic body:
   // its public operator() is inspected through ordinary substitution.
@@ -7238,7 +7255,7 @@ bool generic_order<std::totally_ordered T>(T& left, T& right) {
 }
 int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
 )",
-          "std::comparator", "one exact public binary operator()",
+          "std::comparator", "safe repeatable binary call",
           "a dependent unary target should not satisfy a binary comparator");
 
   rejects("dependent-callable-result.gti", R"(
@@ -7254,7 +7271,7 @@ bool generic_order<std::totally_ordered T>(T& left, T& right) {
 }
 int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
 )",
-          "std::comparator", "declared owned result",
+          "std::comparator", "exact owned result",
           "a dependent comparator should still require an exact bool result");
 
   rejects("closed-callable-open-argument.gti", R"(
@@ -7270,7 +7287,7 @@ bool generic_order<std::totally_ordered T>(T& left, T& right) {
 }
 int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
 )",
-          "std::comparator", "one exact public binary operator()",
+          "std::comparator", "safe repeatable binary call",
           "a closed signature should not prove a relation over an open "
           "argument");
 
@@ -7295,7 +7312,7 @@ bool generic_order<std::totally_ordered T>(T& left, T& right) {
 }
 int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
 )",
-          "std::read_binary_callable", "receiver capability",
+          "std::read_binary_callable", "read-only access",
           "a dependent mutable-only target should not satisfy a read-only "
           "binary use site");
 
@@ -7315,23 +7332,19 @@ int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!missingClassFact.canGenerateCode() &&
+             hasDiagnosticCode(missingClassFact.diagnostics, "GTI-S2029") &&
              hasDiagnostic(missingClassFact.diagnostics,
-                           "generic constraint 'std::totally_ordered'"),
+                           "concept 'std::totally_ordered'"),
          "a dependent callable class should still require its own generic "
          "constraints from the enclosing facts");
 
-  const lang::FrontendResult privateBinding = lang::Frontend().analyze(
-      "private-callable-intrinsic.gti", R"(
-#include <std/functional>
-
-concept forged<F, A, R> =
-    gti_internal::read_callable_capability<F, A, R>;
-)",
-      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!privateBinding.canGenerateCode() &&
-             hasDiagnosticCode(privateBinding.diagnostics, "GTI-S2058"),
-         "compiler-owned callable relations should remain private behind the "
-         "public std concepts");
+  expect(!lang::compilerStructuralConstraint("read_callable") &&
+             !lang::compilerStructuralConstraint("mut_callable") &&
+             !lang::compilerStructuralConstraint("once_callable") &&
+             !lang::compilerStructuralConstraint("read_binary_callable") &&
+             !lang::compilerStructuralConstraint("mut_binary_callable") &&
+             !lang::compilerStructuralConstraint("once_binary_callable"),
+         "source callable concepts have no legacy compiler binding");
 }
 
 void testSymbolicAutoLocalBinding() {
@@ -8095,7 +8108,8 @@ int main() {
              hasDiagnosticCode(wrongElement.diagnostics, "GTI-S2029") &&
              hasDiagnostic(wrongElement.diagnostics, "std::dereferences_to") &&
              hasRelatedDiagnostic(wrongElement.diagnostics,
-                                  "std::dereferences_to<Iterator, char>"),
+                                  "std::dereferences_to<std::detail::"
+                                  "vector_iterator<int32_t, 0>, char>"),
          "the standard string constructor should reject an iterator whose "
          "read-only element referent is not exactly char");
 

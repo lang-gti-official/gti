@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Thread-local storage (0.471.0)
+## Thread-local storage (0.473.0)
 
 The TLS slice has distinct source, independent MIR, runtime and native gates:
 
@@ -67,6 +67,53 @@ and compiler/runtime sanitizer checks, and refreshed performance measurements
 are separate integration acceptance gates. The release PR records their exact
 source identities and results; the historical focused and corpus passes above
 do not substitute for those gates on a changed compiler.
+The owner authorized release before the remaining validation finished. The PR
+records the completed macOS full sweep (857 passes, one skip and one stale test
+expectation), the corrected test's focused pass, scoped Linux passes and partial
+sanitizer results. The final reconciliation with source-defined concept policies
+and the LLVM foundation did not receive a fresh compiler rebuild, full suite,
+installed-SDK or performance run. Those results are not claimed as passing.
+
+## Source-defined concept policies (0.472.0)
+
+`general_requires_semantics` verifies the source replacements for comparison,
+callable, storage, atomic, reflection, iterator, sentinel and range policies.
+It asserts that both private concept binding registries are empty. General
+reflection facts and checked ownership/lifetime operations remain compiler-owned;
+an empty binding registry is not evidence that those mechanisms were removed.
+
+Positive cases use unrelated user-defined records, callables and cursors,
+including inherited overload lookup, consuming invocation, exact borrowed
+results, inferred-result queries and ordinary range-loop requirements. Negative
+cases cover ambiguity, private/unsafe/mutating operations, wrong result types,
+unproved generic forwarding, mismatched loan origins and disjunctions that do
+not guarantee a shared operation. Concrete instantiation must recheck operations
+that are dependent during initial analysis. Alias and inline-constraint cases
+also guard the proof rule `(A || B) && C => A || B`: no particular alternative
+may be invented, and aliases must not discard the complete disjunction.
+Iteration-body assertions additionally test the actual loop-bound element,
+including a borrowed local materialized from a value-yielding user iterator.
+A simple iteration fact must not prove an extra body assertion. The unchanged
+`text_view_iterator_completion.gti` regression covers the same behavior in
+`for_each` and `all_of`; checking only the raw dereference expression is not an
+equivalent policy. Runtime statements in an iteration query are rejected.
+
+`lowered_program_contract` checks the corresponding non-executable requirement
+inventory and rejects malformed result/access/origin records.
+`general_requires_lsp` covers recovery, queries and formatting;
+`general_requires_runtime` executes the expanded
+`examples/173-general-requires.gti` across native optimization/standard modes.
+The callable, generic-algorithm, iterator, reflection and compiler-pipeline
+suites retain the existing public contracts, including rejection diagnostics.
+Source-policy failures identify the applied concept and source requirement
+rather than referring to a retired private capability.
+
+The complete example oracles and both body/declaration censuses remain delivery
+gates. Added source helpers legitimately increase declaration inventories;
+changes to emitted bodies or generated adapters still require individual review.
+Performance acceptance also checks optimized range algorithms with allocation
+counts and executable size, separately from compiler/query cost. Moving policy
+into source does not by itself establish a runtime speedup.
 
 ## Nested constructor argument handoff (0.470.1)
 
