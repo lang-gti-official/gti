@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GTI task branches: published checkpoints, verified GitHub PR merges, a Gitea mirror, safe cleanup."""
+"""GTI task branches: published checkpoints, verified Gitea PR merges and safe cleanup."""
 
 from __future__ import annotations
 
@@ -20,14 +20,9 @@ import urllib.parse
 import urllib.request
 import uuid
 
-CANONICAL = "https://github.com/lang-gti-official/gti.git"
-REPOSITORY = "lang-gti-official/gti"
-API = "https://api.github.com/repos/" + REPOSITORY
-GRAPHQL = "https://api.github.com/graphql"
-# Gitea keeps a complete copy of main and the tags as a backup; it hosts no
-# task branches, PRs, or issues. `sync` pushes there after every integration.
-MIRROR_REMOTE = "gitea"
-MIRROR = "https://git.internal.howetotech.dev/gti-lang/gti.git"
+CANONICAL = "https://git.internal.howetotech.dev/gti-lang/gti.git"
+REPOSITORY = "gti-lang/gti"
+API = "https://git.internal.howetotech.dev/api/v1/repos/" + REPOSITORY
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
 LOCK_WAIT_SECONDS = 30.0
 
@@ -74,57 +69,41 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-class GitHub:
-    """GitHub REST (plus one GraphQL mutation) for the canonical repository."""
+class Gitea:
+    """Gitea REST for the canonical repository; credentials never follow redirects."""
 
     def __init__(self, primary):
-        token = (os.environ.get("GTI_GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-                 or os.environ.get("GITHUB_TOKEN"))
+        token = os.environ.get("GTI_GITEA_TOKEN") or os.environ.get("GITEA_TOKEN")
         if not token:
             env_file = Path(primary) / ".env"
             if env_file.exists():
                 for line in env_file.read_text().splitlines():
                     key, sep, value = line.partition("=")
-                    if sep and key.strip() in {"GTI_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"}:
+                    if sep and key.strip() in {"GTI_GITEA_TOKEN", "GITEA_TOKEN"}:
                         token = value.strip().strip("\"'")
                         break
         if not token:
-            # The authenticated GitHub CLI is the ordinary developer credential.
-            result = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, check=False)
-            token = result.stdout.strip() if result.returncode == 0 else ""
-        if not token:
-            raise WorkflowError("Authenticate the GitHub CLI (gh auth login) or set GTI_GITHUB_TOKEN")
+            raise WorkflowError("Set GTI_GITEA_TOKEN or GITEA_TOKEN (or put it in the primary checkout's .env)")
         self.token = token
 
-    def request(self, method, path, payload=None, url=None):
+    def request(self, method, path, payload=None):
         data = None if payload is None else json.dumps(payload).encode()
-        req = urllib.request.Request(url or API + path, data=data, method=method,
-                                     headers={"Authorization": "Bearer " + self.token,
-                                              "Accept": "application/vnd.github+json",
-                                              "X-GitHub-Api-Version": "2022-11-28",
+        req = urllib.request.Request(API + path, data=data, method=method,
+                                     headers={"Authorization": "token " + self.token,
+                                              "Accept": "application/json",
                                               "Content-Type": "application/json"})
         try:
             with urllib.request.build_opener(NoRedirect).open(req, timeout=30) as result:
                 body = result.read()
         except urllib.error.HTTPError as error:
-            if error.code == 404 and method == "GET" and path.startswith("/branches/"):
+            error.close()
+            if error.code == 404 and method == "GET" and path == "/branch_protections/main":
                 return None  # an unprotected branch, not a failure
             # Do not print response bodies, credentials, or unknown redirects.
-            raise WorkflowError(f"GitHub {method} {path} failed ({error.code}); use status and retry") from error
+            raise WorkflowError(f"Gitea {method} {path} failed ({error.code}); use status and retry") from error
         except urllib.error.URLError as error:
-            raise WorkflowError(f"GitHub {method} {path} failed (unavailable); use status and retry") from error
+            raise WorkflowError(f"Gitea {method} {path} failed (unavailable); use status and retry") from error
         return json.loads(body) if body else None
-
-    def ready(self, pr):
-        """Leave draft state; REST cannot, so this is the one GraphQL call."""
-        result = self.request("POST", "/graphql", {
-            "query": "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id})"
-                     " { pullRequest { isDraft } } }",
-            "variables": {"id": pr["node_id"]}}, url=GRAPHQL)
-        if (result or {}).get("errors") or (result or {}).get("data", {}).get(
-                "markPullRequestReadyForReview", {}).get("pullRequest", {}).get("isDraft", True):
-            raise WorkflowError("GitHub did not mark the PR ready for review; use status and retry")
-
 
 class Workflow:
     def __init__(self, repo, api=None, enforce_origin=True):
@@ -135,14 +114,10 @@ class Workflow:
             raise WorkflowError("Use a regular checkout with a primary .git directory")
         if enforce_origin and (git(self.repo, "remote", "get-url", "origin") != CANONICAL or
                                git(self.repo, "remote", "get-url", "--push", "--all", "origin") != CANONICAL):
-            raise WorkflowError("origin must be canonical GTI GitHub; credentials are never sent to other hosts")
-        if enforce_origin and self.mirror_remote() and (
-                git(self.repo, "remote", "get-url", MIRROR_REMOTE) != MIRROR or
-                git(self.repo, "remote", "get-url", "--push", "--all", MIRROR_REMOTE) != MIRROR):
-            raise WorkflowError(f"remote {MIRROR_REMOTE} must be the GTI Gitea mirror; fix its URLs before syncing")
+            raise WorkflowError("origin must be canonical GTI Gitea; credentials are never sent to other hosts")
         self.state_dir = self.common / "gti-agent-workflow"
         self.state_dir.mkdir(exist_ok=True)
-        self.api = api or GitHub(self.primary)
+        self.api = api or Gitea(self.primary)
         # Heavy validation runs inside the shared build window, never under
         # the metadata lock, so peers can register and inspect tasks meanwhile.
         self.window = build_window.Window(build_window.directory_for(self.common))
@@ -183,17 +158,45 @@ class Workflow:
         except FileNotFoundError as error:
             raise WorkflowError(f"Unknown task {task}; use start --adopt to register a preserved branch") from error
         if not legacy and self.is_legacy(state):
-            raise WorkflowError("Task record predates the GitHub move; its PR lived on Gitea. Push the branch to origin "
-                                "and re-register it with start --adopt (the old record is kept as *.legacy-gitea.json)")
+            raise WorkflowError("Task record predates the current Gitea repository; use rehost for an imported GitHub "
+                                "PR, or start --adopt for preserved work. Historical tracker numbers are not interchangeable")
         return state
 
     @staticmethod
     def is_legacy(state):
-        return state.get("host") != "github"
+        return state.get("host") != "gitea" or state.get("schema") != 3
 
-    def mirror_remote(self):
-        remotes = git(self.primary, "remote", check=False).stdout.split()
-        return MIRROR_REMOTE if MIRROR_REMOTE in remotes else None
+    def rehost(self, task, number):
+        """Rebind an imported GitHub PR without rewriting its exact-source evidence."""
+        state = self.load(task, legacy=True)
+        if state.get("phase") == "verifying":
+            raise WorkflowError("Validation is still running; wait for its owner to finish before rehosting")
+        if not self.is_legacy(state):
+            if state.get("pr") != number:
+                raise WorkflowError("Task is already bound to another Gitea PR")
+            self.pull(state)
+            return state
+        if state.get("host") != "github" or state.get("schema") != 2 or not state.get("pr"):
+            raise WorkflowError("Only an identified GitHub PR can be rehosted; use start --adopt for other preserved work")
+        expected_url = f"https://github.com/lang-gti-official/gti/pull/{state['pr']}"
+        if state.get("pr_url") != expected_url:
+            raise WorkflowError("Unexpected original GitHub PR identity")
+        pr = self.api.request("GET", f"/pulls/{number}")
+        if (not self.matches(pr, state["branch"]) or
+                pr.get("head", {}).get("sha") != state.get("published_head")):
+            raise WorkflowError("Imported PR repository, branch or published head differs; preserve and investigate")
+        recovery = self.state_dir / "evidence" / task / "github-hosting-record.json"
+        recovery.parent.mkdir(parents=True, exist_ok=True)
+        if recovery.exists():
+            if json.loads(recovery.read_text()) != state:
+                raise WorkflowError("Original hosting recovery record already exists with different contents")
+        else:
+            recovery.write_text(json.dumps(state, indent=2) + "\n")
+        state.update(schema=3, host="gitea", pr=number, pr_url=pr["html_url"],
+                     hosting_migration={"from_pr": expected_url, "published_head": state["published_head"],
+                                        "at": self.now(), "recovery": str(recovery)})
+        self.save(state)
+        return state
 
     def save(self, state, phase=None):
         if phase:
@@ -239,11 +242,10 @@ class Workflow:
     def find_pr(self, branch):
         found = []
         page = 1
-        head = urllib.parse.quote(REPOSITORY.split("/")[0] + ":" + branch, safe="")
         while True:
-            prs = self.api.request("GET", f"/pulls?state=all&per_page=100&page={page}&head={head}")
+            prs = self.api.request("GET", f"/pulls?state=all&limit=50&page={page}")
             found.extend(p for p in prs if self.matches(p, branch))
-            if len(prs) < 100:
+            if len(prs) < 50:
                 break
             page += 1
         if len(found) > 1:
@@ -259,8 +261,8 @@ class Workflow:
         created = pr is None
         if created:
             pr = self.api.request("POST", "/pulls", {
-                "base": "main", "head": state["branch"], "draft": True,
-                "title": state["title"],
+                "base": "main", "head": state["branch"],
+                "title": "WIP: " + state["title"],
                 "body": f"Workflow task `{state['task']}`. Implementation and validation are in progress."})
         if not self.matches(pr, state["branch"]):
             raise WorkflowError("Created PR has unexpected repository/branch identity")
@@ -269,16 +271,23 @@ class Workflow:
         if pr["state"] != "open" or pr.get("merged"):
             raise WorkflowError("This task's PR is closed; do not reuse its branch")
         if created and not pr.get("draft"):
-            raise WorkflowError("GitHub did not create a draft PR; mark the PR draft before continuing")
+            raise WorkflowError("Gitea did not recognize the WIP draft title; check repository draft settings")
         return pr
 
     def start(self, task, title, worktree, branch=None, adopt=False):
         path = self.file(task)
         if path.exists() and self.is_legacy(self.load(task, legacy=True)):
-            # A Gitea-era record steps aside; its branch is re-registered on GitHub.
+            # Never bind a historical tracker number to the replacement repo.
             if not adopt:
-                raise WorkflowError("Task record predates the GitHub move; re-register its worktree with start --adopt")
-            path.replace(path.with_suffix(".legacy-gitea.json"))
+                raise WorkflowError("Task record predates the current Gitea repository; use rehost or start --adopt")
+            old = self.load(task, legacy=True)
+            if old.get("host") == "github" and old.get("pr"):
+                raise WorkflowError("Use rehost to preserve the imported PR and its verification evidence")
+            recovery = self.state_dir / "evidence" / task / "legacy-gitea-record.json"
+            recovery.parent.mkdir(parents=True, exist_ok=True)
+            if recovery.exists():
+                raise WorkflowError("Historical recovery record exists; inspect it before adoption")
+            path.replace(recovery)
         if path.exists():
             state = self.load(task)
             if title != state["title"] or str(Path(worktree).resolve()) != state["worktree"]:
@@ -302,10 +311,10 @@ class Workflow:
         for record in self.state_dir.glob("*.json"):
             other = json.loads(record.read_text())
             if self.is_legacy(other):
-                continue  # a Gitea-era record no longer owns anything
+                continue  # historical records cannot identify PRs on this host
             if other.get("branch") == branch or other.get("worktree") == str(root):
                 raise WorkflowError("Another task already owns this branch or worktree")
-        state = {"schema": 2, "host": "github", "task": task, "title": title, "branch": branch,
+        state = {"schema": 3, "host": "gitea", "task": task, "title": title, "branch": branch,
                  "worktree": str(root), "base": base, "phase": "starting"}
         if root.exists():
             if not adopt:
@@ -505,47 +514,28 @@ class Workflow:
                 self.save(state, phase)
 
     def protection(self, configure=False, advisory_ci=False):
-        rule = self.api.request("GET", "/branches/main/protection")
+        rule = self.api.request("GET", "/branch_protections/main")
         if configure:
-            checks = (rule or {}).get("required_status_checks") or {}
-            # Explicit owner policy: GitHub CI is advisory. Keep strict PR
-            # freshness and review protection without requiring runner capacity.
-            contexts = [] if advisory_ci else list(checks.get("contexts") or [])
-            reviews = (rule or {}).get("required_pull_request_reviews") or {}
-            payload = {
-                # Up-to-date branches only: this closes the fetch/merge race.
-                "required_status_checks": {"strict": True, "contexts": contexts},
-                # Admins follow the same rules; nobody bypasses them.
-                "enforce_admins": True,
-                # A pull request is the only way into main; existing review
-                # requirements are kept, otherwise none are added.
-                "required_pull_request_reviews": {
-                    "dismiss_stale_reviews": bool(reviews.get("dismiss_stale_reviews", False)),
-                    "require_code_owner_reviews": bool(reviews.get("require_code_owner_reviews", False)),
-                    "required_approving_review_count": int(reviews.get("required_approving_review_count", 0)),
-                    "require_last_push_approval": bool(reviews.get("require_last_push_approval", False))},
-                "restrictions": None,
-                "allow_force_pushes": False,
-                "allow_deletions": False,
-                "required_linear_history": bool(((rule or {}).get("required_linear_history") or {}).get("enabled", False)),
-                "required_conversation_resolution": bool(
-                    ((rule or {}).get("required_conversation_resolution") or {}).get("enabled", False)),
-                "block_creations": False,
-                "lock_branch": False}
-            # GitHub accepts contexts OR checks, not both. Empty contexts
-            # clear all required checks, including app-pinned entries.
-            if checks.get("checks") and not advisory_ci:
-                payload["required_status_checks"]["checks"] = checks["checks"]
-            rule = self.api.request("PUT", "/branches/main/protection", payload)
-
-        def enabled(name):
-            return bool(((rule or {}).get(name) or {}).get("enabled", False))
-
-        if (not rule or not enabled("enforce_admins") or enabled("allow_force_pushes") or enabled("allow_deletions")
-                or not (rule.get("required_status_checks") or {}).get("strict")
-                or not rule.get("required_pull_request_reviews")):
-            raise WorkflowError("main protection must require pull requests and up-to-date branches, bind admins, and deny "
-                                "force pushes and deletion; use protection --configure")
+            # Round-trip existing review, signature, file and status policies.
+            # Only the separately owner-authorized advisory-CI flag clears checks.
+            payload = {k: v for k, v in (rule or {}).items()
+                       if k not in {"id", "created_at", "updated_at", "branch_name", "rule_name"}}
+            payload.update(enable_push=False, enable_push_whitelist=False,
+                           enable_force_push=False, enable_force_push_allowlist=False,
+                           block_on_outdated_branch=True, block_admin_merge_override=True,
+                           enable_bypass_allowlist=False)
+            if advisory_ci:
+                payload.update(enable_status_check=False, status_check_contexts=[])
+            if not rule:
+                payload["rule_name"] = "main"
+            rule = self.api.request("PATCH" if rule else "POST",
+                                    "/branch_protections/main" if rule else "/branch_protections", payload)
+        if (not rule or rule.get("enable_push") or rule.get("enable_push_whitelist") or
+                rule.get("enable_force_push") or rule.get("enable_force_push_allowlist") or
+                rule.get("enable_bypass_allowlist") or not rule.get("block_on_outdated_branch") or
+                not rule.get("block_admin_merge_override")):
+            raise WorkflowError("main protection must deny direct/force pushes and bypasses and require up-to-date "
+                                "PRs without admin overrides; use protection --configure")
         return rule
 
     def finish(self, task, body, pr_only=False):
@@ -575,15 +565,18 @@ class Workflow:
                 self.api.request("PATCH", f"/pulls/{state['pr']}",
                                  {"title": state["title"], "body": body})
             if pr.get("draft"):
-                self.api.ready(pr)
+                # Gitea's REST draft state is derived from its WIP title.
+                pr = self.pull(state)
+                if pr.get("draft"):
+                    raise WorkflowError("Gitea still considers the PR a draft after its title update")
             if pr_only:
                 self.save(state, "ready")
                 return state
             self.protection()
-            # `sha` pins the exact validated head; the branch rule's up-to-date
+            # `head_commit_id` pins the validated head; the up-to-date rule
             # requirement closes the fetch/merge race on the server.
-            self.api.request("PUT", f"/pulls/{state['pr']}/merge", {
-                "merge_method": "merge", "sha": head})
+            self.api.request("POST", f"/pulls/{state['pr']}/merge", {
+                "do": "merge", "head_commit_id": head, "force_merge": False})
             pr = self.pull(state)
             if not pr.get("merged"):
                 raise WorkflowError("Merge is not confirmed; leave the task active and retry finish")
@@ -592,14 +585,45 @@ class Workflow:
         self.save(state, "merged")
         return self.sync(task)
 
+    def integration_commit(self, state, pr, main):
+        """Prove direct integration or exact inclusion in an accepted umbrella PR.
+
+        Gitea need not auto-mark component PRs merged. Never enable heuristic
+        detection or manual-merge overrides just to make their UI say merged.
+        """
+        if pr.get("merged"):
+            commit = pr["merge_commit_sha"]
+        elif state.get("integration_batch"):
+            batch = self.load(state["integration_batch"])
+            combined = self.pull(batch)
+            members = batch.get("batch", {}).get("members", [])
+            member = next((m for m in members if m.get("task") == state["task"]), {})
+            proof = batch.get("verified", {})
+            identity = {key: proof.get(key) for key in ("head", "base")}
+            platforms = {p for m in members for p in m["plan"]["platforms"]}
+            if (not combined.get("merged") or member.get("pr") != state.get("pr") or
+                    member.get("head") != pr["head"]["sha"] or
+                    state.get("published_head") != member.get("head") or
+                    state.get("admission", {}).get("head") != member.get("head") or
+                    proof.get("head") != combined["head"]["sha"] or not platforms or
+                    any(batch.get("batch_verified", {}).get(p) != identity for p in platforms) or
+                    not self.ancestor(member["head"], combined["head"]["sha"])):
+                raise WorkflowError("Component lacks exact source and full-platform proof in its merged batch")
+            manifest = json.loads(git(self.primary, "show", combined["head"]["sha"] + ":" + batch["batch"]["manifest"]))
+            if manifest != {"schema": 1, "base": batch["batch"]["base"], "members": members}:
+                raise WorkflowError("Merged batch manifest differs from component integration records")
+            commit = combined["merge_commit_sha"]
+        else:
+            raise WorkflowError("PR has not merged; do not advance local main")
+        if not self.ancestor(pr["head"]["sha"], main) or not self.ancestor(commit, main):
+            raise WorkflowError("Integrated source/merge commits are not reachable from current remote main")
+        return commit
+
     def sync(self, task):
         state = self.load(task)
         pr = self.pull(state)
-        if not pr.get("merged"):
-            raise WorkflowError("PR has not merged; do not advance local main")
         base = self.fetch()
-        if not self.ancestor(pr["head"]["sha"], base) or not self.ancestor(pr["merge_commit_sha"], base):
-            raise WorkflowError("Merged PR commits are not reachable from current remote main")
+        commit = self.integration_commit(state, pr, base)
         if git(self.primary, "branch", "--show-current") != "main":
             raise WorkflowError("Primary checkout is not on main; do not change another task's branch")
         old = git(self.primary, "rev-parse", "HEAD")
@@ -631,31 +655,26 @@ class Workflow:
             self.save(state, "sync-blocked")
             raise WorkflowError("PR merged, but local edits block main sync; back up overlapping files and reconcile them before retrying sync")
         state["local_main"] = git(self.primary, "rev-parse", "HEAD")
-        state["mirror"] = self.mirror()
+        if not pr.get("merged"):
+            batch = self.load(state["integration_batch"])
+            if pr["state"] == "open":
+                self.api.request("PATCH", f"/pulls/{state['pr']}", {
+                    "state": "closed", "body": (pr.get("body") or "").rstrip() +
+                    f"\n\nIntegrated with exact-source validation via {batch['pr_url']} at `{commit}`."})
+            if self.pull(state)["state"] != "closed":
+                raise WorkflowError("Component integration is proven but PR closure is not confirmed; retry sync")
+            state["integrated_via_batch"] = {"task": batch["task"], "pr_url": batch["pr_url"],
+                                              "head": pr["head"]["sha"], "merge_commit": commit}
         self.save(state, "synced")
         return state
-
-    def mirror(self):
-        """Push main and the tags to the Gitea backup. A failure is reported, never hidden, and does not undo sync."""
-        remote = self.mirror_remote()
-        if not remote:
-            return {"remote": None, "pushed": False, "at": self.now(), "error": f"no {MIRROR_REMOTE} remote"}
-        # main is never forced: a merge that landed only on the mirror must surface
-        # as a rejected push, not vanish. Tags are forced so a moved `nightly` follows.
-        result = git(self.primary, "push", remote, "refs/heads/main:refs/heads/main", check=False)
-        if result.returncode == 0:
-            result = git(self.primary, "push", "--force", remote, "refs/tags/*:refs/tags/*", check=False)
-        error = None if result.returncode == 0 else (result.stderr.strip() or "push failed")
-        if error:
-            print(f"agent-workflow: mirror to {remote} failed: {error}", file=sys.stderr)
-        return {"remote": remote, "pushed": result.returncode == 0, "at": self.now(), "error": error}
 
     def cleanup(self, task):
         state = self.load(task)
         pr = self.pull(state)
         main = self.fetch()
-        if state["phase"] not in {"synced", "completed"} or not pr.get("merged"):
+        if state["phase"] not in {"synced", "completed"}:
             raise WorkflowError("Only a merged and locally synced task may be cleaned up")
+        self.integration_commit(state, pr, main)
         head = pr["head"]["sha"]
         if not self.ancestor(head, main):
             raise WorkflowError("Task head is no longer integrated")
@@ -691,7 +710,7 @@ class Workflow:
     def retire_empty(self, state, reason):
         """Retire a task without a PR whose branch holds nothing beyond main.
 
-        Abandonment keeps unmerged work behind a closed PR, but GitHub refuses
+        Abandonment keeps unmerged work behind a closed PR, but the host refuses
         a PR without commits and an empty branch has nothing to keep. Every
         check runs before the first removal, and each removal tolerates a piece
         an interrupted attempt already removed.
@@ -764,7 +783,7 @@ class Workflow:
             json.loads(p.read_text()) for p in sorted(self.state_dir.glob("*.json"))]
         for state in records:
             if self.is_legacy(state):
-                state["remote_state"] = "legacy-gitea"
+                state["remote_state"] = "legacy-github" if state.get("host") == "github" else "legacy-gitea"
             elif state.get("pr"):
                 pr = self.pull(state)
                 state["remote_state"] = "merged" if pr.get("merged") else pr["state"]
@@ -781,6 +800,9 @@ def main():
     start.add_argument("--worktree", required=True)
     start.add_argument("--branch")
     start.add_argument("--adopt", action="store_true")
+    rehost = sub.add_parser("rehost", help="explicitly bind a migrated GitHub task to its verified Gitea PR")
+    rehost.add_argument("task")
+    rehost.add_argument("--pr", type=int, required=True)
     checkpoint = sub.add_parser("checkpoint")
     checkpoint.add_argument("task")
     checkpoint.add_argument("--message")
@@ -803,7 +825,7 @@ def main():
     sub.add_parser("status").add_argument("task", nargs="?")
     protection = sub.add_parser("protection")
     protection.add_argument("--configure", action="store_true")
-    protection.add_argument("--advisory-ci", action="store_true", help="remove required GitHub CI contexts while preserving PR freshness and reviews (owner-authorized)")
+    protection.add_argument("--advisory-ci", action="store_true", help="remove required CI contexts while preserving PR freshness and reviews (owner-authorized)")
     sub.add_parser("preview", help="optionally submit a detached combined preview job").add_argument(
         "arguments", nargs=argparse.REMAINDER)
     sub.add_parser("batch", help="admit focused fixes and validate an explicit combined batch").add_argument(
@@ -831,6 +853,8 @@ def main():
         with workflow.lock():
             if args.command == "start":
                 result = workflow.start(args.task, args.title, args.worktree, args.branch, args.adopt)
+            elif args.command == "rehost":
+                result = workflow.rehost(args.task, args.pr)
             elif args.command == "checkpoint":
                 result = workflow.checkpoint(args.task, args.message, args.paths)
             elif args.command == "finish":

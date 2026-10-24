@@ -70,9 +70,10 @@ for value in "${jobs}" "${test_jobs}"; do
     exit 1
   fi
 done
-: "${GITHUB_ENV:?GITHUB_ENV must name the runner environment file}"
+GTI_CI_ENV_FILE="${GITEA_ENV:-${GITHUB_ENV:-}}"
+: "${GTI_CI_ENV_FILE:?GITEA_ENV or GITHUB_ENV must name the runner environment file}"
 {
   echo "GTI_JOBS=${jobs}"
   echo "GTI_TEST_JOBS=${test_jobs}"
-} >> "${GITHUB_ENV}"
+} >> "${GTI_CI_ENV_FILE}"
 echo "Runner budget: ${jobs} compile jobs, ${test_jobs} CTest workers (${detected_jobs} processors, ${memory_mib:-unknown} MiB)"

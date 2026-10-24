@@ -18,7 +18,7 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOOLS = ("gti", "gti_lsp")
-CANONICAL = "https://github.com/lang-gti-official/gti.git"
+CANONICAL = "https://git.internal.howetotech.dev/gti-lang/gti.git"
 
 
 def preview_source(root, dry_run=False):
