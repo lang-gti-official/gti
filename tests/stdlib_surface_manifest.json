@@ -4,7 +4,7 @@
     "stdlib/prelude.gti": "1d368521fc596dc5bfb172273056efc551fdbe9b88a40b2829f95da6bf7067fb",
     "stdlib/std/algorithm.gti": "e99485de4cf40d0e1e5be0d10f86780bc38f170c388473b994bb1a6f786ba656",
     "stdlib/std/array.gti": "2b892b6049d85bf53b146b4b8d1c019477c6657591774f8ef93138cee921510a",
-    "stdlib/std/assert.gti": "e7996ec91748812a5a0daafcbaf954a6bff27cf023981d8de30096bbbac91453",
+    "stdlib/std/assert.gti": "3a2ce83cc942a9d506e3934de5bc14290b532a4d6258d6fb55fb691656e17015",
     "stdlib/std/atomic.gti": "c78f9f7632b8ea3a3d757b1027a570a0581071bf270e7041bf2f57f1b67abfa6",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "546221ebd010d869a41ca0829f4cd823c27c7773dc5e66c27bea53d22ec8d474",
@@ -43,7 +43,7 @@
     "stdlib/std/resource_vector.gti": "168647ac6a6b78f5559884bd2860dfb2b6f52e5187914ac445fe4d7dbb8910c3",
     "stdlib/std/set.gti": "79607e9740ba8b226c6c58773fbd5dc6dce6df1197cd6b1e867efd52b97ab2fa",
     "stdlib/std/simd.gti": "9db37c0d480f519cfcfb44b22a478cf51f19e0c11334e85caf76e23bbe107f3b",
-    "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
+    "stdlib/std/source_location.gti": "8d27724cadabe286d7ac2ced211f61bc93fafea12aa5b2f324de39ef0e58be56",
     "stdlib/std/span.gti": "430adc5e18fd0325a8e7abba92c7edfa031d956d64c16fbb7327da3776d21c6e",
     "stdlib/std/string.gti": "f283b464bce49ba83e36478c02ba2732933ef0a514063fd24c4a058279811569",
     "stdlib/std/string_view.gti": "db84934530d41115374ab9f76978a276e7c2c6789b6f2848a25dacf295beba27",
@@ -1002,6 +1002,20 @@
       "expected": {
         "exit_code": 0,
         "stdout": "4\n42\nempty\nkept\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "expression-text",
+      "mode": "run",
+      "source": "tests/fixtures/expression_text.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
         "stderr": ""
       }
     },
@@ -5849,6 +5863,29 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_source_location.gti",
         "tests/source_location_runtime_test.py",
+        "stdlib/std/source_location.gti"
+      ]
+    },
+    {
+      "id": "source-location.expression-text",
+      "source": "stdlib/std/source_location.gti",
+      "status": "executable",
+      "operations": [
+        "std::expression_text"
+      ],
+      "case_ids": [
+        "expression-text"
+      ],
+      "required_instantiations": [
+        "unevaluated scalar and owning expressions",
+        "nested generic forwarding and declaration defaults",
+        "exact text and explicit constant fallback for synthesized expressions",
+        "UTF-8, grouping, comments and multiline source bytes"
+      ],
+      "evidence": [
+        "tests/fixtures/expression_text.gti",
+        "tests/expression_text_tests.cpp",
+        "tests/expression_text_runtime_test.py",
         "stdlib/std/source_location.gti"
       ]
     },

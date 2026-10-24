@@ -1,0 +1,110 @@
+#include <std/chrono>
+#include <std/string>
+#include <std/vector>
+
+// A passive class argument is built before its field's constructor consumes
+// it. There is no default constructor or assignment route to substitute.
+class Duration {
+public:
+  int64_t ticks;
+  Duration(int64_t input) : ticks(input) {}
+};
+
+class Stamp {
+public:
+  Duration duration;
+  Stamp(Duration input) : duration(input) {}
+};
+
+class Envelope {
+public:
+  Stamp stamp;
+  Envelope(Stamp input) : stamp(input) {}
+};
+
+class DefaultTimer {
+public:
+  mut Stamp last{Duration(int64_t(7))};
+  DefaultTimer() = default;
+};
+
+class ExplicitTimer {
+public:
+  Stamp last;
+  ExplicitTimer(int64_t input) : last(Stamp(Duration(input))) {}
+};
+
+class DeepTimer {
+public:
+  Envelope last{Stamp(Duration(int64_t(11)))};
+  DeepTimer() = default;
+};
+
+// This is the editor's motivating shape, beside the unrelated user types.
+class ClockTimer {
+public:
+  mut bool started = false;
+  mut std::chrono::steady_time_point last{
+      std::chrono::nanoseconds(int64_t(0))};
+  mut float delta = float(0);
+  ClockTimer() = default;
+};
+
+int64_t observe(int64_t tag) {
+  std::println(tag);
+  return tag;
+}
+
+class OrderedTimer {
+public:
+  Stamp first{Duration(observe(int64_t(1)))};
+  Envelope second{Stamp(Duration(observe(int64_t(2))))};
+  int64_t third = observe(int64_t(3));
+  OrderedTimer() = default;
+};
+
+class Ticket {
+  int32_t tag;
+public:
+  Ticket(int32_t input) : tag(input) {}
+  ~Ticket() { std::println(this.tag); }
+};
+
+// A later failure must retain the exact nested argument schedule and clean
+// the already-published owning sibling, without inventing a whole-object drop.
+class CheckedTimer {
+  Ticket ticket{7};
+  Stamp last{Duration(observe(int64_t(4)))};
+  int32_t checked;
+public:
+  CheckedTimer(int32_t divisor) : checked(12 / divisor) {}
+  ~CheckedTimer() { std::println(8); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  DefaultTimer defaults{};
+  ExplicitTimer explicit_timer{int64_t(9)};
+  DeepTimer deep{};
+  ClockTimer clock{};
+  if (defaults.last.duration.ticks != int64_t(7) ||
+      explicit_timer.last.duration.ticks != int64_t(9) ||
+      deep.last.stamp.duration.ticks != int64_t(11) || clock.started ||
+      clock.delta != float(0)) {
+    return 1;
+  }
+  auto elapsed = clock.last.time_since_origin();
+  if (elapsed.count() != int64_t(0)) {
+    return 2;
+  }
+
+  OrderedTimer ordered{};
+  if (ordered.first.duration.ticks != int64_t(1) ||
+      ordered.second.stamp.duration.ticks != int64_t(2) ||
+      ordered.third != int64_t(3)) {
+    return 3;
+  }
+  Ticket outer_guard{9};
+  CheckedTimer checked{argc == 1 ? 1 : 0};
+  std::println("ready");
+  return 0;
+}

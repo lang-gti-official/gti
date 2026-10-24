@@ -87,6 +87,32 @@ The public `std::debug_assertions_enabled` constant lets application helpers
 use exactly the same policy. Panics reuse the existing tracked caller token,
 bounded runtime record, deterministic cleanup and containment contract.
 
+## Value Results, Fresh Callables and Written Metadata: 2026-10-23
+
+The earlier no-result/no-return restriction is revised. Explicit results use
+`#macro Result name(...)`; omitted results remain void. Semantics checks
+macro-local return initialization and reachable ownership exits. HIR records a
+typed scoped-result value and its exact local return targets; MIR lowers these
+to result initialization, cleanup and a join, never a return from the caller.
+The result remains owned if local cleanup fails. Missing/forged return targets
+are rejected independently. Void expansions without local returns retain the
+existing statement-only path rather than acquiring unnecessary result storage.
+The first result profile is owned/dependency-free; borrowed outputs need
+region-boundary provenance and loan joins before admission.
+
+Fresh caller lambda expressions now retain lexical callable/type identity
+through speculative discovery and repeated/nested substitution. Discovery
+publishes no executable capture effects, loans or call journals; evaluated
+uses perform the ordinary checked capture construction. A lambda body owns
+its own return domain.
+
+Written expression text is immutable source provenance, not token expansion.
+A compiler-private, declaration-identity-bound query checks the operand in an
+isolated probe and supplies a static text literal; source-defined
+`std::expression_text` exposes it. Whole-expression forwarding preserves the
+caller origin; substituted compounds without one written origin fail closed.
+Assertions are clients, not public names recognized by the compiler.
+
 ## Alternatives
 
 - Compiler-recognized assertion names: rejected; applications need the same

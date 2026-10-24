@@ -257,6 +257,7 @@ struct IndexedMirBody {
   std::optional<std::unordered_set<MirPlaceId>> referencedPlaces;
   // Places that some body value publishes into through the named recognizer.
   std::optional<std::unordered_set<const MirPlace *>> classValueDestinations;
+  std::optional<std::unordered_set<const MirPlace *>> lambdaValueDestinations;
   // Value-kind drop obligations whose place is rooted directly in a value,
   // keyed by that value, in body order.
   std::optional<
@@ -349,6 +350,10 @@ struct IndexedMirBody {
   const MirProgram *conditionalViewProgram = nullptr;
   const void *conditionalViewRepresentations = nullptr;
   std::optional<std::unordered_set<const MirPlace *>> conditionalViewStorages;
+  const MirProgram *moduleLocalProgram = nullptr;
+  std::optional<std::map<std::pair<HirBindingId, SymbolId>,
+                         const MirProgramInitializationLocal *>>
+      moduleLocals;
 };
 
 // Each emitter operation remembers which index belongs to each body it has
@@ -1896,6 +1901,66 @@ hasExecutableProgramInitialization(const MirProgram &program) {
                              return !instruction.definedFailure.empty();
                            });
                      });
+}
+
+// Module/0 also evaluates lexical bindings inside one planned initializer.
+// Their explicit verified inventory, not body kind or source spelling, decides
+// whether a binding uses an ordinary local carrier rather than global storage.
+[[nodiscard]] const MirProgramInitializationLocal *
+moduleInitializationLocal(const MirProgram &program, const MirBody &body,
+                          const MirPlace &place) {
+  if (body.kind != MirBodyKind::Module ||
+      place.root != MirPlaceRootKind::Binding)
+    return nullptr;
+  const auto exactLocal = [&](const MirProgramInitializationLocal *local) {
+    if (local == nullptr || local->symbol != place.symbol)
+      return static_cast<const MirProgramInitializationLocal *>(nullptr);
+    const MirPlace *view = body.findPlace(local->place);
+    // Structured aliases retain a semantic binding identity distinct from
+    // their physical hidden owner. Match the published physical view and its
+    // exact projection prefix; never invent an unprojected alias object.
+    return view != nullptr && view->root == MirPlaceRootKind::Binding &&
+                   view->binding == place.binding &&
+                   view->symbol == local->symbol &&
+                   view->hostedStartupOperation ==
+                       place.hostedStartupOperation &&
+                   view->capture == place.capture &&
+                   view->temporary == place.temporary &&
+                   view->value == place.value && view->loan == place.loan &&
+                   view->projections.size() <= place.projections.size() &&
+                   std::equal(view->projections.begin(),
+                              view->projections.end(),
+                              place.projections.begin())
+               ? local
+               : nullptr;
+  };
+  if (auto *index = indexedMirBody(body)) {
+    if (index->moduleLocalProgram != &program) {
+      index->moduleLocalProgram = &program;
+      index->moduleLocals.reset();
+    }
+    if (!index->moduleLocals) {
+      index->moduleLocals.emplace();
+      for (const auto &step : program.programInitializationPlan().steps)
+        for (const auto &local : step.locals) {
+          const auto *view = body.findPlace(local.place);
+          if (view == nullptr || view->root != MirPlaceRootKind::Binding)
+            continue;
+          const auto [found, inserted] = index->moduleLocals->emplace(
+              std::pair{view->binding, local.symbol}, &local);
+          if (!inserted)
+            found->second = nullptr;
+        }
+    }
+    const auto found = index->moduleLocals->find({place.binding, place.symbol});
+    return found == index->moduleLocals->end() ? nullptr
+                                               : exactLocal(found->second);
+  }
+  for (const auto &step : program.programInitializationPlan().steps)
+    for (const auto &local : step.locals)
+      if (const auto *found = exactLocal(&local))
+        return found;
+  return nullptr;
 }
 
 [[nodiscard]] const MirProgramInitializationStep *
@@ -5772,8 +5837,9 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
     // Initialize may instead activate the temporary's own full-expression
     // obligation directly. MIR builds this join when a member call borrows
     // the joined value as its receiver. A call, plain or on its Invoke
-    // success edge, an ordinary constructor with prepared inputs, and a copy
-    // of a place construct the temporary right before that Initialize. The
+    // success edge, a verified targetless generated default, an ordinary
+    // constructor with prepared inputs, and a copy of a place construct the
+    // temporary right before that Initialize. The
     // temporary's Drop ends it; input transfers do not activate the result.
     // A move out of a nested cleanup-free join constructs it too. The nested
     // storage carries no obligation either; that move is the
@@ -5833,8 +5899,8 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
                        return drop.place == movedSource->id &&
                               drop.dropType.requiresActiveCleanup;
                      });
-    if ((((directFunctionCall || directCopy || preparedConstruction ||
-           nestedPassiveJoin) &&
+    if ((((directFunctionCall || directDefaultConstruction || directCopy ||
+           preparedConstruction || nestedPassiveJoin) &&
           !definition->successResultDrop &&
           onlyPreparedInputTransfers(body, *definition)) ||
          movedCleanupFreeLocal) &&
@@ -11024,8 +11090,11 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
 // Forward half of one Closure's fused chain. Captured places must stay
 // frozen after the Closure: their only writes are single-shot dominating
 // Initializes, nothing loans or drops them, and a literal spelled at any
-// later invocation therefore captures the same values the Closure saw. Move
-// captures and copied class captures
+// later invocation therefore captures the same values the Closure saw.
+// A passive scalar copy may instead use one immediate same-block invocation:
+// only its exact receiver staging may intervene, so the consumer reads the
+// value observed by Closure even if a later instruction writes the source.
+// Move captures and copied class captures
 // collapse to exactly one direct same-block consumer because a duplicated or
 // delayed literal would transfer ownership twice or change class-temporary
 // lifetime relative to the MIR closure value. The literal is spelled only at
@@ -11057,6 +11126,7 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
   const MirLoopAnalysis loops =
       dominance ? analyzeMirLoops(body, *dominance) : MirLoopAnalysis{};
   bool requiresDirectUse = false;
+  bool immediateCopySnapshot = false;
   for (std::size_t index = 0; index < closure.operands.size(); ++index) {
     const MirOperand &operand = closure.operands[index];
     const LambdaCaptureMode mode = lambda->captureModes[index];
@@ -11072,6 +11142,14 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
          (operand.kind == MirOperandKind::Move || movedCapture != nullptr));
     requiresDirectUse = requiresDirectUse || mode == LambdaCaptureMode::Move ||
                         operand.type.kind == SemanticType::Class;
+    const bool passiveScalarCopy =
+        mode == LambdaCaptureMode::Copy &&
+        operand.type.kind != SemanticType::Class &&
+        operand.type.kind != SemanticType::Array &&
+        operand.type.kind != SemanticType::Lambda &&
+        result->info.traits.copyable &&
+        result->info.traits.drop == DropKind::Trivial &&
+        !result->info.traits.containsBorrowedState;
     const bool copiedClassCapture = mode == LambdaCaptureMode::Copy &&
                                     operand.type.kind == SemanticType::Class;
     const MirPlace *captured =
@@ -11118,6 +11196,10 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
                                                    result->definitionBlock));
         if (writer.kind != MirInstructionKind::Initialize ||
             !validInitializationBlock) {
+          if (passiveScalarCopy) {
+            immediateCopySnapshot = true;
+            continue;
+          }
           return false;
         }
         bool writerPrecedes = false;
@@ -11131,6 +11213,10 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
           }
         }
         if (!writerPrecedes) {
+          if (passiveScalarCopy) {
+            immediateCopySnapshot = true;
+            continue;
+          }
           return false;
         }
       }
@@ -11301,6 +11387,35 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
   if (requiresDirectUse && (invocations + discards != 1 || !directOnly)) {
     return false;
   }
+  if (immediateCopySnapshot) {
+    if (invocations != 1 || discards != 0 || !directOnly || !directConsumer)
+      return false;
+    const auto *block = body.findBlock(result->definitionBlock);
+    bool seenClosure = false;
+    bool seenConsumer = false;
+    if (!block)
+      return false;
+    for (const auto &instruction : block->instructions) {
+      if (instruction.id == closure.id) {
+        seenClosure = true;
+        continue;
+      }
+      if (!seenClosure)
+        continue;
+      if (instruction.id == directConsumer->id) {
+        seenConsumer = true;
+        break;
+      }
+      // Even a pure-looking argument computation could contain a failure or
+      // observe capture state. Keep this profile to exact receiver aliases;
+      // all delayed/nonadjacent uses retain the frozen-source proof above.
+      if (!valueCallableReceiverInput(body, instruction) ||
+          !instruction.result || !direct(*instruction.result))
+        return false;
+    }
+    if (!seenConsumer)
+      return false;
+  }
   if (fusedValueDrop) {
     const bool transferred =
         directConsumer != nullptr && invocations == 1 && discards == 0 &&
@@ -11387,8 +11502,8 @@ fusedClosureUsesFailureCallableBoundary(const MirProgram &program,
 }
 
 // A lambda SSA value whose only executable consumer reparents it into one
-// bare lambda binding or exact prepared argument can publish directly into
-// that destination's lifetime slot.
+// bare lambda binding, exact prepared argument or verified temporary result
+// can publish directly into that destination's lifetime slot.
 // This is the lambda analogue of classValueDestinationSlot(), but it stays
 // separate because a concrete C++ closure type is normally unnameable.
 enum class LambdaValuePublication {
@@ -11534,16 +11649,29 @@ lambdaValueDestination(const MirBody &body, MirValueId valueId) {
     return {};
   }
   const MirPlace *destination = body.findPlace(*initialize->destination);
-  if (destination == nullptr ||
-      destination->root != (preparedClosure ? MirPlaceRootKind::Temporary
-                                            : MirPlaceRootKind::Binding) ||
-      !destination->projections.empty() ||
+  if (destination == nullptr || !destination->projections.empty() ||
       destination->type != value->info.type) {
     return {};
   }
   const MirLifecycleEvent *publication = initialize->lifecycle.size() == 1
                                              ? &initialize->lifecycle.front()
                                              : nullptr;
+  const MirDropObligation *resultDrop =
+      publication ? body.findDropObligation(publication->target) : nullptr;
+  const bool temporaryResult =
+      destination->root == MirPlaceRootKind::Temporary &&
+      destination->sourceValue != 0 &&
+      destination->sourceValue == initialize->hirValue && resultDrop &&
+      resultDrop->kind == MirDropObligationKind::Value &&
+      resultDrop->place == destination->id &&
+      resultDrop->value == destination->sourceValue &&
+      resultDrop->dropType.type == destination->type &&
+      !resultDrop->initiallyActive && !publication->conditional &&
+      !publication->failureCleanup;
+  if (destination->root != (preparedClosure ? MirPlaceRootKind::Temporary
+                                            : MirPlaceRootKind::Binding) &&
+      !temporaryResult)
+    return {};
   const bool exactLexicalPublication =
       destination->traits.drop == DropKind::Lexical && publication != nullptr &&
       publication->target != 0 && !publication->conditional &&
@@ -11556,10 +11684,41 @@ lambdaValueDestination(const MirBody &body, MirValueId valueId) {
       exactLexicalPublication &&
       publication->kind == MirLifecycleEventKind::Reparent &&
       publication->source != 0;
+  const MirDropObligation *sourceDrop =
+      uniqueValueLifetimeDrop(body, valueId, value->info.type);
+  // A nested result is already an object in its exact hidden Temporary.
+  // Its Move has no separate SSA-rooted obligation: the subsequent
+  // Initialize reparents the existing Temporary's Value lifetime directly.
+  if (sourceDrop == nullptr && temporaryResult &&
+      publication->kind == MirLifecycleEventKind::Reparent &&
+      definition->kind == MirInstructionKind::Move &&
+      definition->lifecycle.empty()) {
+    const MirPlace *source = body.findPlace(definition->operands.front().place);
+    const MirDropObligation *movedDrop =
+        body.findDropObligation(publication->source);
+    if (source != nullptr && source->root == MirPlaceRootKind::Temporary &&
+        source->projections.empty() && source->type == value->info.type &&
+        source->sourceValue != 0 &&
+        source->sourceValue == definition->hirValue && movedDrop != nullptr &&
+        movedDrop->kind == MirDropObligationKind::Value &&
+        movedDrop->place == source->id &&
+        movedDrop->value == source->sourceValue &&
+        movedDrop->dropType.type == source->type &&
+        !movedDrop->initiallyActive) {
+      sourceDrop = movedDrop;
+    }
+  }
   const bool passivePublication =
       destination->traits.drop == DropKind::Trivial &&
       value->info.traits.drop == DropKind::Trivial &&
       (initialize->lifecycle.empty() ||
+       (temporaryResult &&
+        ((publication->kind == MirLifecycleEventKind::Initialize &&
+          publication->source == 0) ||
+         (publication->kind == MirLifecycleEventKind::Reparent &&
+          publication->source != 0 && sourceDrop != nullptr &&
+          sourceDrop != resultDrop &&
+          sourceDrop == body.findDropObligation(publication->source)))) ||
        (preparedClosure && publication != nullptr &&
         publication->kind == MirLifecycleEventKind::Initialize &&
         publication->source == 0 &&
@@ -11766,10 +11925,13 @@ materializedClosureForType(const MirProgram &program, const MirBody &body,
       }
       MaterializedClosure candidate =
           materializedClosure(program, body, instruction);
-      if (!candidate || selected) {
+      if (!candidate || (selected && candidate.lambda != selected.lambda)) {
         return {};
       }
-      selected = std::move(candidate);
+      // One verified concrete lambda body/layout is one environment type,
+      // even when several forcing edges evaluate its captures separately.
+      if (!selected)
+        selected = std::move(candidate);
     }
   }
   return selected;
@@ -12601,8 +12763,24 @@ declarationInitializersScheduledInConstructors(const MirProgram &program,
           instruction.destination
               ? owner.fieldInitializers.findPlace(*instruction.destination)
               : nullptr;
-      if (place == nullptr || place->root != MirPlaceRootKind::Binding ||
-          !place->projections.empty() || place->symbol == 0 ||
+      if (place == nullptr)
+        return false;
+      const auto field =
+          std::find_if(owner.declaredFields.begin(), owner.declaredFields.end(),
+                       [&](const MirClassFieldInfo &candidate) {
+                         return candidate.field == place->binding ||
+                                candidate.symbol == place->symbol;
+                       });
+      // Result-region execution can initialize lexical owners, scalars and
+      // decomposition sources inside the catalog. They are not declaration
+      // defaults: only the exact published field identities require coverage
+      // by the selected constructor's executable schedule.
+      if (field == owner.declaredFields.end())
+        continue;
+      if (place->root != MirPlaceRootKind::Binding ||
+          place->binding != field->field || place->symbol != field->symbol ||
+          place->type != field->type || !place->projections.empty() ||
+          place->symbol == 0 ||
           std::find(defaults.begin(), defaults.end(), place->symbol) !=
               defaults.end())
         return false;
@@ -17673,8 +17851,13 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       !producer->successResultDrop &&
       // Prepared arguments may hand off their exact input obligations even
       // though this cleanup-free result creates none. constructorProducer
-      // verifies each unconditional TransferOut against its CallInput stage.
-      (producer->lifecycle.empty() || constructorProducer) &&
+      // verifies each unconditional TransferOut on the status path. A proved
+      // failure-free construction has no propagation marker, but retains the
+      // same input handoff. Check that transfer-only lifecycle independently
+      // of failure propagation, without admitting a result activation here.
+      (producer->lifecycle.empty() || constructorProducer ||
+       (producer->definedFailure.empty() &&
+        onlyPreparedInputTransfers(body, *producer))) &&
       (producer->definedFailure.propagation == FailurePropagationKind::None ||
        producer->definedFailure.propagation ==
            FailurePropagationKind::Constructor) &&
@@ -19356,7 +19539,10 @@ fixedArrayValueDestinationSlot(const MirProgram &program, const MirBody &body,
   // Initialize establishes the one object lifetime instead.
   if (valueDrop == nullptr) {
     const auto &publication = initialize->lifecycle.front();
-    return call && body.kind != MirBodyKind::Module && bindingDrop != nullptr &&
+    return call &&
+                   (body.kind != MirBodyKind::Module ||
+                    moduleInitializationLocal(program, body, *destination)) &&
+                   bindingDrop != nullptr &&
                    bindingDrop->kind == MirDropObligationKind::Binding &&
                    bindingDrop->dropType.type == instruction.info.type &&
                    !bindingDrop->dropType.requiresActiveCleanup &&
@@ -19425,7 +19611,8 @@ fixedArrayValueDestinationSlot(const MirProgram &program, const MirBody &body,
   }
 
   const MirLifecycleEvent &publication = initialize->lifecycle.front();
-  if (body.kind != MirBodyKind::Module) {
+  if (body.kind != MirBodyKind::Module ||
+      moduleInitializationLocal(program, body, *destination)) {
     return bindingDrop != nullptr &&
                    publication.kind == MirLifecycleEventKind::Reparent &&
                    publication.source == valueDrop->id &&
@@ -22263,6 +22450,12 @@ lifetimeSlotPlace(const MirProgram &program,
   }
   if (place.root == MirPlaceRootKind::Temporary &&
       place.type.kind == SemanticType::Lambda && place.projections.empty()) {
+    if (someValueTargetsPlace(
+            body, place, &IndexedMirBody::lambdaValueDestinations,
+            [&](MirValueId value) {
+              return constructedLambdaDestination(program, body, value);
+            }))
+      return true;
     const MirTemporaryMaterialization materialization =
         findMirTemporaryMaterialization(body, place, place.sourceValue);
     if (materialization &&
@@ -22310,7 +22503,8 @@ lifetimeSlotPlace(const MirProgram &program,
                        });
   }
   if (body.kind == MirBodyKind::Module &&
-      place.root == MirPlaceRootKind::Binding) {
+      place.root == MirPlaceRootKind::Binding &&
+      moduleInitializationLocal(program, body, place) == nullptr) {
     const auto *step =
         program.programInitializationPlan().findStepForSymbol(place.symbol);
     if (step != nullptr &&
@@ -23715,7 +23909,8 @@ private:
     }
     std::optional<SemanticType> currentType = rootType(body, place);
     if (place.root == MirPlaceRootKind::Binding &&
-        result.body.kind == MirBodyKind::Module) {
+        result.body.kind == MirBodyKind::Module &&
+        moduleInitializationLocal(program, body, place) == nullptr) {
       const MirProgramInitializationStep *step =
           program.programInitializationPlan().findStepForSymbol(place.symbol);
       const MirPlace *storage =
@@ -31071,13 +31266,14 @@ public:
                << place.id << ";\n";
         continue;
       }
-      // Module binding roots are the exact program-storage places named by
-      // the initialization plan. Their C++ definitions live outside this
-      // function; declaring a body-local carrier would initialize the wrong
-      // object and leave the real global untouched.
+      // Persistent Module binding roots are the exact program-storage places
+      // named by the initialization plan. Their C++ definitions live outside
+      // this function; declaring a body-local carrier would initialize the
+      // wrong object and leave the real global untouched.
       if (facts.kind == MirBodyKind::Module &&
           place.root == MirPlaceRootKind::Binding &&
-          place.projections.empty() && place.symbol != 0) {
+          place.projections.empty() && place.symbol != 0 &&
+          moduleInitializationLocal(program, facts.body, place) == nullptr) {
         const CppMirSymbolRepresentation *storage =
             storageRepresentationForBody(program, representations, std::nullopt,
                                          place.symbol);
@@ -33046,6 +33242,10 @@ private:
 
   void emitMaterializedClosureFactory(const MirBody &body,
                                       const MaterializedClosure &closure) {
+    const auto canonical =
+        materializedClosureForType(program, body, closure.lambda->type);
+    if (!canonical || canonical.closure != closure.closure)
+      return;
     const std::string suffix = std::to_string(closure.closure->id);
     const std::string factory = "__gti_mir_closure_factory_" + suffix;
     const auto cleanup = mirUniqueCleanupType(program, closure.lambda->type);
@@ -34113,6 +34313,11 @@ private:
 
   void emitMaterializedClosureConstruction(const ScalarBodyFacts &facts,
                                            const MaterializedClosure &closure) {
+    const auto canonical =
+        materializedClosureForType(program, facts.body, closure.lambda->type);
+    if (!canonical)
+      throw std::logic_error(
+          "verified closure construction lost its exact environment factory");
     // Trivial value roots and passive local bindings have no semantic drop
     // obligation (materializedClosure proves the latter's empty lifecycle).
     // Re-executing their Closure in a loop replaces representation-only
@@ -34129,7 +34334,7 @@ private:
     output << "__gti_mir_p_"
            << canonicalSlotPlaceId(facts.body, *closure.destination)
            << ".construct_from([&]() { return "
-           << "__gti_mir_closure_factory_" << closure.closure->id << '(';
+           << "__gti_mir_closure_factory_" << canonical.closure->id << '(';
     for (std::size_t index = 0; index < closure.captures.size(); ++index) {
       if (index != 0) {
         output << ", ";
@@ -34813,7 +35018,8 @@ private:
     const MirPlace *place = facts.body.findPlace(destination);
     if (place != nullptr && facts.kind == MirBodyKind::Module &&
         place->root == MirPlaceRootKind::Binding &&
-        place->projections.empty() && place->symbol != 0) {
+        place->projections.empty() && place->symbol != 0 &&
+        moduleInitializationLocal(program, facts.body, *place) == nullptr) {
       const CppMirSymbolRepresentation *storage = storageRepresentationForBody(
           program, representations, facts.owner, place->symbol);
       if (storage == nullptr || storage->spelling.empty()) {
@@ -37562,6 +37768,19 @@ private:
         } else {
           output << "// closure local " << destination->id
                  << " joins the fused chain\n";
+        }
+        // The producing Move constructed the destination already. Reparent
+        // now ends the hidden source's semantic lifetime, so retire the
+        // disarmed representation just as ordinary value publication does.
+        if (producer != nullptr) {
+          if (const MirPlace *handedOff =
+                  movedTemporaryHandedOff(facts.body, instruction);
+              handedOff != nullptr && slotPlace(facts.body, *handedOff)) {
+            writeIndent();
+            output << "__gti_mir_p_"
+                   << canonicalSlotPlaceId(facts.body, *handedOff)
+                   << ".destroy(); // end moved closure representation\n";
+          }
         }
         return;
       }
@@ -43052,7 +43271,8 @@ private:
     }
     if (facts.kind == MirBodyKind::Module &&
         place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
-        place.symbol != 0) {
+        place.symbol != 0 &&
+        moduleInitializationLocal(program, facts.body, place) == nullptr) {
       output << storageSpelling(facts, place.symbol);
       return;
     }
@@ -51285,7 +51505,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     if (address.kind == MirBodyKind::Module &&
         place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
-        place.symbol != 0) {
+        place.symbol != 0 &&
+        moduleInitializationLocal(program_, body, place) == nullptr) {
       const CppMirSymbolRepresentation *storage = storageRepresentationForBody(
           program_, representations_, std::nullopt, place.symbol);
       if (storage == nullptr || storage->spelling.empty() ||
@@ -57653,6 +57874,15 @@ initializerScheduleFromAnalysis(const MirProgram &program_,
   }
   case MirBodyKind::Module:
     body = &program_.module();
+    if (std::any_of(program_.programInitializationPlan().steps.begin(),
+                    program_.programInitializationPlan().steps.end(),
+                    [](const MirProgramInitializationStep &step) {
+                      return !step.locals.empty() ||
+                             !step.nestedFullExpressions.empty();
+                    }))
+      // Lexical initializer execution belongs to the complete body text, not
+      // the passive expression-only persistent-storage schedule.
+      return result;
     break;
   default:
     return result;

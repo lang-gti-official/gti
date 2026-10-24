@@ -1,5 +1,22 @@
 # Compiler Verification
 
+## Nested constructor argument handoff (0.470.1)
+
+`constructor_nested_argument_runtime` exercises cleanup-free class values
+constructed from prepared class arguments in default and explicit field
+initializers, including deeper nesting and a chrono clock-point field. Its
+ordinary user types have no zero-argument constructor or assignment route to
+substitute. The C++20/C++23 optimization, no-elide and sanitizer matrix checks
+field values, ordered sibling effects, and owning-sibling rollback after a
+later initializer fails. The original compiler rejected the defaulted parent
+constructor with `GTI-B0001` at representation admission.
+
+`cpp_mir_body_emitter_lifecycle` additionally pins the existing body-placement
+route for this successful prepared-input schedule and rejects forged transfer
+sources/targets, conditional or failure-only events, duplicate handoffs and
+invented result activation. The proof is independent of a constructor's
+failure-propagation marker; the native initializer fusion contract is unchanged.
+
 ## Carriers of returned references (0.468.3)
 
 `accessor_text_carrier_runtime` runs `accessor_text_carriers.gti` in all
@@ -518,6 +535,42 @@ corners({a, b})`).
 
 ## Typed macros and assertions
 
+`macro_result_parser` covers explicit result types and macro-local returns.
+`macro_values_semantic_ir` checks scalar and owning results, nested result
+regions, contextual conversions, initializer bodies, and caller-written `?`.
+Independent HIR/MIR mutations reject missing or cross-region return identities,
+uninitialized result slots, missing lifetime activation, forged temporary
+borrows, and premature cleanup. Passive objects still require a live object
+lifetime even when their destruction has no observable effect. Startup-local
+and decomposition tests reject projected uses before their physical owner is
+initialized; a valid generic body alone cannot authorize an invalid startup
+schedule.
+`macro_values_runtime` checks these paths at C++20/C++23 O0/O1/O2/O3,
+disabled elision and native ASan/UBSan. `macro_fresh_callables` checks that
+type discovery does not execute captures or publish speculative executable
+bindings, that concrete callable identities survive repeated and nested forcing,
+and that recursive constraint queries terminate without rejecting finite queries
+whose exact argument types change. `macro_fresh_callable_runtime` checks
+capture timing, skipped captures, caller ownership and exactly-once cleanup.
+
+`expression_text_semantic_ir` checks exact parser extents, origin-preserving
+clones and forwarding, default-expression provenance, missing source buffers,
+private capability access, static operand errors, strict synthetic-composition
+rejection and explicit constant fallback selection. Dynamic fallbacks are
+rejected even for operands with available written origins. Its HIR/MIR assertions
+require literal normalization before operand lowering: no metadata intrinsic or
+argument call may reach execution.
+`expression_text_runtime` checks untouched side effects and owner moves,
+absence of retained runtime loans, nested generic wrappers, static result
+lifetime, synthesized fallback without owner consumption or loans,
+UTF-8/comments/newlines and ordinary generic definition-site spelling
+at C++20/C++23 O0/O1/O3 plus ASan/UBSan. The stdlib surface manifest registers
+the same public operation and focused O0/O3 fixture.
+`expression_text_lsp` checks value-result hover signatures and exact helper
+definition identities, UTF-16 argument diagnostic spans, synthetic-source
+diagnostics, explicit fallback recovery, dynamic-fallback diagnostic clearing,
+incomplete source and reopen.
+
 The existing `deferred_assertions*` gate names are retained for continuity after
 the public syntax migration to `#macro`; no old attribute support remains.
 `deferred_assertions` checks the general typed statement macro rule
@@ -553,6 +606,14 @@ panic, break and continue. Examples are identified by their selected
 paths, not a numeric-prefix convention, so renumbering cannot change the expected
 output policy.
 
+`macro_result_failures` checks an unrelated move-only resource returned through
+a typed macro result region. Its six exact stderr traces cover normal result
+publication, failure before result creation, macro-local cleanup failure after
+result initialization, failure in a later caller argument, double failure while
+cleaning the pending result, and ordinary cleanup failure after publication.
+The matrix uses C++20/C++23 at O0/O3, disabled elision and native ASan/UBSan;
+failure cases require status 70 and the original primary/secondary sites.
+
 `deferred_assertions_lsp` covers unsaved/incomplete text, UTF-16 spans, static
 argument errors, macro hover/definition identity, qualified overload selection
 and recovery from the removed attribute. `macro_expansion_queries` checks
@@ -565,7 +626,9 @@ Tree-sitter corpus and shipped-source parsing cover the new header, module,
 declaration and example inventories.
 
 `deferred_assertions_cost` compares the same complete-state workload with
-handwritten control flow. Zero observed successful-path allocations and cold
+handwritten control flow, including scalar results, passive objects passed by
+value, and nested returned callbacks with captured snapshots. Zero observed
+successful-path allocations and cold
 message calls are correctness gates; `--measure` adds two warmups and nine
 interleaved samples, native/generated size, build time and child peak memory.
 Timing samples are reported rather than gated on noisy shared hosts. Macro

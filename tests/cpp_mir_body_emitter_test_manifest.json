@@ -94,6 +94,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testLambdaResultRegionMaterialization",
+      "suite": "preflight"
+    },
+    {
       "name": "testConditionalOwningArgumentReceiverAdmission",
       "suite": "preflight"
     },
@@ -127,6 +131,10 @@
     },
     {
       "name": "testDischargedCompoundOperatorVocabulary",
+      "suite": "preflight"
+    },
+    {
+      "name": "testImmediatePassiveCaptureSnapshots",
       "suite": "preflight"
     },
     {
@@ -167,6 +175,18 @@
     },
     {
       "name": "testVerifiedProgramInitializationPlanClassification",
+      "suite": "preflight"
+    },
+    {
+      "name": "testProgramInitializerLexicalLocals",
+      "suite": "preflight"
+    },
+    {
+      "name": "testPassiveResultRegionPreparedArgument",
+      "suite": "preflight"
+    },
+    {
+      "name": "testPassiveResultRegionContextualConversions",
       "suite": "preflight"
     },
     {
@@ -839,6 +859,10 @@
     },
     {
       "name": "testNestedCleanupFreeClassResult",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCleanupFreeConstructedFieldPreparedInputs",
       "suite": "lifecycle"
     },
     {

@@ -38,6 +38,50 @@ void testDischargedCompoundOperatorVocabulary() {
       "proved successful path exactly matches C++ semantics");
 }
 
+void testImmediatePassiveCaptureSnapshots() {
+  const auto frontend = analyze("immediate-copy-snapshot.gti", R"(
+int main() {
+  mut int value = 1;
+  int result = ([value]() -> int { return value; })();
+  value = 9;
+  return result;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "immediate copy snapshot lowers to verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.entryKind == lang::ProgramEntryKind::None)
+      continue;
+    expect(
+        supportsSelectedBodyText(frontend.mir, rows, function.id),
+        "an immediate passive capture stays exact despite later source writes");
+  }
+
+  const auto barrier = analyze("intervening-copy-snapshot.gti", R"(
+int main() {
+  mut int value = 1;
+  int result = ([value](int ignored) -> int { return value; })(value = 9);
+  return result;
+}
+)");
+  expect(barrier.canGenerateCode(),
+         "capture/argument ordering is valid ordinary GTI");
+  if (!barrier.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap barrierRows(
+      buildRows(barrier, barrier.mir));
+  for (const auto &function : barrier.mir.functionInstances()) {
+    if (function.entryKind == lang::ProgramEntryKind::None)
+      continue;
+    expect(!supportsSelectedBodyText(barrier.mir, barrierRows, function.id),
+           "an intervening argument write cannot delay the copied capture "
+           "snapshot");
+  }
+}
+
 void testConsumedPassivePayloadTagObservation() {
   const auto frontend =
       analyzeWithStandardLibrary("consumed-payload-tag.gti", R"(
@@ -2757,6 +2801,165 @@ int main() { return 0; }
                  "different value must fail admission");
 }
 
+// Callable result regions retain explicit pending Value lifetimes, including
+// passive environments and multiple forcing edges of one written lambda.
+void testLambdaResultRegionMaterialization() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/macro_fresh_callables.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(input.good() || input.eof(), "the macro callable fixture must exist");
+  expect(
+      frontend.canGenerateCode(),
+      "callable result regions preserve ordinary capture and ownership facts");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const bool ready = emitter.analyzeProgram().ready();
+  expect(ready, "all callable result-region bodies need complete emission");
+  if (!ready)
+    return;
+  bool checked = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *hir = frontend.hir.findFunctionInstance(function.id);
+    if (!hir || !hir->source || hir->source->name().lexeme != "choose_snapshot")
+      continue;
+    checked = true;
+    const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                       function.id};
+    const auto text = function.mayRaiseDefinedFailure
+                          ? emitter.emitFailureBodyText(address, "callable", 1)
+                          : emitter.emitBodyText(address, "callable", 1);
+    const auto occurrences = [&](std::string_view needle) {
+      std::size_t count = 0;
+      for (std::size_t at = 0;
+           (at = text.text.find(needle, at)) != std::string::npos;
+           at += needle.size())
+        ++count;
+      return count;
+    };
+    expect(text.emitted() &&
+               occurrences("struct __gti_mir_closure_environment_") == 1 &&
+               occurrences(".construct_from([&]() { return "
+                           "__gti_mir_closure_factory_") == 2,
+           "two forcing edges snapshot separately into one exact environment "
+           "type");
+    const auto passive = std::find_if(
+        function.body.dropObligations.begin(),
+        function.body.dropObligations.end(), [](const auto &drop) {
+          return drop.kind == lang::MirDropObligationKind::Value &&
+                 drop.dropType.type.kind == lang::SemanticType::Lambda &&
+                 !drop.dropType.requiresActiveCleanup;
+        });
+    expect(passive != function.body.dropObligations.end(),
+           "passive callable joins retain their explicit Value obligation");
+    if (passive == function.body.dropObligations.end())
+      continue;
+    auto malformed = frontend.mir;
+    auto *changed = const_cast<lang::MirFunctionInstance *>(
+        malformed.findFunctionInstance(function.id));
+    bool erased = false;
+    for (auto &block : changed->body.blocks) {
+      for (auto &instruction : block.instructions) {
+        if (erased || instruction.kind != lang::MirInstructionKind::Initialize)
+          continue;
+        const auto activation = std::find_if(
+            instruction.lifecycle.begin(), instruction.lifecycle.end(),
+            [&](const auto &event) {
+              return event.kind == lang::MirLifecycleEventKind::Initialize &&
+                     event.target == passive->id;
+            });
+        if (activation != instruction.lifecycle.end()) {
+          instruction.lifecycle.erase(activation);
+          erased = true;
+        }
+      }
+    }
+    expect(
+        erased && !lang::verifyMirProgram(malformed).valid() &&
+            hasIssue(lang::CppMirBodyEmitter(malformed, map).analyze(address),
+                     lang::CppMirBodyEmissionIssueKind::InvalidMirProgram),
+        "missing callable result activation fails before backend spelling");
+  }
+  bool nestedChecked = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (nestedChecked ||
+            instruction.kind != lang::MirInstructionKind::Initialize)
+          continue;
+        for (const auto &event : instruction.lifecycle) {
+          const auto *source = function.body.findDropObligation(event.source);
+          const auto *target = function.body.findDropObligation(event.target);
+          const auto *sourcePlace =
+              source ? function.body.findPlace(source->place) : nullptr;
+          const auto *targetPlace =
+              target ? function.body.findPlace(target->place) : nullptr;
+          if (event.kind != lang::MirLifecycleEventKind::Reparent || !source ||
+              !target || !sourcePlace || !targetPlace ||
+              source->kind != lang::MirDropObligationKind::Value ||
+              target->kind != lang::MirDropObligationKind::Value ||
+              source->dropType.type.kind != lang::SemanticType::Lambda ||
+              source->dropType.requiresActiveCleanup ||
+              sourcePlace->root != lang::MirPlaceRootKind::Temporary ||
+              targetPlace->root != lang::MirPlaceRootKind::Temporary)
+            continue;
+          nestedChecked = true;
+          auto malformed = frontend.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          auto *changedBlock =
+              const_cast<lang::MirBlock *>(changed->body.findBlock(block.id));
+          auto changedInstruction = std::find_if(
+              changedBlock->instructions.begin(),
+              changedBlock->instructions.end(), [&](const auto &candidate) {
+                return candidate.id == instruction.id;
+              });
+          auto changedEvent = std::find_if(
+              changedInstruction->lifecycle.begin(),
+              changedInstruction->lifecycle.end(), [&](const auto &candidate) {
+                return candidate.kind ==
+                           lang::MirLifecycleEventKind::Reparent &&
+                       candidate.source == source->id &&
+                       candidate.target == target->id;
+              });
+          changedEvent->source = target->id;
+          const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                             function.id};
+          expect(
+              !lang::verifyMirProgram(malformed).valid() &&
+                  hasIssue(
+                      lang::CppMirBodyEmitter(malformed, map).analyze(address),
+                      lang::CppMirBodyEmissionIssueKind::InvalidMirProgram),
+              "nested callable publication cannot substitute its source "
+              "Temporary lifetime");
+          break;
+        }
+      }
+    }
+  }
+  expect(nestedChecked,
+         "nested callable results retain distinct exact Temporary lifetimes");
+  const auto completeText = gti_test::emitCppText(frontend);
+  const std::string_view retirement = "end moved closure representation";
+  const auto firstRetirement = completeText.find(retirement);
+  const auto secondRetirement =
+      firstRetirement == std::string::npos
+          ? std::string::npos
+          : completeText.find(retirement, firstRetirement + 1);
+  expect(firstRetirement != std::string::npos &&
+             secondRetirement != std::string::npos &&
+             completeText.find(retirement, secondRetirement + 1) ==
+                 std::string::npos,
+         "nested passive and owning handoffs retire each hidden source "
+         "representation exactly once");
+  expect(checked && !completeText.empty(),
+         "direct, nested, passive and moved-owning callable results emit from "
+         "verified MIR");
+}
+
 // A returned owning payload-enum call result constructs in the caller's
 // result storage, from an ordinary function or an exact lambda, including
 // across a fallible drop that keeps it an unpublished obligation. An exact
@@ -4014,6 +4217,336 @@ public:
              hasIssue(incoherent,
                       lang::CppMirBodyEmissionIssueKind::InvalidMirProgram),
          "a stale program plan must fail before classifier readiness");
+}
+
+void testProgramInitializerLexicalLocals() {
+  const auto frontend = analyze("cpp-mir-initializer-locals.gti", R"(
+mut int cleaned = 0;
+class Owner {
+public:
+  Owner() {}
+  ~Owner() { cleaned += 1; }
+};
+struct Pair {
+  int first;
+  int second;
+  Pair(int first, int second) : first(first), second(second) {}
+};
+#macro int initial_value(int value) {
+  Owner guard{};
+  mut int saved = value;
+  saved += 1;
+  Pair pair{saved, 2};
+  auto [left, right] = pair;
+  if (left > 0) { return left + right; }
+  return 0;
+}
+int global = initial_value(4);
+class Registry { public: static int value = initial_value(6); };
+struct Record { int field = initial_value(8); };
+int main() {
+  Record record{};
+  return global + Registry::value + record.field + cleaned - 30;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "owning startup locals must retain verified MIR cleanup");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto rows = buildRows(frontend, frontend.mir);
+  std::size_t locals = 0;
+  for (const auto &step : frontend.mir.programInitializationPlan().steps)
+    for (const auto &local : step.locals) {
+      ++locals;
+      expect(std::none_of(
+                 rows.symbols.begin(), rows.symbols.end(),
+                 [&](const auto &row) {
+                   return row.kind ==
+                              lang::CppMirSymbolRepresentationKind::Storage &&
+                          row.symbol == local.symbol;
+                 }),
+             "initializer-local identities never demand global storage rows");
+    }
+  expect(locals == 12,
+         "both startup steps retain owners, scalars, hidden decomposition "
+         "sources and exact structured aliases");
+  const lang::CppMirBodyEmissionMap map(rows);
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress module{.kind = lang::MirBodyKind::Module};
+  expect(emitter.analyze(module).ready() &&
+             emitter.supportsFailureBodyText(module),
+         "startup locals use ordinary verified failure-capable body carriers");
+  expect(!emitter.initializerSchedule(module).supported,
+         "lexical startup execution never becomes a passive global schedule");
+  const auto fieldOwner = std::find_if(
+      frontend.mir.classInstances().begin(),
+      frontend.mir.classInstances().end(), [](const auto &owner) {
+        return owner.generatedDefaultRequiresSchedule &&
+               owner.declaredFields.size() == 1 &&
+               std::any_of(owner.fieldInitializers.dropObligations.begin(),
+                           owner.fieldInitializers.dropObligations.end(),
+                           [](const auto &drop) {
+                             return drop.kind ==
+                                    lang::MirDropObligationKind::Binding;
+                           });
+      });
+  expect(fieldOwner != frontend.mir.classInstances().end(),
+         "the field catalog retains its macro-local owning cleanup");
+  if (fieldOwner != frontend.mir.classInstances().end()) {
+    const lang::MirBodyAddress fields{
+        .kind = lang::MirBodyKind::FieldInitializers, .owner = fieldOwner->id};
+    const auto schedule = emitter.initializerSchedule(fields);
+    expect(emitter.analyze(fields).ready() && schedule.supported &&
+               schedule.fields.size() == 1 &&
+               schedule.fields.front().field ==
+                   fieldOwner->declaredFields.front().symbol &&
+               schedule.fields.front().spelling.empty(),
+           "selected construction suppresses only the exact field default, "
+           "not its lexical-local initializations");
+    const auto constructor = std::find_if(
+        frontend.mir.constructorInstances().begin(),
+        frontend.mir.constructorInstances().end(), [&](const auto &candidate) {
+          return candidate.owner == fieldOwner->id &&
+                 candidate.generatedDefault;
+        });
+    expect(constructor != frontend.mir.constructorInstances().end(),
+           "the field default selects an executable generated constructor");
+    if (constructor != frontend.mir.constructorInstances().end()) {
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                         .owner = constructor->id};
+      expect(constructor->mayRaiseDefinedFailure
+                 ? emitter.supportsFailureBodyText(address)
+                 : emitter.supportsBodyText(address),
+             "field macro-local execution and cleanup remain in complete "
+             "selected constructor MIR text");
+    }
+  }
+  const auto text = emitter.emitFailureBodyText(module, "initializer", 1);
+  expect(text.emitted() &&
+             text.text.find("__gti_mir_p_") != std::string::npos &&
+             !gti_test::emitCppText(frontend).empty(),
+         "owning startup locals emit complete MIR body text and cleanup");
+  auto malformedHir = frontend.hir;
+  const auto generated = std::find_if(
+      malformedHir.constructorInstances().begin(),
+      malformedHir.constructorInstances().end(), [](const auto &instance) {
+        return instance.generatedDefault && !instance.body.statements.empty();
+      });
+  expect(generated != malformedHir.constructorInstances().end(),
+         "generated field construction retains initializer result regions");
+  if (generated != malformedHir.constructorInstances().end()) {
+    auto &body = const_cast<lang::HirConstructorInstance &>(*generated).body;
+    auto orphan = body.statements.front();
+    orphan.id = body.statements.size() + 1;
+    body.statements.push_back(std::move(orphan));
+    const auto rejected = lang::LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, malformedHir, frontend.mir,
+        frontend.mir, {}, lang::TargetInfo::host());
+    expect(
+        !rejected.valid() &&
+            std::any_of(rejected.issues.begin(), rejected.issues.end(),
+                        [](const auto &issue) {
+                          return issue.detail.find("initializer") !=
+                                 std::string::npos;
+                        }),
+        "lowered construction still rejects orphan generated-body statements");
+  }
+  auto malformed = frontend.mir;
+  auto &steps = const_cast<lang::MirProgramInitializationPlan &>(
+                    malformed.programInitializationPlan())
+                    .steps;
+  const auto step =
+      std::find_if(steps.begin(), steps.end(),
+                   [](const auto &item) { return !item.locals.empty(); });
+  if (step != steps.end()) {
+    step->locals.clear();
+    const auto rejected =
+        lang::CppMirBodyEmitter(malformed, map).analyze(module);
+    expect(
+        hasIssue(rejected,
+                 lang::CppMirBodyEmissionIssueKind::InvalidMirProgram),
+        "backend rejects missing local authority instead of inventing storage");
+  }
+}
+
+void testPassiveResultRegionPreparedArgument() {
+  const auto frontend = analyze("passive-result-region-argument.gti", R"(
+mut int later_calls = 0;
+struct Record {
+  int value;
+  Record(int value) : value(value) {}
+};
+#macro Record select_record(int mode, int value) {
+  if (mode < 0) { return Record(value); }
+  if (mode == 0) { Record saved{value + 1}; return saved; }
+  return Record(value + 2);
+}
+int later() { later_calls += 1; return 0; }
+int consume(Record record, int ignored) { return record.value; }
+int sample(int mode) { return consume(select_record(mode, 41), later()); }
+int main() {
+  int sum = sample(-1) + sample(0) + sample(1);
+  if (sum != 126 || later_calls != 3) { return 1; }
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "unknown three-way passive result arguments retain verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::MirFunctionInstance *selected = nullptr;
+  lang::MirDropObligationId resultDrop = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &drop : function.body.dropObligations) {
+      const auto *place = function.body.findPlace(drop.place);
+      if (drop.kind != lang::MirDropObligationKind::Value ||
+          drop.dropType.requiresActiveCleanup || !place ||
+          place->root != lang::MirPlaceRootKind::Temporary ||
+          place->type.kind != lang::SemanticType::Class)
+        continue;
+      std::size_t writers = 0;
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          writers += instruction.kind == lang::MirInstructionKind::Initialize &&
+                     instruction.destination == place->id;
+      if (writers == 3) {
+        selected = &function;
+        resultDrop = drop.id;
+      }
+    }
+  }
+  expect(selected && resultDrop != 0,
+         "all three return writers share one explicit passive value lifetime");
+  if (!selected)
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = selected->id};
+  const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "unknown three-way and named-local returns prepare one by-value "
+         "argument without a native default object");
+  const auto text = emitter.emitFailureBodyText(address, "passive_argument", 1);
+  expect(text.emitted() &&
+             text.text.find("end prepared argument source shell") !=
+                 std::string::npos &&
+             !gti_test::emitCppText(frontend).empty(),
+         "passive result argument emission ends its source representation "
+         "after exactly staging the prepared object");
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        malformed.findFunctionInstance(selected->id));
+    auto &body = function->body;
+    const auto *drop = body.findDropObligation(resultDrop);
+    const auto sourcePlace = drop->place;
+    lang::MirInstruction *publication = nullptr;
+    lang::MirInstruction *stage = nullptr;
+    lang::MirBlockId moveBlock = 0;
+    lang::MirBlock *branch = nullptr;
+    for (auto &block : body.blocks) {
+      if (!branch && block.terminator.kind == lang::MirTerminatorKind::Branch)
+        branch = &block;
+      for (auto &instruction : block.instructions) {
+        if (!publication &&
+            instruction.kind == lang::MirInstructionKind::Initialize &&
+            instruction.destination == sourcePlace)
+          publication = &instruction;
+        if (instruction.kind == lang::MirInstructionKind::Move &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().place == sourcePlace)
+          moveBlock = block.id;
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.preparedParameterDrop &&
+            instruction.info.type == drop->dropType.type)
+          stage = &instruction;
+      }
+    }
+    expect(publication && !publication->lifecycle.empty() && stage && branch &&
+               moveBlock != 0,
+           "passive result mutation retains exact publication and input IDs");
+    if (!publication || publication->lifecycle.empty() || !stage || !branch ||
+        moveBlock == 0)
+      continue;
+    if (mutation == 0)
+      publication->lifecycle.clear();
+    else if (mutation == 1)
+      publication->lifecycle.front().target = *stage->preparedParameterDrop;
+    else
+      branch->terminator.target = moveBlock;
+    lang::rebuildMirReachability(body);
+    expect(lang::rebuildMirValueUses(body),
+           "passive result mutations preserve exact SSA use indexes");
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "missing, forged or bypassed passive activation cannot reach the "
+           "prepared argument");
+    expect(hasIssue(lang::CppMirBodyEmitter(malformed, rows).analyze(address),
+                    lang::CppMirBodyEmissionIssueKind::InvalidMirProgram),
+           "backend fails closed before emitting an unavailable result slot");
+  }
+}
+
+void testPassiveResultRegionContextualConversions() {
+  const auto frontend = analyze("passive-result-region-conversions.gti", R"(
+struct Flag {
+  operator bool() { return true; }
+  implicit operator int() { return 19; }
+};
+#macro Flag select_flag(int mode) {
+  if (mode < 0) { return Flag(); }
+  if (mode == 0) { Flag saved{}; return saved; }
+  return Flag();
+}
+int probe(int mode) {
+  int converted = select_flag(mode);
+  if (!select_flag(mode)) { return 0; }
+  return converted;
+}
+int main() {
+  if (probe(-1) != 19 || probe(0) != 19 || probe(1) != 19) { return 1; }
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "generated-default result regions support ordinary contextual "
+         "scalar and bool conversions");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
+  std::size_t probes = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    std::size_t resultSlots = 0;
+    for (const auto &drop : function.body.dropObligations) {
+      const auto *place = function.body.findPlace(drop.place);
+      if (drop.kind != lang::MirDropObligationKind::Value ||
+          drop.dropType.requiresActiveCleanup || !place ||
+          place->root != lang::MirPlaceRootKind::Temporary ||
+          place->type.kind != lang::SemanticType::Class)
+        continue;
+      std::size_t writers = 0;
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          writers += instruction.kind == lang::MirInstructionKind::Initialize &&
+                     instruction.destination == place->id;
+      resultSlots += writers == 3;
+    }
+    if (resultSlots != 2)
+      continue;
+    ++probes;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    expect(emitter.analyze(address).ready() &&
+               (function.mayRaiseDefinedFailure
+                    ? emitter.supportsFailureBodyText(address)
+                    : emitter.supportsBodyText(address)),
+           "unknown three-way generated defaults and named-local returns "
+           "publish into exact value slots before their conversion receivers");
+  }
+  expect(probes == 1 && !gti_test::emitCppText(frontend).empty(),
+         "contextual result conversion emits complete MIR text without "
+         "inventing a default object for its region slot");
 }
 
 void testSafeIndexUsesBoundsNotRawMemory() {
@@ -7145,6 +7678,8 @@ constexpr NamedTest kTests[] = {
     {"testOwningPayloadEnumTransportAdmissionFailsClosed",
      testOwningPayloadEnumTransportAdmissionFailsClosed},
     {"testLambdaOwningTransportAdmission", testLambdaOwningTransportAdmission},
+    {"testLambdaResultRegionMaterialization",
+     testLambdaResultRegionMaterialization},
     {"testConditionalOwningArgumentReceiverAdmission",
      testConditionalOwningArgumentReceiverAdmission},
     {"testBorrowedArgumentFallibleConditionAdmission",
@@ -7163,6 +7698,8 @@ constexpr NamedTest kTests[] = {
      testPassiveEnumTemporaryObservationThenTransfer},
     {"testDischargedCompoundOperatorVocabulary",
      testDischargedCompoundOperatorVocabulary},
+    {"testImmediatePassiveCaptureSnapshots",
+     testImmediatePassiveCaptureSnapshots},
     {"testPassivePayloadTagObservation", testPassivePayloadTagObservation},
     {"testConsumedPassivePayloadTagObservation",
      testConsumedPassivePayloadTagObservation},
@@ -7180,6 +7717,12 @@ constexpr NamedTest kTests[] = {
      testHostedStartupOwnsRemainingAuthorityGap},
     {"testVerifiedProgramInitializationPlanClassification",
      testVerifiedProgramInitializationPlanClassification},
+    {"testProgramInitializerLexicalLocals",
+     testProgramInitializerLexicalLocals},
+    {"testPassiveResultRegionPreparedArgument",
+     testPassiveResultRegionPreparedArgument},
+    {"testPassiveResultRegionContextualConversions",
+     testPassiveResultRegionContextualConversions},
     {"testSafeIndexUsesBoundsNotRawMemory",
      testSafeIndexUsesBoundsNotRawMemory},
     {"testUnsafeRawPointerVocabulary", testUnsafeRawPointerVocabulary},

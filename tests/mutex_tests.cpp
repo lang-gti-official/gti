@@ -1,5 +1,7 @@
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
@@ -344,6 +346,100 @@ void testReferencePrefixBeforeOwnedField() {
          "mutex guard exercises mixed reference and owner initialization");
 }
 
+// Final failure-effect lowering elides this infallible native initializer's
+// Invoke. Retain its canonical conservative shape in a no-entry test program
+// to exercise the backend's independently proved impossible-failure cleanup.
+// A genuinely fallible constructor cannot be this positive control: native
+// initializer fusion requires its exact source body to prove failure-free.
+std::optional<lang::MirProgram>
+retainedNativeInitializerFailure(const lang::MirProgram &program,
+                                 lang::HirConstructorInstanceId owner,
+                                 lang::MirInstructionId constructInstruction) {
+  auto retained = program;
+  auto &constructor = const_cast<lang::MirConstructorInstance &>(
+      *retained.findConstructorInstance(owner));
+  auto &body = constructor.body;
+  if (retained.hostedStartup() || body.blocks.size() != 1 ||
+      !body.failureRecords.empty())
+    return std::nullopt;
+  auto &entry = body.blocks.front();
+  const auto construct =
+      std::find_if(entry.instructions.begin(), entry.instructions.end(),
+                   [&](const auto &instruction) {
+                     return instruction.id == constructInstruction;
+                   });
+  if (construct == entry.instructions.end() || !construct->constructorTarget ||
+      !construct->definedFailure.empty() ||
+      !lang::cppMirConstructorStatusCannotFail(retained,
+                                               *construct->constructorTarget))
+    return std::nullopt;
+  auto &target = const_cast<lang::MirConstructorInstance &>(
+      *retained.findConstructorInstance(*construct->constructorTarget));
+  target.mayRaiseDefinedFailure = true;
+  construct->definedFailure.propagation =
+      lang::FailurePropagationKind::Constructor;
+  const auto constructValue = construct->hirValue;
+  lang::MirBlock success{.id = 2};
+  success.instructions.assign(std::next(construct), entry.instructions.end());
+  success.terminator = entry.terminator;
+  success.reachable = true;
+  const auto normalDrop =
+      std::find_if(success.instructions.begin(), success.instructions.end(),
+                   [](const auto &instruction) {
+                     return instruction.kind == lang::MirInstructionKind::Drop;
+                   });
+  if (normalDrop == success.instructions.end() ||
+      normalDrop->lifecycle.size() != 1)
+    return std::nullopt;
+  auto failureDrop = *normalDrop;
+  failureDrop.id = body.instructionCount() + 1;
+  failureDrop.lifecycle.front().failureCleanup = true;
+  const auto boundary = body.cleanupBoundaries.size() + 1;
+  body.cleanupBoundaries.push_back(
+      {.id = boundary,
+       .kind = lang::MirCleanupBoundaryKind::Failure,
+       .obligations = {failureDrop.lifecycle.front().source}});
+  lang::MirInstruction marker{.id = failureDrop.id + 1,
+                              .kind = lang::MirInstructionKind::Lifecycle,
+                              .cleanupBoundaryEnd = boundary};
+  lang::MirBlock failure{
+      .id = 3,
+      .failureParameter = 1,
+      .activeFailure = 1,
+      .instructions = {failureDrop, marker},
+      .terminator = {.kind = lang::MirTerminatorKind::PropagateFailure,
+                     .failureRecord = 1},
+      .reachable = true};
+  entry.instructions.erase(std::next(construct), entry.instructions.end());
+  entry.terminator = {.kind = lang::MirTerminatorKind::Invoke,
+                      .hirValue = constructValue,
+                      .invokeInstruction = constructInstruction,
+                      .failureRecord = 1,
+                      .target = 2,
+                      .elseTarget = 3};
+  body.failureRecords.push_back({.id = 1,
+                                 .producerBlock = 1,
+                                 .producerInstruction = constructInstruction,
+                                 .parameterBlock = 3});
+  body.blocks.push_back(std::move(success));
+  body.blocks.push_back(std::move(failure));
+  for (auto &value : body.values)
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.result == value.id)
+          value.definitionBlock = block.id;
+  if (!lang::rebuildMirValueUses(body))
+    return std::nullopt;
+  const auto effects = lang::deriveMirProgramEffectSummaries(retained);
+  for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+           retained.functionInstances()))
+    function.effectSummary = effects.functions[function.id - 1];
+  for (auto &instance : const_cast<std::vector<lang::MirConstructorInstance> &>(
+           retained.constructorInstances()))
+    instance.effectSummary = effects.constructors[instance.id - 1];
+  return retained;
+}
+
 void testPreparedMutexPayload() {
   const auto frontend = analyze("mutex-prepared-payload.gti", R"gti(
 #include <std/mutex>
@@ -354,7 +450,7 @@ public:
   payload(payload& other) = delete;
   payload(payload&& other) = default;
 };
-int main() { std::mutex<payload> value{payload(4)}; return 0; }
+int exercise() { std::mutex<payload> value{payload(4)}; return 0; }
 )gti");
   expect(frontend.canGenerateCode(), "prepared native payload lowers");
   if (!frontend.canGenerateCode())
@@ -389,40 +485,75 @@ int main() { std::mutex<payload> value{payload(4)}; return 0; }
                          ")") == std::string::npos,
                "an initializer executed before the body must follow success, "
                "not branch on an unset body-local status flag");
+        const auto retained = retainedNativeInitializerFailure(
+            frontend.mir, constructor.id,
+            bindings.front().constructInstruction);
+        expect(retained && lang::verifyMirProgram(*retained).valid(),
+               "retained conservative native initializer independently "
+               "verifies before cleanup mutations");
+        if (!retained)
+          continue;
+        const auto &retainedConstructor =
+            *retained->findConstructorInstance(constructor.id);
+        expect(lang::cppMirConstructedFieldInitializerBindings(
+                   *retained, retainedConstructor)
+                       .size() == 1,
+               "failure-free source constructor proves the retained native "
+               "initializer's impossible cleanup edge");
         for (int mutation = 0; mutation != 8; ++mutation) {
-          auto malformed = frontend.mir;
+          auto malformed = *retained;
           auto &changed = const_cast<lang::MirConstructorInstance &>(
               *malformed.findConstructorInstance(constructor.id));
-          if (mutation == 4)
+          std::size_t changedTargets = 0;
+          if (mutation == 4) {
             changed.body.dropObligations[*stage.preparedParameterDrop - 1]
                 .initiallyActive = true;
+            ++changedTargets;
+          }
           for (auto &candidateBlock : changed.body.blocks)
             for (auto &instruction : candidateBlock.instructions) {
               if (instruction.id == stage.id) {
-                if (mutation == 0)
+                if (mutation == 0) {
                   instruction.destination.reset();
-                if (mutation == 1)
+                  ++changedTargets;
+                }
+                if (mutation == 1) {
                   instruction.lifecycle.clear();
-                if (mutation == 2)
+                  ++changedTargets;
+                }
+                if (mutation == 2) {
                   instruction.lifecycle.front().conditional = true;
+                  ++changedTargets;
+                }
               }
               if (mutation == 3 &&
-                  instruction.id == bindings.front().constructInstruction)
+                  instruction.id == bindings.front().constructInstruction) {
                 instruction.lifecycle.clear();
+                ++changedTargets;
+              }
               if (candidateBlock.failureParameter != 0 &&
                   instruction.kind == lang::MirInstructionKind::Drop &&
                   instruction.lifecycle.size() == 1) {
                 const auto dropId = instruction.lifecycle.front().source;
-                if (mutation == 5)
+                if (mutation == 5) {
                   instruction.lifecycle.front().failureCleanup = false;
-                if (mutation == 6)
+                  ++changedTargets;
+                }
+                if (mutation == 6) {
                   changed.body.dropObligations[dropId - 1].initiallyActive =
                       false;
-                if (mutation == 7)
+                  ++changedTargets;
+                }
+                if (mutation == 7) {
                   changed.body.dropObligations[dropId - 1]
                       .dropType.requiresActiveCleanup = true;
+                  ++changedTargets;
+                }
               }
             }
+          expect(changedTargets == 1,
+                 "each prepared native payload mutation changes one real "
+                 "slot or cleanup target");
           expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
                                                                  changed)
                      .empty(),

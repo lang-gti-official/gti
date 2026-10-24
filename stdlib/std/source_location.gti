@@ -1,6 +1,6 @@
 // <std/source_location> -- immutable, owned source call-site information.
 //
-// The four private declarations are identity-bound compiler capabilities.
+// The private declarations are identity-bound compiler capabilities.
 // Ordinary source cannot invoke them directly. `current` deliberately uses
 // caller-side default arguments so a direct call, or an API defaulted at its
 // caller, records the external invocation rather than this implementation.
@@ -12,9 +12,25 @@ std::string_view source_file_name();
 std::string_view source_function_name();
 uint32_t source_line();
 uint32_t source_column();
+std::string_view source_expression_text<T>(T expression);
+std::string_view source_expression_text_or<T>(T expression,
+                                             std::string_view fallback);
 }
 
 namespace std {
+/// Exact written expression text; the expression is checked but never evaluated.
+/// Interior whitespace and comments are retained. The result has static storage.
+#macro std::string_view expression_text<T>(T expression) {
+  return gti_internal::source_expression_text<T>(expression);
+}
+
+/// Uses constant literal-backed fallback text when no exact written origin exists.
+/// Both arguments are checked without runtime evaluation or borrowing.
+#macro std::string_view expression_text<T>(T expression,
+                                         std::string_view fallback) {
+  return gti_internal::source_expression_text_or<T>(expression, fallback);
+}
+
 /// An immutable snapshot of one source call site.
 ///
 /// File and function names are owned by the value, so moving the location

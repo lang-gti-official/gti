@@ -50,7 +50,8 @@ compiler task.
 
 The implementation provides source-defined `std::assert` and
 `std::debug_assert`, plus general typed `#macro` statement declarations with
-ordinary call syntax and an implicit void result. This revises the original
+ordinary call syntax, implicit void statements and explicit typed value
+results. This revises the original
 0.465.0 `[[deferred]]` spelling: the old attribute is rejected with migration
 guidance rather than kept as another system. Macro-only overloads, generics,
 defaults, final packs, constraints and caller tracking use the one checked
@@ -67,6 +68,11 @@ prevent capture without changing written spellings. Local mutation and scoped
 loops lower through ordinary HIR/MIR; break/continue cannot leave the macro.
 Bounded nested diagnostics and the read-only editor expansion view expose the
 checked expansion without supplying a second execution model.
+Typed result regions now provide macro-local returns, lazy scalar/owning
+results and cleanup-safe publication to the enclosing full expression. Fresh
+lambda arguments retain lexical identities while capture execution remains
+conditional. Written argument metadata is available through the source-defined
+`std::expression_text` API, with zero argument execution or runtime allocation.
 
 This changes the earlier assertion direction: call-site closures or an empty
 ordinary function do not provide the required skipped-argument guarantee.
@@ -94,11 +100,18 @@ Further goals, not implemented by this slice:
   before any speculative semantic work, and keep matched ordinary model/session
   copies intact. The pending TLS integration's cache-fork adaptation is that
   prerequisite; these cache fields are not imported by the macro syntax slice.
-- Value results and caller-directed exits need an explicit result/exit and
-  full-expression lifetime contract. Hygienic automatic locals and macro-owned
-  loops are implemented; returns and introduced propagation remain excluded.
-- Fresh callable-valued arguments need source-identity-preserving type
-  discovery before substitution; a named callable works in the current profile.
+- Borrowed result regions require exact origin/access/dependency joins,
+  transfer of a result's loan beyond local cleanup, and verifier mutations
+  rejecting macro-local storage escape and missing/forged authority. Acceptance
+  includes unrelated reference carriers and multi-owner branch results, not
+  nominal exceptions for public views. Owned/dependency-free results and local
+  returns are implemented. Caller-directed exits and introduced propagation
+  remain separate explicit control-flow design work.
+- Direct immovable macro results require final-destination construction through
+  region branches and caller consumption. The current movable/copyable result
+  profile diagnoses this shape rather than requiring a native C++ move or
+  silently relocating a pinned payload. Acceptance must include deleted-move
+  user types and cleanup-failure paths with no intermediate relocation.
 - Constant-context macro calls require the staged verified-MIR evaluation
   profile from L-CONST-01, preserving phase timing and diagnostic/resource
   limits. This slice does not add another AST execution rule.

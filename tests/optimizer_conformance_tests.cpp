@@ -46,6 +46,9 @@ void testCensus() {
   census(MirOperation::PostDecrement);
   census(
       static_cast<IntrinsicKind>(static_cast<int>(IntrinsicKind::Count) - 1));
+  expect(optimizationCoverage(IntrinsicKind::SourceExpressionText).handling ==
+             MirOptimizationHandling::NotApplicable,
+         "written metadata has no executable optimizer operation");
   census(MirTerminatorKind::TerminateCleanupFailure);
   census(MirProjectionKind::Base);
   census(MirPlaceRootKind::Loan);
