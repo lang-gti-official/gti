@@ -713,17 +713,14 @@ void testSharedExitKinds() {
     std::size_t exits;
     std::size_t returns;
     std::size_t drops;
-    // RT-12 (docs/plans/optimization.md): exits that construct the source
-    // result class do not yet share their ladders.
-    bool recoveryPending = false;
   };
-  // `run`: nine exits over owners a, b, c, d become a success ladder and an
-  // error ladder of four rungs each, beside the inner block's own drop of c.
-  // `drain`: four exits become one ladder. `probe`: three exits become one
-  // rung per value kind.
+  // `run`: nine exits over owners a, b, c, d carry their constructed result
+  // (RT-12) to one ladder of four rungs, beside the inner block's own drops
+  // of c. `drain`: four exits become one ladder. `probe`: three exits share
+  // one rung and one return.
   for (const Expected &expected :
-       {Expected{"run", 9, 2, 9, true}, Expected{"drain", 4, 1, 3},
-        Expected{"probe", 3, 2, 2, true}}) {
+       {Expected{"run", 9, 1, 9}, Expected{"drain", 4, 1, 3},
+        Expected{"probe", 3, 1, 1}}) {
     const lang::MirBody *body = functionBody(frontend, expected.name);
     const lang::MirBody *separate = unshared.canGenerateCode()
                                         ? functionBody(unshared, expected.name)
@@ -734,17 +731,6 @@ void testSharedExitKinds() {
       continue;
     expect(lang::verifyMirBody(*body).valid(),
            std::string(expected.name) + " verifies: " + firstError(*body));
-    if (expected.recoveryPending) {
-      expect(returnTerminators(*separate) == expected.exits,
-             std::string(expected.name) +
-                 " keeps one return per exit unshared");
-      std::cout << expected.name << ": " << expected.exits
-                << " exits, sharing pending RT-12 (normal drops "
-                << normalDrops(*separate) << " -> " << normalDrops(*body)
-                << ", returns " << returnTerminators(*separate) << " -> "
-                << returnTerminators(*body) << ")\n";
-      continue;
-    }
     expect(returnTerminators(*body) == expected.returns,
            std::string(expected.name) + " has " +
                std::to_string(returnTerminators(*body)) +
@@ -763,10 +749,8 @@ void testSharedExitKinds() {
               << returnTerminators(*separate) << " -> "
               << returnTerminators(*body) << '\n';
   }
-  // RT-12 (docs/plans/optimization.md): `run` carries its success and error
-  // values to shared ladders, with rungs entered by several exits, only once
-  // exits that construct the source result class share again. Report the
-  // current shape instead of requiring it.
+  // `run` carries its constructed results to one shared ladder whose rungs
+  // several exits enter (RT-12).
   const lang::MirBody *run = functionBody(frontend, "run");
   if (run != nullptr) {
     bool successTail = false;
@@ -782,14 +766,19 @@ void testSharedExitKinds() {
           });
       joinedRungs += drops && counts[block.id] >= 2;
     }
-    std::cout << "run: carried success tail " << successTail
-              << ", joined rungs " << joinedRungs << " (pending RT-12)\n";
+    expect(successTail, "run returns its carried result from the tail");
+    expect(joinedRungs == 9, "run has " + std::to_string(joinedRungs) +
+                                 " rungs that several exits enter instead "
+                                 "of 9");
+    std::cout << "run: carried tail " << successTail << ", joined rungs "
+              << joinedRungs << '\n';
   }
 }
 
 void testExitsThatStayPrivate() {
   // Owning and borrowed results keep their own cleanup, and so does a body
-  // with a single exit.
+  // with a single exit. A class result constructed at each exit that owns
+  // cleanup (`fresh`) is not carried: a failing rung could not abandon it.
   lang::MirLowerer::resetCleanupSharingStatistics();
   const auto frontend = analyze("shared-exit-private.gti", R"(
 class Guard {
@@ -806,6 +795,12 @@ Guard owning(int32_t p) {
   Guard b = Guard(3);
   return r;
 }
+Guard fresh(int32_t p) {
+  Guard a = Guard(1);
+  if (p == 1) { return Guard(7); }
+  Guard b = Guard(3);
+  return Guard(8);
+}
 Guard& borrowed(Guard& value, int32_t p) {
   Guard a = Guard(1);
   if (p == 1) { return value; }
@@ -819,7 +814,8 @@ int32_t single(int32_t p) {
 }
 int main() {
   Guard g = Guard(5);
-  return owning(1).get() + borrowed(g, 1).get() + single(1) - 11;
+  return owning(1).get() + fresh(1).get() + borrowed(g, 1).get() + single(1) -
+         18;
 }
 )");
   expect(frontend.canGenerateCode(), "the private-exit fixture lowers");
@@ -836,7 +832,8 @@ int main() {
     std::size_t drops;
   };
   for (const Expected &expected :
-       {Expected{"owning", 2, 5}, Expected{"borrowed", 2, 3},
+       {Expected{"owning", 2, 5}, Expected{"fresh", 2, 3},
+        Expected{"borrowed", 2, 3},
         Expected{"single", 1, 2}}) {
     const lang::MirBody *body = functionBody(frontend, expected.name);
     expect(body != nullptr, std::string(expected.name) + " has a body");
