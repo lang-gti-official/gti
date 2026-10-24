@@ -1,0 +1,97 @@
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+
+// A payload enum whose alternatives own cleanup is replaced through the
+// complete referent of a checked mutable reference: a member call's reference
+// result, a free function's reference result, a reference local, a reference
+// parameter and std::optional::value(). Each replacement retires the old
+// alternative exactly once before the new value moves in; the referent's owner
+// drops the final value at its own end of life. When the old alternative's
+// cleanup raises, the unpublished replacement is dropped once instead.
+
+int32_t bump(int32_t value) { return value + 1; }
+
+// An owning payload whose destructor reports each retirement.
+class noisy {
+public:
+  int32_t id;
+  noisy(int32_t id) : id(id) {}
+  ~noisy() { std::println(std::to_string(bump(this.id) - 1)); }
+};
+
+enum class slot { held(noisy n), named(std::string name), empty };
+
+class box {
+  mut slot item;
+public:
+  box(slot v) : item(std::move(v)) {}
+  mut slot& ref() mut { return this.item; }
+  slot& view() { return this.item; }
+};
+
+mut slot& pick(mut slot& target) { return target; }
+
+void reset(mut slot& target, slot replacement) {
+  target = std::move(replacement);
+}
+
+int32_t code(slot& value) {
+  switch (value) {
+  case slot::held(auto& n):
+    return n.id;
+  case slot::named(auto& name):
+    std::println(name);
+    return -1;
+  case slot::empty:
+    return 0;
+  }
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) {
+    // The old alternative's cleanup raises: the replacement is never
+    // published and drops once; the retired referent drops nothing.
+    mut box failing = box(slot::held(noisy(int32_t(2147483647))));
+    failing.ref() = slot::held(noisy(10));
+    return code(failing.view());
+  }
+  {
+    // A member call's mutable reference result.
+    mut box b = box(slot::held(noisy(1)));
+    b.ref() = slot::held(noisy(2));
+    std::println(code(b.view()));
+    b.ref() = slot::named(std::string("member"));
+    std::println(code(b.view()));
+    b.ref() = slot::held(noisy(3));
+  }
+  std::println("--");
+  {
+    // A reference local, a free function's reference result and a reference
+    // parameter over one by-value binding.
+    mut slot local = slot::held(noisy(4));
+    {
+      mut slot& r = local;
+      r = slot::named(std::string("local"));
+    }
+    std::println(code(local));
+    pick(local) = slot::held(noisy(5));
+    std::println(code(local));
+    reset(local, slot::held(noisy(6)));
+    std::println(code(local));
+  }
+  std::println("--");
+  {
+    // std::optional::value() and a reference local bound from it.
+    mut std::optional<slot> t = std::optional<slot>(slot::held(noisy(7)));
+    t.value() = slot::held(noisy(8));
+    std::println(code(t.value()));
+    {
+      mut slot& r = t.value();
+      r = slot::empty;
+    }
+    std::println(code(t.value()));
+    t.value() = slot::held(noisy(9));
+  }
+  return 0;
+}

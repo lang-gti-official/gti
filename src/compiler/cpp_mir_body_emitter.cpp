@@ -228,6 +228,23 @@ namespace {
 // storage: each is built once, on first use, from the body and its program
 // alone, so each answer equals the scan it replaces. Bodies outside such a
 // scope keep scanning.
+
+// One fixed-array element that MIR stages by copying or moving one whole
+// named binding, such as a by-value constructor parameter or a local
+// (see inlineFixedArrayElements).
+struct InlineFixedArrayElement {
+  const MirInstruction *producer = nullptr;
+  const MirInstruction *aggregate = nullptr;
+  const MirPlace *source = nullptr;
+  bool moved = false;
+  // A moved class element's value obligation. The producer's Move takes it
+  // from the binding's obligation and the aggregate transfers it out, so it
+  // never governs storage of its own.
+  const MirDropObligation *transferred = nullptr;
+
+  [[nodiscard]] explicit operator bool() const { return producer != nullptr; }
+};
+
 struct IndexedMirBody {
   struct InstructionEntry {
     const MirInstruction *first = nullptr;
@@ -313,6 +330,14 @@ struct IndexedMirBody {
   // `passiveArrayProgram`, in body order.
   const MirProgram *passiveArrayProgram = nullptr;
   std::optional<std::vector<const MirInstruction *>> passiveArrayAggregates;
+  // Answers of inlineFixedArrayElements, and whether each aggregate
+  // constructs its final storage in place, keyed by the aggregate, as
+  // computed under `inlineArrayProgram`.
+  const MirProgram *inlineArrayProgram = nullptr;
+  std::unordered_map<const MirInstruction *,
+                     std::vector<InlineFixedArrayElement>>
+      inlineArrayElements;
+  std::unordered_map<const MirInstruction *, bool> inlineArrayInPlace;
   // Answers of returnMoveDefinition, keyed by the queried value.
   std::unordered_map<MirValueId, const MirInstruction *> returnMoveDefinitions;
   // Whether each drop names the unique cleanup of its type under
@@ -8287,14 +8312,21 @@ owningPayloadEnumValueSlot(const MirProgram &program, const MirBody &body,
   return payloadEnumMoveValueSlot(program, body, valueId).slot;
 }
 
+// An owning payload-enum assignment moves its value slot into the destination
+// after the paired CleanupBeforeAssign drained the old alternative. A place
+// this body tracks records its Reinitialize transition. The complete referent
+// of one checked mutable reference (a reference binding or a source call's
+// mutable reference result) is existing storage whose lexical drop belongs to
+// the referent's owner, so MIR records neither a local ownership transition
+// nor a Replace target there. Those referents use the same exact proofs as
+// class stores; no accessor or container name selects them.
 [[nodiscard]] const MirPlace *
 owningPayloadEnumAssignmentSlot(const MirProgram &program, const MirBody &body,
                                 const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Assign ||
       !instruction.destination || instruction.operands.size() != 1 ||
       instruction.operands.front().kind != MirOperandKind::Value ||
-      instruction.lifecycle.size() != 1 || !instruction.ownership ||
-      instruction.ownership->kind != OwnershipEventKind::Reinitialize)
+      instruction.lifecycle.size() != 1)
     return nullptr;
   const auto *destination = body.findPlace(*instruction.destination);
   const auto *slot = owningPayloadEnumValueSlot(
@@ -8302,12 +8334,21 @@ owningPayloadEnumAssignmentSlot(const MirProgram &program, const MirBody &body,
   const auto &event = instruction.lifecycle.front();
   const auto *source = body.findDropObligation(event.source);
   const auto *cleanup = findInstruction(body, instruction.replacementPair);
-  if (destination == nullptr || !destination->key || slot == nullptr ||
+  if (destination == nullptr)
+    return nullptr;
+  const bool trackedDestination =
+      destination->key && instruction.ownership &&
+      instruction.ownership->kind == OwnershipEventKind::Reinitialize &&
+      instruction.ownership->place == *destination->key &&
+      instruction.ownership->after == OwnershipStateSet::Available;
+  const bool borrowedReferent =
+      !instruction.ownership && event.target == 0 &&
+      (exactMutableReferenceDestination(body, *destination) ||
+       exactMutableCallResultDestination(program, body, *destination));
+  if ((!trackedDestination && !borrowedReferent) || slot == nullptr ||
       destination->type != slot->type ||
-      instruction.operands.front().type != slot->type ||
-      instruction.ownership->place != *destination->key ||
-      instruction.ownership->after != OwnershipStateSet::Available ||
-      source == nullptr || source->place != slot->id ||
+      instruction.operands.front().type != slot->type || source == nullptr ||
+      source->place != slot->id ||
       event.kind != MirLifecycleEventKind::Replace || event.conditional ||
       event.failureCleanup || cleanup == nullptr ||
       cleanup->kind != MirInstructionKind::CleanupBeforeAssign ||
@@ -18288,12 +18329,389 @@ generatedSpecialMemberMoveStage(const MirProgram &program, const MirBody &body,
   return {};
 }
 
+// Copying a passive generated-copy class, or a fixed array of them, runs no
+// source copy body: the copy is the generated element-wise representation
+// copy, so its position relative to other work is unobservable.
+[[nodiscard]] bool
+fixedArrayElementCopyIsObservationFree(const MirProgram &program,
+                                       const SemanticType &type) {
+  if (type.kind == SemanticType::Array) {
+    return type.arguments.size() == 1 && type.arrayLengthParameterId == 0 &&
+           type.arrayLength != 0 &&
+           fixedArrayElementCopyIsObservationFree(program,
+                                                  type.arguments.front());
+  }
+  return passiveGeneratedCopyClass(program, type) != nullptr;
+}
+
+// The element's class, or its arrays' leaf class, has a copy constructor.
+[[nodiscard]] bool fixedArrayElementCopyable(const MirProgram &program,
+                                             const SemanticType &type) {
+  if (type.kind == SemanticType::Array) {
+    return type.arguments.size() == 1 && type.arrayLengthParameterId == 0 &&
+           type.arrayLength != 0 &&
+           fixedArrayElementCopyable(program, type.arguments.front());
+  }
+  const MirClassInstance *owner = uniqueClassInstanceForType(program, type);
+  return owner != nullptr && owner->traits.copyable &&
+         owner->copyConstructor != SpecialMemberStatus::Deleted;
+}
+
+// The aggregate's braced initializer can spell such an element's binding
+// directly: `T{a, std::move(b)}` copies or moves each element once, into the
+// array's own storage, at the aggregate and in operand order. No staged local
+// or value slot exists, and the element's copy or move runs later than MIR's
+// Load or Move. That is exact only when nothing in between can tell:
+// - producer and aggregate share one block, so no edge leaves between them;
+// - every instruction in between is failure-free, so no cleanup could need
+//   the staged element;
+// - none writes the binding (or, for a move, names it at all), and the body
+//   neither lends it mutably nor takes its address, so the binding still has
+//   the value MIR read;
+// - an instruction in between that is not an inlined element later in the
+//   same aggregate may run user code, so the element's own transfer must then
+//   be observation-free (a generated copy or move).
+// A move without a lifecycle event leaves the binding's obligation in force,
+// which only a cleanup-free element may do. The aggregate's own proof, not
+// this one, checks that a transferred obligation leaves at the aggregate.
+// The result has one entry per aggregate operand; an empty entry keeps its
+// staged route. Each body fact is gathered in one pass over the body.
+[[nodiscard]] std::vector<InlineFixedArrayElement>
+computeInlineFixedArrayElements(const MirProgram &program, const MirBody &body,
+                                const MirInstruction &aggregate) {
+  const SemanticType &arrayType = aggregate.info.type;
+  if (aggregate.kind != MirInstructionKind::Compute ||
+      aggregate.operation != MirOperation::Aggregate || !aggregate.result ||
+      aggregate.destination || aggregate.receiver || aggregate.literal ||
+      !aggregate.localFailureSites.empty() ||
+      !aggregate.definedFailure.empty() ||
+      arrayType.kind != SemanticType::Array ||
+      arrayType.arguments.size() != 1 ||
+      arrayType.arrayLengthParameterId != 0 || arrayType.arrayLength == 0 ||
+      aggregate.operands.size() != arrayType.arrayLength) {
+    return {};
+  }
+  const SemanticType &elementType = arrayType.arguments.front();
+  if (elementType.kind != SemanticType::Class &&
+      elementType.kind != SemanticType::Array) {
+    return {};
+  }
+  const MirBlock *block = nullptr;
+  std::size_t aggregateIndex = 0;
+  for (const MirBlock &candidate : body.blocks) {
+    for (std::size_t index = 0; index < candidate.instructions.size();
+         ++index) {
+      if (candidate.instructions[index].id == aggregate.id) {
+        block = &candidate;
+        aggregateIndex = index;
+      }
+    }
+  }
+  if (block == nullptr) {
+    return {};
+  }
+  std::unordered_map<MirInstructionId, std::size_t> positions;
+  for (std::size_t index = 0; index < aggregateIndex; ++index) {
+    positions.emplace(block->instructions[index].id, index);
+  }
+  const auto bindingOf = [&](MirPlaceId id) -> HirBindingId {
+    const MirPlace *place = id == 0 ? nullptr : body.findPlace(id);
+    return place != nullptr && place->root == MirPlaceRootKind::Binding
+               ? place->binding
+               : 0;
+  };
+  const auto valueRootOf = [&](MirPlaceId id) -> MirValueId {
+    const MirPlace *place = id == 0 ? nullptr : body.findPlace(id);
+    return place != nullptr && place->root == MirPlaceRootKind::Value
+               ? place->value
+               : 0;
+  };
+
+  // Every place and obligation naming an operand value, and every binding
+  // that a mutable loan or a raw address can write without naming it.
+  std::unordered_map<MirValueId, std::size_t> operandValues;
+  for (const MirOperand &operand : aggregate.operands) {
+    if (operand.kind == MirOperandKind::Value && operand.value != 0) {
+      ++operandValues[operand.value];
+    }
+  }
+  std::unordered_map<MirValueId, std::vector<MirPlaceId>> valuePlaces;
+  for (const MirPlace &place : body.places) {
+    if (place.root == MirPlaceRootKind::Value &&
+        operandValues.contains(place.value)) {
+      valuePlaces[place.value].push_back(place.id);
+    }
+  }
+  std::unordered_map<MirValueId, std::vector<const MirDropObligation *>>
+      valueDrops;
+  for (const MirDropObligation &drop : body.dropObligations) {
+    for (const MirValueId named :
+         {drop.generatedValue, valueRootOf(drop.place)}) {
+      if (named != 0 && operandValues.contains(named) &&
+          (valueDrops[named].empty() || valueDrops[named].back() != &drop)) {
+        valueDrops[named].push_back(&drop);
+      }
+    }
+  }
+  std::unordered_set<HirBindingId> writableElsewhere;
+  for (const MirLoan &loan : body.loans) {
+    if (loan.access == AccessMode::Mutable && bindingOf(loan.source) != 0) {
+      writableElsewhere.insert(bindingOf(loan.source));
+    }
+  }
+  for (const MirBlock &candidate : body.blocks) {
+    for (const MirInstruction &instruction : candidate.instructions) {
+      for (const MirOperand &operand : instruction.operands) {
+        if (operand.kind == MirOperandKind::Address &&
+            bindingOf(operand.place) != 0) {
+          writableElsewhere.insert(bindingOf(operand.place));
+        }
+      }
+    }
+  }
+
+  // The element shapes, independent of what lies between producer and
+  // aggregate.
+  struct Candidate {
+    InlineFixedArrayElement element;
+    std::size_t position = 0;
+  };
+  std::vector<Candidate> candidates(aggregate.operands.size());
+  std::unordered_map<MirDropObligationId, std::size_t> transferredNames;
+  for (std::size_t operandIndex = 0; operandIndex < aggregate.operands.size();
+       ++operandIndex) {
+    const MirOperand &operand = aggregate.operands[operandIndex];
+    const MirValue *value = operand.kind == MirOperandKind::Value
+                                ? body.findValue(operand.value)
+                                : nullptr;
+    const MirInstruction *producer =
+        value == nullptr ? nullptr : findInstruction(body, value->definition);
+    if (value == nullptr || producer == nullptr ||
+        operandValues[value->id] != 1 || operand.type != elementType ||
+        value->info.type != elementType ||
+        value->info.traits.containsBorrowedState || !producer->result ||
+        *producer->result != value->id || producer->info != value->info ||
+        producer->destination || producer->receiver || producer->loan ||
+        producer->operation != MirOperation::None ||
+        !producer->localFailureSites.empty() ||
+        !producer->definedFailure.empty() || producer->operands.size() != 1 ||
+        producer->operands.front().type != elementType ||
+        !positions.contains(producer->id)) {
+      continue;
+    }
+    const bool copied =
+        producer->kind == MirInstructionKind::Load &&
+        producer->intrinsic == IntrinsicKind::None &&
+        producer->operands.front().kind == MirOperandKind::Copy &&
+        value->info.traits.copyable &&
+        fixedArrayElementCopyable(program, elementType);
+    const bool moved = producer->kind == MirInstructionKind::Move &&
+                       (producer->intrinsic == IntrinsicKind::None ||
+                        producer->intrinsic == IntrinsicKind::Move) &&
+                       producer->operands.front().kind == MirOperandKind::Move;
+    const MirPlace *source = body.findPlace(producer->operands.front().place);
+    if ((!copied && !moved) || source == nullptr ||
+        source->root != MirPlaceRootKind::Binding || source->binding == 0 ||
+        !source->projections.empty() || source->type != elementType ||
+        writableElsewhere.contains(source->binding) || !source->key ||
+        !producer->ownership || producer->ownership->place != *source->key ||
+        !producer->ownership->reachable ||
+        producer->ownership->before != OwnershipStateSet::Available ||
+        producer->ownership->kind !=
+            (moved ? OwnershipEventKind::Move : OwnershipEventKind::Read) ||
+        producer->ownership->after !=
+            (moved ? OwnershipStateSet::Moved : OwnershipStateSet::Available) ||
+        (moved && !fixedArrayElementTransferIsDefinedFailureFree(
+                      program, elementType))) {
+      continue;
+    }
+
+    const MirDropObligation *transferred = nullptr;
+    if (!producer->lifecycle.empty()) {
+      const MirLifecycleEvent &event = producer->lifecycle.front();
+      const MirDropObligation *bindingDrop =
+          body.findDropObligation(event.source);
+      transferred = uniqueValueLifetimeDrop(body, value->id, elementType);
+      if (!moved || producer->lifecycle.size() != 1 || transferred == nullptr ||
+          transferred->kind != MirDropObligationKind::Value ||
+          transferred->initiallyActive ||
+          event.kind != MirLifecycleEventKind::Move ||
+          event.target != transferred->id || event.conditional ||
+          event.failureCleanup || bindingDrop == nullptr ||
+          bindingDrop->kind != MirDropObligationKind::Binding ||
+          bindingDrop->place != source->id) {
+        continue;
+      }
+    } else if (moved &&
+               (elementType.kind == SemanticType::Class
+                    ? passiveGeneratedDestructorClass(program, elementType) ==
+                          nullptr
+                    : !cleanupFreeCopyableFixedArray(program, elementType))) {
+      continue;
+    }
+    // No other storage or obligation names the element value.
+    const auto places = valuePlaces.find(value->id);
+    const auto drops = valueDrops.find(value->id);
+    const std::size_t expectedPlaces = transferred == nullptr ? 0 : 1;
+    if ((places == valuePlaces.end() ? 0 : places->second.size()) !=
+            expectedPlaces ||
+        (expectedPlaces == 1 && places->second.front() != transferred->place) ||
+        (drops == valueDrops.end() ? 0 : drops->second.size()) !=
+            expectedPlaces ||
+        (expectedPlaces == 1 && drops->second.front() != transferred)) {
+      continue;
+    }
+    const std::vector<MirValueUse> uses = nonRootRecordUses(body, value->id);
+    if (uses.size() != 1 ||
+        uses.front().kind != MirValueUseKind::InstructionOperand ||
+        uses.front().instruction != aggregate.id ||
+        uses.front().operandIndex != operandIndex ||
+        uses.front().block != block->id) {
+      continue;
+    }
+    if (transferred != nullptr) {
+      transferredNames.emplace(transferred->id, 0);
+    }
+    candidates[operandIndex] = {.element = {.producer = producer,
+                                            .aggregate = &aggregate,
+                                            .source = source,
+                                            .moved = moved,
+                                            .transferred = transferred},
+                                .position = positions.at(producer->id)};
+  }
+  // A transferred obligation is named only by its Move and its TransferOut.
+  if (!transferredNames.empty()) {
+    for (const MirBlock &candidate : body.blocks) {
+      for (const MirInstruction &instruction : candidate.instructions) {
+        for (const MirLifecycleEvent &event : instruction.lifecycle) {
+          for (const MirDropObligationId named : {event.source, event.target}) {
+            if (const auto found = transferredNames.find(named);
+                found != transferredNames.end()) {
+              ++found->second;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Decide from the last operand back, so each element knows which later
+  // siblings also run at the aggregate.
+  std::vector<InlineFixedArrayElement> elements(aggregate.operands.size());
+  std::unordered_set<const MirInstruction *> laterInlined;
+  for (std::size_t operandIndex = aggregate.operands.size();
+       operandIndex-- != 0;) {
+    const Candidate &candidate = candidates[operandIndex];
+    if (!candidate.element ||
+        (candidate.element.transferred != nullptr &&
+         transferredNames.at(candidate.element.transferred->id) != 2)) {
+      continue;
+    }
+    const HirBindingId binding = candidate.element.source->binding;
+    const bool observationFree =
+        candidate.element.moved
+            ? fixedArrayElementTransferIsDefinedFailureFree(program,
+                                                            elementType)
+            : fixedArrayElementCopyIsObservationFree(program, elementType);
+    bool exact = true;
+    for (std::size_t index = candidate.position + 1;
+         exact && index < aggregateIndex; ++index) {
+      const MirInstruction &between = block->instructions[index];
+      if (laterInlined.contains(&between)) {
+        continue;
+      }
+      const bool namesBinding =
+          (between.destination && bindingOf(*between.destination) == binding) ||
+          (between.receiver && bindingOf(between.receiver->place) == binding) ||
+          std::any_of(between.operands.begin(), between.operands.end(),
+                      [&](const MirOperand &operand) {
+                        return bindingOf(operand.place) == binding &&
+                               (candidate.element.moved ||
+                                (operand.kind != MirOperandKind::Copy &&
+                                 operand.kind != MirOperandKind::BorrowRead));
+                      });
+      exact = observationFree && !namesBinding &&
+              between.localFailureSites.empty() &&
+              between.definedFailure.empty();
+    }
+    if (exact) {
+      elements[operandIndex] = candidate.element;
+      laterInlined.insert(candidate.element.producer);
+    }
+  }
+  return elements;
+}
+
+[[nodiscard]] std::vector<InlineFixedArrayElement>
+inlineFixedArrayElements(const MirProgram &program, const MirBody &body,
+                         const MirInstruction &aggregate) {
+  IndexedMirBody *index = indexedMirBody(body);
+  if (index == nullptr) {
+    return computeInlineFixedArrayElements(program, body, aggregate);
+  }
+  if (index->inlineArrayProgram != &program) {
+    index->inlineArrayProgram = &program;
+    index->inlineArrayElements.clear();
+    index->inlineArrayInPlace.clear();
+  }
+  if (const auto found = index->inlineArrayElements.find(&aggregate);
+      found != index->inlineArrayElements.end()) {
+    return found->second;
+  }
+  std::vector<InlineFixedArrayElement> elements =
+      computeInlineFixedArrayElements(program, body, aggregate);
+  index->inlineArrayElements.emplace(&aggregate, elements);
+  return elements;
+}
+
+// The element `valueId` is, if the aggregate that consumes it inlines it.
+[[nodiscard]] InlineFixedArrayElement
+inlineFixedArrayElement(const MirProgram &program, const MirBody &body,
+                        MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  const MirInstruction *producer =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  if (producer == nullptr ||
+      (producer->kind != MirInstructionKind::Load &&
+       producer->kind != MirInstructionKind::Move) ||
+      producer->operands.size() != 1) {
+    return {};
+  }
+  const std::vector<MirValueUse> uses = nonRootRecordUses(body, valueId);
+  const MirInstruction *aggregate =
+      uses.size() == 1 &&
+              uses.front().kind == MirValueUseKind::InstructionOperand
+          ? findInstruction(body, uses.front().instruction)
+          : nullptr;
+  if (aggregate == nullptr || aggregate->operation != MirOperation::Aggregate) {
+    return {};
+  }
+  const std::vector<InlineFixedArrayElement> elements =
+      inlineFixedArrayElements(program, body, *aggregate);
+  return uses.front().operandIndex < elements.size()
+             ? elements[uses.front().operandIndex]
+             : InlineFixedArrayElement{};
+}
+
+// The obligation-free fixed-array elements: an inlined copy or lifecycle-free
+// move of a named binding, or a cleanup-free class copy staged in its own
+// sequenced local. Neither has a drop identity of its own; once the array is
+// constructed, its result obligation governs the element.
+[[nodiscard]] bool
+obligationFreeFixedArrayElement(const MirProgram &program, const MirBody &body,
+                                const InlineFixedArrayElement &inlined,
+                                MirValueId valueId) {
+  return inlined ? inlined.transferred == nullptr
+                 : sequencedCopiedArgument(program, body, valueId) != nullptr;
+}
+
 // A fixed-array aggregate needs partial-initialization rollback only when an
 // element move can fail. This bounded form proves the opposite from MIR:
-// every staged element has an exact owning drop identity, every identity
-// transfers out in operand order, the result receives one exact identity, and
-// the element type's move is structurally defined-failure-free. Destruction
-// is independently governed by the result obligation's aggregate schedule.
+// every staged element either has an exact owning drop identity, or is one of
+// the obligation-free elements above; the identities transfer out in operand
+// order, the result receives one exact identity, and the element type's move
+// is structurally defined-failure-free. Destruction is independently governed
+// by the result obligation's aggregate schedule.
 [[nodiscard]] bool
 failureFreeFixedArrayAggregateMove(const MirProgram &program,
                                    const MirBody &body,
@@ -18310,14 +18728,18 @@ failureFreeFixedArrayAggregateMove(const MirProgram &program,
       instruction.info.type.arrayLengthParameterId != 0 ||
       instruction.info.type.arrayLength == 0 ||
       instruction.operands.size() != instruction.info.type.arrayLength ||
-      instruction.lifecycle.size() != instruction.operands.size() + 1 ||
+      instruction.lifecycle.empty() ||
+      instruction.lifecycle.size() > instruction.operands.size() + 1 ||
       instruction.literal || !instruction.definedFailure.empty() ||
       !instruction.localFailureSites.empty() ||
       !elementMoveDefinedFailureFree) {
     return false;
   }
 
+  const std::vector<InlineFixedArrayElement> inlined =
+      inlineFixedArrayElements(program, body, instruction);
   std::unordered_set<MirDropObligationId> transferred;
+  std::size_t transfers = 0;
   const SemanticType &elementType = instruction.info.type.arguments.front();
   for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
     const MirOperand &operand = instruction.operands[index];
@@ -18328,15 +18750,32 @@ failureFreeFixedArrayAggregateMove(const MirProgram &program,
         value == nullptr
             ? nullptr
             : uniqueValueLifetimeDrop(body, value->id, elementType);
-    const MirLifecycleEvent &event = instruction.lifecycle[index];
     if (operand.type != elementType || value == nullptr ||
-        value->info.type != elementType || drop == nullptr ||
-        !transferred.insert(drop->id).second ||
+        value->info.type != elementType) {
+      return false;
+    }
+    if (obligationFreeFixedArrayElement(
+            program, body,
+            index < inlined.size() ? inlined[index] : InlineFixedArrayElement{},
+            value->id)) {
+      if (drop != nullptr) {
+        return false;
+      }
+      continue;
+    }
+    if (transfers + 1 >= instruction.lifecycle.size()) {
+      return false;
+    }
+    const MirLifecycleEvent &event = instruction.lifecycle[transfers++];
+    if (drop == nullptr || !transferred.insert(drop->id).second ||
         event.kind != MirLifecycleEventKind::TransferOut ||
         event.source != drop->id || event.target != 0 || event.conditional ||
         event.failureCleanup) {
       return false;
     }
+  }
+  if (instruction.lifecycle.size() != transfers + 1) {
+    return false;
   }
 
   const MirDropObligation *resultDrop =
@@ -19302,6 +19741,43 @@ fixedArrayAggregateInputUsesSsaSlot(const MirProgram &program,
   const MirInstruction *definition =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
   return definition != nullptr && definition->kind == MirInstructionKind::Call;
+}
+
+// An inlined element exists only inside a braced initializer that constructs
+// the array's final storage: a passive staged binding, or an owning
+// aggregate's binding, constructor field, or element/argument slot. Any other
+// aggregate keeps its elements on their staged routes.
+[[nodiscard]] InlineFixedArrayElement
+admittedInlineFixedArrayElement(const MirProgram &program, const MirBody &body,
+                                MirValueId valueId) {
+  const InlineFixedArrayElement element =
+      inlineFixedArrayElement(program, body, valueId);
+  if (!element) {
+    return {};
+  }
+  const MirInstruction &aggregate = *element.aggregate;
+  const auto constructsInPlace = [&] {
+    return passiveFixedArrayStagedDestination(program, body, aggregate) !=
+               nullptr ||
+           (failureFreeFixedArrayAggregateMove(program, body, aggregate) &&
+            (fixedArrayValueDestinationSlot(program, body, aggregate) !=
+                 nullptr ||
+             fixedArrayAggregateInputPlace(program, body, *aggregate.result) !=
+                 nullptr));
+  };
+  // inlineFixedArrayElement keyed the index's answers to `program`.
+  IndexedMirBody *index = indexedMirBody(body);
+  bool inPlace = false;
+  if (index == nullptr || index->inlineArrayProgram != &program) {
+    inPlace = constructsInPlace();
+  } else if (const auto found = index->inlineArrayInPlace.find(&aggregate);
+             found != index->inlineArrayInPlace.end()) {
+    inPlace = found->second;
+  } else {
+    inPlace = constructsInPlace();
+    index->inlineArrayInPlace.emplace(&aggregate, inPlace);
+  }
+  return inPlace ? element : InlineFixedArrayElement{};
 }
 
 [[nodiscard]] const MirFunctionInstance *
@@ -30907,6 +31383,11 @@ public:
         // invent default construction and cleanup of an unrelated referent.
         continue;
       }
+      if (admittedInlineFixedArrayElement(program, facts.body, value.id)) {
+        // The array's braced initializer copies or moves the binding itself;
+        // a staged local would copy or move the element twice.
+        continue;
+      }
       if (returnedCallResultSlot(program, facts.body, value.id) != nullptr ||
           returnedFreshPayloadSlot(program, representations, facts.body,
                                    value.id) != nullptr) {
@@ -33813,6 +34294,22 @@ private:
       }
     }
     if (instruction.operation == MirOperation::Aggregate) {
+      // An inlined element spells its binding, so its copy or move runs here,
+      // once, into the array's storage.
+      const auto emitInlinedElement = [&](const MirOperand &operand) {
+        const InlineFixedArrayElement element =
+            operand.kind == MirOperandKind::Value
+                ? admittedInlineFixedArrayElement(program, facts.body,
+                                                  operand.value)
+                : InlineFixedArrayElement{};
+        if (!element) {
+          return false;
+        }
+        output << (element.moved ? "std::move(" : "");
+        emitStoragePlaceValue(facts, *element.source);
+        output << (element.moved ? ")" : "");
+        return true;
+      };
       const PassiveFixedArrayConstructAggregate passive =
           passiveFixedArrayConstructAggregate(program, facts.body, instruction);
       if (passive) {
@@ -33851,7 +34348,8 @@ private:
              ++index) {
           if (index)
             output << ", ";
-          emitOperand(instruction.operands[index]);
+          if (!emitInlinedElement(instruction.operands[index]))
+            emitOperand(instruction.operands[index]);
         }
         output << "};\n";
         writeIndent();
@@ -33899,6 +34397,20 @@ private:
             output << ", ";
           }
           const MirOperand &operand = instruction.operands[index];
+          // An obligation-free element is an inlined binding or a copy in its
+          // sequenced local; it has no input slot to move from or retire.
+          const bool inlinedElement = emitInlinedElement(operand);
+          const bool sequencedCopy =
+              !inlinedElement && operand.kind == MirOperandKind::Value &&
+              sequencedCopiedArgument(program, facts.body, operand.value) !=
+                  nullptr;
+          if (sequencedCopy)
+            emitOperand(operand);
+          if (inlinedElement || sequencedCopy) {
+            if (byteArray)
+              output << ");\n";
+            continue;
+          }
           if (operand.kind == MirOperandKind::Value &&
               fixedArrayAggregateInputUsesSsaSlot(program, facts.body,
                                                   operand.value)) {
@@ -33927,6 +34439,13 @@ private:
           output << "__gti_mir_p_" << slot << ".mark_constructed();\n";
         }
         for (const MirOperand &operand : instruction.operands) {
+          if (operand.kind == MirOperandKind::Value &&
+              (admittedInlineFixedArrayElement(program, facts.body,
+                                               operand.value) ||
+               sequencedCopiedArgument(program, facts.body, operand.value) !=
+                   nullptr)) {
+            continue;
+          }
           if (operand.kind == MirOperandKind::Value &&
               fixedArrayAggregateInputUsesSsaSlot(program, facts.body,
                                                   operand.value)) {
@@ -36765,6 +37284,17 @@ private:
         // The branch already constructed this slot. The join result names it
         // for receiver staging; it must not move-construct the slot into
         // itself.
+        return;
+      }
+      if (admittedInlineFixedArrayElement(program, facts.body,
+                                          *instruction.result)
+              .producer == &instruction) {
+        writeIndent();
+        output << "// "
+               << (instruction.kind == MirInstructionKind::Move ? "move "
+                                                                : "copy load ")
+               << *instruction.result
+               << " spells inside its fixed-array initializer\n";
         return;
       }
     }
@@ -50875,9 +51405,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // exact passive scalar-field class: its generated move/destructor adds
       // no observable user operation or cleanup outside the MIR schedule.
       // The move needs no copy constructor, so a move-only class qualifies.
+      // A fixed array of such classes moves and destroys element-wise; its
+      // elements keep the copyable rule its array admission was proved with.
+      const SemanticType *parameterLeaf = &place.type;
+      while (parameterLeaf->kind == SemanticType::Array &&
+             parameterLeaf->arguments.size() == 1 &&
+             parameterLeaf->arrayLengthParameterId == 0 &&
+             parameterLeaf->arrayLength != 0)
+        parameterLeaf = &parameterLeaf->arguments.front();
       const auto *passiveParameter =
           address.kind == MirBodyKind::Constructor && !failureForm
-              ? passiveGeneratedDestructorClass(program_, place.type)
+              ? (parameterLeaf == &place.type
+                     ? passiveGeneratedDestructorClass(program_, place.type)
+                     : passiveGeneratedCopyClass(program_, *parameterLeaf))
               : nullptr;
       const bool passiveConstructorParameter =
           passiveParameter != nullptr && passiveParameter->traits.movable &&
@@ -51243,6 +51783,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   }
   for (const MirValue &value : body.values) {
     if (callResultLoanIdentity(program_, body, value) &&
+        typeRow(value.info.type))
+      continue;
+    // A copied or moved binding spells inside its array's braced initializer.
+    if (admittedInlineFixedArrayElement(program_, body, value.id) &&
         typeRow(value.info.type))
       continue;
     const auto *arrayStage = value.info.type.kind == SemanticType::Array
@@ -54259,6 +54803,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !classSsaLifetimeSlot(program_, representations_, body,
                                   *instruction.result) &&
             sequencedMovedArgument(body, *instruction.result) != &instruction &&
+            admittedInlineFixedArrayElement(program_, body, *instruction.result)
+                    .producer != &instruction &&
             !(cppMirOwningArrayPlacementResult(program_,
                                                instruction.info.type) &&
               returnMoveDefinition(body, *instruction.result) ==

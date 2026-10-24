@@ -16113,6 +16113,235 @@ int main() {
          "fuse into");
 }
 
+// A constructor builds a fixed-array field from its by-value parameters. Each
+// copied or moved whole parameter spells inside the array's braced
+// initializer, so it is copied or moved once, into the field, with no staged
+// local: elements of `{a, std::move(b)}`, a whole row beside a nested row, and
+// moves of a class with a destructor. A copied local whose address is taken
+// keeps its sequenced copy, since a write through the address would not name
+// it. An element class without a copy constructor, a moved element whose
+// obligation does not leave at the aggregate, a lifecycle-free move of a class
+// with cleanup, and a failure site on a moved element each refuse the body.
+void testArrayFieldConstructorElements() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-array-field-constructor-elements.gti", R"(
+struct Point {
+  int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+};
+mut int32_t live = 0;
+class Tracked {
+public:
+  Tracked(int32_t v) : v(v) { live = live + 1; }
+  ~Tracked() { live = live - 1; }
+  int32_t v;
+};
+struct Polygon {
+  Point[2] corners;
+  Polygon(Point a, Point b) : corners({a, std::move(b)}) {}
+};
+struct Grid {
+  Point[2][2] cells;
+  Grid(Point[2] top, Point a, Point b) : cells({top, {a, std::move(b)}}) {}
+};
+struct Owners {
+  Tracked[2] items;
+  Owners(Tracked a, Tracked b) : items({std::move(a), std::move(b)}) {}
+};
+int32_t addressed(Point a, Point b) {
+  const Point* p = &a;
+  Point[2] corners = {a, b};
+  return corners[1].x + (p == nullptr ? 1 : 0);
+}
+int main() {
+  Point[2] top = {Point(1, 2), Point(3, 4)};
+  Polygon p = Polygon(Point(1, 2), Point(5, 4));
+  Grid g = Grid(top, Point(5, 6), Point(7, 8));
+  Owners o = Owners(Tracked(3), Tracked(4));
+  return p.corners[1].x + g.cells[1][1].x + o.items[1].v +
+         addressed(Point(1, 2), Point(5, 4)) - 21;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "array fields built from constructor parameters should construct "
+         "valid MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto constructorOf = [&](const lang::MirProgram &program,
+                                 std::string_view name) {
+    for (const auto &constructor : program.constructorInstances()) {
+      const auto *owner = program.findClassInstance(constructor.owner);
+      const auto *info =
+          owner == nullptr
+              ? nullptr
+              : frontend.semantics.findClassType(owner->declaration);
+      if (info != nullptr && info->declaration &&
+          info->declaration->name().lexeme == name)
+        return &constructor;
+    }
+    return static_cast<const lang::MirConstructorInstance *>(nullptr);
+  };
+  const std::vector<std::string> names{"Polygon", "Grid", "Owners"};
+  const bool lowered =
+      std::all_of(names.begin(), names.end(), [&](const std::string &name) {
+        return constructorOf(frontend.mir, name) != nullptr;
+      });
+  expect(lowered, "the fixture should lower every constructor");
+  if (!lowered)
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const auto textOf = [&](const lang::MirProgram &program,
+                          std::string_view name) {
+    const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                       constructorOf(program, name)->id};
+    const lang::CppMirBodyEmitter emitter(program, map);
+    if (emitter.supportsFailureBodyText(address))
+      return emitter.emitFailureBodyText(address, "array-field-v0", 1).text;
+    if (emitter.supportsBodyText(address))
+      return emitter.emitBodyText(address, "array-field-v0", 1).text;
+    return std::string();
+  };
+  const auto inlined = [](const std::string &text) {
+    std::size_t count = 0;
+    for (std::size_t at = text.find("spells inside its fixed-array");
+         at != std::string::npos;
+         at = text.find("spells inside its fixed-array", at + 1))
+      ++count;
+    return count;
+  };
+
+  const std::string polygon = textOf(frontend.mir, "Polygon");
+  expect(polygon.find("std::array<::__gti_program::Point, 2>{__gti_mir_p_") !=
+                 std::string::npos &&
+             polygon.find(".get(), std::move(__gti_mir_p_") !=
+                 std::string::npos &&
+             inlined(polygon) == 2 &&
+             polygon.find("auto __gti_mir_v_") == std::string::npos,
+         "a copied and a moved parameter should be copied and moved once, "
+         "inside the field's initializer, got: " +
+             polygon);
+  const std::string grid = textOf(frontend.mir, "Grid");
+  expect(grid.find("std::array<std::array<::__gti_program::Point, 2>, 2>{"
+                   "__gti_mir_p_") != std::string::npos &&
+             grid.find(".get(), std::move(__gti_mir_p_") != std::string::npos &&
+             inlined(grid) == 3,
+         "a whole copied row and a nested row of a copy and a move should "
+         "spell their parameters in place, got: " +
+             grid);
+  const std::string owners = textOf(frontend.mir, "Owners");
+  expect(owners.find("std::array<::__gti_program::Tracked, 2>{std::move("
+                     "__gti_mir_p_") != std::string::npos &&
+             owners.find(".get()), std::move(__gti_mir_p_") !=
+                 std::string::npos &&
+             inlined(owners) == 2,
+         "moves of a class with a destructor should transfer each parameter "
+         "into the field once, got: " +
+             owners);
+  lang::HirFunctionInstanceId addressedId = 0;
+  for (const auto &function : frontend.hir.functionInstances())
+    if (function.source && function.source->name().lexeme == "addressed")
+      addressedId = function.id;
+  const lang::MirBodyAddress addressedBody{lang::MirBodyKind::Function,
+                                           addressedId};
+  const lang::CppMirBodyEmitter addressedEmitter(frontend.mir, map);
+  const std::string addressed =
+      addressedId == 0 ? std::string()
+      : addressedEmitter.supportsFailureBodyText(addressedBody)
+          ? addressedEmitter
+                .emitFailureBodyText(addressedBody, "array-field-v0", 1)
+                .text
+      : addressedEmitter.supportsBodyText(addressedBody)
+          ? addressedEmitter.emitBodyText(addressedBody, "array-field-v0", 1)
+                .text
+          : std::string();
+  expect(inlined(addressed) == 1 &&
+             addressed.find("auto __gti_mir_v_") != std::string::npos,
+         "a copied local whose address is taken should keep its sequenced "
+         "copy beside the inlined element, got: " +
+             addressed);
+
+  const auto mutableBody = [&](lang::MirProgram &program,
+                               std::string_view name) -> lang::MirBody & {
+    return const_cast<lang::MirConstructorInstance *>(
+               constructorOf(program, name))
+        ->body;
+  };
+  const auto aggregateOf = [](lang::MirBody &body) -> lang::MirInstruction * {
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.operation == lang::MirOperation::Aggregate)
+          return &instruction;
+    return nullptr;
+  };
+  const auto producerOf =
+      [](lang::MirBody &body,
+         const lang::MirOperand &operand) -> lang::MirInstruction * {
+    const auto *value = body.findValue(operand.value);
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions)
+        if (value != nullptr && instruction.id == value->definition)
+          return &instruction;
+    return nullptr;
+  };
+
+  lang::MirProgram noCopy = frontend.mir;
+  bool copyChanged = false;
+  for (auto &owner : const_cast<std::vector<lang::MirClassInstance> &>(
+           noCopy.classInstances()))
+    if (owner.type ==
+        constructorOf(noCopy, "Polygon")->parameterTypes.front()) {
+      owner.copyConstructor = lang::SpecialMemberStatus::Deleted;
+      copyChanged = true;
+    }
+  expect(copyChanged && textOf(noCopy, "Polygon").empty(),
+         "an element class without a copy constructor has no inline copy");
+
+  lang::MirProgram lostTransfer = frontend.mir;
+  lang::MirInstruction *transfer =
+      aggregateOf(mutableBody(lostTransfer, "Owners"));
+  expect(transfer != nullptr && transfer->lifecycle.size() == 3,
+         "both moved owners should transfer out at the aggregate");
+  if (transfer != nullptr && !transfer->lifecycle.empty()) {
+    transfer->lifecycle.erase(transfer->lifecycle.begin());
+    expect(textOf(lostTransfer, "Owners").empty(),
+           "a moved element whose obligation does not leave at the aggregate "
+           "refuses the body");
+  }
+
+  lang::MirProgram lifecycleFree = frontend.mir;
+  lang::MirBody &owning = mutableBody(lifecycleFree, "Owners");
+  lang::MirInstruction *aggregate = aggregateOf(owning);
+  lang::MirInstruction *move =
+      aggregate == nullptr ? nullptr
+                           : producerOf(owning, aggregate->operands.front());
+  expect(move != nullptr && move->lifecycle.size() == 1,
+         "a moved owner should take its parameter's obligation");
+  if (move != nullptr && !aggregate->lifecycle.empty()) {
+    move->lifecycle.clear();
+    aggregate->lifecycle.erase(aggregate->lifecycle.begin());
+    expect(textOf(lifecycleFree, "Owners").empty(),
+           "a move that leaves a class's cleanup with its parameter refuses "
+           "the body");
+  }
+
+  lang::MirProgram failingMove = frontend.mir;
+  lang::MirBody &shape = mutableBody(failingMove, "Polygon");
+  lang::MirInstruction *polygonAggregate = aggregateOf(shape);
+  lang::MirInstruction *moved =
+      polygonAggregate == nullptr
+          ? nullptr
+          : producerOf(shape, polygonAggregate->operands.back());
+  expect(moved != nullptr && moved->kind == lang::MirInstructionKind::Move,
+         "the second corner should be moved");
+  if (moved != nullptr) {
+    moved->localFailureSites.push_back(1);
+    expect(textOf(failingMove, "Polygon").empty(),
+           "a failure site on a moved element refuses the body");
+  }
+}
+
 // A field of a fixed-array element selected at a run-time index is read and
 // written only after that element's bound check (issue #203). MIR completes
 // the check at the element's AddressOf before the field access, as it does
@@ -16702,6 +16931,7 @@ constexpr NamedTest kTests[] = {
     {"testMovedPlaceFieldView", testMovedPlaceFieldView},
     {"testAssignmentResultFieldView", testAssignmentResultFieldView},
     {"testClassStoresIntoNamedPlaces", testClassStoresIntoNamedPlaces},
+    {"testArrayFieldConstructorElements", testArrayFieldConstructorElements},
     {"testCheckedArrayElementFieldAccess", testCheckedArrayElementFieldAccess},
     {"testAssignmentResultWholeValue", testAssignmentResultWholeValue},
     {"testNestedClassResultFieldView", testNestedClassResultFieldView},
