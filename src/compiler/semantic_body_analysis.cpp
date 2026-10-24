@@ -6185,10 +6185,19 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       break;
   }
   // So does a reference relay to a nested text class: a dependent place
-  // other than a named value is observed, not copied out.
+  // other than a named value is observed, not copied out. A reference local
+  // bound to such a place is that place.
+  const auto *sourceVariable = exprAs<Variable>(source);
+  const Symbol *sourceSymbol =
+      sourceVariable == nullptr ? nullptr : resolve(sourceVariable->name());
+  const bool aliasSource =
+      sourceSymbol != nullptr &&
+      sourceSymbol->type.kind == SemanticType::Reference &&
+      sourceSymbol->variableDeclaration != nullptr &&
+      dependentReferenceAliases.contains(sourceSymbol->variableDeclaration);
   if (ownerDependentValue && !contextualText &&
-      (exprAs<Get>(source) != nullptr ||
-       (exprAs<Variable>(source) == nullptr &&
+      (exprAs<Get>(source) != nullptr || aliasSource ||
+       (sourceVariable == nullptr &&
         initializerInfo->category == ValueCategory::Place))) {
     consumeTextDependentValue(initializer);
     report(expressionToken(initializer),
@@ -6211,6 +6220,25 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
                          ? textDependentValueInfo(declaredType).traits
                          : initializerInfo->traits;
     semanticModel.record(stmt, std::move(updated));
+  }
+
+  // A reference local bound to a call's dependent reference result, or to
+  // another such local, aliases it (L-OWN-02). A reference to a dependent
+  // value's own field stays unsupported.
+  if ((exprAs<Call>(source) != nullptr || aliasSource) &&
+      declaredType.kind == SemanticType::Reference &&
+      declaredType.arguments.size() == 1 && initializerInfo != nullptr &&
+      initializerInfo->category == ValueCategory::Place &&
+      isTextDependentValue(*initializerInfo) &&
+      initializerInfo->type == declaredType.arguments.front()) {
+    consumeTextDependentValue(initializer);
+    if (globalStorage || instanceField)
+      report(stmt.name(),
+             "A reference into a value holding dynamic text cannot be "
+             "stored because the value's owner dependency is local.",
+             "GTI-S2045");
+    else
+      dependentReferenceAliases[&stmt] = initializer.get();
   }
 
   // A contextual construction or conversion is a fresh value of the declared

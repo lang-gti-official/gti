@@ -1169,6 +1169,11 @@ add_test(NAME view_field_conversions_runtime
                  "${PROJECT_SOURCE_DIR}/tests/view_field_conversions_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(view_field_conversions_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME dependent_reference_results_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/dependent_reference_results_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(dependent_reference_results_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME view_field_nesting_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/view_field_nesting_runtime_test.py"
