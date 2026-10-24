@@ -3,7 +3,8 @@ set -euo pipefail
 
 # Workflows install ccache explicitly and persist only this object store, never
 # a build tree, installed toolchain, test result, or unverified LLVM source.
-: "${GITHUB_ENV:?GITHUB_ENV must name the runner environment file}"
+GTI_CI_ENV_FILE="${GITEA_ENV:-${GITHUB_ENV:-}}"
+: "${GTI_CI_ENV_FILE:?GITEA_ENV or GITHUB_ENV must name the runner environment file}"
 : "${GTI_CACHE_DIRECTORY:?GTI_CACHE_DIRECTORY must name the object cache}"
 if [[ "${GTI_CACHE_DIRECTORY}" != /* || "${GTI_CACHE_DIRECTORY}" == / ||
       "${GTI_CACHE_DIRECTORY}" == *$'\n'* ||
@@ -26,5 +27,5 @@ fi
   # No path rewriting, omitted inputs, or PCH/time-macro correctness relaxations.
   echo "CCACHE_BASEDIR="
   echo "CCACHE_SLOPPINESS="
-} >> "${GITHUB_ENV}"
+} >> "${GTI_CI_ENV_FILE}"
 echo "Compiler object cache: ${GTI_CACHE_DIRECTORY} (10G, compiler-content identity)"

@@ -8936,8 +8936,8 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `lsp_scalability_benchmark_smoke` | real JSON-RPC workload/schema, frontend work traces, root-only dependency reuse, scoped dirty-dependency invalidation, protocol-valid completion/cancellation race handling, supersession, and bounded cache occupancy without a CI wall-time threshold |
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
-| `repository_hosting` | fail-closed GitHub source, workflow, release, installer, Lazy package, issue-template, release-policy, mirror, and delivery-instruction authority; retired compiler-repository hosts and live archived-workflow references are rejected outside explicit historical evidence |
-| `release_asset_sync` | post-upload exact GitHub rolling-release asset synchronization, including deterministic retired-platform removal, malformed-identity rejection, and empty-input fail-closed behavior |
+| `repository_hosting` | fail-closed Gitea source, workflow, release, installer, Lazy package, issue-template and delivery authority; no live GitHub automation/backup push; explicit historical identity exceptions and manual macOS platform boundaries |
+| `release_asset_sync` | Gitea release-scoped post-upload asset synchronization; deterministic retired-platform removal, incomplete-upload protection, canonical HTTPS credentials, redirect refusal, malformed-identity and empty-input rejection |
 | `benchmark_harness` | strict schema-1 GTI/C++ and schema-2 multi-GTI/profile descriptors; schema-3 fixed-native attribution; schema-4 bounded generated arithmetic proxies; path and provenance containment; correctness records; deterministic interleaving; and threshold-free vector plus managed-thread smoke execution |
 | `compile_time_harness` | sequential clean/full/emission/native/C++ attribution with preserved compiler identities; raw samples and randomized order; before/after emission equality and optimized runtime output checks; existing-output preservation and invalid repetition rejection, without a timing threshold |
 | `runtime_performance_workloads` | threshold-free build, execution, descriptor, and exact-result-record coverage for the admitted checked-scalar, fixed-array proof/overflow, strict-FP, optimizer-level, and game-update workloads |
@@ -9115,13 +9115,15 @@ when the public wrapper is added.
 `installed_native_record_pipeline` additionally verifies that the packaged
 compiler library exposes the same semantic/HIR/MIR native-record contract.
 
-The live workflows are GitHub Actions under `.github/workflows/` of
-`lang-gti-official/gti` (`ci.yml`, `release.yml`, `mirror.yml`), running on
-GitHub-hosted `ubuntu-latest` and `macos-15` runners. They replace the Gitea
-Actions workflows archived under `docs/plans/archive/gitea-actions/` on
-2026-10-11, when the self-hosted instance's single 6-core runner could not
-carry the full suite's workload; Gitea remains a backup mirror of `main` and
-the tags. The budgets, preflights and selections below carried over unchanged,
+The live workflows are Gitea Actions under `.gitea/workflows/` of canonical
+`gti-lang/gti` (`ci.yml`, `release.yml`), running on existing Linux runners.
+Policy revision (2026-10-24): GitHub automation is retired under
+`docs/plans/archive/github-actions-20261024/`; no helper/workflow pushes to
+GitHub or a backup. The owner selected manual Apple Silicon stable publication,
+not installation of a macOS runner service. Linux-only automated nightly assets
+must not imply automatic macOS availability. See the manual release contract in
+`build-and-driver.md`. Local/managed-runner macOS validation remains required
+where the affected invariant requires it. The budgets, preflights and selections below remain enforced,
 and the helper scripts and their gates (`ci_resources`, `ci_cache`,
 `ci_sanitizer_capability`, `ci_release`, `release_asset_sync`,
 `release_version_policy`, `repository_hosting`) guard them. The CI workflow
@@ -9160,9 +9162,8 @@ a killed compile can be read against them. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution
 is an explicit host capability controlled by
 `GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled. The hosted
-workflows disable it: the former Gitea Docker runner could not reserve the
-required shadow-memory mapping before any GTI code executed, and GitHub-hosted
-runners have not passed the TSAN preflight. Mixed runtime matrices keep
+workflows disable it: Docker/host environments that cannot reserve the required
+shadow-memory mapping have not passed the dedicated TSAN preflight. Mixed runtime matrices keep
 their ordinary and ASan/UBSan modes; dedicated TSAN CTests report an explicit
 skip with return code 77. A compatible dedicated runner must pass the TSAN
 preflight and leave the option enabled before its result counts as race-checking

@@ -37,7 +37,7 @@ def main():
         parser.exit(1, f"Runner sanitizer preflight failed:\n{error}\n"
                     "This probe contains no GTI code. Fix the runner's compiler/runtime, "
                     "address-space limits, or container sandbox before retrying. "
-                    "See .github/README.md. Sanitizer tests have NOT been skipped.\n")
+                    "See .gitea/README.md. Sanitizer tests have NOT been skipped.\n")
 
 
 if __name__ == "__main__":

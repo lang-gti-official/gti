@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.468.5 — Canonical Gitea hosting
+
+- Source, issues, PRs, Actions, tags, release downloads and agent tooling return
+  to `git.internal.howetotech.dev/gti-lang/gti`. GitHub workflows are retired;
+  integration never pushes to GitHub or an automatic backup.
+- Imported task records retain their original source/verification provenance
+  through explicit rehosting. The older distinct Gitea tracker is archived,
+  not overwritten or confused with imported issue numbers.
+- Linux releases remain automated on existing Gitea runners. Apple Silicon
+  stable archives are manually packaged, validated and attached to the matching
+  release; no macOS runner service or automatic macOS nightly is configured.
+
 ## 0.468.4 — Returning payload references from reference parameters
 
 - A free function, static method or lambda can now return a reference bound by

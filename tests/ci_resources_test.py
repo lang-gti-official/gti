@@ -32,6 +32,7 @@ def main():
         )):
             output = root / str(index)
             environment = os.environ.copy()
+            environment.pop("GITEA_ENV", None)
             environment.update(GTI_CONFIGURED_JOBS=jobs,
                                GTI_CONFIGURED_TEST_JOBS=test_jobs,
                                GITHUB_ENV=str(output), PATH=str(commands))
@@ -133,6 +134,12 @@ def main():
                                 capture_output=True, text=True, timeout=10)
         assert output.read_text() == "GTI_JOBS=12\nGTI_TEST_JOBS=12\n"
         assert "unknown MiB" in result.stdout, result.stdout
+        gitea_output, legacy_output = root / "gitea-environment", root / "unused-github-environment"
+        environment.update(GITEA_ENV=str(gitea_output), GITHUB_ENV=str(legacy_output))
+        subprocess.run([bash, str(script)], env=environment, check=True,
+                       capture_output=True, text=True, timeout=10)
+        assert gitea_output.read_text() == "GTI_JOBS=12\nGTI_TEST_JOBS=12\n"
+        assert not legacy_output.exists(), "Gitea environment must take precedence"
     print("CI available-CPU defaults, memory caps, overrides, and detection fallbacks passed")
 
 

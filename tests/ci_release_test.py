@@ -22,51 +22,47 @@ def run(command, cwd, success=True):
 
 
 def workflow_contract(root):
-    release = (root / ".github/workflows/release.yml").read_text()
-    ci = (root / ".github/workflows/ci.yml").read_text()
-    assert not (root / ".github/workflows/nightly.yml").exists(), "duplicate bundled workflow"
+    release = (root / ".gitea/workflows/release.yml").read_text()
+    ci = (root / ".gitea/workflows/ci.yml").read_text()
+    assert not (root / ".github/workflows").exists() or not list((root / ".github/workflows").glob("*.yml"))
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"
     assert release.count('run: cmake --build build --config Release --parallel "${GTI_JOBS}"') == 1
     assert release.count("name: Test build tree") == 1, "channels must share full CTest"
     assert release.count("name: Test installed toolchain") == 1
     assert "cancel-in-progress: false" in release
-    assert "group: toolchain-${{ github.sha }}" in release, "new main must not cancel stable"
+    assert "group: toolchain-${{ gitea.sha }}" in release, "new main must not cancel stable"
     package = release.split("  package:\n", 1)[1].split("  publish-stable:\n", 1)[0]
     stable = release.split("  publish-stable:\n", 1)[1].split("  publish-nightly:\n", 1)[0]
     nightly = release.split("  publish-nightly:\n", 1)[1]
-    # One validated stage per platform; GitHub's macOS runners restore the
-    # Apple Silicon archive the Neovim plugin installs.
-    for platform in ("linux-x64", "darwin-arm64"):
-        assert f"platform: {platform}" in package, platform
-    assert "runner: macos-15" in package and "runner: ubuntu-latest" in package
-    assert "fail-fast: false" in package
+    assert "runs-on: ubuntu-latest" in package and "Linux-X64) platform=linux-x64" in package
+    assert "macos-15" not in package and "macOS-ARM64)" not in package, "macOS is explicitly manual"
+    manual = (root / "docs/architecture/build-and-driver.md").read_text()
+    assert "### Manual macOS release publication" in manual and "host-runtime.json" in manual
     assert "if: needs.metadata.outputs.stable == 'true'" in stable
     assert "refs/tags/${GTI_RELEASE_TAG}" in stable and "--force origin refs/tags/" not in stable
-    assert 'gh release create "${GTI_RELEASE_TAG}"' in stable and "--target \"${GTI_RELEASE_SHA}\"" in stable
-    assert "pattern: gti-release-package-*" in stable and "merge-multiple: true" in stable
-    assert package.index("-DGTI_OUTPUT_DIR=${{ github.workspace }}/dist/stable") < package.index("-DGTI_CHANNEL=nightly")
+    assert "tag_name: ${{ needs.metadata.outputs.tag }}" in stable
+    assert "target_commitish: ${{ needs.metadata.outputs.sha }}" in stable
+    assert "name: gti-release-package" in stable
+    assert package.index("-DGTI_OUTPUT_DIR=${{ gitea.workspace }}/dist/stable") < package.index("-DGTI_CHANNEL=nightly")
     assert "path: dist/stable/*" in package and "path: dist/nightly/*" in package
-    assert "name: gti-release-package-${{ matrix.platform }}" in package
-    assert "name: gti-nightly-package-${{ matrix.platform }}" in package
     assert 'mktemp -d "${GTI_RUNNER_TEMP}/gti-stage.XXXXXXXX"' in package
     assert package.count("-DGTI_STAGE_DIR=${{ env.GTI_STAGE_DIRECTORY }}") == 2
     assert "-DGTI_BUILD_ID=${{ needs.metadata.outputs.sha }}" in package
     assert "group: gti-nightly-publication" in nightly
-    assert "pattern: gti-nightly-package-*" in nightly and "merge-multiple: true" in nightly
+    assert "name: gti-nightly-package" in nightly
     assert nightly.index("Download nightly archive") < nightly.index("admit-nightly") < nightly.index("git tag --force nightly")
     assert nightly.count("if: steps.admission.outputs.publish == 'true'") == 3
-    assert nightly.index("gh release upload nightly") < nightly.index("scripts/sync_release_assets.py")
-    assert "--prerelease" in nightly and "--prerelease" not in stable
-    for job in (stable, nightly):
-        assert "contents: write" in job, "publication requests its write scope explicitly"
-    assert release.count("contents: write") == 2 and "permissions:\n  contents: read" in release
+    assert nightly.index("name: Publish nightly release") < nightly.index("scripts/sync_release_assets.py")
+    assert "prerelease: true" in nightly and "prerelease: false" in stable
+    assert "releases: write" in stable and "releases: write" in nightly and "code: write" in nightly
+    assert "permissions:\n  contents: read" in release
     assert "documentation-index:" not in ci, "documentation must reuse the native compiler"
     assert "build/gti_docgen --stdlib stdlib" in ci
     for contents, profiles in ((ci, ("native", "sanitizers")), (release, ("release",))):
         assert contents.count("bash scripts/configure_ci_cache.sh") == len(profiles)
-        assert contents.count("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9") == len(profiles)
-        assert contents.count("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9") == len(profiles)
+        assert contents.count("https://gitea.com/actions/cache/restore@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2") == len(profiles)
+        assert contents.count("https://gitea.com/actions/cache/save@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2") == len(profiles)
         assert contents.count("if: always() && steps.cache.outputs.cache-primary-key") == len(profiles)
         assert "ccache --show-stats" in contents and "save-always:" not in contents
         for profile in profiles:
@@ -74,7 +70,7 @@ def workflow_contract(root):
             assert prefix in contents
         assert "path: ${{ env.CCACHE_DIR }}" in contents
         assert "CMakeFiles/gti_driver.dir/src/driver/build.cpp.o" in contents
-        assert "GITEA_" not in contents and "${{ gitea." not in contents
+        assert "${{ github." not in contents and "GH_TOKEN" not in contents and "gh release" not in contents
 
 
 def source_contract(root):
