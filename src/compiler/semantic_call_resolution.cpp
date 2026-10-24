@@ -975,59 +975,6 @@ auto SemanticVisitor::Impl::acceptsArgumentShape(
   return arguments.size() >= fixed;
 }
 
-auto SemanticVisitor::Impl::hasExactComparisonOperator(
-    const SemanticType &type, OverloadedOperator operation) const -> bool {
-  const ClassInfo *owner = classInfo(type);
-  if (owner == nullptr) {
-    return false;
-  }
-  const auto member =
-      owner->members.find(std::string(operatorFunctionName(operation)));
-  if (member == owner->members.end() ||
-      member->second.symbol.type != SemanticType::Function) {
-    return false;
-  }
-
-  const SemanticType parameter = SemanticType::referenceTo(type);
-  const Symbol overloadSet = substituteSymbol(member->second.symbol, type);
-  return std::any_of(overloadSet.overloads.begin(), overloadSet.overloads.end(),
-                     [&](const CallableCandidate &candidate) {
-                       return !candidate.staticMember &&
-                              candidate.access == AccessModifier::Public &&
-                              candidate.requirements.empty() &&
-                              candidate.receiverMutability ==
-                                  ReceiverMutability::ReadOnly &&
-                              candidate.returnType == SemanticType::Bool &&
-                              candidate.parameterTypes.size() == 1 &&
-                              candidate.parameterTypes.front() == parameter;
-                     });
-}
-
-auto SemanticVisitor::Impl::isEqualityComparableConstraintType(
-    const SemanticType &type) const -> bool {
-  if (type.kind == SemanticType::Class) {
-    return hasExactComparisonOperator(type, OverloadedOperator::Equal) &&
-           hasExactComparisonOperator(type, OverloadedOperator::NotEqual);
-  }
-  return isInteger(type) || semanticFloatFormat(type).has_value() ||
-         type == SemanticType::Bool || type == SemanticType::Char ||
-         type == SemanticType::StringView || type == SemanticType::NullPtr ||
-         type.kind == SemanticType::RawPointer ||
-         type.kind == SemanticType::Enum;
-}
-
-auto SemanticVisitor::Impl::isRelationallyOrderedConstraintType(
-    const SemanticType &type) const -> bool {
-  if (isInteger(type) || semanticFloatFormat(type).has_value()) {
-    return true;
-  }
-  return type.kind == SemanticType::Class &&
-         hasExactComparisonOperator(type, OverloadedOperator::Less) &&
-         hasExactComparisonOperator(type, OverloadedOperator::LessEqual) &&
-         hasExactComparisonOperator(type, OverloadedOperator::Greater) &&
-         hasExactComparisonOperator(type, OverloadedOperator::GreaterEqual);
-}
-
 auto SemanticVisitor::Impl::satisfiesAtomicConstraint(
     const SemanticType &argument, GenericConstraintKind constraint) const
     -> bool {
@@ -1037,10 +984,6 @@ auto SemanticVisitor::Impl::satisfiesAtomicConstraint(
     return true;
   }
   switch (constraint) {
-  case GenericConstraintKind::EqualityComparable:
-    return isEqualityComparableConstraintType(argument);
-  case GenericConstraintKind::RelationallyOrdered:
-    return isRelationallyOrderedConstraintType(argument);
   case GenericConstraintKind::Numeric:
     return isInteger(argument) || semanticFloatFormat(argument).has_value();
   case GenericConstraintKind::SignedNumeric:
@@ -6504,6 +6447,23 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
 auto SemanticVisitor::Impl::hasSymbolicOperatorRequirement(
     OverloadedOperator kind, const SemanticType &receiverType,
     std::span<const SemanticType> argumentTypes) const -> bool {
+  if (receiverType.kind == SemanticType::TypeParameter &&
+      argumentTypes.size() == 1 && argumentTypes.front() == receiverType) {
+    const bool equality = kind == OverloadedOperator::Equal ||
+                          kind == OverloadedOperator::NotEqual;
+    const bool ordering = kind == OverloadedOperator::Less ||
+                          kind == OverloadedOperator::LessEqual ||
+                          kind == OverloadedOperator::Greater ||
+                          kind == OverloadedOperator::GreaterEqual;
+    // A primitive comparison remains a value operation. A source query using
+    // reference bindings must not turn it into a hypothetical member call,
+    // which would incorrectly reject temporary operands or invent loans.
+    if ((equality || ordering) && isNumeric(receiverType))
+      return false;
+    if (equality && constraintImplies(constraintOf(receiverType),
+                                      GenericConstraintKind::AtomicScalar))
+      return false;
+  }
   return !symbolicOperatorRequirements(kind, receiverType, argumentTypes)
               .empty();
 }

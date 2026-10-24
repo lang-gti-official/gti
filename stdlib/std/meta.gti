@@ -51,7 +51,7 @@ T meta_construct<T, Values...>(Values... values);
 namespace std {
 namespace meta {
 
-/// The category of a type, as `type<T>::kind()` reports it.
+/// The categories used by the reflection classification predicates.
 enum class kind {
   unknown = 0,
   structure = 1,
@@ -174,6 +174,8 @@ public:
   constexpr bool is_text() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
   /// Whether T is a checked reference (the access mode is not changed).
   constexpr bool is_reference() { return gti_internal::meta_type_kind<T>() == uint64_t(11); }
+  /// A raw data address, not an owning pointer or a callable address.
+  constexpr bool is_raw_pointer() { return gti_internal::meta_type_kind<T>() == uint64_t(13); }
   /// Whether T denotes absence of a result, rather than an object type.
   constexpr bool is_void() { return gti_internal::meta_type_kind<T>() == uint64_t(17); }
   /// The number of instance fields when `T` is a struct or class, else 0.
@@ -280,6 +282,11 @@ public:
   /// Whether the method takes its receiver mutably.
   constexpr bool is_mutating() { return gti_internal::meta_method_trait<T, I, 4>(); }
   constexpr bool is_public() { return gti_internal::meta_method_trait<T, I, 5>(); }
+  /// Declaration facts; none of these predicates authorizes an invocation.
+  constexpr bool is_consuming() { return gti_internal::meta_method_trait<T, I, 6>(); }
+  constexpr bool is_unsafe() { return gti_internal::meta_method_trait<T, I, 7>(); }
+  constexpr bool is_generic() { return gti_internal::meta_method_trait<T, I, 8>(); }
+  constexpr bool is_constrained() { return gti_internal::meta_method_trait<T, I, 9>(); }
   constexpr uint64_t parameter_count() { return gti_internal::meta_method_parameter_count<T, I>(); }
   constexpr parameter_list<T, I> parameters() { return parameter_list<T, I>(); }
   constexpr type<return_type<T, I>> result() {
@@ -446,6 +453,7 @@ constexpr bool is_enum<T>() { return gti_internal::meta_type_kind<T>() == uint64
 constexpr bool is_integral<T>() { return gti_internal::meta_type_trait<T, 17>(); }
 constexpr bool is_floating_point<T>() { return gti_internal::meta_type_trait<T, 18>(); }
 constexpr bool is_bool<T>() { return gti_internal::meta_type_trait<T, 19>(); }
+constexpr bool is_raw_pointer<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(13); }
 constexpr bool is_text<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
 constexpr bool is_payload_enum<T>() { return gti_internal::meta_type_trait<T, 0>(); }
 constexpr bool is_generic_instance<T>() { return gti_internal::meta_type_trait<T, 1>(); }

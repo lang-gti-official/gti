@@ -13086,6 +13086,14 @@ auto SemanticVisitor::Impl::metaQueryConstant(
         return ConstantValue{facts->mutableReceiver};
       case 5:
         return ConstantValue{facts->publicAccess};
+      case 6:
+        return ConstantValue{facts->consumingReceiver};
+      case 7:
+        return ConstantValue{facts->requiresUnsafe};
+      case 8:
+        return ConstantValue{facts->generic};
+      case 9:
+        return ConstantValue{facts->constrained};
       default:
         return std::nullopt;
       }

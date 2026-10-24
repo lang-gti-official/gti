@@ -73,7 +73,7 @@ static_assert(!std::meta::has_object_layout<int32_t&>());
 static_assert(std::meta::is_borrow_free<Coordinates>());
 static_assert(std::meta::is_borrow_free<RawAddress>());
 static_assert(!std::meta::is_borrow_free<CopyConstructionOnly>());
-static_assert(!std::meta::is_borrow_free<std::string_view>());
+static_assert(!std::meta::is_borrow_free<int32_t&>());
 static_assert(std::meta::is_copy_constructible<CopyConstructionOnly>());
 static_assert(!std::meta::is_copyable<CopyConstructionOnly>());
 static_assert(!std::meta::is_relocatable<CopyConstructionOnly>());

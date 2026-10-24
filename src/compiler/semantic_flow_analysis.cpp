@@ -11859,7 +11859,6 @@ auto SemanticVisitor::Impl::constraintImplies(GenericConstraintSet actual,
   case GenericConstraintKind::Transferable:
   case GenericConstraintKind::Shareable:
   case GenericConstraintKind::DefaultInitializable:
-  case GenericConstraintKind::EqualityComparable:
     return true;
   default:
     return false;
@@ -11889,7 +11888,7 @@ auto SemanticVisitor::Impl::isOrdered(SemanticType type) const -> bool {
   return isInteger(type) || semanticFloatFormat(type).has_value() ||
          (type.kind == SemanticType::TypeParameter &&
           constraintImplies(constraintOf(type),
-                            GenericConstraintKind::RelationallyOrdered));
+                            GenericConstraintKind::Numeric));
 }
 
 auto SemanticVisitor::Impl::isIntegral(SemanticType type) const -> bool {
@@ -12283,8 +12282,9 @@ auto SemanticVisitor::Impl::isComparable(SemanticType left, SemanticType right,
   if (left.kind == SemanticType::TypeParameter ||
       right.kind == SemanticType::TypeParameter) {
     return left == right &&
-           constraintImplies(constraintOf(left),
-                             GenericConstraintKind::EqualityComparable);
+           (isNumeric(left) ||
+            constraintImplies(constraintOf(left),
+                              GenericConstraintKind::AtomicScalar));
   }
   if (isInteger(left) && isInteger(right)) {
     return numericResult(left, right, leftExpression, rightExpression) !=

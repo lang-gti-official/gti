@@ -26,7 +26,7 @@ concept transferable_value<T> = std::meta::is_transferable<T>();
 // alternative alone. Both signed and unsigned integers support addition.
 concept signed_or_unsigned<T> =
     std::meta::is_signed_integral<T>() || std::meta::is_unsigned_integral<T>();
-T next_number<T>(T value) requires signed_or_unsigned<T> { return value + 1; }
+T next_number<signed_or_unsigned T>(T value) { return value + 1; }
 
 // A user-defined storage policy has the same facts available as std/memory.
 // Borrow-free does not mean that stored raw pointers are valid or owned.
@@ -42,6 +42,12 @@ concept math_value<T> =
 
 struct Distance {
   int value = 0;
+  bool operator==(Distance& other) { return this.value == other.value; }
+  bool operator!=(Distance& other) { return this.value != other.value; }
+  bool operator<(Distance& other) { return this.value < other.value; }
+  bool operator<=(Distance& other) { return this.value <= other.value; }
+  bool operator>(Distance& other) { return this.value > other.value; }
+  bool operator>=(Distance& other) { return this.value >= other.value; }
   Distance operator+(Distance& other) {
     Distance result{.value = this.value + other.value};
     return result;
@@ -64,9 +70,12 @@ Result invoke<F, Arg, Result>(F& function, Arg& argument)
   return function(argument);
 }
 
-T sum<T>(T& left, T& right) requires math_value<T> {
+// Inline annotation retains the complete source-defined operation contract.
+T sum<math_value T>(T& left, T& right) {
   return left + right;
 }
+
+bool before<std::totally_ordered T>(T& left, T& right) { return left < right; }
 
 T zero<T>() requires default_constructible<T> {
   return T();
@@ -146,10 +155,15 @@ int main() {
   static_assert(std::meta::is_bitwise_relocatable<Distance>());
   static_assert(std::meta::has_object_layout<Distance>());
   static_assert(std::meta::is_borrow_free<Distance>());
-  static_assert(!std::meta::is_borrow_free<std::string_view>());
+  static_assert(!std::meta::is_borrow_free<int&>());
+  // General declaration metadata is available to user-defined policies too.
+  static_assert(!std::meta::method<Doubler, 0>().is_consuming());
+  static_assert(!std::meta::method<Doubler, 0>().is_unsafe());
+  static_assert(!std::meta::method<Doubler, 0>().is_generic());
+  static_assert(!std::meta::method<Doubler, 0>().is_constrained());
   static_assert(!std::meta::has_object_layout<void>());
   auto vacant = empty_slot<Distance>();
-  if (next_number<int>(3) != 4 || next_number<uint64_t>(7) != uint64_t(8)) {
+  if (next_number<int>(3) != 4 || next_number<uint64_t>(uint64_t(7)) != uint64_t(8)) {
     return 5;
   }
   static_assert(requires(int& left, int& right) {
@@ -162,6 +176,7 @@ int main() {
 
   Distance left{.value = 7};
   Distance right{.value = 9};
+  if (!before(left, right)) { return 6; }
   Distance total = sum(left, right);
   Distance empty = zero<Distance>();
   Doubler doubler{};

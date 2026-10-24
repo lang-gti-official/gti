@@ -633,7 +633,10 @@ reflection predicates, and uses them in generic algorithms over an unrelated
 user-defined value. It also demonstrates multi-check queries and exact result
 rejection. Independent object-layout and borrow-state predicates let its own
 storage policy use the same facts as `std/memory`; a signed-or-unsigned
-disjunction demonstrates common guarantees in generic arithmetic. Requirements
+disjunction demonstrates common guarantees in generic arithmetic. Inline source
+constraints retain complete operation contracts. Source-defined standard
+comparison concepts accept its domain type, and method reflection exposes
+access, safety, generic and constraint facts. Requirements
 execute no user code and do not relax ownership rules.
 
 ## Complete projects

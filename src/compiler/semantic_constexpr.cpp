@@ -191,6 +191,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.impl = std::make_unique<Impl>(target, sourceGraph, false,
                                          workMetrics, sources, rawPointerAudit);
     worker.impl->catalog = catalog.snapshotForInstanceAnalysis();
+    worker.impl->compilerTypeClasses = compilerTypeClasses;
     worker.impl->semanticModel = stagingModel;
     worker.impl->macroLookup = macroLookup;
     worker.impl->macroLookupBase = macroLookupBase;

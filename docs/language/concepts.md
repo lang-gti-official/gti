@@ -67,10 +67,10 @@ T lower<sortable T>(T left, T right) {
 }
 ```
 
-The named concept must have one type parameter. On function parameters it
-must reduce to unary capabilities; structural function contracts use the
-trailing clause below. Class and struct parameters also accept unary
-structural concepts:
+The named concept must have one type parameter. Functions, constructors,
+classes and structs accept source-defined unary concepts, including structural
+queries and predicates. The full concept contract is preserved, not just its
+classification facts:
 
 ```gti
 concept readable<T> = requires(T& source) { { source.read() } -> int; };
@@ -395,9 +395,12 @@ requirement from its declared members after ordinary substitution, with the
 same exact matching, even when the required result or parameters name the
 enclosing parameters. A bare type parameter proves one only through an
 enclosing requirement.
-Function inline generic-parameter constraints still exclude structural
-concepts; use a trailing clause. Class parameters accept unary structural
-annotations as described above. Borrowed-result contracts remain unsupported.
+Unary source concepts may annotate function, constructor and class generic
+parameters inline, including composed expression, signature and predicate
+requirements. Their full contracts enter the generic scope and are checked
+again for concrete arguments; they are not reduced to unary classification
+bits. Relational concepts and protocol concepts with bodies still use a
+trailing clause. Borrowed-result contracts remain unsupported.
 
 An ordinary requirement proves a safe call and rejects an unsafe member.
 Prefix the compound signature with `unsafe` to describe a member whose caller
@@ -479,10 +482,16 @@ diagnostics retain useful guidance without recognizing those concept names.
 The former `adds`, `subtracts`, `negates`, and `scales_by` compiler bindings
 and dedicated proof branches have been removed. Their generic-body operation
 facts now use the same general expression-requirement path as user concepts.
-The exact equality and relational declaration-shape contracts remain private:
-ordinary expression viability cannot yet prove their requirement-free,
-read-only, exact-reference signature policy. Replacing them needs general
-receiver/requirement metadata, not weaker acceptance or a renamed private trait.
+Equality and ordering policy now also lives in source. Ordinary safe expression
+queries prove the operations; a source metadata scan retains the public,
+read-only, nongeneric, requirement-free, exact-reference declaration policy for
+classes. General method predicates expose consuming access, unsafe obligations,
+generic declarations and method requirements. Primitive comparisons remain
+value operations, not hypothetical reference-taking member calls. The old
+comparison capability bindings and dedicated class-policy checker are removed.
+`std::meta::is_raw_pointer<T>()` and `type<T>::is_raw_pointer()` classify a
+concrete type using the existing type-category metadata. They do not establish
+pointer validity, lifetime, access rights, or permission to dereference it.
 Iterator relations returning checked borrows, and callable relations carrying
 the complete read/mutable/once-use and borrow/escape contract, retain their
 existing compiler facts. A single owned-result expression query is not a

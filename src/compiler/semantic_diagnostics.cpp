@@ -600,16 +600,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                    "' is declared here."});
   }
   switch (failure.failed) {
-  case GenericConstraintKind::EqualityComparable:
-    diagnostic.hints.emplace_back(
-        "Class types must provide public, read-only bool operator==(" +
-        typeSpelling(failure.argument) + "& other) and operator!= overloads.");
-    break;
-  case GenericConstraintKind::RelationallyOrdered:
-    diagnostic.hints.emplace_back(
-        "Class types must provide exact public, read-only bool overloads "
-        "for <, <=, >, and >=.");
-    break;
   case GenericConstraintKind::CopyConstructible:
     diagnostic.hints.emplace_back(
         "The required concept needs an available copy constructor; copy "

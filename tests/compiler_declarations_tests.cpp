@@ -5312,13 +5312,12 @@ int main() {
 void testCompilerPrivateMemberRequirements() {
   // Trusted source may name a compiler-private probe type, so its direct
   // member queries must see that type's members exactly as a call written
-  // there would, including a member constrained by a raw compiler-bound
-  // concept rather than its public alias.
+  // there would, including a member constrained by a private source concept.
+  // Equality policy no longer has a raw compiler-bound declaration.
   const auto trusted =
       analyzeTrustedPreludeFixture("compiler-private-member-probe.gti", R"(
 namespace gti_internal {
-@compiler_constraint("equality_comparable")
-concept probe_equality<E>;
+concept probe_equality<E> = std::equality_comparable<E>;
 struct plain_probe<T> {
   bool matches() { return true; }
 };
@@ -5375,7 +5374,7 @@ int main() {
                        });
   };
   expect(instantiated("inline_width") && !instantiated("boxed_width"),
-         "a raw compiler-bound member constraint must select the satisfied "
+         "a private source member constraint must select the satisfied "
          "if-constexpr probe branch, not silently fall back");
 
   // A named concept is a public predicate: it never observes a
@@ -7304,8 +7303,9 @@ int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!missingClassFact.canGenerateCode() &&
+             hasDiagnosticCode(missingClassFact.diagnostics, "GTI-S2029") &&
              hasDiagnostic(missingClassFact.diagnostics,
-                           "generic constraint 'std::totally_ordered'"),
+                           "concept 'std::totally_ordered'"),
          "a dependent callable class should still require its own generic "
          "constraints from the enclosing facts");
 

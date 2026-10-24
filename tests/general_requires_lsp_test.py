@@ -16,7 +16,7 @@ concept complete_object<T> = std::meta::has_object_layout<T>();
 concept detached_object<T> = complete_object<T> && std::meta::is_borrow_free<T>();
 concept integer_domain<T> = std::meta::is_signed_integral<T>() || std::meta::is_unsigned_integral<T>();
 T increment<T>(T value) requires integer_domain<T> { return value + 1; }
-T add<T>(T& left, T& right) requires sums<T> { return left + right; }
+T add<sums T>(T& left, T& right) { return left + right; }
 T twice<T>(T value) requires std::meta::is_integral<T>() { return value + value; }
 concept raw_read<T> = requires(T& value) { { unsafe { value.raw() } } -> int; };
 int main() { int left = 3; int right = 4; return add(left, right) == twice(left) + 1 ? 0 : 1; }
@@ -63,7 +63,7 @@ def main():
                 "textDocument": {"publishDiagnostics": {"relatedInformation": True}}}})
             session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
             assert change(SOURCE, 1) == []
-            contract = hover(SOURCE, SOURCE.index("sums<T> {"))
+            contract = hover(SOURCE, SOURCE.index("sums T>"))
             assert "left + right" in str(contract) and "-> T" in str(contract), contract
             predicate = hover(SOURCE, SOURCE.index("integer_value<T>"))
             assert "std::meta::is_integral<T>()" in str(predicate), predicate

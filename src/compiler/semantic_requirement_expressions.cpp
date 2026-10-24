@@ -84,6 +84,10 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
       std::make_unique<Impl>(target, sourceGraph, false, nullptr, sources,
                              RawPointerAuditMode::Off, false, trustedBodies);
   static_cast<RequestSessionContext &>(worker->requestSession) = requestSession;
+  // Computed reflection types belong to the declaration environment, not to
+  // caller flow. Isolated queries need the same trusted type identities to
+  // reduce metadata sequences and dependent projections.
+  worker->compilerTypeClasses = compilerTypeClasses;
   worker->macroLookupBase = this;
   worker->nextExpansion = nextExpansion;
   worker->macroExpansionDepth = macroExpansionDepth;
@@ -329,8 +333,10 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
             active.mutableReceiver == wanted->mutableReceiver &&
             (wanted->requiresUnsafe || !active.requiresUnsafe))
           return true;
-    return reject("The required expression is not guaranteed for the open type "
-                  "parameters.");
+    // Ordinary symbolic analysis can also prove built-in operations from
+    // classification facts (for example integer comparisons). Do not invent
+    // an operation from the query being asked: only the enclosing worker's
+    // existing constraints participate, and concrete instances recheck it.
   }
   if (expressionRequirementDepth >= 64)
     return reject(
@@ -349,6 +355,19 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     bindQueryType(*extraTypes[index],
                   arguments[query.parameters().size() + 1 + index], bindings);
   worker->prepareRequirementLookup(lookupScope, sourceUnitFor(query.keyword()));
+  // Declaration lookup must not capture caller scopes, but substituted type
+  // arguments still carry their proven primitive facts. Preserve those facts
+  // explicitly rather than lending the query the caller's entire requires
+  // clause or allowing it to assume its own desired expression.
+  const auto retainArgumentFacts = [&](const auto &self,
+                                       const SemanticType &type) -> void {
+    if (type.kind == SemanticType::TypeParameter)
+      worker->genericConstraints[type.genericParameterId] |= constraintOf(type);
+    for (const auto &argument : type.arguments)
+      self(self, argument);
+  };
+  for (const auto &argument : arguments)
+    retainArgumentFacts(retainArgumentFacts, argument);
   worker->typeParameterScopes.push_back(std::move(bindings));
   worker->beginScope();
   if (!query.parameters().empty() && macroContext(query.keyword())) {

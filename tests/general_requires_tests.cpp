@@ -30,10 +30,8 @@ static_assert([] {
       return false;
   return true;
 }());
-static_assert(lang::compilerConstraint("equality_comparable") ==
-              lang::GenericConstraintKind::EqualityComparable);
-static_assert(lang::compilerConstraint("relationally_ordered") ==
-              lang::GenericConstraintKind::RelationallyOrdered);
+static_assert(!lang::compilerConstraint("equality_comparable"));
+static_assert(!lang::compilerConstraint("relationally_ordered"));
 
 int failures = 0;
 
@@ -69,9 +67,12 @@ void accepted(const lang::FrontendResult &result, const std::string &name) {
                   });
   expect(!errors && result.hirValid, name);
   if (errors)
-    for (const auto &item : result.diagnostics)
+    for (const auto &item : result.diagnostics) {
       std::cerr << "  " << item.code << " at " << item.primary.line << ": "
                 << item.message << '\n';
+      for (const auto &note : item.related)
+        std::cerr << "    " << note.message << '\n';
+    }
 }
 
 void rejected(const lang::FrontendResult &result, const std::string &name,
@@ -166,6 +167,11 @@ int main() {
   static_assert(!std::meta::is_borrow_free<Borrowed>());
   static_assert(!std::meta::is_borrow_free<int&>());
   static_assert(std::meta::is_borrow_free<int*>());
+  static_assert(std::meta::is_raw_pointer<int*>());
+  static_assert(std::meta::type<void*>().is_raw_pointer());
+  static_assert(!std::meta::is_raw_pointer<int>());
+  static_assert(!std::meta::is_raw_pointer<int&>());
+  static_assert(!std::meta::is_raw_pointer<std::unique_ptr<int>>());
   auto vacant = slot<Payload>();
   return bytes<Payload>() > uint64_t(0) ? 0 : 1;
 }
@@ -204,6 +210,110 @@ int main() {
 }
 )"),
            "heterogeneous operator result and grouped checks");
+
+  accepted(
+      check(root, directory, "inline_source_requirements", R"(
+concept reads<T> = requires(T& value) { { value.read() } -> int; };
+concept sums<T> = requires(T& left, T& right) { { left + right } -> int; };
+struct Counter {
+  int value = 4;
+  int read() { return this.value; }
+  int operator+(Counter& other) { return this.value + other.value; }
+};
+int read<reads T>(T& value) { return value.read(); }
+int sum<sums T = Counter>(T& left, T& right) { return left + right; }
+class Reader {
+public:
+  int read<reads T>(T& value) { return value.read(); }
+};
+int main() {
+  Counter a{}; Counter b{}; Reader reader{};
+  return read(a) + sum(a, b) + reader.read(a) == 16 ? 0 : 1;
+}
+)"),
+      "inline source concepts preserve full signature and operator proofs");
+
+  rejected(check(root, directory, "inline_source_requirement_rejection", R"(
+concept reads<T> = requires(T& value) { { value.read() } -> int; };
+struct Wrong { bool read() { return true; } };
+int read<reads T>(T& value) { return value.read(); }
+int main() { Wrong value; return read(value); }
+)"),
+           "inline source concepts validate the full concrete requirement");
+
+  accepted(check(root, directory, "source_comparison_policy", R"(
+#include <std/meta>
+struct Key {
+  int value = 0;
+  bool operator==(Key& other) { return this.value == other.value; }
+  bool operator!=(Key& other) { return this.value != other.value; }
+  bool operator<(Key& other) { return this.value < other.value; }
+  bool operator<=(Key& other) { return this.value <= other.value; }
+  bool operator>(Key& other) { return this.value > other.value; }
+  bool operator>=(Key& other) { return this.value >= other.value; }
+};
+bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
+bool before<std::totally_ordered T>(T& a, T& b) { return a < b; }
+bool integer_before<T>(T& a, T& b) requires std::meta::is_integral<T>() {
+  return before(a, b);
+}
+struct Contracts {
+  int read() { return 0; }
+  unsafe int raw() { return 0; }
+  int operator()() && { return 0; }
+  int checked<T>(T& value) requires std::integral<T> { return 0; }
+};
+int main() {
+  static_assert(!std::meta::method<Contracts, 0>().is_consuming());
+  static_assert(!std::meta::method<Contracts, 0>().is_unsafe());
+  static_assert(std::meta::method<Contracts, 1>().is_unsafe());
+  static_assert(std::meta::method<Contracts, 2>().is_consuming());
+  static_assert(std::meta::method<Contracts, 3>().is_generic());
+  static_assert(std::meta::method<Contracts, 3>().is_constrained());
+  static_assert(std::detail::read_equality_members<Key>());
+  static_assert(std::detail::read_ordering_members<Key>());
+  Key a{.value = 1}; Key b{.value = 2};
+  int x = 1; int y = 2;
+  return !same(a, b) && before(a, b) && integer_before(x, y) ? 0 : 1;
+}
+)"),
+           "source comparison policy uses general declaration facts and "
+           "operation proofs");
+
+  rejected(check(root, directory, "source_comparison_policy_exactness", R"(
+struct ValueParameter {
+  bool operator==(ValueParameter other) { return true; }
+  bool operator!=(ValueParameter other) { return false; }
+};
+bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
+int main() { ValueParameter value{}; return same(value, value) ? 0 : 1; }
+)"),
+           "source comparison policy retains its exact read-reference "
+           "parameter contract");
+
+  rejected(check(root, directory, "unproven_comparison_policy", R"(
+bool before<std::totally_ordered T>(T& a, T& b) { return a < b; }
+bool missing_proof<T>(T& a, T& b) { return before(a, b); }
+int main() { return 0; }
+)"),
+           "isolated expression queries cannot assume their own comparison "
+           "capability");
+
+  accepted(check(root, directory, "comparison_policy_boundaries", R"(
+class Hidden {
+  bool operator==(Hidden& other) { return true; }
+  bool operator!=(Hidden& other) { return false; }
+};
+bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
+int main() {
+  static_assert(!(requires(Hidden& a, Hidden& b) { { same(a, b) } -> bool; }));
+  static_assert(requires(bool& a, bool& b) { { same(a, b) } -> bool; });
+  static_assert(requires(int*& a, int*& b) { { same(a, b) } -> bool; });
+  return 0;
+}
+)"),
+           "comparison source policy preserves private access without "
+           "excluding primitive equality");
 
   accepted(check(root, directory, "construction", R"(
 concept defaults<T> = requires { { T() } -> T; };

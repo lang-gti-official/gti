@@ -25,8 +25,6 @@ enum class GenericConstraintKind : std::uint8_t {
   Transferable,
   Shareable,
   DefaultInitializable,
-  EqualityComparable,
-  RelationallyOrdered,
   AtomicScalar,
   MoveConstructible,
   IntegralEnum,
@@ -89,7 +87,7 @@ struct CompilerStructuralConstraintRecord {
   std::size_t arity;
 };
 
-inline constexpr std::array<GenericConstraintKind, 23> genericConstraintKinds{{
+inline constexpr std::array<GenericConstraintKind, 21> genericConstraintKinds{{
     GenericConstraintKind::Numeric,
     GenericConstraintKind::SignedNumeric,
     GenericConstraintKind::Integral,
@@ -105,8 +103,6 @@ inline constexpr std::array<GenericConstraintKind, 23> genericConstraintKinds{{
     GenericConstraintKind::Transferable,
     GenericConstraintKind::Shareable,
     GenericConstraintKind::DefaultInitializable,
-    GenericConstraintKind::EqualityComparable,
-    GenericConstraintKind::RelationallyOrdered,
     GenericConstraintKind::AtomicScalar,
     GenericConstraintKind::IntegralEnum,
     GenericConstraintKind::Reflectable,
@@ -117,10 +113,7 @@ inline constexpr std::array<GenericConstraintKind, 23> genericConstraintKinds{{
 
 // Only facts still bound by private concept declarations belong here. The
 // complete fact inventory above also serves reflection and generic proofs.
-inline constexpr std::array<CompilerConstraintRecord, 2> compilerConstraints{{
-    {"equality_comparable", GenericConstraintKind::EqualityComparable},
-    {"relationally_ordered", GenericConstraintKind::RelationallyOrdered},
-}};
+inline constexpr std::array<CompilerConstraintRecord, 0> compilerConstraints{};
 
 inline constexpr std::array<CompilerStructuralConstraintRecord, 25>
     compilerStructuralConstraints{{

@@ -1994,7 +1994,7 @@ auto SemanticVisitor::Impl::registerEnumGenericParameters() -> void {
     currentNamespace = info.namespaceScope;
     info.genericParameters =
         makeGenericParameters(info.declaration->genericParameters(), info.name,
-                              info.namespaceScope, true, false);
+                              info.namespaceScope, false);
     for (std::size_t index = 0; index < info.genericParameters.size();
          ++index) {
       const auto &parameter = info.genericParameters[index];
@@ -2749,7 +2749,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       std::vector<GenericParameterInfo> genericParameters =
           classDecl->genericArgumentPatterns().empty()
               ? makeGenericParameters(classDecl->genericParameters(),
-                                      classDecl->name(), scope, true, false)
+                                      classDecl->name(), scope, false)
               : makeClassPatternParameters(*classDecl, scope);
       for (std::size_t index = 0; index < genericParameters.size(); ++index) {
         if (genericParameters[index].pack &&
@@ -3608,6 +3608,11 @@ auto SemanticVisitor::Impl::metaMethodFacts(const SemanticType &type,
       .virtualMethod = function->virtualMethod,
       .mutableReceiver =
           declaration.receiverMutability() != ReceiverMutability::ReadOnly,
+      .consumingReceiver =
+          declaration.receiverMutability() == ReceiverMutability::Consuming,
+      .requiresUnsafe = function->requiresUnsafe,
+      .generic = !function->genericParameters.empty(),
+      .constrained = !function->requirements.empty(),
       .returnType = substituteType(function->returnType, substitution)};
   const auto member = owner->members.find(declaration.name().lexeme);
   if (member != owner->members.end()) {

@@ -3068,16 +3068,6 @@ private:
                        const std::vector<SemanticType> &arguments);
 
   [[nodiscard]] bool
-  hasExactComparisonOperator(const SemanticType &type,
-                             OverloadedOperator operation) const;
-
-  [[nodiscard]] bool
-  isEqualityComparableConstraintType(const SemanticType &type) const;
-
-  [[nodiscard]] bool
-  isRelationallyOrderedConstraintType(const SemanticType &type) const;
-
-  [[nodiscard]] bool
   satisfiesAtomicConstraint(const SemanticType &argument,
                             GenericConstraintKind constraint) const;
 
@@ -3874,10 +3864,11 @@ private:
   hasStableBorrowStorage(const ExprPtr &expression,
                          std::unordered_set<const Expr *> &visiting) const;
 
-  std::vector<GenericParameterInfo> makeGenericParameters(
-      const std::vector<GenericParameter> &parameters,
-      const Token &declarationName, const std::vector<std::string> &fromScope,
-      bool allowStructural = false, bool resolveDefaults = true);
+  std::vector<GenericParameterInfo>
+  makeGenericParameters(const std::vector<GenericParameter> &parameters,
+                        const Token &declarationName,
+                        const std::vector<std::string> &fromScope,
+                        bool resolveDefaults = true);
   void resolveGenericParameterDefaults(
       const std::vector<GenericParameter> &parameters,
       std::vector<GenericParameterInfo> &result,
@@ -5102,6 +5093,10 @@ private:
     bool virtualMethod = false;
     bool mutableReceiver = false;
     bool publicAccess = false;
+    bool consumingReceiver = false;
+    bool requiresUnsafe = false;
+    bool generic = false;
+    bool constrained = false;
     SemanticType returnType = SemanticType::Unknown;
     std::vector<SemanticType> parameterTypes;
     std::vector<std::string> parameterNames;

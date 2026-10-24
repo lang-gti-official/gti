@@ -2322,6 +2322,17 @@ ordered parameter/result type roles and source provenance in AST-free
 `LoweredConceptRequirement` records; neither HIR nor the backend evaluates
 constraints anew.
 
+Isolated query and staged constant workers preserve the declaration-bound
+reflection type registry alongside their catalog snapshot. This lets generic
+source predicates reduce computed metadata sequences without sharing caller
+flow. Unary source concepts may annotate function and constructor parameters
+inline: `GenericParameterInfo::conceptId` retains the full contract, the type
+parameter scope imports its facts, and concrete admission rechecks it.
+Comparison policy uses source metadata filtering plus ordinary expression
+queries; no comparison concept binding or class-policy checker remains.
+Primitive-category facts retain native value comparisons even when a source
+requirement was written with reference bindings.
+
 A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
 application, and exact semantic type arguments. Arguments may be visible
