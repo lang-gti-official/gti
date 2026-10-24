@@ -26715,6 +26715,8 @@ movedTemporaryHandedOff(const MirBody &body, const MirInstruction &consumer) {
 // A synthetic owned temporary has no named moved-from binding to retain.
 // When its exact return Move is followed by TransferOut, retire only the
 // disarmed native shell at that event. Named locals keep their scheduled Drop.
+// Failure-only cleanup may still own the unpublished value on a path that
+// cannot reach publication; that Drop must remain executable on failure.
 [[nodiscard]] const MirPlace *
 movedReturnTemporaryForTransfer(const MirBody &body,
                                 const MirInstruction &transfer) {
@@ -26733,25 +26735,85 @@ movedReturnTemporaryForTransfer(const MirBody &body,
       drop->dropType.type != slot->type)
     return nullptr;
   const MirInstruction *move = nullptr;
+  const MirBlock *publication = nullptr;
+  std::vector<MirBlockId> failureDrops;
   for (const auto &block : body.blocks) {
     for (std::size_t index = 0; index < block.instructions.size(); ++index) {
       const auto &instruction = block.instructions[index];
       if (instruction.kind == MirInstructionKind::Drop &&
           instruction.destination) {
         const auto *destination = body.findPlace(*instruction.destination);
-        if (destination && sameMirPlaceRoot(*destination, *slot))
-          return nullptr;
+        if (destination && sameMirPlaceRoot(*destination, *slot)) {
+          const bool exactFailureDrop =
+              destination == slot && instruction.lifecycle.size() == 1 &&
+              instruction.lifecycle.front().kind ==
+                  MirLifecycleEventKind::Drop &&
+              instruction.lifecycle.front().source == drop->id &&
+              instruction.lifecycle.front().target == 0 &&
+              !instruction.lifecycle.front().conditional &&
+              instruction.lifecycle.front().failureCleanup &&
+              block.activeFailure != 0 &&
+              body.findFailureRecord(block.activeFailure) != nullptr;
+          if (!exactFailureDrop)
+            return nullptr;
+          failureDrops.push_back(block.id);
+        }
       }
-      if (&instruction == &transfer && index != 0)
+      if (&instruction == &transfer && index != 0) {
         move = &block.instructions[index - 1];
+        publication = &block;
+      }
     }
   }
-  if (move == nullptr || !move->result ||
+  if (move == nullptr || publication == nullptr ||
+      body.findBlock(publication->id) != publication ||
+      publication->activeFailure != 0 || !move->result ||
       returnMoveDefinition(body, *move->result) != move ||
       move->operands.front().place != slot->id ||
       move->operands.front().type != slot->type ||
       move->info.type != slot->type)
     return nullptr;
+  if (!failureDrops.empty()) {
+    // One reverse CFG closure proves all candidate cleanup Drops disjoint
+    // from this publication, including branches and failure continuations.
+    // Merely retaining a failureCleanup flag grants no such authority.
+    std::vector<std::vector<MirBlockId>> predecessors(body.blocks.size() + 1);
+    bool validEdges = true;
+    for (const auto &block : body.blocks) {
+      if (body.findBlock(block.id) != &block) {
+        validEdges = false;
+        continue;
+      }
+      forEachTerminatorEdge(block.terminator, [&](MirBlockId target) {
+        if (target == 0)
+          return;
+        if (body.findBlock(target) == nullptr) {
+          validEdges = false;
+          return;
+        }
+        predecessors[target].push_back(block.id);
+      });
+    }
+    if (!validEdges)
+      return nullptr;
+    std::vector<bool> reachesPublication(body.blocks.size() + 1, false);
+    std::vector<MirBlockId> pending;
+    pending.push_back(publication->id);
+    reachesPublication[publication->id] = true;
+    while (!pending.empty()) {
+      const auto block = pending.back();
+      pending.pop_back();
+      for (const auto predecessor : predecessors[block])
+        if (!reachesPublication[predecessor]) {
+          reachesPublication[predecessor] = true;
+          pending.push_back(predecessor);
+        }
+    }
+    if (std::any_of(
+            failureDrops.begin(), failureDrops.end(),
+            [&](MirBlockId block) { return reachesPublication[block]; }))
+      return nullptr;
+  }
   return slot;
 }
 

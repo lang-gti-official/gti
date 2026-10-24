@@ -2136,10 +2136,9 @@ void initializerLocalDependencies() {
   int saved = expression;
   return local_value(saved);
 }
-#macro int local_callback() {
-  int saved = 7;
-  auto action = [saved]() -> int { return saved; };
-  return action();
+#macro int local_callback<F>(F action) {
+  int saved = action();
+  return saved;
 }
 )";
   const auto accepted = [&](const std::string &source,
@@ -2152,16 +2151,16 @@ void initializerLocalDependencies() {
   };
   accepted(helpers + R"(
 thread_local int first = local_value(3);
-thread_local auto second = nested_value(4);
-thread_local int third = local_callback();
+thread_local int second = nested_value(4);
+thread_local int third = local_callback([]() -> int { return 7; });
 int main() { return first + second + third; }
 )",
            "namespace TLS initialization permits its own lexical values and "
-           "owned captures through copied nested-probe contexts");
+           "fresh-callable results through copied nested-probe contexts");
   accepted(helpers + R"(
 int main() {
   thread_local int first = nested_value(3);
-  thread_local auto second = local_callback();
+  thread_local auto second = local_callback([]() -> int { return 7; });
   return first + second;
 }
 )",

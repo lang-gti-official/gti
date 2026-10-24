@@ -9794,6 +9794,25 @@ verifyMirProgramInitialization(const MirProgram &program) {
     if (place == nullptr || !visiting.insert(placeId).second) {
       return StorageIdentity{};
     }
+    if (place->root == MirPlaceRootKind::Symbol && place->capture == 0) {
+      const auto *threadLocal = program.findThreadLocalStorage(place->symbol);
+      if (threadLocal && place->binding == 0 && place->temporary == 0 &&
+          place->value == 0 && place->loan == 0 && !place->foreignStorage &&
+          (!place->key ||
+           (!place->key->receiver && place->key->root == threadLocal->symbol &&
+            place->key->domain == module.placeDomain)) &&
+          (place->projections.empty()
+               ? place->type == threadLocal->type &&
+                     place->traits == threadLocal->traits &&
+                     (threadLocal->access != AccessMode::ReadOnly ||
+                      place->access == AccessMode::ReadOnly)
+               : true)) {
+        // An exact TLS access has no eager process step. Its independently
+        // verified Ensure success, not source order, establishes readiness.
+        visiting.erase(placeId);
+        return std::nullopt;
+      }
+    }
     std::optional<StorageIdentity> selected;
     const auto select = [&](StorageIdentity candidate) {
       if (candidate.step == 0 ||

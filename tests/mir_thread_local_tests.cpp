@@ -43,14 +43,14 @@ void initializerHasNoCallerActivation() {
 extern "C" { mut int32_t external_value; }
 mut int32_t process_value = 4;
 thread_local mut int32_t per_thread_value = 2;
+thread_local int32_t* external_address = &external_value;
+int32_t read_external() { unsafe { return external_value; } }
 #macro int32_t lexical_value(int32_t expression) {
   int32_t saved = expression;
-  unsafe {
-    int32_t native_copy = external_value;
-    return saved + native_copy;
-  }
+  int32_t native_copy = read_external();
+  return saved + native_copy;
 }
-int32_t process_result = lexical_value(process_value);
+int32_t process_result = lexical_value(process_value + per_thread_value);
 thread_local int32_t per_thread_result = lexical_value(per_thread_value);
 int32_t invoke(int32_t argument) {
   int32_t caller = argument;

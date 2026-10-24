@@ -1788,12 +1788,18 @@ public:
   ~Resource() { destroyed = 1; }
   int32_t read() { return this.number; }
 };
+class ScopeGuard {
+public:
+  ScopeGuard() {}
+  ~ScopeGuard() { destroyed += 1; }
+};
 #macro int32_t select_value(bool enabled, int32_t expression) {
   int32_t saved = expression;
   if (enabled) { return saved; }
   return 0;
 }
 #macro Resource own_value(int32_t expression) {
+  ScopeGuard armed{};
   Resource saved{expression};
   return saved;
 }
@@ -1866,6 +1872,80 @@ int main() {
   expect(changedGuard && !lang::verifyMirProgram(malformedMir).valid(),
          "macro-local evaluation still requires its exact TLS first-use "
          "guard");
+  const auto *ownedInitializer = lang::findMirBody(
+      frontend.mir,
+      {.kind = lang::MirBodyKind::ThreadLocalInitializer, .owner = owner});
+  expect(ownedInitializer != nullptr,
+         "owning macro fixture retains its exact TLS initializer body");
+  if (!ownedInitializer)
+    return;
+  lang::MirBlockId publicationBlock = 0;
+  lang::MirDropObligationId resultDrop = 0;
+  lang::MirPlaceId resultSlot = 0;
+  for (const auto &block : ownedInitializer->blocks)
+    for (const auto &instruction : block.instructions)
+      for (const auto &event : instruction.lifecycle) {
+        const auto *drop = ownedInitializer->findDropObligation(event.source);
+        const auto *place =
+            drop ? ownedInitializer->findPlace(drop->place) : nullptr;
+        if (event.kind == lang::MirLifecycleEventKind::TransferOut &&
+            !event.failureCleanup && event.target == 0 && place &&
+            place->root == lang::MirPlaceRootKind::Temporary) {
+          publicationBlock = block.id;
+          resultDrop = drop->id;
+          resultSlot = place->id;
+        }
+      }
+  lang::MirBlockId failureBlock = 0;
+  lang::MirInstructionId failureDrop = 0;
+  for (const auto &block : ownedInitializer->blocks)
+    for (const auto &instruction : block.instructions)
+      if (block.activeFailure != 0 &&
+          instruction.kind == lang::MirInstructionKind::Drop &&
+          instruction.destination == resultSlot &&
+          instruction.lifecycle.size() == 1 &&
+          instruction.lifecycle.front().source == resultDrop &&
+          instruction.lifecycle.front().failureCleanup) {
+        failureBlock = block.id;
+        failureDrop = instruction.id;
+      }
+  lang::MirDropObligationId otherDrop = 0;
+  const auto *returned = ownedInitializer->findDropObligation(resultDrop);
+  for (const auto &drop : ownedInitializer->dropObligations)
+    if (returned && drop.id != resultDrop &&
+        drop.dropType.type == returned->dropType.type)
+      otherDrop = drop.id;
+  expect(publicationBlock && resultDrop && resultSlot && failureBlock &&
+             failureDrop && otherDrop,
+         "an owning result retains a distinct exact failure-only cleanup "
+         "before success publication");
+  if (!publicationBlock || !failureDrop || !otherDrop)
+    return;
+  for (const bool wrongObligation : {false, true}) {
+    auto forged = frontend.mir;
+    auto *body = lang::findMirBody(
+        forged,
+        {.kind = lang::MirBodyKind::ThreadLocalInitializer, .owner = owner});
+    bool changed = false;
+    for (auto &block : body->blocks) {
+      if (wrongObligation) {
+        for (auto &instruction : block.instructions)
+          if (instruction.id == failureDrop) {
+            instruction.lifecycle.front().source = otherDrop;
+            changed = true;
+          }
+      } else if (block.id == failureBlock) {
+        block.terminator = {.kind = lang::MirTerminatorKind::Goto,
+                            .target = publicationBlock};
+        changed = true;
+      }
+    }
+    lang::rebuildMirReachability(*body);
+    expect(changed && lang::rebuildMirValueUses(*body) &&
+               !lang::verifyMirProgram(forged).valid(),
+           "failure-result cleanup requires its exact obligation and cannot "
+           "rejoin the publication path");
+  }
 }
 
 void macroLocalCleanupRetainsAmbientEffects() {

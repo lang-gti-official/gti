@@ -101,7 +101,7 @@ int main() {
 }
 """
 
-MACRO_RESULT = """\
+MACRO_RESULT_PRELUDE = """\
 #include <std/format>
 #include <std/panic>
 #include <std/thread>
@@ -109,6 +109,7 @@ thread_local mut int32_t macro_seed = 7;
 thread_local mut int32_t macro_created = 0;
 thread_local mut int32_t macro_guards = 0;
 thread_local mut int32_t macro_dropped = 0;
+thread_local mut bool macro_guard_fails = false;
 class MacroReport {
 public:
   MacroReport() = default;
@@ -124,7 +125,10 @@ thread_local MacroReport macro_report{};
 class MacroGuard {
 public:
   MacroGuard() {}
-  ~MacroGuard() { macro_guards += 1; }
+  ~MacroGuard() {
+    macro_guards += 1;
+    if (macro_guard_fails) std::panic("macro guard failure");
+  }
 };
 class MacroOwner {
   int32_t number;
@@ -153,6 +157,9 @@ int32_t verify_macro_state() {
       macro_created != 1 || macro_guards != 1 || macro_dropped != 0) return 1;
   return 0;
 }
+"""
+
+MACRO_RESULT = MACRO_RESULT_PRELUDE + """\
 int main() {
   auto started = std::thread::start([]() -> void {
     if (verify_macro_state() != 0) std::panic("worker macro state");
@@ -167,6 +174,13 @@ int main() {
   if (verify_macro_state() != 0) return 4;
   std::println("main macro {}", macro_owner.read());
   return 0;
+}
+"""
+
+MACRO_RESULT_FAILURE = MACRO_RESULT_PRELUDE + """\
+int main() {
+  macro_guard_fails = true;
+  return verify_macro_state();
 }
 """
 
@@ -413,6 +427,8 @@ def main() -> None:
         ("macro_result", MACRO_RESULT, "concurrent", 0,
          "worker macro 7\nmacro cleaned 1 1 1\nmacro joined\n"
          "main macro 7\nmacro cleaned 1 1 1\n", None),
+        ("macro_result_failure", MACRO_RESULT_FAILURE, "concurrent", 70,
+         "macro cleaned 1 1 1\n", "GTI-R0017"),
         ("manual", MANUAL, "concurrent", 0,
          "init 1\ndrop 1\nmanual joined\n", None),
         ("immovable", IMMOVABLE, "single-threaded", 0,

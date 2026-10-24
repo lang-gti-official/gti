@@ -3244,6 +3244,7 @@ private:
       HirStatementId statement = 0;
       std::size_t constructorInitializer = 0;
     };
+    const FullExpressionLookup lookup(body);
     std::vector<PendingFullExpression> pendingFullExpressions;
     for (std::size_t index = 0; index < initializers.size(); ++index) {
       const HirConstructorInitializer &initializer = initializers[index];
@@ -3276,8 +3277,21 @@ private:
       if (statement.source == nullptr) {
         continue;
       }
+      const auto *invocation = stmtAs<ExpressionStmt>(statement.source);
+      const bool statementOnlyMacro =
+          invocation && invocation->expression() &&
+          statement.kind == HirStatementKind::Block && statement.value == 0 &&
+          model.findMacroExpansion(*invocation) != nullptr &&
+          model.typeOf(*invocation->expression()) == SemanticType::Void &&
+          lookup.forRoot(body, *invocation->expression()) == nullptr;
       for (const SemanticFullExpression &expression :
            model.fullExpressionsFor(*statement.source)) {
+        // A checked statement-only expansion has no executable invocation
+        // value. Its evaluated children retain their own ordinary expression
+        // roots and cleanup; only this exact syntactic outer root is absent.
+        if (statementOnlyMacro && expression.roots.size() == 1 &&
+            expression.roots.front() == invocation->expression().get())
+          continue;
         pendingFullExpressions.push_back(
             {.expression = &expression, .statement = statement.id});
       }
@@ -3296,7 +3310,6 @@ private:
           }
           return left.expression->order < right.expression->order;
         });
-    const FullExpressionLookup lookup(body);
     for (const PendingFullExpression &pending : pendingFullExpressions) {
       const std::vector<HirValueId> roots =
           pending.constructorInitializer != 0 &&
