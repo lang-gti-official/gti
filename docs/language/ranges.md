@@ -346,6 +346,8 @@ cursor cannot outlive a local view shell, even when the view is literal-backed.
 These builtin-view member operations are normalized by semantic analysis to
 trusted declaration-identity-bound source factory calls. The receiver is the
 first ordinary checked argument, evaluated once before written arguments.
+Written through a checked `operator->` (`label->end()`), that argument is the
+view the selected operator's reference designates.
 HIR/MIR use the resolved call and lifetime facts, while editor queries present
 the public member signature. No backend spelling recognition grants access.
 
