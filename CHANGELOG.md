@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.467.1 — References into values over a local owner's text
+## 0.468.1 — References into values over a local owner's text
 
 - Fixed a use-after-free present since 0.465.2. A reference that a method or
   function returns into a value holding a local string's text, as in
@@ -28,13 +28,13 @@ for what minor and patch releases mean.
 
 - A method returning one of several fields by reference, such as
   `Word& either(bool first)`, can again be switched on in place over a local
-  owner's text, as before 0.467.0.
+  owner's text, as before 0.468.0.
 - A function taking a class by reference can pass on the reference one of
   its methods returns, as in `keepWordRef(line.wordRef())`, while another
   field of the class holds a local owner's text; this was an internal
   compiler error (`GTI-B0001`).
 
-## 0.467.0 — Views of the caller's string in results and nested values
+## 0.468.0 — Views of the caller's string in results and nested values
 
 - A function can now return a value over the text of one of its read-only
   reference parameters, and each call's result views that call's argument:
@@ -96,6 +96,51 @@ for what minor and patch releases mean.
   `Slot(int32_t n) : state(slot_state::ready(n)) {}`, are again known not to
   fail, as in 0.448.4, so their callers no longer check for a failure.
 
+## 0.467.2 — Copying a payload view that holds a local owner's text
+
+- In a `switch` over a payload enum whose `string_view` payload views a local
+  owner, as in `Word word = Word::text(input.view());`, copying the arm's
+  binding into a local (`case Word::text(value): std::string_view v = value;`)
+  used to report `error[GTI-B0001]` (an internal compiler error). The copy now
+  compiles and keeps `input` borrowed while it is live, as a copy of a class's
+  published text field does. This also covers copies of copies, a payload
+  enum held in a field (`switch (line.word)`), generic enums, `default` arms
+  and loops.
+## 0.467.1 — Text members through `operator->`
+
+- When an `operator->` returns a `std::string_view&`, its members can be
+  called through `->`. For a class with `std::string_view& operator->()`,
+  `b->size()` used to report `error[GTI-B0001]` (an internal compiler error);
+  it now calls the view's `size()`. The same holds for `empty()` and for
+  `end()`/`rend()`, and for `std::optional<std::string_view>`, whose
+  `o->size()` now works like `(*o).size()`. On an empty optional, `o->size()`
+  reports its defined `empty_owner_access` failure.
+- A referent without members is reported at the call: `->` through an
+  `int&` or `c_string&` result reports `GTI-S2000`, and an unknown
+  `string_view` member reports `GTI-S2035`.
+- Not yet supported: building a text iterator directly from a returned view
+  reference, as in `o->begin()` or `o.value().begin()`, still reports
+  `GTI-B0001`. Bind the reference first (`std::string_view& view =
+  o.value();`) and iterate `view`.
+
+## 0.467.0 — Source-defined requirements and general type facts
+
+- `requires` queries can check ordinary expressions and construction with exact
+  owned results, optional synthetic parameters and multiple checks. Queries
+  execute no code and retain normal access, ownership and unsafe obligations.
+- Concepts and trailing clauses can compose constexpr Boolean calls, including
+  general `std::meta` classification, lifecycle, relocation, transfer/share,
+  exact-type and enum-representation predicates. Existing compiler facts stay
+  authoritative; arbitrary predicates do not invent safety proofs.
+- Prelude numeric/lifecycle/enum concepts now compose reflection queries, and
+  domain arithmetic concepts use source expression requirements. Strict
+  comparison and borrowed-result contracts retain their necessary compiler
+  support. Exact member requirements remain compatible; overload ranking and
+  subsumption are unchanged.
+- Hover signatures, requirement parameter navigation/rename, formatting and
+  Tree-sitter support cover the extended syntax. Example 173 demonstrates it.
+
+
 ## 0.466.0 — Typed macros
 
 - Declare namespace-scope statement templates with `#macro NAME(typed
@@ -118,6 +163,7 @@ for what minor and patch releases mean.
 - Diagnostics include nested expansion context. Neovim's read-only
   `:GTIExpandMacro` view explains the checked expansion and local bindings.
 
+
 ## 0.465.6 — Moving one class and copying another after fallible work
 
 - A constructor can now move one class into a field and copy another into a
@@ -130,6 +176,7 @@ for what minor and patch releases mean.
   or the constructor body fails, each field already built is dropped exactly
   once.
 
+
 ## 0.465.5 — Test-target editor diagnostics
 
 - The language server recognizes `kind = "test"` and no longer asks valid
@@ -137,6 +184,7 @@ for what minor and patch releases mean.
   suites, invalid test signatures and conflicting user-written entry points.
   Changing a target between executable and test refreshes editor diagnostics.
   Generated test dispatchers stay out of editor source snapshots and symbols.
+
 
 ## 0.465.4 — Text relays through accessor switch subjects
 
@@ -155,6 +203,7 @@ for what minor and patch releases mean.
   view. It now reports `error[GTI-S2045]`, exactly as through
   `switch (this.word)`.
 
+
 ## 0.465.3 — Moving classes that hold function items
 
 - A generic class whose field holds a function item, such as `class Op<F> {
@@ -167,6 +216,7 @@ for what minor and patch releases mean.
 - Such a class can also now be chosen by a conditional, as in `Op<F> chosen =
   pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
   can be assigned into a field. Each used to report `error[GTI-B0001]`.
+
 
 ## 0.465.2 — Switching over a payload enum returned by reference
 

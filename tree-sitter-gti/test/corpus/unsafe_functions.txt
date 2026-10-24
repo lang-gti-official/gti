@@ -77,7 +77,11 @@ concept readable<T> = requires(T& source) { unsafe { source.read() } -> int; };
             (identifier))
           (reference_declarator))
         (identifier)
-        (identifier)
-        (identifier)
+        (call_expression
+          (member_expression
+            (primary_expression
+              (identifier))
+            (identifier))
+          (argument_list))
         (type
           (primitive_type))))))

@@ -245,22 +245,29 @@ constraint-disjunction
 constraint-conjunction = constraint-primary
                          { ( "&&" | "and" ) constraint-primary } ;
 constraint-primary     = concept-application
-                       | member-requirement
+                       | constraint-predicate
+                       | expression-requirement
                        | "(" constraint-expression ")" ;
 
-member-requirement     = "requires" "(" [ "mut" ] type IDENTIFIER
-                         { "," [ "mut" ] type IDENTIFIER } ")"
-                         "{" [ "unsafe" ] "{" IDENTIFIER "." IDENTIFIER "("
-                         [ IDENTIFIER { "," IDENTIFIER } ] ")" "}"
-                         "->" type ";" "}" ;
-(* The receiver type is a reference with explicit read-only/mutable access.
-   The receiver identifiers match; each additional binding appears once in
-   declaration order. Parameter reference access and all signature types match
-   exactly. The result is an owned type, not a C++ result concept.
+constraint-predicate   = concept-application "("
+                         [ assignment-expression
+                           { "," assignment-expression } ] ")" ;
+expression-requirement = "requires" [ "(" [ requirement-parameter
+                         { "," requirement-parameter } ] ")" ]
+                         "{" requirement-check { requirement-check } "}" ;
+requirement-parameter  = [ "mut" ] type IDENTIFIER ;
+requirement-check      = [ "unsafe" ] "{" assignment-expression "}"
+                         "->" type ";" ;
+(* A requirement's `mut` parameters must be references. The result is an exact
+   owned non-borrowed type, not a C++ result concept. Ordinary expression rules
+   apply without executing code or mutating caller flow. The historical direct
+   nongeneric member call with a checked receiver and all argument bindings in
+   declaration order retains its exact signature-matching contract.
    An unsafe requirement preserves the caller obligation in generic bodies;
    it accepts safe or unsafe implementations. An ordinary requirement accepts
-   only safe implementations. Member requirements are also boolean primary
-   expressions. Neither spelling executes its synthetic call. *)
+   only safe implementations. Requirements are also boolean primary expressions.
+   Predicate calls must be exact bool constants under existing constexpr rules;
+   general expressions and negation are not direct constraint leaves. *)
 
 compiler-concept-declaration
                        = compiler-constraint-binding "concept" IDENTIFIER
@@ -884,6 +891,8 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    receiver.
    `operator->`
    performs one checked reference step; recursive proxy lookup is not provided.
+   The member after `->` is looked up on the referenced type, which need not
+   be a class (a `std::string_view&` result supplies the view's members).
    `operator bool` participates implicitly only in conditions, logical
    `and`/`or` (`&&`/`||`), and `!`. A conversion operator `operator T()` takes
    no parameters and uses a read-only, `mut`, or `&&` receiver; `T(value)`
