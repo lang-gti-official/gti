@@ -175,6 +175,10 @@ public:
 
   struct ProgramEffectSummary {
     bool directFailure = false;
+    // An effect query cannot certify an invalid body. Its ordinary instance
+    // analysis owns diagnostics, including discovery of independent type
+    // assertions; retained errors gate that path if its result later changes.
+    bool invalidBody = false;
     std::vector<ProgramStorageEffectUse> uses;
     std::vector<ProgramBorrowStorageUse> borrowUses;
     std::vector<ProgramEffectEdge> edges;
@@ -188,6 +192,7 @@ public:
     std::vector<CompileTimeValue> values;
     SourceSpan site;
     bool complete = false;
+    std::vector<SemanticDiagnostic> invalidDiagnostics;
   };
   struct ProgramConcreteEffectState {
     std::vector<ProgramConcreteEffectQuery> queries;
@@ -196,6 +201,9 @@ public:
     std::vector<std::pair<std::size_t, ProgramEffectOwner>> localOwners;
     // Hash buckets accelerate lookup; the ordered vector alone assigns IDs.
     std::unordered_map<std::size_t, std::vector<std::size_t>> buckets;
+    std::unordered_map<InstanceAnalysisKey, std::vector<std::size_t>,
+                       InstanceAnalysisKeyHash>
+        invalidInstances;
     std::size_t analyzed = 0;
   };
 
@@ -205,6 +213,8 @@ public:
                                    const std::vector<CompileTimeValue> &values,
                                    const SourceSpan &site);
   void closeConcreteProgramEffects(const ProgramInitializationPlan &plan);
+  void preserveInvalidProgramEffectDiagnostics(
+      const InstanceAnalysisKey &key, SemanticInstanceAnalysis &analysis) const;
 
   explicit Impl(
       TargetInfo target, const SourceGraph *sourceGraph,
@@ -591,18 +601,23 @@ public:
   [[nodiscard]] SemanticInstanceAnalysis
   analyzeReusableInstance(InstanceAnalysisKey key, Analyze analyze) {
     if (!lateDemandReady || bodyPhaseActive || instanceAnalysisActive ||
-        !prepareInstanceReuse())
-      return withLateDemand(analyze);
+        !prepareInstanceReuse()) {
+      auto result = withLateDemand(analyze);
+      preserveInvalidProgramEffectDiagnostics(key, result);
+      return result;
+    }
     if (!reusableInstanceKey(key)) {
       if (workMetrics != nullptr)
         ++workMetrics->semanticInstanceReuseIneligible;
       SemanticInstanceAnalysis result = withLateDemand(analyze);
+      preserveInvalidProgramEffectDiagnostics(key, result);
       reserveInstanceRange(result.model);
       return result;
     }
     if (auto reused = reuseInstance(key)) {
       if (workMetrics != nullptr)
         ++workMetrics->semanticInstanceReuseHits;
+      preserveInvalidProgramEffectDiagnostics(key, *reused);
       return std::move(*reused);
     }
     if (workMetrics != nullptr)
@@ -611,6 +626,7 @@ public:
     journalNextInstance = true;
     SemanticInstanceAnalysis result = withLateDemand(analyze, &consulted);
     journalNextInstance = false;
+    preserveInvalidProgramEffectDiagnostics(key, result);
     reserveInstanceRange(result.model);
     retainInstance(std::move(key), result, consulted);
     return result;

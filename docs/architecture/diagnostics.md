@@ -183,6 +183,12 @@ request becomes the primary location and the library location a related note:
 an error inside prelude or standard-library internals is reported where the
 caller can act on it, including in the editor's per-document diagnostics.
 
+Concrete storage-effect queries retain invalid-body diagnostics for this same
+ordinary instance-publication path. They must not short-circuit independent
+body/result-type assertion discovery or publish library-internal locations in
+place of the user's instantiation site. Retained errors are keyed by the exact
+instance and remain a refusal if later analysis would otherwise admit it.
+
 `GTI-S2105` reports deterministic concrete-instance discovery exhaustion (64
 new-instance levels or 16,384 distinct generic instances in one HIR request). It anchors
 the requesting source, relates the declaration and explains that runtime

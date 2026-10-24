@@ -2688,7 +2688,8 @@ private:
     currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
-    if (!owner.typeArguments.empty() || !owner.valueArguments.empty()) {
+    if ((ownerInfo != nullptr && !ownerInfo->genericParameters.empty()) ||
+        !owner.typeArguments.empty() || !owner.valueArguments.empty()) {
       const PhaseTimeScope timeScope("hir-instance-analysis", "destructor");
       analysis = instanceProvider->analyzeDestructorInstance(
           owner.declaration, owner.typeArguments, owner.valueArguments);

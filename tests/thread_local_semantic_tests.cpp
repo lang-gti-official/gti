@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/semantic_analyzer.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -1022,6 +1023,240 @@ void selected<uint64_t Mode>() {
   }
 }
 
+void invalidEffectQueryDiagnostics() {
+  for (const bool borrowed : {false, true}) {
+    const std::string source = R"(
+thread_local mut int guarded = 1;
+expected<int, int> read() { return unexpected(7); }
+void mapper(int value) {}
+int main() {
+)" + std::string(borrowed ? "int& held = guarded; " : "") +
+                               "[[discard]] read().transform_error(mapper); " +
+                               (borrowed ? "return held; }" : "return 0; }");
+    const auto result = analyze(source, true, true);
+    const auto member = source.rfind("transform_error");
+    const auto atMember = [&](std::string_view message) {
+      return std::count_if(
+                 result.diagnostics.begin(), result.diagnostics.end(),
+                 [&](const auto &diagnostic) {
+                   return diagnostic.code == "GTI-S2079" &&
+                          diagnostic.message == message &&
+                          diagnostic.primary.source ==
+                              std::filesystem::weakly_canonical(
+                                  "thread-local-semantics.gti")
+                                  .string() &&
+                          diagnostic.primary.start == member &&
+                          diagnostic.primary.end == member + 15 &&
+                          std::any_of(
+                              diagnostic.related.begin(),
+                              diagnostic.related.end(),
+                              [](const auto &related) {
+                                return related.message ==
+                                       "Reported inside this library instance.";
+                              });
+                 }) == 1;
+    };
+    expect(!result.canGenerateCode() && !result.semanticValid &&
+               result.diagnostics.size() == 2 &&
+               atMember("Static assertion failed. A 'transform_error' mapper "
+                        "must return an error value, not 'void'.") &&
+               atMember("Static assertion failed. An 'expected' error type "
+                        "cannot be 'void'.") &&
+               !code(result, "GTI-S2045") && !code(result, "GTI-B0001") &&
+               result.mir.functionInstances().empty(),
+           "failed effect queries preserve canonical library diagnostic "
+           "origins and independent body/result-type assertions, with or "
+           "without a retained TLS borrow");
+  }
+
+  const std::string assertion =
+      "static_assert(sizeof(T) == uint64_t(4), \"exact instance body\"); ";
+  const std::vector<std::pair<std::string, std::string>> instances = {
+      {"void selected<T>() { " + assertion + "}", "selected"},
+      {"class Selected<T> { public: Selected() { " + assertion + "} };",
+       "construct"},
+      {"class Selected<T> { public: ~Selected() { " + assertion + "} };",
+       "destroy"},
+      {"class Selected<T> { " + assertion + "public: int field = 1; };",
+       "fields"},
+  };
+  for (const auto &[declaration, kind] : instances) {
+    const auto use = [&](std::string_view type, std::string_view name) {
+      return kind == "selected" ? "selected<" + std::string(type) + ">(); "
+                                : "Selected<" + std::string(type) + "> " +
+                                      std::string(name) + "{}; ";
+    };
+    const std::string prefix =
+        "thread_local mut int guarded = 1; " + declaration;
+    const std::string good = use("int32_t", "good");
+    const std::string bad = use("int64_t", "bad");
+    const auto allowed = analyze(prefix + "int main() { int& held = guarded; " +
+                                     good + "return held; }",
+                                 true, true);
+    if (!allowed.canGenerateCode())
+      for (const auto &diagnostic : allowed.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(allowed.canGenerateCode(),
+           "a valid concrete provider outcome preserves its exact owner/type "
+           "key and an unrelated live TLS borrow");
+    for (const bool reverse : {false, true}) {
+      const auto result =
+          analyze(prefix + "int main() { int& held = guarded; " +
+                      (reverse ? bad + good : good + bad) + "return held; }",
+                  true, true);
+      const auto assertions = std::count_if(
+          result.diagnostics.begin(), result.diagnostics.end(),
+          [](const auto &diagnostic) {
+            return diagnostic.code == "GTI-S2079" &&
+                   diagnostic.message.find("exact instance body") !=
+                       std::string::npos;
+          });
+      expect(!result.semanticValid && !result.canGenerateCode() &&
+                 assertions == 1 && !code(result, "GTI-S2045") &&
+                 !code(result, "GTI-B0001") &&
+                 result.mir.functionInstances().empty() &&
+                 result.mir.constructorInstances().empty() &&
+                 result.mir.destructorInstances().empty(),
+             "failed function/constructor/destructor/field effect queries "
+             "cannot emit MIR or contaminate another concrete specialization "
+             "in either query order");
+    }
+  }
+
+  const std::string keyed = R"(
+thread_local mut int guarded = 1;
+class Keyed<T, uint64_t OwnerValue> {
+public:
+  void select<U, uint64_t MethodValue>() {
+    static_assert(sizeof(T) != uint64_t(8) || OwnerValue != uint64_t(7) ||
+                  sizeof(U) != uint64_t(4) || MethodValue != uint64_t(9),
+                  "exact owner and method instance");
+  }
+};
+)";
+  const std::string owners =
+      "Keyed<int32_t, 7> first{}; Keyed<int64_t, 6> second{}; "
+      "Keyed<int64_t, 7> third{}; ";
+  const std::string safeKeys =
+      "first.select<int32_t, 9>(); second.select<int32_t, 9>(); "
+      "third.select<int64_t, 9>(); third.select<int32_t, 8>(); ";
+  const std::string badKey = "third.select<int32_t, 9>(); ";
+  for (const bool reverse : {false, true}) {
+    const auto result =
+        analyze(keyed + "int main() { " + owners + "int& held = guarded; " +
+                    (reverse ? badKey + safeKeys : safeKeys + badKey) +
+                    "return held; }",
+                true, true);
+    const auto exactFailures = std::count_if(
+        result.diagnostics.begin(), result.diagnostics.end(),
+        [](const auto &diagnostic) {
+          return diagnostic.code == "GTI-S2079" &&
+                 diagnostic.message.find("exact owner and method instance") !=
+                     std::string::npos;
+        });
+    expect(!result.canGenerateCode() && exactFailures == 1 &&
+               !code(result, "GTI-S2045") && !code(result, "GTI-B0001") &&
+               result.mir.functionInstances().empty(),
+           "deferred invalid diagnostics use the complete owner and function "
+           "type/value key without cross-specialization contamination");
+  }
+
+  const auto open = analyze(R"(
+thread_local mut int guarded = 1;
+interface Callback { void call(); };
+void selected<uint64_t Mode>(Callback& callback) {
+  int& held = guarded;
+  callback.call();
+  int copy = held;
+}
+void dispatch(Callback& callback) { selected<0>(callback); }
+int main() { return 0; }
+)",
+                            true, true);
+  expect(!open.semanticValid && code(open, "GTI-S2045") &&
+             !code(open, "GTI-B0001"),
+         "a genuinely open concrete dispatch remains an unknown storage "
+         "effect rather than a deferred invalid-body diagnostic");
+}
+
+void emptyPackDestructorProvider() {
+  const auto source = analyze(R"(
+class Empty<Args...> { public: ~Empty() {} };
+int main() { Empty<> value{}; return 0; }
+)");
+  lang::SemanticVisitor semantic(lang::TargetInfo::host(), &source.sourceGraph,
+                                 false, nullptr, &source.sources);
+  expect(semantic.check(source.program),
+         "the empty-pack destructor provider fixture has valid primary "
+         "semantic facts");
+  struct Provider final : lang::SemanticInstanceProvider {
+    lang::SemanticVisitor &delegate;
+    std::size_t emptyDestructors = 0;
+    bool reject = false;
+    explicit Provider(lang::SemanticVisitor &delegate) : delegate(delegate) {}
+    lang::SemanticTypeTraits
+    traitsFor(const lang::SemanticType &type) const override {
+      return delegate.traitsFor(type);
+    }
+    bool
+    requiresActiveCleanupFor(const lang::SemanticType &type) const override {
+      return delegate.requiresActiveCleanupFor(type);
+    }
+    lang::SemanticInstanceAnalysis analyzeFunctionInstance(
+        lang::FunctionId id, const std::vector<lang::SemanticType> &a,
+        const std::vector<lang::CompileTimeValue> &b,
+        const std::vector<lang::SemanticType> &c,
+        const std::vector<lang::CompileTimeValue> &d) override {
+      return delegate.analyzeFunctionInstance(id, a, b, c, d);
+    }
+    lang::SemanticInstanceAnalysis analyzeConstructorInstance(
+        lang::ConstructorId id, const std::vector<lang::SemanticType> &a,
+        const std::vector<lang::CompileTimeValue> &b,
+        const std::vector<lang::SemanticType> &c,
+        const std::vector<lang::CompileTimeValue> &d) override {
+      return delegate.analyzeConstructorInstance(id, a, b, c, d);
+    }
+    lang::SemanticInstanceAnalysis analyzeDestructorInstance(
+        lang::ClassId id, const std::vector<lang::SemanticType> &a,
+        const std::vector<lang::CompileTimeValue> &b) override {
+      auto result = delegate.analyzeDestructorInstance(id, a, b);
+      if (a.empty() && b.empty()) {
+        ++emptyDestructors;
+        // Public-provider fault injection: a selected invalid outcome must
+        // not disappear merely because its concrete argument pack is empty.
+        if (reject)
+          result.diagnostics.push_back(lang::makeDiagnostic(
+              "GTI-S2079", lang::DiagnosticPhase::Semantics,
+              {"empty-provider.gti", 0, 1, 1},
+              "Rejected concrete destructor provider outcome."));
+      }
+      return result;
+    }
+    lang::SemanticInstanceAnalysis analyzeClassFieldInitializers(
+        lang::ClassId id, const std::vector<lang::SemanticType> &a,
+        const std::vector<lang::CompileTimeValue> &b) override {
+      return delegate.analyzeClassFieldInitializers(id, a, b);
+    }
+  } provider(semantic);
+  const auto accepted =
+      lang::HirLowerer().lower(source.program, semantic.model(), provider);
+  expect(accepted.valid() && provider.emptyDestructors == 1,
+         "an empty concrete class pack still requires one ordinary destructor "
+         "provider analysis");
+  provider.reject = true;
+  provider.emptyDestructors = 0;
+  const auto rejected =
+      lang::HirLowerer().lower(source.program, semantic.model(), provider);
+  expect(!rejected.valid() && provider.emptyDestructors == 1 &&
+             std::any_of(rejected.diagnostics.begin(),
+                         rejected.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2079";
+                         }),
+         "an ordinary invalid empty-pack destructor outcome gates executable "
+         "HIR admission instead of bypassing its provider");
+}
+
 void packFoldUnsafeBoundary() {
   const std::string unsafeTarget = "unsafe void leaf<T>(T& element) {} ";
   for (const std::string arguments : {"", "1"}) {
@@ -1603,6 +1838,8 @@ int main() {
   enumDesignatorEffects();
   packFoldCallerFacts();
   concreteEffectObligationReplay();
+  invalidEffectQueryDiagnostics();
+  emptyPackDestructorProvider();
   packFoldUnsafeBoundary();
   orderedInputProtection();
   fullExpressionCleanup();

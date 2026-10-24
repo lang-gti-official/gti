@@ -409,14 +409,38 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
           return;
         }
         if (!analysis.valid()) {
-          for (auto &diagnostic : analysis.diagnostics) {
-            diagnostic.related.push_back(
-                {query.site, "Concrete generic instance requested here."});
-            diagnostics.push_back(std::move(diagnostic));
+          // Effect demand is not ordinary concrete discovery. Publishing its
+          // errors here would preempt HIR's independent type/assertion
+          // discovery and its canonical user-origin diagnostic aggregation.
+          // Keep this exact node uncertified and retain errors for the normal
+          // provider boundary, including a fail-closed late-demand mismatch.
+          programEffects[owner].invalidBody = true;
+          auto &retained = state->queries[owner.id - 1].invalidDiagnostics;
+          for (auto &diagnostic : analysis.diagnostics)
+            if (diagnostic.severity == DiagnosticSeverity::Error)
+              retained.push_back(std::move(diagnostic));
+          InstanceAnalysisKey key{.declaration = query.target.id,
+                                  .classTypes = query.owner.arguments,
+                                  .classValues = query.owner.valueArguments,
+                                  .types = query.types,
+                                  .values = query.values};
+          switch (query.target.kind) {
+          case ProgramEffectOwnerKind::Function:
+            key.kind = InstanceAnalysisKind::Function;
+            break;
+          case ProgramEffectOwnerKind::Constructor:
+            key.kind = InstanceAnalysisKind::Constructor;
+            break;
+          case ProgramEffectOwnerKind::Destructor:
+            key.kind = InstanceAnalysisKind::Destructor;
+            break;
+          case ProgramEffectOwnerKind::FieldInitializers:
+            key.kind = InstanceAnalysisKind::ClassFieldInitializers;
+            break;
+          default:
+            break; // The query-kind switch above already rejects this shape.
           }
-          programEffects[owner].unknown.push_back(
-              {.span = query.site,
-               .reason = "a concrete GTI body is not valid"});
+          state->invalidInstances[std::move(key)].push_back(owner.id);
         } else {
           // Instance-local lambda/default owners can reuse source IDs in the
           // next delta. Preserve the exact graph (including cycles, failure
@@ -510,6 +534,28 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
       for (const auto target : targets)
         visit(visit, target, 0);
     }
+  }
+}
+
+auto SemanticVisitor::Impl::preserveInvalidProgramEffectDiagnostics(
+    const InstanceAnalysisKey &key, SemanticInstanceAnalysis &analysis) const
+    -> void {
+  const auto state = requestSession.programConcreteEffects;
+  if (!analysis.valid() || !state || state->invalidInstances.empty())
+    return;
+  const auto found = state->invalidInstances.find(key);
+  if (found == state->invalidInstances.end())
+    return;
+  // A failed effect query is not an empty-effects proof. If ordinary
+  // analysis later succeeds (for example after late demand), its selected
+  // body still cannot proceed to MIR with unresolved effects. Report the
+  // retained source errors through the ordinary instance result; HIR alone
+  // owns instantiation origins, library re-anchoring and report merging.
+  for (const auto id : found->second) {
+    const auto &query = state->queries[id - 1];
+    analysis.diagnostics.insert(analysis.diagnostics.end(),
+                                query.invalidDiagnostics.begin(),
+                                query.invalidDiagnostics.end());
   }
 }
 
@@ -1936,7 +1982,7 @@ auto SemanticVisitor::Impl::closeProgramFailureEffects() -> void {
   auto &failing = requestSession.programFailingEffects;
   failing.clear();
   for (const auto &[owner, summary] : programEffects)
-    if (summary.directFailure ||
+    if (summary.directFailure || summary.invalidBody ||
         std::any_of(summary.unknown.begin(), summary.unknown.end(),
                     [](const auto &effect) { return !effect.cleanup; }))
       failing.insert(owner);
@@ -2014,6 +2060,12 @@ auto SemanticVisitor::Impl::validateProgramStorageBorrowEffects() -> void {
       if (found == programEffects.end())
         return;
       const auto &summary = found->second;
+      // Invalid bodies are deferred ordinary instance failures, not unknown
+      // safe calls. The ordinary provider retains their source errors even
+      // if a later analysis unexpectedly succeeds; no effects certificate is
+      // published and HIR remains responsible for diagnostic discovery.
+      if (summary.invalidBody)
+        return;
       const bool rollback =
           requestSession.programFailingEffects.contains(owner);
       const auto open = std::find_if(

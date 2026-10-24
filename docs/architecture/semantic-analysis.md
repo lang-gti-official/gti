@@ -1369,6 +1369,15 @@ primary symbolic pack fold retains its dependent storage obligation for concrete
 reanalysis; this does not waive an unresolved effect in a selected instance.
 Ordinary name, type, access and unsafe-call checks still apply to the primary.
 
+Effect-query analysis does not replace ordinary concrete-instance diagnostic
+publication. An invalid selected body is a distinct, non-certified outcome:
+its exact instance key and source errors are retained, rather than treating it
+as an empty effect summary or a genuinely open call. The ordinary instance
+provider supplies the diagnostics to HIR's existing instantiation-context and
+library-reanchoring path. If later analysis unexpectedly succeeds, the retained
+errors still prevent that exact instance from being admitted without a resolved
+proof. Missing or open effects remain unknown and retain their normal rejection.
+
 Persistent-storage loan checks reuse that exact effect graph and the ordinary
 structured loan endpoint scheduler. A request-local full-expression frame is
 selected by the existing `SemanticFullExpression` roots, including a shared
