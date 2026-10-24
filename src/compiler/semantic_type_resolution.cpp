@@ -2436,6 +2436,30 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       }
       if (argument == nullptr || !*argument)
         continue;
+      // A class formal whose text field the constructor stores re-roots the
+      // argument's owner dependency at that field to the stored path, and
+      // one it stores whole nests every path under it (L-OWN-02).
+      if (input.sourceField != 0 || input.wholeValue) {
+        if (!potentialPackView && index < arguments.size())
+          relayConstructorTextField(
+              constructedType, *selected.constructor->declaration, input,
+              *argument, textOrigins, contextualConstruction);
+        // A fresh value this function returns relays a class formal its
+        // constructor stores whole in a field (L-OWN-02 phase 3).
+        if (input.wholeValue && input.payload == 0 && !potentialPackView &&
+            index < arguments.size() && construction != nullptr &&
+            initializer->target.name.segments.size() == 1)
+          if (const ClassInfo *owner = classInfo(constructedType)) {
+            const auto member =
+                owner->members.find(initializer->target.name.last().lexeme);
+            if (member != owner->members.end())
+              (void)relayReturnedTextFormal(
+                  *construction, constructedType,
+                  selected.constructor->declaration, *argument,
+                  toolingSymbolFor(member->second.symbol));
+          }
+        continue;
+      }
       const bool conditionalText =
           index < selected.parameterTypes.size() &&
           selected.parameterTypes[index].kind == SemanticType::TypeParameter;
@@ -2468,8 +2492,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       // A class whose fields other code reads keeps the ownerless rule.
       bool restrictedOwner = false;
       bool readingConstructor = false;
-      if (!potentialPackView && !contextualConstruction &&
-          index < arguments.size()) {
+      if (!potentialPackView && index < arguments.size()) {
         auto dependencies = textFieldInitializerDependencies(
             constructedType, *initializer, *argument, input.payload);
         restrictedOwner =
@@ -2650,8 +2673,13 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
             selected.constructor->requiresUnsafe);
   } else if (contextualConstruction) {
     // The initializer keeps its own construction, call and occurrence records.
+    // A converted value that holds its argument's owner is a dependent value
+    // that only its consumer may keep (L-OWN-02).
+    const bool dependent = resolved.dependentTextPublication;
     semanticModel.recordContextualConstruction(*construction,
                                                std::move(resolved), paren);
+    if (dependent)
+      noteTextDependentValue(*construction);
   } else {
     semanticModel.record(*construction, std::move(resolved));
     recordSelectedConstructionOccurrence(*construction);
@@ -4533,7 +4561,9 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
       initializer ? semanticModel.findExpression(*initializer) : nullptr;
   const bool textDependentValue =
       (type.kind == SemanticType::Class || type.kind == SemanticType::Enum) &&
-      initializerInfo != nullptr && isTextDependentValue(*initializerInfo);
+      initializerInfo != nullptr &&
+      (isTextDependentValue(*initializerInfo) ||
+       contextualTextValue(*initializer, type));
   if (!isDirectStoredReferenceType(type) &&
       type.kind != SemanticType::StringView &&
       type.kind != SemanticType::CString && !textDependentValue) {
@@ -4884,7 +4914,12 @@ auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
                                                      readInfo->category,
                                                      readInfo->access));
         const auto *group = exprAs<Grouping>(read);
-        read = group == nullptr ? nullptr : group->expression().get();
+        const auto *move = exprAs<Call>(read);
+        read = group != nullptr ? group->expression().get()
+               : move != nullptr && move->arguments().size() == 1 &&
+                       resolvedIntrinsicKind(*move) == IntrinsicKind::Move
+                   ? move->arguments().front().get()
+                   : nullptr;
       }
       return;
     }
@@ -5361,13 +5396,19 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   if (isParameterDerivedBorrow(value, source)) {
     return;
   }
+  const std::string sourceKind =
+      function->returnBorrowParameter < function->parameterTypes.size() &&
+              function->parameterTypes[function->returnBorrowParameter]
+                      .referenceAccess == AccessMode::Mutable
+          ? "mutable reference parameter"
+          : "read-only parameter";
   Diagnostic diagnostic = makeDiagnostic(
       std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
       "Returned " + std::string(description) + " must derive from " +
           (source.name.lexeme.empty()
-               ? "unnamed read-only parameter " +
+               ? "unnamed " + sourceKind + " " +
                      std::to_string(function->returnBorrowParameter + 1)
-               : "read-only parameter '" + source.name.lexeme + "'") +
+               : sourceKind + " '" + source.name.lexeme + "'") +
           ".");
   diagnostic.related.push_back({tokenSpan(source.sourceAnchor()),
                                 "Required owner dependency source is here."});
@@ -5632,7 +5673,23 @@ auto SemanticVisitor::Impl::isParameterDerivedBorrow(
     if (const ExprPtr *source = storedBorrowSource(expression)) {
       return isParameterDerivedBorrow(*source, parameter, visiting);
     }
-    return false;
+    // A reference binding with no initializer, such as an `auto&` payload
+    // pattern, names its referent only through its retained loan. A loan
+    // whose one origin place is rooted at the parameter's referent borrows
+    // storage inside it, just as a receiver-rooted loan derives from `this`.
+    // A selected stored reference names an external owner instead; its
+    // complete dependency set is proved before this structural walk.
+    const auto *binding = semanticModel.findBinding(parameter);
+    const SemanticLoanInfo *loan =
+        symbol == nullptr || symbol->type.kind != SemanticType::Reference ||
+                symbol->retainedLoan == 0
+            ? nullptr
+            : semanticModel.findLoan(symbol->retainedLoan);
+    return binding != nullptr && binding->symbol != 0 && loan != nullptr &&
+           loan->kind == SemanticLoanKind::Reference &&
+           !loan->referenceSelection && loan->designatedFields.empty() &&
+           loan->conditions.empty() && loan->additionalDependencies.empty() &&
+           !loan->place.receiver && loan->place.root == binding->symbol;
   }
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {
     return isParameterDerivedBorrow(grouping->expression(), parameter,
@@ -5777,6 +5834,14 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
   }
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {
     return hasStableBorrowStorage(grouping->expression(), visiting);
+  }
+  // A moved value's text relays still view its owner's storage (L-OWN-02);
+  // a consuming method cannot return a reference into the moved value.
+  if (const ExprPtr *moved = explicitMoveSource(expression);
+      moved != nullptr && *moved) {
+    const ExpressionInfo *info = semanticModel.findExpression(**moved);
+    if (info != nullptr && isTextDependentValue(*info))
+      return hasStableBorrowStorage(*moved, visiting);
   }
   if (const auto dependencies =
           semanticModel.findBorrowDependencies(*expression);

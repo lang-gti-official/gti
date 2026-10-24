@@ -1,9 +1,9 @@
 # GTI
 
 <p align="center">
-  <a href="https://github.com/lang-gti-official/gti/actions/workflows/ci.yml"><img src="https://github.com/lang-gti-official/gti/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
-  <a href="https://github.com/lang-gti-official/gti/actions/workflows/release.yml"><img src="https://github.com/lang-gti-official/gti/actions/workflows/release.yml/badge.svg?branch=main" alt="Release status"></a>
-  <a href="https://github.com/lang-gti-official/gti/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+  <a href="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/ci.yml"><img src="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/release.yml"><img src="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/release.yml/badge.svg?branch=main" alt="Release status"></a>
+  <a href="https://git.internal.howetotech.dev/gti-lang/gti/src/branch/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
 </p>
 
 <p align="center">
@@ -153,7 +153,7 @@ approved support libraries (`LLVMSupport`, `LLVMTargetParser`, and
 [ADR 006](docs/decisions/006-llvm-support-adoption.md) for the boundary.
 
 ```sh
-git clone https://github.com/lang-gti-official/gti.git gti
+git clone https://git.internal.howetotech.dev/gti-lang/gti.git gti
 cd gti
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
@@ -170,9 +170,11 @@ cmake --build build --parallel 4
   -o /tmp/gti-opaque-handles
 ```
 
-GitHub (`lang-gti-official/gti`) is the canonical repository: pull requests,
-issues, CI and releases live there. The self-hosted Gitea repository at
-https://git.internal.howetotech.dev/gti-lang/gti is a backup mirror of `main` and the tags.
+The canonical repository is
+https://git.internal.howetotech.dev/gti-lang/gti: pull requests, issues, CI,
+tags and releases live there. GitHub automation is retired and no automatic
+backup push is configured. The older, separate Gitea tracker is preserved in
+`gti-lang/gti-legacy-gitea-20261024`.
 
 Run the test suite with:
 
@@ -447,7 +449,7 @@ language server, standard library, runtime, and native Tree-sitter parser:
 ```lua
 return {
   {
-    "https://github.com/lang-gti-official/gti.git",
+    "https://git.internal.howetotech.dev/gti-lang/gti.git",
     name = "gti",
     version = "*",
   },
@@ -491,7 +493,10 @@ Gitea Releases; syncing Git tags does not create or copy release binaries.
 Older tags from before the hostname migration still contain the old installer.
 The current Linux-only runner cannot publish macOS binaries. On macOS, build
 locally and set `GTI_PATH` and `GTI_LSP_PATH` to those executables (and
-`GTI_TREE_SITTER_PATH` to the built parser), or provision a native macOS runner.
+`GTI_TREE_SITTER_PATH` to the built parser), or manually publish a validated
+Apple Silicon stable archive using the
+[manual release contract](docs/architecture/build-and-driver.md#manual-macos-release-publication).
+No macOS runner service is configured; nightly binary downloads are Linux-only.
 When supplying your own toolchain, set `build = false` in the Lazy spec to
 disable its release-download hook.
 

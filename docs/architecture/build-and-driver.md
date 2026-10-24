@@ -161,15 +161,17 @@ package does not load a downstream LLVM package.
 
 ## Published Toolchain Channels
 
-GitHub (`lang-gti-official/gti`) is the Git, tag, workflow, and release
-authority; the self-hosted Gitea repository is a backup mirror and publishes
-nothing. Release archives are downloaded by the plugin from
-`https://github.com/lang-gti-official/gti/releases/download/<tag>/<asset>`.
+The self-hosted Gitea (`gti-lang/gti`) is the Git, tag, workflow, and release
+authority. No helper or workflow publishes to GitHub or a backup. Release
+archives are downloaded by the plugin from
+`https://git.internal.howetotech.dev/gti-lang/gti/releases/download/<tag>/<asset>`.
 The plugin uses a full HTTPS Git URL, not owner/repository shorthand. Archive
 shapes exist for Linux x64, Linux arm64, and macOS arm64, but an archive is
-published only by a configured native runner job. The release workflow
-packages `linux-x64` on `ubuntu-latest` and `darwin-arm64` on `macos-15`;
-Linux arm64 has no package job.
+published only after native validation. Existing Gitea Linux runners package
+`linux-x64` automatically. The owner selected manual Apple Silicon stable
+publication instead of installing a macOS Actions runner. Linux arm64 has no
+package job. The rolling nightly release is currently Linux-only; do not infer
+macOS availability from a tag or silently serve an older macOS nightly asset.
 Version `v0.299.0` is the final historical macOS x64 toolchain; source
 compilation can still target or run on Intel macOS when its prerequisites are
 supplied locally.
@@ -196,7 +198,7 @@ retained versions without assuming
 an Intel or Apple Silicon installation prefix. Existing build generators are
 preserved while configuration/install rules are refreshed.
 
-`--preview` selects the canonical GitHub `preview` commit directly and builds
+`--preview` selects the canonical Gitea `preview` commit directly and builds
 CLI, LSP and parser together in a persistent detached worktree under the
 primary checkout's sibling `gti-preview-installs/<full-commit>`. It never
 switches or resets the calling checkout or incorporates its uncommitted work.
@@ -246,7 +248,7 @@ at normal process priority. `--jobs N` overrides the job count; the dry-run and
 normal output both report the selected parallelism.
 
 A single toolchain-release workflow builds, tests, stages, and smoke-tests each
-GitHub `main` commit once per platform with bundled LLVM/Clang. That verified stage supplies
+Gitea `main` commit on Linux with bundled LLVM/Clang. That verified stage supplies
 nightly and, when `VERSION` changes, stable archives. Stable is archived before
 the nightly `BUILD_ID` stamp; the two channels retain separate artifact names.
 The stable publication job owns the matching immutable tag and versioned
@@ -255,13 +257,50 @@ move a stable tag to another commit. New main commits do not cancel stable
 publication.
 
 The `nightly` release is one mutable channel whose tag and `BUILD_ID` advance
-to each admitted GitHub `main` commit. Nightly publication is serialized and
+to each admitted Gitea `main` commit. Nightly publication is serialized and
 checks current remote main before changing the tag; a superseded build skips
 publication. Its publication step uploads the complete current asset set before a
-GitHub API pass (`scripts/sync_release_assets.py`) removes any asset not produced by that build. This exact
+Gitea API pass (`scripts/sync_release_assets.py`) removes any asset not produced by that build. This exact
 synchronization keeps retired platform archives from surviving a successful
 rolling publication while preserving current archives if upload is
 interrupted.
+
+### Manual macOS release publication
+
+No macOS background runner is configured or authorized by the hosting cutover.
+For an Apple Silicon **stable** release, use a clean, separate checkout of the
+exact immutable `v<VERSION>` commit advertised by canonical Gitea, not a newer
+`main` with the same archive name. Confirm its tag/commit and `VERSION` agree.
+Build with `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` and the documented
+macOS dependencies, using `scripts/build_window.py --kind build` for the full
+build and `--kind suite` for full CTest. Do not use an unoptimized compiler or
+drop required platform/runtime checks.
+
+Stage `gti_toolchain` into a fresh temporary directory with
+`cmake --install <build> --config Release --prefix <stage> --component gti_toolchain`.
+This is private packaging, not installation into the user's active toolchain.
+Run the same installed CLI/LSP/project, process-resource, managed-thread,
+atomic-runtime and installed-library consumer checks as the release workflow,
+against that stage. macOS installation must generate and verify
+`share/gti/host-runtime.json`; do not package a stage with unresolved Homebrew
+runtime dependencies. Then package the checked stage:
+
+```sh
+cmake -DGTI_SOURCE_DIR=<exact-source> -DGTI_STAGE_DIR=<validated-stage> \
+  -DGTI_OUTPUT_DIR=<output-directory> -DGTI_PLATFORM=darwin-arm64 \
+  -DGTI_EXPECTED_TAG=v<VERSION> -P cmake/PackageRelease.cmake
+```
+
+The packager checks the stage, version/tag agreement and macOS runtime manifest,
+and writes `gti-v<VERSION>-darwin-arm64.tar.gz` plus its `.sha256` file. Verify
+the checksum, retain exact-source build/test evidence, then use Gitea's release
+editor to attach **both** files to the existing matching stable release. Do not
+move its tag, create a competing version, delete Linux assets, or upload a
+system-LLVM-only local-install archive as a bundled release. Until those files
+are uploaded, a macOS download is unavailable; source/local installation remains
+available. Stable macOS publication is manual and is not a completed automated
+platform check. Nightly asset pruning intentionally removes archives outside
+its current Linux build rather than retaining misleading old macOS binaries.
 
 Stable versions describe user-visible toolchain behavior. Internal compiler or
 runtime work, tests, and documentation alone retain `VERSION` and reach users

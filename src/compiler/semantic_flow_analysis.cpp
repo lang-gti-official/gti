@@ -1607,6 +1607,14 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       return ownerDependentTextInfo(type, ValueCategory::Place,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
+    // A reference local bound to a dependent place is that place.
+    if (textDependentType(type) && symbol != nullptr &&
+        symbol->type.kind == SemanticType::Reference &&
+        symbol->variableDeclaration != nullptr &&
+        dependentReferenceAliases.contains(symbol->variableDeclaration))
+      return textDependentValueInfo(type, ValueCategory::Place,
+                                    mutableAccess ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly);
     // A local binding that retains a dependent text value (L-OWN-02). A
     // reference binding's loan is its referent's, not a text dependency.
     if (textDependentType(type) && symbol != nullptr && symbol->type == type &&
@@ -1679,6 +1687,12 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                   std::move(type), ValueCategory::Place,
                   resolved->returnType.referenceAccess);
           }
+        if (const auto *unary = exprAs<Unary>(&expr))
+          if (const auto field = operatorTextReferenceRelay(*unary);
+              field && nestedTextClass(type) &&
+              nestedTextRelay(*field).has_value())
+            return textDependentValueInfo(std::move(type), ValueCategory::Place,
+                                          resolved->returnType.referenceAccess);
         return expressionInfo(std::move(type), ValueCategory::Place,
                               resolved->returnType.referenceAccess);
       }
@@ -1783,10 +1797,12 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                                   : AccessMode::ReadOnly);
     }
     // A text field read through a formal or the receiver may hold a relayed
-    // owner's dynamic text, under the function's field contract (L-OWN-02).
+    // owner's dynamic text, under the function's field contract (L-OWN-02);
+    // so may one read under a formal's relayed nested value.
     if (borrowedTextType(type) && member != nullptr &&
         get.access().kind != TokenKind::ARROW && get.object() &&
-        textFieldContractFormal(*get.object()) &&
+        (textFieldContractFormal(*get.object()) ||
+         contractRelayPrefix(get.object().get())) &&
         directTextField(memberObjectType,
                         symbolForDeclaration(member->symbol.declaration)))
       return ownerDependentTextInfo(type, ValueCategory::Place,
@@ -1807,9 +1823,11 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                                     : AccessMode::ReadOnly);
     }
     // A payload-enum field through which the dependency designates a text
-    // payload is itself a dependent value, observed by a switch.
-    if (type.kind == SemanticType::Enum && member != nullptr &&
-        objectInfo != nullptr && get.access().kind != TokenKind::ARROW &&
+    // payload is itself a dependent value, observed by a switch; so is a
+    // class field through which it designates a nested text path.
+    if ((type.kind == SemanticType::Enum || type.kind == SemanticType::Class) &&
+        member != nullptr && objectInfo != nullptr &&
+        get.access().kind != TokenKind::ARROW &&
         isTextDependentValue(*objectInfo)) {
       const auto field = symbolForDeclaration(member->symbol.declaration);
       const auto paths = textDependentPaths(*get.object());
@@ -1850,6 +1868,21 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
           return ownerDependentTextInfo(std::move(type), ValueCategory::Place,
                                         resolved->returnType.referenceAccess);
       }
+      // A reference to a nested text class designates the receiver's paths
+      // under the relayed prefix (L-OWN-02 phase 3).
+      if (const auto field = textReferenceRelay(call, *resolved);
+          field && nestedTextClass(type) && nestedTextRelay(*field).has_value())
+        return textDependentValueInfo(std::move(type), ValueCategory::Place,
+                                      resolved->returnType.referenceAccess);
+      // A reference into a receiver or argument that holds a local owner's
+      // dynamic text is that origin's dependent field, as `origin.field`
+      // would be: a switch may observe it, but it cannot be passed, copied
+      // out, stored or returned (L-OWN-02).
+      if (const auto reference = dependentReferenceResult(call, *resolved);
+          reference && reference->prefixes &&
+          !dependentReferencePaths(*reference).empty())
+        return textDependentValueInfo(std::move(type), ValueCategory::Place,
+                                      resolved->returnType.referenceAccess);
       return expressionInfo(std::move(type), ValueCategory::Place,
                             resolved->returnType.referenceAccess);
     }
@@ -1879,10 +1912,20 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
         return textDependentValueInfo(std::move(type));
     }
+    // So does moving a view, as a consuming receiver's text field: the moved
+    // view is the same view (L-OWN-02).
+    if (borrowedTextType(type) && call.arguments().size() == 1 &&
+        resolvedIntrinsicKind(call) == IntrinsicKind::Move) {
+      const ExpressionInfo *sourceInfo =
+          semanticModel.findExpression(*call.arguments().front());
+      if (sourceInfo != nullptr && sourceInfo->type == type &&
+          sourceInfo->traits.containsBorrowedState)
+        return ownerDependentTextInfo(std::move(type));
+    }
     // A callee that returns a dynamic argument in a text field of its fresh
     // result gives a value carrying that argument's owner there (L-OWN-02).
     if (textDependentType(type) && resolved != nullptr &&
-        resolved->dependentTextPublication)
+        (resolved->dependentTextPublication || resolved->dependentTextReturn))
       return textDependentValueInfo(std::move(type));
     if (borrowedTextType(type) && resolved != nullptr &&
         resolved->borrowOrigin != BorrowOriginKind::None) {
@@ -2663,9 +2706,37 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
       noteTextFieldFormalUse(expr, *formal);
   // A generic class method's type-parameter field may hold a relayed owner's
   // text in a text instance: any read but the method's relayed return
-  // requires it ownerless there.
-  if (exprAs<Variable>(&expr) != nullptr || exprAs<Get>(&expr) != nullptr)
+  // requires it ownerless there. A payload-enum field read as a value may
+  // carry any of its text payloads away.
+  if (exprAs<Variable>(&expr) != nullptr || exprAs<Get>(&expr) != nullptr) {
     noteConditionalTextFieldRead(expr);
+    notePayloadFieldRead(expr);
+  } else if (const auto *call = exprAs<Call>(&expr)) {
+    // A receiver accessor's call reads the field it returns.
+    notePayloadFieldRead(expr);
+    // A reference into a value holding a local owner's dynamic text is
+    // tracked only through the field paths it designates (L-OWN-02).
+    if (const auto *resolved = semanticModel.findCall(*call))
+      if (const auto reference = dependentReferenceResult(*call, *resolved);
+          reference && !reference->prefixes)
+        report(expressionToken(expr),
+               "This call returns a reference into a value holding dynamic "
+               "text from a local owner, but not to a field of it, so the "
+               "text it reaches cannot be tracked.",
+               "GTI-S2045");
+  }
+  // A contract formal's relayed nested text value keeps its text under the
+  // formal's prefix only through a field projection (L-OWN-02 phase 3).
+  noteContractRelayUse(expr, result);
+  if (const auto *get = exprAs<Get>(&expr);
+      get != nullptr && result != SemanticType::Function && get->object()) {
+    const Expr *object = get->object().get();
+    while (const auto *group = exprAs<Grouping>(object))
+      object = group->expression() ? group->expression().get() : nullptr;
+    if (const auto found = requestSession.contractRelayUses.find(object);
+        found != requestSession.contractRelayUses.end())
+      found->second.projected = true;
+  }
   if (const auto *get = exprAs<Get>(&expr);
       get != nullptr && result != SemanticType::Function) {
     consumeTextDependentValue(get->object());
@@ -7010,9 +7081,11 @@ auto SemanticVisitor::Impl::consumingReceiverValue(
     const ExprPtr &receiver) const -> bool {
   const ExpressionInfo *info =
       receiver ? semanticModel.findExpression(*receiver) : nullptr;
+  // A dependent text value's text is governed by the callee's field
+  // contract, which a relay checks at the call (L-OWN-02).
   return info != nullptr && info->category == ValueCategory::Value &&
          info->type.kind == SemanticType::Class && info->traits.movable &&
-         (!info->traits.containsBorrowedState ||
+         (!info->traits.containsBorrowedState || isTextDependentValue(*info) ||
           completeBorrowDependencySet(receiver).has_value());
 }
 

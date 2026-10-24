@@ -25,7 +25,7 @@ does not restate it. Put durable rules in `AGENTS.md`, not here.
 
 ## Task Lifecycle
 
-An implementation task ends with a merged GitHub PR and a synchronized primary
+An implementation task ends with a merged Gitea PR and a synchronized primary
 `main`, through the `agent-workflow` skill and
 [`docs/architecture/agent-workflow.md`](docs/architecture/agent-workflow.md).
 `main` is protected against direct pushes. Read-only reviews and audits create

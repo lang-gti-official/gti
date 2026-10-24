@@ -82,7 +82,9 @@ if(Python3_Interpreter_FOUND)
     passive_function_item_class_runtime
     passive_class_move_and_copy_runtime
     view_fields_runtime text_reference_accessors_runtime
-    view_field_payloads_runtime
+    view_field_payloads_runtime view_field_conversions_runtime
+    dependent_reference_results_runtime
+    view_field_nesting_runtime
     recursive_text_relays_runtime
     declaration_owned_defaults_runtime
     base_rollback_record_runtime virtual_expected_owning_return_runtime
@@ -96,6 +98,7 @@ if(Python3_Interpreter_FOUND)
     expected_payload_pair_arguments_runtime expected_payload_pending_cleanup_runtime
     expected_payload_short_circuit_runtime
     extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
+    failure_free_passive_constructors_runtime
     failure_free_passive_moves_runtime
     generated_base_constructor_runtime generated_constructor_order_runtime generic_algorithm_breadth
     generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
@@ -135,6 +138,7 @@ if(Python3_Interpreter_FOUND)
     allocation_default_argument_runtime
     restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime
     retained_owner_member_pack_runtime shared_accessor_range_runtime
+    accessor_text_carrier_runtime
     shared_ownership_runtime shared_ownership_threads scoped_parallel_threads
     source_storage_drain_runtime
     source_prefix_owner_runtime source_resource_prefix_runtime

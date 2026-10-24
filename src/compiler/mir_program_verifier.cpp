@@ -202,6 +202,19 @@ dependentTextPublication(const MirProgram &program,
       instruction.borrowFields.size() != 1)
     return false;
   const auto &mapping = instruction.borrowFields.front();
+  // A class formal's text field re-rooted at the path its constructor stores
+  // it in: the argument's dependency at that field moves to the result.
+  if (!mapping.sourceFields.empty())
+    return mapping.origin == BorrowOriginKind::Argument &&
+           mapping.parameter == instruction.borrowArgument &&
+           mapping.globalRoot == 0 && mapping.access == AccessMode::ReadOnly &&
+           mapping.resultConditions.empty() &&
+           mapping.sourceConditions.empty() &&
+           mir_detail::dependentTextRelayPath(
+               program, constructor, mapping.parameter, mapping.sourceFields) ==
+               mapping.resultFields &&
+           mir_detail::directTextPath(program, instruction.info.type,
+                                      mapping.resultFields);
   return mapping.origin == BorrowOriginKind::Argument &&
          mapping.parameter == instruction.borrowArgument &&
          mapping.globalRoot == 0 && mapping.sourceFields.empty() &&
@@ -233,10 +246,20 @@ dependentTextCallPublication(const MirInstruction &instruction,
       instruction.borrowFields.size() != 1)
     return false;
   const auto &mapping = instruction.borrowFields.front();
+  // A class formal returned whole nests the argument's path under the field
+  // (L-OWN-02 phase 3); a text formal fills the field itself.
+  const bool whole =
+      !mapping.sourceFields.empty() &&
+      mapping.parameter < target.parameterTypes.size() &&
+      target.parameterTypes[mapping.parameter].kind == SemanticType::Class &&
+      mapping.resultFields.size() == mapping.sourceFields.size() + 1 &&
+      std::equal(mapping.sourceFields.begin(), mapping.sourceFields.end(),
+                 mapping.resultFields.begin() + 1);
   return mapping.origin == BorrowOriginKind::Argument &&
          mapping.parameter == instruction.borrowArgument &&
-         mapping.globalRoot == 0 && mapping.sourceFields.empty() &&
-         mapping.resultFields.size() == 1 &&
+         mapping.globalRoot == 0 &&
+         (whole ||
+          (mapping.sourceFields.empty() && mapping.resultFields.size() == 1)) &&
          mapping.access == AccessMode::ReadOnly &&
          mapping.resultConditions.empty() && mapping.sourceConditions.empty() &&
          std::binary_search(
@@ -272,6 +295,31 @@ dependentTextCallPublication(const MirInstruction &instruction,
       payload - variant.payloadSymbols.begin())];
   return type.kind == SemanticType::StringView ||
          type.kind == SemanticType::CString;
+}
+
+// A function returning a value that views the referent of one read-only
+// reference formal at one text path of its result (L-OWN-02).
+[[nodiscard]] bool
+dependentTextReturnSummary(const MirProgram &program,
+                           const MirFunctionInstance &instance) {
+  if (!instance.dependentTextReturn ||
+      instance.returnBorrowOrigin != BorrowOriginKind::Argument ||
+      instance.returnBorrowFields.size() != 1 ||
+      !instance.returnBorrowParameters.empty())
+    return false;
+  const auto &mapping = instance.returnBorrowFields.front();
+  const auto parameter = instance.returnBorrowParameter;
+  if (mapping.origin != BorrowOriginKind::Argument ||
+      mapping.parameter != parameter || !mapping.sourceFields.empty() ||
+      mapping.access != AccessMode::ReadOnly || mapping.globalRoot != 0 ||
+      !mapping.resultConditions.empty() || !mapping.sourceConditions.empty() ||
+      parameter >= instance.parameterTypes.size() ||
+      instance.parameterTypes[parameter].kind != SemanticType::Reference ||
+      instance.parameterTypes[parameter].referenceAccess !=
+          AccessMode::ReadOnly)
+    return false;
+  return mir_detail::directTextPath(program, instance.returnType,
+                                    mapping.resultFields);
 }
 
 // The traits of a value whose text field or payload holds a relayed owner's
@@ -1805,8 +1853,18 @@ uniqueMirClassInstanceForType(const MirProgram &program,
           instruction.lambdaTarget
               ? program.findLambda(*instruction.lambdaTarget)
               : nullptr;
+      // A text field result of the consumed receiver (L-OWN-02) is the text
+      // that field held, never storage of the receiver.
+      const bool consumedTextField =
+          functionTarget != nullptr &&
+          functionTarget->returnBorrowOrigin == BorrowOriginKind::Receiver &&
+          mir_detail::textFieldResult(functionTarget->returnType,
+                                      functionTarget->returnBorrowOrigin,
+                                      functionTarget->returnBorrowParameter,
+                                      functionTarget->returnBorrowFields);
       if (functionTarget != nullptr &&
           functionTarget->receiverMutability == ReceiverMutability::Consuming &&
+          !consumedTextField &&
           (functionTarget->returnType.kind == SemanticType::Reference ||
            functionTarget->returnBorrowOrigin != BorrowOriginKind::None ||
            instruction.info.traits.containsBorrowedState) &&
@@ -4484,9 +4542,23 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             (source->type.kind == SemanticType::Class ||
              source->type.kind == SemanticType::Enum) &&
             findStoredCarrierReferences(program, source->type).empty();
+        // A carrier of the view an accessor returned holds exactly that
+        // result loan's stored dependency, which is none when the accessor's
+        // own result was proved to hold ownerless text.
+        const auto *accessor =
+            source != nullptr && source->root == MirPlaceRootKind::Loan &&
+                    source->projections.empty() &&
+                    (source->type.kind == SemanticType::StringView ||
+                     source->type.kind == SemanticType::CString)
+                ? body.findLoan(source->loan)
+                : nullptr;
+        const bool ownerlessAccessorText =
+            accessor != nullptr && accessor->kind == MirLoanKind::CallResult &&
+            loan->parent == accessor->id && accessor->storedDependency == 0 &&
+            isCarrierReferenceResult(program, instruction);
         const bool independentText =
             source && (independentlyStaticTextBinding(program, body, *source) ||
-                       ownerlessTextField);
+                       ownerlessTextField || ownerlessAccessorText);
         if ((loan->storedDependency == 0 && !independentText) ||
             !loan->additionalSources().empty() ||
             !instruction.borrowArguments.empty())
@@ -6126,8 +6198,16 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
   const bool textFieldResult = mir_detail::textFieldResult(
       instance.returnType, instance.returnBorrowOrigin,
       instance.returnBorrowParameter, instance.returnBorrowFields);
+  // A dependent text result views the referent of one read-only reference
+  // formal at one text path of the result (L-OWN-02).
+  const bool dependentTextResult =
+      dependentTextReturnSummary(program, instance);
+  if (instance.dependentTextReturn && !dependentTextResult)
+    return invalidSummary(
+        "dependent text result lacks one read-only reference formal at a "
+        "text path");
   if (!instance.returnBorrowFields.empty() && !completeReferenceResult &&
-      !completeConditionalResult && !textFieldResult) {
+      !completeConditionalResult && !textFieldResult && !dependentTextResult) {
     const auto paths =
         findStoredCarrierReferences(program, instance.returnType);
     const bool reference = instance.returnType.kind == SemanticType::Reference;
@@ -6396,10 +6476,15 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
       // element, so storage declared as the view itself holds an ownerless
       // view. An exact copy of it is lifetime independent like a literal. A
       // reference field ends in a dereference and stays owner dependent.
+      // Moving a view out of such storage, as a consuming accessor does,
+      // copies the same view.
       const MirPlace *stored =
-          definition && definition->kind == MirInstructionKind::Load &&
+          definition &&
+                  (definition->kind == MirInstructionKind::Load ||
+                   definition->kind == MirInstructionKind::Move) &&
                   definition->operands.size() == 1 &&
-                  definition->operands.front().kind == MirOperandKind::Copy
+                  (definition->operands.front().kind == MirOperandKind::Copy ||
+                   definition->operands.front().kind == MirOperandKind::Move)
               ? body.findPlace(definition->operands.front().place)
               : nullptr;
       const bool independentStoredText =
@@ -6438,8 +6523,21 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           !returned->info.traits.containsBorrowedState &&
           definition->result == returned->id && !definition->loan &&
           !definition->info.traits.containsBorrowedState;
+      // A dependent text result may return an ownerless value of its type
+      // on another path, as a view relay may return a literal: a
+      // construction or call that publishes no text and carries no loan,
+      // whose inputs TextContracts proves ownerless.
+      const bool ownerlessDependentResult =
+          instance.dependentTextReturn && returned && definition &&
+          (definition->kind == MirInstructionKind::Construct ||
+           definition->kind == MirInstructionKind::Call) &&
+          returned->info.type == instance.returnType &&
+          !returned->info.traits.containsBorrowedState &&
+          definition->result == returned->id && !definition->loan &&
+          !definition->dependentTextPublication &&
+          !definition->info.traits.containsBorrowedState;
       if (independentTextLiteral || independentStoredText ||
-          ownerlessFieldText ||
+          ownerlessFieldText || ownerlessDependentResult ||
           ((instance.returnType.kind == SemanticType::Enum ||
             instance.returnType.kind == SemanticType::Class) &&
            emptyReturn && emptyReturn(block.id))) {
