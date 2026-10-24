@@ -1637,7 +1637,15 @@ auto SemanticVisitor::Impl::finishProgramFullExpression(std::size_t index)
                     ? SemanticType::Unknown
                     : typeOf(binding->type()));
   } else if (const auto *returned = stmtAs<ReturnStmt>(source.statement)) {
-    destination(returned->value(), currentReturnType);
+    // Macro-local returns transfer into their own result region, not the
+    // enclosing function's result. Match the same lexical owner used by
+    // analyzeMacroReturn so a nested lambda retains its ordinary return type.
+    const bool macroReturn =
+        !macroResultRegions.empty() &&
+        macroResultRegions.back().function == currentFunctionDeclaration &&
+        macroResultRegions.back().lambdaDepth == lambdaDepth;
+    destination(returned->value(), macroReturn ? macroResultRegions.back().type
+                                               : currentReturnType);
   } else if (const auto *selection = stmtAs<SwitchStmt>(source.statement)) {
     const auto *info = semanticModel.findExpression(*selection->expression());
     destination(selection->expression(),
@@ -3676,6 +3684,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::SourceFunctionName:
         case IntrinsicKind::SourceLine:
         case IntrinsicKind::SourceColumn:
+        case IntrinsicKind::SourceExpressionText:
         case IntrinsicKind::MetaFieldCount:
         case IntrinsicKind::MetaFieldName:
         case IntrinsicKind::MetaFieldIsPublic:
@@ -8323,6 +8332,23 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
                          ? FreshTemporaryValueFailure::None
                          : FreshTemporaryValueFailure::UnsupportedProducer;
     return result;
+  }
+  if (const auto *call = exprAs<Call>(producer);
+      call != nullptr && semanticModel.shareMacroExpansion(*call)) {
+    // A checked typed result region publishes one owned value at this source
+    // expression. Its call-shaped syntax has no executable function target:
+    // the expansion and its exact result facts are the producer authority.
+    // Keep the existing concrete/self-contained and borrow-target contracts;
+    // in particular this does not broaden fresh callable admission.
+    const auto *produced = semanticModel.findExpression(*producer);
+    if (produced != nullptr && produced->category == ValueCategory::Value &&
+        produced->type == info->type &&
+        !containsOpenTypeParameter(produced->type) &&
+        !produced->traits.containsBorrowedState) {
+      result.eligible = true;
+      result.failure = FreshTemporaryValueFailure::None;
+      return result;
+    }
   }
   if (payloadEnum) {
     // Both owning and passive alternatives have the same exact construction

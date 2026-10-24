@@ -74,7 +74,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v112`, `mir-body-v91`).
+instruction, body, and caller-assignment facts (`mir-v113`, `mir-body-v91`).
 
 Caller-token consumers are panic and the identity-bound inactive-result
 failure operations used by source result classes. This does not change
@@ -329,8 +329,11 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v113`/`mir-body-v92`,
-with `lowered-program-v25` declaration metadata. Declaration-bound computed
+The combined deterministic serialization is currently `mir-v114`/`mir-body-v93`,
+with `lowered-program-v26` declaration metadata. These distinct combined
+identities retain both macro result-region/local-initializer authority and
+thread-local initialization, cleanup and reference-pack proof facts.
+Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains
 complete borrowed-dependency-set proofs alongside foreign-storage inventories
@@ -602,7 +605,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v112`/`lowered-program-v22`, preserving
+The combined serialization is `mir-v113`/`lowered-program-v22`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,
@@ -1066,6 +1069,31 @@ selects the GTI call. A cleanup-free moved environment has no full-expression
 obligation, so its receiver is a `Value` stage of the exact Move rather than a
 `MoveValue`; the once-callable receiver proof follows that stage to the Move
 and still requires its exact ownership event.
+Scoped HIR result regions lower entirely to existing MIR operations: an exact
+typed temporary, per-return initialization and lifecycle transfer/reparent,
+local cleanup, and an ordinary join transport. Their returns cannot produce
+the surrounding body's Return terminator. The result is active in failure
+cleanup before local destruction begins, and keeps the enclosing expression's
+lifetime after successful local cleanup. Class and closure results retain a
+Value lifetime obligation even when cleanup is trivial: every return activates
+the same typed slot, and independent lifetime flow proves availability before
+movement or argument preparation. No backend reconstructs multi-return
+initialization from control-flow patterns. Region joins reconcile outer loan
+bindings, transferred endpoints and temporary states, rather than inheriting
+the state of the last visited return. Borrowed region outputs remain rejected
+until their provenance/loan-transfer join contract is implemented. No backend
+interprets macro syntax or invents local-return cleanup.
+
+Initializer expressions use these same lexical lifetimes. Each merged
+program-initialization step separately records its persistent storage and the
+exact binding/symbol/place identities of its lexical locals, plus their nested
+full-expression identities. The HIR initializer-reachability query supplies
+that inventory; MIR verifies disjoint storage/local identities, local use and
+markers confined to their owning step, and unchanged dense storage ordering.
+Full-expression canonicalization repairs the step metadata together with drop
+obligations and markers, including cleanup-sharing fallback. These locals are
+not persistent program storage or constructed field rollback obligations.
+
 Program v72/body v62 add the generated `ReturnResult` drop obligation. A
 completed owning return operand is reparented out of its full-expression into
 this pending lifetime when callee cleanup can fail. It retains the exact
@@ -3375,7 +3403,20 @@ owning declaration initializers arm rollback on the field's binding place
 (their place domain roots fields in bindings rather than `this`), they route
 defined-failure edges under the same body-wide unarmed-transfer rule, and
 the emission analysis treats a fully armed body as carrying its complete
-construction schedule. A source constructor receives every unoverridden,
+construction schedule.
+Initializer bodies may also evaluate lexical locals inside scoped result
+regions. HIR exempts only exact program-storage and declared-field binding
+identities from lexical obligations; those locals retain ordinary `Binding`
+obligations and region-scope cleanup in MIR. A field-initializer rollback must
+name an exact field from its owning class catalog, never a local merely because
+it shares the initializer body or the field's type.
+Each module initialization step separately inventories its lexical binding,
+symbol and canonical place identities and nested full expressions. The C++
+backend consumes that verified inventory to declare ordinary function-local
+carriers inside the initializer function; only persistent plan bindings name
+global storage rows. A step with lexical execution uses complete MIR body
+emission, never the passive expression-only storage schedule.
+A source constructor receives every unoverridden,
 active-cleanup field completed by that schedule as an initially active
 `ConstructionRollback` on the corresponding This-rooted field place. Program
 verification requires a unique matching field-initializer obligation with the
@@ -3560,7 +3601,12 @@ receivers stage `MutableTemporaryBorrow` from their full-expression slot with
 mutable owned storage, cleanup obligation, and single invocation use. A
 conditional receiver instead names its initialized join temporary through a
 transport-only Load/Move identity; initialization and lifecycle dataflow prove
-the slot live at the call. The backend must not reconstruct that slot into
+the slot live at the call. In particular, every temporary-borrow input is
+bound to the value-drop obligation with its exact place and source identity;
+the converged lifecycle state must prove that obligation definitely available
+at the input on every incoming path. Another live object of the same type,
+an uninitialized arm, or prior cleanup is not evidence of availability.
+The backend must not reconstruct that slot into
 itself at the join. Fallible arm producers activate only on their Invoke
 success edges. Program verification independently rejects whole-This moves
 outside consuming instance methods and consuming calls that publish tracked
@@ -4096,6 +4142,13 @@ that carries the producer's conditional drop through the CFG merge. The merge
 retargets the producer to that slot, and the loan, which already ended inside
 the arm, names it. Both the loan rule and the input rule admit only those two
 forms through the shared materialization query.
+An argument may also name an initialized join-result slot through that
+query's exact self-slot Load/Move transport. It does not create a second
+object or activate a second owner. The independent lifecycle check requires
+the slot's exact value-drop obligation definitely live at the borrow on
+every incoming path; the non-escaping loan still ends before its later
+transfer or cleanup. This applies equally to ordinary conditional results
+and scoped macro results, without a library-type exception.
 The loan is active while later arguments are prepared and ends in
 reverse temporary-argument order immediately after the call, or at the start
 of both normal and failure successors for an `Invoke`. The producer's one

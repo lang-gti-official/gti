@@ -98,6 +98,9 @@ struct MacroParameterUses {
     case StmtKind::ExpressionStmt:
       expression(static_cast<const ExpressionStmt &>(*value).expression());
       break;
+    case StmtKind::ReturnStmt:
+      expression(static_cast<const ReturnStmt &>(*value).value());
+      break;
     case StmtKind::IfStmt: {
       const auto &branch = static_cast<const IfStmt &>(*value);
       expression(branch.condition());
@@ -302,6 +305,8 @@ auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement,
   }
   if (const auto *expression = stmtAs<ExpressionStmt>(&statement))
     return expressionAllowed(*expression->expression());
+  if (const auto *returned = stmtAs<ReturnStmt>(&statement))
+    return !returned->value() || expressionAllowed(*returned->value());
   if (const auto *local = stmtAs<VariableDecl>(&statement))
     return !local->isStatic() &&
            (!local->initializer() || expressionAllowed(*local->initializer()));
@@ -358,39 +363,51 @@ auto SemanticVisitor::Impl::copyRequestSessionForSpeculativeModel(Impl &probe)
   static_cast<RequestSessionContext &>(probe.requestSession) = requestSession;
 } // Restore the caller before creating or executing any probe model.
 
-auto SemanticVisitor::Impl::analyzeMacroStatement(
-    const ExpressionStmt &statement) -> bool {
-  if (currentFunctionDeclaration && currentFunctionDeclaration->isMacro())
-    return false;
-  const Call *call = directCall(statement.expression());
-  if (!call)
-    return false;
-  if (macroProbe && macroProbeCall == call)
-    return false;
-  std::optional<MacroLookupScope> lookupScope;
-  if (const auto *context = macroContext(expressionToken(*call)))
-    lookupScope.emplace(*this, *context);
-  const auto symbol = resolveExpressionSymbol(call->callee());
-  if (!symbol || symbol->type != SemanticType::Function ||
-      std::none_of(symbol->overloads.begin(), symbol->overloads.end(),
-                   [](const CallableCandidate &candidate) {
-                     return candidate.record().macroExpansion;
-                   }))
-    return false;
-  const auto reject = [&](std::string message) {
-    diagnostics.push_back(
-        makeDiagnostic(DiagnosticId::MacroExpansion, call->paren(), {message}));
-  };
-  if (macroExpansionDepth >= 64 || macroExpandedBodies >= 4096) {
-    reject("Macro expansion exceeds the 64-call or 4096-body resource limit.");
-    return true;
+auto SemanticVisitor::Impl::adoptCallableTypeDiscovery(const Impl &probe,
+                                                       const SemanticType &type)
+    -> void {
+  if (type.kind == SemanticType::Lambda) {
+    for (const auto &[key, identity] :
+         probe.requestSession.sourceLambdaIdentities) {
+      if (identity.id != type.lambdaId)
+        continue;
+      requestSession.sourceLambdaIdentities.try_emplace(key, identity);
+      nextLambdaId = std::max(nextLambdaId, identity.id + 1);
+      if (!semanticModel.findLambda(identity.id)) {
+        if (const auto *discovered =
+                probe.semanticModel.findLambda(identity.id)) {
+          LambdaInfo shape = *discovered;
+          shape.declaration = identity.declaration;
+          // Body/initializer pointers and binding identities never become
+          // executable AST facts merely because a type was discovered.
+          semanticModel.recordLambdaTypeDiscovery(std::move(shape));
+        }
+      }
+      break;
+    }
   }
+  for (const auto &argument : type.arguments)
+    adoptCallableTypeDiscovery(probe, argument);
+  for (const auto &argument : type.lambdaClassTypeArguments())
+    adoptCallableTypeDiscovery(probe, argument);
+  for (const auto &argument : type.lambdaFunctionTypeArguments())
+    adoptCallableTypeDiscovery(probe, argument);
+}
+
+auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
+    -> std::unique_ptr<Impl> {
   // Resolve and type-check the complete written call in an isolated semantic
   // snapshot. In particular, a disabled helper still checks its arguments,
   // but their speculative moves, loans and writes never affect caller flow.
-  Impl probe(target, sourceGraph, toolingOccurrences, nullptr, sources,
-             rawPointerAudit, requireFunctionDefinitions, trustedBodies);
+  auto result = std::make_unique<Impl>(
+      target, sourceGraph, toolingOccurrences, nullptr, sources,
+      rawPointerAudit, requireFunctionDefinitions, trustedBodies);
+  Impl &probe = *result;
   copyRequestSessionForSpeculativeModel(probe);
+  // Constraint queries may select another typed macro before this probe has
+  // entered any expansion body. Preserve their independent recursion budget.
+  probe.expressionRequirementDepth = expressionRequirementDepth;
+  probe.activeRequirementQueries = activeRequirementQueries;
   probe.semanticModel.beginSpeculativeDelta(semanticModel);
   probe.semanticModel.setFunctionDemandSink(nullptr);
   probe.semanticModel.setCallJournal(nullptr);
@@ -447,8 +464,8 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
   probe.requestSession.assertionTrackingStart = 0;
   probe.requestSession.assertionDiagnostics.clear();
   probe.macroProbe = true;
-  probe.macroProbeCall = call;
-  for (const auto &argument : call->arguments())
+  probe.macroProbeCall = &call;
+  for (const auto &argument : call.arguments())
     probe.macroProbeArguments.insert(argument.get());
   probe.macroLookupBase = this;
   probe.nextExpansion = nextExpansion;
@@ -460,10 +477,61 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
   probe.instanceTypeSubstitution = instanceTypeSubstitution;
   probe.instanceValueSubstitution = instanceValueSubstitution;
   probe.designatedMoves = designatedMoves;
+  return result;
+}
+
+auto SemanticVisitor::Impl::analyzeMacroStatement(
+    const ExpressionStmt &statement) -> bool {
+  const Call *call = directCall(statement.expression());
+  return call && analyzeMacroCall(*call, &statement);
+}
+
+auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
+                                             const ExpressionStmt *statement)
+    -> bool {
+  if (currentFunctionDeclaration && currentFunctionDeclaration->isMacro())
+    return false;
+  const Call *call = &writtenCall;
+  if (macroProbe && macroProbeCall == call)
+    return false;
+  struct RestoreDefinitionChain {
+    decltype(macroActiveBodies) &active;
+    std::optional<decltype(macroActiveBodies)> saved;
+    ~RestoreDefinitionChain() {
+      if (saved)
+        active = std::move(*saved);
+    }
+  } definitionChain{macroActiveBodies, std::nullopt};
+  std::optional<MacroLookupScope> lookupScope;
+  if (const auto *context = macroContext(expressionToken(*call))) {
+    lookupScope.emplace(*this, *context);
+    // Written argument nesting is finite syntax, not a cycle in a helper's
+    // definition. Keep the global expansion budget, but start a fresh
+    // definition-cycle chain when forcing an invocation-owned expression.
+    if (!context->definition)
+      definitionChain.saved = std::exchange(macroActiveBodies, {});
+  }
+  const auto symbol = resolveExpressionSymbol(call->callee());
+  if (!symbol || symbol->type != SemanticType::Function ||
+      std::none_of(symbol->overloads.begin(), symbol->overloads.end(),
+                   [](const CallableCandidate &candidate) {
+                     return candidate.record().macroExpansion;
+                   }))
+    return false;
+  const auto reject = [&](std::string message) {
+    diagnostics.push_back(
+        makeDiagnostic(DiagnosticId::MacroExpansion, call->paren(), {message}));
+  };
+  if (macroExpansionDepth >= 64 || macroExpandedBodies >= 4096) {
+    reject("Macro expansion exceeds the 64-call or 4096-body resource limit.");
+    return true;
+  }
+  auto probeOwner = makeMacroProbe(*call);
+  Impl &probe = *probeOwner;
   probe.analyze(*call);
   if (hasErrorDiagnostics(probe.diagnostics)) {
     for (auto &diagnostic : probe.diagnostics) {
-      macroRelated(diagnostic, tokenSpan(statement.expressionStart()),
+      macroRelated(diagnostic, tokenSpan(callableToken(call->callee())),
                    "While checking this macro invocation.");
       if (symbol->overloads.size() == 1 &&
           symbol->overloads.front().declaration)
@@ -480,22 +548,13 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
       selection ? semanticModel.findFunction(selection->function) : nullptr;
   if (!function || !function->declaration || !function->macroExpansion)
     return false;
-  const auto unstableType = [&](const auto &self,
-                                const SemanticType &type) -> bool {
-    if (type.kind == SemanticType::Lambda &&
-        !semanticModel.findLambda(type.lambdaId))
-      return true;
-    return std::any_of(
-        type.arguments.begin(), type.arguments.end(),
-        [&](const auto &argument) { return self(self, argument); });
-  };
-  if (std::any_of(
-          selection->typeArguments.begin(), selection->typeArguments.end(),
-          [&](const auto &type) { return unstableType(unstableType, type); })) {
-    reject("A fresh callable-valued macro argument requires a named binding "
-           "so its concrete type identity is established before expansion.");
-    return true;
-  }
+  // A successful probe publishes only lexical callable identity and type
+  // shape. Captures, loans, body facts and executable journals are established
+  // afresh if/when an expanded occurrence evaluates the caller expression.
+  for (const auto &type : selection->typeArguments)
+    adoptCallableTypeDiscovery(probe, type);
+  for (const auto &type : selection->parameterTypes)
+    adoptCallableTypeDiscovery(probe, type);
   if (std::any_of(selection->parameterTypes.begin(),
                   selection->parameterTypes.end(),
                   [&](const SemanticType &type) {
@@ -505,7 +564,8 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
     // executable flow. Concrete semantic reanalysis must expand and check it;
     // do not accidentally apply ordinary eager-call moves to a generic body.
     recordSelectedCallOccurrence(*call, *selection);
-    semanticModel.record(*call, ExpressionInfo{.type = SemanticType::Void});
+    currentType = callExpressionType(selection->returnType);
+    semanticModel.record(*call, expressionInfo(currentType));
     loanFlow.deferredGenericFlow = true;
     requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
     return true;
@@ -543,8 +603,30 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
     reject("The selected typed macro has no eligible statement body.");
     return true;
   }
-  if (statement.discardAttribute()) {
-    report(*statement.discardAttribute(),
+  const SemanticType resultType = selection->returnType;
+  if (!containsOpenTypeParameter(resultType)) {
+    const auto traits = typeTraits(resultType);
+    if (resultType.kind == SemanticType::Reference ||
+        traits.containsBorrowedState) {
+      reject("A macro result cannot export a reference or tracked borrowed "
+             "state from its local result region.");
+      return true;
+    }
+    if (resultType != SemanticType::Void && !traits.movable &&
+        !traits.copyable) {
+      reject("A macro result must be movable or copyable to leave its local "
+             "result region; return an owning indirection for an immovable "
+             "payload.");
+      return true;
+    }
+  }
+  if (!statement && resultType == SemanticType::Void) {
+    reject("A void macro must be invoked as a complete expression statement.");
+    return true;
+  }
+  if (statement && statement->discardAttribute() &&
+      resultType == SemanticType::Void) {
+    report(*statement->discardAttribute(),
            "'[[discard]]' cannot be applied to a void typed macro.");
     return true;
   }
@@ -566,7 +648,7 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
   caller.lexicalLambdaDepth = lambdaDepth;
   caller.localScopeEnd =
       std::min(caller.localScopeEnd.value_or(scopes.size()), scopes.size());
-  Token invocation = statement.expressionStart();
+  Token invocation = expressionToken(*call);
   if (caller.definition && caller.invocation)
     invocation = *caller.invocation;
   CallerLocationOrigin origin;
@@ -629,6 +711,10 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
         MacroLookupContext domain = context    ? *context
                                     : fallback ? *fallback
                                                : caller;
+        domain.callableSourceExpansion =
+            context && context->callableSourceExpansion
+                ? *context->callableSourceExpansion
+                : token.expansion;
         // Syntax carried through an enclosing expansion may now be inside
         // its argument's lambda body. Capture this invocation's fresh stack,
         // not the numeric bounds of the discarded enclosing callable stack.
@@ -725,7 +811,7 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
   ResolvedCallInfo selected = *selection;
   selected.defaultArguments.clear(); // Probe-owned syntax is not executable.
   recordSelectedCallOccurrence(*call, std::move(selected));
-  semanticModel.record(*call, ExpressionInfo{.type = SemanticType::Void});
+  semanticModel.record(*call, expressionInfo(resultType));
   // Keep written references available to editor queries even when no expanded
   // path evaluates them. Executable expression/loan facts stay in the probe.
   const SourceSpan callSpan = tokenSpan(expressionToken(*call));
@@ -743,10 +829,45 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
   ++macroExpandedBodies;
   macroActiveBodies.push_back(activeBody);
   const std::size_t diagnosticStart = diagnostics.size();
+  const ScopeStack incoming = scopes;
+  macroResultRegions.push_back({.function = currentFunctionDeclaration,
+                                .lambdaDepth = lambdaDepth,
+                                .expansion = bodyExpansion,
+                                .type = resultType});
   {
+    // This is an executable lexical body even inside a namespace or field
+    // initializer. Declaration classification shares the ordinary local
+    // rules; the real enclosing callable/effect owner stays unchanged.
+    struct ExecutableBodyScope {
+      std::size_t &depth;
+      explicit ExecutableBodyScope(std::size_t &depth) : depth(depth) {
+        ++depth;
+      }
+      ~ExecutableBodyScope() { --depth; }
+    } executableBody(functionDepth);
     MacroLookupScope definitionScope(*this, macroLookup.at(bodyExpansion));
     analyze(expansion.statement);
   }
+  auto resultRegion = std::move(macroResultRegions.back());
+  macroResultRegions.pop_back();
+  if (statement &&
+      (resultType != SemanticType::Void || !resultRegion.exits.empty()))
+    semanticModel.recordFullExpression(*statement, statement->expression());
+  std::vector<const ReturnStmt *> reachableReturns;
+  const FlowSummary resultFlow =
+      summarizeFlow(expansion.statement.get(), &reachableReturns);
+  if (resultType != SemanticType::Void && resultFlow.canFallThrough)
+    reject(
+        "A value macro must return a value on every normally completing path.");
+  std::vector<ScopeStack> exits;
+  for (auto &[returned, state] : resultRegion.exits)
+    if (std::find(reachableReturns.begin(), reachableReturns.end(), returned) !=
+        reachableReturns.end())
+      exits.push_back(std::move(state));
+  if (resultFlow.canFallThrough)
+    exits.push_back(scopes);
+  if (!exits.empty())
+    applyMoveStates(mergedValueStates(incoming, exits));
   macroActiveBodies.pop_back();
   --macroExpansionDepth;
   for (std::size_t index = diagnosticStart; index < diagnostics.size();
@@ -758,18 +879,72 @@ auto SemanticVisitor::Impl::analyzeMacroStatement(
         diagnostic.primary.end <= definition.extent()->end) {
       macroRelated(diagnostic, diagnostic.primary,
                    "In the body of macro '" + definition.name().lexeme + "'.");
-      diagnostic.primary = tokenSpan(statement.expressionStart());
+      diagnostic.primary = tokenSpan(callableToken(call->callee()));
     }
     const std::string name =
         qualifiedName(function->namespaceScope, definition.name().lexeme);
-    macroRelated(diagnostic, tokenSpan(statement.expressionStart()),
+    macroRelated(diagnostic, tokenSpan(callableToken(call->callee())),
                  "While expanding macro '" + name + "' here.");
     macroRelated(diagnostic, tokenSpan(definition.name()),
                  "Macro '" + name + "' is declared here.");
   }
-  semanticModel.recordMacroExpansion(statement, std::move(expansion.statement),
+  if (statement && resultType == SemanticType::Void &&
+      resultRegion.exits.empty())
+    semanticModel.recordMacroExpansion(*statement, expansion.statement,
+                                       definition);
+  semanticModel.recordMacroExpansion(*call, std::move(expansion.statement),
                                      definition);
-  currentType = SemanticType::Void;
+  if (statement && resultType != SemanticType::Void &&
+      !statement->discardAttribute() && !function->discardableResult)
+    report(call->paren(),
+           "The result of this value macro must be used or "
+           "explicitly discarded with [[discard]].",
+           "GTI-S2009");
+  currentType = resultType;
+  return true;
+}
+
+auto SemanticVisitor::Impl::analyzeMacroReturn(const ReturnStmt &statement)
+    -> bool {
+  if (macroResultRegions.empty() ||
+      macroResultRegions.back().function != currentFunctionDeclaration ||
+      macroResultRegions.back().lambdaDepth != lambdaDepth)
+    return false;
+  const SemanticType result = macroResultRegions.back().type;
+  if (result == SemanticType::Void) {
+    if (statement.value() && analyze(statement.value()) != SemanticType::Void)
+      report(statement.keyword(), "A void macro cannot return a value.");
+  } else if (!statement.value()) {
+    report(statement.keyword(), "A value macro return requires a value.");
+  } else {
+    const SemanticType value = analyzeInitializer(statement.value(), result);
+    const auto *info = semanticModel.findExpression(*statement.value());
+    if (result.kind == SemanticType::Reference ||
+        (info && info->traits.containsBorrowedState)) {
+      report(statement.keyword(),
+             "A macro result cannot export a reference or tracked borrowed "
+             "state from its local result region.",
+             "GTI-S2124");
+    } else if (!recordsDeclarationConversion(*statement.value()) &&
+               !isOwnershipAssignable(result, value, statement.value())) {
+      const auto *variable = movedVariable(statement.value());
+      // A substituted argument is an expression, not an eager by-value
+      // parameter. Only the macro's own named locals get implicit return
+      // movement; consuming a caller owner requires a written move.
+      const auto moved =
+          variable && variable->name().expansion ==
+                          macroResultRegions.back().expansion
+              ? analyzeImplicitReturnMove(statement.value(), result, value)
+              : ImplicitReturnMoveStatus::NotEligible;
+      if (moved == ImplicitReturnMoveStatus::NotEligible)
+        report(statement.keyword(),
+               "Cannot initialize macro result of type '" +
+                   typeSpelling(result) + "' from '" + typeSpelling(value) +
+                   "'.",
+               "GTI-S2003");
+    }
+  }
+  macroResultRegions.back().exits.emplace_back(&statement, scopes);
   return true;
 }
 

@@ -321,6 +321,7 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(),                                // SourceFunctionName
     harmless(),                                // SourceLine
     harmless(),                                // SourceColumn
+    harmless(), // SourceExpressionText: no executable form; verifier rejects.
     harmless(), // MetaFieldCount: folded in semantics, never executes.
     harmless(), // MetaFieldName
     harmless(), // MetaFieldIsPublic
@@ -661,6 +662,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "source-function-name",
     "source-line",
     "source-column",
+    "source-expression-text",
     "meta-field-count",
     "meta-field-name",
     "meta-field-is-public",

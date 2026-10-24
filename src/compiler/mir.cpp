@@ -5696,11 +5696,42 @@ void advanceLifecycleState(MirLifecycleState &state,
   std::unordered_map<MirLoanId, std::vector<MirDropObligationId>> carrierDrops;
   std::unordered_set<MirDropObligationId> receiverCarrierDrops;
   std::unordered_map<MirLoanId, MirCallInputRole> callInputRoles;
+  std::unordered_map<MirPlaceId, std::vector<const MirDropObligation *>>
+      valueDropsByPlace;
+  for (const auto &drop : body.dropObligations)
+    if (drop.kind == MirDropObligationKind::Value)
+      valueDropsByPlace[drop.place].push_back(&drop);
+  std::unordered_map<MirInstructionId, MirDropObligationId> temporaryInputDrops;
   for (const MirBlock &block : body.blocks)
-    for (const MirInstruction &instruction : block.instructions)
+    for (const MirInstruction &instruction : block.instructions) {
       if (instruction.kind == MirInstructionKind::CallInput &&
           instruction.loan && instruction.callInputRole)
         callInputRoles.emplace(*instruction.loan, *instruction.callInputRole);
+      if (instruction.kind != MirInstructionKind::CallInput ||
+          (instruction.callInputKind != HirCallInputKind::ReadTemporaryBorrow &&
+           instruction.callInputKind !=
+               HirCallInputKind::MutableTemporaryBorrow))
+        continue;
+      const auto place = instruction.operands.size() == 1
+                             ? instruction.operands.front().place
+                             : 0;
+      const auto found = valueDropsByPlace.find(place);
+      const MirDropObligation *exact = nullptr;
+      if (found != valueDropsByPlace.end())
+        for (const auto *drop : found->second)
+          if (drop->value == instruction.hirValue) {
+            if (exact)
+              return failure(body, owner,
+                             "temporary input has ambiguous owner obligations",
+                             block.id, instruction.id);
+            exact = drop;
+          }
+      if (!exact)
+        return failure(body, owner,
+                       "temporary input lacks its exact owner obligation",
+                       block.id, instruction.id);
+      temporaryInputDrops.emplace(instruction.id, exact->id);
+    }
   for (const MirDropObligation &drop : body.dropObligations) {
     const MirPlace *place = body.findPlace(drop.place);
     const auto carrier = place == nullptr
@@ -5787,6 +5818,15 @@ void advanceLifecycleState(MirLifecycleState &state,
 
     for (const MirInstruction &instruction : block.instructions) {
       lifecycleIndex = 0;
+      if (validate) {
+        const auto borrowed = temporaryInputDrops.find(instruction.id);
+        if (borrowed != temporaryInputDrops.end() &&
+            !state[borrowed->second - 1].definitely(OwnershipState::Available))
+          return failure(body, owner,
+                         "temporary borrow requires its exact owner to be live "
+                         "on every incoming path",
+                         block.id, instruction.id);
+      }
       if (validate && instruction.kind == MirInstructionKind::EndBorrow &&
           instruction.loan) {
         const auto *loan = body.findLoan(*instruction.loan);
@@ -11033,6 +11073,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           producer->enumOwner == referent.enumId && producer->enumVariant &&
           !producer->constructorTarget && !producer->functionTarget &&
           !producer->lambdaTarget;
+      // The exact materialization query also identifies a join's transport
+      // from its hidden slot. Lifecycle flow independently requires its exact
+      // owner definitely live at this input, including every incoming arm.
+      const bool joinedTemporary =
+          producer != nullptr && place != nullptr &&
+          place->root == MirPlaceRootKind::Temporary &&
+          (producer->kind == MirInstructionKind::Load ||
+           producer->kind == MirInstructionKind::Move);
       if (place == nullptr || source == nullptr || producer == nullptr ||
           loan == nullptr || loan->kind != MirLoanKind::CallArgument ||
           loan->source != place->id || loan->access != AccessMode::ReadOnly ||
@@ -11056,7 +11104,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               bool(captureDependency) ||
           !sameCallInputTraits(producer->info.traits, source->info.traits) ||
           (!ordinaryConstruction && !generatedDefault && !ordinaryCall &&
-           !payloadConstruction && !callableConstruction &&
+           !payloadConstruction && !callableConstruction && !joinedTemporary &&
            producer->kind != MirInstructionKind::Move)) {
         return false;
       }
@@ -11076,7 +11124,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return false;
       }
       const MirDropObligationId obligation = obligations.front()->id;
-      return producer->successResultDrop == obligation ||
+      return joinedTemporary || producer->successResultDrop == obligation ||
              std::any_of(
                  producer->lifecycle.begin(), producer->lifecycle.end(),
                  [&](const MirLifecycleEvent &event) {

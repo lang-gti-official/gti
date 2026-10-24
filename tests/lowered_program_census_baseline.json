@@ -2289,7 +2289,7 @@
       }
     },
     "147-standard-library-import.gti": {
-      "declarations": 3345,
+      "declarations": 3371,
       "bodies": 452,
       "generated_items": 253,
       "generated_kinds": {
@@ -2705,9 +2705,9 @@
       }
     },
     "172-deferred-assertions.gti": {
-      "declarations": 1517,
-      "bodies": 195,
-      "generated_items": 116,
+      "declarations": 1528,
+      "bodies": 202,
+      "generated_items": 119,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
@@ -2716,7 +2716,7 @@
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 66,
+        "concrete_instance_adapter": 69,
         "thread_local_storage": 0
       }
     },
@@ -2753,9 +2753,9 @@
       }
     },
     "174-typed-macros.gti": {
-      "declarations": 1502,
-      "bodies": 156,
-      "generated_items": 95,
+      "declarations": 1543,
+      "bodies": 211,
+      "generated_items": 116,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
@@ -2764,14 +2764,14 @@
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 45,
+        "concrete_instance_adapter": 66,
         "thread_local_storage": 0
       }
     }
   },
   "totals": {
-    "declarations": 182679,
-    "bodies": 23925,
-    "generated_items": 15033
+    "declarations": 182757,
+    "bodies": 23987,
+    "generated_items": 15057
   }
 }

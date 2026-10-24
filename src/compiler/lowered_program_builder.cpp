@@ -1159,11 +1159,14 @@ private:
          !source.parameterTypes.empty() || owner == nullptr ||
          owner->defaultConstructor != SpecialMemberStatus::Generated ||
          !source.parameterBindings.empty() || !source.body.roots.empty() ||
-         !source.body.statements.empty() ||
          lowered.definitionKind != MirDefinitionKind::Source))
       return reject("generated constructor instance " +
                     std::to_string(index + 1) +
                     " has an invalid structural schedule");
+    // A generated constructor has no user body roots, but its selected field
+    // initializers may own nested result-region statements and locals.
+    // verifyHirProgramPlans independently proves their exact reachable
+    // inventory; an empty-statements check would reject that verified schedule.
     if (source.id != lowered.id || source.owner != lowered.owner ||
         source.generatedDefault != lowered.generatedDefault ||
         source.constexprConstructor != lowered.constexprConstructor ||

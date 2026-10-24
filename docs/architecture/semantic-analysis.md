@@ -59,6 +59,19 @@ in [execution semantics](../language/execution.md#typed-statement-macros).
 engine. The syntax revision preserves the existing semantic expansion, HIR
 and verified-MIR contract, including argument probes and caller provenance.
 
+Explicit result macros add a semantic local-result region, not a hidden
+function boundary. Its concrete result type governs return initialization;
+reachable return snapshots are selected by the ordinary flow summary before
+merging caller move states. A fresh lambda or demanded function body has its
+own return domain. Only locals written in that exact expansion are eligible
+for implicit return movement; a forwarded caller expression requires an
+explicit move to sacrifice its owner. Reference/tracked-borrowed and direct
+immovable results are rejected structurally until result dependency joins and
+destination-passing construction respectively supply their missing proof.
+HIR preserves the local return targets; MIR owns successful publication and
+rollback cleanup. Void expansions without a local return retain their existing
+statement-only path.
+
 Member visibility is shared by semantic field/call/constructor/type checks and
 completion filtering. `canAccessMember` uses the lexical class context, the
 selected declaration's access and owner, substituted inheritance paths, and an
@@ -1397,6 +1410,14 @@ temporaries and protects a published reference or borrowed result. Body cleanup
 summaries retain conservative rollback effects until the closed execution/failure
 proof can establish a narrower path.
 
+Macro-local returns select the exact active result region's destination type,
+matched by lexical function and lambda depth, rather than the enclosing
+function's return type. Transferring an owning result therefore consumes its
+temporary at that boundary; actually discarding the result still records its
+cleanup effects. Nested lambdas retain ordinary function-return handling.
+Unevaluated expression-text and skipped-argument probes fork effect journals
+and cannot publish speculative storage writes or cleanup into caller flow.
+
 The closed source effect graph also computes a monotone may-propagate-failure
 bit from typed local defined-failure outcomes, unknown GTI boundaries and exact
 selected callees. It executes no GTI and adds no alternate failure semantics.
@@ -1980,6 +2001,30 @@ and fields; concrete reanalysis establishes the exact target. Captureless lambda
 parameters may expand a surrounding lexical type pack, with the same concrete
 binding and ownership checks as an ordinary function pack.
 
+Deferred expression discovery preserves the lexical identity of a lambda by
+source unit/path, bracket offset and originating compile-time expansion. Macro
+argument copies retain that origin independently of their fresh hygiene lookup
+domains; concrete enclosing generic arguments and capture types remain part of
+the ordinary lambda `SemanticType`. A successful isolated macro probe publishes
+only callable shape, traits and invocation identity, with speculative capture
+binding identities and initializer pointers removed. These shapes have an
+ID-only lookup; AST lookup requires an actually analyzed lambda body. Discovery
+publishes no executable expression facts, calls,
+loans, capture initialization or cleanup. Every forced occurrence reuses the
+lexical type identity while ordinary lambda analysis checks its actual capture
+initializers and body in caller flow. Repeated forcing therefore constructs
+separate closure values of one lexical type, and repeated ownership consumption
+is still rejected by the shared place/value-state rules.
+
+An executable scoped result region contributes to lexical local-binding depth
+even when its caller is a namespace, instance-field or static initializer.
+Explicit and inferred declarations, checked references, structured bindings,
+mutation and automatic cleanup therefore use ordinary local rules. The region
+does not invent a function declaration or effect owner: initializer effects
+remain attributed to the real enclosing initializer, local returns target the
+region, and callable-body lexical demand advancement keeps its original
+eligibility.
+
 A direct by-value or checked-reference generic parameter may acquire a `Confined` callable
 contract when its visible body invokes it or forwards it to another proven
 confined parameter. Each call site records an exact parameter list, result
@@ -2262,8 +2307,12 @@ Resolved ordinary method calls and class `operator()` calls retain a
 `CallReceiverMode` alongside the exact selected target. The mode distinguishes
 read-only and mutable source places, reusable values, consuming receivers, and
 read-only or mutable borrows of a fresh temporary. Semantics alone classifies
-freshness: ordinary construction, by-value GTI calls, and value-producing GTI
-operators qualify for the bounded ephemeral-borrow contract. Receiver-only
+freshness: ordinary construction, by-value GTI calls, typed macro result regions,
+and value-producing GTI operators qualify for the bounded ephemeral-borrow
+contract. A concrete self-contained macro result uses its checked expansion and
+exact result type as producer authority, not an invented executable function
+call. The ordinary selected-target confinement, non-borrowing result, linkage,
+access and loan rules still apply. Receiver-only
 materialization also accepts owned movable class values from conditional
 expressions, lambda calls and copy/move construction; this does not broaden
 ephemeral argument borrowing. Reusable
@@ -2371,7 +2420,12 @@ construction relationship. Only these bounded guaranteed facts admit
 operations in an open generic body. Arbitrary compound expressions are concrete
 filters, not inferred proofs of their subexpressions. The selected concrete
 instance still resolves every executable call/constructor normally. Query
-recursion is bounded to 64 active checks.
+recursion is bounded to 64 active checks. Re-entering the same in-flight query
+with identical syntax, resolved argument types and exact type/value-generic
+substitutions fails immediately rather than expanding a branching probe tree.
+Isolated query workers and typed-macro selection probes inherit that active
+identity stack without sharing mutable runtime flow or capture state. Changing
+concrete generic arguments remain distinct checks within the existing budget.
 
 Constexpr Boolean-call leaves use existing constant evaluation. Trusted
 reflection fact identity, including unambiguous transparent source wrappers,

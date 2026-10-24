@@ -180,6 +180,7 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
       cloneLoopUse(call.receiver->loopUse);
   }
   worker->expressionRequirementDepth = expressionRequirementDepth;
+  worker->activeRequirementQueries = activeRequirementQueries;
   worker->requestSession.trackAssertionDiagnostics = false;
   worker->requestSession.trackedAssertionFailed = false;
   worker->requestSession.assertionDiagnostics.clear();
@@ -304,6 +305,17 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
   return fact;
 }
 
+auto SemanticVisitor::Impl::requirementQueryIdentity(
+    const void *syntax, std::span<const SemanticType> arguments) const
+    -> ActiveRequirementQuery {
+  ActiveRequirementQuery identity{
+      .syntax = syntax,
+      .arguments = {arguments.begin(), arguments.end()},
+      .types = instanceTypeSubstitution,
+      .values = instanceValueSubstitution};
+  return identity;
+}
+
 auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     const MemberRequirement &query, std::span<const SemanticType> arguments,
     std::string *reason, const std::vector<std::string> *lookupScope) const
@@ -334,14 +346,24 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     return reject("The required expression is not guaranteed for the open type "
                   "parameters.");
   }
+  ActiveRequirementQuery identity = requirementQueryIdentity(&query, arguments);
+  if (std::find(activeRequirementQueries.begin(),
+                activeRequirementQueries.end(),
+                identity) != activeRequirementQueries.end())
+    return reject("Expression requirements contain a recursive query cycle.");
   if (expressionRequirementDepth >= 64)
     return reject(
         "Expression requirements exceed the 64-query recursion limit.");
   ++expressionRequirementDepth;
+  activeRequirementQueries.push_back(std::move(identity));
   struct PopDepth {
     std::size_t &depth;
-    ~PopDepth() { --depth; }
-  } pop{expressionRequirementDepth};
+    std::vector<ActiveRequirementQuery> &active;
+    ~PopDepth() {
+      active.pop_back();
+      --depth;
+    }
+  } pop{expressionRequirementDepth, activeRequirementQueries};
   auto worker = unevaluatedExpressionWorker();
   std::unordered_map<std::string, SemanticType> bindings;
   for (std::size_t index = 0; index < query.parameters().size(); ++index)
@@ -431,13 +453,24 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
              reject(
                  "The compiler-verified type relationship is not satisfied.");
   }
+  ActiveRequirementQuery identity =
+      requirementQueryIdentity(&application, arguments);
+  if (std::find(activeRequirementQueries.begin(),
+                activeRequirementQueries.end(),
+                identity) != activeRequirementQueries.end())
+    return reject("Constraint predicates contain a recursive query cycle.");
   if (expressionRequirementDepth >= constexprCallDepthLimit)
     return reject("Constraint predicates exceed the 64-query recursion limit.");
   ++expressionRequirementDepth;
+  activeRequirementQueries.push_back(std::move(identity));
   struct PopDepth {
     std::size_t &depth;
-    ~PopDepth() { --depth; }
-  } pop{expressionRequirementDepth};
+    std::vector<ActiveRequirementQuery> &active;
+    ~PopDepth() {
+      active.pop_back();
+      --depth;
+    }
+  } pop{expressionRequirementDepth, activeRequirementQueries};
   auto worker = unevaluatedExpressionWorker();
   worker->prepareRequirementLookup(lookupScope,
                                    sourceUnitFor(application.name.last()));

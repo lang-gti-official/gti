@@ -16,6 +16,17 @@ expressions; MIR owns their control flow, failure edges and cleanup. Changing
 the source spelling from `[[deferred]]` to `#macro` introduces no second
 executable representation or backend macro interpreter.
 
+Value macros and void macros with local returns use `HirValueKind::ScopedResult`.
+Its `regionBody` owns checked ordinary statements; each local return names that
+value's exact `resultRegion` identity. Nested regions and fresh lambda bodies
+have independent return domains. Structural verification rejects missing,
+forged or cross-region return targets and recursive region edges. Results are
+owned/dependency-free in this profile; borrowed result-origin joins are not
+inferred from backend representation. MIR materializes a typed join result,
+keeps it in failure cleanup during local destruction and then exposes its
+transport value to the enclosing full expression. Void templates with no
+local returns retain the statement-only path and need no result join.
+
 Concrete function instances preserve the semantic owned-pointee accessor
 summary (exact receiver-field identity and private borrow operation), refreshed
 from concrete instance analysis. It is proof metadata, not a synthetic field
@@ -346,6 +357,10 @@ concrete expressions in field order, and MIR owns publication, failure edges and
 rollback. Verification checks each selected expression against the original
 field declaration and rejects missing, reordered or substituted defaults. This
 does not add implicit initialization for fields without a declaration default.
+Its body has no statement roots, but selected initializer values may own scoped
+result regions. Verification starts the result/return graph at those values and
+requires every body value, nested statement, and local binding to be reachable
+from the selected initializer schedule; unrelated body inventory is rejected.
 Selected defaults retain existing scalar initialization conversions through one
 semantic compatibility rule; literal-dependent narrowing is still selected in
 semantics, never reevaluated by an IR verifier.
@@ -490,7 +505,11 @@ instances or module-body iteration. Each namespace global and non-generic
 static field has one exact binding in the merged module body. `DataOnly` steps
 have no module statement, value, or executable initializer root. `Initializer`
 steps have one exact statement/root and must retain the nonzero source-backed
-initializer value plus its source plan identity. Ordinary static fields of
+initializer value plus its source plan identity. A scoped result inside that
+value contributes its transitively reachable statements, values, and local
+bindings, not another module root or program-storage step. Inventory verification
+follows these value-to-statement region edges as well as ordinary expression and
+statement edges; unreachable extras remain invalid. Ordinary static fields of
 generic classes are rejected by current semantics and have no accepted
 program-wide initialization contract; excluding them from this plan is not
 evidence of usable per-instance static storage.

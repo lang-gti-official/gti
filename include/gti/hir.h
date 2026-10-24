@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -73,6 +74,7 @@ enum class HirValueKind {
   Binary,
   Call,
   Conditional,
+  ScopedResult,
   Move,
   NativeCallback,
   FunctionItem,
@@ -234,6 +236,9 @@ struct HirValue {
   UnsafeOperationKind unsafeOperation = UnsafeOperationKind::None;
   SymbolId symbol = 0;
   std::vector<HirValueId> operands;
+  // A semantic result region executes statements at this expression's
+  // position. Its returns publish this value, not the enclosing function.
+  std::optional<HirStatementId> regionBody;
   // Caller-expanded declaration defaults, in exact operand-suffix order.
   // Retained even when a concrete pack prevents a fixed-arity call plan.
   std::vector<HirValueId> defaultArguments;
@@ -399,6 +404,7 @@ struct HirStatement {
   bool unsafeBlock = false;
   std::optional<HirBindingId> binding;
   std::optional<HirValueId> value;
+  HirValueId resultRegion = 0;
   std::optional<HirValueId> condition;
   std::optional<HirValueId> increment;
   std::optional<HirStatementId> initializer;
@@ -498,6 +504,26 @@ struct HirThreadLocalStorage {
   DefinedFailureOperation ensureFailure;
   HirBody initializer;
 };
+
+// Exact executable inventory reached from initializer values, including only
+// statement subgraphs entered through ScopedResult values. Shared by HIR
+// verification and lowering of program-storage initialization schedules.
+struct HirInitializerReachability {
+  bool complete = true;
+  std::unordered_set<HirValueId> values;
+  std::unordered_set<HirStatementId> statements;
+  std::unordered_set<HirBindingId> bindings;
+};
+
+[[nodiscard]] HirInitializerReachability
+hirInitializerReachability(const HirBody &body,
+                           const std::vector<HirValueId> &roots);
+// Independent root groups share one immutable body index, avoiding a full
+// module-inventory rebuild for every program-storage initializer.
+[[nodiscard]] std::vector<HirInitializerReachability>
+hirInitializerReachabilityBatch(
+    const HirBody &body,
+    const std::vector<std::vector<HirValueId>> &rootGroups);
 
 struct HirLambda {
   HirLambdaId id = 0;

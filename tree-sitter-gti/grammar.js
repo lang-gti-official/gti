@@ -99,6 +99,7 @@ module.exports = grammar({
 
   conflicts: ($) => [
     [$.function_declaration, $.macro_declaration],
+    [$.macro_declaration, $._qualified_identifier],
     [$.generic_argument_profile_clause, $.generic_parameter],
     [$.generic_argument_profile_clause, $._qualified_identifier],
     [$.extern_c_variable_declaration, $.extern_c_function_prototype],
@@ -838,6 +839,7 @@ module.exports = grammar({
       seq(
         repeat(field("attribute", $.function_contract_attribute)),
         "#macro",
+        optional(field("return_type", $.type)),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),

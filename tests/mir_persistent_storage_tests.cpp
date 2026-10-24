@@ -1765,6 +1765,131 @@ int main() { return initialized; }
   expect(removed && !lang::verifyMirProgram(forged).valid(),
          "an initializer cannot omit the armed local's failure cleanup");
 }
+
+void macroResultsComposeWithPersistentStorage(std::string_view storage) {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/macro-results.gti",
+      std::string(R"(
+thread_local mut int32_t first = 1;
+thread_local mut int32_t second = 2;
+thread_local mut int32_t destroyed = 0;
+class Resource {
+  int32_t number;
+public:
+  Resource(int32_t value) : number(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { destroyed = 1; }
+  int32_t read() { return this.number; }
+};
+#macro int32_t select_value(bool enabled, int32_t expression) {
+  int32_t saved = expression;
+  if (enabled) { return saved; }
+  return 0;
+}
+#macro Resource own_value(int32_t expression) {
+  Resource saved{expression};
+  return saved;
+}
+)") + std::string(storage) +
+          " int32_t configured = select_value(true, second);\n" +
+          std::string(storage) + R"( Resource owner = own_value(7);
+int32_t inspect(Resource& value) { return value.read(); }
+int main() {
+  int32_t& borrowed = first;
+  int32_t temporary = inspect(own_value(configured));
+  return temporary + owner.read() + borrowed;
+}
+)");
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "macro result locals, persistent initialization, and temporary "
+         "argument borrowing compose");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(
+      lang::verifyHirProgramPlans(frontend.semantics, frontend.hir).valid() &&
+          lang::verifyMirProgram(frontend.mir).valid(),
+      "macro result initialization retains both scoped-local and "
+      "persistent-storage proofs");
+  if (storage.empty())
+    return;
+  const auto owner = symbol(frontend, "owner");
+  const auto configured = symbol(frontend, "configured");
+  bool changedReturn = false;
+  auto malformedHir = frontend.hir;
+  auto &hirStorage = const_cast<std::vector<lang::HirThreadLocalStorage> &>(
+      malformedHir.threadLocalStorage());
+  for (auto &item : hirStorage)
+    if (item.symbol == owner) {
+      expect(!item.initializer.dropObligations.empty(),
+             "an owning macro initializer retains its lexical local cleanup");
+      for (auto &statement : item.initializer.statements)
+        if (statement.resultRegion != 0) {
+          statement.resultRegion = 0;
+          changedReturn = true;
+          break;
+        }
+    }
+  expect(changedReturn &&
+             !lang::verifyHirProgramPlans(frontend.semantics, malformedHir)
+                  .valid() &&
+             !lang::MirLowerer()
+                  .lower(malformedHir, frontend.failureMetadata)
+                  .valid(),
+         "a TLS initializer cannot turn its macro-local result into a body "
+         "return");
+  auto malformedMir = frontend.mir;
+  auto *initializer = lang::findMirBody(
+      malformedMir,
+      {.kind = lang::MirBodyKind::ThreadLocalInitializer, .owner = configured});
+  bool changedGuard = false;
+  if (initializer)
+    for (auto &block : initializer->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::EnsureThreadLocal &&
+            instruction.threadLocalStorage == symbol(frontend, "second")) {
+          instruction.threadLocalStorage = symbol(frontend, "first");
+          instruction.bodyTarget = lang::MirBodyAddress{
+              .kind = lang::MirBodyKind::ThreadLocalInitializer,
+              .owner = symbol(frontend, "first")};
+          changedGuard = true;
+        }
+  expect(changedGuard && !lang::verifyMirProgram(malformedMir).valid(),
+         "macro-local evaluation still requires its exact TLS first-use "
+         "guard");
+}
+
+void macroLocalCleanupRetainsAmbientEffects() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/macro-cleanup.gti", R"(
+thread_local mut int32_t first = 1;
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { first = 9; }
+};
+#macro int32_t with_cleanup(int32_t expression) {
+  Guard armed{};
+  return expression;
+}
+int main() {
+  int32_t& borrowed = first;
+  int32_t copied = with_cleanup(2);
+  return borrowed + copied;
+}
+)");
+  expect(!frontend.canGenerateCode() &&
+             std::any_of(
+                 frontend.diagnostics.begin(), frontend.diagnostics.end(),
+                 [](const auto &error) { return error.code == "GTI-S2045"; }) &&
+             std::none_of(
+                 frontend.diagnostics.begin(), frontend.diagnostics.end(),
+                 [](const auto &error) { return error.code == "GTI-B0001"; }),
+         "macro-local cleanup cannot hide mutation overlapping a live TLS "
+         "borrow");
+}
 } // namespace
 
 int main() {
@@ -1791,6 +1916,9 @@ int main() {
   referenceRootDoesNotAcquireExactVirtualType(true);
   ordinaryBindingsRetainPhysicalStorageTypes();
   provisionalInitializationKeepsFailureCleanup();
+  macroResultsComposeWithPersistentStorage("thread_local");
+  macroResultsComposeWithPersistentStorage("");
+  macroLocalCleanupRetainsAmbientEffects();
   foldHirProof();
   foldColdInputEffects();
   referenceInputPhysicalType(false);

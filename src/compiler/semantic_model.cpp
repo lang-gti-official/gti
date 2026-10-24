@@ -1208,6 +1208,17 @@ const Token *SemanticModel::findMacroDefault(const Expr &expression) const {
   return base == nullptr ? nullptr : base->findMacroDefault(expression);
 }
 
+std::shared_ptr<const Stmt>
+SemanticModel::shareMacroExpansion(const Call &call) const {
+  if (const auto found = macroValueExpansions.find(&call);
+      found != macroValueExpansions.end())
+    return found->second;
+  auto inherited = base == nullptr ? nullptr : base->shareMacroExpansion(call);
+  noteBaseSyntheticSyntax(inherited != nullptr &&
+                          !baseStableSyntheticSyntax(&call));
+  return inherited;
+}
+
 std::vector<MacroExpansionSite> SemanticModel::macroExpansionSites() const {
   std::vector<MacroExpansionSite> sites;
   std::unordered_set<const ExpressionStmt *> seen;
@@ -1220,6 +1231,18 @@ std::vector<MacroExpansionSite> SemanticModel::macroExpansionSites() const {
                        declaration == model->macroDeclarations.end()
                            ? nullptr
                            : declaration->second});
+    }
+  std::unordered_set<const Call *> calls;
+  for (const SemanticModel *model = this; model != nullptr; model = model->base)
+    for (const auto &[call, body] : model->macroValueExpansions) {
+      if (!calls.insert(call).second || !body)
+        continue;
+      const auto declaration = model->macroValueDeclarations.find(call);
+      sites.push_back({nullptr, body.get(),
+                       declaration == model->macroValueDeclarations.end()
+                           ? nullptr
+                           : declaration->second,
+                       call});
     }
   return sites;
 }
@@ -1335,6 +1358,9 @@ SemanticModel::findLambda(const Lambda &declaration) const {
   if (found != lambdasById.end() && found->second != nullptr) {
     return findLambda(*found->second);
   }
+  if (const auto discovery = lambdaTypeDiscoveries.find(id);
+      discovery != lambdaTypeDiscoveries.end())
+    return &discovery->second;
   const LambdaInfo *inherited =
       base == nullptr ? nullptr : base->findLambda(id);
   noteBaseLambda(inherited);
@@ -2047,6 +2073,8 @@ void SemanticModel::clear() {
   constexprBranches.clear();
   constexprForExpansions.clear();
   macroExpansions.clear();
+  macroValueExpansions.clear();
+  macroValueDeclarations.clear();
   macroDeclarations.clear();
   macroDefaults.clear();
   declarationAttributes.clear();
@@ -2060,6 +2088,7 @@ void SemanticModel::clear() {
   functionDeclarations.clear();
   lambdas.clear();
   lambdasById.clear();
+  lambdaTypeDiscoveries.clear();
   classTypes.clear();
   classTypesById.clear();
   exactClassSpecializations.clear();
@@ -2227,6 +2256,9 @@ void SemanticModel::markSyntheticSyntaxStable() {
   for (const auto &[statement, expansion] : macroExpansions)
     if (expansion)
       stableSyntheticSyntax.insert(statement);
+  for (const auto &[call, expansion] : macroValueExpansions)
+    if (expansion)
+      stableSyntheticSyntax.insert(call);
   for (const auto &[expression, alias] : expressionAliases)
     stableSyntheticSyntax.insert(expression);
   for (const auto &[field, anchor] : implicitFieldInitializers)
@@ -2667,6 +2699,12 @@ void SemanticModel::recordMacroDefault(const Expr &expression, Token caller) {
   macroDefaults.insert_or_assign(&expression, std::move(caller));
 }
 
+void SemanticModel::recordMacroExpansion(const Call &call, StmtPtr body,
+                                         const FunctionDecl &declaration) {
+  macroValueExpansions.insert_or_assign(&call, std::move(body));
+  macroValueDeclarations.insert_or_assign(&call, &declaration);
+}
+
 void SemanticModel::recordDeclarationAttributes(
     const Stmt &declaration,
     std::vector<ResolvedDeclarationAttribute> attributes) {
@@ -2794,6 +2832,15 @@ void SemanticModel::record(const Lambda &declaration, LambdaInfo info) {
   const auto [found, _] =
       lambdas.insert_or_assign(&declaration, std::move(info));
   lambdasById.insert_or_assign(found->second.id, &declaration);
+}
+
+void SemanticModel::recordLambdaTypeDiscovery(LambdaInfo info) {
+  for (auto &capture : info.captures) {
+    capture.initializer = nullptr;
+    capture.sourceSymbol = 0;
+    capture.bindingSymbol = 0;
+  }
+  lambdaTypeDiscoveries.insert_or_assign(info.id, std::move(info));
 }
 
 void SemanticModel::recordClassType(const ClassDecl &declaration,

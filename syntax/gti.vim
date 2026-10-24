@@ -30,6 +30,8 @@ syntax keyword gtiConceptKeyword concept nextgroup=gtiConceptName skipwhite
 syntax keyword gtiStorageClass const constexpr export extern implicit mut override static thread_local virtual
 syntax keyword gtiOperatorKeyword operator
 syntax match gtiInclude "#include\>"
+syntax match gtiMacroKeyword "#macro\>"
+syntax match gtiMacroName "\%(#macro\>[^{};()]*\s\)\@<=\h\w*\ze\s*\%(<[^{};()]*>\s*\)\?("
 syntax keyword gtiInclude import
 syntax keyword gtiStatement break continue return
 syntax keyword gtiOperator alignof and or sizeof
@@ -75,6 +77,8 @@ highlight default link gtiInclude Include
 highlight default link gtiKeyword Keyword
 highlight default link gtiLifecycleSpecifier StorageClass
 highlight default link gtiMember Identifier
+highlight default link gtiMacroKeyword Keyword
+highlight default link gtiMacroName Function
 highlight default link gtiNamespaceDeclaration Identifier
 highlight default link gtiNamespaceKeyword Structure
 highlight default link gtiNamespaceName Identifier

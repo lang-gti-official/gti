@@ -1622,6 +1622,20 @@ enum class MirProgramDataInitializationKind {
   Count,
 };
 
+// A lexical binding evaluated inside one storage initializer, never persistent
+// program storage. Retain its exact source and place identity independently of
+// the operation shapes emitted for its initialization or cleanup. A structured
+// name's place is its published projection of a separate hidden local owner;
+// binding remains the name's semantic identity, not the physical owner's ID.
+struct MirProgramInitializationLocal {
+  HirBindingId binding = 0;
+  SymbolId symbol = 0;
+  MirPlaceId place = 0;
+
+  friend bool operator==(const MirProgramInitializationLocal &,
+                         const MirProgramInitializationLocal &) = default;
+};
+
 // Pointer-free identity for one program-wide storage step in the merged
 // Module/0 body. Data-only steps retain an explicit implicit-zero/constant
 // provenance discriminator and the exact constant payload when applicable.
@@ -1646,6 +1660,8 @@ struct MirProgramInitializationStep {
   HirStatementId statement = 0;
   HirValueId initializer = 0;
   HirFullExpressionId fullExpression = 0;
+  std::vector<MirProgramInitializationLocal> locals;
+  std::vector<HirFullExpressionId> nestedFullExpressions;
 
   friend bool operator==(const MirProgramInitializationStep &,
                          const MirProgramInitializationStep &) = default;

@@ -120,7 +120,11 @@ SignaturePrinter::function(const FunctionInfo &info,
     }
     result += functionName(info);
   } else if (info.macroExpansion) {
-    result += "#macro " + functionName(info);
+    result += "#macro ";
+    if (declaration == nullptr ||
+        !declaration->returnType().name.last().generated)
+      result += types.print(returnType) + " ";
+    result += functionName(info);
   } else {
     result += types.print(returnType) + " " + functionName(info);
   }
@@ -2665,12 +2669,18 @@ LanguageQueries::macroExpansion(const FrontendResult &snapshot,
   SourceSpan selectedSpan;
   bool ambiguous = false;
   for (const auto &site : snapshot.semantics.macroExpansionSites()) {
-    if (!site.invocation || !site.body || !site.declaration)
+    if ((!site.invocation && !site.call) || !site.body || !site.declaration)
       continue;
-    const auto *call = exprAs<Call>(site.invocation->expression().get());
+    const auto *call = site.call
+                           ? site.call
+                           : exprAs<Call>(site.invocation->expression().get());
     if (!call)
       continue;
-    SourceSpan span = tokenSpan(site.invocation->expressionStart());
+    if (!site.invocation && !call->writtenOrigin())
+      continue;
+    SourceSpan span = site.invocation
+                          ? tokenSpan(site.invocation->expressionStart())
+                          : *call->writtenOrigin();
     span.end = tokenSpan(call->paren()).end;
     if (span.source != unit->path.string() || span.end > source->size() ||
         span.start > byteOffset || byteOffset >= span.end)

@@ -9,8 +9,12 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
-`GTI-S2124` reports invalid typed macro invocation shapes and deterministic
-expansion-budget exhaustion. `GTI-S2099` diagnoses an ineligible `#macro`
+`GTI-S2124` reports invalid typed macro invocation/result shapes, missing
+normal-path result returns and deterministic expansion-budget exhaustion.
+Reference/tracked-borrowed and direct immovable outputs stop in semantics;
+they must not fall through to native C++ errors. Ordinary result initialization
+errors retain `GTI-S2003`, including caller owners that need an explicit move.
+`GTI-S2099` diagnoses an ineligible `#macro`
 signature/body, a macro/function overload mixture at one qualified name, or
 the removed `[[deferred]]` attribute (with migration guidance to `#macro`).
 Concrete body failures retain the owning
@@ -27,6 +31,14 @@ does not replace ordinary diagnostic codes or infer origins from macro names.
 Editors may inspect a retained expansion through the read-only
 [`gti/inspectMacroExpansion` workflow](lsp.md#read-only-macro-expansion-inspection);
 that explanatory view has no authority to repair or execute an invalid body.
+
+`GTI-S2029` retains the ordinary unsatisfied-requirement call span and related
+requirement detail when a general query re-enters an identical in-flight
+syntax/type/value substitution. The inner query fails as a recursive cycle;
+nested concept failures retain their ordinary outer concept message and
+related application/query spans. Distinct queries retain the existing
+64-active-query limit. No automatic edit
+attempts to change a recursive contract.
 
 `GTI-S2082` follows payload-enum alternatives, including those inside the
 source `expected` class, as well as fixed arrays when detecting a recursive

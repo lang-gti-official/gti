@@ -1980,6 +1980,119 @@ int selected<uint64_t Mode>() {
   }
 }
 
+void macroResultStorageEffects() {
+  for (const std::string storage : {"", "thread_local "}) {
+    const bool concurrent = !storage.empty();
+    const std::string prefix = storage + "mut int guarded = 1; " + storage +
+                               "mut int other = 2; " + storage +
+                               "mut int third = 3; ";
+    const auto accepted = [&](const std::string &source,
+                              std::string_view message) {
+      const auto result = analyze(source, concurrent, true);
+      if (!result.canGenerateCode())
+        for (const auto &diagnostic : result.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(result.canGenerateCode(), message);
+    };
+    const auto rejected = [&](const std::string &source,
+                              std::string_view message) {
+      const auto result = analyze(source, concurrent, true);
+      const bool conflict =
+          std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                        return diagnostic.code == "GTI-S2045" &&
+                               diagnostic.message.find("overlapping path") !=
+                                   std::string::npos;
+                      });
+      if (!conflict || code(result, "GTI-B0001"))
+        for (const auto &diagnostic : result.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(!result.semanticValid && conflict && !code(result, "GTI-B0001"),
+             message);
+    };
+    const std::string owner = R"(
+struct Cleanup {
+  Cleanup() {}
+  Cleanup(Cleanup& other) = delete;
+  Cleanup(Cleanup&& other) = default;
+  ~Cleanup() { guarded = 9; }
+};
+#macro Cleanup owned() { return Cleanup(); }
+#macro Cleanup nested_owned() { return owned(); }
+)";
+    accepted(prefix + owner + R"(
+int main() {
+  int& held = guarded;
+  Cleanup saved = nested_owned();
+  int snapshot = held;
+  return snapshot;
+}
+)",
+             "owning macro results transfer through nested result regions "
+             "without a phantom cleanup under the caller's persistent loan");
+    rejected(prefix + owner + R"(
+int main() {
+  int& held = guarded;
+  [[discard]] nested_owned();
+  return held;
+}
+)",
+             "discarding a real owning macro result executes its conflicting "
+             "cleanup before the persistent loan ends");
+    accepted(prefix + owner + R"(
+int main() {
+  int& held = other;
+  [[discard]] nested_owned();
+  return held;
+}
+)",
+             "actual owning macro cleanup remains legal for a disjoint "
+             "persistent owner");
+    accepted("#include <std/source_location>\n" + prefix + R"(
+#macro ignore<F>(F action) {}
+int main() {
+  int& held = guarded;
+  std::string_view written = std::expression_text(++guarded);
+  ignore([]() -> void { guarded = 9; });
+  return held + int(written.size());
+}
+)",
+             "source-text and ignored fresh-callable probes never execute "
+             "their operand's conflicting persistent write");
+
+    const std::string callable = R"(
+#macro int invoke<F>(F action) { return action(); }
+#macro int relay<F>(F action) { return invoke(action); }
+int selected<uint64_t Mode>() {
+  int& held = guarded;
+  int result = relay([]() -> int {
+    if constexpr (Mode == 0) { other = 9; }
+    else if constexpr (Mode == 1) { guarded = 9; }
+    else { third = 9; }
+    return 1;
+  });
+  return held + result;
+}
+)";
+    for (const bool reverse : {false, true}) {
+      const std::string conflicting =
+          reverse ? "int first = selected<1>(); int second = selected<0>(); "
+                  : "int first = selected<0>(); int second = selected<1>(); ";
+      rejected(prefix + callable + "int main() { " + conflicting +
+                   "return first + second; }",
+               "fresh lambdas forced through nested result macros retain "
+               "their exact hidden conflicting effect in both query orders");
+      const std::string disjoint =
+          reverse ? "int first = selected<2>(); int second = selected<0>(); "
+                  : "int first = selected<0>(); int second = selected<2>(); ";
+      accepted(prefix + callable + "int main() { " + disjoint +
+                   "return first + second; }",
+               "concrete fresh-callable macro effects remain disjoint and "
+               "query-qualified in either specialization order");
+    }
+  }
+}
+
 void deferredProbeIsolation() {
   const std::string prefix = R"(
 thread_local mut int value = 1;
@@ -2082,6 +2195,7 @@ int main() {
   instanceCleanupCache();
   instanceTextRelayEffects();
   requirementProbeIsolation();
+  macroResultStorageEffects();
   deferredProbeIsolation();
   return failures ? 1 : 0;
 }
