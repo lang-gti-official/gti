@@ -10729,9 +10729,9 @@ or resolve them using source.
   full conservative executable inventory with deterministic source diagnostics;
   source-discovered/transitive dependency gates and mutation controls; and a
   backend-selectable behavioral corpus preserving C++ representation checks.
-  `AllExecutableBodies` deliberately makes no reachability claim. Exact roots
-  remain an O-LLVM-04 prerequisite before a partial executable slice omits unused
-  prelude bodies. See [implemented admission and remaining obligations](../architecture/backend.md#llvm-coverage-and-admission).
+  Its original `AllExecutableBodies` policy deliberately made no reachability
+  claim. O-LLVM-04 subsequently added sealed entry/dependency reachability with
+  conservative fallback. See [implemented admission and remaining obligations](../architecture/backend.md#llvm-coverage-and-admission).
 
 ### O-LLVM-03: Target, Layout And Execution ABI
 

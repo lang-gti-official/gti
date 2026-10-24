@@ -151,9 +151,9 @@ automatically; that mode also requires an explicit `-DCMAKE_BUILD_TYPE`,
 which LLVM's own build insists on. Release builds force that acquisition
 mode. These are two ways to supply one mandatory dependency. The compiler core
 links only the narrowly approved support libraries (`LLVMSupport`,
-`LLVMTargetParser`, and `LLVMDemangle`). The independent foundational LLVM
-backend additionally owns the exact host `Core`/`nativecodegen` closure and is
-not yet capable of producing an executable. See
+`LLVMTargetParser`, and `LLVMDemangle`). The independent LLVM backend
+additionally owns the exact host `Core`/`nativecodegen`/`Passes` closure and
+currently emits the documented scalar executable profile. See
 [ADR 006](docs/decisions/006-llvm-support-adoption.md) and
 [ADR 031](docs/decisions/031-native-llvm-backend-foundation.md) for the two
 boundaries.
