@@ -39,7 +39,10 @@ release and validation narratives retain their original checkpoint language,
 including past publication holds, platform counts and intermediate failures.
 They do not reopen completed capabilities or authorize an old release/install
 procedure. Historical issue numbers refer to their recorded host; all new
-integration follows the current GitHub workflow. Reproduce a remaining
+integration follows the current [Gitea workflow](../architecture/agent-workflow.md).
+Gitea at `git.internal.howetotech.dev/gti-lang/gti` is canonical for source,
+PRs, issues, CI and releases; earlier hosting selections below are history.
+Reproduce a remaining
 composition against current main before treating a past rejection as a new
 compiler task.
 
@@ -6385,9 +6388,10 @@ At that historical 0.333.1 checkpoint, the canonical remote moved to
 `codex/gitea-primary-migration` branch is integrated with the newer stdlib
 checkpoints, retaining their changes and advancing the installer/release fix
 to 0.333.1 instead of restoring the branch's older 0.331.1. Gitea then owned
-release dispatch. That host selection is superseded: current branches, PRs,
-issues, CI and releases use `lang-gti-official/gti` on GitHub, with Gitea only
-the backup main/tag mirror under the repository workflow.
+release dispatch. During the later GitHub-hosted period, `lang-gti-official/gti`
+was canonical and Gitea served as a backup. Both earlier selections are
+superseded by the 2026-10-24 cutover: current source, branches, PRs, issues, CI
+and releases use canonical Gitea `gti-lang/gti`, with no automatic backup push.
 The Gitea topic branches require their own reachability and patch review before
 cleanup. Their presence is not evidence that the previous cleanup was undone.
 The 0.334.1 publication includes the first Gitea cleanup batch: 20 topic tips
@@ -7429,7 +7433,7 @@ consumer, and release refreshes remain outstanding for the full campaign.
   The recorded 0.346.0 combined production suite passed all 294 tests. That
   historical publication included other tasks' shared-checkout work with
   explicit user approval and used Gitea's then-current release workflow.
-  Current publication follows the GitHub PR/nightly/stable lifecycle.
+  Current publication follows the Gitea PR/nightly/stable lifecycle.
   The earlier owning-wrapper deferral in L-CALL-01 is superseded.
 - **Unlocks:** a command schema with an owned handler and an object API such as
   `set_auth_login_callback(lambda)` that retains and invokes the callback later.

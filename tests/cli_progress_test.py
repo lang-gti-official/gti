@@ -220,7 +220,7 @@ def live_lowering_probe(probe, env):
     import termios
 
     for operation, verb in (("check", "Checking"), ("build", "Building")):
-        for phase in ("hir", "mir"):
+        for phase in ("hir", "mir", "native"):
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 72, 0, 0))
             process = subprocess.Popen([probe, operation, phase], env=env,
@@ -252,6 +252,29 @@ def live_lowering_probe(probe, env):
                 assert observed, (operation, phase, chunks)
                 process.stdin.write(b"\n")
                 process.stdin.flush()
+                if phase == "native":
+                    deadline = time.monotonic() + 5
+                    resumed = False
+                    while time.monotonic() < deadline:
+                        ready, _, _ = select.select([master], [], [], 0.1)
+                        if ready:
+                            chunks.append(os.read(master, 65536))
+                        text = b"".join(chunks).decode(errors="replace")
+                        last_message = "Built native dependency beta@0.1.0"
+                        if last_message in text and re.search(
+                                rf"{verb}  label-probe \([0-9.]+s elapsed\)",
+                                text.split(last_message, 1)[1]):
+                            resumed = True
+                            break
+                    assert resumed, text
+                    lines = [line.rsplit("\r\x1b[2K", 1)[-1].strip("\r")
+                             for line in text.split("\n")]
+                    for message in ("native script log",
+                                    "Reused native dependency alpha@0.1.0",
+                                    last_message):
+                        assert lines.count(message) == 1, text
+                    process.stdin.write(b"\n")
+                    process.stdin.flush()
                 stdout, _ = process.communicate(timeout=5)
                 text = b"".join(chunks).decode(errors="replace")
                 assert process.returncode == 0 and stdout == b"", (process.returncode, stdout)

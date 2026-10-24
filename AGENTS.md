@@ -1,5 +1,13 @@
 # GTI Repository Guidance
 
+**Canonical host (2026-10-24): [Gitea](https://git.internal.howetotech.dev/gti-lang/gti).**
+`origin` must use `https://git.internal.howetotech.dev/gti-lang/gti.git` for
+source, branches, PRs, issues, CI and releases. GitHub-era hosting instructions
+in older checkouts or historical notes are superseded. When resuming an old
+worktree, read the current primary checkout's guidance and workflow skill;
+use its helper with `--repo <task-worktree>` until current main is reconciled.
+Do not restore GitHub remotes or use `gh` to publish GTI work.
+
 GTI is an independent, experimental, statically typed systems language with
 strong C++ syntax familiarity, explicit ownership, and deterministic cleanup.
 Its goal is a fully usable systems language with excellent safety and sound

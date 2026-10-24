@@ -265,8 +265,23 @@ The current implemented foundation includes:
   [typed statement macros](execution.md#typed-statement-macros), a
   facility available equally to application APIs. `static_assert` remains the
   unqualified compile-time language construct; and
-- `<std/testing>` provides caller-tracked `std::testing::check`, reporting a
-  failed condition through cleanup-preserving panic. Manifest test suites
+- `<std/testing>` provides caller-tracked checks that report failures through
+  cleanup-preserving panic. `std::testing::check` checks a boolean;
+  `check_eq` and `check_ne` compare equally typed, equality-comparable values
+  through their source-defined `std::formatter<T>` and show actual/expected
+  values only on failure. These source-defined typed macros evaluate scalar
+  operands once into values and borrow object operands through ordinary
+  reference-holding source types; literal expectations need no local binding.
+  Messages are evaluated only on failure, and user equality is called once. `check_string_eq` compares string views, quoting
+  newlines, tabs, zero bytes, quotes and backslashes and reporting lengths and
+  the first differing UTF-8 byte index. `check_approx` accepts floating-point
+  values and explicit absolute tolerance, plus optional relative tolerance;
+  either tolerance may establish equality. Tolerances must be finite and
+  nonnegative; NaNs fail, equal infinities pass and unequal infinities fail.
+  `check_elements_eq` compares two borrowed contiguous `std::span<T>` values,
+  reporting the first differing index and values or unequal lengths; bind
+  `container.as_span()` results to locals first. These checks neither consume
+  borrowed operands nor format successful comparisons. Manifest test suites
   discover `[[test]] void` functions and run each in its own process; see
   [annotated test suites](programs-and-targets.md#annotated-test-suites); and
 - `<std/build>` host-side package build-program support through

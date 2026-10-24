@@ -1,4 +1,85 @@
 #include <std/panic>
+#include <std/format>
+#include <std/string>
+#include <std/memory>
+#include <std/span>
+
+// Operand capture is ordinary source policy: objects stay borrowed, while
+// scalar literals and expressions are evaluated once into inexpensive values.
+namespace std::testing::detail {
+  class check_operand<T> {
+    T& value;
+  public:
+    check_operand(T& source) : value(source) {}
+    T& get() { return this.value; }
+  };
+  class scalar_check_operand<T> {
+    T value;
+  public:
+    scalar_check_operand(T source) : value(source) {}
+    T& get() { return this.value; }
+  };
+}
+class std::testing::detail::check_operand<bool>
+    : public std::testing::detail::scalar_check_operand<bool> {
+public:
+  check_operand(bool value) : std::testing::detail::scalar_check_operand<bool>(value) {}
+};
+class std::testing::detail::check_operand<char>
+    : public std::testing::detail::scalar_check_operand<char> {
+public:
+  check_operand(char value) : std::testing::detail::scalar_check_operand<char>(value) {}
+};
+class std::testing::detail::check_operand<int8_t>
+    : public std::testing::detail::scalar_check_operand<int8_t> {
+public:
+  check_operand(int8_t value) : std::testing::detail::scalar_check_operand<int8_t>(value) {}
+};
+class std::testing::detail::check_operand<uint8_t>
+    : public std::testing::detail::scalar_check_operand<uint8_t> {
+public:
+  check_operand(uint8_t value) : std::testing::detail::scalar_check_operand<uint8_t>(value) {}
+};
+class std::testing::detail::check_operand<int16_t>
+    : public std::testing::detail::scalar_check_operand<int16_t> {
+public:
+  check_operand(int16_t value) : std::testing::detail::scalar_check_operand<int16_t>(value) {}
+};
+class std::testing::detail::check_operand<uint16_t>
+    : public std::testing::detail::scalar_check_operand<uint16_t> {
+public:
+  check_operand(uint16_t value) : std::testing::detail::scalar_check_operand<uint16_t>(value) {}
+};
+class std::testing::detail::check_operand<int32_t>
+    : public std::testing::detail::scalar_check_operand<int32_t> {
+public:
+  check_operand(int32_t value) : std::testing::detail::scalar_check_operand<int32_t>(value) {}
+};
+class std::testing::detail::check_operand<uint32_t>
+    : public std::testing::detail::scalar_check_operand<uint32_t> {
+public:
+  check_operand(uint32_t value) : std::testing::detail::scalar_check_operand<uint32_t>(value) {}
+};
+class std::testing::detail::check_operand<int64_t>
+    : public std::testing::detail::scalar_check_operand<int64_t> {
+public:
+  check_operand(int64_t value) : std::testing::detail::scalar_check_operand<int64_t>(value) {}
+};
+class std::testing::detail::check_operand<uint64_t>
+    : public std::testing::detail::scalar_check_operand<uint64_t> {
+public:
+  check_operand(uint64_t value) : std::testing::detail::scalar_check_operand<uint64_t>(value) {}
+};
+class std::testing::detail::check_operand<float>
+    : public std::testing::detail::scalar_check_operand<float> {
+public:
+  check_operand(float value) : std::testing::detail::scalar_check_operand<float>(value) {}
+};
+class std::testing::detail::check_operand<double>
+    : public std::testing::detail::scalar_check_operand<double> {
+public:
+  check_operand(double value) : std::testing::detail::scalar_check_operand<double>(value) {}
+};
 
 namespace std::testing {
   /// Fails the current isolated test with a source-located terminal message.
@@ -7,6 +88,185 @@ namespace std::testing {
   void check(bool condition, std::string_view message = "Test check failed") {
     if (!condition) {
       std::panic(message);
+    }
+  }
+
+  namespace detail {
+    void append_value<T>(mut std::string& output, T& value)
+        requires std::formattable<T> {
+      std::formatter<T> writer{};
+      std::format_spec spec{};
+      auto result = writer.format(value, output, spec);
+      if (!result) { output.append("<formatting failed>"); }
+    }
+
+    void append_quoted(mut std::string& output, std::string_view text) {
+      output.push_back('"');
+      for (mut size_t index = 0; index < text.size(); index++) {
+        char value = text[index];
+        if (value == '\n') { output.append("\\n"); }
+        else if (value == '\r') { output.append("\\r"); }
+        else if (value == '\t') { output.append("\\t"); }
+        else if (value == '\0') { output.append("\\0"); }
+        else if (value == '"') { output.append("\\\""); }
+        else if (value == '\\') { output.append("\\\\"); }
+        else { output.push_back(value); }
+      }
+      output.push_back('"');
+    }
+  }
+
+  namespace detail {
+  /// Borrows both operands; values are formatted only when the check fails.
+  [[track_caller]]
+  void check_equal<T>(T& actual, T& expected,
+                   std::string_view message = "Expected equal values")
+      requires std::equality_comparable<T> && std::formattable<T> {
+    {
+      mut std::string output{message};
+      output.append("\n  actual: ");
+      detail::append_value(output, actual);
+      output.append("\nexpected: ");
+      detail::append_value(output, expected);
+      std::panic(output.view());
+    }
+  }
+
+  [[track_caller]]
+  void check_different<T>(T& actual, T& unexpected,
+                   std::string_view message = "Expected different values")
+      requires std::equality_comparable<T> && std::formattable<T> {
+    {
+      mut std::string output{message};
+      output.append("\n  actual: ");
+      detail::append_value(output, actual);
+      output.append("\nunexpected: ");
+      detail::append_value(output, unexpected);
+      std::panic(output.view());
+    }
+  }
+
+  }
+
+  /// Evaluates scalar operands once and borrows object operands without copies.
+  /// Messages and diagnostic formatting are evaluated only on failure.
+  [[track_caller]]
+  #macro check_eq<T>(T actual, T expected,
+                    std::string_view message = "Expected equal values")
+      requires std::equality_comparable<T> && std::formattable<T> {
+    detail::check_operand<T> actual_value{actual};
+    detail::check_operand<T> expected_value{expected};
+    if (!(actual_value.get() == expected_value.get())) {
+      detail::check_equal(actual_value.get(), expected_value.get(), message);
+    }
+  }
+
+  [[track_caller]]
+  #macro check_ne<T>(T actual, T unexpected,
+                    std::string_view message = "Expected different values")
+      requires std::equality_comparable<T> && std::formattable<T> {
+    detail::check_operand<T> actual_value{actual};
+    detail::check_operand<T> unexpected_value{unexpected};
+    if (actual_value.get() == unexpected_value.get()) {
+      detail::check_different(actual_value.get(), unexpected_value.get(), message);
+    }
+  }
+
+  /// Reports quoted values, lengths and the first differing byte (UTF-8 bytes,
+  /// not character indices). Use .view() when comparing owning strings.
+  [[track_caller]]
+  void check_string_eq(std::string_view actual, std::string_view expected,
+                       std::string_view message = "Expected equal strings") {
+    if (actual != expected) {
+      mut size_t index = 0;
+      while (index < actual.size() && index < expected.size() &&
+             actual[index] == expected[index]) { index++; }
+      mut std::string output{message};
+      output.append("\n  actual: ");
+      detail::append_quoted(output, actual);
+      output.append("\nexpected: ");
+      detail::append_quoted(output, expected);
+      output.append("\nfirst difference at byte ");
+      detail::append_value(output, index);
+      output.append("; lengths ");
+      size_t actual_size = actual.size();
+      size_t expected_size = expected.size();
+      detail::append_value(output, actual_size);
+      output.append(" and ");
+      detail::append_value(output, expected_size);
+      std::panic(output.view());
+    }
+  }
+
+  /// Absolute OR relative tolerance. Tolerances must be finite and nonnegative;
+  /// NaNs never compare approximately equal, and equal infinities do.
+  [[track_caller]]
+  void check_approx<T>(T actual, T expected, T absolute_tolerance,
+                       T relative_tolerance = T(0),
+                       std::string_view message = "Expected approximately equal values")
+      requires std::floating_point<T> && std::formattable<T> {
+    T zero = T(0);
+    T absolute_finite = absolute_tolerance - absolute_tolerance;
+    T relative_finite = relative_tolerance - relative_tolerance;
+    bool valid = absolute_tolerance >= zero && relative_tolerance >= zero &&
+                 absolute_finite == zero && relative_finite == zero;
+    if (!valid) { std::panic("Approximate comparison requires finite nonnegative tolerances"); }
+    if (actual == expected) { return; }
+    T actual_finite = actual - actual;
+    T expected_finite = expected - expected;
+    bool finite = actual_finite == zero && expected_finite == zero;
+    mut T difference = actual - expected;
+    if (difference < zero) { difference = -difference; }
+    mut T actual_magnitude = actual;
+    mut T expected_magnitude = expected;
+    if (actual_magnitude < zero) { actual_magnitude = -actual_magnitude; }
+    if (expected_magnitude < zero) { expected_magnitude = -expected_magnitude; }
+    mut T scale = actual_magnitude;
+    if (expected_magnitude > scale) { scale = expected_magnitude; }
+    mut T relative_difference = difference;
+    if (finite && scale > zero) {
+      T difference_finite = difference - difference;
+      if (difference_finite == zero) { relative_difference = difference / scale; }
+      else {
+        relative_difference = actual / scale - expected / scale;
+        if (relative_difference < zero) { relative_difference = -relative_difference; }
+      }
+    }
+    if (finite && (difference <= absolute_tolerance ||
+                   (scale > zero && relative_difference <= relative_tolerance))) { return; }
+    mut std::string output{message};
+    output.append("\n  actual: "); detail::append_value(output, actual);
+    output.append("\nexpected: "); detail::append_value(output, expected);
+    output.append("\nabsolute tolerance: "); detail::append_value(output, absolute_tolerance);
+    output.append("; relative tolerance: "); detail::append_value(output, relative_tolerance);
+    std::panic(output.view());
+  }
+
+  /// Compares two borrowed contiguous spans without copying their elements.
+  /// Bind container.as_span() results to locals before passing them.
+  [[track_caller]]
+  void check_elements_eq<T>(std::span<T>& actual, std::span<T>& expected,
+                         std::string_view message = "Expected equal elements")
+      requires std::storage_element<T> && std::equality_comparable<T> &&
+               std::formattable<T> {
+    size_t actual_size = actual.size();
+    size_t expected_size = expected.size();
+    mut size_t index = 0;
+    while (index < actual_size && index < expected_size) {
+      if (!(actual[index] == expected[index])) {
+        mut std::string output{message};
+        output.append("\nfirst difference at index "); detail::append_value(output, index);
+        output.append("\n  actual: "); detail::append_value(output, actual[index]);
+        output.append("\nexpected: "); detail::append_value(output, expected[index]);
+        std::panic(output.view());
+      }
+      index++;
+    }
+    if (actual_size != expected_size) {
+      mut std::string output{message};
+      output.append("\ncollection lengths differ; actual: "); detail::append_value(output, actual_size);
+      output.append("; expected: "); detail::append_value(output, expected_size);
+      std::panic(output.view());
     }
   }
 }
