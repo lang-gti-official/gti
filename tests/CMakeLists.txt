@@ -2121,6 +2121,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   add_test(
+    NAME llvm_backend_dependency_controls
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/llvm_backend_boundary_test.py"
+  )
+  add_test(
     NAME lowered_program_source_boundary
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/lowered_program_boundary_test.py"
