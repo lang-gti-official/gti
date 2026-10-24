@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.467.4 — Returning payload references from reference parameters
+## 0.467.5 — Returning payload references from reference parameters
 
 - A free function, static method or lambda can now return a reference bound by
   an `auto&` or `mut auto&` payload pattern over its reference parameter, a
@@ -22,6 +22,17 @@ for what minor and patch releases mean.
   by-value parameter or a temporary are still rejected.
 - That diagnostic now says "mutable reference parameter" when the source
   parameter is `mut T&`, rather than calling it read-only.
+
+## 0.467.4 — Replacing a payload enum through a reference
+
+- A payload enum whose alternatives need cleanup, such as one holding a
+  `std::string`, can now be assigned through a mutable reference: a member or
+  free function's `mut T&` result (`b.ref() = label::blank;`, including
+  `std::optional<T>::value()`), a `mut T&` local or a `mut T&` parameter.
+  These assignments used to report `error[GTI-B0001]` (an internal compiler
+  error). The old alternative is dropped exactly once before the new value
+  moves in; if dropping it fails, only the unpublished new value is dropped.
+
 
 ## 0.467.3 — Array fields built from constructor parameters
 
