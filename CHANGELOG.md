@@ -9,6 +9,35 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.468.3 — Iterators and carriers from returned references
+
+- A text iterator can now be built directly from a view that a call returns
+  by reference. For `std::string_view& Box::get()`, `box.get().begin()`,
+  `box.get().rbegin()` and `maybe.value().begin()` on a
+  `std::optional<std::string_view>` used to report `error[GTI-B0001]` (an
+  internal compiler error); they now work, whether the view holds literal text
+  or text owned by a `std::string`. So does `for (auto c : box.get())` over a
+  literal-backed view, and `std::string_view& view = box.get();
+  view.begin()` when the view holds literal text.
+- The same holds through a checked `operator->`: `o->begin()` on a
+  `std::optional<std::string_view>` and `label->begin()` for a class whose
+  `operator->` returns a `std::string_view&` now work. 0.467.1 listed them
+  as not yet supported.
+- The same holds for user carriers built by a function: `Cursor open(
+  std::string_view& view) { return Cursor(view); }` can now be called as
+  `open(box.get())`, and `attach(panel.current())` can build a carrier from a
+  `Gauge&` that `Panel::current()` returns. Each used to report
+  `error[GTI-B0001]`.
+- The returned reference stays borrowed while the iterator or carrier lives:
+  changing the text's owner, or assigning the accessor's receiver, is still
+  rejected with `error[GTI-S2017]`.
+- Fixed: since 0.468.0, `std::string_view& view = maybe.value();
+  view.begin()` on a `std::optional<std::string_view>` holding text owned by a
+  `std::string` reported `error[GTI-B0001]`; it works again.
+- Not yet supported: constructing a carrier class directly from a returned
+  reference, as in `Cursor(box.get())`, still reports `GTI-B0001`. Call a
+  function that constructs it, as `open(box.get())` does.
+
 ## 0.468.2 — References to payload enums held inside another enum
 
 - `std::optional<Shape>::value()` for a payload enum without cleanup, such as
