@@ -460,6 +460,596 @@ int main() { return reader.read(); }
   }
 }
 
+void packFoldStorageEffects() {
+  for (const std::string storage : {"", "thread_local "}) {
+    const bool concurrent = !storage.empty();
+    const std::string prefix = storage + "mut int32_t guarded = 1; " + storage +
+                               "mut int32_t other = 2; ";
+    const auto accepted = [&](const std::string &source,
+                              std::string_view reason) {
+      const auto result = analyze(source, concurrent, true);
+      if (!result.canGenerateCode())
+        for (const auto &diagnostic : result.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(result.canGenerateCode(), reason);
+    };
+    const auto rejected = [&](const std::string &source, bool exactEffects,
+                              std::string_view reason) {
+      const auto result = analyze(source, concurrent, true);
+      const bool conflict =
+          std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                      [&](const auto &diagnostic) {
+                        return diagnostic.code == "GTI-S2045" &&
+                               (!exactEffects ||
+                                diagnostic.message.find("overlapping path") !=
+                                    std::string::npos);
+                      });
+      const bool valid =
+          !result.semanticValid && conflict && !code(result, "GTI-B0001");
+      if (!valid)
+        for (const auto &diagnostic : result.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(valid, reason);
+    };
+    const std::string localPrefix = R"(
+void leaf<T>(mut int32_t& input, T& element) { input += 1; }
+void folded<Args...>(Args... args) {
+  mut int32_t input = 0;
+  (leaf(input, args), ...);
+}
+)";
+    for (const std::string arguments : {"", "1, true"})
+      accepted(prefix + localPrefix +
+                   "int main() { int32_t& held = guarded; folded(" + arguments +
+                   "); return held; }",
+               "an exact empty or nonempty user fold preserves an unrelated "
+               "persistent loan and authorized formal writes");
+
+    const std::string sharedPrefix = R"(
+void leaf<T>(int32_t& input, T& element) { int32_t copy = input; }
+void folded<Args...>(Args... args) { (leaf(guarded, args), ...); }
+)";
+    accepted(prefix + sharedPrefix +
+                 "int main() { int32_t& held = guarded; folded(1, true); "
+                 "return held; }",
+             "direct persistent readonly fixed inputs permit shared reads");
+    const std::string mutablePrefix = R"(
+void leaf<T>(mut int32_t& input, T& element) { input += 1; other += 1; }
+void folded<Args...>(Args... args) { (leaf(guarded, args), ...); }
+)";
+    accepted(prefix + mutablePrefix +
+                 "int main() { folded(1, true); return guarded; }",
+             "direct persistent mutable fixed inputs authorize formal writes "
+             "without hiding disjoint ambient writes");
+
+    const std::string referencePrefix = R"(
+void leaf<T>(int32_t& input, T& element) { int32_t copy = input; }
+void folded<Args...>(Args... args) {
+  int32_t& input = guarded;
+  (leaf(input, args), ...);
+}
+)";
+    for (const std::string arguments : {"", "1, true"})
+      accepted(prefix + referencePrefix +
+                   "int main() { int32_t& held = guarded; folded(" + arguments +
+                   "); return held; }",
+               "a real readonly reference-local fixed prefix remains valid "
+               "for empty and nonempty expansions");
+
+    const std::string hiddenWrite = R"(
+void leaf<T>(int32_t& input, T& element) { guarded = 3; }
+void folded<Args...>(Args... args) {
+  mut int32_t input = 0;
+  (leaf(input, args), ...);
+}
+)";
+    accepted(
+        prefix + hiddenWrite +
+            "int main() { int32_t& held = guarded; folded(); return held; }",
+        "an exact empty fold executes no hidden target effects");
+    rejected(prefix + hiddenWrite +
+                 "int main() { int32_t& held = guarded; folded(1, true); "
+                 "return held; }",
+             true,
+             "nonempty user fold hidden writes conflict with readonly loans");
+    const std::string hiddenRead = R"(
+void read(int32_t& input) { int32_t copy = input; }
+void leaf<T>(int32_t& input, T& element) { read(guarded); }
+void folded<Args...>(Args... args) {
+  mut int32_t input = 0;
+  (leaf(input, args), ...);
+}
+)";
+    rejected(prefix + hiddenRead +
+                 "int main() { mut int32_t& held = guarded; folded(1); "
+                 "return held; }",
+             true,
+             "nonempty user fold hidden reads conflict with exclusive loans");
+
+    const std::string sharedHiddenWrite = R"(
+void leaf<T>(int32_t& input, T& element) { guarded = 3; }
+void folded<Args...>(Args... args) { (leaf(guarded, args), ...); }
+)";
+    accepted(
+        prefix + sharedHiddenWrite +
+            "int main() { int32_t& held = guarded; folded(); return held; }",
+        "zero concrete invocations create no fixed-input borrow");
+    rejected(prefix + sharedHiddenWrite +
+                 "int main() { folded(1, true); return 0; }",
+             true,
+             "a readonly direct persistent fixed input protects against its "
+             "own target's hidden write without a separate named loan");
+    const std::string mutableHiddenRead = R"(
+void read(int32_t& input) { int32_t copy = input; }
+void leaf<T>(mut int32_t& input, T& element) { read(guarded); input += 1; }
+void folded<Args...>(Args... args) { (leaf(guarded, args), ...); }
+)";
+    rejected(prefix + mutableHiddenRead + "int main() { folded(1); return 0; }",
+             true,
+             "an exclusive direct persistent fixed input protects against "
+             "its own target's hidden read");
+    const std::string referenceHiddenWrite = R"(
+void leaf<T>(int32_t& input, T& element) { guarded = 3; }
+void folded<Args...>(Args... args) {
+  int32_t& input = guarded;
+  (leaf(input, args), ...);
+}
+)";
+    accepted(prefix + referenceHiddenWrite +
+                 "int main() { folded(); return 0; }",
+             "an empty expansion retains actual reference-local setup but "
+             "does not invent a target invocation");
+    rejected(prefix + referenceHiddenWrite +
+                 "int main() { folded(1); return 0; }",
+             true,
+             "a fixed reference-local retains its exact persistent origin "
+             "through the concrete target's hidden write");
+    rejected(prefix + R"(
+void leaf<T>(int32_t& input, T& element);
+void folded<Args...>(Args... args) {
+  mut int32_t input = 0;
+  (leaf(input, args), ...);
+}
+int main() { int32_t& held = guarded; folded(1); return held; }
+)",
+             false,
+             "a nonempty fold with a declaration-only GTI target remains "
+             "conservatively unknown rather than effect-free");
+  }
+
+  const std::string dynamicPrefix = R"(
+thread_local mut int32_t guarded = 1;
+int32_t initialize() { guarded += 1; return 2; }
+thread_local mut int32_t input = initialize();
+void leaf<T>(mut int32_t& fixed, T& element) { fixed += 1; }
+void folded<Args...>(Args... args) { (leaf(input, args), ...); }
+)";
+  const auto empty =
+      analyze(dynamicPrefix + "int main() { int32_t& held = guarded; "
+                              "folded(); return held; }",
+              true, true);
+  if (!empty.canGenerateCode())
+    for (const auto &diagnostic : empty.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(empty.canGenerateCode(),
+         "an exact empty fold does not initialize its direct dynamic TLS "
+         "fixed prefix while an unrelated loan is live");
+  const auto nonempty =
+      analyze(dynamicPrefix + "int main() { int32_t& held = guarded; "
+                              "folded(1); return held; }",
+              true, true);
+  expect(!nonempty.semanticValid && code(nonempty, "GTI-S2045") &&
+             !code(nonempty, "GTI-B0001"),
+         "a nonempty fold retains dynamic fixed-prefix TLS initialization "
+         "effects and rejects its hidden conflicting write");
+
+  for (const bool exclusive : {false, true}) {
+    const std::string orderedPrefix =
+        R"(
+thread_local mut int32_t first = 1;
+thread_local mut int32_t other = 2;
+)" +
+        std::string(exclusive
+                        ? "int32_t initialize() { return first; } "
+                        : "int32_t initialize() { first = 3; return 4; } ") +
+        "thread_local mut int32_t later = initialize(); "
+        "void leaf<T>(" +
+        (exclusive ? "mut " : "") +
+        "int32_t& input, int32_t& second, T& element) {} ";
+    const std::string direct = "void folded<Args...>(Args... args) { "
+                               "(leaf(first, later, args), ...); } ";
+    const auto emptyOrdered =
+        analyze(orderedPrefix + direct + "int main() { folded(); return 0; }",
+                true, true);
+    if (!emptyOrdered.canGenerateCode())
+      for (const auto &diagnostic : emptyOrdered.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(emptyOrdered.canGenerateCode(),
+           "an empty fold does not initialize any later fixed TLS input");
+    const auto conflict =
+        analyze(orderedPrefix + direct + "int main() { folded(1); return 0; }",
+                true, true);
+    const bool orderedConflict = std::any_of(
+        conflict.diagnostics.begin(), conflict.diagnostics.end(),
+        [](const auto &diagnostic) {
+          return diagnostic.code == "GTI-S2045" &&
+                 std::any_of(diagnostic.related.begin(),
+                             diagnostic.related.end(), [](const auto &related) {
+                               return related.message.find(
+                                          "Earlier reference or borrowed-state "
+                                          "inputs are already bound") !=
+                                      std::string::npos;
+                             });
+        });
+    if (!orderedConflict || code(conflict, "GTI-B0001"))
+      for (const auto &diagnostic : conflict.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(!conflict.semanticValid && orderedConflict &&
+               !code(conflict, "GTI-B0001"),
+           "a later TLS fixed input's initializer cannot violate an earlier "
+           "shared or exclusive fixed input before the fold invocation");
+
+    const auto warmed = analyze(orderedPrefix + R"(
+void folded<Args...>(Args... args) {
+  int32_t& ready = later;
+  (leaf(first, ready, args), ...);
+}
+int main() { folded(1); return 0; }
+)",
+                                true, true);
+    if (!warmed.canGenerateCode())
+      for (const auto &diagnostic : warmed.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(warmed.canGenerateCode(),
+           "an actual reference-local setup initializes the later slot before "
+           "the earlier fold input is bound");
+  }
+  const auto disjointInitialization = analyze(R"(
+thread_local mut int32_t first = 1;
+thread_local mut int32_t other = 2;
+int32_t initialize() { other += 1; return 3; }
+thread_local mut int32_t later = initialize();
+void leaf<T>(mut int32_t& input, int32_t& second, T& element) { input += 1; }
+void folded<Args...>(Args... args) { (leaf(first, later, args), ...); }
+int main() { folded(1); return 0; }
+)",
+                                              true, true);
+  if (!disjointInitialization.canGenerateCode())
+    for (const auto &diagnostic : disjointInitialization.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(disjointInitialization.canGenerateCode(),
+         "ordered fold input protection preserves a later TLS initializer "
+         "whose hidden write is disjoint from the earlier input");
+  const auto unavailable = analyze(R"(
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner&) = delete;
+  Owner(Owner&&) = default;
+};
+void leaf<T>(Owner& input, T& element) {}
+void folded<Args...>(Args... args) {
+  mut Owner input{};
+  Owner moved = std::move(input);
+  (leaf(input, args), ...);
+}
+int main() { folded(); return 0; }
+)",
+                                   true, true);
+  expect(!unavailable.semanticValid && code(unavailable, "GTI-S2018") &&
+             !code(unavailable, "GTI-B0001"),
+         "exact-empty runtime-effect suppression preserves ordinary moved "
+         "binding availability checks");
+}
+
+void enumDesignatorEffects() {
+  for (const std::string storage : {"", "thread_local "}) {
+    const bool concurrent = !storage.empty();
+    const std::string prefix = storage + "mut int32_t guarded = 1; " + storage +
+                               "mut int32_t other = 2; " + R"(
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() { guarded = 3; }
+};
+enum Payload { owned(Cleanup value), empty };
+)";
+    const auto accepted = [&](const std::string &source,
+                              std::string_view reason) {
+      const auto result = analyze(source, concurrent, true);
+      if (!result.canGenerateCode())
+        for (const auto &diagnostic : result.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(result.canGenerateCode(), reason);
+    };
+    accepted(prefix + R"(
+thread_local mut Payload input = Payload::empty;
+int32_t inspect(Payload& value, int32_t index) {
+  switch(value) {
+  case Payload::owned(auto& payload):
+    int32_t values[1] = {1};
+    return values[index];
+  case Payload::empty: return 0;
+  }
+}
+int main() {
+  int32_t& held = guarded;
+  int32_t observed = inspect(input, 0);
+  return held + observed;
+}
+)",
+             "case designators do not create phantom enum cleanup when a "
+             "borrowed switch body can propagate a failure");
+    accepted(prefix + R"(
+int main() {
+  Payload owned = Payload::owned(Cleanup());
+  int32_t& held = guarded;
+  return held;
+}
+)",
+             "a real payload construction transfers into an owner whose "
+             "scope cleanup follows the later reference binding's endpoint");
+    accepted(prefix + R"(
+int main() {
+  Payload first = Payload::empty;
+  Payload second = (Payload::empty);
+  return 0;
+}
+)",
+             "actual unit-alternative values and groupings still construct "
+             "ordinary owning enum values");
+    const auto invalidUnitCall = analyze(prefix + R"(
+int main() { Payload value = Payload::empty(); return 0; }
+)",
+                                         concurrent, true);
+    expect(!invalidUnitCall.semanticValid &&
+               code(invalidUnitCall, "GTI-S2067") &&
+               !code(invalidUnitCall, "GTI-B0001"),
+           "a unit alternative remains a value rather than an accepted "
+           "payload-constructor call");
+    const auto scopeConflict = analyze(prefix + R"(
+int main() {
+  int32_t& held = guarded;
+  Payload owned = Payload::owned(Cleanup());
+  return held;
+}
+)",
+                                       concurrent, true);
+    const bool realScopeCleanup = std::any_of(
+        scopeConflict.diagnostics.begin(), scopeConflict.diagnostics.end(),
+        [](const auto &diagnostic) {
+          return diagnostic.code == "GTI-S2045" &&
+                 std::any_of(diagnostic.related.begin(),
+                             diagnostic.related.end(), [](const auto &related) {
+                               return related.message.find(
+                                          "cleanup runs at scope exit") !=
+                                      std::string::npos;
+                             });
+        });
+    expect(!scopeConflict.semanticValid && realScopeCleanup &&
+               !code(scopeConflict, "GTI-B0001"),
+           "a later owning local retains its real destructor conflict when "
+           "scope cleanup precedes the earlier reference binding's endpoint");
+    const std::string temporary = R"(
+void inspect(Payload& value) {}
+int main() {
+  int32_t& held = )";
+    accepted(prefix + temporary + "other; " + R"(
+  inspect(Payload::owned(Cleanup()));
+  return held;
+}
+)",
+             "a real enum temporary's destructor preserves disjoint loans");
+    const auto rejected = analyze(prefix + temporary + "guarded; " + R"(
+  inspect(Payload::owned(Cleanup()));
+  return held;
+}
+)",
+                                  concurrent, true);
+    const bool cleanupConflict = std::any_of(
+        rejected.diagnostics.begin(), rejected.diagnostics.end(),
+        [](const auto &diagnostic) {
+          return diagnostic.code == "GTI-S2045" &&
+                 std::any_of(
+                     diagnostic.related.begin(), diagnostic.related.end(),
+                     [](const auto &related) {
+                       return related.message.find(
+                                  "Remaining temporaries are cleaned") !=
+                              std::string::npos;
+                     });
+        });
+    expect(!rejected.semanticValid && cleanupConflict &&
+               !code(rejected, "GTI-B0001"),
+           "a genuinely constructed enum temporary retains its mutating "
+           "destructor's conflict at the full-expression cleanup boundary");
+  }
+}
+
+void packFoldCallerFacts() {
+  for (const bool terminal : {false, true}) {
+    const std::string source =
+        std::string(terminal ? "[[noreturn, track_caller]] "
+                             : "[[track_caller]] ") +
+        "void leaf<T>(T& element) { " + (terminal ? "while (true) {}" : "") +
+        R"( }
+void folded<Args...>(Args... args) { (leaf(args), ...); }
+int main() { folded(1); return 0; }
+)";
+    const auto result = analyze(source, true, true);
+    if (!result.canGenerateCode())
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(result.canGenerateCode(),
+           "a concrete fold preserves ordinary selected caller and terminal "
+           "contracts through verified HIR and MIR");
+    std::size_t selected = 0;
+    for (const auto &function : result.hir.functionInstances())
+      for (const auto &value : function.body.values)
+        if (value.kind == lang::HirValueKind::Call && value.functionTarget) {
+          const auto *target =
+              result.hir.findFunctionInstance(*value.functionTarget);
+          if (!target || !target->source ||
+              target->source->name().lexeme != "leaf")
+            continue;
+          ++selected;
+          expect(value.neverReturns == terminal && value.tracksCaller &&
+                     value.callerLocation && value.callerLocationProof &&
+                     lang::exprAs<lang::Call>(value.source),
+                 "each expanded call retains its exact declaration flags "
+                 "and ordinary source-call caller-location proof");
+        }
+    expect(selected == 1,
+           "the one-element fold exposes exactly one ordinary selected call");
+  }
+}
+
+void concreteEffectObligationReplay() {
+  for (const std::string storage : {"", "thread_local "}) {
+    const bool concurrent = !storage.empty();
+    const std::string prefix = storage + "mut int32_t guarded = 1; " + storage +
+                               "mut int32_t other = 2; " + storage +
+                               "mut int32_t third = 3; ";
+    const auto accepted = [&](const std::string &source,
+                              std::string_view reason) {
+      const auto result = analyze(source, concurrent, true);
+      if (!result.canGenerateCode())
+        for (const auto &diagnostic : result.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(result.canGenerateCode(), reason);
+    };
+    const std::string leaf =
+        "void leaf<T>(int32_t& fixed, T& element) { guarded = 9; } ";
+    const std::string selected = R"(
+void selected<Args...>(Args... args) {
+  int32_t& fixed = guarded;
+  (leaf(fixed, args), ...);
+}
+)";
+    for (const bool reverseDeclarations : {false, true}) {
+      const std::string fold =
+          reverseDeclarations ? selected + leaf : leaf + selected;
+      accepted(prefix + fold + "int main() { return 0; }",
+               "an uninstantiated symbolic fold retains a dependent effect "
+               "obligation without claiming an executed nonempty call");
+      accepted(prefix + fold + "int main() { selected(); return 0; }",
+               "a selected zero expansion replays the dependent obligation "
+               "without executing a hidden conflicting write in either "
+               "declaration order");
+      const auto nonempty =
+          analyze(prefix + fold + "int main() { selected(1); return 0; }",
+                  concurrent, true);
+      expect(!nonempty.semanticValid && code(nonempty, "GTI-S2045") &&
+                 !code(nonempty, "GTI-B0001"),
+             "an actual nonempty fold's internal persistent input obligation "
+             "is checked before HIR in either declaration order");
+    }
+    const std::string localLambda = R"(
+void selected<uint64_t Mode>() {
+  if constexpr (Mode < 2) {
+    int32_t& held = guarded;
+    auto hidden = []() {
+      if constexpr (Mode == 0) { other = 9; }
+      else { guarded = 9; }
+    };
+    hidden();
+    int32_t copy = held;
+  }
+}
+)";
+    accepted(prefix + localLambda + "int main() { selected<0>(); return 0; }",
+             "an exact concrete local lambda preserves a disjoint hidden "
+             "storage effect without an outer caller loan");
+    std::string emptyLambda = localLambda;
+    emptyLambda.replace(emptyLambda.find("other = 9;"),
+                        std::string_view("other = 9;").size(), "");
+    accepted(prefix + emptyLambda + "int main() { selected<0>(); return 0; }",
+             "an analyzed empty local lambda owns an exact empty summary "
+             "rather than an unresolved or inherited source ID");
+    for (const bool reverse : {false, true}) {
+      const std::string calls = reverse ? "selected<1>(); selected<0>(); "
+                                        : "selected<0>(); selected<1>(); ";
+      const auto rejected = analyze(prefix + localLambda + "int main() { " +
+                                        calls + "return 0; }",
+                                    concurrent, true);
+      const bool exactConflict =
+          std::any_of(rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                        return diagnostic.code == "GTI-S2045" &&
+                               diagnostic.message.find("overlapping path") !=
+                                   std::string::npos;
+                      });
+      if (!exactConflict || code(rejected, "GTI-B0001"))
+        for (const auto &diagnostic : rejected.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(!rejected.semanticValid && exactConflict &&
+                 !code(rejected, "GTI-B0001"),
+             "the same lambda syntax's distinct concrete effects cannot be "
+             "lost or cross-contaminated by either instance query order");
+      const auto emptyAndWrite = analyze(
+          prefix + emptyLambda + "int main() { " + calls + "return 0; }",
+          concurrent, true);
+      const auto realConflicts = std::count_if(
+          emptyAndWrite.diagnostics.begin(), emptyAndWrite.diagnostics.end(),
+          [](const auto &diagnostic) {
+            return diagnostic.code == "GTI-S2045" &&
+                   diagnostic.message.find("overlapping path") !=
+                       std::string::npos;
+          });
+      if (realConflicts != 1 || code(emptyAndWrite, "GTI-B0001"))
+        for (const auto &diagnostic : emptyAndWrite.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(!emptyAndWrite.semanticValid && realConflicts == 1 &&
+                 !code(emptyAndWrite, "GTI-B0001"),
+             "empty and writing instances of the same lambda syntax retain "
+             "exactly the one real conflicting effect in either query order");
+      const std::string disjoint = R"(
+void selected<uint64_t Mode>() {
+  if constexpr (Mode < 2) {
+    int32_t& held = guarded;
+    auto hidden = []() {
+      if constexpr (Mode == 0) { other = 9; }
+      else { third = 9; }
+    };
+    hidden();
+    int32_t copy = held;
+  }
+}
+)";
+      accepted(prefix + disjoint + "int main() { " + calls + "return 0; }",
+               "query-qualified local effect owners preserve distinct "
+               "disjoint lambda specializations in both orders");
+    }
+  }
+}
+
+void packFoldUnsafeBoundary() {
+  const std::string unsafeTarget = "unsafe void leaf<T>(T& element) {} ";
+  for (const std::string arguments : {"", "1"}) {
+    const auto outside =
+        analyze(unsafeTarget +
+                    "void folded<Args...>(Args... args) { (leaf(args), ...); } "
+                    "int main() { folded(" +
+                    arguments + "); return 0; }",
+                true, true);
+    expect(!outside.semanticValid && code(outside, "GTI-S2055") &&
+               !code(outside, "GTI-B0001"),
+           "an unsafe selected fold callable requires ordinary lexical "
+           "unsafe admission, not inferred backend permission");
+    const auto inside = analyze(unsafeTarget +
+                                    "void folded<Args...>(Args... args) { "
+                                    "unsafe { (leaf(args), ...); } } "
+                                    "int main() { folded(" +
+                                    arguments + "); return 0; }",
+                                true, true);
+    if (!inside.canGenerateCode())
+      for (const auto &diagnostic : inside.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(inside.canGenerateCode(),
+           "an explicitly admitted fold retains the exact source unsafe "
+           "operation on its ordinary per-element call");
+  }
+}
+
 void orderedInputProtection() {
   const std::string prefix =
       "thread_local mut int value = 1; int modify() { value = 2; return 3; } ";
@@ -1009,6 +1599,11 @@ int main() {
   lifetimeAndEffects();
   exactWholeObjectVirtualEffects();
   persistentClassAliasBoundaries();
+  packFoldStorageEffects();
+  enumDesignatorEffects();
+  packFoldCallerFacts();
+  concreteEffectObligationReplay();
+  packFoldUnsafeBoundary();
   orderedInputProtection();
   fullExpressionCleanup();
   invalidDeclarations();

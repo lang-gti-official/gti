@@ -3051,6 +3051,7 @@ private:
     case HirValueKind::IndexSet:
     case HirValueKind::LayoutQuery:
     case HirValueKind::PayloadExtraction:
+    case HirValueKind::PackElement:
     case HirValueKind::QualifiedName:
     case HirValueKind::This:
     case HirValueKind::MemberSet:
@@ -6508,7 +6509,14 @@ private:
         value.packFoldFunction = resolved->function;
         value.packFoldArgument = resolved->packArgument;
         value.packFoldElements.reserve(resolved->elements.size());
-        for (const ResolvedPackFoldElement &element : resolved->elements) {
+        if (value.operands.size() != resolved->packArgument + 1) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        const HirValueId pack = value.operands[resolved->packArgument];
+        for (std::size_t index = 0; index < resolved->elements.size();
+             ++index) {
+          const ResolvedPackFoldElement &element = resolved->elements[index];
           const FunctionInfo *target =
               baseModel->findFunction(element.call.function);
           const HirFunctionInstanceId functionTarget =
@@ -6522,10 +6530,72 @@ private:
           if (functionTarget == 0) {
             lifecycleValid = false;
           }
+          // Each concrete invocation owns fresh evaluations of its named
+          // prefix. Reusing their value IDs would cache a scalar load or TLS
+          // Ensure across element calls, contrary to source call order.
+          std::vector<HirValueId> arguments;
+          for (std::size_t argument = 0; argument < resolved->packArgument;
+               ++argument) {
+            const auto *input = body.findValue(value.operands[argument]);
+            if (!input || input->kind != HirValueKind::Variable) {
+              lifecycleValid = false;
+              return std::nullopt;
+            }
+            HirValue copy = *input;
+            copy.id = nextValueId++;
+            copy.source = nullptr;
+            arguments.push_back(copy.id);
+            body.values.push_back(std::move(copy));
+          }
+          const HirValueId projected = nextValueId++;
+          body.values.push_back({.id = projected,
+                                 .kind = HirValueKind::PackElement,
+                                 .info = {.type = element.elementType,
+                                          .category = ValueCategory::Place,
+                                          .access = AccessMode::ReadOnly,
+                                          .traits = instanceProvider->traitsFor(
+                                              element.elementType)},
+                                 .symbol = resolved->packSymbol,
+                                 .operands = {pack},
+                                 .packElement = index});
+          arguments.push_back(projected);
+          const auto plan = orderedArguments(
+              arguments, element.call.parameterTypes, body, arguments.size());
+          if (!plan) {
+            lifecycleValid = false;
+            return std::nullopt;
+          }
+          const HirValueId call = nextValueId++;
+          body.values.push_back(
+              {.id = call,
+               .kind = HirValueKind::Call,
+               .source = resolved->pattern,
+               .info = {.type = SemanticType::Void,
+                        .category = ValueCategory::Value,
+                        .access = AccessMode::ReadOnly,
+                        .traits =
+                            instanceProvider->traitsFor(SemanticType::Void)},
+               .unsafeOperation = model.unsafeOperation(*resolved->pattern),
+               .operands = std::move(arguments),
+               .parameterTypes = element.call.parameterTypes,
+               .neverReturns = element.call.neverReturns,
+               .tracksCaller = element.call.tracksCaller,
+               .definedFailure = {.propagation =
+                                      FailurePropagationKind::DirectCall},
+               .dispatch = CallDispatch::Static,
+               .dispatchOwner = element.call.dispatchOwner,
+               .callPlan = HirCallPlan{.arguments = *plan},
+               .functionTarget = functionTarget});
+          output.program.sourceValueIds[resolved->pattern].push_back(call);
           value.packFoldElements.push_back(
               {.elementType = element.elementType,
                .functionTarget = functionTarget,
-               .parameterTypes = element.call.parameterTypes});
+               .parameterTypes = element.call.parameterTypes,
+               .call = call});
+          // The prefix and pack remain the source descriptor; the suffix is
+          // the ordered executable expansion. Ordinary operand traversal
+          // assigns all calls and their inputs this fold's full expression.
+          value.operands.push_back(call);
         }
       }
     }

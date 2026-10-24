@@ -90,6 +90,9 @@ enum class HirValueKind {
   Literal,
   Logical,
   PackFold,
+  // A read-only place selected from one exact concrete parameter pack.
+  // This is a typed expansion projection, not source-level pack indexing.
+  PackElement,
   PackExpansion,
   PayloadConstruction,
   PayloadExtraction,
@@ -197,6 +200,7 @@ struct HirPackFoldElement {
   SemanticType elementType = SemanticType::Unknown;
   HirFunctionInstanceId functionTarget = 0;
   std::vector<SemanticType> parameterTypes;
+  HirValueId call = 0;
 };
 
 struct HirPackExpansionElement {
@@ -290,6 +294,7 @@ struct HirValue {
   FunctionId packFoldFunction = 0;
   std::size_t packFoldArgument = 0;
   std::vector<HirPackFoldElement> packFoldElements;
+  std::optional<std::size_t> packElement;
   std::vector<HirPackExpansionElement> packExpansionElements;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirFunctionInstanceId> functionPointerFunctionTarget;

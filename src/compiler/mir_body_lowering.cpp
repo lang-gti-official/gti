@@ -4287,6 +4287,42 @@ private:
         }
       }
       break;
+    case HirValueKind::PackElement: {
+      const auto *pack = value->operands.size() == 1
+                             ? findValue(value->operands.front())
+                             : nullptr;
+      if (!value->packElement || !pack ||
+          pack->info.type.kind != SemanticType::TypePack ||
+          !pack->info.type.concretePack || value->symbol == 0 ||
+          pack->symbol != value->symbol ||
+          *value->packElement >= pack->info.type.arguments.size() ||
+          pack->info.type.arguments[*value->packElement] != value->info.type ||
+          value->info.category != ValueCategory::Place ||
+          value->info.access != AccessMode::ReadOnly ||
+          value->info.traits != resolvedTraits(value->info.type)) {
+        valid = false;
+        break;
+      }
+      const auto *sourcePlace = output.findPlace(placeForValue(pack->id));
+      if (!sourcePlace || sourcePlace->root != MirPlaceRootKind::Binding ||
+          sourcePlace->capture != 0 || !sourcePlace->projections.empty() ||
+          sourcePlace->symbol != pack->symbol ||
+          sourcePlace->type != pack->info.type) {
+        valid = false;
+        break;
+      }
+      MirPlace projected = *sourcePlace;
+      projected.id = 0;
+      projected.projections.push_back({.kind = MirProjectionKind::PackElement,
+                                       .constantIndex = *value->packElement});
+      projected.type = value->info.type;
+      projected.traits = resolvedTraits(value->info.type);
+      projected.access = AccessMode::ReadOnly;
+      projected.sourceValue = 0;
+      projected.key.reset();
+      place = appendPackElementPlace(std::move(projected));
+      break;
+    }
     case HirValueKind::Call:
     case HirValueKind::Propagation:
     case HirValueKind::Conditional:
@@ -4737,6 +4773,7 @@ private:
     case HirValueKind::Conditional:
     case HirValueKind::Grouping:
     case HirValueKind::Index:
+    case HirValueKind::PackElement:
     case HirValueKind::MemberAccess:
     case HirValueKind::QualifiedName:
     case HirValueKind::This:
@@ -5052,6 +5089,7 @@ private:
       }
       break;
     case HirValueKind::Grouping:
+    case HirValueKind::PackElement:
       if (!value->operands.empty()) {
         emitPlaceDependencies(value->operands.front(), checkedPrefix);
       }
@@ -5736,6 +5774,7 @@ private:
     case HirValueKind::Literal:
       return MirOperation::Literal;
     case HirValueKind::PackFold:
+    case HirValueKind::PackElement:
       return MirOperation::None;
     case HirValueKind::PackExpansion:
       // Calls lower concrete expansions directly into projected element
@@ -8299,82 +8338,46 @@ private:
   void emitPackFold(const HirValue &value) {
     if (value.info.type != SemanticType::Void || value.packFoldSymbol == 0 ||
         value.packFoldParameter == 0 || value.packFoldFunction == 0 ||
-        value.operands.size() != value.packFoldArgument + 1) {
+        value.operands.size() !=
+            value.packFoldArgument + 1 + value.packFoldElements.size()) {
       valid = false;
       return;
     }
 
-    const HirValueId packValue = value.operands.back();
-    emitPlaceDependencies(packValue);
-    const MirPlaceId packPlaceId = placeForValue(packValue);
-    const MirPlace *resolvedPackPlace = output.findPlace(packPlaceId);
-    if (resolvedPackPlace == nullptr ||
-        resolvedPackPlace->root != MirPlaceRootKind::Binding ||
-        !resolvedPackPlace->projections.empty() ||
-        resolvedPackPlace->symbol != value.packFoldSymbol ||
-        resolvedPackPlace->type.kind != SemanticType::TypePack ||
-        !resolvedPackPlace->type.concretePack ||
-        resolvedPackPlace->type.genericParameterId != value.packFoldParameter ||
-        resolvedPackPlace->type.arguments.size() !=
-            value.packFoldElements.size()) {
+    const auto *pack = findValue(value.operands[value.packFoldArgument]);
+    if (!pack || pack->symbol != value.packFoldSymbol ||
+        pack->info.type.kind != SemanticType::TypePack ||
+        !pack->info.type.concretePack ||
+        pack->info.type.genericParameterId != value.packFoldParameter ||
+        pack->info.type.arguments.size() != value.packFoldElements.size()) {
       valid = false;
       return;
     }
-    // Appending projected places can reallocate output.places. Keep the
-    // verified entry-place descriptor by value for the whole expansion.
-    const MirPlace packPlace = *resolvedPackPlace;
-
     for (std::size_t elementIndex = 0;
          elementIndex < value.packFoldElements.size(); ++elementIndex) {
       const HirPackFoldElement &element = value.packFoldElements[elementIndex];
+      const auto *call = findValue(element.call);
       if (element.functionTarget == 0 ||
-          element.elementType != packPlace.type.arguments[elementIndex] ||
-          element.parameterTypes.size() != value.packFoldArgument + 1) {
+          element.elementType != pack->info.type.arguments[elementIndex] ||
+          element.parameterTypes.size() != value.packFoldArgument + 1 ||
+          !call || call->kind != HirValueKind::Call ||
+          call->functionTarget != element.functionTarget ||
+          call->parameterTypes != element.parameterTypes ||
+          value.operands[value.packFoldArgument + 1 + elementIndex] !=
+              element.call ||
+          !call->callPlan) {
         valid = false;
         return;
       }
 
-      MirInstruction call{
-          .kind = MirInstructionKind::Call,
-          .hirValue = value.id,
-          .definedFailure = {.propagation = normalizedCallPropagation(
-                                 FailurePropagationKind::DirectCall,
-                                 CallDispatch::Static, element.functionTarget)},
-          .dispatch = CallDispatch::Static,
-          .functionTarget = element.functionTarget,
-          .info = value.info,
-      };
-      call.parameterTypes = element.parameterTypes;
-      call.operands.reserve(element.parameterTypes.size());
-      for (std::size_t argument = 0; argument < value.packFoldArgument;
-           ++argument) {
-        call.operands.push_back(argumentOperand(
-            value.operands[argument], element.parameterTypes[argument]));
-      }
-
-      const SemanticType &elementParameter = element.parameterTypes.back();
-      if (elementParameter.kind != SemanticType::Reference ||
-          elementParameter.referenceAccess != AccessMode::ReadOnly ||
-          elementParameter.arguments.size() != 1 ||
-          elementParameter.arguments.front() != element.elementType) {
-        valid = false;
+      // HIR has already expanded each concrete element into its own
+      // ordinary invocation. Reuse its canonical left-to-right CallInput
+      // schedule, including protection across later TLS initialization.
+      emitValue(element.call);
+      if (terminated()) {
+        emittedValues.insert(value.id);
         return;
       }
-      MirPlace projected = packPlace;
-      projected.id = 0;
-      projected.projections.push_back({.kind = MirProjectionKind::PackElement,
-                                       .constantIndex = elementIndex});
-      projected.type = element.elementType;
-      projected.access = AccessMode::ReadOnly;
-      projected.traits = resolvedTraits(element.elementType);
-      projected.sourceValue = 0;
-      projected.key.reset();
-      const MirPlaceId elementPlace =
-          appendPackElementPlace(std::move(projected));
-      call.operands.push_back({.kind = MirOperandKind::BorrowRead,
-                               .place = elementPlace,
-                               .type = elementParameter});
-      (void)appendInstruction(std::move(call));
     }
 
     emittedValues.insert(value.id);

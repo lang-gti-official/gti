@@ -2009,8 +2009,13 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner) {
     for (const MirInstruction &instruction : block->instructions) {
       const auto requireAvailable = [&](const MirOperand &operand)
           -> std::optional<MirVerificationResult> {
+        const bool referenceInput =
+            (operand.kind == MirOperandKind::BorrowRead ||
+             operand.kind == MirOperandKind::BorrowWrite) &&
+            (orderedInvocation(instruction) ||
+             instruction.kind == MirInstructionKind::CallInput);
         if ((operand.kind != MirOperandKind::Copy &&
-             operand.kind != MirOperandKind::Move) ||
+             operand.kind != MirOperandKind::Move && !referenceInput) ||
             operand.place == 0 || operand.place > storageForPlace.size()) {
           return std::nullopt;
         }
@@ -2704,6 +2709,9 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
   // Their reference binding protects persistent storage before later inputs
   // run, even when no named semantic loan is needed. This is the explicit
   // checkpoint-to-invocation protocol, not a second NLL inference engine.
+  // Compact direct reference operands acquire the same protection exactly at
+  // their invocation and release it there. They have no preceding input
+  // evaluation interval; this grants no new operand/type/lifetime admission.
   struct StagedStorageInput {
     MirPlaceId source = 0;
     AccessMode access = AccessMode::ReadOnly;
@@ -2716,6 +2724,32 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       for (const auto &instruction : block.instructions) {
         if (instruction.tombstone || !orderedInvocation(instruction))
           continue;
+        const auto retainDirect = [&](const MirOperand &operand) {
+          const auto *source = body.findPlace(operand.place);
+          if ((operand.kind != MirOperandKind::BorrowRead &&
+               operand.kind != MirOperandKind::BorrowWrite) ||
+              !source || source->root != MirPlaceRootKind::Symbol ||
+              source->capture != 0 ||
+              !std::binary_search(persistent.begin(), persistent.end(),
+                                  source->symbol) ||
+              std::any_of(
+                  source->projections.begin(), source->projections.end(),
+                  [](const auto &projection) {
+                    return projection.kind == MirProjectionKind::RawIndex ||
+                           projection.kind == MirProjectionKind::RawDereference;
+                  }))
+            return;
+          staged[instruction.id].push_back(
+              {.source = source->id,
+               .access = operand.kind == MirOperandKind::BorrowWrite
+                             ? AccessMode::Mutable
+                             : AccessMode::ReadOnly,
+               .consumer = instruction.id});
+        };
+        if (instruction.receiver)
+          retainDirect(*instruction.receiver);
+        for (const auto &operand : instruction.operands)
+          retainDirect(operand);
         const auto retain = [&](const MirOperand &operand) {
           if (operand.kind == MirOperandKind::Value)
             inputConsumers.emplace(operand.value, instruction.id);

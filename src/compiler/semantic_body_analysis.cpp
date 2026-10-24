@@ -9954,6 +9954,9 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   ++lambdaDepth;
   currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Lambda,
                                .id = id};
+  // An analyzed empty local body is distinct from an unresolved external
+  // owner, including when an instance delta reuses this source-local ID.
+  programEffects.try_emplace(currentProgramEffectOwner);
   lambdaUncapturedLocals.push_back(std::move(unavailableLocals));
 
   const auto enclosingRawAccessObservation =
@@ -10630,28 +10633,55 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
   const std::size_t packIndex = call->arguments().size() - 1;
   const Variable *packVariable = nullptr;
   const Symbol *packSymbol = nullptr;
-  for (std::size_t index = 0; index < call->arguments().size(); ++index) {
-    const ExprPtr &argument = call->arguments()[index];
-    const auto *variable = exprAs<Variable>(argument.get());
-    if (variable == nullptr) {
-      report(expressionToken(argument),
-             "Pack-fold call arguments must be named local values so the "
-             "fold cannot repeat expression side effects.",
-             "GTI-S2023");
-      argumentTypes.emplace_back(analyze(argument));
-      valid = false;
-      continue;
+  {
+    // An empty concrete pack executes neither the target nor its fixed named
+    // inputs. Keep ordinary type/availability checks, but do not invent a
+    // persistent read or TLS initialization for an argument that never runs.
+    // A primary's symbolic empty expansion does not establish this fact.
+    const auto *namedPack = exprAs<Variable>(call->arguments().back().get());
+    const auto *resolvedPack = namedPack ? resolve(namedPack->name()) : nullptr;
+    const bool concreteEmpty =
+        resolvedPack && resolvedPack->type.kind == SemanticType::TypePack &&
+        resolvedPack->type.concretePack && resolvedPack->type.arguments.empty();
+    const bool dependentPrimary =
+        resolvedPack && isUnselectedProgramPack(*resolvedPack);
+    const std::size_t firstDependentCheck =
+        requestSession.programStorageBorrowChecks.size();
+    struct RestoreEffectOwner {
+      ProgramEffectOwner &slot;
+      ProgramEffectOwner previous;
+      ~RestoreEffectOwner() { slot = previous; }
+    } restoreEffectOwner{currentProgramEffectOwner, currentProgramEffectOwner};
+    if (concreteEmpty)
+      currentProgramEffectOwner = {};
+    for (std::size_t index = 0; index < call->arguments().size(); ++index) {
+      const ExprPtr &argument = call->arguments()[index];
+      const auto *variable = exprAs<Variable>(argument.get());
+      if (variable == nullptr) {
+        report(expressionToken(argument),
+               "Pack-fold call arguments must be named local values so the "
+               "fold cannot repeat expression side effects.",
+               "GTI-S2023");
+        argumentTypes.emplace_back(analyze(argument));
+        valid = false;
+        continue;
+      }
+      if (index == packIndex) {
+        packVariable = variable;
+        packSymbol = resolve(variable->name());
+        const bool enclosingPackElement = analyzingPackFoldElement;
+        analyzingPackFoldElement = true;
+        argumentTypes.emplace_back(analyze(argument));
+        analyzingPackFoldElement = enclosingPackElement;
+      } else {
+        argumentTypes.emplace_back(analyze(argument));
+      }
     }
-    if (index == packIndex) {
-      packVariable = variable;
-      packSymbol = resolve(variable->name());
-      const bool enclosingPackElement = analyzingPackFoldElement;
-      analyzingPackFoldElement = true;
-      argumentTypes.emplace_back(analyze(argument));
-      analyzingPackFoldElement = enclosingPackElement;
-    } else {
-      argumentTypes.emplace_back(analyze(argument));
-    }
+    if (dependentPrimary)
+      for (std::size_t index = firstDependentCheck;
+           index < requestSession.programStorageBorrowChecks.size(); ++index)
+        requestSession.programStorageBorrowChecks[index].dependentPrimary =
+            true;
   }
 
   if (calleeType != SemanticType::Function || !callee ||
@@ -10781,24 +10811,27 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
       }
       fold.elements.push_back(
           {.elementType = element,
-           .call = ResolvedCallInfo{.function = resolved.id,
-                                    .declaration = resolved.declaration,
-                                    .returnType = resolved.returnType,
-                                    .parameterTypes = resolved.parameterTypes,
-                                    .typeArguments = std::move(typeArguments),
-                                    .valueArguments = std::move(valueArguments),
-                                    .requirements = resolved.requirements,
-                                    .borrowOrigin = resolved.returnBorrowOrigin,
-                                    .borrowArgument =
-                                        resolved.returnBorrowParameter,
-                                    .borrowAccess = resolved.returnBorrowAccess,
-                                    .borrowPlace = resolved.returnBorrowPlace,
-                                    .dispatch = CallDispatch::Static,
-                                    .dispatchOwner = resolved.dispatchOwner}});
+           .call = ResolvedCallInfo{
+               .function = resolved.id,
+               .declaration = resolved.declaration,
+               .returnType = resolved.returnType,
+               .parameterTypes = resolved.parameterTypes,
+               .typeArguments = std::move(typeArguments),
+               .valueArguments = std::move(valueArguments),
+               .requirements = resolved.requirements,
+               .neverReturns = resolved.record().neverReturns,
+               .tracksCaller = resolved.record().tracksCaller,
+               .borrowOrigin = resolved.returnBorrowOrigin,
+               .borrowArgument = resolved.returnBorrowParameter,
+               .borrowAccess = resolved.returnBorrowAccess,
+               .borrowPlace = resolved.returnBorrowPlace,
+               .dispatch = CallDispatch::Static,
+               .dispatchOwner = resolved.dispatchOwner}});
     }
   }
 
   if (valid) {
+    recordSelectedCallSafety(*call, candidate);
     // The fixed prefix's mutable-reference access is independent of the pack
     // element type. Preserve that source use even in primary analysis, where
     // no concrete element calls exist yet.
@@ -10815,6 +10848,8 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
                               .returnType = candidate.returnType,
                               .parameterTypes = candidate.parameterTypes,
                               .requirements = candidate.requirements,
+                              .neverReturns = candidate.record().neverReturns,
+                              .tracksCaller = candidate.record().tracksCaller,
                               .borrowOrigin = candidate.returnBorrowOrigin,
                               .borrowArgument = candidate.returnBorrowParameter,
                               .borrowAccess = candidate.returnBorrowAccess,
@@ -12065,6 +12100,7 @@ auto SemanticVisitor::Impl::analyzeParameterDefaults(
                       ? ProgramEffectOwnerKind::FunctionDefaultArgument
                       : ProgramEffectOwnerKind::ConstructorDefaultArgument,
           .id = effectOwners[index]};
+      programEffects.try_emplace(currentProgramEffectOwner);
     }
     const bool enclosingDefaultArgument = analyzingDefaultArgument;
     const Expr *enclosingDefaultArgumentRoot = currentDefaultArgumentRoot;

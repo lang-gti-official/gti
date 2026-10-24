@@ -120,6 +120,13 @@ GTI call targets require a structural ambient-effects proof when a persistent
 borrow remains live. Native calls and raw pointers retain their existing unsafe
 obligations; the compiler does not infer arbitrary native pointer retention.
 
+A concrete pack fold uses the effects of its exact selected element calls, not
+an unconditional unknown-call effect. Each invocation obeys the ordinary
+left-to-right input-borrow intervals: initializing a later TLS input cannot
+mutate an earlier borrowed input. An independently concrete empty pack evaluates
+no fixed input and triggers no TLS initialization; names and types are still
+checked. A symbolic or unresolved expansion does not establish that proof.
+
 A virtual call on a proved exact, complete class object uses the selected final
 overrider's transitive effects. This is an effect proof, not a change to virtual
 dispatch or a claim that read-only methods cannot mutate other storage. The

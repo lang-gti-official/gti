@@ -1350,13 +1350,24 @@ HIR. This proof does not infer safety from a backend or from `findConstant()`.
 
 Closed generic calls use request-local concrete effect queries keyed by the
 declaration, concrete owner, and type/value substitutions. A reused isolated
-semantic instance worker analyzes only initializer-reachable selected bodies;
-discarded `if constexpr` arms do not contribute effects. Nongeneric bridge
+semantic instance worker closes queries selected by actual source-owner effect
+edges and pending persistent-storage obligations, including obligations inside
+a selected generic body whose caller has no live persistent loan. Merely
+registering a query in a speculative cache is not a root; discarded
+`if constexpr` arms do not contribute effects. Nongeneric bridge
 calls retain their graph edges, and source constructor/destructor/field effects
 use the same exact instance identity. Query expansion is bounded by 64 generic
 ancestry steps and 16,384 analyzed distinct instances, with located `GTI-S2105`
 diagnostics. Open substitutions, dynamic dispatch, and protocol/combinator paths
 without exact selected generic arguments remain conservatively unknown.
+
+Instance-local effect owners are exported under the selecting query and local
+owner identity. Borrow-check targets, failure conditions, and graph edges use
+the same mapping, preserving cycles and conditional cleanup without mixing
+specializations that reuse a lambda or default-argument source identity. A
+primary symbolic pack fold retains its dependent storage obligation for concrete
+reanalysis; this does not waive an unresolved effect in a selected instance.
+Ordinary name, type, access and unsafe-call checks still apply to the primary.
 
 Persistent-storage loan checks reuse that exact effect graph and the ordinary
 structured loan endpoint scheduler. A request-local full-expression frame is

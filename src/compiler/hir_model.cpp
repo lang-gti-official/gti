@@ -225,6 +225,147 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
   }
   const auto verifyConcreteBindings = [&](const HirBody &body) {
+    std::unordered_set<HirValueId> expandedCalls;
+    std::unordered_set<HirValueId> expandedInputs;
+    std::unordered_set<HirValueId> expandedElements;
+    const auto exactNamedCopy = [](const HirValue &copy,
+                                   const HirValue &source) {
+      return source.kind == HirValueKind::Variable &&
+             copy.kind == HirValueKind::Variable && copy.source == nullptr &&
+             copy.id != source.id && copy.symbol == source.symbol &&
+             copy.info == source.info && copy.place == source.place &&
+             copy.ownership == source.ownership &&
+             copy.unsafeOperation == source.unsafeOperation &&
+             copy.definedFailure == source.definedFailure &&
+             copy.constant == source.constant &&
+             copy.programConstantSubstitution ==
+                 source.programConstantSubstitution &&
+             copy.borrowDependencies == source.borrowDependencies &&
+             copy.borrowPlace == source.borrowPlace &&
+             copy.borrowOrigin == source.borrowOrigin &&
+             copy.borrowArgument == source.borrowArgument &&
+             copy.borrowArguments == source.borrowArguments &&
+             copy.borrowFields == source.borrowFields &&
+             copy.borrowAccess == source.borrowAccess &&
+             copy.operands.empty() && copy.sequencedInputs.empty() &&
+             !copy.functionTarget && !copy.constructorTarget &&
+             !copy.lambdaTarget && !copy.nativeCalleeType && !copy.callPlan &&
+             !copy.packElement;
+    };
+    for (const auto &fold : body.values) {
+      if (fold.kind != HirValueKind::PackFold)
+        continue;
+      const auto *source = exprAs<PackFold>(fold.source);
+      const auto *pattern =
+          source ? exprAs<Call>(source->pattern().get()) : nullptr;
+      bool exact = pattern && fold.info.type == SemanticType::Void &&
+                   fold.packFoldSymbol != 0 && fold.packFoldParameter != 0 &&
+                   fold.packFoldFunction != 0 &&
+                   fold.operands.size() ==
+                       fold.packFoldArgument + 1 + fold.packFoldElements.size();
+      const auto *pack =
+          exact ? body.findValue(fold.operands[fold.packFoldArgument])
+                : nullptr;
+      const auto binding = std::find_if(
+          body.bindings.begin(), body.bindings.end(), [&](const auto &entry) {
+            return entry.info.symbol == fold.packFoldSymbol;
+          });
+      exact =
+          exact && pack && pack->kind == HirValueKind::Variable &&
+          pack->symbol == fold.packFoldSymbol &&
+          pack->info.type.kind == SemanticType::TypePack &&
+          pack->info.type.concretePack &&
+          pack->info.type.genericParameterId == fold.packFoldParameter &&
+          pack->info.type.arguments.size() == fold.packFoldElements.size() &&
+          binding != body.bindings.end() && binding->parameter &&
+          binding->info.type == pack->info.type;
+      for (std::size_t index = 0; exact && index < fold.packFoldElements.size();
+           ++index) {
+        const auto &element = fold.packFoldElements[index];
+        const auto *call = body.findValue(element.call);
+        const auto *target =
+            program.findFunctionInstance(element.functionTarget);
+        exact =
+            call && target && expandedCalls.insert(element.call).second &&
+            fold.operands[fold.packFoldArgument + 1 + index] == element.call &&
+            element.elementType == pack->info.type.arguments[index] &&
+            element.parameterTypes.size() == fold.packFoldArgument + 1 &&
+            target->declaration == fold.packFoldFunction && !target->owner &&
+            target->returnType == SemanticType::Void &&
+            target->parameterTypes == element.parameterTypes &&
+            target->typeArguments ==
+                std::vector<SemanticType>{element.elementType} &&
+            target->valueArguments.empty() &&
+            call->kind == HirValueKind::Call && call->source == pattern &&
+            call->info == fold.info && call->dispatch == CallDispatch::Static &&
+            call->functionTarget == element.functionTarget &&
+            call->parameterTypes == element.parameterTypes &&
+            call->operands.size() == fold.packFoldArgument + 1 &&
+            call->callPlan && !call->callPlan->receiver && !call->receiver &&
+            call->callPlan->arguments.size() == call->operands.size() &&
+            call->sequencedInputs.empty();
+        for (std::size_t argument = 0;
+             exact && argument < call->operands.size(); ++argument) {
+          const auto &input = call->callPlan->arguments[argument];
+          const auto *value = body.findValue(call->operands[argument]);
+          exact = value && input.value == value->id &&
+                  input.parameterIndex == argument &&
+                  input.parameterType == element.parameterTypes[argument] &&
+                  !input.defaultArgument;
+          if (!exact)
+            break;
+          if (argument < fold.packFoldArgument) {
+            const auto *original = body.findValue(fold.operands[argument]);
+            const auto &parameter = element.parameterTypes[argument];
+            const auto expected =
+                parameter.kind == SemanticType::Reference
+                    ? (parameter.referenceAccess == AccessMode::Mutable
+                           ? HirCallInputKind::MutableBorrow
+                           : HirCallInputKind::ReadBorrow)
+                : parameter.kind == SemanticType::Class ||
+                        parameter.kind == SemanticType::Lambda ||
+                        (parameter.kind == SemanticType::Enum && original &&
+                         original->info.traits.drop == DropKind::Lexical)
+                    ? HirCallInputKind::CopyValue
+                    : HirCallInputKind::Value;
+            exact = original && exactNamedCopy(*value, *original) &&
+                    input.kind == expected &&
+                    expandedInputs.insert(value->id).second;
+          } else {
+            const auto &parameter = element.parameterTypes[argument];
+            exact = value->kind == HirValueKind::PackElement &&
+                    value->packElement == index && value->source == nullptr &&
+                    value->symbol == pack->symbol &&
+                    value->operands == std::vector<HirValueId>{pack->id} &&
+                    value->info.type == element.elementType &&
+                    value->info.category == ValueCategory::Place &&
+                    value->info.access == AccessMode::ReadOnly &&
+                    value->definedFailure.empty() &&
+                    value->unsafeOperation == UnsafeOperationKind::None &&
+                    !value->functionTarget && !value->constructorTarget &&
+                    !value->lambdaTarget && !value->callPlan && !value->place &&
+                    !value->ownership && value->sequencedInputs.empty() &&
+                    parameter.kind == SemanticType::Reference &&
+                    parameter.referenceAccess == AccessMode::ReadOnly &&
+                    parameter.arguments ==
+                        std::vector<SemanticType>{element.elementType} &&
+                    input.kind == HirCallInputKind::ReadBorrow &&
+                    expandedElements.insert(value->id).second;
+          }
+        }
+      }
+      if (!exact)
+        result.errors.emplace_back(
+            "HIR fold lost its exact ordered call, named input or concrete "
+            "pack-element projection");
+    }
+    for (const auto &value : body.values)
+      if ((value.kind == HirValueKind::PackElement) !=
+              value.packElement.has_value() ||
+          (value.kind == HirValueKind::PackElement &&
+           !expandedElements.contains(value.id)))
+        result.errors.emplace_back(
+            "HIR pack-element place has no unique typed expansion owner");
     for (const HirBinding &binding : body.bindings) {
       const auto found = instanceSymbols.find(binding.info.symbol);
       if (found != instanceSymbols.end() &&
@@ -249,6 +390,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const auto &instance : program.lambdaInstances())
     verifyConcreteBindings(instance.body);
   for (const auto &instance : program.classInstances()) {
+    verifyConcreteBindings(instance.fieldInitializers);
+    verifyConcreteBindings(instance.staticFieldInitializers);
     const ClassTypeInfo *owner = semantics.findClassType(instance.declaration);
     if (owner == nullptr ||
         owner->typeAliases.size() != instance.typeAliases.size()) {

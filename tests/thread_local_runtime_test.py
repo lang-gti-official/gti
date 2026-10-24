@@ -25,6 +25,82 @@ thread_local mut State second = State(2);
 thread_local mut State unused = State(99);
 """
 
+FORMAT_PAYLOAD = """\
+#include <std/format>
+#include <std/string>
+#include <std/thread>
+class Formatted {
+public:
+  int32_t id;
+  Formatted(int32_t id) : id(id) {}
+  ~Formatted() { std::println("drop {} {}", this.id, this.id); }
+};
+enum FormattedSlot { full(Formatted value), text(std::string value), empty };
+thread_local mut FormattedSlot formatted = FormattedSlot::full(Formatted(1));
+int32_t read_formatted(FormattedSlot& value) {
+  switch (value) {
+  case FormattedSlot::full(auto& item): return item.id;
+  case FormattedSlot::text(auto& item): return int32_t(item.size());
+  case FormattedSlot::empty: return 0;
+  }
+}
+void replace_formatted(mut FormattedSlot& target, FormattedSlot value) {
+  target = std::move(value);
+}
+int main() {
+  if (read_formatted(formatted) != 1) return 1;
+  auto started = std::thread::start([]() -> void {
+    replace_formatted(formatted, FormattedSlot::full(Formatted(2)));
+    std::println("worker {}", read_formatted(formatted));
+  });
+  if (!started) return 2;
+  mut auto worker = std::move(started).value();
+  auto joined = worker.join();
+  if (!joined) return 3;
+  std::println("joined");
+  replace_formatted(formatted, FormattedSlot::full(Formatted(3)));
+  std::println("main {}", read_formatted(formatted));
+  return 0;
+}
+"""
+
+EMPTY_FOLD_PREFIX = """\
+#include <std/format>
+#include <std/panic>
+int32_t initialize_prefix() { std::println("initialize prefix"); return 7; }
+thread_local mut int32_t fold_prefix = initialize_prefix();
+void observe_prefix<T>(int32_t& prefix, T& element) {
+  if (prefix != 7) std::panic("wrong prefix");
+  std::println("invoke");
+}
+void folded_prefix<Args...>(Args... args) {
+  (observe_prefix(fold_prefix, args), ...);
+}
+int main() {
+  folded_prefix();
+  std::println("empty complete");
+  folded_prefix(1, 2);
+  std::println("nonempty complete");
+  return 0;
+}
+"""
+
+FOLD_RELOAD = """\
+#include <std/format>
+thread_local mut int32_t repeated = 0;
+void observe_reload<T>(int32_t snapshot, mut int32_t& live, T& element) {
+  std::println("{}", snapshot);
+  live += 1;
+}
+void fold_reload<Args...>(Args... args) {
+  (observe_reload(repeated, repeated, args), ...);
+}
+int main() {
+  fold_reload(1, 2, 3);
+  return repeated == 3 ? 0 : 1;
+}
+"""
+
 SUCCESS = "#include <std/thread>\n" + STATE + """\
 int32_t local_visit() {
   thread_local mut int32_t visits = 0;
@@ -260,6 +336,11 @@ def main() -> None:
         ("worker", SUCCESS, "concurrent", 0,
          "init 2\ninit 1\nworker 2 1 1 1\ndrop 1\ndrop 2\njoined\n"
          "init 1\ninit 2\ndrop 2\ndrop 1\n", None),
+        ("formatted_payload", FORMAT_PAYLOAD, "concurrent", 0,
+         "drop 1 1\nworker 2\ndrop 2 2\njoined\ndrop 1 1\nmain 3\ndrop 3 3\n", None),
+        ("empty_fold_prefix", EMPTY_FOLD_PREFIX, "single-threaded", 0,
+         "empty complete\ninitialize prefix\ninvoke\ninvoke\nnonempty complete\n", None),
+        ("fold_reload", FOLD_RELOAD, "single-threaded", 0, "0\n1\n2\n", None),
         ("manual", MANUAL, "concurrent", 0,
          "init 1\ndrop 1\nmanual joined\n", None),
         ("immovable", IMMOVABLE, "single-threaded", 0,

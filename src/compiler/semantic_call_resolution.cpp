@@ -7495,14 +7495,8 @@ auto SemanticVisitor::Impl::requireFunctionDefinition(
   diagnostics.push_back(std::move(diagnostic));
 }
 
-auto SemanticVisitor::Impl::recordResolvedCall(
-    const Call &call, const CallableCandidate &function,
-    std::vector<SemanticType> typeArguments,
-    std::vector<CompileTimeValue> valueArguments,
-    std::vector<std::size_t> ephemeralBorrowArguments,
-    std::vector<CallableArgumentBoundary> callableArguments,
-    CallReceiverMode receiverMode, const ExprPtr *argumentReceiver) -> void {
-  requireFunctionDefinition(function, expressionToken(call.callee()));
+auto SemanticVisitor::Impl::recordSelectedCallSafety(
+    const Call &call, const CallableCandidate &function) -> void {
   const bool pointerBearingCFunction =
       function.declaration != nullptr && function.declaration->hasCLinkage() &&
       (containsCAbiRawPointer(function.returnType) ||
@@ -7537,6 +7531,17 @@ auto SemanticVisitor::Impl::recordResolvedCall(
            "Pointer-bearing C declaration is here."});
     }
   }
+}
+
+auto SemanticVisitor::Impl::recordResolvedCall(
+    const Call &call, const CallableCandidate &function,
+    std::vector<SemanticType> typeArguments,
+    std::vector<CompileTimeValue> valueArguments,
+    std::vector<std::size_t> ephemeralBorrowArguments,
+    std::vector<CallableArgumentBoundary> callableArguments,
+    CallReceiverMode receiverMode, const ExprPtr *argumentReceiver) -> void {
+  requireFunctionDefinition(function, expressionToken(call.callee()));
+  recordSelectedCallSafety(call, function);
   recordCallableForwardings(call, function);
   recordOwnerlessTextCall(call, function);
   recordTextFieldCall(call, function);

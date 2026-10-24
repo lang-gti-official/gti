@@ -221,6 +221,11 @@ is a mutable reference. An empty pack performs no call and has no effect. The
 comma and ellipsis in this syntax do not admit another fold operator or
 delegate expansion order to the backend.
 
+These input intervals include any first-use initialization of a named
+`thread_local` argument. A later initializer cannot invalidate an earlier
+borrow merely because both arguments are written as names. Within an empty
+concrete fold, even that first-use initialization does not execute.
+
 A contextual brace argument initializes its selected fixed-array parameter in
 place. Its elements run from left to right under the array element order below;
 the complete array parameter becomes live before evaluation advances to the
@@ -813,6 +818,12 @@ sibling field expression evaluates. A payload switch evaluates its subject
 once, selects by the active alternative, binds that alternative's selected
 fields, and executes the selected arm. An exhaustive payload switch has no
 unmatched execution path.
+
+The variant name in a payload-constructor callee or a switch pattern is a
+non-evaluated designator. Naming it neither creates an enum temporary nor adds
+destructor or rollback effects. This does not apply to an actual unit-variant
+value or to the enclosing payload construction, which follow ordinary owning
+value lifetime rules.
 
 A named subject place is observed. An ordinary value binding owns an
 immutable copy of its field and drops it at the arm's end. A tag-only pattern

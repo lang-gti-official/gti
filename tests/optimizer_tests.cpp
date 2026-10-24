@@ -6499,7 +6499,8 @@ int switch_reactivation(mut int& parent) {
                   .binding = 1,
                   .type = lang::SemanticType::Int32,
                   .access = lang::AccessMode::Mutable,
-                  .traits = lang::semanticTraits(lang::SemanticType::Int32)}},
+                  .traits = lang::semanticTraits(lang::SemanticType::Int32),
+                  .initiallyAvailable = true}},
       .loans = {{.id = 1,
                  .kind = lang::MirLoanKind::Parameter,
                  .source = 1,
@@ -8488,7 +8489,20 @@ int main() {
               });
     return places;
   };
-  const auto mutablePackCalls = [](lang::MirBody &body) {
+  const auto mutablePackInput =
+      [](lang::MirBody &body, lang::MirOperand &operand) -> lang::MirOperand * {
+    const auto *value = body.findValue(operand.value);
+    auto *block = value ? body.findBlock(value->definitionBlock) : nullptr;
+    if (operand.kind != lang::MirOperandKind::Value || !block)
+      return nullptr;
+    for (auto &stage : block->instructions)
+      if (stage.id == value->definition &&
+          stage.kind == lang::MirInstructionKind::CallInput &&
+          stage.operands.size() == 1)
+        return &stage.operands.front();
+    return nullptr;
+  };
+  const auto mutablePackCalls = [&](lang::MirBody &body) {
     std::vector<lang::MirInstruction *> calls;
     for (lang::MirBlock &block : body.blocks) {
       for (lang::MirInstruction &instruction : block.instructions) {
@@ -8496,8 +8510,9 @@ int main() {
             instruction.operands.empty()) {
           continue;
         }
+        const auto *input = mutablePackInput(body, instruction.operands.back());
         const lang::MirPlace *argument =
-            body.findPlace(instruction.operands.back().place);
+            input ? body.findPlace(input->place) : nullptr;
         if (argument != nullptr && argument->projections.size() == 1 &&
             argument->projections.front().kind ==
                 lang::MirProjectionKind::PackElement) {
@@ -8530,14 +8545,15 @@ int main() {
        ++index) {
     const lang::MirPlace &place = *foldPlaces[index];
     const lang::MirInstruction &call = *foldCalls[index];
-    orderedCalls =
-        place.type == expectedTypes[index] &&
-        place.projections.front().constantIndex == index &&
-        call.operands.size() == 3 &&
-        call.operands.back().kind == lang::MirOperandKind::BorrowRead &&
-        call.operands.back().place == place.id &&
-        call.parameterTypes.size() == call.operands.size() &&
-        call.functionTarget != 0;
+    const auto *input =
+        mutablePackInput(*foldBody, foldCalls[index]->operands.back());
+    orderedCalls = place.type == expectedTypes[index] &&
+                   place.projections.front().constantIndex == index &&
+                   call.operands.size() == 3 && input &&
+                   input->kind == lang::MirOperandKind::BorrowRead &&
+                   input->place == place.id && call.callSite == call.hirValue &&
+                   call.parameterTypes.size() == call.operands.size() &&
+                   call.functionTarget != 0;
   }
   expect(orderedCalls,
          "pack-fold MIR should use ordered ordinary calls over exact concrete "
@@ -8588,8 +8604,12 @@ int main() {
       wrongPlaceBody == nullptr ? std::vector<lang::MirInstruction *>{}
                                 : mutablePackCalls(*wrongPlaceBody);
   if (wrongPlaceCalls.size() == 3) {
-    wrongPlaceCalls[1]->operands.back().place =
-        wrongPlaceCalls.front()->operands.back().place;
+    auto *first = mutablePackInput(*wrongPlaceBody,
+                                   wrongPlaceCalls.front()->operands.back());
+    auto *second =
+        mutablePackInput(*wrongPlaceBody, wrongPlaceCalls[1]->operands.back());
+    if (first && second)
+      second->place = first->place;
   }
   expect(wrongPlaceCalls.size() == 3 &&
              !lang::verifyMirProgram(wrongCallPlace).valid(),

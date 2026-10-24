@@ -37,8 +37,14 @@ for what minor and patch releases mean.
 - Calls on proved complete concrete objects retain their exact virtual callee's
   effects, avoiding false persistent-borrow conflicts without treating readonly
   methods as pure or weakening checks for aliased receivers.
+- Concrete pack folds retain exact call effects and ordinary ordered argument
+  borrows, including later-argument TLS initialization. Empty concrete folds
+  neither evaluate fixed inputs nor initialize their TLS storage.
+- Payload variant names used as constructor or case designators no longer invent
+  owning temporaries and destructor effects; actual enum values retain cleanup.
 - See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
   and [runnable example 175](examples/175-thread-local-storage.gti).
+
 ## 0.468.4 — Returning payload references from reference parameters
 
 - A free function, static method or lambda can now return a reference bound by

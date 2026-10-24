@@ -229,13 +229,28 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
   }
 
   for (const auto &node : nodes) {
-    const bool stagedPersistentInput = std::any_of(
+    const bool protectedPersistentInput = std::any_of(
         node.body->blocks.begin(), node.body->blocks.end(),
         [&](const auto &block) {
           return block.reachable &&
                  std::any_of(
                      block.instructions.begin(), block.instructions.end(),
                      [&](const auto &input) {
+                       const auto direct = [&](const MirOperand &operand) {
+                         const auto *place =
+                             node.body->findPlace(operand.place);
+                         return (operand.kind == MirOperandKind::BorrowRead ||
+                                 operand.kind == MirOperandKind::BorrowWrite) &&
+                                place &&
+                                place->root == MirPlaceRootKind::Symbol &&
+                                place->capture == 0 &&
+                                isPersistent(place->symbol);
+                       };
+                       if (!input.tombstone &&
+                           ((input.receiver && direct(*input.receiver)) ||
+                            std::any_of(input.operands.begin(),
+                                        input.operands.end(), direct)))
+                         return true;
                        if (input.tombstone ||
                            input.kind != MirInstructionKind::CallInput ||
                            (input.callInputKind !=
@@ -252,7 +267,7 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
                               isPersistent(place->symbol);
                      });
         });
-    if (node.body->loans.empty() && !stagedPersistentInput)
+    if (node.body->loans.empty() && !protectedPersistentInput)
       continue;
     std::vector<MirPersistentStorageAccess> hidden;
     std::map<MirInstructionId, const Invocation *> roots;
@@ -270,7 +285,7 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
       hidden.push_back(
           {.block = invocation.block, .instruction = invocation.instruction});
     }
-    if (hidden.empty() && !stagedPersistentInput)
+    if (hidden.empty() && !protectedPersistentInput)
       continue;
     using QueryKey = std::pair<MirInstructionId, std::vector<SymbolId>>;
     std::map<QueryKey, std::vector<MirPersistentStorageAccess>> cache;

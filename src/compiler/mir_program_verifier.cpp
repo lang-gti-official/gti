@@ -33,6 +33,19 @@ exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
                                            const SemanticType &derived,
                                            const SemanticType &base);
 
+[[nodiscard]] bool mirBorrowedPlaceMatches(const MirProgram &program,
+                                           const MirPlace *place,
+                                           const SemanticType &pointee,
+                                           AccessMode access) {
+  return place &&
+         (place->type == pointee ||
+          (place->type.kind == SemanticType::Class &&
+           pointee.kind == SemanticType::Class &&
+           mirPublicBaseConversion(program, place->type, pointee))) &&
+         (access != AccessMode::Mutable ||
+          place->access == AccessMode::Mutable);
+}
+
 struct MirStoredCarrierReference {
   std::vector<SymbolId> fields;
   SemanticType reference = SemanticType::Unknown;
@@ -3030,6 +3043,29 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         }
       }
       if (instruction.kind == MirInstructionKind::CallInput &&
+          (instruction.callInputKind == HirCallInputKind::ReadBorrow ||
+           instruction.callInputKind == HirCallInputKind::MutableBorrow) &&
+          instruction.operands.size() == 1 &&
+          (instruction.operands.front().kind == MirOperandKind::BorrowRead ||
+           instruction.operands.front().kind == MirOperandKind::BorrowWrite)) {
+        const auto &type = instruction.info.type;
+        const bool reference = type.kind == SemanticType::Reference;
+        const auto *place = body.findPlace(instruction.operands.front().place);
+        const auto access =
+            instruction.callInputKind == HirCallInputKind::MutableBorrow
+                ? AccessMode::Mutable
+                : AccessMode::ReadOnly;
+        if ((reference && type.arguments.size() != 1) ||
+            !mirBorrowedPlaceMatches(program, place,
+                                     reference ? type.arguments.front() : type,
+                                     access))
+          return verificationFailure(
+              body, owner,
+              "borrowed call input does not match its exact physical pointee "
+              "and access",
+              block.id, instruction.id);
+      }
+      if (instruction.kind == MirInstructionKind::CallInput &&
           instruction.callInputRole == MirCallInputRole::Argument &&
           instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Loan &&
@@ -3497,10 +3533,11 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         const bool exactLoanKind = provenance != nullptr;
         if (source == nullptr || parameter.arguments.size() != 1 ||
             operand.type != parameter || (!exactBorrowKind && !exactLoanKind) ||
-            source->type != parameter.arguments.front() ||
+            !mirBorrowedPlaceMatches(program, source,
+                                     parameter.arguments.front(),
+                                     parameter.referenceAccess) ||
             (parameter.referenceAccess == AccessMode::Mutable &&
-             (source->access != AccessMode::Mutable ||
-              (exactLoanKind && provenance->access != AccessMode::Mutable)))) {
+             exactLoanKind && provenance->access != AccessMode::Mutable)) {
           return verificationFailure(
               body, owner,
               "direct reference argument does not match its exact "

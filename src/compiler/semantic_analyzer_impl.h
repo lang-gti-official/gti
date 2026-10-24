@@ -51,6 +51,7 @@ public:
     FieldInitializers,
     Lambda,
     ConcreteInstance,
+    ConcreteLocal,
   };
 
   struct ProgramEffectOwner {
@@ -131,6 +132,9 @@ public:
     std::vector<ProgramEffectOwner> targets;
     std::vector<ProgramUnknownEffect> unknown;
     std::shared_ptr<const ProgramFailureCondition> failureCondition;
+    // A symbolic fold is not an executable invocation. Keep its obligation
+    // until selected concrete bodies replay it with an exact element count.
+    bool dependentPrimary = false;
   };
 
   struct ProgramExpressionEffects {
@@ -187,6 +191,9 @@ public:
   };
   struct ProgramConcreteEffectState {
     std::vector<ProgramConcreteEffectQuery> queries;
+    // Source-local owner IDs are scoped to instance deltas. Exported graph
+    // nodes retain the selecting query as well as that local source identity.
+    std::vector<std::pair<std::size_t, ProgramEffectOwner>> localOwners;
     // Hash buckets accelerate lookup; the ordered vector alone assigns IDs.
     std::unordered_map<std::size_t, std::vector<std::size_t>> buckets;
     std::size_t analyzed = 0;
@@ -3610,6 +3617,9 @@ private:
 
   [[nodiscard]] bool containsCAbiRawPointer(const SemanticType &type) const;
 
+  void recordSelectedCallSafety(const Call &call,
+                                const CallableCandidate &function);
+
   void
   recordResolvedCall(const Call &call, const CallableCandidate &function,
                      std::vector<SemanticType> typeArguments,
@@ -4909,6 +4919,8 @@ private:
   void
   recordProgramOrderedInputEffects(const ProgramStorageBorrowCheck &earlier,
                                    const ExprPtr &input);
+  [[nodiscard]] bool isUnselectedProgramPack(const Symbol &symbol) const;
+  [[nodiscard]] bool isDependentProgramPackFold(const Expr &expression) const;
   void recordProgramCallEffectTargets(const Expr &expression);
   [[nodiscard]] bool
   hasExactWholeObjectVirtualTarget(const ResolvedCallInfo &resolved,

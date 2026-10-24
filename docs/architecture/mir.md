@@ -2583,12 +2583,11 @@ A `MirBody` owns:
   pointee's transfer/share policy, without inheriting the pointee's copy, move,
   drop or borrowed-state traits. Pack and scoped-task
   verification consume those same published nominal facts;
-- an explicit `MirOperation::PackFold` for the bounded call fold. It retains
-  the source HIR fold identity, fixed named-place operands, selected generic
-  declaration, source pack identity and argument position, and one concrete
-  element type plus exact resolved call target per pack element in source
-  order. An empty pack retains an empty element sequence instead of
-  disappearing during lowering;
+- ordinary staged calls for a concrete bounded call fold, with exact
+  read-only `PackElement` places. HIR retains the source fold and selected
+  expansion; executable MIR contains no `MirOperation::PackFold`. Earlier
+  expression-inventory descriptions of that operation are historical, not a
+  second execution path. An empty expansion emits no input evaluation or call;
 - exact defined-failure identity on checked instructions. Each local detector
   origin retains a sorted unique outcome set and a snapshot-local
   `SourceUnitId` plus line/offset anchor and has one parallel artifact-local
@@ -4167,17 +4166,24 @@ construction and rollback contracts. Module MIR owns the verified source-
 graph-derived initialization schedule, and the hosted adapter executes that
 schedule through the implemented `Module/0` body.
 
-`PackFold` has its own bounded verifier contract rather than pretending its
-element calls are ordinary scheduled call syntax. Verification requires the
-recorded element count, source-pack order, concrete element types, parameter
-positions, and per-element function instances to agree with HIR and with the
-one semantic pattern declaration. It rejects a substituted target from a
-different overload/declaration, a missing or duplicated element, reordered
-types, a mutable/consuming element parameter, or fixed-operand drift. The
-operation executes its element calls left to right and keeps ordinary unknown-
-call conservative effects: it is not speculatable, removable, or reorderable.
-This metadata does not introduce general MIR pack iteration or ask a backend to
-perform semantic instantiation.
+`PackFold` retains a bounded HIR expansion proof, but each concrete element now
+has a unique ordinary call identity and the same `CallInput` schedule as other
+calls. HIR verifies the source-pack order, concrete types, source-prefix copies,
+parameter positions and selected function instances before MIR lowering. MIR
+independently verifies the concrete pack binding, read-only element projection,
+resolved traits, exact target/signature, unique staged-input consumer and input
+order. Prefix borrowing therefore starts at its checkpoint, not merely at
+invocation: later input evaluation, including a TLS initializer, cannot
+invalidate it. Each invocation completes before the next element's fresh input
+evaluations. An empty expansion evaluates none of those inputs.
+
+Legacy compact reference operands retain invocation-time protection against
+hidden persistent-storage effects even without a named source loan. This
+general operation-family check does not substitute for the earlier checkpoint
+of an ordinary staged input or authorize new complex input producers. Scalar
+reference inputs of calls also require independently initialized storage;
+raw address formation and storage-lifetime-start destinations remain distinct.
+No metadata asks a backend to iterate a source pack or instantiate a target.
 
 Program v103 adds the resolved `threadConfinedCallback` declaration fact and
 `ThreadConfined` adapter policy. It represents first-use binding in the existing

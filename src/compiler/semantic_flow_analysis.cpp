@@ -1,6 +1,109 @@
 #include "semantic_analyzer_impl.h"
 
 namespace lang {
+namespace {
+// A known-length concrete pack is not the same as the primary's empty
+// symbolic expansion. Use the analyzed argument and the selected per-element
+// calls together; never infer zero execution from elements.empty() alone.
+const ResolvedPackFoldInfo *programPackFoldBinding(const SemanticModel &model,
+                                                   const Expr &expression) {
+  const auto *fold = exprAs<PackFold>(&expression);
+  const auto *resolved = fold ? model.findPackFold(*fold) : nullptr;
+  const auto *pattern = fold ? exprAs<Call>(fold->pattern().get()) : nullptr;
+  if (!resolved || !pattern || resolved->pattern != pattern ||
+      !resolved->function || !resolved->declaration || !resolved->packSymbol ||
+      !resolved->packParameter ||
+      resolved->packArgument >= pattern->arguments().size() ||
+      resolved->packArgument + 1 != pattern->arguments().size() ||
+      resolved->fixedArgumentTypes.size() != resolved->packArgument)
+    return nullptr;
+  const auto &pack = pattern->arguments()[resolved->packArgument];
+  const auto *info = pack ? model.findExpression(*pack) : nullptr;
+  if (!info || info->type.kind != SemanticType::TypePack ||
+      info->type.genericParameterId != resolved->packParameter ||
+      model.findResolvedSymbol(*pack) != resolved->packSymbol)
+    return nullptr;
+  return resolved;
+}
+
+const ResolvedPackFoldInfo *programPackFoldExpansion(const SemanticModel &model,
+                                                     const Expr &expression) {
+  const auto *resolved = programPackFoldBinding(model, expression);
+  if (!resolved)
+    return nullptr;
+  const auto *info = model.findExpression(
+      *resolved->pattern->arguments()[resolved->packArgument]);
+  if (!info->type.concretePack ||
+      info->type.arguments.size() != resolved->elements.size())
+    return nullptr;
+  for (std::size_t index = 0; index < resolved->elements.size(); ++index) {
+    const auto &element = resolved->elements[index];
+    const auto &call = element.call;
+    if (element.elementType != info->type.arguments[index] ||
+        call.function != resolved->function ||
+        call.declaration != resolved->declaration ||
+        call.dispatch != CallDispatch::Static || call.nativeCalleeType ||
+        call.intrinsic != IntrinsicKind::None ||
+        call.returnType != SemanticType::Void ||
+        call.parameterTypes.size() != resolved->pattern->arguments().size() ||
+        call.typeArguments.size() != 1 ||
+        call.typeArguments.front() != element.elementType ||
+        !call.valueArguments.empty())
+      return nullptr;
+    const auto &parameter = call.parameterTypes.back();
+    if (parameter.kind != SemanticType::Reference ||
+        parameter.referenceAccess != AccessMode::ReadOnly ||
+        parameter.arguments.size() != 1 ||
+        parameter.arguments.front() != element.elementType)
+      return nullptr;
+  }
+  return resolved;
+}
+} // namespace
+
+auto SemanticVisitor::Impl::isUnselectedProgramPack(const Symbol &symbol) const
+    -> bool {
+  if (symbol.type.kind != SemanticType::TypePack || symbol.type.concretePack ||
+      symbol.type.genericParameterId == 0 || !symbol.parameterDeclaration ||
+      !symbol.parameterDeclaration->pack)
+    return false;
+  // An instance may inspect an uninstantiated nested declaration too. Match
+  // the exact source formal against active selected bodies, not just the
+  // surrounding instance-analysis flag.
+  if (instanceAnalysisActive && requestSession.openReanalyses)
+    for (const auto &key : *requestSession.openReanalyses) {
+      const std::vector<Parameter> *parameters = nullptr;
+      if (key.kind == InstanceAnalysisKind::Function) {
+        const auto *function = semanticModel.findFunction(key.declaration);
+        if (function && function->declaration)
+          parameters = &function->declaration->parameters();
+      } else if (key.kind == InstanceAnalysisKind::Constructor) {
+        const auto *constructor = programConstructor(key.declaration);
+        if (constructor && constructor->declaration)
+          parameters = &constructor->declaration->parameters();
+      }
+      if (parameters && std::any_of(parameters->begin(), parameters->end(),
+                                    [&](const auto &parameter) {
+                                      return &parameter ==
+                                             symbol.parameterDeclaration;
+                                    }))
+        return false;
+    }
+  return true;
+}
+
+auto SemanticVisitor::Impl::isDependentProgramPackFold(
+    const Expr &expression) const -> bool {
+  const auto *fold = programPackFoldBinding(semanticModel, expression);
+  if (!fold || !fold->elements.empty())
+    return false;
+  const auto &argument = fold->pattern->arguments()[fold->packArgument];
+  const auto *variable = exprAs<Variable>(argument.get());
+  const auto *symbol = variable ? resolve(variable->name()) : nullptr;
+  const auto *info = semanticModel.findExpression(*argument);
+  return symbol && info && !info->type.concretePack &&
+         info->type == symbol->type && isUnselectedProgramPack(*symbol);
+}
 
 auto SemanticVisitor::Impl::canDataInitializeProgramConstant(
     const ConstantValue &) -> bool {
@@ -223,6 +326,16 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
     return;
   std::unique_ptr<Impl> worker;
   std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> visited;
+  std::set<std::size_t> selectedQueries;
+  const auto selectQueries = [&](const ProgramEffectSummary &summary) {
+    for (const auto &edge : summary.edges)
+      if (edge.target.kind == ProgramEffectOwnerKind::ConcreteInstance)
+        selectedQueries.insert(edge.target.id);
+  };
+  // Root actual source-owner edges, not every entry in the shared query cache:
+  // an ignored speculative probe can register a query without executing it.
+  for (const auto &[_, summary] : programEffects)
+    selectQueries(summary);
   const auto visit = [&](const auto &self, ProgramEffectOwner owner,
                          std::size_t depth) -> void {
     if (!visited.insert(owner).second)
@@ -305,56 +418,57 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
               {.span = query.site,
                .reason = "a concrete GTI body is not valid"});
         } else {
-          requestSession.programStorageBorrowChecks.insert(
-              requestSession.programStorageBorrowChecks.end(),
-              worker->requestSession.programStorageBorrowChecks.begin(),
-              worker->requestSession.programStorageBorrowChecks.end());
-          // Local callable/initializer owners share this selected body. Flatten
-          // those exact records, never mix in the primary generic's open arms.
-          std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> local;
-          std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
-              cleanupLocal;
-          const auto collect = [&](const auto &collectSelf,
-                                   ProgramEffectOwner source,
-                                   bool cleanup = false) -> void {
-            auto &visited = cleanup ? cleanupLocal : local;
-            if (!visited.insert(source).second)
-              return;
+          // Instance-local lambda/default owners can reuse source IDs in the
+          // next delta. Preserve the exact graph (including cycles, failure
+          // and cleanup edges) under query-qualified private identities. Check
+          // targets must use this same mapping rather than the primary graph.
+          std::unordered_map<ProgramEffectOwner, ProgramEffectOwner,
+                             ProgramEffectOwnerHash>
+              exported;
+          const auto exportOwner =
+              [&](const auto &exportSelf,
+                  ProgramEffectOwner source) -> ProgramEffectOwner {
+            if (source.kind == ProgramEffectOwnerKind::ConcreteInstance ||
+                source.kind == ProgramEffectOwnerKind::Initializer)
+              return source;
             const auto found = worker->programEffects.find(source);
-            if (found == worker->programEffects.end()) {
-              programEffects[owner].edges.push_back(
-                  {.target = source, .span = query.site, .cleanup = cleanup});
-              return;
-            }
-            const auto &summary = found->second;
-            auto &destination = programEffects[owner];
-            destination.directFailure |= !cleanup && summary.directFailure;
-            destination.uses.insert(destination.uses.end(),
-                                    summary.uses.begin(), summary.uses.end());
-            for (auto use : summary.borrowUses) {
-              use.cleanup |= cleanup;
-              destination.borrowUses.push_back(std::move(use));
-            }
-            for (auto unknown : summary.unknown) {
-              unknown.cleanup |= cleanup;
-              destination.unknown.push_back(std::move(unknown));
-            }
-            for (const auto &edge : summary.edges) {
-              if (edge.target.kind ==
-                      ProgramEffectOwnerKind::ConcreteInstance ||
-                  edge.target.kind == ProgramEffectOwnerKind::Initializer) {
-                auto retained = edge;
-                retained.cleanup |= cleanup;
-                destination.edges.push_back(std::move(retained));
-              } else
-                collectSelf(collectSelf, edge.target, cleanup || edge.cleanup);
-            }
+            if (found == worker->programEffects.end())
+              return source;
+            if (const auto existing = exported.find(source);
+                existing != exported.end())
+              return existing->second;
+            state->localOwners.emplace_back(owner.id, source);
+            const ProgramEffectOwner destination{
+                .kind = ProgramEffectOwnerKind::ConcreteLocal,
+                .id = state->localOwners.size()};
+            exported.emplace(source, destination);
+            auto summary = found->second;
+            for (auto &edge : summary.edges)
+              edge.target = exportSelf(exportSelf, edge.target);
+            selectQueries(summary);
+            programEffects.insert_or_assign(destination, std::move(summary));
+            return destination;
           };
-          // An empty selected body has no effects; an absent local record is
-          // empty at the root, but an absent referenced owner is a primary
-          // edge.
+          // An absent selected root is an empty body, not its open primary.
           if (worker->programEffects.contains(query.target))
-            collect(collect, query.target);
+            programEffects[owner].edges.push_back(
+                {.target = exportOwner(exportOwner, query.target),
+                 .span = query.site});
+          for (const auto &[source, _] : worker->programEffects)
+            (void)exportOwner(exportOwner, source);
+          for (auto check : worker->requestSession.programStorageBorrowChecks) {
+            for (auto &target : check.targets)
+              target = exportOwner(exportOwner, target);
+            if (check.failureCondition) {
+              auto condition = std::make_shared<ProgramFailureCondition>(
+                  *check.failureCondition);
+              for (auto &target : condition->targets)
+                target = exportOwner(exportOwner, target);
+              check.failureCondition = std::move(condition);
+            }
+            requestSession.programStorageBorrowChecks.push_back(
+                std::move(check));
+          }
         }
         state->queries[owner.id - 1].complete = true;
         ++depth;
@@ -382,12 +496,20 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
     visit(visit,
           {.kind = ProgramEffectOwnerKind::Initializer, .id = step.symbol}, 0);
   }
-  for (std::size_t index = 0;
-       index < requestSession.programStorageBorrowChecks.size(); ++index) {
-    const auto targets =
-        requestSession.programStorageBorrowChecks[index].targets;
-    for (const auto target : targets)
-      visit(visit, target, 0);
+  std::size_t checkIndex = 0;
+  while (!selectedQueries.empty() ||
+         checkIndex < requestSession.programStorageBorrowChecks.size()) {
+    if (!selectedQueries.empty()) {
+      const auto id = *selectedQueries.begin();
+      selectedQueries.erase(selectedQueries.begin());
+      visit(visit, {.kind = ProgramEffectOwnerKind::ConcreteInstance, .id = id},
+            0);
+    } else {
+      const auto targets =
+          requestSession.programStorageBorrowChecks[checkIndex++].targets;
+      for (const auto target : targets)
+        visit(visit, target, 0);
+    }
   }
 }
 
@@ -1010,6 +1132,9 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
   // Reference inputs are call-scoped loans even without a named binding.
   // Apply the same rule to ordinary calls, constructors, overloaded operators
   // and callable environments rather than granting one surface an exception.
+  if (const auto *fold = programPackFoldExpansion(semanticModel, expression))
+    for (const auto &element : fold->elements)
+      appendArguments(fold->pattern->arguments(), element.call.parameterTypes);
   if (const auto *construction = semanticModel.findConstruction(expression)) {
     if (const auto *call = exprAs<Call>(&expression))
       appendArguments(call->arguments(), construction->parameterTypes);
@@ -1109,6 +1234,7 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
   const std::size_t edges = programEffects[owner].edges.size();
   const std::size_t unknown = programEffects[owner].unknown.size();
   recordProgramCallEffectTargets(expression);
+  check.dependentPrimary = isDependentProgramPackFold(expression);
   publishProgramStorageBorrowCheck(std::move(check), owner, edges, unknown);
 }
 
@@ -1510,9 +1636,41 @@ auto SemanticVisitor::Impl::recordProgramCallEffectTargets(
   }
   if (const auto *fold = exprAs<PackFold>(&expression);
       fold != nullptr && semanticModel.findPackFold(*fold) != nullptr) {
-    addUnknownProgramEffect(expression,
-                            "a pack-expanded GTI call has an open effect "
-                            "set");
+    const auto *expansion = programPackFoldExpansion(semanticModel, expression);
+    if (!expansion) {
+      addUnknownProgramEffect(expression,
+                              "a pack-expanded GTI call has an open effect "
+                              "set");
+      return;
+    }
+    // The source resolver selected one exact free generic declaration and
+    // recorded every specialization in source-pack order. An empty concrete
+    // expansion executes no target or input boundary; open empty packs above
+    // remain unknown. Nonempty folds use the ordinary concrete-body graph.
+    for (const auto &element : expansion->elements) {
+      const auto &call = element.call;
+      recordProgramArgumentBoundaryEffects(call.parameterTypes,
+                                           expansion->pattern->arguments());
+      const auto *target = semanticModel.findFunction(call.function);
+      if (!target || target->declaration != call.declaration ||
+          target->ownerClass != 0) {
+        addUnknownProgramEffect(expression,
+                                "a pack-expanded GTI call has no exact target");
+      } else if (target->linkage != LanguageLinkage::Gti ||
+                 target->declaration->runtimeBinding()) {
+        // As for an ordinary call, the native/trusted boundary contributes
+        // only its explicit inputs, not an unrecorded hidden GTI body.
+        continue;
+      } else if (!target->bodyDeclaration()->body()) {
+        addUnknownProgramEffect(
+            expression, "a selected pack-expanded GTI function has no body");
+      } else {
+        recordConcreteProgramEffect(
+            {.kind = ProgramEffectOwnerKind::Function, .id = target->id},
+            call.dispatchOwner, call.typeArguments, call.valueArguments,
+            tokenSpan(expressionToken(expression)));
+      }
+    }
     return;
   }
   if (const ResolvedConstructionInfo *construction =
@@ -1810,7 +1968,7 @@ auto SemanticVisitor::Impl::programFailureMayHappen(
 auto SemanticVisitor::Impl::validateProgramStorageBorrowEffects() -> void {
   closeProgramFailureEffects();
   for (const auto &check : requestSession.programStorageBorrowChecks) {
-    if (check.protections.empty() ||
+    if (check.dependentPrimary || check.protections.empty() ||
         (check.failureCondition &&
          !programFailureMayHappen(*check.failureCondition)))
       continue;
@@ -3917,19 +4075,25 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   // Keep a source token for calls, including source operations that select an
   // ordinary operator and expected's synthesized mapper/failure branches.
   // This is location provenance only, not a transitive failure category set.
+  const auto *fold = exprAs<PackFold>(&expr);
+  const auto *foldCall =
+      fold == nullptr ? nullptr : exprAs<Call>(fold->pattern().get());
   if (expr.exprKind() == ExprKind::Call ||
       expr.exprKind() == ExprKind::DirectInitializer ||
-      semanticModel.findOperator(expr)) {
-    const Token location = expressionToken(expr);
+      semanticModel.findOperator(expr) || foldCall != nullptr) {
+    const Token location = expressionToken(foldCall ? *foldCall : expr);
     const SourceSpan span = tokenSpan(location);
     const auto *context = macroContext(location);
-    semanticModel.recordCallerLocation(
-        expr, context && context->caller
-                  ? *context->caller
-                  : CallerLocationOrigin{.sourceUnit = sourceUnitFor(location),
-                                         .start = span.start,
-                                         .end = span.end,
-                                         .line = span.line});
+    const CallerLocationOrigin origin =
+        context && context->caller
+            ? *context->caller
+            : CallerLocationOrigin{.sourceUnit = sourceUnitFor(location),
+                                   .start = span.start,
+                                   .end = span.end,
+                                   .line = span.line};
+    semanticModel.recordCallerLocation(expr, origin);
+    if (foldCall)
+      semanticModel.recordCallerLocation(*foldCall, origin);
   }
   const SemanticPlace expressionPlace = semanticPlace(&expr);
   if (expressionPlace.root != nullptr) {
@@ -4169,7 +4333,24 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     // after all source bodies and concrete effect queries have completed.
     recordProgramTemporaryFailureCleanup(expr, rollback);
   }
-  if (info.category == ValueCategory::Value &&
+  const auto *qualifiedDesignator = exprAs<QualifiedName>(&expr);
+  const auto *designatedEnumerator =
+      qualifiedDesignator && analyzingCallCallee &&
+              allowPayloadEnumeratorReference
+          ? semanticModel.findEnumerator(*qualifiedDesignator)
+          : nullptr;
+  const auto *designatedEnum =
+      designatedEnumerator
+          ? semanticModel.findEnumType(designatedEnumerator->owner)
+          : nullptr;
+  // The selected variant name in a constructor callee or case pattern is a
+  // designator, not an evaluated enum value. Preserve its semantic identity
+  // and occurrences, but do not invent an owning temporary or its cleanup.
+  // Actual unit values and the enclosing payload construction remain ordinary
+  // owning values with all of their lifetime and destructor effects.
+  const bool payloadDesignator = designatedEnum && designatedEnum->payload &&
+                                 designatedEnumerator->type == info.type;
+  if (!payloadDesignator && info.category == ValueCategory::Value &&
       requiresActiveCleanupFor(info.type)) {
     recordProgramCleanupEffects(info.type, tokenSpan(expressionToken(expr)));
     applyRawCleanupWrites(info.type, tokenSpan(expressionToken(expr)),

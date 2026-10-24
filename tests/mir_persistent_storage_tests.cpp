@@ -1,6 +1,8 @@
 #include "../src/compiler/mir_storage_effects.h"
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
+#include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
@@ -9,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 bool passed = true;
@@ -1027,6 +1030,543 @@ int main() {
   }
 }
 
+void foldHirProof() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/fold-hir.gti", R"(
+void touch<T>(mut int32_t& count, T& value) { count += 1; }
+void folded<Args...>(mut int32_t& count, Args... args) {
+  (touch(count, args), ...);
+  (touch(count, args), ...);
+}
+int main() { mut int32_t count = 0; folded(count, 1, 2); return count - 4; }
+)");
+  expect(frontend.canGenerateCode(),
+         "two unrelated user folds have ordinary concrete call plans");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::HirFunctionInstanceId owner = 0;
+  std::vector<lang::HirValueId> folds;
+  for (const auto &function : frontend.hir.functionInstances())
+    for (const auto &value : function.body.values)
+      if (value.kind == lang::HirValueKind::PackFold) {
+        owner = function.id;
+        folds.push_back(value.id);
+      }
+  expect(owner && folds.size() == 2,
+         "typed expansion fixture has two exact fold owners");
+  if (!owner || folds.size() != 2)
+    return;
+  for (int mutation = 0; mutation != 14; ++mutation) {
+    auto forged = frontend.hir;
+    auto &body =
+        const_cast<lang::HirBody &>(forged.findFunctionInstance(owner)->body);
+    auto *fold = const_cast<lang::HirValue *>(body.findValue(folds.front()));
+    auto *call = const_cast<lang::HirValue *>(
+        body.findValue(fold->packFoldElements.front().call));
+    auto *prefix =
+        const_cast<lang::HirValue *>(body.findValue(call->operands.front()));
+    auto *element =
+        const_cast<lang::HirValue *>(body.findValue(call->operands.back()));
+    switch (mutation) {
+    case 0:
+      fold->packFoldElements.front().call = 0;
+      break;
+    case 1:
+      fold->packFoldElements.front().call =
+          body.findValue(folds.back())->packFoldElements.front().call;
+      fold->operands[fold->packFoldArgument + 1] =
+          fold->packFoldElements.front().call;
+      break;
+    case 2:
+      fold->packFoldElements.back().call = fold->packFoldElements.front().call;
+      fold->operands.back() = fold->packFoldElements.front().call;
+      break;
+    case 3:
+      std::swap(fold->packFoldElements.front().call,
+                fold->packFoldElements.back().call);
+      std::swap(fold->operands[fold->packFoldArgument + 1],
+                fold->operands.back());
+      break;
+    case 4:
+      ++prefix->symbol;
+      break;
+    case 5:
+      prefix->info.type = lang::SemanticType::Bool;
+      break;
+    case 6:
+      call->callPlan->arguments.front().kind = lang::HirCallInputKind::Value;
+      break;
+    case 7:
+      element->packElement = 2;
+      break;
+    case 8:
+      element->info.type = lang::SemanticType::Bool;
+      break;
+    case 9:
+      element->symbol = 0;
+      break;
+    case 10:
+      element->operands.front() = fold->operands.front();
+      break;
+    case 11:
+      element->info.access = lang::AccessMode::Mutable;
+      break;
+    case 12:
+      element->info.traits.copyable = !element->info.traits.copyable;
+      break;
+    case 13:
+      call->callPlan->arguments.front().kind =
+          lang::HirCallInputKind::ReadBorrow;
+      break;
+    }
+    if (mutation == 12) {
+      expect(
+          !lang::MirLowerer().lower(forged, frontend.failureMetadata).valid(),
+          "pack-element traits must match independently resolved MIR types");
+    } else {
+      expect(!lang::verifyHirProgramPlans(frontend.semantics, forged).valid(),
+             "HIR fold rejects a missing, substituted, duplicated, reordered "
+             "or untyped expansion component");
+    }
+  }
+}
+
+void referenceInputPhysicalType(bool mutableInput) {
+  const std::string source =
+      std::string("void observe(") + (mutableInput ? "mut " : "") +
+      "uint16_t& value) {}\n"
+      "int main() {\n"
+      "  mut uint16_t value = uint16_t(2); value += uint16_t(1);\n"
+      "  uint16_t readonly = uint16_t(3);\n"
+      "  int8_t different = int8_t(1);\n"
+      "  observe(value); return int32_t(different) - 1;\n"
+      "}\n";
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/reference-pointee.gti", source);
+  expect(frontend.canGenerateCode(),
+         "ordinary shared and mutable scalar reference inputs verify");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *info = frontend.semantics.findFunction(function.declaration);
+    if (!info || !info->declaration ||
+        info->declaration->name().lexeme != "main")
+      continue;
+    for (int mutation = 0; mutation != (mutableInput ? 2 : 1); ++mutation) {
+      auto forged = frontend.mir;
+      auto *body = lang::findMirBody(
+          forged, {.kind = lang::MirBodyKind::Function, .owner = function.id});
+      lang::MirPlaceId replacement = 0;
+      for (const auto &place : body->places)
+        if (place.root == lang::MirPlaceRootKind::Binding &&
+            place.projections.empty() &&
+            (mutation == 0 ? place.type == lang::SemanticType::Int8
+                           : place.type == lang::SemanticType::UInt16 &&
+                                 place.access == lang::AccessMode::ReadOnly))
+          replacement = place.id;
+      bool changed = false;
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.kind == lang::MirInstructionKind::CallInput &&
+              instruction.callInputRole == lang::MirCallInputRole::Argument &&
+              instruction.info.type.kind == lang::SemanticType::Reference &&
+              instruction.info.type.arguments ==
+                  std::vector<lang::SemanticType>{lang::SemanticType::UInt16}) {
+            instruction.operands.front().place = replacement;
+            changed = true;
+          }
+      expect(replacement && changed && !lang::verifyMirProgram(forged).valid(),
+             "ordinary staged references reject a wrong physical pointee or "
+             "read-only source for a mutable parameter");
+    }
+  }
+}
+
+void referenceInputBaseConversion() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/reference-base.gti", R"(
+class Base { public: Base() {} };
+class Derived : public Base { public: Derived() : Base() {} };
+class Unrelated { public: Unrelated() {} };
+void observe(Base& value) {}
+void change(mut Base& value) {}
+int main() {
+  mut Derived owner{};
+  mut Unrelated unrelated{};
+  observe(owner); change(owner); return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "shared and mutable staged class references preserve verified public "
+         "base conversion");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *info = frontend.semantics.findFunction(function.declaration);
+    if (!info || !info->declaration ||
+        info->declaration->name().lexeme != "main")
+      continue;
+    auto forged = frontend.mir;
+    auto *body = lang::findMirBody(
+        forged, {.kind = lang::MirBodyKind::Function, .owner = function.id});
+    lang::MirPlaceId unrelated = 0;
+    const auto unrelatedSymbol = symbol(frontend, "unrelated");
+    for (const auto &place : body->places)
+      if (place.root == lang::MirPlaceRootKind::Binding &&
+          place.symbol == unrelatedSymbol && place.projections.empty())
+        unrelated = place.id;
+    bool changed = false;
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputRole == lang::MirCallInputRole::Argument &&
+            instruction.callInputKind == lang::HirCallInputKind::ReadBorrow) {
+          instruction.operands.front().place = unrelated;
+          changed = true;
+        }
+    expect(unrelated && changed && !lang::verifyMirProgram(forged).valid(),
+           "a staged class reference cannot substitute an unrelated physical "
+           "owner for a public-base view");
+  }
+}
+
+void foldColdInputEffects() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/fold-cold.gti", R"(
+thread_local mut int32_t first = 1;
+thread_local mut int32_t disjoint = 3;
+int32_t initialize_second() { disjoint = 9; return 2; }
+thread_local mut int32_t second = initialize_second();
+void observe<T>(int32_t& earlier, int32_t& later, T& element) {}
+void folded<Args...>(Args... args) {
+  (observe(first, second, args), ...);
+}
+int main() { folded(1, 2); return 0; }
+)");
+  expect(frontend.canGenerateCode(),
+         "a later TLS input may initialize disjoint persistent storage");
+  if (!frontend.canGenerateCode())
+    return;
+  auto forged = frontend.mir;
+  const auto first = symbol(frontend, "first");
+  const auto disjoint = symbol(frontend, "disjoint");
+  bool changed = false;
+  for (const auto &function : forged.functionInstances()) {
+    const auto *info = frontend.semantics.findFunction(function.declaration);
+    if (!info || !info->declaration ||
+        info->declaration->name().lexeme != "initialize_second")
+      continue;
+    auto *body = lang::findMirBody(
+        forged, {.kind = lang::MirBodyKind::Function, .owner = function.id});
+    for (auto &place : body->places)
+      if (place.root == lang::MirPlaceRootKind::Symbol &&
+          place.symbol == disjoint) {
+        place.symbol = first;
+        if (place.key && place.key->root == disjoint)
+          place.key->root = first;
+        changed = true;
+      }
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::EnsureThreadLocal &&
+            instruction.threadLocalStorage == disjoint) {
+          instruction.threadLocalStorage = first;
+          instruction.bodyTarget = lang::MirBodyAddress{
+              .kind = lang::MirBodyKind::ThreadLocalInitializer,
+              .owner = first};
+        }
+  }
+  const auto proof = lang::verifyMirProgram(forged);
+  expect(changed && !proof.valid() &&
+             std::any_of(proof.errors.begin(), proof.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find("persistent call input") !=
+                                  std::string::npos;
+                         }),
+         "an earlier staged fold input remains protected while a later TLS "
+         "initializer executes");
+}
+
+void scalarInputAvailability(bool mutableInput) {
+  const std::string source =
+      std::string("void observe(") + (mutableInput ? "mut " : "") +
+      "int32_t& value) {}\n"
+      "int main() {\n"
+      "  mut int32_t first = 1; first += 1;\n"
+      "  observe(first);\n"
+      "  mut int32_t later = 2; later += 1; return later;\n"
+      "}\n";
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/scalar-input.gti", source);
+  expect(frontend.canGenerateCode(),
+         "an ordinary initialized scalar accepts a checked reference input");
+  if (!frontend.canGenerateCode())
+    return;
+  std::optional<lang::MirBodyAddress> main;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *info = frontend.semantics.findFunction(function.declaration);
+    if (info && info->declaration && info->declaration->name().lexeme == "main")
+      main = lang::MirBodyAddress{.kind = lang::MirBodyKind::Function,
+                                  .owner = function.id};
+  }
+  expect(main.has_value(), "scalar input fixture has one concrete entry");
+  if (!main)
+    return;
+  auto forged = frontend.mir;
+  auto *body = lang::findMirBody(forged, *main);
+  lang::MirInstructionId checkpoint = 0;
+  for (const auto &block : body->blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.kind == lang::MirInstructionKind::CallInput &&
+          instruction.operands.size() == 1 &&
+          instruction.operands.front().kind ==
+              (mutableInput ? lang::MirOperandKind::BorrowWrite
+                            : lang::MirOperandKind::BorrowRead))
+        checkpoint = instruction.id;
+  lang::MirPlaceId future = 0;
+  for (const auto &block : body->blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind != lang::MirInstructionKind::Initialize ||
+          instruction.id <= checkpoint || !instruction.destination)
+        continue;
+      const auto *place = body->findPlace(*instruction.destination);
+      if (place && place->root == lang::MirPlaceRootKind::Binding &&
+          place->projections.empty() &&
+          place->type == lang::SemanticType::Int32)
+        future = place->id;
+    }
+  expect(checkpoint && future,
+         "ordinary scalar fixture stages before its future binding exists");
+  if (!checkpoint || !future)
+    return;
+  for (auto &block : body->blocks)
+    for (auto &instruction : block.instructions)
+      if (instruction.id == checkpoint)
+        instruction.operands.front().place = future;
+  const auto proof = lang::verifyMirProgram(forged);
+  expect(!proof.valid() &&
+             std::any_of(proof.errors.begin(), proof.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find(
+                                      "definitely initialized scalar") !=
+                                  std::string::npos;
+                         }),
+         "reference input independently requires an initialized scalar");
+}
+
+void foldPersistentInputs(std::string_view storage, bool mutableInput,
+                          bool hiddenWrite) {
+  const std::string source =
+      std::string(storage) + " mut int32_t first = 1;\n" +
+      std::string(storage) + " mut int32_t second = 2;\n" +
+      (hiddenWrite ? "void hidden() { second = 9; }\n"
+                   : "void hidden() { int32_t observed = second; }\n") +
+      "void touch<T>(" + (mutableInput ? "mut " : "") +
+      "int32_t& prefix, T& element) { hidden(); }\n"
+      "void folded<Args...>(Args... args) {\n"
+      "  int32_t seeded = first;\n"
+      "  mut int32_t prefix = seeded;\n"
+      "  (touch(prefix, args), ...);\n"
+      "  mut int32_t later = seeded; later += 1;\n"
+      "}\n"
+      "int main() { folded(1, 2); return 0; }\n";
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/compact-inputs.gti", source);
+  for (const auto &diagnostic : frontend.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "unrelated user fold has exact compact source-call targets");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto first = symbol(frontend, "first");
+  const auto second = symbol(frontend, "second");
+  std::optional<lang::MirBodyAddress> owner;
+  lang::HirFunctionInstanceId wrongTarget = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *info = frontend.semantics.findFunction(function.declaration);
+    if (!info || !info->declaration)
+      continue;
+    if (info->declaration->name().lexeme == "folded")
+      owner = lang::MirBodyAddress{.kind = lang::MirBodyKind::Function,
+                                   .owner = function.id};
+    if (info->declaration->name().lexeme == "main")
+      wrongTarget = function.id;
+  }
+  if (!owner || !first || !second || !wrongTarget) {
+    expect(false, "compact fixture owns its concrete function and storage");
+    return;
+  }
+  auto disjoint = frontend.mir;
+  auto *body = lang::findMirBody(disjoint, *owner);
+  lang::MirPlaceId input = 0;
+  lang::MirPlaceId expired = 0;
+  for (const auto &place : body->places) {
+    if (place.root == lang::MirPlaceRootKind::Symbol && place.symbol == first &&
+        place.projections.empty())
+      input = place.id;
+  }
+  std::vector<lang::MirInstructionId> calls;
+  std::vector<lang::MirInstructionId> inputs;
+  const auto findInstruction = [](lang::MirBody &owner,
+                                  lang::MirInstructionId id) {
+    for (auto &block : owner.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == id)
+          return &instruction;
+    return static_cast<lang::MirInstruction *>(nullptr);
+  };
+  for (auto &block : body->blocks)
+    for (auto &instruction : block.instructions) {
+      if (instruction.kind != lang::MirInstructionKind::Call ||
+          !instruction.functionTarget || instruction.operands.empty())
+        continue;
+      const auto *function =
+          disjoint.findFunctionInstance(*instruction.functionTarget);
+      const auto *info =
+          function ? frontend.semantics.findFunction(function->declaration)
+                   : nullptr;
+      if (!info || !info->declaration ||
+          info->declaration->name().lexeme != "touch")
+        continue;
+      const auto *value = body->findValue(instruction.operands.front().value);
+      auto *stage = value ? findInstruction(*body, value->definition) : nullptr;
+      expect(instruction.callSite == instruction.hirValue &&
+                 instruction.callSite != 0 && stage &&
+                 stage->kind == lang::MirInstructionKind::CallInput &&
+                 stage->operands.size() == 1 &&
+                 stage->operands.front().kind ==
+                     (mutableInput ? lang::MirOperandKind::BorrowWrite
+                                   : lang::MirOperandKind::BorrowRead),
+             "fold element calls retain ordinary ordered reference inputs");
+      if (!stage || stage->operands.size() != 1)
+        return;
+      stage->operands.front().place = input;
+      inputs.push_back(stage->id);
+      calls.push_back(instruction.id);
+    }
+  if (!calls.empty())
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Initialize ||
+            instruction.id <= calls.back() || !instruction.destination)
+          continue;
+        const auto *place = body->findPlace(*instruction.destination);
+        if (place && place->root == lang::MirPlaceRootKind::Binding &&
+            place->projections.empty() &&
+            place->type == lang::SemanticType::Int32)
+          expired = place->id;
+      }
+  expect(input && expired && calls.size() == 2 && body->loans.empty(),
+         "fold protection uses ordinary stages without a named source loan");
+  if (!input || !expired || calls.size() != 2)
+    return;
+  expect(lang::verifyMirProgram(disjoint).valid(),
+         "fold persistent call input permits disjoint hidden effects");
+  auto overlap = disjoint;
+  for (const auto address : lang::enumerateMirBodyAddresses(overlap)) {
+    if (address.kind != lang::MirBodyKind::Function)
+      continue;
+    auto *callee = lang::findMirBody(overlap, address);
+    for (auto &place : callee->places)
+      if (place.root == lang::MirPlaceRootKind::Symbol &&
+          place.symbol == second) {
+        place.symbol = first;
+        if (place.key && place.key->root == second)
+          place.key->root = first;
+      }
+    for (auto &block : callee->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::EnsureThreadLocal &&
+            instruction.threadLocalStorage == second) {
+          instruction.threadLocalStorage = first;
+          instruction.bodyTarget = lang::MirBodyAddress{
+              .kind = lang::MirBodyKind::ThreadLocalInitializer,
+              .owner = first};
+        }
+  }
+  const auto proof = lang::verifyMirProgram(overlap);
+  const bool conflicts = mutableInput || hiddenWrite;
+  expect(proof.valid() == !conflicts,
+         "ordered fold input access governs hidden same-root conflicts");
+  if (conflicts)
+    expect(std::any_of(proof.errors.begin(), proof.errors.end(),
+                       [](const auto &error) {
+                         return error.message.find("persistent call input") !=
+                                std::string::npos;
+                       }),
+           "fold rejection comes from exact persistent input protection");
+  for (int mutation = 0; mutation != 9; ++mutation) {
+    if (mutation == 5 && storage.empty())
+      continue;
+    auto forged = disjoint;
+    auto *target = lang::findMirBody(forged, *owner);
+    for (auto &block : target->blocks)
+      for (auto &instruction : block.instructions) {
+        if (mutation == 5 &&
+            instruction.kind == lang::MirInstructionKind::EnsureThreadLocal &&
+            instruction.threadLocalStorage == first)
+          instruction.threadLocalStorage = second;
+        if (mutation == 0 && instruction.id == calls.front())
+          instruction.functionTarget.reset();
+        if (mutation == 1 && instruction.id == calls.front())
+          instruction.functionTarget = wrongTarget;
+        if (mutation == 2 && instruction.id == inputs.front())
+          instruction.operands.front().place = 0;
+        if (mutation == 3 && instruction.id == inputs.front())
+          instruction.operands.front().type = lang::SemanticType::Bool;
+        if (mutation == 4 && instruction.id == inputs.front())
+          instruction.operands.front().place = expired;
+        if (mutation == 6 && instruction.id == calls.front()) {
+          const auto *next = findInstruction(*target, calls.back());
+          instruction.operands.front() = next->operands.front();
+        }
+        if (mutation == 7 && instruction.id == calls.back())
+          instruction.callSite =
+              findInstruction(*target, calls.front())->callSite;
+        if (mutation == 8 && instruction.id == calls.front())
+          instruction.callSite = 0;
+      }
+    expect(lang::rebuildMirValueUses(*target),
+           "forged invocation operands retain a rebuilt use inventory");
+    const auto forgedProof = lang::verifyMirProgram(forged);
+    if (forgedProof.valid())
+      std::cerr << "fold forged input accepted: storage=" << storage
+                << " mutable=" << mutableInput << " write=" << hiddenWrite
+                << " mutation=" << mutation << '\n';
+    expect(!forgedProof.valid(),
+           "fold inputs require target, available typed source, exact TLS "
+           "guard and unique invocation");
+  }
+  const auto compact = [&](lang::MirProgram &program) {
+    auto *ownerBody = lang::findMirBody(program, *owner);
+    for (const auto call : calls) {
+      auto *invocation = findInstruction(*ownerBody, call);
+      for (auto &operand : invocation->operands) {
+        const auto *value = ownerBody->findValue(operand.value);
+        auto *stage =
+            value ? findInstruction(*ownerBody, value->definition) : nullptr;
+        if (!stage || stage->kind != lang::MirInstructionKind::CallInput ||
+            stage->operands.size() != 1)
+          return false;
+        operand = stage->operands.front();
+        *stage = lang::makeMirInstructionTombstone(*stage);
+      }
+      invocation->callSite = 0;
+    }
+    return lang::rebuildMirValueUses(*ownerBody);
+  };
+  auto compactDisjoint = disjoint;
+  expect(compact(compactDisjoint) &&
+             lang::verifyMirProgram(compactDisjoint).valid(),
+         "legacy compact vocabulary has a coherent disjoint control");
+  auto compactOverlap = overlap;
+  const bool collapsed = compact(compactOverlap);
+  const auto compactProof = lang::verifyMirProgram(compactOverlap);
+  expect(collapsed && compactProof.valid() == !conflicts,
+         "removing staging cannot bypass invocation-time ambient protection");
+}
+
 void provisionalInitializationKeepsFailureCleanup() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-mir-persistent-storage/initializer-cleanup.gti", R"(
@@ -1110,5 +1650,16 @@ int main() {
   referenceRootDoesNotAcquireExactVirtualType(true);
   ordinaryBindingsRetainPhysicalStorageTypes();
   provisionalInitializationKeepsFailureCleanup();
+  foldHirProof();
+  foldColdInputEffects();
+  referenceInputPhysicalType(false);
+  referenceInputPhysicalType(true);
+  referenceInputBaseConversion();
+  scalarInputAvailability(false);
+  scalarInputAvailability(true);
+  for (const auto storage : {"thread_local", ""})
+    for (const bool mutableInput : {false, true})
+      for (const bool hiddenWrite : {false, true})
+        foldPersistentInputs(storage, mutableInput, hiddenWrite);
   return passed ? 0 : 1;
 }
