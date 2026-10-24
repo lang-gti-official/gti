@@ -1,0 +1,146 @@
+#include <std/optional>
+#include <std/panic>
+#include <std/string>
+#include <std/utility>
+
+// A reference accessor that binds the active payload with `auto&` returns a
+// reference to that payload inside its owner, as std::optional<T>::value()
+// does. Callers copy the referent by value or keep the reference. A
+// cleanup-free enum payload (shape) and one owning a std::string (label) both
+// read through the owner's storage rather than through a separate object.
+enum class shape { circle(int32_t radius), none };
+enum class label { text(std::string name), blank };
+enum class wrap { one(shape inner), zero };
+
+enum class slot<T> { empty, full(T value) };
+
+class holder<T> {
+  mut slot<T> state = slot<T>::empty;
+
+public:
+  holder(T value) : state(slot<T>::full(std::move(value))) {}
+
+  T& get() {
+    switch (this.state) {
+    case slot<T>::full(auto& payload): return payload;
+    case slot<T>::empty: std::panic("empty holder");
+    }
+  }
+
+  mut T& get() mut {
+    switch (this.state) {
+    case slot<T>::full(mut auto& payload): return payload;
+    case slot<T>::empty: std::panic("empty holder");
+    }
+  }
+};
+
+int32_t radius(shape value) {
+  switch (value) {
+  case shape::circle(r): return r;
+  case shape::none: return -1;
+  }
+}
+
+int32_t radius_ref(shape& value) {
+  switch (value) {
+  case shape::circle(auto& r): return r;
+  case shape::none: return -1;
+  }
+}
+
+std::size_t name_size(label& value) {
+  switch (value) {
+  case label::text(auto& name): return name.size();
+  case label::blank: return std::size_t(0);
+  }
+}
+
+int main() {
+  // std::optional over a cleanup-free payload enum.
+  mut std::optional<shape> owner = std::optional<shape>(shape::circle(3));
+  shape copied = owner.value();
+  auto inferred = owner.value();
+  shape star = *owner;
+  {
+    shape& borrowed = owner.value();
+    auto& inferred_ref = owner.value();
+    std::println(radius(copied) + radius(inferred) + radius_ref(borrowed) +
+                 radius_ref(inferred_ref) + radius(star));
+    switch (borrowed) {
+    case shape::circle(r): std::println(r); break;
+    case shape::none: return 1;
+    }
+  }
+
+  // Writes through the mutable accessor reach the owner, not the copies.
+  owner.value() = shape::circle(5);
+  {
+    mut shape& writable = owner.value();
+    writable = shape::circle(radius_ref(writable) + 1);
+  }
+  std::println(radius(owner.value()));
+  std::println(radius(copied) + radius(star));
+
+  std::optional<shape> twin = owner.clone();
+  std::println(radius(twin.value()));
+  std::println(radius(owner.value_or(shape::none)));
+  owner.reset();
+  std::println(radius(owner.value_or(shape::none)));
+
+  // A user-defined owner with the same accessor shape.
+  mut holder<shape> box = holder<shape>(shape::circle(7));
+  shape boxed = box.get();
+  {
+    auto& boxed_ref = box.get();
+    std::println(radius(boxed) + radius_ref(boxed_ref));
+  }
+  box.get() = shape::none;
+  std::println(radius(box.get()));
+  std::println(radius(boxed));
+
+  // A reference bound to a borrowed payload directly, without an accessor.
+  wrap nested = wrap::one(shape::circle(8));
+  switch (nested) {
+  case wrap::one(auto& inner): {
+    shape& alias = inner;
+    shape copy = inner;
+    std::println(radius_ref(alias) + radius(copy));
+    break;
+  }
+  case wrap::zero: return 2;
+  }
+
+  // A payload that owns a std::string reads through the same references; a
+  // by-value copy of the move-only text is explicit and independent.
+  mut std::optional<label> titled =
+      std::optional<label>(label::text(std::string("gti")));
+  mut std::string kept = std::string();
+  {
+    label& title = titled.value();
+    auto& title_ref = titled.value();
+    std::println(name_size(title) + name_size(title_ref));
+    switch (title) {
+    case label::text(auto& name): kept = std::clone(name); break;
+    case label::blank: return 3;
+    }
+  }
+  titled = std::optional<label>(label::text(std::string("payload")));
+  std::println(name_size(titled.value()));
+  std::println(kept.size());
+
+  holder<label> named = holder<label>(label::text(std::string("ab")));
+  label& named_ref = named.get();
+  auto& named_alias = named.get();
+  std::println(name_size(named_ref) + name_size(named_alias));
+  switch (named.get()) {
+  case label::text(auto& name): std::println(std::clone(name).size()); break;
+  case label::blank: return 4;
+  }
+
+  std::optional<std::string> text = std::optional<std::string>(std::string("four"));
+  std::string& text_ref = text.value();
+  std::string text_copy = std::clone(text.value());
+  std::println(text_ref.size() + text_copy.size());
+  return 0;
+}

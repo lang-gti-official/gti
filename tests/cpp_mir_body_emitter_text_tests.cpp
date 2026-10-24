@@ -10007,6 +10007,126 @@ int main() {
          "rather than borrowed unwritten");
 }
 
+// A borrowed payload binding names the active payload inside its subject, so
+// its MIR value has no native object even when its type is a cleanup-free
+// enum. A reference bound to it, as a local or as a reference-returning
+// accessor's result, retains that payload's address. A fresh cleanup-free
+// enum temporary is still its own SSA value.
+void testBorrowedCleanupFreeEnumPayloadReference() {
+  const auto frontend =
+      analyze("cpp-mir-borrowed-cleanup-free-payload-reference.gti", R"(
+enum class shape { circle(int radius), none };
+enum class wrap { one(shape inner) };
+int radius(shape& value) {
+  switch (value) {
+  case shape::circle(auto& r): return r;
+  case shape::none: return 0;
+  }
+}
+class holder {
+  wrap state;
+
+public:
+  holder(shape value) : state(wrap::one(value)) {}
+  shape& inner() {
+    switch (this.state) {
+    case wrap::one(auto& item): return item;
+    }
+  }
+};
+int bound(wrap& value) {
+  switch (value) {
+  case wrap::one(auto& item): {
+    shape& alias = item;
+    return radius(alias);
+  }
+  }
+}
+int fresh() { return radius(shape::circle(4)); }
+int main() {
+  wrap nested = wrap::one(shape::circle(3));
+  holder box = holder(shape::circle(3));
+  shape copied = box.inner();
+  return radius(copied) + bound(nested) + fresh() - 10;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "borrowed cleanup-free payload references verify in MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto function = [&](std::string_view name) {
+    for (const lang::HirFunctionInstance &instance :
+         frontend.hir.functionInstances())
+      if (instance.source != nullptr && instance.source->name().lexeme == name)
+        return frontend.mir.findFunctionInstance(instance.id);
+    return static_cast<const lang::MirFunctionInstance *>(nullptr);
+  };
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const auto bodyText = [&](const lang::MirFunctionInstance &instance) {
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = instance.id};
+    return instance.mayRaiseDefinedFailure
+               ? emitter.emitFailureBodyText(address, "borrowed-payload-v0", 1)
+                     .text
+               : emitter.emitBodyText(address, "borrowed-payload-v0", 1).text;
+  };
+  // Whether `text` names `__gti_mir_v_<id>` itself, not a longer id.
+  const auto namesValue = [](const std::string &text, lang::MirValueId id) {
+    const std::string name = "__gti_mir_v_" + std::to_string(id);
+    for (std::size_t at = text.find(name); at != std::string::npos;
+         at = text.find(name, at + name.size())) {
+      const std::size_t end = at + name.size();
+      if (end == text.size() || text[end] < '0' || text[end] > '9')
+        return true;
+    }
+    return false;
+  };
+  const std::string payloadAddress =
+      " = &::gti_internal::backend::payload_get<";
+  for (const std::string_view name : {"inner", "bound"}) {
+    const lang::MirFunctionInstance *instance = function(name);
+    std::vector<lang::MirValueId> borrowed;
+    if (instance != nullptr)
+      for (const lang::MirBlock &block : instance->body.blocks)
+        for (const lang::MirInstruction &instruction : block.instructions)
+          if (instruction.kind == lang::MirInstructionKind::Compute &&
+              instruction.operation == lang::MirOperation::PayloadExtract &&
+              instruction.result &&
+              instruction.info.category == lang::ValueCategory::Place &&
+              instruction.info.type.kind == lang::SemanticType::Enum)
+            borrowed.push_back(*instruction.result);
+    expect(instance != nullptr && borrowed.size() == 1 &&
+               supportsSelectedBodyText(frontend.mir, map, instance->id),
+           std::string(name) +
+               " borrows one cleanup-free enum payload and enters emission");
+    if (instance == nullptr || borrowed.size() != 1 ||
+        !supportsSelectedBodyText(frontend.mir, map, instance->id))
+      continue;
+    const std::string text = bodyText(*instance);
+    expect(!namesValue(text, borrowed.front()),
+           std::string(name) +
+               " never reads the borrowed payload as an SSA object");
+    expect(text.find(payloadAddress) != std::string::npos,
+           std::string(name) +
+               " binds the reference to the active payload's address");
+  }
+  const lang::MirFunctionInstance *temporary = function("fresh");
+  lang::MirValueId constructed = 0;
+  if (temporary != nullptr)
+    for (const lang::MirBlock &block : temporary->body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Compute &&
+            instruction.operation == lang::MirOperation::PayloadConstruct &&
+            instruction.result)
+          constructed = *instruction.result;
+  expect(temporary != nullptr && constructed != 0 &&
+             supportsSelectedBodyText(frontend.mir, map, temporary->id) &&
+             namesValue(bodyText(*temporary), constructed),
+         "a fresh cleanup-free enum temporary is borrowed as its SSA value");
+}
+
 constexpr NamedTest kTests[] = {
     {"testFieldInitializerExpressionVocabulary",
      testFieldInitializerExpressionVocabulary},
@@ -10132,6 +10252,8 @@ constexpr NamedTest kTests[] = {
     {"testUnconsumedFusedClosureSpellsNoBody",
      testUnconsumedFusedClosureSpellsNoBody},
     {"testHiddenSlotTemporaryArguments", testHiddenSlotTemporaryArguments},
+    {"testBorrowedCleanupFreeEnumPayloadReference",
+     testBorrowedCleanupFreeEnumPayloadReference},
 };
 
 } // namespace
