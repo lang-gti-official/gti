@@ -1,5 +1,40 @@
 # Compiler Verification
 
+## Array fields from constructor parameters (0.467.3)
+
+`array_field_constructor_elements_runtime` runs
+`array_field_constructor_elements.gti`. Constructors of user-defined structs
+build a fixed-array field from copied parameters (`corners({a, b})`), from a
+moved and a copied parameter beside a fresh element, from nested rows of a
+copy and a move, and from whole array parameters as rows; a class with a
+counting destructor moves both parameters into its array field; and a local
+array takes a moved element. Fields are read at a run-time index. The output
+shows each element's value, that copied parameters are still readable, and
+that every counted object is destroyed exactly once, as an element. With an
+argument the first index is out of range and fails with `GTI-R0007` (exit
+status 70). Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and
+ASan/UBSan. The 0.467.2 compiler stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_lifecycle`, `testArrayFieldConstructorElements`
+checks that the constructors spell their parameters inside the field's
+initializer (`std::array<Point, 2>{a, std::move(b)}`, a whole row beside a
+nested row, `std::move` of both counted owners) with no staged local. An
+element class without a copy constructor, a moved element whose obligation
+does not leave at the aggregate, a lifecycle-free move of a class with a
+destructor, and a failure site on a moved element each refuse the body.
+
+An emitted-C++ differential against the 0.465.6 emitter, run on every program
+under `tests/fixtures`, `tests/coverage` and `examples` at O0 and O3 with one
+`GTI_STDLIB_PATH` (1832 programs, 3664 runs; `namespace-depth-63` excluded
+for its compile time), leaves 2906 runs identical and 740 refused by both
+with the same codes. No program is newly refused or changes its refusal, and
+nothing times out. Only the new fixture becomes accepted. Text changes in 8
+programs. Six spell staged element copies inline: `012-fixed-arrays`, three
+`a42-*` reproducers, `passive_fixed_array_values` and `raw_record_containers`.
+`class_array_arguments` and `storage_fixed_array_emplacement` gain a plain
+constructor for a by-value array of passive classes, so their callers drop a
+dead failure branch. The owning runtime tests of all eight pass.
+
 ## Copied dependent payload views (0.467.2)
 
 `view_fields` covers the copy in `testCopiedPayloadBindings`.
