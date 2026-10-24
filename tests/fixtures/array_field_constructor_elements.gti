@@ -1,0 +1,111 @@
+// Constructors that build a fixed-array field from their by-value parameters:
+// copied elements, moved elements, elements mixed with a fresh construction,
+// nested arrays of elements and of rows, and a class whose destructor counts
+// each element it ends. Each used to stop C++ emission with GTI-B0001. Every
+// element is copied or moved once, straight into the array's storage, and
+// fields are read at a run-time index; with an argument the first index is
+// out of range and fails with GTI-R0007.
+#include <std/string>
+#include <std/vector>
+
+mut int32_t live = 0;
+mut int32_t destroyed = 0;
+
+struct Point {
+  int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+  int32_t digits() { return this.x * 10 + this.y; }
+};
+
+// A user destructor makes every element's end observable.
+class Tracked {
+public:
+  Tracked(int32_t v) : v(v) { live = live + 1; }
+  ~Tracked() {
+    live = live - 1;
+    destroyed = destroyed * 10 + v;
+  }
+  int32_t v;
+};
+
+struct Polygon {
+  Point[2] corners;
+  Polygon(Point a, Point b) : corners({a, b}) {}
+};
+
+// A moved and a copied parameter beside a fresh element.
+struct Triangle {
+  Point[3] corners;
+  Triangle(Point a, Point b) : corners({std::move(a), b, Point(7, 8)}) {}
+};
+
+struct Grid {
+  Point[2][2] cells;
+  Grid(Point a, Point b, Point c, Point d)
+      : cells({{a, b}, {c, std::move(d)}}) {}
+};
+
+// Whole rows are copied or moved, so the parameters are arrays themselves.
+struct Rows {
+  Point[2][2] cells;
+  Rows(Point[2] top, Point[2] bottom) : cells({top, std::move(bottom)}) {}
+};
+
+struct Owners {
+  Tracked[2] items;
+  Owners(Tracked a, Tracked b) : items({std::move(a), std::move(b)}) {}
+};
+
+int32_t polygon(Polygon p, int32_t i) {
+  return p.corners[i].digits() * 100 + p.corners[1 - i].digits();
+}
+
+int32_t triangle(Triangle t, int32_t i) {
+  return (t.corners[i].digits() * 100 + t.corners[i + 1].digits()) * 100 +
+         t.corners[2].digits();
+}
+
+int32_t grid(Grid g, int32_t i) {
+  return (g.cells[i][i].digits() * 100 + g.cells[i][1 - i].digits()) * 100 +
+         g.cells[1 - i][i].digits();
+}
+
+int32_t rows(Rows r, int32_t i) {
+  return r.cells[i][1 - i].digits() * 100 + r.cells[1 - i][i].digits();
+}
+
+// The copies leave the parameters intact for later reads.
+int32_t copies(Point a, Point b, int32_t i) {
+  Polygon p = Polygon(a, b);
+  return polygon(p, i) * 100 + a.digits();
+}
+
+// A local array takes a moved element the same way.
+int32_t local(Point a, Point b, int32_t i) {
+  Point[2] corners = {a, std::move(b)};
+  return corners[i].digits() * 100 + corners[1 - i].digits();
+}
+
+int32_t owners(int32_t i) {
+  Owners o = Owners(Tracked(3), Tracked(4));
+  return o.items[i].v * 10 + live;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int32_t i = argc > 1 ? 2 : 1;
+  std::println(polygon(Polygon(Point(1, 2), Point(5, 4)), i));
+  std::println(triangle(Triangle(Point(1, 2), Point(5, 4)), i - 1));
+  std::println(grid(Grid(Point(1, 2), Point(3, 4), Point(5, 6), Point(7, 8)), i));
+  Point[2] top = {Point(1, 2), Point(3, 4)};
+  Point[2] bottom = {Point(5, 6), Point(7, 8)};
+  std::println(rows(Rows(top, bottom), i));
+  std::println(copies(Point(1, 2), Point(5, 4), i));
+  std::println(local(Point(1, 2), Point(5, 4), i));
+  std::println(owners(i));
+  // Each Tracked is destroyed once: as an element, never as a moved-from
+  // parameter.
+  std::println(live);
+  std::println(destroyed);
+  return 0;
+}
