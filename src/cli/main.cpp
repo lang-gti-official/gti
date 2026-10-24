@@ -2799,12 +2799,14 @@ int buildProjectPlan(
     nativeInputs = *scripts.nativeInputs;
     for (const lang::driver::BuildScriptOutcome &outcome : scripts.outcomes) {
       if (options.verbose && !outcome.output.empty()) {
-        std::cerr << outcome.output;
+        progress.writeMessage(outcome.output);
       }
-      std::cerr << terminalStyle.code(std::cerr, Style::Success)
-                << (outcome.reused ? "Reused" : "Built")
-                << terminalStyle.code(std::cerr, Style::Reset)
-                << " native dependency " << outcome.packageIdentity << '\n';
+      std::ostringstream summary;
+      summary << terminalStyle.code(std::cerr, Style::Success)
+              << (outcome.reused ? "Reused" : "Built")
+              << terminalStyle.code(std::cerr, Style::Reset)
+              << " native dependency " << outcome.packageIdentity << '\n';
+      progress.writeMessage(summary.str());
     }
   }
   std::optional<lang::driver::BuildCachePolicy> cache;

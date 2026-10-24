@@ -94,6 +94,19 @@ ProgressObserver *BuildProgress::observer() {
   return enabled_ ? this : nullptr;
 }
 
+void BuildProgress::writeMessage(std::string_view message) {
+  if (message.empty()) {
+    return;
+  }
+  std::lock_guard lock(mutex_);
+  clearRow();
+  std::cerr << message;
+  if (message.back() != '\n') {
+    std::cerr << '\n';
+  }
+  std::cerr.flush();
+}
+
 bool BuildProgress::phaseShown() const {
   return verbose_ || !backendDetail(phase_);
 }
