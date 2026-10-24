@@ -24,11 +24,14 @@ struct TypeLayout {
 // bodies.
 class Layouts final {
 public:
-  explicit Layouts(Session &session);
   [[nodiscard]] TypeLayout get(const SemanticType &type);
   [[nodiscard]] llvm::PointerType *pointer() const;
 
 private:
+  friend class Session;
+  explicit Layouts(Session &session);
+  Layouts(const Layouts &) = delete;
+  Layouts &operator=(const Layouts &) = delete;
   struct Record {
     const MirClassInstance *instance = nullptr;
     llvm::StructType *storage = nullptr;

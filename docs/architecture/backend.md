@@ -4334,8 +4334,10 @@ dependency, initialization, packaging, status, and first-lowering decision.
 
 O-LLVM-03 provides the private machinery for real lowering; it does not admit
 any executable instruction family. `Session` owns the exact
-`VerifiedLoweredProgram`, context, native target machine, module, diagnostic
-collector and emission state. The only process-global LLVM state is once-only
+`VerifiedLoweredProgram`, context, native target machine, module, unique layout
+and ABI planners, diagnostic collector and emission state. Planner construction
+is private to the session, so clients cannot create competing per-program maps.
+The only process-global LLVM state is once-only
 target/assembly-printer registration. No module, type cache, diagnostic buffer,
 or pass manager is shared between programs. The initial targets are native
 macOS arm64 and Linux x86_64. Foreign targets and unimplemented debug metadata

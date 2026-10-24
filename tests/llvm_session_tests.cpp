@@ -71,8 +71,8 @@ int main() {
 
 void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
   Session session(input, {});
-  Layouts layouts(session);
-  Abi abi(session, layouts);
+  auto &layouts = session.layouts();
+  auto &abi = session.abi();
   const auto boolean = layouts.get(SemanticType::Bool);
   expect(boolean.value->isIntegerTy(1) && boolean.storage->isIntegerTy(8) &&
              boolean.size == 1,
@@ -328,8 +328,7 @@ int main(void) {
         LlvmCodegenOptimization::Default,
         LlvmCodegenOptimization::Aggressive}) {
     Session session(input, {.optimization = level});
-    Layouts layouts(session);
-    Abi abi(session, layouts);
+    auto &abi = session.abi();
     // Native ABI oracle only: these identity bodies are not GTI instruction
     // lowering, a hosted entry, or evidence of any admitted language family.
     for (const auto &[name, type] :

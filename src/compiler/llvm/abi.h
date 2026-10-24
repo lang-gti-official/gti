@@ -37,7 +37,6 @@ struct FunctionAbi {
 // classification is inferred from a record's field offsets.
 class Abi final {
 public:
-  Abi(Session &session, Layouts &layouts);
   [[nodiscard]] FunctionAbi gti(const SemanticType &result,
                                 std::span<const SemanticType> parameters,
                                 bool mayFail, bool receiver = false,
@@ -65,6 +64,10 @@ public:
   void declareFunctions(std::span<const HirFunctionInstanceId> ids);
 
 private:
+  friend class Session;
+  Abi(Session &session, Layouts &layouts);
+  Abi(const Abi &) = delete;
+  Abi &operator=(const Abi &) = delete;
   Session &session;
   Layouts &layouts;
   llvm::StructType *textView_;

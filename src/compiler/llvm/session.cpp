@@ -1,4 +1,5 @@
 #include "session.h"
+#include "abi.h"
 
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/DiagnosticInfo.h>
@@ -160,6 +161,8 @@ Session::Session(VerifiedLoweredProgram program, LlvmBackendOptions options)
   verifyTargetLayout(input_.program().target(), dataLayout(), context_);
   module_.addModuleFlag(llvm::Module::Error, "gti.execution.abi",
                         executionAbiVersion);
+  layouts_ = std::unique_ptr<Layouts>(new Layouts(*this));
+  abi_ = std::unique_ptr<Abi>(new Abi(*this, *layouts_));
 }
 
 Session::~Session() = default;

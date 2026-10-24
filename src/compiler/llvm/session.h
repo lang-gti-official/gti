@@ -12,6 +12,9 @@
 
 namespace lang::native_llvm {
 
+class Layouts;
+class Abi;
+
 // Private, invalidatable whole-program ABI, not an external GTI ABI promise.
 inline constexpr unsigned executionAbiVersion = 1;
 
@@ -25,6 +28,8 @@ public:
   [[nodiscard]] const LoweredProgram &program() const;
   [[nodiscard]] llvm::LLVMContext &context() { return context_; }
   [[nodiscard]] llvm::Module &module() { return module_; }
+  [[nodiscard]] Layouts &layouts() { return *layouts_; }
+  [[nodiscard]] Abi &abi() { return *abi_; }
   [[nodiscard]] const llvm::DataLayout &dataLayout() const;
   [[nodiscard]] LlvmBackendOptions options() const { return options_; }
   [[nodiscard]] const std::vector<std::string> &diagnostics() const {
@@ -47,6 +52,8 @@ private:
   llvm::LLVMContext context_;
   std::unique_ptr<llvm::TargetMachine> machine_;
   llvm::Module module_;
+  std::unique_ptr<Layouts> layouts_;
+  std::unique_ptr<Abi> abi_;
 };
 
 // Kept separate so target-contract mutations can be tested before any body
