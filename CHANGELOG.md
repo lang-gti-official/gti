@@ -23,6 +23,19 @@ for what minor and patch releases mean.
   and deterministic panic cleanup. Equality macros evaluate operands once and
   defer formatting and custom messages until failure.
 
+## 0.467.3 — Array fields built from constructor parameters
+
+- A constructor that initializes a fixed-array field from its by-value
+  parameters, as in `Polygon(Point a, Point b) : corners({a, b})`, used to
+  report `error[GTI-B0001]` (an internal compiler error). It now compiles and
+  runs, including moved parameters (`corners({std::move(a), b})`), a fresh
+  element beside them, nested arrays (`cells({{a, b}, {c, d}})`), whole array
+  parameters as rows (`cells({top, bottom})`) and classes with a destructor.
+  Each element is copied or moved once, straight into the field.
+- The same elements in a local array, such as
+  `Point[2] corners = {a, std::move(b)};` or `Point[2][2] g = {{a, b}, {c, d}};`,
+  also reported `GTI-B0001` and now work.
+
 ## 0.467.2 — Copying a payload view that holds a local owner's text
 
 - In a `switch` over a payload enum whose `string_view` payload views a local
