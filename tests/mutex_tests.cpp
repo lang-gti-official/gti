@@ -345,9 +345,13 @@ void testReferencePrefixBeforeOwnedField() {
 }
 
 void testPreparedMutexPayload() {
+  // The stateless interface retains a conservative MIR failure edge while
+  // the backend independently proves its passive native construction safe.
+  // Keep a real failure cleanup for the negative mutations below.
   const auto frontend = analyze("mutex-prepared-payload.gti", R"gti(
 #include <std/mutex>
-class payload {
+interface marker {};
+class payload : public marker {
   int value;
 public:
   payload(int initial) : value(initial) {}
@@ -393,36 +397,56 @@ int main() { std::mutex<payload> value{payload(4)}; return 0; }
           auto malformed = frontend.mir;
           auto &changed = const_cast<lang::MirConstructorInstance &>(
               *malformed.findConstructorInstance(constructor.id));
-          if (mutation == 4)
+          std::size_t mutationApplications = 0;
+          if (mutation == 4) {
             changed.body.dropObligations[*stage.preparedParameterDrop - 1]
                 .initiallyActive = true;
+            ++mutationApplications;
+          }
           for (auto &candidateBlock : changed.body.blocks)
             for (auto &instruction : candidateBlock.instructions) {
               if (instruction.id == stage.id) {
-                if (mutation == 0)
+                if (mutation == 0) {
                   instruction.destination.reset();
-                if (mutation == 1)
+                  ++mutationApplications;
+                }
+                if (mutation == 1) {
                   instruction.lifecycle.clear();
-                if (mutation == 2)
+                  ++mutationApplications;
+                }
+                if (mutation == 2) {
                   instruction.lifecycle.front().conditional = true;
+                  ++mutationApplications;
+                }
               }
               if (mutation == 3 &&
-                  instruction.id == bindings.front().constructInstruction)
+                  instruction.id == bindings.front().constructInstruction) {
                 instruction.lifecycle.clear();
+                ++mutationApplications;
+              }
               if (candidateBlock.failureParameter != 0 &&
                   instruction.kind == lang::MirInstructionKind::Drop &&
                   instruction.lifecycle.size() == 1) {
                 const auto dropId = instruction.lifecycle.front().source;
-                if (mutation == 5)
+                if (mutation == 5) {
                   instruction.lifecycle.front().failureCleanup = false;
-                if (mutation == 6)
+                  ++mutationApplications;
+                }
+                if (mutation == 6) {
                   changed.body.dropObligations[dropId - 1].initiallyActive =
                       false;
-                if (mutation == 7)
+                  ++mutationApplications;
+                }
+                if (mutation == 7) {
                   changed.body.dropObligations[dropId - 1]
                       .dropType.requiresActiveCleanup = true;
+                  ++mutationApplications;
+                }
               }
             }
+          expect(mutationApplications == 1,
+                 "prepared payload negative mutation must alter one MIR "
+                 "record");
           expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
                                                                  changed)
                      .empty(),
