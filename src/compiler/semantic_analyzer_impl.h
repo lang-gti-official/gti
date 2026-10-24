@@ -5270,8 +5270,6 @@ private:
   [[nodiscard]] bool isNumericLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isSimdLibraryUnit(SourceUnitId sourceUnit) const;
 
-  [[nodiscard]] bool isIteratorLibraryUnit(SourceUnitId sourceUnit) const;
-
   [[nodiscard]] bool isFunctionalLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool

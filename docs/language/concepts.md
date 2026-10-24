@@ -436,7 +436,7 @@ compiler-private member, meaning any member of a `gti_internal` type or a
 public member whose signature names one, satisfies a direct query or a trailing
 `requires requires` leaf only in compiler-trusted source, which could call it
 there. Trusted source can therefore probe a private helper type whose method is
-constrained directly by a raw `@compiler_constraint` capability. A named concept
+constrained by source predicates over compiler-verified facts. A named concept
 is a public predicate. Its member requirements never admit a compiler-private
 member, even when trusted source declares or applies the concept, and the
 failure reports that the member is compiler-private rather than nonpublic.
@@ -662,8 +662,12 @@ The current structural capability set is intentionally small:
   value yields. This deliberately supersedes the old private declaration-only
   range checker: a viable ordinary loop, rather than a second hand-maintained
   overload filter, establishes the protocol;
-- `sized_range<R>` requires exact public read-only
-  `std::size_t R::size()`; fixed arrays satisfy it from their exact extent;
+- `sized_range<R>` composes input iteration with an ordinary expression query
+  for `range.size()` through a read-only borrow, returning exactly
+  `std::size_t`. Fixed arrays satisfy that expression through their checked
+  extent operation. The parenthesized expression query deliberately uses
+  ordinary overload resolution rather than the older declaration-only member
+  query, so callable constrained/generic members can qualify too;
 - `forward_iterator<I>` is the source-defined conjunction of input iteration,
   copy construction, and use of `I` as its own sentinel; the public
   bidirectional and random-access concepts compose their movement facts over
@@ -722,8 +726,9 @@ form when the active requirements prove both a read-only and a mutable one,
 mirroring concrete member selection.
 
 Complete-range requirements additionally supply private symbolic
-iterator/sentinel carriers for a range-based `for`, plus the exact zero-argument
-`size()` result under `sized_range`. These carriers are compiler proof objects,
+iterator/sentinel carriers for a range-based `for`. The ordinary expression
+requirement supplies the exact zero-argument `size()` result independently.
+These carriers are compiler proof objects,
 not source-visible associated types. Concrete generic reanalysis must replace
 them with the selected nominal endpoint declarations or fixed-array strategy
 before HIR and verified MIR are built.
@@ -793,28 +798,20 @@ C++ conversion or expression probing must not fill that gap implicitly.
 
 ## Trusted bindings
 
-The prelude and selected canonical standard-library units use reserved syntax
-to connect an internal declaration to one compiler fact. For example,
-`<std/iterator>` still owns its not-yet-migrated inferred input-iterator
-relationship:
+All standard-library concepts are now source-defined. No
+`@compiler_constraint` binding remains registered. Its old spelling is reserved
+and rejected, rather than available to application code as a way to invent
+facts. Classification, lifecycle, comparison, callable, iterator, sentinel,
+range and borrowed-result policies compose general requirements and reflection
+queries in ordinary source.
 
-```gti
-namespace gti_internal {
-@compiler_constraint("input_iterator")
-concept input_iterator_capability<I>;
-}
-```
-
-`@compiler_constraint` is accepted only inside `gti_internal` in the implicit
-prelude or in the exact trusted unit assigned to that binding. The remaining
-four bindings belong to `<std/iterator>`: input iteration, dereference-to,
-writable iteration and size availability. Migrated classification, lifecycle,
-comparison, callable, sentinel, range and exact borrowed-result policies have
-no private concept declarations. They compose general queries and irreducible
-compiler facts in ordinary source. Application source cannot forge a binding, name the private
-capability, or expose it through a public signature. Binding names and bound
-declarations are compiler/standard-library integration details, not a public
-language API.
+This does not remove compiler ownership of irreducible facts. Exact type and
+declaration identities, layout, object lifetime, structural relocation,
+transfer/share safety and checked borrow origins still come from semantic
+analysis through identity-bound private operations. Source policy composes those
+facts; it cannot override them. An application can define the same kind of
+concept using public `std::meta` queries and `requires` expressions, without
+access to private declarations or any nominal recognition of a public concept.
 
 ## Frontend and backend contract
 

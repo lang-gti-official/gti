@@ -3500,16 +3500,6 @@ auto SemanticVisitor::Impl::isSimdLibraryUnit(SourceUnitId sourceUnit) const
          unit->standardLibraryName == "std/simd";
 }
 
-auto SemanticVisitor::Impl::isIteratorLibraryUnit(SourceUnitId sourceUnit) const
-    -> bool {
-  if (sourceGraph == nullptr) {
-    return false;
-  }
-  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
-  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
-         unit->standardLibraryName == "std/iterator";
-}
-
 auto SemanticVisitor::Impl::isFunctionalLibraryUnit(
     SourceUnitId sourceUnit) const -> bool {
   if (sourceGraph == nullptr) {
@@ -11806,15 +11796,14 @@ auto SemanticVisitor::Impl::constraintImplies(GenericConstraintSet actual,
     return true;
   if (required == GenericConstraintKind::ObjectLayout ||
       required == GenericConstraintKind::BorrowFree) {
-    for (const auto scalar : {GenericConstraintKind::Numeric,
-                             GenericConstraintKind::SignedNumeric,
-                             GenericConstraintKind::Integral,
-                             GenericConstraintKind::SignedIntegral,
-                             GenericConstraintKind::UnsignedIntegral,
-                             GenericConstraintKind::FloatingPoint,
-                             GenericConstraintKind::AtomicScalar,
-                             GenericConstraintKind::IntegralEnum,
-                             GenericConstraintKind::Boolean})
+    for (const auto scalar :
+         {GenericConstraintKind::Numeric, GenericConstraintKind::SignedNumeric,
+          GenericConstraintKind::Integral,
+          GenericConstraintKind::SignedIntegral,
+          GenericConstraintKind::UnsignedIntegral,
+          GenericConstraintKind::FloatingPoint,
+          GenericConstraintKind::AtomicScalar,
+          GenericConstraintKind::IntegralEnum, GenericConstraintKind::Boolean})
       if (hasConstraint(actual, scalar))
         return true;
   }

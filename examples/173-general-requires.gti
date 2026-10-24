@@ -28,7 +28,11 @@ struct CountCursor {
 struct Counts {
   CountCursor begin() { return CountCursor(); }
   CountEnd end() { return CountEnd(); }
+  std::size_t size() { return std::size_t(3); }
 };
+std::size_t measured_size<R>(R& range) requires std::sized_range<R> {
+  return range.size();
+}
 concept integer_range<R> = requires(R& range) {
   for (int& value : range) {}
 };
@@ -307,6 +311,8 @@ int main() {
   if (!matches_cell(inferred, 11)) { return 21; }
   Counts counts{};
   if (count_sum(counts) != 6) { return 20; }
+  int[3] fixed_counts = {1, 2, 3};
+  if (measured_size(counts) != measured_size(fixed_counts)) { return 22; }
   static_assert(requires(int[3]& values) { for (auto& value : values) {} });
   static_assert(!(requires(int[3]& values) { for (mut int& value : values) {} }));
   int[3] positive_values = {1, 2, 3};

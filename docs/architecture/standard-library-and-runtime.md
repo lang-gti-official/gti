@@ -805,10 +805,13 @@ Comparison, callable, sentinel, checked exact-reference, inline-payload policy,
 and complete range concepts now compose ordinary source reflection and
 unevaluated requirements. Range queries reuse actual loop analysis, including
 access, endpoint lifetime and cleanup checks; they are not a second range
-protocol implementation. The remaining private concept bindings are input
-iteration, dereference-to, writable iteration and size availability. Their
-migration still needs general inferred-result proof support and a coherent
-array/member size query; they are not claimed as source-defined yet.
+protocol implementation. Input iteration, dereference-to and writable iteration
+use inferred expression requirements plus exact declaration/reflection facts.
+Size availability uses an ordinary exact-result expression query; fixed-array
+size remains a checked compiler operation. There are no remaining private
+concept bindings. Type categories, lifecycle/relocation, transfer/share,
+layout, exact relations and checked borrow origins remain compiler facts;
+source code decides how to combine them into public concepts.
 Semantics recognizes only trusted declaration identities and exact facts,
 never those public names or `std::accumulate`.
 

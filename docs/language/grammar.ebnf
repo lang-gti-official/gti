@@ -257,9 +257,19 @@ expression-requirement = "requires" [ "(" [ requirement-parameter
                          "{" requirement-check { requirement-check } "}" ;
 requirement-parameter  = [ "mut" ] type IDENTIFIER ;
 requirement-check      = [ "unsafe" ] "{" assignment-expression "}"
-                         "->" type ";" ;
-(* A requirement's `mut` parameters must be references. The result is an exact
-   owned non-borrowed type, not a C++ result concept. Ordinary expression rules
+                         [ "->" [ "mut" ] type [ requirement-borrow-origin ] ] ";"
+                       | [ "unsafe" ] "for" "(" [ "mut" ] type IDENTIFIER
+                         ":" assignment-expression ")" "{" "}" ;
+requirement-borrow-origin
+                       = "[[" "borrowed_from" "(" IDENTIFIER ")" "]]" ;
+(* A requirement's `mut` parameters must be references. A written result is an
+   exact owned non-borrowed type, or a checked reference whose borrowed_from
+   names a borrowed query parameter. A mutable result requires a mutable origin.
+   `auto&` (optionally mut) with borrowed_from infers only the referent; omitting
+   the arrow checks expression validity without promising a result type or
+   category. A loop query has an empty body and uses ordinary range analysis;
+   its element binding may be auto or an exact type with checked access.
+   These are not C++ result concepts. Ordinary expression rules
    apply without executing code or mutating caller flow. The historical direct
    nongeneric member call with a checked receiver and all argument bindings in
    declaration order retains its exact signature-matching contract.
@@ -282,16 +292,14 @@ compiler-constraint-binding
    declaration's type parameters or a closed exact type. An application
    supplies the referenced concept's exact arity and may map, reorder, or reuse
    the enclosing parameters. Concepts may be referenced
-   before their declaration; cycles are invalid. Negation, arbitrary expression
-   requirements beyond the member signature above, concept specialization, and
+   before their declaration; cycles are invalid. Direct concept negation,
+   concept specialization, and
    constraint-based overload ranking are not part of this layer.
 
-   `@compiler_constraint` is reserved syntax. Semantic analysis accepts it only
-   for compiler-owned concepts in the trusted prelude's `gti_internal`
-   namespace. Each binding maps one declaration to one irreducible unary fact
-   or exact structural relationship. Ordinary source cannot create or name a
-   binding directly. Compiler-trusted standard-library units may compose a
-   bound declaration into public source concepts. *)
+   `@compiler_constraint` is reserved legacy syntax with no registered bindings.
+   Public concepts are source definitions over general expression queries and
+   reflection predicates. Irreducible type, ownership and lifecycle facts remain
+   compiler-owned; source policy cannot override them. *)
 
 enum-declaration       = "enum" [ "class" ] IDENTIFIER
                          [ generic-parameter-clause ]
@@ -1538,12 +1546,12 @@ pack-expansion         = IDENTIFIER "..." ;
    `std::sentinel_for<Sentinel, Iterator>`,
    and its facts are active while the symbolic body is checked. Concrete
    instantiation substitutes and validates every application again. The current
-   structural concepts prove only their compiler-defined exact operator shapes:
-   read-only input iterator dereference plus mutable prefix increment,
-   iterator/sentinel inequality, and exact read-only dereference-referent
-   compatibility for accumulation.
-   Public concepts compose private declaration-identity-bound capabilities;
-   public names are not compiler-recognized.
+   structural facts preserve the exact member/operator inputs, access, result
+   and checked origin established by source requirements. An inferred-result
+   requirement does not invent an owned or borrowed result, and concrete
+   instances must resolve deferred operations again. Disjunction exports only
+   facts common to its alternatives. Public concepts compose source requirements
+   and general reflection predicates; public names are not compiler-recognized.
 
    Inline and trailing constraints affect validity only. They do not
    distinguish overload signatures, rank candidates, provide SFINAE, or select
@@ -1558,8 +1566,7 @@ pack-expansion         = IDENTIFIER "..." ;
    restricted to an inferred fixed-array extent.
 
    A trailing clause is semantically rejected on an operator
-   or a virtual, pure, overriding, or interface method. Concept negation,
-   general requires-expressions, arbitrary expression requirements,
+   or a virtual, pure, overriding, or interface method. Direct concept negation
    and concept, partial, or constraint-selected specialization are not
    implemented.
 

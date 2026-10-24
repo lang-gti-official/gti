@@ -7635,8 +7635,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                                        member->name().lexeme == "end");
       const std::optional<SemanticType> result =
           symbolicRangeMemberReturnType(receiverType, member->name().lexeme);
-      if (result &&
-          (member->name().lexeme == "size" || generatedRangeEndpoint)) {
+      if (result && generatedRangeEndpoint) {
         if (hasExplicitGenericArguments) {
           report(expr.paren(),
                  "Structural range members do not take generic arguments.",

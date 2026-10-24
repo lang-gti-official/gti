@@ -5558,7 +5558,6 @@ auto SemanticVisitor::Impl::symbolicRangeMemberReturnType(
 
   bool readable = false;
   bool writable = false;
-  bool sized = false;
   for (const ExpandedStructuralRequirement &requirement :
        activeStructuralRequirements()) {
     if (requirement.arguments.empty() ||
@@ -5569,9 +5568,6 @@ auto SemanticVisitor::Impl::symbolicRangeMemberReturnType(
     case StructuralConstraintKind::Iteration:
       readable = !requirement.mutableReceiver || readable;
       writable = requirement.mutableReceiver || writable;
-      break;
-    case StructuralConstraintKind::SizedRange:
-      sized = true;
       break;
     default:
       break;
@@ -5588,9 +5584,6 @@ auto SemanticVisitor::Impl::symbolicRangeMemberReturnType(
   }
   if (member == "end" && (readable || writable)) {
     return symbolicRangeCarrierType(rangeType, SymbolicRangeCarrier::Sentinel);
-  }
-  if (member == "size" && sized) {
-    return SemanticType::UInt64;
   }
   return std::nullopt;
 }
@@ -5629,59 +5622,7 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     }
   }
 
-  const auto selectedRangeMember =
-      [&](const SemanticType &range, std::string_view name,
-          ReceiverMutability receiver) -> std::optional<CallableCandidate> {
-    if (range == SemanticType::StringView &&
-        receiver == ReceiverMutability::ReadOnly) {
-      auto factory = textViewMemberFactory(name);
-      if (factory && factory->parameterTypes.size() == 1) {
-        // Structural member queries consume the same trusted declaration
-        // identity as written member calls; its first input is the receiver.
-        factory->parameterTypes.clear();
-        return factory;
-      }
-      if (name == "size")
-        return CallableCandidate{.returnType = SemanticType::UInt64};
-      return std::nullopt;
-    }
-    const ClassInfo *owner = classInfo(range);
-    if (owner == nullptr) {
-      return std::nullopt;
-    }
-    const auto found = owner->members.find(std::string(name));
-    if (found == owner->members.end() ||
-        found->second.symbol.type != SemanticType::Function) {
-      return std::nullopt;
-    }
-    const Symbol overloadSet = substituteSymbol(found->second.symbol, range);
-    std::vector<CallableCandidate> candidates;
-    for (const CallableCandidate &candidate : overloadSet.overloads) {
-      if (!candidate.staticMember &&
-          candidate.access == AccessModifier::Public &&
-          !candidate.compilerPrivate && candidate.requirements.empty() &&
-          candidate.parameterTypes.empty() &&
-          candidate.receiverMutability == receiver) {
-        candidates.emplace_back(candidate);
-      }
-    }
-    return candidates.size() == 1
-               ? std::optional<CallableCandidate>{candidates.front()}
-               : std::nullopt;
-  };
   switch (kind) {
-  case StructuralConstraintKind::SizedRange: {
-    if (arguments.size() != 1) {
-      return false;
-    }
-    if (arguments.front().kind == SemanticType::Array &&
-        arguments.front().arguments.size() == 1) {
-      return true;
-    }
-    const std::optional<CallableCandidate> size = selectedRangeMember(
-        arguments.front(), "size", ReceiverMutability::ReadOnly);
-    return size && size->returnType == SemanticType::UInt64;
-  }
   case StructuralConstraintKind::EnumUnderlying:
     return arguments.size() == 2 && arguments[0].kind == SemanticType::Enum &&
            satisfiesAtomicConstraint(arguments[0],
@@ -5752,9 +5693,6 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       }
       break;
     }
-    case StructuralConstraintKind::SizedRange:
-      // size() is a generated member-call fact rather than an operator.
-      break;
     case StructuralConstraintKind::EnumUnderlying:
       // Enum representation classification grants no numeric operators.
       break;

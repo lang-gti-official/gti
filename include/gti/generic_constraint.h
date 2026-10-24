@@ -44,7 +44,6 @@ enum class StructuralConstraintKind : std::uint8_t {
   None,
   ReadMember,
   Iteration,
-  SizedRange,
   EnumUnderlying,
 };
 
@@ -92,10 +91,8 @@ inline constexpr std::array<GenericConstraintKind, 21> genericConstraintKinds{{
 // complete fact inventory above also serves reflection and generic proofs.
 inline constexpr std::array<CompilerConstraintRecord, 0> compilerConstraints{};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 1>
-    compilerStructuralConstraints{{
-        {"sized_range", StructuralConstraintKind::SizedRange, 1},
-    }};
+inline constexpr std::array<CompilerStructuralConstraintRecord, 0>
+    compilerStructuralConstraints{};
 
 static_assert(genericConstraintKinds.size() + 2 ==
               static_cast<std::uint8_t>(GenericConstraintKind::Count));

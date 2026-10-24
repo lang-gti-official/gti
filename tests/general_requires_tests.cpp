@@ -35,6 +35,9 @@ static_assert(!lang::compilerStructuralConstraint("mutable_range_of"));
 static_assert(!lang::compilerStructuralConstraint("input_iterator"));
 static_assert(!lang::compilerStructuralConstraint("dereferences_to"));
 static_assert(!lang::compilerStructuralConstraint("writable_iterator"));
+static_assert(!lang::compilerStructuralConstraint("sized_range"));
+static_assert(lang::compilerConstraints.empty());
+static_assert(lang::compilerStructuralConstraints.empty());
 static_assert([] {
   for (const std::string_view binding :
        {"numeric", "signed_numeric", "integral", "signed_integral",
@@ -201,6 +204,39 @@ int main() {
 }
 )GTI"),
       "iteration requirements reuse loop analysis and export generic proofs");
+
+  accepted(check(root, directory, "source_sized_range_policy", R"GTI(
+#include <std/iterator>
+#include <std/vector>
+std::size_t measured<R>(R& range) requires std::sized_range<R> {
+  return range.size();
+}
+struct Cursor {
+  int value = 0;
+  int& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(Cursor& other) { return false; }
+};
+struct WrongSize {
+  Cursor begin() { return Cursor(); }
+  Cursor end() { return Cursor(); }
+  int size() { return 1; }
+};
+struct MutableSize {
+  Cursor begin() { return Cursor(); }
+  Cursor end() { return Cursor(); }
+  std::size_t size() mut { return std::size_t(1); }
+};
+int main() {
+  static_assert(!(requires(WrongSize& range) { { measured(range) } -> std::size_t; }));
+  static_assert(!(requires(MutableSize& range) { { measured(range) } -> std::size_t; }));
+  int[3] fixed = {1, 2, 3};
+  std::vector<int> dynamic{};
+  return measured(fixed) == std::size_t(3) && measured(dynamic) == std::size_t(0) ? 0 : 1;
+}
+)GTI"),
+           "source sized_range preserves checked fixed-array size and exact "
+           "read-only results");
 
   accepted(
       check(root, directory, "dependent_borrowed_query_result", R"GTI(

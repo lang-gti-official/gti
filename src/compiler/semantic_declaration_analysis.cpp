@@ -1157,11 +1157,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
     resolveProtocolConcept(conceptInfo, valid);
   } else if (declaration.compilerBinding()) {
     const CompilerConstraintBinding &binding = *declaration.compilerBinding();
-    const bool trustedIteratorConstraint =
-        isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
-        binding.name == "sized_range";
-    if ((!isPreludeUnit(conceptInfo.sourceUnit) &&
-         !trustedIteratorConstraint) ||
+    if (!isPreludeUnit(conceptInfo.sourceUnit) ||
         conceptInfo.namespaceScope !=
             std::vector<std::string>{"gti_internal"}) {
       report(binding.attribute,

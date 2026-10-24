@@ -438,11 +438,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "Provide the operations and checked access required by the range "
           "loop in this source requirement.");
       break;
-    case StructuralConstraintKind::SizedRange:
-      diagnostic.hints.emplace_back(
-          "The range must provide one exact public read-only size() returning "
-          "std::size_t.");
-      break;
     case StructuralConstraintKind::EnumUnderlying:
       diagnostic.hints.emplace_back(
           "The first type must be an integral enum and the second its exact "

@@ -4,10 +4,6 @@
 
 #include <std/meta>
 
-namespace gti_internal {
-@compiler_constraint("sized_range") concept sized_range_capability<R>;
-}
-
 namespace std {
 namespace detail {
 // Declaration metadata supplies the result type; an ordinary expression query
@@ -239,17 +235,21 @@ concept sized_sentinel_for<Sentinel, Iterator> =
 // a range's exact begin/end protocol. They intentionally expose no associated
 // iterator type: range-first generic code iterates the owner directly, and
 // concrete reanalysis retains the selected source declarations.
+[[unsatisfied("Provide the accessible begin()/end() operations and checked element access required by a read-only range loop.")]]
 concept input_range<Range> =
     requires(Range& range) { for (auto& element : range) {} };
+[[unsatisfied("The range must yield exactly the required element type with read-only checked access.")]]
 concept range_of<Range, T> =
     std::input_range<Range> &&
     requires(Range& range) { for (T& element : range) {} };
+[[unsatisfied("Provide the begin_mut()/end() operations and exact mutable element access required by a mutable range loop.")]]
 concept mutable_range_of<Range, T> =
     std::range_of<Range, T> &&
     requires(mut Range& range) { for (mut T& element : range) {} };
+[[unsatisfied("The range must provide a safe read-only size() returning std::size_t without a conversion.")]]
 concept sized_range<Range> =
     std::input_range<Range> &&
-    gti_internal::sized_range_capability<Range>;
+    requires(Range& range) { { (range.size()) } -> std::size_t; };
 
 struct input_iterator_tag {};
 struct output_iterator_tag {};

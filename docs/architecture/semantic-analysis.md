@@ -2430,6 +2430,23 @@ exact-element and mutable-range bindings and duplicate endpoint checker are
 removed; the actual loop semantics and synthetic open-body carriers remain
 compiler-owned.
 
+Simple expression requirements retain an unknown result in open-body facts;
+they do not turn a potentially owned result into a fictitious reference.
+Inferred checked-reference requirements additionally retain exact access and
+the named borrowed-input origin while leaving only the referent unknown.
+Conjunctive exact-result facts refine compatible weaker facts without creating
+extra overloads or discarding differing origins/unsafe obligations. An unresolved
+compound expression is not evidence of validity: concrete instances must resolve
+it, and a query cannot manufacture proof from its own requested operation.
+Lowered metadata distinguishes inferred expressions from exact-result and loop
+queries, with a resolved void placeholder rather than an executable unknown type.
+
+The source iterator policies use these general queries and declaration metadata.
+The size policy uses ordinary call analysis, including the existing checked
+fixed-array size operation. All private concept binding registries are empty;
+the compiler still owns general category/lifecycle/reflection facts and checked
+operation/loan authority, not standard-library policy or public concept names.
+
 Registration-time constraint diagnostics use the canonical semantic type
 printer with a read-only lookup into declaration-owned generic parameter
 records when completed model rows are not available yet. The reporter consumes
