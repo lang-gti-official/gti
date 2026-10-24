@@ -101,6 +101,75 @@ int main() {
 }
 """
 
+MACRO_RESULT = """\
+#include <std/format>
+#include <std/panic>
+#include <std/thread>
+thread_local mut int32_t macro_seed = 7;
+thread_local mut int32_t macro_created = 0;
+thread_local mut int32_t macro_guards = 0;
+thread_local mut int32_t macro_dropped = 0;
+class MacroReport {
+public:
+  MacroReport() = default;
+  void activate() {}
+  ~MacroReport() {
+    if (macro_created != 1 || macro_guards != 1 || macro_dropped != 1) {
+      std::panic("macro TLS cleanup counts");
+    }
+    std::println("macro cleaned {} {} {}", macro_created, macro_guards, macro_dropped);
+  }
+};
+thread_local MacroReport macro_report{};
+class MacroGuard {
+public:
+  MacroGuard() {}
+  ~MacroGuard() { macro_guards += 1; }
+};
+class MacroOwner {
+  int32_t number;
+public:
+  MacroOwner(int32_t value) : number(value) { macro_created += 1; }
+  MacroOwner(MacroOwner& other) = delete;
+  MacroOwner(MacroOwner&& other) = default;
+  int32_t read() { return this.number; }
+  ~MacroOwner() { macro_dropped += 1; }
+};
+#macro int32_t select_macro(bool enabled, int32_t expression) {
+  int32_t saved = expression;
+  if (enabled) { return saved; }
+  return 0;
+}
+#macro MacroOwner own_macro(int32_t expression) {
+  MacroGuard armed{};
+  MacroOwner saved{expression};
+  return saved;
+}
+thread_local int32_t macro_configured = select_macro(macro_seed > 0, macro_seed);
+thread_local MacroOwner macro_owner = own_macro(macro_configured);
+int32_t verify_macro_state() {
+  macro_report.activate();
+  if (macro_owner.read() != 7 || macro_owner.read() != 7 ||
+      macro_created != 1 || macro_guards != 1 || macro_dropped != 0) return 1;
+  return 0;
+}
+int main() {
+  auto started = std::thread::start([]() -> void {
+    if (verify_macro_state() != 0) std::panic("worker macro state");
+    std::println("worker macro {}", macro_owner.read());
+  });
+  if (!started) return 1;
+  mut auto worker = std::move(started).value();
+  auto joined = worker.join();
+  if (!joined) return 2;
+  std::println("macro joined");
+  if (macro_created != 0 || macro_guards != 0 || macro_dropped != 0) return 3;
+  if (verify_macro_state() != 0) return 4;
+  std::println("main macro {}", macro_owner.read());
+  return 0;
+}
+"""
+
 SUCCESS = "#include <std/thread>\n" + STATE + """\
 int32_t local_visit() {
   thread_local mut int32_t visits = 0;
@@ -341,6 +410,9 @@ def main() -> None:
         ("empty_fold_prefix", EMPTY_FOLD_PREFIX, "single-threaded", 0,
          "empty complete\ninitialize prefix\ninvoke\ninvoke\nnonempty complete\n", None),
         ("fold_reload", FOLD_RELOAD, "single-threaded", 0, "0\n1\n2\n", None),
+        ("macro_result", MACRO_RESULT, "concurrent", 0,
+         "worker macro 7\nmacro cleaned 1 1 1\nmacro joined\n"
+         "main macro 7\nmacro cleaned 1 1 1\n", None),
         ("manual", MANUAL, "concurrent", 0,
          "init 1\ndrop 1\nmanual joined\n", None),
         ("immovable", IMMOVABLE, "single-threaded", 0,

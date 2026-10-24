@@ -1376,6 +1376,10 @@ private:
     Token declaration;
     const VariableDecl *variableDeclaration = nullptr;
     const Parameter *parameterDeclaration = nullptr;
+    // Exact executable region that creates a lexical automatic binding.
+    // Independent persistent initializers may use their own locals, never
+    // surrounding automatic storage or a different initializer's locals.
+    ProgramEffectOwner declarationEffectOwner;
     // Lexical order of a namespace global's declaration statement; 0 for
     // every other symbol. See symbolVisibleNow.
     std::size_t declarationOrder = 0;
@@ -5418,6 +5422,7 @@ private:
   bool macroProbe = false;
   const Call *macroProbeCall = nullptr;
   const Call *macroStatementCall = nullptr;
+  const ExpressionStmt *macroStatementContext = nullptr;
   std::unordered_set<const Expr *> macroProbeArguments;
   std::size_t macroExpansionDepth = 0;
   std::size_t macroExpandedBodies = 0;
@@ -5441,7 +5446,6 @@ private:
   [[nodiscard]] MacroLocalScopeRange
   macroLocalScopeRange(const Token &token) const;
   void copyRequestSessionForSpeculativeModel(Impl &probe);
-  [[nodiscard]] bool analyzeMacroStatement(const ExpressionStmt &statement);
   [[nodiscard]] bool
   analyzeMacroCall(const Call &call, const ExpressionStmt *statement = nullptr);
   [[nodiscard]] std::unique_ptr<Impl> makeMacroProbe(const Call &call);

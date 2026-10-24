@@ -480,12 +480,6 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
   return result;
 }
 
-auto SemanticVisitor::Impl::analyzeMacroStatement(
-    const ExpressionStmt &statement) -> bool {
-  const Call *call = directCall(statement.expression());
-  return call && analyzeMacroCall(*call, &statement);
-}
-
 auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
                                              const ExpressionStmt *statement)
     -> bool {
@@ -548,6 +542,9 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
       selection ? semanticModel.findFunction(selection->function) : nullptr;
   if (!function || !function->declaration || !function->macroExpansion)
     return false;
+  // A selected source contract is meaningful even when its open generic
+  // expansion is deferred. It is not an eager executable call boundary.
+  semanticModel.recordMacroDeclaration(*call, *function->declaration);
   // A successful probe publishes only lexical callable identity and type
   // shape. Captures, loans, body facts and executable journals are established
   // afresh if/when an expanded occurrence evaluates the caller expression.
@@ -850,9 +847,6 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
   }
   auto resultRegion = std::move(macroResultRegions.back());
   macroResultRegions.pop_back();
-  if (statement &&
-      (resultType != SemanticType::Void || !resultRegion.exits.empty()))
-    semanticModel.recordFullExpression(*statement, statement->expression());
   std::vector<const ReturnStmt *> reachableReturns;
   const FlowSummary resultFlow =
       summarizeFlow(expansion.statement.get(), &reachableReturns);
@@ -894,12 +888,6 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
                                        definition);
   semanticModel.recordMacroExpansion(*call, std::move(expansion.statement),
                                      definition);
-  if (statement && resultType != SemanticType::Void &&
-      !statement->discardAttribute() && !function->discardableResult)
-    report(call->paren(),
-           "The result of this value macro must be used or "
-           "explicitly discarded with [[discard]].",
-           "GTI-S2009");
   currentType = resultType;
   return true;
 }

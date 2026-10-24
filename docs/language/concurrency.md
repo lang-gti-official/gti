@@ -144,9 +144,12 @@ tasks and results still cannot silently retain borrowed state past its owner.
 
 Current structural boundaries: no non-static TLS fields, TLS parameters or
 functions, `constexpr` TLS, native TLS declarations, generic-instance TLS, or
-lambda-local TLS declarations. A local initializer cannot depend on an automatic
-binding, parameter or instance receiver; guarded lexical/per-instance
-initialization is a separate goal. A source diagnostic identifies these shapes.
+lambda-local TLS declarations. A TLS initializer cannot capture an enclosing
+automatic binding, parameter or instance receiver; guarded lexical/per-instance
+initialization is a separate goal. Ordinary locals created by evaluating that
+exact initializer are permitted and retain their normal borrow and cleanup
+rules. This does not let a nested TLS initializer capture locals belonging to
+an outer initializer. A source diagnostic identifies unsupported dependencies.
 Generic function-local and generic class-static storage require a descriptor key
 that includes the exact concrete function/class instance, rather than the
 unspecialized source `SymbolId`; until that inventory is represented and

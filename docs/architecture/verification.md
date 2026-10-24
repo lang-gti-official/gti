@@ -19,11 +19,13 @@ The TLS slice has distinct source, independent MIR, runtime and native gates:
 - `thread_local_runtime_registry` covers intrusive registration, reverse retirement
   and failure/emergency behavior. A separate ASan/UBSan build instruments the
   changed runtime C++ files themselves, not just the generated test program.
-- `thread_local_end_to_end` runs 18 independent scenarios at C++20/C++23
-  O0/O1/O3 and ASan/UBSan (126 executions). These include workers and manual
+- `thread_local_end_to_end` runs 19 independent scenarios at C++20/C++23
+  O0/O1/O3 and ASan/UBSan (133 executions). These include workers and manual
   entries, local returned borrows, immovable/unique/array owners, ordinary and
   emergency result retirement, recursion, shutdown, unattached native entry,
-  formatted payloads, empty folds and per-element TLS reloads.
+  formatted payloads, empty folds and per-element TLS reloads. The macro-result
+  scenario checks lexical cleanup, owning-result transfer, exactly-once retirement
+  before join, repeated reads and independent initial-thread storage.
 
 The integration checks at compiler source `c533a4bd` pass TLS semantics,
 persistent-storage MIR, deferred-expansion ownership, temporary-argument runtime
@@ -60,8 +62,9 @@ the C++ driver invocation spelling separately from canonical binary provenance.
 
 The unfiltered suite, tooling, staged installed consumers, latest-source platform
 and compiler/runtime sanitizer checks, and refreshed performance measurements
-remain separate integration acceptance gates. The focused and corpus passes
-above are not a claim those remaining gates have completed.
+are separate integration acceptance gates. The release PR records their exact
+source identities and results; the historical focused and corpus passes above
+do not substitute for those gates on a changed compiler.
 
 ## Carriers of returned references (0.468.3)
 

@@ -2091,6 +2091,159 @@ int selected<uint64_t Mode>() {
                "query-qualified in either specialization order");
     }
   }
+
+  const auto discardable = analyze(R"(
+[[discardable]] #macro T status<T>(T expression) { return expression; }
+#macro legacy(int expression) { int saved = expression; }
+#macro stop() { return; }
+void caller<T>(T value) { status(value); }
+int main() { caller(3); status(4); legacy(5); stop(); return 0; }
+)",
+                                   true, true);
+  if (!discardable.canGenerateCode())
+    for (const auto &diagnostic : discardable.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(discardable.canGenerateCode(),
+         "ordinary macro statement analysis preserves discardable source "
+         "contracts for symbolic and concrete calls and legacy void forms");
+  const std::string requiredSource = "#macro int required() { return 1; } "
+                                     "int main() { required(); return 0; }";
+  const auto required = analyze(requiredSource, true, true);
+  const auto call = requiredSource.rfind("required();");
+  const auto ignored = std::find_if(
+      required.diagnostics.begin(), required.diagnostics.end(),
+      [](const auto &diagnostic) { return diagnostic.code == "GTI-S2009"; });
+  expect(!required.semanticValid && ignored != required.diagnostics.end() &&
+             ignored->primary.start ==
+                 call + std::string_view("required(").size() &&
+             ignored->primary.end == ignored->primary.start + 1 &&
+             ignored->fixes.size() == 1 &&
+             ignored->fixes.front().span.start == call &&
+             ignored->fixes.front().replacement == "[[discard]] " &&
+             !code(required, "GTI-B0001"),
+         "non-discardable macro results retain the ordinary exact call "
+         "diagnostic and explicit-discard fix without bypassing cleanup");
+}
+
+void initializerLocalDependencies() {
+  const std::string helpers = R"(
+#macro int local_value(int expression) {
+  mut int saved = expression;
+  saved += 1;
+  return saved;
+}
+#macro int nested_value(int expression) {
+  int saved = expression;
+  return local_value(saved);
+}
+#macro int local_callback() {
+  int saved = 7;
+  auto action = [saved]() -> int { return saved; };
+  return action();
+}
+)";
+  const auto accepted = [&](const std::string &source,
+                            std::string_view message) {
+    const auto result = analyze(source, true, true);
+    if (!result.canGenerateCode())
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(result.canGenerateCode(), message);
+  };
+  accepted(helpers + R"(
+thread_local int first = local_value(3);
+thread_local auto second = nested_value(4);
+thread_local int third = local_callback();
+int main() { return first + second + third; }
+)",
+           "namespace TLS initialization permits its own lexical values and "
+           "owned captures through copied nested-probe contexts");
+  accepted(helpers + R"(
+int main() {
+  thread_local int first = nested_value(3);
+  thread_local auto second = local_callback();
+  return first + second;
+}
+)",
+           "typed and inferred local TLS initializers use their own exact "
+           "declaration region rather than the surrounding function");
+  accepted(helpers + R"(
+#macro int nested_storage() {
+  int local = 3;
+  thread_local int nested = local_value(4);
+  return local + nested;
+}
+thread_local int outer = nested_storage();
+int main() { return outer; }
+)",
+           "nested independent TLS initialization restores the outer "
+           "initializer's exact lexical declaration authority");
+
+  for (const std::string type : {"int", "auto"}) {
+    const std::string source =
+        helpers + "int main() { int caller = 4; thread_local " + type +
+        " state = nested_value(caller); return state; }";
+    const auto result = analyze(source, true, true);
+    const auto use = source.rfind("caller)");
+    const auto declaration = source.find("caller =");
+    const auto diagnostic = std::find_if(
+        result.diagnostics.begin(), result.diagnostics.end(),
+        [&](const auto &item) {
+          return item.code == "GTI-S2124" && item.primary.start == use &&
+                 item.primary.end == use + std::string_view("caller").size() &&
+                 item.primary.source.ends_with("thread-local-semantics.gti") &&
+                 std::any_of(item.related.begin(), item.related.end(),
+                             [&](const auto &related) {
+                               return related.span.start == declaration &&
+                                      related.span.source ==
+                                          item.primary.source;
+                             });
+        });
+    expect(!result.semanticValid && diagnostic != result.diagnostics.end() &&
+               !code(result, "GTI-B0001"),
+           "substituted enclosing automatic values remain forbidden TLS "
+           "dependencies with exact use and declaration spans");
+
+    const auto nested = analyze(helpers + R"(
+#macro int nested_storage() {
+  int local = 3;
+  thread_local )" + type + R"( nested = nested_value(local);
+  return nested;
+}
+thread_local int outer = nested_storage();
+int main() { return outer; }
+)",
+                                true, true);
+    expect(!nested.semanticValid && code(nested, "GTI-S2124") &&
+               !code(nested, "GTI-B0001"),
+           "a nested TLS initializer cannot capture another initializer's "
+           "lexical local in either typed or inferred storage");
+  }
+  const auto captured = analyze(helpers + R"(
+int main() {
+  int caller = 4;
+  auto action = [caller]() -> int { return caller; };
+  thread_local int state = local_value(action());
+  return state;
+}
+)",
+                                true, true);
+  expect(!captured.semanticValid && code(captured, "GTI-S2124") &&
+             !code(captured, "GTI-B0001"),
+         "an enclosing captured closure remains surrounding automatic "
+         "storage when substituted into an independent TLS initializer");
+  const auto parameter = analyze(helpers + R"(
+int read(int caller) {
+  thread_local int state = nested_value(caller);
+  return state;
+}
+int main() { return read(4); }
+)",
+                                 true, true);
+  expect(!parameter.semanticValid && code(parameter, "GTI-S2124") &&
+             !code(parameter, "GTI-B0001"),
+         "an enclosing function parameter cannot acquire initializer-local "
+         "ownership through a macro's copied expression context");
 }
 
 void deferredProbeIsolation() {
@@ -2196,6 +2349,7 @@ int main() {
   instanceTextRelayEffects();
   requirementProbeIsolation();
   macroResultStorageEffects();
+  initializerLocalDependencies();
   deferredProbeIsolation();
   return failures ? 1 : 0;
 }

@@ -2435,6 +2435,9 @@ public:
   shareMacroExpansion(const ExpressionStmt &statement) const;
   [[nodiscard]] std::shared_ptr<const Stmt>
   shareMacroExpansion(const Call &call) const;
+  // Source-level declaration identity without inventing an eager call edge.
+  [[nodiscard]] const FunctionDecl *
+  findMacroDeclaration(const Call &call) const;
   [[nodiscard]] std::vector<MacroExpansionSite> macroExpansionSites() const;
   [[nodiscard]] const Token *findMacroDefault(const Expr &expression) const;
   // The declared attributes of a field or class-like declaration; nullptr
@@ -2889,6 +2892,8 @@ private:
                             const FunctionDecl &declaration);
   void recordMacroExpansion(const Call &call, StmtPtr body,
                             const FunctionDecl &declaration);
+  void recordMacroDeclaration(const Call &call,
+                              const FunctionDecl &declaration);
   void recordMacroDefault(const Expr &expression, Token caller);
   void recordDeclarationAttributes(
       const Stmt &declaration,

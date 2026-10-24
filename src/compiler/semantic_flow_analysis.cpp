@@ -5837,13 +5837,15 @@ auto SemanticVisitor::Impl::declare(const Token &name, SemanticType type,
                                     const Parameter *parameterDeclaration,
                                     std::optional<ConstantValue> constant)
     -> bool {
-  return declare(name, Symbol{.type = type,
-                              .constant = std::move(constant),
-                              .assignable = assignable,
-                              .declaration = name,
-                              .variableDeclaration = variableDeclaration,
-                              .parameterDeclaration = parameterDeclaration,
-                              .bindingKind = bindingKind});
+  return declare(name,
+                 Symbol{.type = type,
+                        .constant = std::move(constant),
+                        .assignable = assignable,
+                        .declaration = name,
+                        .variableDeclaration = variableDeclaration,
+                        .parameterDeclaration = parameterDeclaration,
+                        .declarationEffectOwner = currentProgramEffectOwner,
+                        .bindingKind = bindingKind});
 }
 
 auto SemanticVisitor::Impl::declare(const Token &name, Symbol symbol) -> bool {

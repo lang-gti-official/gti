@@ -1219,6 +1219,18 @@ SemanticModel::shareMacroExpansion(const Call &call) const {
   return inherited;
 }
 
+const FunctionDecl *
+SemanticModel::findMacroDeclaration(const Call &call) const {
+  if (const auto found = macroValueDeclarations.find(&call);
+      found != macroValueDeclarations.end())
+    return found->second;
+  const FunctionDecl *inherited =
+      base == nullptr ? nullptr : base->findMacroDeclaration(call);
+  noteBaseSyntheticSyntax(inherited != nullptr &&
+                          !baseStableSyntheticSyntax(&call));
+  return inherited;
+}
+
 std::vector<MacroExpansionSite> SemanticModel::macroExpansionSites() const {
   std::vector<MacroExpansionSite> sites;
   std::unordered_set<const ExpressionStmt *> seen;
@@ -2702,6 +2714,11 @@ void SemanticModel::recordMacroDefault(const Expr &expression, Token caller) {
 void SemanticModel::recordMacroExpansion(const Call &call, StmtPtr body,
                                          const FunctionDecl &declaration) {
   macroValueExpansions.insert_or_assign(&call, std::move(body));
+  recordMacroDeclaration(call, declaration);
+}
+
+void SemanticModel::recordMacroDeclaration(const Call &call,
+                                           const FunctionDecl &declaration) {
   macroValueDeclarations.insert_or_assign(&call, &declaration);
 }
 

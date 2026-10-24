@@ -2629,14 +2629,19 @@ auto SemanticVisitor::Impl::visitExternCDecl(const ExternCDecl &stmt) -> void {
 
 auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
     -> void {
-  if (analyzeMacroStatement(stmt))
-    return;
   struct RestoreMacroStatement {
     const Call *&slot;
     const Call *previous;
-    ~RestoreMacroStatement() { slot = previous; }
-  } restoreMacroStatement{macroStatementCall, macroStatementCall};
+    const ExpressionStmt *&context;
+    const ExpressionStmt *previousContext;
+    ~RestoreMacroStatement() {
+      slot = previous;
+      context = previousContext;
+    }
+  } restoreMacroStatement{macroStatementCall, macroStatementCall,
+                          macroStatementContext, macroStatementContext};
   macroStatementCall = directCall(stmt.expression());
+  macroStatementContext = &stmt;
   semanticModel.recordFullExpression(stmt, stmt.expression());
   discardResult(stmt.expression());
   const SemanticType resultType = analyze(stmt.expression());
@@ -2662,6 +2667,9 @@ auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
       semanticModel.findFunction(selected       ? selected->function
                                  : callOperator ? callOperator->function
                                                 : 0);
+  if (!target && call)
+    if (const auto *macro = semanticModel.findMacroDeclaration(*call))
+      target = semanticModel.findFunction(*macro);
   if (call != nullptr && !(target && target->discardableResult) &&
       resultType != SemanticType::Void && resultType != SemanticType::Unknown &&
       !expressionNeverReturns(stmt.expression().get())) {
@@ -7114,7 +7122,8 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
 }
 
 auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
-  if (analyzeMacroCall(expr))
+  if (analyzeMacroCall(expr, macroStatementCall == &expr ? macroStatementContext
+                                                         : nullptr))
     return;
   // How this call's result is used decides an accessor pair below; read it
   // before any child analysis supplies its own contexts.
@@ -11697,13 +11706,19 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
       isThreadLocalStorage(currentProgramEffectOwner.id) &&
       (symbol->bindingKind == SemanticBindingKind::LocalVariable ||
        symbol->bindingKind == SemanticBindingKind::Parameter ||
-       symbol->bindingKind == SemanticBindingKind::Field) &&
+       symbol->bindingKind == SemanticBindingKind::Field ||
+       symbol->bindingKind == SemanticBindingKind::LambdaCapture) &&
       (symbol->variableDeclaration == nullptr ||
-       !symbol->variableDeclaration->isThreadLocal())) {
+       !symbol->variableDeclaration->isThreadLocal()) &&
+      !((symbol->bindingKind == SemanticBindingKind::LocalVariable ||
+         symbol->bindingKind == SemanticBindingKind::Parameter) &&
+        symbol->declarationEffectOwner.valid() &&
+        symbol->declarationEffectOwner == currentProgramEffectOwner)) {
     Diagnostic diagnostic =
         makeDiagnostic("GTI-S2124", DiagnosticPhase::Semantics, expr.name(),
                        "A thread-local initializer cannot depend on an "
-                       "automatic binding, parameter or instance field.");
+                       "enclosing automatic binding, parameter, capture or "
+                       "instance field.");
     diagnostic.related.push_back(
         {tokenSpan(symbol->declaration),
          "This automatic dependency is declared here."});

@@ -1767,6 +1767,12 @@ int main() { return initialized; }
 }
 
 void macroResultsComposeWithPersistentStorage(std::string_view storage) {
+  const std::string globalOwner =
+      storage.empty()
+          ? ""
+          : std::string(storage) + " Resource owner = own_value(7);\n";
+  const std::string localOwner =
+      storage.empty() ? "Resource owner = own_value(7);\n" : "";
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-mir-persistent-storage/macro-results.gti",
       std::string(R"(
@@ -1792,11 +1798,12 @@ public:
   return saved;
 }
 )") + std::string(storage) +
-          " int32_t configured = select_value(true, second);\n" +
-          std::string(storage) + R"( Resource owner = own_value(7);
-int32_t inspect(Resource& value) { return value.read(); }
+          " int32_t configured = select_value(second > 0, second);\n" +
+          globalOwner +
+          R"(int32_t inspect(Resource& value) { return value.read(); }
 int main() {
-  int32_t& borrowed = first;
+)" + localOwner +
+          R"(  int32_t& borrowed = first;
   int32_t temporary = inspect(own_value(configured));
   return temporary + owner.read() + borrowed;
 }
