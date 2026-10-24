@@ -130,7 +130,11 @@ void testPublication() {
               "__gti_mir_p_" + std::to_string(*stage->destination);
           expect(!call.successResultDrop && !call.successResultDestination,
                  "passive call does not invent a semantic result obligation");
-          expect(text.text.find("std::move(" + slot + ".take())") !=
+          // A fallible wrapper moves the slot into its out-parameter; a
+          // failure-free wrapper constructs its returned prvalue from it.
+          expect(text.text.find(function.mayRaiseDefinedFailure
+                                    ? "std::move(" + slot + ".take())"
+                                    : "(" + slot + ".take())") !=
                      std::string::npos,
                  "Expected return reads its completed payload slot");
           for (int mutation = 0; mutation != 2; ++mutation) {

@@ -7431,11 +7431,10 @@ auto SemanticVisitor::Impl::predeclaredTextFieldSource(
         return index;
     return std::nullopt;
   };
-  // Only a read-only receiver or formal takes a relayed value, so only its
-  // fields can hold a caller's dynamic text.
-  const bool receiver =
-      function.ownerClass != 0 && !function.staticMember &&
-      declaration.receiverMutability() == ReceiverMutability::ReadOnly;
+  // Only a read-only formal or a read-only or consuming receiver takes a
+  // relayed value, so only its fields can hold a caller's dynamic text.
+  const bool receiver = function.ownerClass != 0 && !function.staticMember &&
+                        contractReceiver(declaration.receiverMutability());
   struct Origin {
     PredeclaredTextBorrowSource source;
     SemanticType type;
@@ -7602,8 +7601,7 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
               function.declaration, function.bodyDeclaration(),
               function.virtualMethod || function.overrideMethod,
               function.ownerClass) &&
-          function.bodyDeclaration()->receiverMutability() ==
-              ReceiverMutability::ReadOnly &&
+          contractReceiver(function.bodyDeclaration()->receiverMutability()) &&
           textPublicationOwner(owner) && directTextField(owner, field))
         return PredeclaredTextBorrowSource{.known = true,
                                            .ownerDependent = true,
@@ -7954,9 +7952,12 @@ auto SemanticVisitor::Impl::textReferenceReturnSummary(
   const bool conditional =
       type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
       type.arguments.front().kind == SemanticType::TypeParameter;
+  // A reference to a nested text class relays the paths under it (L-OWN-02
+  // phase 3).
   if (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
       (type.arguments.front().kind != SemanticType::StringView &&
-       type.arguments.front().kind != SemanticType::CString && !conditional) ||
+       type.arguments.front().kind != SemanticType::CString && !conditional &&
+       !nestedTextClass(type.arguments.front())) ||
       function.intrinsic != IntrinsicKind::None ||
       function.declaration == nullptr ||
       function.bodyDeclaration()->body() == nullptr)
@@ -8131,7 +8132,7 @@ auto SemanticVisitor::Impl::payloadReferenceRelayArm(
     const auto type = substituteType(candidate.payloadTypes[*index],
                                      enumSubstitution(fieldType));
     if (type.kind != SemanticType::StringView &&
-        type.kind != SemanticType::CString &&
+        type.kind != SemanticType::CString && !nestedTextClass(type) &&
         !(conditional && type.kind == SemanticType::TypeParameter))
       return std::nullopt;
     return OwnerlessTextField{
