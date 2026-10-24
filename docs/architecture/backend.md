@@ -4298,6 +4298,15 @@ support-library surface from ADR 006. Source and link-graph gates reject
 frontend, optimizer-private, C++ representation, and unowned LLVM component
 dependencies.
 
+On Linux, static LLVM component symbols are localized at the final ELF link,
+including for installed static-library consumers. A distribution's `libclang`
+may load its own shared `libLLVM`; exposing GTI's static LLVM registries to that
+DSO causes symbol interposition, duplicate initialization and shutdown
+corruption. Only the named LLVM archives are isolated (`--exclude-libs`), not
+GTI/runtime/native API symbols. This neither adds a monolithic LLVM dependency
+nor changes the opaque libclang C API boundary. macOS uses its existing
+two-level linkage and does not receive the ELF option.
+
 Backend selection is immutable `CompilationRequest` policy. The generic
 `compileToSelectedBackend` entry follows the same frontend, optimized-MIR,
 lowered construction, verification, diagnostic, and progress path as

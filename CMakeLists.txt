@@ -629,6 +629,29 @@ target_link_libraries(
           "$<INSTALL_INTERFACE:GTI_LLVM::Backend>"
 )
 
+# System libclang can depend on a shared libLLVM while GTI deliberately links
+# only its owned static components. ELF executable symbols otherwise preempt
+# the shared copy's ManagedStatic/command-line registries, corrupting startup
+# and shutdown. Isolate LLVM implementation symbols only, not GTI/native API
+# exports. INTERFACE propagation protects installed static-library consumers.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(gti_llvm_support_archives
+      "${CMAKE_STATIC_LIBRARY_PREFIX}LLVMSupport${CMAKE_STATIC_LIBRARY_SUFFIX}"
+      "${CMAKE_STATIC_LIBRARY_PREFIX}LLVMTargetParser${CMAKE_STATIC_LIBRARY_SUFFIX}"
+      "${CMAKE_STATIC_LIBRARY_PREFIX}LLVMDemangle${CMAKE_STATIC_LIBRARY_SUFFIX}")
+  list(JOIN gti_llvm_support_archives ":" gti_llvm_support_exclusions)
+  target_link_options(gti_compiler INTERFACE
+                      "LINKER:--exclude-libs,${gti_llvm_support_exclusions}")
+  set(gti_llvm_backend_archives)
+  foreach(component IN LISTS GTI_LLVM_BACKEND_LIBRARY_CLOSURE)
+    list(APPEND gti_llvm_backend_archives
+         "${CMAKE_STATIC_LIBRARY_PREFIX}${component}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+  endforeach()
+  list(JOIN gti_llvm_backend_archives ":" gti_llvm_backend_exclusions)
+  target_link_options(gti_llvm_backend INTERFACE
+                      "LINKER:--exclude-libs,${gti_llvm_backend_exclusions}")
+endif()
+
 add_library(
   "gti_runtime" STATIC
   "runtime/src/execution.cpp"

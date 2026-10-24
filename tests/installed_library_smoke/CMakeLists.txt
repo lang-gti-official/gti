@@ -64,6 +64,11 @@ add_executable(gti_installed_runtime_execution_smoke ../runtime_execution_tests.
 target_link_libraries(gti_installed_runtime_execution_smoke PRIVATE GTI::runtime)
 add_test(NAME installed_runtime_execution_boundary COMMAND gti_installed_runtime_execution_smoke)
 
+add_executable(gti_installed_llvm_clang_coexistence_smoke ../llvm_clang_coexistence_smoke.cpp)
+target_link_libraries(gti_installed_llvm_clang_coexistence_smoke PRIVATE GTI::llvm_backend GTI::bindgen)
+add_test(NAME installed_llvm_clang_coexistence COMMAND gti_installed_llvm_clang_coexistence_smoke)
+set_tests_properties(installed_llvm_clang_coexistence PROPERTIES TIMEOUT 30)
+
 add_executable(gti_installed_driver_smoke ../driver_library_smoke.cpp)
 target_link_libraries(gti_installed_driver_smoke PRIVATE GTI::driver)
 add_test(NAME installed_driver_library COMMAND gti_installed_driver_smoke)

@@ -1681,6 +1681,11 @@ add_executable(gti_runtime_execution_tests runtime_execution_tests.cpp)
 target_link_libraries(gti_runtime_execution_tests PRIVATE gti_runtime)
 add_test(NAME runtime_execution_boundary COMMAND gti_runtime_execution_tests)
 
+add_executable(gti_llvm_clang_coexistence_smoke llvm_clang_coexistence_smoke.cpp)
+target_link_libraries(gti_llvm_clang_coexistence_smoke PRIVATE gti_llvm_backend gti_bindgen)
+add_test(NAME llvm_clang_coexistence COMMAND gti_llvm_clang_coexistence_smoke)
+set_tests_properties(llvm_clang_coexistence PROPERTIES TIMEOUT 30)
+
 if(Python3_Interpreter_FOUND)
   add_test(NAME runtime_abi_inventory
            COMMAND "${Python3_EXECUTABLE}"
@@ -4661,6 +4666,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/llvm_backend_cli_test.py"
             "$<TARGET_FILE:gti>"
   )
+  set_tests_properties(llvm_backend_cli PROPERTIES TIMEOUT 120)
   add_test(
     NAME cli_workflow
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cli_smoke_test.py"

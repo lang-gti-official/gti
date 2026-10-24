@@ -10116,6 +10116,7 @@ remains pending:
 | `llvm_target_layout_abi` | O-LLVM-03 scalar/array/recursive-record/C-record/union layouts, target mismatch rejection, private result/status/failure signatures, exact C narrow extensions, versioned runtime-record layouts, recursive declaration/provenance, unresolved-definition and LLVM-verifier rejection, diagnostic isolation, and real binary object publication/linking with bidirectional C scalar oracles at O0/O1/O2/O3. Run on macOS arm64 and Linux x86_64. No GTI instruction lowering is claimed. |
 | `runtime_execution_boundary`, `installed_runtime_execution_boundary` | The real C begin/drain hooks attach the runtime lifetime, preserve reverse registered cleanup and idempotent drain, and link from the installed runtime. |
 | `runtime_abi_inventory` | Clang parses every active runtime C declaration into a target-specific exact-signature/resource/failure/callback inventory retained in the build. Missing declarations and unclassified headers reject. C++ helper wrappers are not C services. |
+| `llvm_clang_coexistence`, `installed_llvm_clang_coexistence` | Both LLVM's private static backend closure and the real libclang C reader load, parse a header and shut down in the same build-tree/installed consumer. Linux ELF archive symbol isolation prevents registry interposition with libclang's shared LLVM. Tests have bounded deadlines. |
 
 The existing example oracle now uses `backend_execution.py`. Default C++ runs
 retain both native standards, every marker/count/ownership check, and observable
