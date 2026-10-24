@@ -2,6 +2,7 @@
 // declaration-bound private capabilities.
 
 #include <std/detail/iterator>
+#include <std/meta>
 
 namespace gti_internal {
 namespace runtime {

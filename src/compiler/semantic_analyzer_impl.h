@@ -3159,6 +3159,10 @@ private:
   [[nodiscard]] std::optional<ConstraintFailure> firstRequirementFailure(
       std::span<const AppliedConceptRequirement> requirements) const;
 
+  [[nodiscard]] bool activeRequirementsImply(
+      std::span<const AppliedConceptRequirement> requirements,
+      const ConstraintExpression &expression, std::size_t root) const;
+
   [[nodiscard]] std::optional<ConstraintFailure> firstConceptApplicationFailure(
       const AppliedConceptRequirement &requirement) const;
 

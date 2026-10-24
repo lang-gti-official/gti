@@ -1059,7 +1059,8 @@ auto SemanticVisitor::Impl::satisfiesAtomicConstraint(
   case GenericConstraintKind::ObjectLayout:
     return runtimeObjectLayoutType(argument);
   case GenericConstraintKind::BorrowFree:
-    return !typeTraits(argument).containsBorrowedState;
+    return argument.kind != SemanticType::Reference &&
+           !typeTraits(argument).containsBorrowedState;
   case GenericConstraintKind::SignedIntegral:
     return isSignedInteger(argument);
   case GenericConstraintKind::UnsignedIntegral:
@@ -1522,6 +1523,166 @@ auto SemanticVisitor::Impl::structuralRequirementAvailable(
       });
 }
 
+auto SemanticVisitor::Impl::activeRequirementsImply(
+    std::span<const AppliedConceptRequirement> requirements,
+    const ConstraintExpression &expression, std::size_t root) const -> bool {
+  // Retain alternatives as propositions: intersecting their common unary
+  // consequences alone loses the fact that one of the alternatives holds.
+  // This is bounded, conservative implication, not predicate execution or a
+  // solver for arbitrary constexpr code. Failure to prove grants no capability.
+  struct Proof {
+    ConstraintExpressionKind kind = ConstraintExpressionKind::Application;
+    std::size_t left = 0;
+    std::size_t right = 0;
+    AppliedConceptRequirement leaf;
+    std::optional<PredicateCapability> capability;
+  };
+  std::vector<Proof> proofs(1);
+  std::size_t budget = 8192;
+  bool exhausted = false;
+  const auto append = [&](Proof proof) -> std::size_t {
+    if (proofs.size() >= 2048) {
+      exhausted = true;
+      return 0;
+    }
+    proofs.emplace_back(std::move(proof));
+    return proofs.size() - 1;
+  };
+  const auto combine = [&](ConstraintExpressionKind kind, std::size_t left,
+                           std::size_t right) -> std::size_t {
+    if (!left || !right)
+      return 0;
+    return append(Proof{.kind = kind, .left = left, .right = right});
+  };
+  std::function<std::size_t(const AppliedConceptRequirement &, unsigned)> leaf;
+  std::function<std::size_t(std::span<const AppliedConceptRequirement>,
+                            const ConstraintExpression &, std::size_t,
+                            unsigned)>
+      tree;
+  tree = [&](std::span<const AppliedConceptRequirement> set,
+             const ConstraintExpression &shape, std::size_t index,
+             unsigned depth) -> std::size_t {
+    if (depth > 64 || budget == 0) {
+      exhausted = true;
+      return 0;
+    }
+    --budget;
+    if (index >= shape.nodes.size())
+      return 0;
+    const auto &node = shape.nodes[index];
+    if (node.kind == ConstraintExpressionKind::Application) {
+      const auto found =
+          std::find_if(set.begin(), set.end(), [&](const auto &item) {
+            return item.expression == &shape &&
+                   item.expressionApplication == node.application;
+          });
+      return found == set.end() ? 0 : leaf(*found, depth + 1);
+    }
+    const auto left = tree(set, shape, node.left, depth + 1);
+    const auto right = tree(set, shape, node.right, depth + 1);
+    return combine(node.kind, left, right);
+  };
+  leaf = [&](const AppliedConceptRequirement &item,
+             unsigned depth) -> std::size_t {
+    if (depth > 64 || budget == 0) {
+      exhausted = true;
+      return 0;
+    }
+    --budget;
+    if (item.conceptId && item.conceptId <= concepts.size() &&
+        !(item.syntax &&
+          (item.syntax->predicate || item.syntax->memberRequirement))) {
+      const auto &conceptInfo = concepts[item.conceptId - 1];
+      if (!conceptInfo.protocol && conceptInfo.definitionExpression &&
+          !conceptInfo.definitionRequirements.empty()) {
+        const auto substitution =
+            conceptSubstitution(conceptInfo, item.arguments);
+        std::vector<AppliedConceptRequirement> expanded;
+        for (const auto &pattern : conceptInfo.definitionRequirements) {
+          AppliedConceptRequirement applied{
+              .conceptId = pattern.conceptId,
+              .syntax = pattern.syntax,
+              .expression = conceptInfo.definitionExpression,
+              .expressionApplication = pattern.expressionApplication,
+              .lookupScope = conceptInfo.namespaceScope};
+          for (const auto &argument : pattern.arguments) {
+            if (!argument.parameter)
+              applied.arguments.push_back(
+                  substituteType(argument.concrete, substitution));
+            else if (*argument.parameter < item.arguments.size())
+              applied.arguments.push_back(item.arguments[*argument.parameter]);
+            else
+              return 0;
+          }
+          expanded.emplace_back(std::move(applied));
+        }
+        return tree(expanded, *conceptInfo.definitionExpression,
+                    conceptInfo.definitionExpression->root, depth + 1);
+      }
+    }
+    Proof proof{.leaf = item};
+    if (item.syntax && item.syntax->predicate)
+      proof.capability = predicateCapabilityFor(
+          *item.syntax, item.arguments,
+          item.lookupScope ? &*item.lookupScope : nullptr);
+    return append(std::move(proof));
+  };
+  const auto required = tree(requirements, expression, root, 0);
+  std::function<bool(std::size_t, std::size_t)> implies =
+      [&](std::size_t provided, std::size_t wanted) -> bool {
+    if (!provided || !wanted || exhausted || budget == 0)
+      return false;
+    --budget;
+    const auto &a = proofs[provided];
+    const auto &b = proofs[wanted];
+    // A required conjunction needs both guarantees. Every possible provided
+    // branch must entail the goal, even when the goal is also a disjunction.
+    if (b.kind == ConstraintExpressionKind::Conjunction)
+      return implies(provided, b.left) && implies(provided, b.right);
+    if (a.kind == ConstraintExpressionKind::Disjunction)
+      return implies(a.left, wanted) && implies(a.right, wanted);
+    if (b.kind == ConstraintExpressionKind::Disjunction)
+      return implies(provided, b.left) || implies(provided, b.right);
+    if (a.kind == ConstraintExpressionKind::Conjunction)
+      return implies(a.left, wanted) || implies(a.right, wanted);
+    if (a.capability && b.capability &&
+        a.capability->atomic != GenericConstraintKind::None &&
+        b.capability->atomic != GenericConstraintKind::None &&
+        a.capability->arguments == b.capability->arguments)
+      return constraintImplies(constraintBit(a.capability->atomic),
+                               b.capability->atomic);
+    // Opaque predicates and member queries retain declaration identity. Equal
+    // spelling, or equal results on one concrete type, is not a proof.
+    const auto special = [](const AppliedConceptRequirement &item) {
+      return item.syntax &&
+             (item.syntax->predicate || item.syntax->memberRequirement);
+    };
+    return a.leaf.arguments == b.leaf.arguments &&
+           (special(a.leaf) || special(b.leaf)
+                ? a.leaf.syntax == b.leaf.syntax
+                : a.leaf.conceptId != 0 &&
+                      a.leaf.conceptId == b.leaf.conceptId);
+  };
+  for (const auto &scope : requirementScopes) {
+    const auto shaped =
+        std::find_if(scope.begin(), scope.end(),
+                     [](const auto &item) { return item.expression; });
+    if (shaped != scope.end()) {
+      const auto provided =
+          tree(scope, *shaped->expression, shaped->expression->root, 0);
+      if (implies(provided, required))
+        return true;
+    } else {
+      for (const auto &item : scope) {
+        const auto provided = leaf(item, 0);
+        if (implies(provided, required))
+          return true;
+      }
+    }
+  }
+  return false;
+}
+
 auto SemanticVisitor::Impl::firstRequirementFailure(
     std::span<const AppliedConceptRequirement> requirements) const
     -> std::optional<ConstraintFailure> {
@@ -1655,6 +1816,9 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
     }
     std::optional<ConstraintFailure> right = failureFor(node.right);
     if (!right) {
+      return std::nullopt;
+    }
+    if (activeRequirementsImply(requirements, *expression, nodeIndex)) {
       return std::nullopt;
     }
     return ConstraintFailure{.parameter = left->parameter,

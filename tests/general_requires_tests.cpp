@@ -46,12 +46,17 @@ void expect(bool condition, const std::string &message) {
 
 lang::FrontendResult check(const std::filesystem::path &root,
                            const std::filesystem::path &directory,
-                           const std::string &name, const std::string &source) {
+                           const std::string &name, const std::string &source,
+                           bool concurrent = false) {
   const auto file = directory / (name + ".gti");
   std::ofstream(file) << source;
   lang::FrontendOptions options;
   options.stopAfter = lang::FrontendPhase::Hir;
   options.analyzeRecoveredProgram = true;
+  if (concurrent) {
+    options.target.executionProfile = lang::ExecutionProfile::Concurrent;
+    options.target.runtimeCapabilities.threads = true;
+  }
   return lang::Frontend(options).analyze(
       file, std::nullopt, {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
 }
@@ -65,7 +70,8 @@ void accepted(const lang::FrontendResult &result, const std::string &name) {
   expect(!errors && result.hirValid, name);
   if (errors)
     for (const auto &item : result.diagnostics)
-      std::cerr << "  " << item.code << ": " << item.message << '\n';
+      std::cerr << "  " << item.code << " at " << item.primary.line << ": "
+                << item.message << '\n';
 }
 
 void rejected(const lang::FrontendResult &result, const std::string &name,
@@ -95,6 +101,7 @@ int main(int argc, char **argv) {
   accepted(
       check(root, directory, "source_scalar_policy", R"(
 #include <std/atomic>
+#include <std/meta>
 constexpr bool truth_type<T>() { return std::meta::is_bool<T>(); }
 concept integer_or_boolean<T> = std::meta::is_integral<T>() || truth_type<T>();
 concept signed_or_unsigned<T> = std::meta::is_signed_integral<T>() ||
@@ -102,7 +109,7 @@ concept signed_or_unsigned<T> = std::meta::is_signed_integral<T>() ||
 T load<T>(std::atomic<T>& value) requires integer_or_boolean<T> {
   return value.load();
 }
-T load_truth<T>(std::atomic<T>& value) requires truth_type<T> {
+T load_truth<T>(std::atomic<T>& value) requires truth_type<T>() {
   return value.load();
 }
 T increment<T>(T value) requires signed_or_unsigned<T> { return value + 1; }
@@ -114,32 +121,37 @@ uint64_t fields<T>() requires public_record<T> {
 int main() {
   static_assert(std::meta::is_bool<bool>());
   static_assert(!std::meta::is_bool<int>());
-  std::atomic<bool> truth(true);
-  std::atomic<int> number(7);
+  std::atomic<bool> truth{true};
+  std::atomic<int> number{7};
   return load<bool>(truth) && load_truth<bool>(truth) && load<int>(number) == 7 &&
          increment<int>(3) == 4 && fields<Record>() == uint64_t(1) ? 0 : 1;
 }
-)"),
+)", true),
       "source scalar policies transport common proofs across alternatives");
 
   rejected(check(root, directory, "disjunction_does_not_invent_scalar", R"(
 #include <std/atomic>
+#include <std/meta>
 concept integer_or_float<T> = std::meta::is_integral<T>() ||
                               std::meta::is_floating_point<T>();
 T load<T>(std::atomic<T>& value) requires integer_or_float<T> {
   return value.load();
 }
 int main() { return 0; }
-)"),
+)", true),
            "one non-atomic alternative cannot justify atomic storage");
 
   accepted(check(root, directory, "source_storage_policy", R"(
 #include <std/memory>
+#include <std/meta>
 struct Payload { int value = 0; };
-struct Borrowed { std::string_view value; };
+struct Borrowed {
+  int& value;
+  Borrowed(int& source) : value(source) {}
+};
 concept complete_object<T> = std::meta::has_object_layout<T>();
 concept independent<T> = complete_object<T> && std::meta::is_borrow_free<T>();
-uint64_t bytes<T>() requires complete_object<T> { return sizeof(T); }
+uint64_t bytes<T>() requires complete_object<T> { return std::layout_of<T>().bytes; }
 unsafe void retire<T>(T* address) requires complete_object<T> {
   unsafe { std::destroy_at<T>(address); }
 }

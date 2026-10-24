@@ -1,3 +1,5 @@
+#include <std/meta>
+
 namespace std {
 /// A scalar domain with a stable public atomic contract: bool and the
 /// fixed-width signed and unsigned integer types.

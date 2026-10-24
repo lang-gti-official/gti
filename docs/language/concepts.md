@@ -285,7 +285,12 @@ Owned receiver queries are concrete filters until an exact consuming-access
 proof is available; they never manufacture a borrowed receiver capability.
 Compound expressions may filter concrete types, but do not manufacture proofs
 for arbitrary subexpressions in an open generic body. Conjunction unions
-guaranteed facts; disjunction retains only common facts. Recursive query
+guaranteed operation facts; disjunction retains only common operation facts.
+Constraint satisfaction also preserves the alternatives themselves: a source
+concept or transparent predicate wrapper can prove an equivalent disjunction
+regardless of alternative order. Every possible provided branch must imply
+the required alternative; one successful branch is insufficient. This bounded
+implication check does not execute or infer arbitrary predicate bodies. Recursive query
 checking is bounded to 64 active checks.
 
 ### Constexpr reflection predicates
@@ -319,8 +324,11 @@ wrapper names.
 `std::meta::has_object_layout<T>()` answers whether a complete object
 representation is available to the general object-lifetime operations.
 `std::meta::is_borrow_free<T>()` answers whether a value retains no checked
-external-owner borrow. They are separate facts: a text view has a layout but
-retains a borrow. A raw pointer can be borrow-free without being valid, owned,
+external-owner borrow according to the type's structural ownership contract.
+They are separate facts: a class containing a checked reference can have a
+layout while retaining a borrow. The query is not a per-value lifetime check;
+all ordinary provenance and escape checks still apply to view values. A raw
+pointer can be borrow-free without being valid, owned,
 or safe to dereference. Neither predicate relaxes unsafe obligations. Both
 queries also have methods on `std::meta::type<T>`.
 
