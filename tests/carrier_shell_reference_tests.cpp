@@ -1702,6 +1702,158 @@ int main() { int owner = 7; return inspect(Window(owner)) - 7; }
          "unrelated user carrier exercises abstract entry alias proof");
 }
 
+// A carrier built from the view an accessor returned stores a reference to
+// that returned referent, whether the result is a temporary or bound to a
+// reference first. MIR keeps the referent under the accessor's result loan
+// and holds exactly that loan's stored dependency.
+void checkAccessorReturnedTextCarriers() {
+  const auto frontend = lang::Frontend().analyze(
+      "accessor-returned-text-carriers.gti", R"gti(
+#include <std/string>
+#include <std/optional>
+class Box {
+public:
+  std::string_view text;
+  Box(std::string_view text) : text(text) {}
+  std::string_view& get() { return this.text; }
+};
+class Cursor {
+  std::string_view& view;
+public:
+  Cursor(std::string_view& view) : view(view) {}
+  std::size_t size() { return this.view.size(); }
+};
+Cursor open(std::string_view& view) { return Cursor(view); }
+int main() {
+  std::string owner = std::string("owned");
+  Box owned = Box(owner.view());
+  Box literal = Box("literal");
+  auto first = owned.get().begin();
+  auto second = literal.get().begin();
+  std::string_view& named = literal.get();
+  auto third = named.begin();
+  Cursor cursor = open(owned.get());
+  std::optional<std::string_view> maybe =
+      std::optional<std::string_view>(owner.view());
+  auto fourth = maybe.value().begin();
+  if (*first != 'o' || *second != 'l' || *third != 'l' ||
+      cursor.size() != std::size_t(5) || *fourth != 'o')
+    return 1;
+  return 0;
+}
+)gti",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "carriers of accessor-returned views construct verified MIR");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  try {
+    expect(!gti_test::emitCpp(frontend).contents.empty(),
+           "accessor-returned text carriers reach the production backend");
+  } catch (const std::logic_error &error) {
+    expect(false,
+           std::string("accessor text carrier backend: ") + error.what());
+  }
+  const auto rejectedWith = [](const lang::MirProgram &program,
+                               std::string_view message) {
+    const auto result = lang::verifyMirProgram(program);
+    return std::any_of(
+        result.errors.begin(), result.errors.end(), [&](const auto &error) {
+          return error.message.find(message) != std::string::npos;
+        });
+  };
+  std::size_t owned = 0;
+  std::size_t ownerless = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &loan : function.body.loans) {
+      const auto *accessor = function.body.findLoan(loan.parent);
+      const auto *referent = function.body.findPlace(loan.source);
+      if (loan.kind != lang::MirLoanKind::Stored || accessor == nullptr ||
+          accessor->kind != lang::MirLoanKind::CallResult ||
+          referent == nullptr ||
+          referent->root != lang::MirPlaceRootKind::Loan ||
+          referent->loan != accessor->id || !referent->projections.empty())
+        continue;
+      expect(loan.storedDependency == accessor->storedDependency,
+             "an accessor-referent carrier holds its result's dependency");
+      const auto mutate = [&](const auto &change) {
+        auto malformed = frontend.mir;
+        change(const_cast<lang::MirFunctionInstance *>(
+                   malformed.findFunctionInstance(function.id))
+                   ->body.loans[loan.id - 1]);
+        return malformed;
+      };
+      if (loan.storedDependency != 0) {
+        ++owned;
+        expect(rejectedWith(
+                   mutate([](auto &changed) { changed.storedDependency = 0; }),
+                   "carrier shell loan does not preserve its exact "
+                   "stored dependency"),
+               "an owner-backed accessor carrier cannot drop its dependency");
+      } else {
+        // Ownerless text is proved only at the exact returned referent under
+        // its result loan, never at the accessor's owner.
+        ++ownerless;
+        expect(rejectedWith(mutate([](auto &changed) { changed.parent = 0; }),
+                            "carrier reference result requires one exact "
+                            "stored dependency"),
+               "ownerless accessor text is proved only under its result loan");
+        expect(rejectedWith(mutate([&](auto &changed) {
+                              changed.source = accessor->source;
+                            }),
+                            "carrier reference result requires one exact "
+                            "stored dependency"),
+               "ownerless accessor text cannot move to the accessor's owner");
+      }
+    }
+  }
+  expect(owned >= 3 && ownerless >= 2,
+         "temporary, named, user and optional accessor carriers are checked");
+
+  // The carrier keeps the accessor's owner and the text's owner borrowed.
+  const std::string box = R"gti(
+#include <std/string>
+#include <std/optional>
+class Box {
+public:
+  mut std::string_view text;
+  Box(std::string_view text) : text(text) {}
+  std::string_view& get() { return this.text; }
+};
+int main() {
+  mut std::string owner = std::string("owned");
+)gti";
+  for (const auto &[label, body] :
+       {std::pair<std::string_view, std::string_view>{
+            "text owner",
+            "Box b = Box(owner.view()); auto it = b.get().begin(); "
+            "owner.push_back('x'); return *it == 'o' ? 0 : 1;"},
+        {"accessor owner",
+         "mut Box b = Box(\"literal\"); auto it = b.get().begin(); "
+         "b.text = \"other\"; return *it == 'l' ? 0 : 1;"},
+        {"optional owner",
+         "std::optional<std::string_view> o = "
+         "std::optional<std::string_view>(owner.view()); auto it = "
+         "o.value().begin(); owner.push_back('x'); return *it == 'o' ? 0 "
+         ": 1;"}}) {
+    const auto rejected = lang::Frontend().analyze(
+        "accessor-text-carrier-mutation.gti", box + std::string(body) + "\n}\n",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!rejected.canGenerateCode() &&
+               std::all_of(rejected.diagnostics.begin(),
+                           rejected.diagnostics.end(),
+                           [](const auto &diagnostic) {
+                             return diagnostic.code == "GTI-S2017";
+                           }) &&
+               !rejected.diagnostics.empty(),
+           std::string("an accessor text carrier keeps its ") +
+               std::string(label) + " borrowed");
+  }
+}
+
 void checkSharedAccessorRange() {
   const auto fixture = standardLibraryRoot().parent_path() /
                        "tests/fixtures/shared_accessor_range.gti";
@@ -1881,6 +2033,7 @@ int main() {
 
 int main() {
   checkSharedAccessorRange();
+  checkAccessorReturnedTextCarriers();
   checkAbstractCarrierAliasResult();
   checkProjectedOwningMemberRetainedResults();
   checkOwningElementSlice();

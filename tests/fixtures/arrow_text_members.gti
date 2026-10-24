@@ -70,6 +70,16 @@ int main(int argc, std::vector<std::string> argv) {
       std::optional<std::string_view>(owner.view());
   std::println(maybe->size() + viewed->size());
   std::println(maybe->empty() ? 1 : 0);
+  // Iterators built directly from the view the arrow designates.
+  auto first = literal->begin();
+  auto last = owned->rbegin();
+  auto optional_first = maybe->begin();
+  auto viewed_first = viewed->begin();
+  auto changed = changing->begin();
+  std::println(*first == 'l' && *last == 'd' && *optional_first == 'o' &&
+                       *viewed_first == 'o' && *changed == 'c'
+                   ? 1
+                   : 0);
 
   Handle<Counter> handle = Handle<Counter>(Counter(4));
   std::println(total(handle));
