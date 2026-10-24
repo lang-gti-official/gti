@@ -10,12 +10,6 @@ class function_pointer<Signature> {};
 function_pointer<Signature> function_pointer_from_item<Signature, F>(F target);
 R function_pointer_invoke<R, Args...>(function_pointer<R(Args...)>& target,
                                     Args... args);
-@compiler_constraint("read_callable") concept read_callable_capability<Callable, Argument, Result>;
-@compiler_constraint("mut_callable") concept mut_callable_capability<Callable, Argument, Result>;
-@compiler_constraint("once_callable") concept once_callable_capability<Callable, Argument, Result>;
-@compiler_constraint("read_binary_callable") concept read_binary_callable_capability<Callable, Left, Right, Result>;
-@compiler_constraint("mut_binary_callable") concept mut_binary_callable_capability<Callable, Left, Right, Result>;
-@compiler_constraint("once_binary_callable") concept once_binary_callable_capability<Callable, Left, Right, Result>;
 @compiler_constraint("indirect_predicate") concept indirect_predicate_capability<Callable, Iterator>;
 @compiler_constraint("indirect_operation") concept indirect_operation_capability<Callable, Iterator, Result>;
 @compiler_constraint("range_predicate") concept range_predicate_capability<Callable, Range>;
@@ -450,22 +444,65 @@ public:
   /// consuming use site and accepts read-only, mutable, or consuming targets.
   /// Arguments are exact readable values: a concrete target may take each one
   /// by value or by read-only reference. Results are exact and non-borrowed.
+  [[unsatisfied("Provide a safe unary call through read-only access with the exact owned result and a readable or consumed argument.")]]
   concept read_callable<Callable, Argument, Result> =
-      gti_internal::read_callable_capability<Callable, Argument, Result>;
+      requires(Callable& callable, Argument& argument) {
+        { callable(argument) } -> Result;
+      } || requires(Callable& callable, Argument argument) {
+        { callable(std::move(argument)) } -> Result;
+      };
+  [[unsatisfied("Provide a safe repeatable unary call with the exact owned result and a readable or consumed argument.")]]
   concept mut_callable<Callable, Argument, Result> =
-      gti_internal::mut_callable_capability<Callable, Argument, Result>;
+      std::read_callable<Callable, Argument, Result> ||
+      requires(mut Callable& callable, Argument& argument) {
+        { callable(argument) } -> Result;
+      } || requires(mut Callable& callable, Argument argument) {
+        { callable(std::move(argument)) } -> Result;
+      };
+  [[unsatisfied("Provide a safe unary call through owned access with the exact owned result and a readable or consumed argument.")]]
   concept once_callable<Callable, Argument, Result> =
-      gti_internal::once_callable_capability<Callable, Argument, Result>;
+      std::mut_callable<Callable, Argument, Result> ||
+      requires(Callable callable, Argument& argument) {
+        { std::move(callable)(argument) } -> Result;
+      } || requires(Callable callable, Argument argument) {
+        { std::move(callable)(std::move(argument)) } -> Result;
+      };
 
+  [[unsatisfied("Provide a safe binary call through read-only access with the exact owned result and readable or consumed arguments.")]]
   concept read_binary_callable<Callable, Left, Right, Result> =
-      gti_internal::read_binary_callable_capability<Callable, Left, Right,
-                                                    Result>;
+      requires(Callable& callable, Left& left, Right& right) {
+        { callable(left, right) } -> Result;
+      } || requires(Callable& callable, Left left, Right& right) {
+        { callable(std::move(left), right) } -> Result;
+      } || requires(Callable& callable, Left& left, Right right) {
+        { callable(left, std::move(right)) } -> Result;
+      } || requires(Callable& callable, Left left, Right right) {
+        { callable(std::move(left), std::move(right)) } -> Result;
+      };
+  [[unsatisfied("Provide a safe repeatable binary call with the exact owned result and readable or consumed arguments.")]]
   concept mut_binary_callable<Callable, Left, Right, Result> =
-      gti_internal::mut_binary_callable_capability<Callable, Left, Right,
-                                                   Result>;
+      std::read_binary_callable<Callable, Left, Right, Result> ||
+      requires(mut Callable& callable, Left& left, Right& right) {
+        { callable(left, right) } -> Result;
+      } || requires(mut Callable& callable, Left left, Right& right) {
+        { callable(std::move(left), right) } -> Result;
+      } || requires(mut Callable& callable, Left& left, Right right) {
+        { callable(left, std::move(right)) } -> Result;
+      } || requires(mut Callable& callable, Left left, Right right) {
+        { callable(std::move(left), std::move(right)) } -> Result;
+      };
+  [[unsatisfied("Provide a safe binary call through owned access with the exact owned result and readable or consumed arguments.")]]
   concept once_binary_callable<Callable, Left, Right, Result> =
-      gti_internal::once_binary_callable_capability<Callable, Left, Right,
-                                                    Result>;
+      std::mut_binary_callable<Callable, Left, Right, Result> ||
+      requires(Callable callable, Left& left, Right& right) {
+        { std::move(callable)(left, right) } -> Result;
+      } || requires(Callable callable, Left left, Right& right) {
+        { std::move(callable)(std::move(left), right) } -> Result;
+      } || requires(Callable callable, Left& left, Right right) {
+        { std::move(callable)(left, std::move(right)) } -> Result;
+      } || requires(Callable callable, Left left, Right right) {
+        { std::move(callable)(std::move(left), std::move(right)) } -> Result;
+      };
 
   concept predicate<Predicate, Argument> =
       std::mut_callable<Predicate, Argument, bool>;

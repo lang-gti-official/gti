@@ -139,6 +139,36 @@ struct Tally {
   void operator-=(int amount) mut { this.value -= amount; }
 };
 struct InheritedTally : public Tally {};
+class OwnedNumber {
+  int value;
+public:
+  OwnedNumber(int value) : value(value) {}
+  OwnedNumber(OwnedNumber& other) = delete;
+  OwnedNumber(OwnedNumber&& other) = default;
+  int read() { return this.value; }
+};
+struct ConsumeNumber {
+  int operator()(OwnedNumber number) { return number.read(); }
+};
+struct AddOwnedLeft {
+  int operator()(OwnedNumber number, int& extra) { return number.read() + extra; }
+};
+struct ArgumentForms {
+  int operator()(int number) { return number; }
+  int operator()(int& number) { return number + 100; }
+};
+int consume_integer<F>(F& callable, int number)
+    requires std::read_callable<F, int, int> {
+  return callable(std::move(number));
+}
+int consume_number<F>(F& callable, OwnedNumber number)
+    requires std::read_callable<F, OwnedNumber, int> {
+  return callable(std::move(number));
+}
+int add_owned_left<F>(F& callable, OwnedNumber number, int& extra)
+    requires std::read_binary_callable<F, OwnedNumber, int, int> {
+  return callable(std::move(number), extra);
+}
 void adjust<adjustable T>(mut T& value, int amount) {
   ++value;
   value += amount;
@@ -225,6 +255,15 @@ namespace query_hygiene {
 }
 
 int main() {
+  ConsumeNumber consume{};
+  AddOwnedLeft add{};
+  ArgumentForms forms{};
+  // The moved argument selects the owned overload. A named argument would be
+  // ambiguous and is still rejected by ordinary overload resolution.
+  if (consume_integer(forms, 9) != 9) { return 14; }
+  int extra = 5;
+  if (consume_number(consume, OwnedNumber(7)) != 7 ||
+      add_owned_left(add, OwnedNumber(8), extra) != 13) { return 13; }
   // Independent facts let an application choose its own erased-storage policy.
   // They do not grant permission to skip cleanup or extend a borrow.
   static_assert(std::meta::is_public_base_of<Tally, InheritedTally>());

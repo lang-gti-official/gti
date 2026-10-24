@@ -636,14 +636,15 @@ The current structural capability set is intentionally small:
   Ordinary call viability applies: a by-value operand cannot copy a move-only
   borrowed value merely because a signature exists;
 - `read_callable<F, A, R>`, `mut_callable<F, A, R>`, and
-  `once_callable<F, A, R>` require one exact unary callable signature whose
-  result is the owned, non-borrowed `R` and whose readable argument is either
-  `A` or `A&`. Nominal targets provide a public `operator()`; exact lambdas
-  and eligible GTI function items provide their selected signature. The
+  `once_callable<F, A, R>` are source expression queries for a safe unary
+  invocation returning exactly the owned, non-borrowed `R`, with either a
+  borrowed `A&` argument or a consumed owned `A`. Nominal targets provide a
+  public `operator()`; lambdas and GTI function items use ordinary resolution. The
   invocation capability is respectively read-only, repeatable
   read-only/mutable, or usable once through owned access;
 - the corresponding `read_binary_callable`, `mut_binary_callable`, and
-  `once_binary_callable` relationships name two exact readable arguments;
+  `once_binary_callable` relationships test both arguments, including mixed
+  borrowed/consumed forms;
 - `once_action<F>` is the source-defined nullary exact-`void` consuming-use
   relation: `requires(F action) { { std::move(action)() } -> void; }`;
 - `indirect_predicate<F, I>` derives the exact referent of `I::operator*()` and
@@ -653,6 +654,15 @@ The current structural capability set is intentionally small:
 - `range_predicate<F, R>` and `range_operation<F, R, Result>` derive the exact
   read-only element of a complete range and apply the same repeatable callable
   rules without exposing an associated iterator type.
+
+The unary/binary source policies deliberately replace the former declaration
+census with usable expression queries. A callable may therefore qualify through
+a valid owned-argument form even when its borrowed form is ambiguous. The
+concept does not choose the argument form for a caller: the actual invocation
+must still satisfy exact overload selection, copying/movement, access and
+lifetime checks. An ambiguous named-argument call remains an error at the call
+site. Generic code that needs one specific form can state that expression
+directly in a requirement. No unary/binary callable compiler bindings remain.
 
 In a generic body the writable capability supplies the mutable-dereference
 form of `*output = value`, and `subscripts_to_mut` supplies

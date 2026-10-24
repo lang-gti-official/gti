@@ -7045,9 +7045,12 @@ int main() {
       }
     }
     expect(!result.canGenerateCode() &&
-               hasDiagnostic(result.diagnostics, std::string("concept '") +
-                                                     std::string(conceptName) +
-                                                     "'") &&
+               (hasDiagnostic(result.diagnostics, std::string("concept '") +
+                                                      std::string(conceptName) +
+                                                      "'") ||
+                hasDiagnostic(result.diagnostics, std::string("concept '") +
+                                                      std::string(conceptName) +
+                                                      "<")) &&
                hasDiagnosticHint(result.diagnostics, std::string(hintFragment)),
            std::string(message));
   };
@@ -7064,7 +7067,7 @@ bool inspect<Function>(int32_t value, Function function)
 }
 int main() { return inspect(1, mutable_only()) ? 0 : 1; }
 )",
-          "std::read_callable", "receiver capability",
+          "std::read_callable", "read-only access",
           "a mutable-only target should not satisfy a read-only callable "
           "use site");
 
@@ -7080,7 +7083,7 @@ bool inspect<Function>(int32_t value, mut Function function)
 }
 int main() { return inspect(1, once_only()) ? 0 : 1; }
 )",
-          "std::predicate", "receiver capability",
+          "std::predicate", "safe repeatable unary call",
           "a consuming target should not satisfy a repeatable predicate use "
           "site");
 
@@ -7096,7 +7099,7 @@ bool inspect<Function>(int32_t value, mut Function function)
 }
 int main() { return inspect(1, integer_result()) ? 0 : 1; }
 )",
-          "std::predicate", "declared owned result",
+          "std::predicate", "exact owned result",
           "a predicate should require an exact owned bool result");
 
   rejects("borrowed-operation-result.gti", R"(
@@ -7111,11 +7114,12 @@ int32_t transform<Function>(int32_t value, mut Function function)
 }
 int main() { return transform(1, borrowed_result()) - 1; }
 )",
-          "std::operation", "declared owned result",
+          "std::operation", "exact owned result",
           "an operation should not satisfy an owned-result relation with a "
           "borrowed result");
 
-  rejects("ambiguous-callable-relation.gti", R"(
+  const auto ambiguous = lang::Frontend().analyze(
+      "ambiguous-callable-use.gti", R"(
 #include <std/functional>
 class ambiguous {
 public:
@@ -7128,9 +7132,11 @@ bool inspect<Function>(int32_t value, Function function)
 }
 int main() { return inspect(1, ambiguous()) ? 0 : 1; }
 )",
-          "std::read_callable", "one exact public unary operator()",
-          "a callable relation should reject an ambiguous exact readable "
-          "signature");
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!ambiguous.canGenerateCode() &&
+             hasDiagnosticCode(ambiguous.diagnostics, "GTI-S2022"),
+         "an owned-call alternative does not authorize an ambiguous borrowed "
+         "call");
 
   // A dependent compound subject keeps its declaration inside a generic body:
   // its public operator() is inspected through ordinary substitution.
@@ -7226,7 +7232,7 @@ bool generic_order<std::totally_ordered T>(T& left, T& right) {
 }
 int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
 )",
-          "std::comparator", "one exact public binary operator()",
+          "std::comparator", "safe repeatable binary call",
           "a dependent unary target should not satisfy a binary comparator");
 
   rejects("dependent-callable-result.gti", R"(
@@ -7242,7 +7248,7 @@ bool generic_order<std::totally_ordered T>(T& left, T& right) {
 }
 int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
 )",
-          "std::comparator", "declared owned result",
+          "std::comparator", "exact owned result",
           "a dependent comparator should still require an exact bool result");
 
   rejects("closed-callable-open-argument.gti", R"(
@@ -7258,7 +7264,7 @@ bool generic_order<std::totally_ordered T>(T& left, T& right) {
 }
 int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
 )",
-          "std::comparator", "one exact public binary operator()",
+          "std::comparator", "safe repeatable binary call",
           "a closed signature should not prove a relation over an open "
           "argument");
 
@@ -7283,7 +7289,7 @@ bool generic_order<std::totally_ordered T>(T& left, T& right) {
 }
 int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
 )",
-          "std::read_binary_callable", "receiver capability",
+          "std::read_binary_callable", "read-only access",
           "a dependent mutable-only target should not satisfy a read-only "
           "binary use site");
 
@@ -7309,18 +7315,13 @@ int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
          "a dependent callable class should still require its own generic "
          "constraints from the enclosing facts");
 
-  const lang::FrontendResult privateBinding = lang::Frontend().analyze(
-      "private-callable-intrinsic.gti", R"(
-#include <std/functional>
-
-concept forged<F, A, R> =
-    gti_internal::read_callable_capability<F, A, R>;
-)",
-      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!privateBinding.canGenerateCode() &&
-             hasDiagnosticCode(privateBinding.diagnostics, "GTI-S2058"),
-         "compiler-owned callable relations should remain private behind the "
-         "public std concepts");
+  expect(!lang::compilerStructuralConstraint("read_callable") &&
+             !lang::compilerStructuralConstraint("mut_callable") &&
+             !lang::compilerStructuralConstraint("once_callable") &&
+             !lang::compilerStructuralConstraint("read_binary_callable") &&
+             !lang::compilerStructuralConstraint("mut_binary_callable") &&
+             !lang::compilerStructuralConstraint("once_binary_callable"),
+         "source callable concepts have no legacy compiler binding");
 }
 
 void testSymbolicAutoLocalBinding() {

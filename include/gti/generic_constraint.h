@@ -52,12 +52,6 @@ enum class StructuralConstraintKind : std::uint8_t {
   RangeOf,
   MutableRangeOf,
   SizedRange,
-  ReadCallable,
-  MutCallable,
-  OnceCallable,
-  ReadBinaryCallable,
-  MutBinaryCallable,
-  OnceBinaryCallable,
   IndirectPredicate,
   IndirectOperation,
   RangePredicate,
@@ -109,7 +103,7 @@ inline constexpr std::array<GenericConstraintKind, 21> genericConstraintKinds{{
 // complete fact inventory above also serves reflection and generic proofs.
 inline constexpr std::array<CompilerConstraintRecord, 0> compilerConstraints{};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 19>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 13>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
@@ -120,14 +114,6 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 19>
         {"range_of", StructuralConstraintKind::RangeOf, 2},
         {"mutable_range_of", StructuralConstraintKind::MutableRangeOf, 2},
         {"sized_range", StructuralConstraintKind::SizedRange, 1},
-        {"read_callable", StructuralConstraintKind::ReadCallable, 3},
-        {"mut_callable", StructuralConstraintKind::MutCallable, 3},
-        {"once_callable", StructuralConstraintKind::OnceCallable, 3},
-        {"read_binary_callable", StructuralConstraintKind::ReadBinaryCallable,
-         4},
-        {"mut_binary_callable", StructuralConstraintKind::MutBinaryCallable, 4},
-        {"once_binary_callable", StructuralConstraintKind::OnceBinaryCallable,
-         4},
         {"indirect_predicate", StructuralConstraintKind::IndirectPredicate, 2},
         {"indirect_operation", StructuralConstraintKind::IndirectOperation, 3},
         {"range_predicate", StructuralConstraintKind::RangePredicate, 2},

@@ -488,24 +488,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The first type must be an integral enum and the second its exact "
           "declared underlying integer type.");
       break;
-    case StructuralConstraintKind::ReadCallable:
-    case StructuralConstraintKind::MutCallable:
-    case StructuralConstraintKind::OnceCallable:
-      diagnostic.hints.emplace_back(
-          "The callable must provide one exact public unary operator() with "
-          "the declared owned result and argument taken by value or "
-          "read-only reference; its receiver capability must satisfy the "
-          "declared read, mut, or once use site.");
-      break;
-    case StructuralConstraintKind::ReadBinaryCallable:
-    case StructuralConstraintKind::MutBinaryCallable:
-    case StructuralConstraintKind::OnceBinaryCallable:
-      diagnostic.hints.emplace_back(
-          "The callable must provide one exact public binary operator() with "
-          "the declared owned result and arguments taken by value or "
-          "read-only reference; its receiver capability must satisfy the "
-          "declared read, mut, or once use site.");
-      break;
     case StructuralConstraintKind::IndirectPredicate:
       diagnostic.hints.emplace_back(
           "The iterator's read-only dereference result must be accepted by "

@@ -1144,24 +1144,6 @@ auto SemanticVisitor::Impl::firstConstraintFailure(
   return std::nullopt;
 }
 
-auto SemanticVisitor::Impl::guaranteedStructuralKinds(
-    StructuralConstraintKind kind) -> std::vector<StructuralConstraintKind> {
-  switch (kind) {
-  case StructuralConstraintKind::ReadCallable:
-    return {kind, StructuralConstraintKind::MutCallable,
-            StructuralConstraintKind::OnceCallable};
-  case StructuralConstraintKind::MutCallable:
-    return {kind, StructuralConstraintKind::OnceCallable};
-  case StructuralConstraintKind::ReadBinaryCallable:
-    return {kind, StructuralConstraintKind::MutBinaryCallable,
-            StructuralConstraintKind::OnceBinaryCallable};
-  case StructuralConstraintKind::MutBinaryCallable:
-    return {kind, StructuralConstraintKind::OnceBinaryCallable};
-  default:
-    return {kind};
-  }
-}
-
 auto SemanticVisitor::Impl::conceptSubstitution(
     const RegisteredConcept &conceptInfo,
     std::span<const SemanticType> arguments) const -> TypeSubstitution {
@@ -1247,12 +1229,7 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
             requirement.arguments[*argument.parameter]);
       }
       if (valid) {
-        for (StructuralConstraintKind guaranteed :
-             guaranteedStructuralKinds(expanded.kind)) {
-          ExpandedStructuralRequirement implied = expanded;
-          implied.kind = guaranteed;
-          result.emplace_back(std::move(implied));
-        }
+        result.emplace_back(std::move(expanded));
       }
     }
     return result;
@@ -1419,53 +1396,16 @@ auto SemanticVisitor::Impl::structuralRequirementAvailable(
     std::span<const SemanticType> arguments) const -> bool {
   const std::vector<ExpandedStructuralRequirement> active =
       activeStructuralRequirements();
-  const auto callableCapability = [](StructuralConstraintKind candidate)
-      -> std::optional<CallableInvocationCapability> {
-    switch (candidate) {
-    case StructuralConstraintKind::ReadCallable:
-    case StructuralConstraintKind::ReadBinaryCallable:
-      return CallableInvocationCapability::Read;
-    case StructuralConstraintKind::MutCallable:
-    case StructuralConstraintKind::MutBinaryCallable:
-      return CallableInvocationCapability::Mutable;
-    case StructuralConstraintKind::OnceCallable:
-    case StructuralConstraintKind::OnceBinaryCallable:
-      return CallableInvocationCapability::Once;
-    default:
-      return std::nullopt;
-    }
-  };
-  const auto callableArity = [](StructuralConstraintKind candidate) {
-    switch (candidate) {
-    case StructuralConstraintKind::ReadCallable:
-    case StructuralConstraintKind::MutCallable:
-    case StructuralConstraintKind::OnceCallable:
-      return 1;
-    case StructuralConstraintKind::ReadBinaryCallable:
-    case StructuralConstraintKind::MutBinaryCallable:
-    case StructuralConstraintKind::OnceBinaryCallable:
-      return 2;
-    default:
-      return 0;
-    }
-  };
-  return std::any_of(
-      active.begin(), active.end(), [&](const auto &requirement) {
-        if (requirement.arguments.size() != arguments.size() ||
-            !std::equal(requirement.arguments.begin(),
-                        requirement.arguments.end(), arguments.begin(),
-                        arguments.end())) {
-          return false;
-        }
-        if (requirement.kind == kind) {
-          return true;
-        }
-        const auto provided = callableCapability(requirement.kind);
-        const auto required = callableCapability(kind);
-        return provided && required &&
-               callableArity(requirement.kind) == callableArity(kind) &&
-               callableCapabilitySatisfies(*provided, *required);
-      });
+  return std::any_of(active.begin(), active.end(),
+                     [&](const auto &requirement) {
+                       if (requirement.arguments.size() != arguments.size() ||
+                           !std::equal(requirement.arguments.begin(),
+                                       requirement.arguments.end(),
+                                       arguments.begin(), arguments.end())) {
+                         return false;
+                       }
+                       return requirement.kind == kind;
+                     });
 }
 
 auto SemanticVisitor::Impl::activeRequirementsImply(
@@ -5935,17 +5875,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     }
     return candidates.size() == 1;
   };
-  const auto unaryCallable = [&](CallableInvocationCapability capability) {
-    return arguments.size() == 3 &&
-           callableSatisfies(arguments[0],
-                             std::span<const SemanticType>(&arguments[1], 1),
-                             arguments[2], capability);
-  };
-  const auto binaryCallable = [&](CallableInvocationCapability capability) {
-    return arguments.size() == 4 &&
-           callableSatisfies(arguments[0], arguments.subspan(1, 2),
-                             arguments[3], capability);
-  };
   const auto readableRangeElement =
       [&](const SemanticType &range) -> std::optional<SemanticType> {
     if (range.kind == SemanticType::Array && range.arguments.size() == 1) {
@@ -6072,18 +6001,6 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
            satisfiesAtomicConstraint(arguments[0],
                                      GenericConstraintKind::IntegralEnum) &&
            enums[arguments[0].enumId - 1].underlyingType == arguments[1];
-  case StructuralConstraintKind::ReadCallable:
-    return unaryCallable(CallableInvocationCapability::Read);
-  case StructuralConstraintKind::MutCallable:
-    return unaryCallable(CallableInvocationCapability::Mutable);
-  case StructuralConstraintKind::OnceCallable:
-    return unaryCallable(CallableInvocationCapability::Once);
-  case StructuralConstraintKind::ReadBinaryCallable:
-    return binaryCallable(CallableInvocationCapability::Read);
-  case StructuralConstraintKind::MutBinaryCallable:
-    return binaryCallable(CallableInvocationCapability::Mutable);
-  case StructuralConstraintKind::OnceBinaryCallable:
-    return binaryCallable(CallableInvocationCapability::Once);
   case StructuralConstraintKind::IndirectPredicate:
   case StructuralConstraintKind::IndirectOperation: {
     if (arguments.size() !=
@@ -6269,12 +6186,6 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       // Enum representation classification grants no numeric operators.
       break;
 
-    case StructuralConstraintKind::ReadCallable:
-    case StructuralConstraintKind::MutCallable:
-    case StructuralConstraintKind::OnceCallable:
-    case StructuralConstraintKind::ReadBinaryCallable:
-    case StructuralConstraintKind::MutBinaryCallable:
-    case StructuralConstraintKind::OnceBinaryCallable:
     case StructuralConstraintKind::IndirectPredicate:
     case StructuralConstraintKind::IndirectOperation:
     case StructuralConstraintKind::RangePredicate:

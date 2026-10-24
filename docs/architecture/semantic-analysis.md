@@ -2394,10 +2394,12 @@ clause assertion cannot replace a closed argument's actual capabilities.
 During symbolic body analysis, a
 requirement scope contributes unary facts to ordinary constrained operations
 and supplies synthetic exact operator or callable candidates for the bounded
-structural relationships. Callable requirements carry unary/binary argument
-and owned-result types plus read, repeatable mutable, or consuming-use
-capability; iterator-aware predicate and operation relations derive the exact
-checked-dereference referent privately. This is semantic proof, not text-based
+structural relationships. Unary and binary callable concepts compose source
+expression queries over read-only, mutable, or consumed receivers and borrowed
+or consumed arguments. Query facts retain the exact operand/result types and
+access contracts; alternative argument forms do not invent a common receiver
+or borrow proof. Iterator-aware predicate and operation relations still derive
+the checked-dereference referent privately. This is semantic proof, not text-based
 operator guessing. The AST application is retained for source-facing
 diagnostics and tooling occurrences.
 
@@ -2426,10 +2428,15 @@ candidates or change the exact-overload identity rule.
 
 The current structural checks are deliberately identity- and shape-based:
 iterator movement/read/write relationships, exact domain-value operators, and
-exact public callable signatures. A callable result must be the requested
-owned non-borrowed type. Each readable argument is accepted either by exact
-value or exact read-only reference, and receiver implication follows the
-existing `Read` -> repeatable `Mutable` -> `Once` use-site lattice. Concrete
+callable expression queries. An unannotated result requirement demands the
+requested owned non-borrowed type: the selected call's reference return or
+borrow origin cannot disappear merely because expression analysis exposes its
+referent type. Reference results instead require an explicit checked-origin
+contract. Source callable policies try named read-only and explicitly consumed
+argument forms and compose read, repeatable mutable, and owned receiver queries.
+A callable with an ambiguous borrowed form can qualify through an unambiguous
+consumed form; the ambiguous invocation itself remains an overload error.
+Concrete
 reanalysis still selects one exact lambda or `operator()` target and retains
 its identity and capability in HIR/MIR. Adding a relationship requires one new
 irreducible semantic question and a source-defined public client; it must not

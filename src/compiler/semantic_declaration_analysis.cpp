@@ -1167,12 +1167,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
          binding.name == "mutable_range_of" || binding.name == "sized_range");
     const bool trustedFunctionalConstraint =
         isFunctionalLibraryUnit(conceptInfo.sourceUnit) &&
-        (binding.name == "read_callable" || binding.name == "mut_callable" ||
-         binding.name == "once_callable" ||
-         binding.name == "read_binary_callable" ||
-         binding.name == "mut_binary_callable" ||
-         binding.name == "once_binary_callable" ||
-         binding.name == "indirect_predicate" ||
+        (binding.name == "indirect_predicate" ||
          binding.name == "indirect_operation" ||
          binding.name == "range_predicate" ||
          binding.name == "range_operation");
@@ -1475,15 +1470,9 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
           mapped.arguments.push_back(argumentMap[*argument.parameter]);
         }
         if (mapped.arguments.size() == pattern.arguments.size()) {
-          for (StructuralConstraintKind guaranteed :
-               guaranteedStructuralKinds(mapped.kind)) {
-            RegisteredConcept::StructuralPattern implied = mapped;
-            implied.kind = guaranteed;
-            auto &leaf = leafStructuralConstraints[requirementIndex];
-            if (std::find(leaf.begin(), leaf.end(), implied) == leaf.end()) {
-              leaf.emplace_back(std::move(implied));
-            }
-          }
+          auto &leaf = leafStructuralConstraints[requirementIndex];
+          if (std::find(leaf.begin(), leaf.end(), mapped) == leaf.end())
+            leaf.emplace_back(std::move(mapped));
         }
       }
     }

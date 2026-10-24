@@ -3092,8 +3092,6 @@ private:
   expandStructuralRequirements(
       std::span<const AppliedConceptRequirement> requirements) const;
 
-  [[nodiscard]] static std::vector<StructuralConstraintKind>
-  guaranteedStructuralKinds(StructuralConstraintKind kind);
   [[nodiscard]] bool readMemberRequirementSatisfied(
       const SemanticType &receiver, std::string_view member,
       const SemanticType &result,

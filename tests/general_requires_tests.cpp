@@ -743,6 +743,30 @@ int main() { return 0; }
            "alternative result origins cannot invent a common owner",
            "GTI-S2000");
 
+  accepted(check(root, directory, "borrowed_call_is_not_owned_result", R"(
+[[borrowed_from(value)]] int& reference(int& value) { return value; }
+class Borrower {
+  int value = 1;
+public:
+  [[borrowed_from(input)]] int& operator()(int& input) { return input; }
+  int& operator*() { return this.value; }
+  int& operator[](int index) { return this.value; }
+};
+int main() {
+  static_assert(!(requires(int& input) { { reference(input) } -> int; }));
+  static_assert(!(requires(Borrower& f, int& input) { { f(input) } -> int; }));
+  static_assert(!(requires(Borrower& f, int& input) { { (f(input)) } -> int; }));
+  static_assert(!(requires(Borrower& f) { { *f } -> int; }));
+  static_assert(!(requires(Borrower& f, int index) { { f[index] } -> int; }));
+  static_assert(requires(Borrower& f, int& input) {
+    { f(input) } -> int& [[borrowed_from(input)]];
+  });
+  static_assert(requires(Borrower& f) { { *f } -> int& [[borrowed_from(f)]]; });
+  return 0;
+}
+)"),
+           "owned-result queries cannot erase selected call/operator borrows");
+
   accepted(check(root, directory, "construction", R"(
 concept defaults<T> = requires { { T() } -> T; };
 concept builds<T, A> = requires(A& argument) { { T(argument) } -> T; };

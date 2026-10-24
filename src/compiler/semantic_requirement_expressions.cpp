@@ -498,6 +498,23 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
                     "requirement parameter.");
     return true;
   }
+  // Call expressions expose their referent as the ordinary expression type.
+  // That value-facing view must not erase a selected declaration's borrowed
+  // result when proving an exact owned-result requirement.
+  const Expr *resultExpression = query.expression().get();
+  while (const auto *group = exprAs<Grouping>(resultExpression))
+    resultExpression = group->expression().get();
+  const auto borrowedResult = [](const auto *resolved) {
+    return resolved && (resolved->returnType.kind == SemanticType::Reference ||
+                        resolved->borrowOrigin != BorrowOriginKind::None);
+  };
+  if (borrowedResult(worker->semanticModel.findOperator(*resultExpression)))
+    return reject(
+        "The selected operation returns a borrow, not an owned result.");
+  if (const auto *call = exprAs<Call>(resultExpression);
+      call && (borrowedResult(worker->semanticModel.findCall(*call)) ||
+               borrowedResult(worker->semanticModel.findLambdaCall(*call))))
+    return reject("The selected call returns a borrow, not an owned result.");
   if (actual != required)
     return reject(
         "The expression does not have the exact required owned result type.");
