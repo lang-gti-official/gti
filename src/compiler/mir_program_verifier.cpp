@@ -8993,6 +8993,8 @@ verifyMirProgramInitialization(const MirProgram &program) {
     std::size_t position = 0;
   };
   std::unordered_map<MirInstructionId, LocatedInstruction> instructions;
+  std::unordered_map<MirPlaceId, std::vector<LocatedInstruction>>
+      initializations;
   std::unordered_map<HirFullExpressionId, std::vector<LocatedInstruction>>
       fullExpressionMarkers;
   std::vector<std::vector<const MirBlock *>> stepBlocks(plan.steps.size());
@@ -9014,6 +9016,12 @@ verifyMirProgramInitialization(const MirProgram &program) {
                            LocatedInstruction{.block = &block,
                                               .instruction = &instruction,
                                               .position = position});
+      if (instruction.kind == MirInstructionKind::Initialize &&
+          instruction.destination)
+        initializations[*instruction.destination].push_back(
+            {.block = &block,
+             .instruction = &instruction,
+             .position = position});
       if (instruction.fullExpressionEnd != 0) {
         fullExpressionMarkers[instruction.fullExpressionEnd].push_back(
             {.block = &block,
@@ -9460,6 +9468,7 @@ verifyMirProgramInitialization(const MirProgram &program) {
   std::unordered_map<HirBindingId,
                      std::vector<const MirProgramInitializationLocal *>>
       localDecompositions;
+  std::unordered_map<HirBindingId, LocatedInstruction> localViewInitializations;
   for (const auto &step : plan.steps)
     for (const auto &local : step.locals) {
       const auto *place = module.findPlace(local.place);
@@ -9508,25 +9517,27 @@ verifyMirProgramInitialization(const MirProgram &program) {
                   projection.selection == 0 && place->type == field->type;
         }
       }
-      bool initialized = false;
-      if (exact)
-        for (const auto *block : stepBlocks[step.id - 1])
-          for (const auto &initialize : block->instructions) {
-            if (initialize.kind != MirInstructionKind::Initialize ||
-                initialize.destination != source->id ||
-                initialize.operands.size() != 1)
-              continue;
-            const auto &operand = initialize.operands.front();
-            const auto *value = operand.kind == MirOperandKind::Value
-                                    ? module.findValue(operand.value)
-                                    : nullptr;
-            const auto *input =
-                operand.place != 0 ? module.findPlace(operand.place) : nullptr;
-            initialized |=
-                (value && value->sourceValue == place->sourceValue) ||
-                (input && input->sourceValue == place->sourceValue);
-          }
-      exact &= initialized;
+      std::optional<LocatedInstruction> initialized;
+      if (exact) {
+        const auto found = initializations.find(source->id);
+        if (found == initializations.end() || found->second.size() != 1 ||
+            found->second.front().block->programInitializationStep != step.id ||
+            found->second.front().instruction->operands.size() != 1) {
+          exact = false;
+        } else {
+          const auto &location = found->second.front();
+          const auto &operand = location.instruction->operands.front();
+          const auto *value = operand.kind == MirOperandKind::Value
+                                  ? module.findValue(operand.value)
+                                  : nullptr;
+          const auto *input =
+              operand.place != 0 ? module.findPlace(operand.place) : nullptr;
+          if ((value && value->sourceValue == place->sourceValue) ||
+              (input && input->sourceValue == place->sourceValue))
+            initialized = location;
+        }
+      }
+      exact &= initialized.has_value();
       if (!exact) {
         add("program-initialization local has invalid or overlapping identity",
             step.entryBlock);
@@ -9535,6 +9546,7 @@ verifyMirProgramInitialization(const MirProgram &program) {
       localAliasesBySymbol.emplace(local.symbol, &local);
       localAliasPlaces.insert(local.place);
       localDecompositions[owner->second->binding].push_back(&local);
+      localViewInitializations.emplace(owner->second->binding, *initialized);
     }
   for (const auto &[binding, aliases] : localDecompositions) {
     const auto *source = module.findPlace(localsByBinding.at(binding)->place);
@@ -9649,7 +9661,7 @@ verifyMirProgramInitialization(const MirProgram &program) {
     if (!placeIsUsed(place.id) && !localAliasPlaces.contains(place.id))
       add("module contains orphan persistent/local storage place");
     std::optional<StorageIdentity> identity;
-    bool exact = true;
+    bool exact = !symbolRoot || !localSymbolSteps.contains(place.symbol);
     const auto requireIdentity = [&](StorageIdentity candidate) {
       exact = exact && candidate.step != 0 &&
               (!identity || sameIdentity(*identity, candidate));
@@ -9682,7 +9694,7 @@ verifyMirProgramInitialization(const MirProgram &program) {
     }
     if (!exact) {
       add("module binding/symbol-root place does not name one exact planned "
-          "persistent or local storage identity");
+          "storage step or initializer-local identity");
     }
   }
 
@@ -9750,44 +9762,67 @@ verifyMirProgramInitialization(const MirProgram &program) {
   using VisitingPlaces = std::unordered_set<MirPlaceId>;
   using VisitingLoans = std::unordered_set<MirLoanId>;
   std::function<bool(MirPlaceId, ProgramInitializationStepId, bool,
-                     VisitingPlaces &, VisitingLoans &)>
+                     VisitingPlaces &, VisitingLoans &,
+                     const LocatedInstruction &, bool)>
       legalPlace;
   std::function<bool(MirLoanId, ProgramInitializationStepId, VisitingPlaces &,
-                     VisitingLoans &)>
+                     VisitingLoans &, const LocatedInstruction &)>
       legalLoan;
   legalPlace = [&](MirPlaceId id, ProgramInitializationStepId current,
                    bool sameStepInitialization, VisitingPlaces &places,
-                   VisitingLoans &loans) {
+                   VisitingLoans &loans, const LocatedInstruction &use,
+                   bool destinationUse) {
     const auto *place = module.findPlace(id);
     if (place == nullptr || !places.insert(id).second)
       return false;
     bool legal =
         legalPriorStep(resolvePlaceStep(id), current, sameStepInitialization);
+    if (const auto initialized = localViewInitializations.find(place->binding);
+        place->root == MirPlaceRootKind::Binding &&
+        initialized != localViewInitializations.end()) {
+      const bool exactDestination =
+          destinationUse &&
+          use.instruction == initialized->second.instruction &&
+          use.instruction->kind == MirInstructionKind::Initialize &&
+          use.instruction->destination == id;
+      const bool reachable = !dominance || use.block == nullptr ||
+                             dominance->isReachable(use.block->id);
+      if (reachable && !exactDestination &&
+          !instructionDominates(initialized->second, use)) {
+        add("initializer local view is accessed before its owner Initialize",
+            use.block ? use.block->id : 0,
+            use.instruction ? use.instruction->id : 0);
+        legal = false;
+      }
+    }
     if (place->root == MirPlaceRootKind::Loan)
-      legal &= legalLoan(place->loan, current, places, loans);
+      legal &= legalLoan(place->loan, current, places, loans, use);
     places.erase(id);
     return legal;
   };
   legalLoan = [&](MirLoanId id, ProgramInitializationStepId current,
-                  VisitingPlaces &places, VisitingLoans &loans) {
+                  VisitingPlaces &places, VisitingLoans &loans,
+                  const LocatedInstruction &use) {
     const auto *loan = module.findLoan(id);
     if (loan == nullptr || !loans.insert(id).second)
       return false;
-    bool legal = legalPlace(loan->source, current, false, places, loans);
+    bool legal =
+        legalPlace(loan->source, current, false, places, loans, use, false);
     for (const auto parent : {loan->parent, loan->storedDependency})
       if (parent != 0)
-        legal &= legalLoan(parent, current, places, loans);
+        legal &= legalLoan(parent, current, places, loans, use);
     for (const auto &dependency : loan->additionalDependencies) {
-      legal &= legalPlace(dependency.source, current, false, places, loans);
+      legal &= legalPlace(dependency.source, current, false, places, loans, use,
+                          false);
       if (dependency.parent != 0)
-        legal &= legalLoan(dependency.parent, current, places, loans);
+        legal &= legalLoan(dependency.parent, current, places, loans, use);
     }
     if (loan->referenceSelection) {
       legal &= legalPlace(loan->referenceSelection->carrier, current, false,
-                          places, loans);
+                          places, loans, use, false);
       if (loan->referenceSelection->transferredFrom != 0)
         legal &= legalLoan(loan->referenceSelection->transferredFrom, current,
-                           places, loans);
+                           places, loans, use);
     }
     for (const auto carrier : loan->carriers)
       if (const auto found = localBindingSteps.find(carrier);
@@ -9796,18 +9831,21 @@ verifyMirProgramInitialization(const MirProgram &program) {
     loans.erase(id);
     return legal;
   };
-  const auto legalPriorAccess = [&](MirPlaceId placeId,
-                                    ProgramInitializationStepId current,
-                                    bool sameStepInitialization) {
-    VisitingPlaces places;
-    VisitingLoans loans;
-    return legalPlace(placeId, current, sameStepInitialization, places, loans);
-  };
+  const auto legalPriorAccess =
+      [&](MirPlaceId placeId, ProgramInitializationStepId current,
+          bool sameStepInitialization, const LocatedInstruction &use,
+          bool destinationUse = false) {
+        VisitingPlaces places;
+        VisitingLoans loans;
+        return legalPlace(placeId, current, sameStepInitialization, places,
+                          loans, use, destinationUse);
+      };
   const auto legalLoanAccess = [&](MirLoanId id,
-                                   ProgramInitializationStepId current) {
+                                   ProgramInitializationStepId current,
+                                   const LocatedInstruction &use) {
     VisitingPlaces places;
     VisitingLoans loans;
-    return legalLoan(id, current, places, loans);
+    return legalLoan(id, current, places, loans, use);
   };
   const auto dropInStep = [&](MirDropObligationId id,
                               ProgramInitializationStepId current) {
@@ -9825,6 +9863,7 @@ verifyMirProgramInitialization(const MirProgram &program) {
     const ProgramInitializationStepId current = block.programInitializationStep;
     const MirProgramInitializationStep *step = plan.findStep(current);
     for (const MirInstruction &instruction : block.instructions) {
+      const auto use = instructions.at(instruction.id);
       if (instruction.fullExpressionEnd != 0) {
         const auto found =
             fullExpressionSteps.find(instruction.fullExpressionEnd);
@@ -9843,19 +9882,19 @@ verifyMirProgramInitialization(const MirProgram &program) {
           instruction.destination == step->storagePlace;
       if (instruction.destination &&
           !legalPriorAccess(*instruction.destination, current,
-                            exactInitialization)) {
+                            exactInitialization, use, true)) {
         add("program-storage destination is not initialized/accessed in step "
             "order",
             block.id, instruction.id);
       }
       const auto checkOperand = [&](const MirOperand &operand) {
         if (operand.place != 0 &&
-            !legalPriorAccess(operand.place, current, false)) {
+            !legalPriorAccess(operand.place, current, false, use)) {
           add("program-storage operand/receiver is not accessed strictly "
               "after its step",
               block.id, instruction.id);
         }
-        if (operand.loan != 0 && !legalLoanAccess(operand.loan, current)) {
+        if (operand.loan != 0 && !legalLoanAccess(operand.loan, current, use)) {
           add("loan operand/receiver accesses program storage before its "
               "step",
               block.id, instruction.id);
@@ -9865,9 +9904,9 @@ verifyMirProgramInitialization(const MirProgram &program) {
                                 : nullptr;
         if (value && value->borrowDependencies)
           for (const auto &dependency : value->borrowDependencies->dependencies)
-            if (!legalPriorAccess(dependency.source, current, false) ||
+            if (!legalPriorAccess(dependency.source, current, false, use) ||
                 (dependency.parent != 0 &&
-                 !legalLoanAccess(dependency.parent, current)))
+                 !legalLoanAccess(dependency.parent, current, use)))
               add("initializer value dependency escapes its owning storage "
                   "step",
                   block.id, instruction.id);
@@ -9878,11 +9917,12 @@ verifyMirProgramInitialization(const MirProgram &program) {
       for (const MirOperand &operand : instruction.operands) {
         checkOperand(operand);
       }
-      if (instruction.loan && !legalLoanAccess(*instruction.loan, current))
+      if (instruction.loan && !legalLoanAccess(*instruction.loan, current, use))
         add("initializer loan accesses storage outside its owning step",
             block.id, instruction.id);
       if (instruction.retainedOwnerPlace &&
-          !legalPriorAccess(*instruction.retainedOwnerPlace, current, false))
+          !legalPriorAccess(*instruction.retainedOwnerPlace, current, false,
+                            use))
         add("initializer retained owner escapes its owning storage step",
             block.id, instruction.id);
       if (instruction.programConstantSubstitution &&
@@ -9894,12 +9934,15 @@ verifyMirProgramInitialization(const MirProgram &program) {
             block.id, instruction.id);
       }
     }
+    const LocatedInstruction terminalUse{.block = &block,
+                                         .position = block.instructions.size()};
     if (block.terminator.value && block.terminator.value->place != 0 &&
-        !legalPriorAccess(block.terminator.value->place, current, false)) {
+        !legalPriorAccess(block.terminator.value->place, current, false,
+                          terminalUse)) {
       add("terminator accesses program storage before its step", block.id);
     }
     if (block.terminator.value && block.terminator.value->loan != 0 &&
-        !legalLoanAccess(block.terminator.value->loan, current)) {
+        !legalLoanAccess(block.terminator.value->loan, current, terminalUse)) {
       add("terminator loan accesses program storage before its step", block.id);
     }
     for (const auto &event : block.terminator.successLifecycle)

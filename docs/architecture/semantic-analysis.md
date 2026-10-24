@@ -2345,7 +2345,12 @@ construction relationship. Only these bounded guaranteed facts admit
 operations in an open generic body. Arbitrary compound expressions are concrete
 filters, not inferred proofs of their subexpressions. The selected concrete
 instance still resolves every executable call/constructor normally. Query
-recursion is bounded to 64 active checks.
+recursion is bounded to 64 active checks. Re-entering the same in-flight query
+with identical syntax, resolved argument types and exact type/value-generic
+substitutions fails immediately rather than expanding a branching probe tree.
+Isolated query workers and typed-macro selection probes inherit that active
+identity stack without sharing mutable runtime flow or capture state. Changing
+concrete generic arguments remain distinct checks within the existing budget.
 
 Constexpr Boolean-call leaves use existing constant evaluation. Trusted
 reflection fact identity, including unambiguous transparent source wrappers,

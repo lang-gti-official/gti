@@ -4084,7 +4084,11 @@ struct Pair {
 }
 int global = initial_value(4);
 class Registry { public: static int value = initial_value(6); };
-int main() { return global + Registry::value + cleaned - 18; }
+struct Record { int field = initial_value(8); };
+int main() {
+  Record record{};
+  return global + Registry::value + record.field + cleaned - 30;
+}
 )");
   expect(frontend.canGenerateCode(),
          "owning startup locals must retain verified MIR cleanup");
@@ -4120,6 +4124,31 @@ int main() { return global + Registry::value + cleaned - 18; }
              text.text.find("__gti_mir_p_") != std::string::npos &&
              !gti_test::emitCppText(frontend).empty(),
          "owning startup locals emit complete MIR body text and cleanup");
+  auto malformedHir = frontend.hir;
+  const auto generated = std::find_if(
+      malformedHir.constructorInstances().begin(),
+      malformedHir.constructorInstances().end(), [](const auto &instance) {
+        return instance.generatedDefault && !instance.body.statements.empty();
+      });
+  expect(generated != malformedHir.constructorInstances().end(),
+         "generated field construction retains initializer result regions");
+  if (generated != malformedHir.constructorInstances().end()) {
+    auto &body = const_cast<lang::HirConstructorInstance &>(*generated).body;
+    auto orphan = body.statements.front();
+    orphan.id = body.statements.size() + 1;
+    body.statements.push_back(std::move(orphan));
+    const auto rejected = lang::LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, malformedHir, frontend.mir,
+        frontend.mir, {}, lang::TargetInfo::host());
+    expect(
+        !rejected.valid() &&
+            std::any_of(rejected.issues.begin(), rejected.issues.end(),
+                        [](const auto &issue) {
+                          return issue.detail.find("initializer") !=
+                                 std::string::npos;
+                        }),
+        "lowered construction still rejects orphan generated-body statements");
+  }
   auto malformed = frontend.mir;
   auto &steps = const_cast<lang::MirProgramInitializationPlan &>(
                     malformed.programInitializationPlan())

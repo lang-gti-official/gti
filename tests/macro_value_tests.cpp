@@ -413,6 +413,8 @@ struct Count {
   Count& alias = saved;
   int copied = saved.number;
   auto [unused_number] = saved;
+  auto [read_number] = saved;
+  int projected = read_number;
   int32_t[2] elements = {1, 2};
   auto [unused_first, unused_second] = elements;
   return saved;
@@ -428,6 +430,48 @@ int main() { return first.number + Registry::second.number - 16; }
         "namespace/static initialization retains ordinary user-type locals");
   if (!result.canGenerateCode())
     return;
+  bool checkedIndices = false;
+  for (const auto &statement : result.hir.module().statements) {
+    if (statement.kind != lang::HirStatementKind::StructuredBinding ||
+        statement.structuredBindings.size() != 2 ||
+        !statement.structuredBindings.front().index)
+      continue;
+    const auto id = *statement.structuredBindings.front().index;
+    for (int mutation = 0; mutation < 3; ++mutation) {
+      auto malformed = result.hir;
+      auto &body = const_cast<lang::HirBody &>(malformed.module());
+      auto value = std::find_if(
+          body.values.begin(), body.values.end(),
+          [&](const auto &candidate) { return candidate.id == id; });
+      if (mutation == 0)
+        value->literal = lang::Literal{std::uint64_t{99}};
+      else if (mutation == 1) {
+        value->info.type = lang::SemanticType::UInt32;
+        value->info.traits = lang::semanticTraits(lang::SemanticType::UInt32);
+      } else {
+        auto changed =
+            std::find_if(body.statements.begin(), body.statements.end(),
+                         [&](const auto &candidate) {
+                           return candidate.id == statement.id;
+                         });
+        changed->structuredBindings.back().index = id;
+      }
+      const auto verification =
+          lang::verifyHirProgramPlans(result.semantics, malformed);
+      check(std::any_of(verification.errors.begin(), verification.errors.end(),
+                        [](const auto &error) {
+                          return error.find(
+                                     "source-less module initializer value") !=
+                                 std::string::npos;
+                        }),
+            "source-less array ordinals require exact type, semantic index, "
+            "and unique decomposition identity");
+    }
+    checkedIndices = true;
+    break;
+  }
+  check(checkedIndices, "startup fixture retains semantically witnessed "
+                        "structured array indices");
   const auto &initialization = result.mir.programInitializationPlan();
   std::vector<std::size_t> selected;
   for (std::size_t index = 0; index < initialization.steps.size(); ++index)
@@ -621,6 +665,13 @@ int main() { return first.number + Registry::second.number - 16; }
             lang::PlaceKey{.domain = body.placeDomain, .root = first.symbol};
         return true;
       });
+  rejected("a structured local cannot become symbol-rooted program storage",
+           "module binding/symbol-root place", [&](auto &, auto &body) {
+             auto &place = body.places[view.place - 1];
+             place.root = lang::MirPlaceRootKind::Symbol;
+             place.binding = 0;
+             return true;
+           });
   rejected("an extra unused structured name cannot widen the decomposition",
            "local views are not an exact aggregate decomposition",
            [&](auto &plan, auto &body) {
@@ -641,6 +692,76 @@ int main() { return first.number + Registry::second.number - 16; }
              body.places.push_back(std::move(extra));
              return true;
            });
+  for (const bool eraseSymbol : {false, true})
+    rejected(
+        eraseSymbol
+            ? "a symbol-erased projection cannot precede its hidden owner"
+            : "a structured local cannot precede its hidden owner",
+        "local view is accessed before its owner Initialize",
+        [&](auto &plan, auto &body) {
+          const auto &step = plan.steps[firstIndex];
+          for (const auto &local : step.locals) {
+            const auto *alias = body.findPlace(local.place);
+            if (!alias || alias->binding == local.binding ||
+                alias->projections.size() != 1 ||
+                alias->projections.front().kind !=
+                    lang::MirProjectionKind::Field)
+              continue;
+            const auto owner =
+                std::find_if(step.locals.begin(), step.locals.end(),
+                             [&](const auto &candidate) {
+                               return candidate.binding == alias->binding;
+                             });
+            if (owner == step.locals.end())
+              continue;
+            for (auto &block : body.blocks) {
+              if (block.programInitializationStep != step.id)
+                continue;
+              const auto initialize = std::find_if(
+                  block.instructions.begin(), block.instructions.end(),
+                  [&](const auto &instruction) {
+                    return instruction.kind ==
+                               lang::MirInstructionKind::Initialize &&
+                           instruction.destination == owner->place;
+                  });
+              if (initialize == block.instructions.end())
+                continue;
+              const auto load = std::find_if(
+                  initialize + 1, block.instructions.end(),
+                  [&](const auto &instruction) {
+                    if (instruction.kind != lang::MirInstructionKind::Load ||
+                        instruction.operands.size() != 1)
+                      return false;
+                    const auto *source =
+                        body.findPlace(instruction.operands.front().place);
+                    return source && source->binding == alias->binding &&
+                           source->symbol == local.symbol &&
+                           source->projections == alias->projections;
+                  });
+              if (load == block.instructions.end())
+                continue;
+              const auto initializeId = initialize->id;
+              auto moved = *load;
+              if (eraseSymbol) {
+                auto source = *body.findPlace(moved.operands.front().place);
+                source.id = body.places.size() + 1;
+                source.symbol = 0;
+                source.key.reset();
+                moved.operands.front().place = source.id;
+                body.places.push_back(std::move(source));
+              }
+              block.instructions.erase(load);
+              const auto before = std::find_if(
+                  block.instructions.begin(), block.instructions.end(),
+                  [&](const auto &instruction) {
+                    return instruction.id == initializeId;
+                  });
+              block.instructions.insert(before, std::move(moved));
+              return true;
+            }
+          }
+          return false;
+        });
 }
 
 void initializerResultRegions() {

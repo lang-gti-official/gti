@@ -2536,9 +2536,67 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                          return entry.value == value.id;
                        });
   };
+  std::unordered_map<HirBindingId, const HirBinding *> moduleBindings;
+  for (const auto &binding : program.module().bindings)
+    moduleBindings.emplace(binding.id, &binding);
+  std::unordered_map<HirValueId, std::optional<std::uint64_t>>
+      structuredIndices;
+  for (const auto &statement : program.module().statements) {
+    const auto *source = stmtAs<StructuredBindingDecl>(statement.source);
+    const auto *decomposition =
+        source ? semantics.findStructuredBinding(*source) : nullptr;
+    for (std::size_t index = 0; index < statement.structuredBindings.size();
+         ++index) {
+      const auto &element = statement.structuredBindings[index];
+      if (!element.index)
+        continue;
+      const auto [found, inserted] =
+          structuredIndices.emplace(*element.index, std::nullopt);
+      if (!inserted) {
+        found->second.reset();
+        continue;
+      }
+      if (statement.kind != HirStatementKind::StructuredBinding ||
+          decomposition == nullptr ||
+          decomposition->source.type.kind != SemanticType::Array ||
+          decomposition->source.type.arrayLengthParameterId != 0 ||
+          decomposition->elements.size() !=
+              statement.structuredBindings.size() ||
+          index >= decomposition->elements.size() ||
+          element.projection !=
+              HirStructuredBindingProjectionKind::ArrayElement ||
+          element.field != 0)
+        continue;
+      const auto &selected = decomposition->elements[index];
+      const auto binding = moduleBindings.find(element.binding);
+      if (selected.projection ==
+              StructuredBindingProjectionKind::ArrayElement &&
+          selected.index < decomposition->source.type.arrayLength &&
+          binding != moduleBindings.end() &&
+          binding->second->variable == selected.declaration &&
+          binding->second->info == selected.binding)
+        found->second = selected.index;
+    }
+  }
+  const auto exactStructuredIndex = [&](const HirValue &value) {
+    const auto *ordinal =
+        value.literal ? std::get_if<std::uint64_t>(&*value.literal) : nullptr;
+    const auto expected = structuredIndices.find(value.id);
+    return exactSyntheticCommon(value) && value.kind == HirValueKind::Literal &&
+           ordinal != nullptr && value.symbol == 0 && !value.place &&
+           value.fullExpression == 0 && !value.regionBody &&
+           value.defaultArguments.empty() &&
+           value.info ==
+               ExpressionInfo{.type = SemanticType::UInt64,
+                              .category = ValueCategory::Value,
+                              .access = AccessMode::ReadOnly,
+                              .traits = semanticTraits(SemanticType::UInt64)} &&
+           expected != structuredIndices.end() && expected->second &&
+           *expected->second == *ordinal;
+  };
   const auto exactSyntheticValue = [&](const HirValue &value) {
     if (exactDefaultArrayElement(value) || exactDefaultArrayLevel(value) ||
-        listedContextualConstruction(value)) {
+        listedContextualConstruction(value) || exactStructuredIndex(value)) {
       return true;
     }
     const auto parents = valueParents.find(value.id);

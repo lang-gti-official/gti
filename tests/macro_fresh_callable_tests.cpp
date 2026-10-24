@@ -207,10 +207,62 @@ int main() {
 )",
            "GTI-S2001", "unused fresh lambdas still type-check their bodies");
 }
+
+void constrainedMacroQueryCycle() {
+  lang::FrontendOptions options;
+  options.stopAfter = lang::FrontendPhase::Semantics;
+  const std::string source = R"(
+concept recursive_query<T> = requires(T value) {
+  { constrained(value) } -> int;
+};
+#macro int constrained<T>(T value) requires recursive_query<T> { return 1; }
+int main() { return constrained(1); }
+)";
+  const auto result =
+      lang::Frontend(options).analyze("macro-query-cycle.gti", source);
+  expect(!result.semanticValid,
+         "a constrained macro query cycle must terminate before expansion");
+  const auto bounded = [](std::string_view message) {
+    return message.find("recursive query cycle") != std::string_view::npos;
+  };
+  expect(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                     [&](const auto &diagnostic) {
+                       return diagnostic.code == "GTI-S2029" &&
+                              diagnostic.phase ==
+                                  lang::DiagnosticPhase::Semantics &&
+                              diagnostic.primary.source ==
+                                  "macro-query-cycle.gti" &&
+                              diagnostic.primary.start == source.rfind(");") &&
+                              (bounded(diagnostic.message) ||
+                               std::any_of(diagnostic.related.begin(),
+                                           diagnostic.related.end(),
+                                           [&](const auto &note) {
+                                             return bounded(note.message);
+                                           }));
+                     }),
+         "macro signature probes reject an identical in-flight query at the "
+         "written caller through the ordinary constraint diagnostic");
+  const auto finite =
+      lang::Frontend(options).analyze("macro-finite-query.gti", R"(
+constexpr bool selected<uint64_t N>() {
+  if constexpr (N == 0) { return true; }
+  else { return requires { { constrained<N - 1>() } -> int; }; }
+}
+#macro int constrained<uint64_t N>() requires selected<N>() { return 1; }
+int main() { return constrained<3>() - 1; }
+)");
+  if (!finite.semanticValid)
+    for (const auto &diagnostic : finite.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(finite.semanticValid,
+         "changing concrete value-generic query instances may terminate within "
+         "the existing depth budget");
+}
 } // namespace
 
 int main() {
   discoveryBoundary();
   tests();
+  constrainedMacroQueryCycle();
   return failures == 0 ? 0 : 1;
 }

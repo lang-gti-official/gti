@@ -369,6 +369,10 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
       rawPointerAudit, requireFunctionDefinitions, trustedBodies);
   Impl &probe = *result;
   static_cast<RequestSessionContext &>(probe.requestSession) = requestSession;
+  // Constraint queries may select another typed macro before this probe has
+  // entered any expansion body. Preserve their independent recursion budget.
+  probe.expressionRequirementDepth = expressionRequirementDepth;
+  probe.activeRequirementQueries = activeRequirementQueries;
   probe.semanticModel.beginSpeculativeDelta(semanticModel);
   probe.semanticModel.setFunctionDemandSink(nullptr);
   probe.semanticModel.setCallJournal(nullptr);
@@ -492,7 +496,7 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
   probe.analyze(*call);
   if (hasErrorDiagnostics(probe.diagnostics)) {
     for (auto &diagnostic : probe.diagnostics) {
-      macroRelated(diagnostic, tokenSpan(expressionToken(*call)),
+      macroRelated(diagnostic, tokenSpan(callableToken(call->callee())),
                    "While checking this macro invocation.");
       if (symbol->overloads.size() == 1 &&
           symbol->overloads.front().declaration)
@@ -840,11 +844,11 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
         diagnostic.primary.end <= definition.extent()->end) {
       macroRelated(diagnostic, diagnostic.primary,
                    "In the body of macro '" + definition.name().lexeme + "'.");
-      diagnostic.primary = tokenSpan(expressionToken(*call));
+      diagnostic.primary = tokenSpan(callableToken(call->callee()));
     }
     const std::string name =
         qualifiedName(function->namespaceScope, definition.name().lexeme);
-    macroRelated(diagnostic, tokenSpan(expressionToken(*call)),
+    macroRelated(diagnostic, tokenSpan(callableToken(call->callee())),
                  "While expanding macro '" + name + "' here.");
     macroRelated(diagnostic, tokenSpan(definition.name()),
                  "Macro '" + name + "' is declared here.");

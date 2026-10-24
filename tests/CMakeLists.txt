@@ -23,6 +23,7 @@ add_test(NAME macro_expansion_queries COMMAND gti_macro_expansion_query_tests)
 add_executable(gti_macro_fresh_callable_tests macro_fresh_callable_tests.cpp)
 target_link_libraries(gti_macro_fresh_callable_tests PRIVATE gti_compiler)
 add_test(NAME macro_fresh_callables COMMAND gti_macro_fresh_callable_tests)
+set_tests_properties(macro_fresh_callables PROPERTIES TIMEOUT 60)
 add_test(NAME macro_fresh_callable_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
     $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/macro_fresh_callables.gti"

@@ -3129,6 +3129,19 @@ private:
       const std::vector<SemanticType> &arguments,
       const std::vector<std::string> *lookupScope = nullptr) const;
   mutable std::size_t expressionRequirementDepth = 0;
+  struct ActiveRequirementQuery {
+    const void *syntax = nullptr;
+    std::vector<SemanticType> arguments;
+    TypeSubstitution types;
+    ValueSubstitution values;
+
+    friend bool operator==(const ActiveRequirementQuery &,
+                           const ActiveRequirementQuery &) = default;
+  };
+  [[nodiscard]] ActiveRequirementQuery
+  requirementQueryIdentity(const void *syntax,
+                           std::span<const SemanticType> arguments) const;
+  mutable std::vector<ActiveRequirementQuery> activeRequirementQueries;
   void recordMemberRequirementReceiver(const MemberRequirement &query,
                                        const SemanticType &type);
   struct ActiveMemberRequirement {
