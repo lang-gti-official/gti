@@ -89,6 +89,7 @@ if(Python3_Interpreter_FOUND)
     declaration_owned_defaults_runtime
     base_rollback_record_runtime virtual_expected_owning_return_runtime
     reference_owned_field_replacement_runtime
+    payload_enum_reference_assignment_runtime
     raw_owned_field_replacement_runtime
     shared_getter_worker_loans_runtime
     expected_field_and_join_runtime expected_scoped_return_runtime
@@ -132,6 +133,7 @@ if(Python3_Interpreter_FOUND)
     constructor_copy_after_formal_write_runtime
     assignment_result_projection_runtime
     class_store_destinations_runtime
+    array_field_constructor_elements_runtime
     assignment_result_whole_value_runtime
     allocation_default_argument_runtime
     restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime

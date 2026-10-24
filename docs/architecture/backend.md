@@ -1593,6 +1593,43 @@ when its elements delete default construction. Arrays without an exact
 argument, result, or lifetime-slot publication proof remain rejected rather
 than falling back to native value initialization.
 
+A fixed-array element that MIR stages by copying or moving one whole named
+binding, such as a by-value constructor parameter or a local, is spelled
+inside the array's braced initializer instead: `Polygon(Point a, Point b) :
+corners({a, std::move(b)})` constructs the field once as
+`std::array<Point, 2>{a, std::move(b)}`, so each element is copied or moved
+once, directly into the array's storage. A braced initializer evaluates its
+elements left to right, so the elements keep their operand order; what moves
+is the point of each copy or move, from its `Load` or `Move` to the aggregate.
+The proof (`inlineFixedArrayElements`) admits that only when nothing in
+between can tell. Producer and aggregate share one block, and every
+instruction between them is failure-free. None of them writes the binding (or,
+for a move, names it at all), and the body neither lends it mutably nor takes
+its address, so nothing writes it unnamed. An
+instruction in between that is not itself an inlined element later in the
+same aggregate may run user code, so the element's transfer must then be
+observation-free: the generated copy of a passive generated-copy class, or a
+generated move. A copy also needs a copy constructor on the element's leaf
+class; semantics currently lets a class without one appear as a copied array
+element, and the body is then refused rather than spelled. A moved class
+element carries a value obligation that the `Move` takes from the binding and
+the aggregate transfers out, so it needs no storage. A move with no lifecycle
+event, as MIR records for a cleanup-free array, is admitted only for a
+cleanup-free element, because the binding's own obligation stays in force.
+The rule names representations, not types: rows of a two-dimensional array
+(`cells({top, std::move(bottom)})`), elements of nested rows
+(`{{a, b}, {c, std::move(d)}}`) and moves of a class with a source destructor
+use it alike. The inline spelling applies only where the aggregate constructs
+its final storage: a passive staged binding, or the owning route's binding,
+constructor field, nested element slot or argument slot. That owning route
+accepts obligation-free elements beside transferred ones, so an inlined copy,
+or a cleanup-free copy in its sequenced local, can sit next to a fresh
+construction (`corners({a, Point(5, 4)})`). An element outside the proof keeps
+its staged route. A plain constructor stages a by-value array parameter of
+passive generated-copy classes, like `top`, in a lifetime slot just as it
+stages one such class: the array moves and is destroyed element-wise by
+generated members, which run no user code.
+
 For a verified `MoveBorrowedTemporary` ordinary call or constructor input, the body emitter
 publishes the exact producer call result into its MIR value-rooted lifetime
 slot, moves that value into the selected parameter, and ends the
@@ -3591,6 +3628,17 @@ active-cleanup RHS value obligation; validating only present lifecycle events
 is insufficient, because a missing transfer could leave the published source
 scheduled for cleanup. This requirement is independent of the destination's
 representation or whether it owns a body-local drop obligation.
+
+Owning payload-enum assignment uses the same two referent witnesses. Its
+value slot (a fresh payload construction, call result or moved binding)
+replaces either a place this body tracks, through that place's `Reinitialize`
+ownership event, or the complete referent of a checked mutable reference
+carrier or source mutable call-result loan, where MIR records no local
+ownership event and the `Replace` keeps target zero. The paired
+`CleanupBeforeAssign` drains the old alternative and retires its native shell;
+the commit move-assigns the slot into the same referent spelling and destroys
+only the moved-from slot shell. A borrowed form naming a local `Replace`
+target fails closed.
 
 Requiring a destination obligation for an element, owned field or checked referent
 would retire the same storage twice, so either publication fails closed when

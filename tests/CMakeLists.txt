@@ -1205,6 +1205,11 @@ add_test(NAME class_store_destinations_runtime
                  "${PROJECT_SOURCE_DIR}/tests/class_store_destinations_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(class_store_destinations_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME array_field_constructor_elements_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/array_field_constructor_elements_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(array_field_constructor_elements_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME assignment_result_whole_value_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/assignment_result_whole_value_runtime_test.py"
@@ -1235,6 +1240,11 @@ add_test(NAME reference_owned_field_replacement_runtime
                  "${PROJECT_SOURCE_DIR}/tests/reference_owned_field_replacement_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(reference_owned_field_replacement_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME payload_enum_reference_assignment_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/payload_enum_reference_assignment_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(payload_enum_reference_assignment_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME raw_owned_field_replacement_runtime
          COMMAND ${Python3_EXECUTABLE}
                  "${PROJECT_SOURCE_DIR}/tests/raw_owned_field_replacement_runtime_test.py"
