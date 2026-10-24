@@ -33,6 +33,10 @@ def main() -> None:
             ('#include "gti/semantic_model.h"\n', "forbidden LLVM dependency"),
             ('#include "../optimization/private.h"\n', "forbidden LLVM dependency"),
             ('SemanticModel* state;\n', "forbidden LLVM authority"),
+            ('HirValue value;\n', "forbidden LLVM authority"),
+            ('ExprPtr expression;\n', "forbidden LLVM authority"),
+            ('SemanticVisitor* resolver;\n', "forbidden LLVM authority"),
+            ('OptimizedProgram pipeline;\n', "forbidden LLVM authority"),
         ]
         for name in ("src/compiler/cpp_mir_body_emitter.h", "src/compiler/lowered_program_builder.h",
                      "include/gti/frontend.h", "include/gti/hir.h", "include/gti/semantic_model.h"):

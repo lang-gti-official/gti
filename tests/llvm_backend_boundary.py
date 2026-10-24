@@ -19,8 +19,11 @@ FORBIDDEN_NAME = re.compile(
     r"lowered_program_builder|lowered_program_construction)"
 )
 FORBIDDEN_IDENTIFIER = re.compile(
-    r"\b(?:BackendInput|FrontendResult|HirProgram|SemanticModel|Program|"
-    r"OptimizationResult|LoweredProgramBuilder|CppBackend|CppEmitter|"
+    r"\b(?:BackendInput|FrontendResult|HirProgram|HirBody|HirValue|HirStatement|"
+    r"HirFunctionInstance|HirConstructorInstance|HirDestructorInstance|HirLambda|"
+    r"SemanticModel|SemanticVisitor|SemanticInstanceProvider|Program|Expr|Stmt|"
+    r"ExprPtr|StmtPtr|FunctionDecl|ClassDecl|VariableDecl|ConstructorDecl|DestructorDecl|"
+    r"OptimizationResult|OptimizedProgram|LoweredProgramBuilder|CppBackend|CppEmitter|"
     r"CppMir\w*|CppProgram\w*)\b|\bsourceMir\b"
 )
 INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"\n]+)[>"]', re.M)
