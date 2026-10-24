@@ -411,7 +411,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
         if (!analysis.valid()) {
           for (auto &diagnostic : analysis.diagnostics) {
             diagnostic.related.push_back(
-                {query.site, "Initializer instance requested here."});
+                {query.site, "Concrete generic instance requested here."});
             diagnostics.push_back(std::move(diagnostic));
           }
           programEffects[owner].unknown.push_back(

@@ -947,7 +947,7 @@ void selected<Args...>(Args... args) {
 void selected<uint64_t Mode>() {
   if constexpr (Mode < 2) {
     int32_t& held = guarded;
-    auto hidden = []() {
+    auto hidden = []() -> void {
       if constexpr (Mode == 0) { other = 9; }
       else { guarded = 9; }
     };
@@ -1006,7 +1006,7 @@ void selected<uint64_t Mode>() {
 void selected<uint64_t Mode>() {
   if constexpr (Mode < 2) {
     int32_t& held = guarded;
-    auto hidden = []() {
+    auto hidden = []() -> void {
       if constexpr (Mode == 0) { other = 9; }
       else { third = 9; }
     };
