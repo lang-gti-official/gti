@@ -6,11 +6,22 @@ The frontend converts one entry source and its dependency graph into a
 syntax-preserving `Program`, then hands that owned tree to semantic analysis.
 
 Typed `#macro` declarations remain parser-owned structured syntax, with an
-implicit void result and a retained macro declaration identity. They are not
+implicit void or explicit typed result and a retained macro declaration identity. They are not
 text replacement directives consumed by `SourceLoader`. Names, generic
 parameters, exact typed value parameters, defaults, constraints, attributes and
 braced bodies use the ordinary parsed syntax; semantics owns eligibility and
 expansion. Ordinary call syntax carries no separate macro invocation sigil.
+
+Expression parsing also retains a half-open byte extent for each complete
+written assignment-expression and full comma-expression. This syntax-owned
+`Expr::writtenOrigin` shares one immutable extent across ordinary clones and
+includes interior trivia and closing syntax even when an AST node does not
+otherwise need those tokens. Ordinary clones preserve that
+origin. Whole-expression substitution preserves the replacement's origin;
+cloning a parent whose children are substituted invalidates the parent's
+origin, because the resulting composition was never written as one expression.
+Synthetic syntax starts without an origin. Consumers require an available
+matching `SourceManager` buffer instead of reconstructing source from AST names.
 
 ## Source Loading
 

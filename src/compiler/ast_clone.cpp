@@ -17,6 +17,7 @@ public:
   AstCloneResult result;
   std::uint32_t expansion = 0;
   const AstCloneOptions *options = nullptr;
+  std::size_t substitutions = 0;
 
   [[nodiscard]] Token tok(const Token &token) const {
     Token copy = options && options->token ? options->token(token) : token;
@@ -109,6 +110,7 @@ public:
       if (const auto *pack = exprAs<PackExpansion>(expression.get());
           pack && options && options->pack) {
         if (auto values = options->pack(*pack)) {
+          ++substitutions;
           for (auto &value : *values)
             copies.emplace_back(std::move(value));
           continue;
@@ -120,11 +122,17 @@ public:
   }
 
   [[nodiscard]] ExprPtr expr(const Expr &expression) {
+    const std::size_t before = substitutions;
     ExprPtr copy = options && options->expression
                        ? options->expression(expression)
                        : nullptr;
-    if (!copy)
+    if (copy) {
+      ++substitutions;
+    } else {
       copy = cloneExpression(expression);
+      if (copy && substitutions == before && expression.writtenOrigin())
+        copy->setWrittenOrigin(expression.writtenOrigin());
+    }
     if (copy) {
       result.expressions.emplace(&expression, copy.get());
     }

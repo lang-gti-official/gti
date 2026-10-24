@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Compare source assertions to their handwritten control-flow equivalent.
+"""Compare source assertions and result macros to explicit GTI control flow.
 
+The macro variant includes scalar and passive class local-result publication,
+a prepared value argument, a fresh lambda capture, and unevaluated
+written-expression metadata in the measured loop.
 Correctness gates are complete-state parity and zero observed allocations/cold
 message calls. Timings are reported, not gated on noisy shared test hosts.
 """

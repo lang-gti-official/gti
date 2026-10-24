@@ -437,6 +437,8 @@ enum class IntrinsicKind {
   SourceFunctionName,
   SourceLine,
   SourceColumn,
+  // Written expression metadata, folded to a literal before executable HIR.
+  SourceExpressionText,
   // Compile-time reflection queries (std/meta). Folded to program constants
   // in semantics whenever their generic arguments are concrete; they never
   // execute.
@@ -2244,6 +2246,7 @@ struct MacroExpansionSite {
   const ExpressionStmt *invocation = nullptr;
   const Stmt *body = nullptr;
   const FunctionDecl *declaration = nullptr;
+  const Call *call = nullptr;
 };
 
 class SemanticModel {
@@ -2417,6 +2420,8 @@ public:
   // Retain only a selected expansion's root, not its whole semantic model.
   [[nodiscard]] std::shared_ptr<const Stmt>
   shareMacroExpansion(const ExpressionStmt &statement) const;
+  [[nodiscard]] std::shared_ptr<const Stmt>
+  shareMacroExpansion(const Call &call) const;
   [[nodiscard]] std::vector<MacroExpansionSite> macroExpansionSites() const;
   [[nodiscard]] const Token *findMacroDefault(const Expr &expression) const;
   // The declared attributes of a field or class-like declaration; nullptr
@@ -2867,6 +2872,8 @@ private:
                               std::optional<ConstexprForExpansion> expansion);
   void recordMacroExpansion(const ExpressionStmt &statement, StmtPtr body,
                             const FunctionDecl &declaration);
+  void recordMacroExpansion(const Call &call, StmtPtr body,
+                            const FunctionDecl &declaration);
   void recordMacroDefault(const Expr &expression, Token caller);
   void recordDeclarationAttributes(
       const Stmt &declaration,
@@ -2902,6 +2909,9 @@ private:
                               const FunctionDecl &definition);
 
   void record(const Lambda &declaration, LambdaInfo info);
+  // Callable type discovery carries no analyzed executable body. Only ID
+  // lookup sees these shapes; AST lookup requires ordinary lambda analysis.
+  void recordLambdaTypeDiscovery(LambdaInfo info);
 
   void recordClassType(const ClassDecl &declaration, ClassTypeInfo info);
 
@@ -3094,6 +3104,8 @@ private:
                      std::optional<ConstexprForExpansion>>
       constexprForExpansions;
   std::unordered_map<const ExpressionStmt *, StmtPtr> macroExpansions;
+  std::unordered_map<const Call *, StmtPtr> macroValueExpansions;
+  std::unordered_map<const Call *, const FunctionDecl *> macroValueDeclarations;
   std::unordered_map<const ExpressionStmt *, const FunctionDecl *>
       macroDeclarations;
   std::unordered_map<const Expr *, Token> macroDefaults;
@@ -3118,6 +3130,7 @@ private:
   std::unordered_map<FunctionId, const FunctionDecl *> functionsById;
   std::unordered_map<const Lambda *, LambdaInfo> lambdas;
   std::unordered_map<LambdaId, const Lambda *> lambdasById;
+  std::unordered_map<LambdaId, LambdaInfo> lambdaTypeDiscoveries;
   std::unordered_map<const ClassDecl *, ClassTypeInfo> classTypes;
   std::unordered_map<ClassId, const ClassDecl *> classTypesById;
   struct ExactClassSpecializationRecord {

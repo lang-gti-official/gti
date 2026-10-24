@@ -54,7 +54,7 @@ def main():
                                            env=environment, timeout=180)
                     assert built.returncode == 0, (command, built.stdout, built.stderr)
                     assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
-                    modes_to_run = range(15) if source == failures else (0,)
+                    modes_to_run = range(17) if source == failures else (0,)
                     for mode in modes_to_run:
                         ran = subprocess.run([str(binary), *(["x"] * mode)],
                                              capture_output=True, text=True,
@@ -73,7 +73,7 @@ def main():
                             cleanup = "macro\n" + cleanup
                         if mode in (13, 14):
                             cleanup = "iteration\n" * 3 + cleanup
-                        if mode in (0, 12, 14) or (mode == 3 and disabled):
+                        if mode in (0, 12, 14) or (mode in (3, 16) and disabled):
                             assert (ran.returncode, ran.stdout, ran.stderr) == (0, "", cleanup), (
                                 name, disabled, mode, ran)
                             continue
@@ -86,7 +86,7 @@ def main():
                             assert 'secondary [GTI-R0017] message="cleanup assertion"' in ran.stderr, ran.stderr
                             continue
                         marker, message = {
-                            1: ("plain", "Assertion failed"),
+                            1: ("plain", "Assertion failed: false"),
                             2: ("formatted", "failure: owned payload"),
                             3: ("debug", "debug failure"),
                             4: ("tracked-caller", "through tracked wrapper"),
@@ -97,6 +97,8 @@ def main():
                             10: ("ordered", "ordered 1 then 2"),
                             11: ("macro-local-panic", "macro local failure"),
                             13: ("macro-loop-panic", "macro loop failure"),
+                            15: ("synthesized-default", "Assertion failed: assertion condition"),
+                            16: ("synthesized-debug-default", "Debug assertion failed: assertion condition"),
                         }[mode]
                         expected = (cleanup + f'{site(marker)}: runtime error[GTI-R0017]: '
                                     f'panic: "{message}"\n')

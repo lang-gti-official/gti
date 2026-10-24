@@ -1348,6 +1348,15 @@ formed. Forwarding does not make the immutable grouped binding reseatable.
 
 ### Borrowing Captures And Callable Views
 
+A fresh lambda may be supplied directly to a typed macro expression parameter.
+The macro determines when each occurrence constructs its closure and evaluates
+its capture initializers. An unused argument or an untaken branch constructs
+nothing and creates no runtime move, loan or cleanup. All written lambda bodies
+and capture types are still checked. Repeated uses construct separate closures
+of the same written lambda type; moving one named owner into two such closures
+is rejected by ordinary ownership analysis. A named callable retains its usual
+copy/move and invocation rules.
+
 An explicit `[&value]` capture takes a shared/read-only borrow of a named,
 addressable local or parameter. `[mut &value]` takes an exclusive mutable
 borrow and requires a mutable binding and mutable invocation of the closure:
