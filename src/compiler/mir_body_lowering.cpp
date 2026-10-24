@@ -9644,7 +9644,24 @@ private:
     scopes = evaluatedScopes;
     temporaryDrops = evaluatedTemporaryDrops;
     const MirOperand result = valueOperand(returnedValue);
-    if (!terminated()) {
+    // The residual exit shares the body's normal-exit cleanup as a return
+    // does: once the full expression's own temporaries end, a carried
+    // result joins the ladder for the remaining scope state.
+    std::optional<SharedExitCarrier> shared =
+        terminated() ? std::nullopt : sharedValueCarrier(*returned);
+    if (shared && shared->type.kind == SemanticType::Class &&
+        !sharedClassResult(returnedValue, result))
+      shared.reset();
+    if (shared && !sharedExitEligible(temporaryBaseline->second))
+      shared.reset();
+    if (shared) {
+      shared->stored = result;
+      const MirPlaceId carrier = storeSharedExitValue(*shared);
+      endReturnExpressionLoans(scopeBaseline->second);
+      emitTemporaryDrops(temporaryBaseline->second, value.id, 0, 0, true);
+      if (!emitSharedExit(*shared, carrier))
+        valid = false;
+    } else if (!terminated()) {
       const MirDropObligationId enclosingPendingReturnDrop = pendingReturnDrop;
       prepareReturnOwnership(returnedValue, result);
       endReturnExpressionLoans(scopeBaseline->second);
@@ -11882,7 +11899,9 @@ private:
   }
 
   // The carrier for returning `value` from a shared exit, when it is a
-  // scalar value of the return type.
+  // scalar or class value of the return type. A class value must also own no
+  // cleanup once evaluated (`sharedClassResult`), so a failing rung may
+  // abandon it.
   [[nodiscard]] std::optional<SharedExitCarrier>
   sharedValueCarrier(const HirValue &value) const {
     // A substituted program constant has exactly one MIR materialization,
@@ -11891,7 +11910,8 @@ private:
         value.programConstantSubstitution) {
       return std::nullopt;
     }
-    if (!isMirBlockParameterType(value.info.type) ||
+    if (!(isMirBlockParameterType(value.info.type) ||
+          value.info.type.kind == SemanticType::Class) ||
         value.info.type != output.returnType) {
       return std::nullopt;
     }
@@ -11936,6 +11956,36 @@ private:
     return carrier;
   }
 
+  // A class result a shared exit may carry: a value constructed fresh at
+  // this exit that owns no cleanup, so the rungs it shares may abandon it
+  // when a destructor fails. The carrier then holds no drop obligation.
+  [[nodiscard]] bool sharedClassResult(HirValueId value,
+                                       const std::optional<MirOperand> &result) {
+    // A value holding borrowed state carries loans across the cleanup, as a
+    // returned loan does; it keeps its own exit.
+    const HirValue *source = findValue(value);
+    if (!result || result->kind != MirOperandKind::Value ||
+        source == nullptr || source->info.traits.containsBorrowedState ||
+        temporaryIsActive(dropObligationForValue(value)))
+      return false;
+    const MirValue *produced = output.findValue(result->value);
+    const MirBlock *block =
+        produced == nullptr ? nullptr : output.findBlock(produced->definitionBlock);
+    const MirInstruction *producer = nullptr;
+    if (block != nullptr)
+      for (const MirInstruction &instruction : block->instructions)
+        if (instruction.id == produced->definition)
+          producer = &instruction;
+    return producer != nullptr &&
+           producer->kind == MirInstructionKind::Construct &&
+           producer->result == result->value &&
+           std::none_of(output.dropObligations.begin(),
+                        output.dropObligations.end(),
+                        [&](const MirDropObligation &drop) {
+                          return drop.generatedValue == result->value;
+                        });
+  }
+
   [[nodiscard]] MirPlaceId exitCarrierPlace(const SharedExitCarrier &carrier) {
     for (const auto &[type, place] : exitCarriers) {
       if (type == carrier.type) {
@@ -11947,7 +11997,8 @@ private:
                                           .type = carrier.type,
                                           .access = AccessMode::Mutable,
                                           .traits = carrier.traits,
-                                          .sourceValue = carrier.source});
+                                          .sourceValue = carrier.source,
+                                          .exitCarrier = true});
     exitCarriers.emplace_back(carrier.type, place);
     return place;
   }
@@ -14619,6 +14670,12 @@ private:
     }
     if (terminated()) {
       return;
+    }
+    if (shared && shared->type.kind == SemanticType::Class &&
+        !sharedClassResult(*statement.value, result)) {
+      // The class value owns cleanup or was not constructed fresh here: it
+      // keeps its own exit.
+      shared.reset();
     }
     if (shared && (returnLoan || !sharedExitEligible(incomingTemporaryDrops))) {
       // Evaluating the return expression changed what the exit may share:
