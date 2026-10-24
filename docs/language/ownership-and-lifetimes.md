@@ -485,6 +485,26 @@ T& identity<T>(T& value) {
 }
 ```
 
+A reference bound by a borrowed payload pattern (`auto&` or `mut auto&`)
+derives from the place its switch subject names. When that place lies inside
+the selected reference parameter's referent (the parameter, one of its
+fields, or a reference alias of either), the binding is a checked projection
+of that parameter and may be returned, just as a member accessor returns a
+pattern bound inside `this`. A `mut auto&` binding through a `mut T&`
+parameter may be returned as `mut T&`. A pattern over a local copy, a by-value
+parameter or a temporary does not outlive the call and remains rejected:
+
+```gti
+enum class Reading { exact(int32_t value), estimate(int32_t value) };
+
+int32_t& value_of(Reading& reading) {
+  switch (reading) {
+  case Reading::exact(auto& value): return value;
+  case Reading::estimate(auto& value): return value;
+  }
+}
+```
+
 This is implicit single-origin lifetime inference, not a general lifetime
 parameter system. Other parameters may contribute ordinary values, but a
 returned borrow may not choose between owners or combine dependencies.
@@ -1766,7 +1786,8 @@ and finite recursion through concrete class cleanup; a failing destructor does
 not skip remaining sibling cleanup. Borrowed payload patterns introduce
 arm-scoped shared (`auto&`) or exclusive (`mut auto&`) loans into stable enum
 storage. Their conflict root is conservatively the whole enum, and a checked
-receiver-derived return retains its original owner dependency. A switch over
+return derived from the receiver or a reference parameter retains its
+original owner dependency. A switch over
 a consumed enum, a prvalue or an explicit `std::move`, instead owns the enum
 until the selected arm's entry: by-value bindings take its fields by move and
 release the drained enum without a second drop, while any other arm drops it

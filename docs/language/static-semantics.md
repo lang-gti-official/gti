@@ -1631,9 +1631,9 @@ and requires mutable enum storage. A consumed subject provides neither
 reference. The entire matched enum is the conservative alias-conflict root,
 including for sibling fields: two mutable payload bindings in the same arm
 conflict. Owner replacement, movement, or conflicting access is forbidden
-while the loan lives. Existing checked return summaries can relay
-receiver-derived payload references, but cannot let local or temporary
-payloads escape. Every alternative must be handled exactly once unless a
+while the loan lives. Existing checked return summaries can relay payload
+references derived from the receiver or from a reference parameter, but cannot
+let local, by-value-parameter or temporary payloads escape. Every alternative must be handled exactly once unless a
 `default` arm is present. A complete payload switch is exhaustive for return,
 ownership-state, loan, HIR, and MIR control-flow analysis. `GTI-S2067` owns
 payload declaration, construction, and pattern/exhaustiveness, local-value
