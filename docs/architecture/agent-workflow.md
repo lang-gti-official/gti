@@ -664,6 +664,9 @@ the runner image is a pre-provisioned compiler build host. `CIEnvironment` in
 `agent_workflow` executes these shell steps with missing event aliases and an
 initially tool-free PATH, preserving fail-closed classification and exercising
 a real configure/build/CTest cycle without installing packages locally.
+The lightweight job also runs `repository_hosting`, whose script is explicitly
+classified as developer automation; unknown/compiler test paths still select
+full advisory CI coverage.
 Automation-only local owning checks may use `verify --focused`, which checks
 the actual diff and does not reserve a broad-suite slot. Compiler changes
 cannot use that path. An active `verify` is atomically refused on duplicate

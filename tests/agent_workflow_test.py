@@ -873,7 +873,8 @@ class ValidationChecks(unittest.TestCase):
 
     def test_ci_automation_scope_is_conservative_and_has_its_own_gates(self):
         event = {"pull_request": {"draft": False}}
-        self.assertEqual(validation.ci_mode(event, ["scripts/validation_batch.py", "tests/agent_workflow_test.py", "docs/architecture/verification.md"]), "automation")
+        self.assertEqual(validation.ci_mode(event, ["scripts/validation_batch.py", "tests/agent_workflow_test.py",
+                                                  "tests/repository_hosting_test.py", "docs/architecture/verification.md"]), "automation")
         for paths in ([], ["src/compiler/parser.cpp"], ["tests/parser_tests.cpp"],
                       ["runtime/include/gti/runtime.h"], ["CMakeLists.txt"],
                       [".gitea/workflows/release.yml"], [".gti-validation/batches/batch.json"]):
