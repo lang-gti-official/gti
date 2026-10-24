@@ -1,5 +1,6 @@
 #include "gti/llvm_backend.h"
 
+#include "gti/llvm_admission.h"
 #include "gti/lowered_program.h"
 #include "gti/target.h"
 
@@ -73,12 +74,20 @@ BackendArtifact LlvmBackend::generate(LoweredProgram program) {
         "the LLVM backend foundation currently accepts only the host target");
   }
 
+  const LlvmAdmissionPlan admission = planLlvmAdmission(*verified, options);
+  if (const auto *unsupported = admission.firstUnsupported()) {
+    if (!unsupported->source.source.empty()) {
+      throw BackendUnsupportedError(admission.limitation(),
+                                    unsupported->source);
+    }
+    throw BackendUnsupportedError(admission.limitation());
+  }
+
   initializeNativeLlvmTarget();
   // Constructing an empty context proves that the backend owns a usable LLVM
   // IR environment without manufacturing a program or lowering GTI meaning.
   llvm::LLVMContext context;
   static_cast<void>(context);
-  static_cast<void>(options);
   throw BackendUnsupportedError(
       "executable LLVM lowering is not implemented yet");
 }

@@ -1667,6 +1667,11 @@ target_link_libraries("gti_llvm_backend_foundation_tests"
                       PRIVATE gti_llvm_backend)
 add_test(NAME llvm_backend_foundation COMMAND gti_llvm_backend_foundation_tests)
 
+add_executable("gti_llvm_admission_tests"
+               "${PROJECT_SOURCE_DIR}/tests/llvm_admission_tests.cpp")
+target_link_libraries("gti_llvm_admission_tests" PRIVATE gti_llvm_backend)
+add_test(NAME llvm_admission COMMAND gti_llvm_admission_tests)
+
 add_executable("gti_cpp_mir_program_plan_tests"
                "${PROJECT_SOURCE_DIR}/tests/cpp_mir_program_plan_tests.cpp")
 target_link_libraries("gti_cpp_mir_program_plan_tests"
@@ -2124,6 +2129,17 @@ if(Python3_Interpreter_FOUND)
     NAME llvm_backend_dependency_controls
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/llvm_backend_boundary_test.py"
+  )
+  add_test(
+    NAME llvm_coverage_exhaustiveness
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/llvm_coverage_exhaustiveness_test.py"
+            "${CMAKE_CXX_COMPILER}" "${PROJECT_SOURCE_DIR}"
+  )
+  add_test(
+    NAME backend_execution_protocol
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/backend_execution_test.py"
   )
   add_test(
     NAME lowered_program_source_boundary

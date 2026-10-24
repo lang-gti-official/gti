@@ -1,0 +1,69 @@
+#pragma once
+
+#include "gti/llvm_admission.h"
+
+namespace lang::llvm_detail {
+
+enum class Shape {
+  ObjectArtifact,
+  CheckedFailure,
+  SuccessResultPublication,
+  PreparedOwnerInput,
+  CallerLocation,
+  RawMemory,
+  ConditionalBorrow,
+  MultipleBorrowOrigins,
+  SelectedReferenceAddress,
+  TwoPhaseBorrow,
+  ConditionalDrop,
+  FieldDrop,
+  ArrayDrop,
+  UserDestructor,
+  ClassFields,
+  ClassBases,
+  PolymorphicClass,
+  NativeRecord,
+  NativeUnion,
+  OpaqueNativeHandle,
+  PayloadEnum,
+  NativeCall,
+  IndirectCall,
+  VirtualCall,
+  NativeCallback,
+  ThreadTask,
+  ScopedThreadTasks,
+  ThreadLocalPassive,
+  ThreadLocalDynamic,
+  ProgramInitialization,
+  EmbeddingExports,
+  RuntimeBinding,
+  LibraryDeclaration,
+  GeneratedDependencies,
+  FixedArray,
+  NativeScalar,
+  TypeArguments,
+  Tombstone,
+  BorrowedCarrier,
+  MutableReceiver,
+  CopyableValue,
+  MoveOnlyValue,
+  ImmovableValue,
+  CleanupValue,
+  DirectReturn,
+  BorrowReturn,
+  OwnedReturn,
+  FailureReturn,
+};
+
+#define LLVM_COVERAGE_BEGIN(Type)                                              \
+  [[nodiscard]] const LlvmCoverageEntry &coverage(Type value);
+#define LLVM_COVERAGE_ENTRY(Name, Milestone, State, Rule, Predicate)
+#define LLVM_COVERAGE_SENTINEL(Name)
+#define LLVM_COVERAGE_END()
+#include "coverage.def"
+#undef LLVM_COVERAGE_BEGIN
+#undef LLVM_COVERAGE_ENTRY
+#undef LLVM_COVERAGE_SENTINEL
+#undef LLVM_COVERAGE_END
+
+} // namespace lang::llvm_detail

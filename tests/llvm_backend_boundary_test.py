@@ -55,6 +55,9 @@ def main() -> None:
         write(root, "include/gti/llvm_backend.h", '#include "gti/llvm_detail.h"\n')
         write(root, "include/gti/llvm_detail.h", '#include <llvm/IR/Module.h>\n')
         assert any("exposed LLVM" in failure for failure in audit(root))
+        write(root, "include/gti/llvm_detail.h", '#include "gti/backend.h"\n')
+        write(root, "include/gti/backend.h", '#include <llvm/IR/Type.h>\n')
+        assert any("public contract exposes LLVM" in failure for failure in audit(root))
     print("LLVM dependency discovery and transitive mutation controls passed")
 
 

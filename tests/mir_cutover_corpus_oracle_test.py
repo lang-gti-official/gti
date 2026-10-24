@@ -25,9 +25,10 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 import tempfile
+
+from backend_execution import Endpoint, execute
 
 
 CONFIGURATIONS = (("O0", "c++20"), ("O3", "c++23"))
@@ -71,67 +72,31 @@ class CaseResult:
     error: str = ""
 
 
-def run(command: list[str], *, cwd: Path, env: dict[str, str],
-        timeout: int) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        cwd=cwd,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=timeout,
-    )
-
-
 def build_and_run(gti: Path, root: Path, scratch: Path, source: Path,
                   optimization: str, standard: str,
-                  env: dict[str, str]) -> CaseResult:
+                  env: dict[str, str], backend: str = "cpp") -> CaseResult:
     case = scratch / f"{optimization}-{standard.replace('+', 'x')}" / source.stem
     case.mkdir(parents=True, exist_ok=True)
-    executable = case / ("program.exe" if os.name == "nt" else "program")
-    generated = Path(f"{executable}.gti.cpp")
-    command = [
-        str(gti),
-        str(source),
-        *(
-            ["--execution-profile", "concurrent"]
-            if source.name in {"066-managed-threads.gti", "076-scalar-atomics.gti", "175-thread-local-storage.gti"}
-            else []
-        ),
-        f"-{optimization}",
-        "--std",
-        standard,
-        "--keep-cpp",
-        "-o",
-        str(executable),
-    ]
-    try:
-        built = run(command, cwd=root, env=env, timeout=240)
-    except (OSError, subprocess.TimeoutExpired) as error:
+    endpoint = Endpoint(backend, optimization,
+                        standard if backend == "cpp" else None,
+                        keep_cpp=backend == "cpp")
+    executed = execute(
+        gti, root, case, source, endpoint, env,
+        concurrent=source.name in {"066-managed-threads.gti", "076-scalar-atomics.gti",
+                                  "175-thread-local-storage.gti"},
+    )
+    if executed.error:
         return CaseResult(source.name, optimization, standard, frozenset(),
-                          frozenset(), -1, "", "", f"build failed: {error}")
-    if built.returncode != 0 or not executable.is_file() or not generated.is_file():
-        detail = built.stderr.strip() or built.stdout.strip() or (
-            "compiler reported success without publishing the executable and "
-            "retained C++ artifact"
-        )
-        return CaseResult(source.name, optimization, standard, frozenset(),
-                          frozenset(), built.returncode, built.stdout,
-                          built.stderr, f"build failed: {detail}")
+                          frozenset(), executed.returncode, executed.stdout,
+                          executed.stderr, executed.error)
 
-    text = generated.read_text(encoding="utf-8", errors="replace")
+    text = executed.generated_cpp or ""
     rows = frozenset(
         (family, kind, int(owner))
         for family, kind, owner in MARKER_PATTERN.findall(text)
     )
     markers = frozenset((kind, owner) for _, kind, owner in rows)
 
-    try:
-        executed = run([str(executable)], cwd=root, env=env, timeout=15)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return CaseResult(source.name, optimization, standard, markers, rows,
-                          -1, "", "", f"execution failed: {error}")
     return CaseResult(
         source.name,
         optimization,
@@ -151,6 +116,9 @@ def main() -> int:
     parser.add_argument("baseline")
     parser.add_argument("runtime_library")
     parser.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1))
+    parser.add_argument("--backend", choices=("cpp", "llvm"), default="cpp")
+    parser.add_argument("--case", action="append", dest="selected_cases",
+                        help="run named examples after validating the complete census inventory")
     arguments = parser.parse_args()
 
     gti = Path(arguments.gti).resolve()
@@ -181,6 +149,13 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
+    if arguments.selected_cases:
+        unknown = set(arguments.selected_cases) - source_names
+        if unknown:
+            parser.error(f"unknown corpus examples: {sorted(unknown)}")
+        sources = [source for source in sources if source.name in arguments.selected_cases]
+    configurations = CONFIGURATIONS if arguments.backend == "cpp" else (("O0", "native"), ("O3", "native"))
+
     env = dict(os.environ)
     env["GTI_STDLIB_PATH"] = str(root / "stdlib")
     env["GTI_RUNTIME_INCLUDE"] = str(root / "runtime" / "include")
@@ -200,9 +175,10 @@ def main() -> int:
                     optimization,
                     standard,
                     env,
+                    arguments.backend,
                 ): (source.name, optimization, standard)
                 for source in sources
-                for optimization, standard in CONFIGURATIONS
+                for optimization, standard in configurations
             }
             for future in as_completed(futures):
                 key = futures[future]
@@ -219,7 +195,7 @@ def main() -> int:
     for source in sources:
         cases = [
             results[(source.name, optimization, standard)]
-            for optimization, standard in CONFIGURATIONS
+            for optimization, standard in configurations
         ]
         for case in cases:
             label = f"{case.source} {case.optimization}/{case.standard}"
@@ -231,7 +207,7 @@ def main() -> int:
                     f"{label}: exited {case.returncode}; stdout={case.stdout!r}; "
                     f"stderr={case.stderr!r}"
                 )
-            if len(case.markers) != expected[source.name]:
+            if arguments.backend == "cpp" and len(case.markers) != expected[source.name]:
                 failures.append(
                     f"{label}: emitted {len(case.markers)} reviewed body "
                     f"identities, expected {expected[source.name]}"
@@ -249,7 +225,7 @@ def main() -> int:
         if any(case.error for case in cases):
             continue
         first, second = cases
-        if first.markers != second.markers:
+        if arguments.backend == "cpp" and first.markers != second.markers:
             failures.append(
                 f"{source.name}: body ownership differs between endpoint "
                 "configurations"
@@ -264,15 +240,15 @@ def main() -> int:
             )
 
     print(
-        f"MIR cutover corpus oracle: {len(sources)} examples, "
-        f"{baseline_document['total']} reviewed body identities, "
-        f"{len(CONFIGURATIONS)} endpoint configurations"
+        f"MIR corpus oracle ({arguments.backend}): {len(sources)} examples, "
+        f"{sum(expected[source.name] for source in sources)} reviewed body identities, "
+        f"{len(configurations)} endpoint configurations"
     )
     if failures:
         for failure in failures:
             print(f"FAIL: {failure}", file=sys.stderr)
         return 1
-    print("ok: all examples build, run, and retain identical MIR ownership")
+    print("ok: all selected examples build and run with matching observable behavior")
     return 0
 
 

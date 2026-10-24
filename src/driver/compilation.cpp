@@ -159,17 +159,17 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
     result.diagnostics.emplace_back(std::move(diagnostic));
     return result;
   };
-  const auto backendLimitation = [&](std::string detail) {
+  const auto backendLimitation = [&](const BackendUnsupportedError &error) {
     const SourceUnit *entry = std::as_const(frontend.sourceGraph)
                                   .findUnit(frontend.sourceGraph.entryUnit());
-    Diagnostic diagnostic =
-        makeDiagnostic("GTI-B0003", DiagnosticPhase::Backend,
-                       SourceSpan{entry == nullptr ? request.entry().string()
-                                                   : entry->path.string(),
-                                  0, 0, 1},
-                       "The selected backend does not yet support this valid "
-                       "GTI program: " +
-                           std::move(detail));
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-B0003", DiagnosticPhase::Backend,
+        error.location().value_or(SourceSpan{
+            entry == nullptr ? request.entry().string() : entry->path.string(),
+            0, 0, 1}),
+        "The selected backend does not yet support this valid "
+        "GTI program: " +
+            std::string(error.what()));
     result.status = CompilationStatus::BackendFailure;
     result.sources = std::move(frontend.sources);
     result.diagnostics = std::move(frontend.diagnostics);
@@ -208,7 +208,7 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
     const PhaseTimeScope timeScope("gti-backend");
     result.artifact = backend.generate(std::move(loweredProgram));
   } catch (const BackendUnsupportedError &exception) {
-    return backendLimitation(exception.what());
+    return backendLimitation(exception);
   } catch (const std::exception &exception) {
     return backendFailure(exception.what());
   } catch (...) {

@@ -10100,6 +10100,29 @@ ownership or entry-signature inference.
 
 ## Post-Cutover MIR Corpus Gates
 
+### Native LLVM Admission Gates
+
+O-LLVM-02 adds the following independent checks while executable LLVM support
+remains pending:
+
+| Gate | Evidence |
+| --- | --- |
+| `llvm_admission` | Every typed ledger row has a milestone/predicate; unknown values and sentinels reject; snapshot/target/policy identity survives; all executable bodies remain required; scalar, array, borrow, cleanup, native and TLS shapes are inventoried; pending generation carries source provenance and emits no artifact. |
+| `llvm_coverage_exhaustiveness` | A real host compilation accepts the ledger, then rejects an added terminator member without a count sentinel and an added MIR instruction field. It does not parse C++ enums with a second language parser. |
+| `llvm_backend_dependency_controls` | New helper discovery, literal target ownership, transitive frontend/optimizer/C++ dependencies, hidden sources and public LLVM exposure are tested with mutations. |
+| `backend_execution_protocol` | Backend selection and mode arguments, native versus retained-C++ artifact contracts, build rejection/missing artifacts, and exit/stdout/stderr preservation. Real execution evidence comes from the corpus, not its mock protocol controls. |
+| `llvm_backend_cli`, `driver_pipeline` | Stable `GTI-B0003`, exact optional source spans with entry fallback, unchanged argument validation, no output publication and preservation of an existing destination. |
+| `llvm_backend_foundation`, `backend_lowered_program_rejection`, `llvm_backend_library_boundary` | The sealed input still owns generation; malformed input rejects before admission; the installed/public backend interface remains independent of LLVM headers. |
+
+The existing example oracle now uses `backend_execution.py`. Default C++ runs
+retain both native standards, every marker/count/ownership check, and observable
+behavior comparison. `--backend llvm` selects native O0/O3 endpoints without
+`--std`, `--keep-cpp` or C++ markers; a limitation is a failed build, never a
+passing unsupported case. `--case` narrows execution only after validating the
+complete example/census inventory. Run the full C++ corpus when changing this
+shared harness. The complete LLVM corpus becomes an acceptance gate only after
+the requisite native lowering milestones, and does not certify support today.
+
 The base-constructor stage gate retains the existing generated-base, owning
 payload-argument and field-after-base ordering mutations. Checked/effectful
 scalar preparation additionally checks forged parameter, receiver, borrow,

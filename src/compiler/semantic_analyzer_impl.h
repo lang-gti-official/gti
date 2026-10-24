@@ -6310,9 +6310,6 @@ private:
   // not rebuild declaration authority in a second table. The catalog is
   // sealed after the ordered registration prepasses complete.
   struct SemanticCatalog {
-    // Trusted computed-type identities are declaration facts. Every isolated
-    // query, macro probe and instance worker must inherit the same registry.
-    std::unordered_map<CompilerTypeKind, ClassId> compilerTypeClasses;
     std::unordered_set<std::string> namespaces;
     std::unordered_map<std::string, SymbolId> namespaceToolingSymbols;
     std::unordered_map<std::string, NamespaceAliasInfo> namespaceAliases;
@@ -6872,8 +6869,6 @@ private:
   // preamble reports into its own sink.
   SemanticDiagnosticReporter reporter{semanticModel, diagnostics};
   SemanticCatalog &catalog = requestSession.catalog;
-  std::unordered_map<CompilerTypeKind, ClassId> &compilerTypeClasses =
-      requestSession.catalog.compilerTypeClasses;
   ValueFlowState &valueFlow = requestSession.valueFlow;
   ScopeStack &scopes = requestSession.valueFlow.scopes;
   std::unordered_set<std::string> &namespaces =

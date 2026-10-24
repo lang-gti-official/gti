@@ -1,9 +1,12 @@
 #pragma once
 
+#include "gti/diagnostic.h"
+
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace lang {
 
@@ -35,6 +38,16 @@ struct BackendArtifact {
 class BackendUnsupportedError : public std::runtime_error {
 public:
   using std::runtime_error::runtime_error;
+
+  BackendUnsupportedError(std::string message, SourceSpan source)
+      : std::runtime_error(std::move(message)), source(std::move(source)) {}
+
+  [[nodiscard]] const std::optional<SourceSpan> &location() const {
+    return source;
+  }
+
+private:
+  std::optional<SourceSpan> source;
 };
 
 class Backend {

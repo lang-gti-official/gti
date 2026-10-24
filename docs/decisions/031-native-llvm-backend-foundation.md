@@ -26,8 +26,8 @@ verified optimized MIR -> LoweredProgram
 ```
 
 `CppBackend` remains the production default. `LlvmBackend` is an installed,
-selectable foundation which verifies the same `LoweredProgram`, initializes the
-host LLVM target once, and then reports the classified `GTI-B0003` limitation
+selectable foundation which verifies the same `LoweredProgram`, checks native
+admission before initializing the host LLVM target, and reports the classified `GTI-B0003` limitation
 that executable LLVM lowering is not implemented. It does not manufacture a
 program merely to prove that LLVM can emit one.
 
@@ -94,8 +94,11 @@ not independently rediscovered by each language-family emitter.
 
 ## Current Status
 
-This decision establishes build, package, driver, CLI, initialization, artifact,
-diagnostic, and dependency boundaries only. No GTI declaration, function,
+The foundation and O-LLVM-02 establish build, package, driver, CLI,
+initialization, artifact, diagnostic, coverage/admission and dependency
+boundaries. Admission over an owning verified snapshot inventories the complete
+current vocabulary and represented shapes, then rejects pending requirements
+before LLVM initialization. No GTI declaration, function,
 instruction, control-flow edge, layout, ABI, cleanup, failure path, or runtime
 operation is lowered to LLVM IR. Selecting `--backend llvm` for a valid host
 program fails clearly with `GTI-B0003` and does not create an output artifact.

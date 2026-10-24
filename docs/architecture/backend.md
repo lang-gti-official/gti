@@ -4284,8 +4284,10 @@ locations come from the driver/toolchain installation contract.
 `LlvmBackend` is an independent sibling of `CppBackend`. It receives
 `LoweredProgram` plus GTI-owned LLVM code-generation policy, verifies the
 sealed value, restricts this first stage to the configured host target,
-initializes LLVM's native target and assembly printer once, and then reports
-`GTI-B0003`: executable LLVM lowering is not implemented. It emits no dummy
+and builds an immutable admission plan before LLVM initialization. Pending
+requirements report `GTI-B0003`: executable LLVM lowering is not implemented.
+Native target and assembly-printer initialization remains backend-owned and
+idempotent, for the first admitted executable slice. It emits no dummy
 module, special `main`, LLVM IR, object, or executable.
 
 The public backend header has no LLVM include or type. LLVM context, target
@@ -4328,6 +4330,93 @@ not another branch in the C++ emitter.
 See [ADR 031](../decisions/031-native-llvm-backend-foundation.md) for the
 dependency, initialization, packaging, status, and first-lowering decision.
 
+### LLVM Coverage And Admission
+
+`llvm_admission.h` exposes `llvmCoverageLedger()` and
+`planLlvmAdmission(VerifiedLoweredProgram, LlvmBackendOptions)`. The plan shares
+ownership of the exact immutable verified snapshot and retains optimization and
+debug policy; source identities and target come from that snapshot. It cannot
+be constructed from a frontend, mutable MIR, an inspection print or an unverified
+program. `src/compiler/llvm/` owns the private inventory and vocabulary.
+
+`coverage.def` assigns every current type/capability, MIR instruction/operation/
+terminator, place/projection/operand/loan/lifecycle, intrinsic, failure,
+synchronization, native-runtime, declaration/generated-item and startup enum to
+a named O-LLVM milestone. Entries distinguish pending lowering, implemented
+lowering and verified nonexecuting facts. No executable entry is implemented
+yet. A nonexecuting permission/provenance fact can be inventoried without a
+runtime operation; a source-only query marked `MustBeAbsent` cannot silently
+be erased if it appears as executable input. Neither classification grants LLVM
+attributes or permits removing a runtime check.
+
+The compiled switches reject new unassigned enum members, including enums with
+no count sentinel. `input_fields.def` checks the decomposition of the central
+input records, so new fields require coverage/admission review too. Literal and
+declaration/generated payload variants have corresponding compile-time guards.
+Each ledger entry names inventory-positive and drift-negative test gates;
+these are coverage evidence, not execution evidence for pending lowering. When
+an entry becomes implemented its owner must add real positive/negative execution
+tests for its admitted shapes and update its predicate and test references.
+
+The inventory records types and nested arguments, access and ownership modes,
+exact instructions and their failure/cleanup/publication shapes, generated
+dependencies, native signatures, program initialization and thread-local data,
+initializer and lifetime operations. Repeated requirements coalesce by body and
+context, retaining a count and the first source witness. Required executable
+definitions remain separate from ABI/data-only bodies and uninstantiated source
+declarations. The latter are inventoried as metadata without demanding that
+their symbolic types have runtime storage.
+
+Current closure policy is explicitly `AllExecutableBodies`: every executable
+body in the sealed inventory is required, including unused concrete helpers.
+This is conservative admission, not a reachability proof. Native ABI declarations,
+concrete type inventories and all generated items are also retained. No unsupported
+body is skipped. Before a partial executable backend can omit otherwise dormant
+prelude bodies, it must implement complete root/dependency reachability from the
+sealed input, including globals, exports, address-taken targets and adapters.
+
+Admission scans the full inventory before returning a result. The first
+unsupported requirement is deterministic, preferring an instruction with source
+provenance, then the first remaining required fact. Its diagnostic names the
+ledger key, milestone, body and available block/instruction. Debug source rows
+provide an instruction span when available; otherwise the owning body span or
+driver entry fallback is used. The generic `BackendUnsupportedError` carries
+that optional span through the existing driver diagnostic path. A forged
+`LoweredProgram` still fails verification as an invariant error before admission.
+No artifact is emitted or published on a limitation, and an existing output
+file is preserved.
+
+The dependency gate discovers the backend's literal CMake sources, all public
+`llvm_*.h` headers and private `src/compiler/llvm/` helpers. It follows private
+project includes, rejecting frontend construction, optimizer and C++ helpers
+even behind an innocently named local header. The sealed contract headers stop
+that authority walk because they still cohabit with legacy value declarations;
+public LLVM/Clang exposure is checked through their transitive includes too.
+Mutation gates exercise added helpers, transitive forbidden includes, hidden
+source ownership, public exposure, new enum members and new aggregate fields.
+
+The behavioral corpus compiles/runs through `tests/backend_execution.py` with
+explicit backend and optimization selection. C++ endpoints retain C++20/C++23
+and MIR marker/ownership assertions. LLVM endpoints use native artifacts and
+observable exit/stdout/stderr comparison without C++ representation options.
+Current LLVM corpus runs must fail until their requirements are implemented;
+unsupported builds are never counted as successful execution.
+
+The remaining architecture obligations have explicit owners:
+
+| Obligation | Producer / representation owner | Verification and next gate |
+| --- | --- | --- |
+| Native layout, private function ABI and failure-result transport | Sealed type/call/failure facts; LLVM target/layout/ABI session | Target/layout/signature and status-publication tests, O-LLVM-03/04. No LLVM facts in the lowered contract. |
+| Exact emission roots for a partially supported program | Sealed program kind, declarations, bodies and generated dependencies; backend closure planner | Dormant-prelude, global-init, export, indirect/virtual/callback controls before omitting a body, O-LLVM-04. |
+| Versioned host/runtime bindings | Exact runtime declarations plus C ABI implementations; runtime/LLVM binding owner | Link/signature/status/cleanup tests, O-LLVM-03/06/12/13. Existing C++ inline/template services need explicit native bindings. |
+| Native C aggregate calling convention | Sealed native declarations/layouts; target ABI classifier | Bidirectional argument/result/callback oracles, O-LLVM-03/11. Field offsets alone are insufficient. |
+| Complete virtual dispatch facts | Semantics/HIR/MIR publish exact bases, roots and targets; LLVM chooses representation | Dispatch-plan audit and verifier mutations, O-LLVM-10. Extend the upstream contract first if these facts prove insufficient. |
+| Worker/TLS cleanup and atomic wait ABI | Verified task/storage/synchronization schedules; C runtime adapters | Source failure, attachment/drain, memory-order and cleanup matrices, O-LLVM-06/13. C++ unwinding must not cross generated LLVM frames. |
+
+These are implementation prerequisites, not hidden claims that the native ABI,
+runtime migration or object emission already exists. The operational exit gates
+remain in the [LLVM sequence](../plans/implementation-sequence.md#llvm-production-backend-campaign).
+
 ### LLVM Readiness Audit (2026-10-24)
 
 Initial source baseline for the references below:
@@ -4347,6 +4436,9 @@ are part of the campaign's final coverage baseline. The runtime cleanup-entry
 and lifetime APIs in `runtime_thread.hpp` are currently C++-only, adding another
 concrete C-ABI prerequisite; ordinary class/storage work owns TLS representation,
 and the concurrency bucket completes multi-thread entry/drain composition.
+O-LLVM-02 subsequently implements the vocabulary, admission and growing-source
+dependency gates described above; the table's fixed-two-file observation below
+remains the original audit finding, not the current gate behavior.
 
 **Assessment:** retain the sealed input, backend interface, distinct library,
 and driver-owned artifact boundary. No replacement IR or pipeline refactor is

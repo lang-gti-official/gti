@@ -35,6 +35,8 @@ def audit(root: Path) -> list[str]:
     root = root.resolve()
     failures = []
     cmake = code_without_comments((root / "CMakeLists.txt").read_text())
+    cmake = re.sub(r'"(?:\\.|[^"\\])*"|#[^\n]*',
+                   lambda m: m.group() if m.group().startswith('"') else " ", cmake)
     # LLVM ownership is deliberately literal and reviewable. A variable or
     # generator expression must not hide a source from this boundary gate.
     blocks = re.findall(
@@ -106,4 +108,24 @@ def audit(root: Path) -> list[str]:
                 failures.append(f"{origin}: project include escapes repository: {include}")
                 continue
             pending.append((resolved.relative_to(root).as_posix(), origin, public))
+
+    # Public contracts stop the authority walk because they currently cohabit
+    # with legacy declarations. They do not stop the public LLVM exposure walk.
+    public_pending = [root / name for name in sorted(owned) if name.startswith("include/")]
+    public_visited = set()
+    while public_pending:
+        path = public_pending.pop()
+        if path in public_visited or not path.is_file():
+            continue
+        public_visited.add(path)
+        code = code_without_comments(path.read_text())
+        name = path.relative_to(root).as_posix()
+        if re.search(r"\bllvm\s*::|\bnamespace\s+llvm\b", code):
+            failures.append(f"{name}: public contract exposes LLVM types")
+        for include in INCLUDE.findall(code):
+            if include.startswith(("llvm/", "clang/")):
+                failures.append(f"{name}: public contract exposes LLVM/Clang include {include}")
+            candidate = (root / "include" / include).resolve()
+            if candidate.is_relative_to(root / "include") and candidate.is_file():
+                public_pending.append(candidate)
     return sorted(set(failures))
