@@ -2804,8 +2804,9 @@ set is recorded for it.
   fixed.
 - A non-consuming `switch` subject consumes the value for confinement.
   `dependentTextPayloadLoan` finds the subject's loan when it designates an
-  arm binding's text payload; a by-value binding then carries that loan, and
-  an `auto&` binding is `GTI-S2045`.
+  arm binding's text payload; a by-value binding then carries that loan and
+  records it as its retained loan, as a local initialized from a published
+  field read does, and an `auto&` binding is `GTI-S2045`.
 
 Phase 2b publishes through payload-enum fields at a path `[field, payload]`:
 - `ownerlessTextConstructorInputs` also recognizes, from declarations, an

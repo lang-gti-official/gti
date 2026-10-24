@@ -5339,6 +5339,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           else if (Symbol *carrier = resolveMutable(*payload.name)) {
             attachLoanCarrier(textLoan->id, *carrier, symbol, false);
             payload.binding.traits.containsBorrowedState = true;
+            payload.binding.retainedLoan = textLoan->id;
           }
         }
         if (!rawPointerFieldPaths(payload.binding.type).empty())

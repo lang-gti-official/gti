@@ -62,6 +62,63 @@ and compiler/runtime sanitizer checks, and refreshed performance measurements
 remain separate integration acceptance gates. The focused and corpus passes
 above are not a claim those remaining gates have completed.
 
+
+## Array fields from constructor parameters (0.467.3)
+
+`array_field_constructor_elements_runtime` runs
+`array_field_constructor_elements.gti`. Constructors of user-defined structs
+build a fixed-array field from copied parameters (`corners({a, b})`), from a
+moved and a copied parameter beside a fresh element, from nested rows of a
+copy and a move, and from whole array parameters as rows; a class with a
+counting destructor moves both parameters into its array field; and a local
+array takes a moved element. Fields are read at a run-time index. The output
+shows each element's value, that copied parameters are still readable, and
+that every counted object is destroyed exactly once, as an element. With an
+argument the first index is out of range and fails with `GTI-R0007` (exit
+status 70). Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and
+ASan/UBSan. The 0.467.2 compiler stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_lifecycle`, `testArrayFieldConstructorElements`
+checks that the constructors spell their parameters inside the field's
+initializer (`std::array<Point, 2>{a, std::move(b)}`, a whole row beside a
+nested row, `std::move` of both counted owners) with no staged local. An
+element class without a copy constructor, a moved element whose obligation
+does not leave at the aggregate, a lifecycle-free move of a class with a
+destructor, and a failure site on a moved element each refuse the body.
+
+An emitted-C++ differential against the 0.465.6 emitter, run on every program
+under `tests/fixtures`, `tests/coverage` and `examples` at O0 and O3 with one
+`GTI_STDLIB_PATH` (1832 programs, 3664 runs; `namespace-depth-63` excluded
+for its compile time), leaves 2906 runs identical and 740 refused by both
+with the same codes. No program is newly refused or changes its refusal, and
+nothing times out. Only the new fixture becomes accepted. Text changes in 8
+programs. Six spell staged element copies inline: `012-fixed-arrays`, three
+`a42-*` reproducers, `passive_fixed_array_values` and `raw_record_containers`.
+`class_array_arguments` and `storage_fixed_array_emplacement` gain a plain
+constructor for a by-value array of passive classes, so their callers drop a
+dead failure branch. The owning runtime tests of all eight pass.
+
+## Copied dependent payload views (0.467.2)
+
+`view_fields` covers the copy in `testCopiedPayloadBindings`.
+- A switch's by-value binding of a dependent payload is copied into a local,
+  and that local is copied again. Both copies verify and carry the payload's
+  `Stored` loan.
+- Dropping either copy from the loan's carriers is rejected: MIR derives
+  that each copy holds the owner's text (`verifyDependentTextCarriers`), so
+  it must carry a loan that retains the owner.
+- `view_field_payloads_runtime` runs copies of a local enum's binding and of
+  a `line.word` binding in every mode.
+
+Fourteen probes ran on main's compiler and this change's. Seven reported
+`GTI-B0001` on main and now build and run: the plain copy, a copy chain, a
+`default` arm, a generic enum, a payload enum held in a field, a loop, and a
+two-payload variant. Five source rejections are unchanged: assigning the view
+into an existing binding, storing it, republishing it in a payload or
+constructor, and mutating the owner while a copy is live (`GTI-S2045`,
+`GTI-S2017`). Two already built and still do: `id(value)` with
+`std::string_view& r = value;`, and the carrier program of PR #297's
+`testDerivedCarriers`.
 ## Text members through checked `operator->` (0.467.1)
 
 `testArrowNonClassReferents` in the `ownership` suite analyzes a class with

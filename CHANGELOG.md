@@ -40,6 +40,30 @@ for what minor and patch releases mean.
 - See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
   and [runnable example 175](examples/175-thread-local-storage.gti).
 
+## 0.467.3 — Array fields built from constructor parameters
+
+- A constructor that initializes a fixed-array field from its by-value
+  parameters, as in `Polygon(Point a, Point b) : corners({a, b})`, used to
+  report `error[GTI-B0001]` (an internal compiler error). It now compiles and
+  runs, including moved parameters (`corners({std::move(a), b})`), a fresh
+  element beside them, nested arrays (`cells({{a, b}, {c, d}})`), whole array
+  parameters as rows (`cells({top, bottom})`) and classes with a destructor.
+  Each element is copied or moved once, straight into the field.
+- The same elements in a local array, such as
+  `Point[2] corners = {a, std::move(b)};` or `Point[2][2] g = {{a, b}, {c, d}};`,
+  also reported `GTI-B0001` and now work.
+
+## 0.467.2 — Copying a payload view that holds a local owner's text
+
+- In a `switch` over a payload enum whose `string_view` payload views a local
+  owner, as in `Word word = Word::text(input.view());`, copying the arm's
+  binding into a local (`case Word::text(value): std::string_view v = value;`)
+  used to report `error[GTI-B0001]` (an internal compiler error). The copy now
+  compiles and keeps `input` borrowed while it is live, as a copy of a class's
+  published text field does. This also covers copies of copies, a payload
+  enum held in a field (`switch (line.word)`), generic enums, `default` arms
+  and loops.
+
 ## 0.467.1 — Text members through `operator->`
 
 - When an `operator->` returns a `std::string_view&`, its members can be
