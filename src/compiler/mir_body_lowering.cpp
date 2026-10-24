@@ -14100,6 +14100,27 @@ private:
           }
         }
         (void)appendInstruction(std::move(initialize));
+        // A by-value binding of a dependent text payload (L-OWN-02) holds
+        // the subject's owner text: it carries the subject's active Stored
+        // loan, as a local initialized from a published field read does, so
+        // a copy of the binding retains that owner too.
+        if (binding->info.type.kind != SemanticType::Reference &&
+            binding->info.retainedLoan != 0) {
+          const auto mapped = semanticLoans.find(binding->info.retainedLoan);
+          const MirLoan *retained = mapped == semanticLoans.end()
+                                        ? nullptr
+                                        : output.findLoan(mapped->second);
+          if (!retained || retained->kind != MirLoanKind::Stored ||
+              !loanIsActive(scopes, retained->id)) {
+            valid = false;
+          } else {
+            bindingLoans.insert_or_assign(payload.binding, retained->id);
+            auto &carriers = output.loans[retained->id - 1].carriers;
+            if (std::find(carriers.begin(), carriers.end(), payload.binding) ==
+                carriers.end())
+              carriers.push_back(payload.binding);
+          }
+        }
         registerDrop(payload.binding, destination);
       }
       if (!payloadBindings.empty()) {
