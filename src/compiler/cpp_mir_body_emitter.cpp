@@ -8907,6 +8907,10 @@ struct ConditionalClassBindingJoin {
 cleanupFreeClassJoinMove(const MirProgram &program, const MirBody &body,
                          const MirPlace &slot);
 
+[[nodiscard]] bool exitCarrierClassSlot(const MirProgram &program,
+                                        const MirBody &body,
+                                        const MirPlace &slot);
+
 [[nodiscard]] bool exactMemberBorrowReceiver(const MirProgram &program,
                                              const MirBody &body,
                                              const MirInstruction &producer,
@@ -9179,12 +9183,17 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
              publicationBlock->activeFailure == 0 &&
              !publicationBlock->instructions.empty() &&
              publicationBlock->instructions.front().id == initialize->id &&
-             std::all_of(publicationBlock->instructions.begin() + 1,
-                         publicationBlock->instructions.end(),
-                         [](const MirInstruction &instruction) {
-                           return instruction.kind ==
-                                  MirInstructionKind::EndBorrow;
-                         })) {
+             // A shared exit's store precedes the exit's own cleanup of its
+             // full expression. That work follows publication, and the slot
+             // abandons its passive value if a later rung fails
+             // (`exitCarrierClassSlot` proves no other access).
+             (slot->exitCarrier ||
+              std::all_of(publicationBlock->instructions.begin() + 1,
+                          publicationBlock->instructions.end(),
+                          [](const MirInstruction &instruction) {
+                            return instruction.kind ==
+                                   MirInstructionKind::EndBorrow;
+                          }))) {
     // The status constructor writes the slot at Invoke, and engages it only
     // on success. Only its unique, work-free success path may separate
     // construction from publication. After publication, the arm may end its
@@ -9681,6 +9690,66 @@ cleanupFreeClassJoinMove(const MirProgram &program, const MirBody &body,
   return move;
 }
 
+// The class result carrier of shared normal exits (`MirPlace::exitCarrier`,
+// RT-12). Each exit publishes its fresh cleanup-free result into this one
+// representation-only slot exactly as an arm of a cleanup-free join does,
+// and the shared tail copies it out once for its return. The slot owns no
+// drop obligation: a failing cleanup rung abandons the passive value, so
+// only its representation ends at scope exit.
+[[nodiscard]] bool exitCarrierClassSlot(const MirProgram &program,
+                                        const MirBody &body,
+                                        const MirPlace &slot) {
+  if (!slot.exitCarrier || slot.root != MirPlaceRootKind::Temporary ||
+      slot.temporary == 0 || !slot.projections.empty() ||
+      slot.type.kind != SemanticType::Class || slot.initiallyAvailable ||
+      std::any_of(
+          body.dropObligations.begin(), body.dropObligations.end(),
+          [&](const MirDropObligation &drop) { return drop.place == slot.id; }))
+    return false;
+  std::size_t arms = 0;
+  std::size_t reads = 0;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.destination == slot.id) {
+        if (instruction.kind != MirInstructionKind::Initialize ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != MirOperandKind::Value)
+          return false;
+        const ConditionalClassBindingJoinArm arm =
+            conditionalClassBindingJoinArm(program, body,
+                                           instruction.operands.front().value);
+        if (arm.slot != &slot || arm.initialize != &instruction ||
+            arm.slotDrop != nullptr)
+          return false;
+        ++arms;
+        continue;
+      }
+      if (instruction.successResultDestination == slot.id ||
+          (instruction.receiver && instruction.receiver->place == slot.id))
+        return false;
+      if (std::none_of(instruction.operands.begin(), instruction.operands.end(),
+                       [&](const MirOperand &operand) {
+                         return operand.place == slot.id;
+                       }))
+        continue;
+      // The tail's one copy out, returned at once.
+      if (instruction.kind != MirInstructionKind::Load ||
+          instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != MirOperandKind::Copy ||
+          !instruction.result || instruction.destination ||
+          block.terminator.kind != MirTerminatorKind::Return ||
+          !block.terminator.value ||
+          block.terminator.value->kind != MirOperandKind::Value ||
+          block.terminator.value->value != *instruction.result)
+        return false;
+      ++reads;
+    }
+    if (block.terminator.value && block.terminator.value->place == slot.id)
+      return false;
+  }
+  return arms != 0 && reads == 1;
+}
+
 // The cleanup-free join whose single Move is `move`. Every writer of that
 // Move, whether it stages the joined object or publishes it as an arm of an
 // enclosing join, ends the emptied join's representation right after it, so
@@ -9708,7 +9777,8 @@ cleanupFreeJoinMovedBy(const MirProgram &program, const MirBody &body,
   const ConditionalClassBindingJoin join =
       conditionalClassBindingJoin(program, body, *arm.slot);
   if (!join)
-    return cleanupFreeClassJoinMove(program, body, *arm.slot) != nullptr
+    return cleanupFreeClassJoinMove(program, body, *arm.slot) != nullptr ||
+                   exitCarrierClassSlot(program, body, *arm.slot)
                ? arm.slot
                : nullptr;
   return std::any_of(join.arms.begin(), join.arms.end(),
@@ -22434,7 +22504,8 @@ lifetimeSlotPlace(const MirProgram &program,
       return true;
     }
     if (conditionalClassBindingJoin(program, body, place) ||
-        cleanupFreeClassJoinMove(program, body, place) != nullptr) {
+        cleanupFreeClassJoinMove(program, body, place) != nullptr ||
+        exitCarrierClassSlot(program, body, place)) {
       return true;
     }
     if (conditionalTemporaryViewStorage(program, representations, body,
@@ -32713,6 +32784,7 @@ private:
         place.root == MirPlaceRootKind::Temporary &&
         (static_cast<bool>(conditionalClassBindingJoin(program, body, place)) ||
          cleanupFreeClassJoinMove(program, body, place) != nullptr ||
+         exitCarrierClassSlot(program, body, place) ||
          someValueTargetsPlace(body, place,
                                &IndexedMirBody::classValueDestinations,
                                [&](MirValueId value) {

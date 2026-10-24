@@ -289,6 +289,10 @@ struct MirPlace {
   std::optional<PlaceKey> key;
   bool foreignStorage = false;
   bool initiallyAvailable = false;
+  // The temporary that carries a shared normal exit's result from each exit
+  // to the shared cleanup's single return (RT-12). Each exit initializes it;
+  // the tail loads it once.
+  bool exitCarrier = false;
 
   friend bool operator==(const MirPlace &, const MirPlace &) = default;
 };
