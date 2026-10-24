@@ -6809,6 +6809,23 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
                          : FreshTemporaryValueFailure::UnsupportedProducer;
     return result;
   }
+  if (const auto *call = exprAs<Call>(producer);
+      call != nullptr && semanticModel.shareMacroExpansion(*call)) {
+    // A checked typed result region publishes one owned value at this source
+    // expression. Its call-shaped syntax has no executable function target:
+    // the expansion and its exact result facts are the producer authority.
+    // Keep the existing concrete/self-contained and borrow-target contracts;
+    // in particular this does not broaden fresh callable admission.
+    const auto *produced = semanticModel.findExpression(*producer);
+    if (produced != nullptr && produced->category == ValueCategory::Value &&
+        produced->type == info->type &&
+        !containsOpenTypeParameter(produced->type) &&
+        !produced->traits.containsBorrowedState) {
+      result.eligible = true;
+      result.failure = FreshTemporaryValueFailure::None;
+      return result;
+    }
+  }
   if (payloadEnum) {
     // Both owning and passive alternatives have the same exact construction
     // identity. Materialization and cleanup remain independently checked by

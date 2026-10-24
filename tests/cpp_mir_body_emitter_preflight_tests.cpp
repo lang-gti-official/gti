@@ -4062,16 +4062,23 @@ public:
   Owner() {}
   ~Owner() { cleaned += 1; }
 };
+struct Pair {
+  int first;
+  int second;
+  Pair(int first, int second) : first(first), second(second) {}
+};
 #macro int initial_value(int value) {
   Owner guard{};
   mut int saved = value;
   saved += 1;
-  if (saved > 0) { return saved; }
+  Pair pair{saved, 2};
+  auto [left, right] = pair;
+  if (left > 0) { return left + right; }
   return 0;
 }
 int global = initial_value(4);
 class Registry { public: static int value = initial_value(6); };
-int main() { return global + Registry::value + cleaned - 14; }
+int main() { return global + Registry::value + cleaned - 18; }
 )");
   expect(frontend.canGenerateCode(),
          "owning startup locals must retain verified MIR cleanup");
@@ -4091,8 +4098,9 @@ int main() { return global + Registry::value + cleaned - 14; }
                  }),
              "initializer-local identities never demand global storage rows");
     }
-  expect(locals == 4,
-         "both startup steps retain distinct owner and scalar local bindings");
+  expect(locals == 12,
+         "both startup steps retain owners, scalars, hidden decomposition "
+         "sources and exact structured aliases");
   const lang::CppMirBodyEmissionMap map(rows);
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress module{.kind = lang::MirBodyKind::Module};
