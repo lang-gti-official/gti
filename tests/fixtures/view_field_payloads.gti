@@ -57,7 +57,22 @@ int main() {
   std::string input{"owned text"};
   Line line = Line(input.view(), 3);
   switch (line.word) {
-  case Word::text(value): std::println(value); break;
+  case Word::text(value): {
+    std::println(value);
+    std::string_view copied = value;
+    std::println(copied.size());
+    break;
+  }
+  case Word::none: break;
+  }
+  Word word = Word::text(input.view());
+  switch (word) {
+  case Word::text(value): {
+    std::string_view copied = value;
+    std::string_view again = copied;
+    std::println(again);
+    break;
+  }
   case Word::none: break;
   }
   if (line.hasText()) {
