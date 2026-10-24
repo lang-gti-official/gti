@@ -468,6 +468,19 @@ add_test(NAME driver_library_boundary COMMAND gti_driver_library_smoke)
 add_executable("gti_driver_tests" "${PROJECT_SOURCE_DIR}/tests/driver_tests.cpp")
 target_link_libraries("gti_driver_tests" PRIVATE gti_driver)
 add_test(NAME driver_pipeline COMMAND gti_driver_tests)
+add_executable(gti_test_runner_tests test_runner_tests.cpp)
+target_link_libraries(gti_test_runner_tests PRIVATE gti_driver)
+add_test(NAME test_runner COMMAND gti_test_runner_tests)
+set_tests_properties(test_runner PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+add_executable(gti_test_report_tests test_report_tests.cpp)
+target_link_libraries(gti_test_report_tests PRIVATE gti_driver)
+add_test(NAME test_report COMMAND "${Python3_EXECUTABLE}"
+  "${PROJECT_SOURCE_DIR}/tests/test_report_test.py" "$<TARGET_FILE:gti_test_report_tests>")
+set_tests_properties(test_report PROPERTIES TIMEOUT 30)
+add_executable(gti_process_capture_failure_tests process_capture_failure_tests.cpp)
+target_link_libraries(gti_process_capture_failure_tests PRIVATE gti_driver ${CMAKE_DL_LIBS})
+add_test(NAME process_capture_failure COMMAND gti_process_capture_failure_tests)
+set_tests_properties(process_capture_failure PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
 add_test(NAME source_debug_info
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_debug_info_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(source_debug_info PROPERTIES TIMEOUT 180)
@@ -4522,6 +4535,14 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(annotated_test_suites PROPERTIES TIMEOUT 600)
+  add_test(NAME test_command_controls
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_command_controls_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(test_command_controls PROPERTIES TIMEOUT 600)
+  add_test(NAME testing_assertions_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/testing_assertions_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(testing_assertions_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME scoped_configuration_defines
     COMMAND "${Python3_EXECUTABLE}"

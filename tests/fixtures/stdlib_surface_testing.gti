@@ -1,7 +1,16 @@
 #include <std/testing>
+#include <std/vector>
 
 int main() {
   std::testing::check(2 + 2 == 4, "Addition changed");
   std::testing::check(true);
+  std::testing::check_eq(2 + 2, 4);
+  std::testing::check_ne(2, 3);
+  std::testing::check_string_eq("ready", "ready");
+  std::testing::check_approx(1.0, 1.001, 0.01);
+  mut std::vector<int> values{};
+  values.push_back(4);
+  auto view = values.as_span();
+  std::testing::check_elements_eq(view, view);
   return 0;
 }

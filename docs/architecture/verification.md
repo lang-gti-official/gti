@@ -1895,6 +1895,42 @@ representation fact of either the derived or the base class is cleared.
 
 ## Annotated test suites
 
+`testing_assertions_runtime` checks the source-only equality macros, scalar
+capture and literal ergonomics, borrowed noncopyable objects, exactly-once
+operand/equality evaluation, lazy success messages/formatting, string byte/length
+differences, approximate comparison limits, and borrowed span mismatch/length.
+Independent host assertions require the panic status, user caller line, diagnostic
+values and deterministic cleanup at C++20/O0 and C++23/O3; invalid generic uses
+must be rejected. The annotated example and stdlib surface inventory remain
+registered with the extended testing API.
+
+`test_runner` independently exercises driver selection/listing/empty/duplicate
+catalog rules, bounded overlapping children, timeout progress, exact signal versus
+ordinary status (including 127 and 143), failed exec, moved process ownership and
+background descendant termination on both completion and timeout. It uses native
+host children, so its outcome does not depend on GTI-generated checks.
+Streaming observers must receive complete payloads before the driver releases
+their allocated storage; retained result facts preserve stable failure selection.
+`test_report` parses serialized events with Python's JSON implementation,
+including control bytes, valid/invalid UTF-8, hostile output, all status variants,
+large counts and non-C numeric locales.
+`test_command_controls` uses an optimized host compiler to exercise fresh/cached
+suite selection, exact filters/skips/listing, no-selection refusal/override,
+parallel assertions/crashes/timeouts, later-test continuation, legacy executables,
+invalid options and incomplete build-failure reports at GTI O0/O3. It checks
+inventory/start/completion identity equality and exact terminal counts externally.
+SIGINT and SIGTERM during execution must terminate/reap isolated children, emit
+incomplete summaries, and preserve interruption status. Closed standard streams
+must not alias private capture or exec-handshake descriptors.
+Parallel human reports include target identities when different targets contain
+the same qualified test name.
+`process_capture_failure` injects actual stdio failures around real child
+processes: seek, tell, partial read and close errors must become runner errors,
+while empty output and a genuine status 127 preserve their distinct outcomes.
+`macos_installed_runtime` also executes an annotated test project through relocated
+installed resources, covering the source-defined checks and JSON worker results
+without source-tree standard-library overrides.
+
 `annotated_test_suites` checks the runnable `examples/annotated-tests` project
 at O0/C++20 and O3/C++23, included test declarations, independent global state,
 automatic per-function reports, cache reuse and corrupted-catalog recovery.
