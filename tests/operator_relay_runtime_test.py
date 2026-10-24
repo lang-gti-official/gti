@@ -24,7 +24,7 @@ if __name__ == "__main__":
                       if line.strip() == "T& value() {")
     empty_line = next(index + 1 for index in range(value_line, len(optional_lines))
                       if "fail_empty_owner" in optional_lines[index])
-    arrow_text = "7\n0\n1\n7\n0\n7\n10\n13\n13\n0\n4\n"
+    arrow_text = "7\n0\n1\n7\n0\n7\n10\n13\n13\n0\n1\n4\n"
     main(names=("range_field_access", "indexed_view_relay",
                 "existing_value_allocation", "returned_view_observers",
                 "arrow_text_members", *originals),

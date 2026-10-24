@@ -1012,13 +1012,11 @@ class: a `std::string_view&` result supplies the view's builtin members, so
 `label->size()`, `label->empty()` and `label->end()` and, for
 `std::optional<std::string_view>`, `maybe->size()` work as `(*maybe).size()`
 does. A scalar or `c_string` referent has no members, so member access through
-it is a source error (`GTI-S2000`). One composition is not yet implemented for
-any accessor spelling: a text-view iterator built directly from a returned
-view reference (`maybe->begin()`, `maybe.value().begin()`) stops in MIR
-construction. Binding the reference first (`std::string_view& view =
-maybe.value();`) and iterating `view` works. These checked
-nominal operators remain distinct from built-in raw-pointer `*`, `->`, and
-`[]`, which require an unsafe block and create no borrow or loan.
+it is a source error (`GTI-S2000`). A text-view iterator may be built
+directly from the returned view, as `maybe->begin()` or `label->begin()`.
+These checked nominal operators remain distinct from built-in raw-pointer
+`*`, `->`, and `[]`, which require an unsafe block and create no borrow or
+loan.
 
 Range-based `for` uses `operator*` through the same receiver-tied rules. A
 read-only declaration records a shared range loan and a loop-bounded read-only
