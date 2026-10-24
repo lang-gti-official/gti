@@ -52,6 +52,9 @@ def main() -> None:
         "src/compiler/semantic_analyzer_impl.h",
         "tests/semantic_analyzer_header_smoke.cpp",
         "tests/compiler_test_fixture.h",
+        # Rechecks parsed syntax without a SourceManager to verify source-text
+        # queries reject missing owning buffers; Frontend always supplies one.
+        "tests/expression_text_tests.cpp",
         # Reuses one analyzer across requests to verify that raw-reference
         # assertion state is cleared; the Frontend facade cannot expose this.
         "tests/raw_borrow_tests.cpp",

@@ -274,7 +274,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v112 valid=" << program.valid() << '\n';
+    output << "mir-v113 valid=" << program.valid() << '\n';
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -917,7 +917,18 @@ private:
       }
       output << " statement=" << step.statement << " initializer=v"
              << step.initializer << " full-expression=" << step.fullExpression
-             << '\n';
+             << " locals=[";
+      for (std::size_t index = 0; index < step.locals.size(); ++index) {
+        if (index != 0)
+          output << ',';
+        const auto &local = step.locals[index];
+        output << "local(binding=" << local.binding
+               << ";symbol=" << local.symbol << ";place=p" << local.place
+               << ')';
+      }
+      output << "] nested-full-expressions=[";
+      list(step.nestedFullExpressions);
+      output << "]\n";
     }
   }
 

@@ -22,8 +22,9 @@ does not reserve these identifiers.
 The LSP is an adapter over compiler-owned semantics:
 
 Typed macro declarations and ordinary-looking calls retain compiler-selected
-declaration identities. Hover/signature text prints `#macro` and its implicit
-void contract rather than the removed `[[deferred]]` attribute. Definition
+declaration identities. Hover/signature text prints `#macro`, preserving an
+explicit result type (including written `void`) and omitting only the generated
+implicit `void` type. Definition
 navigation and exact overload selection come from the same frontend records;
 the protocol does not infer expansion semantics from `#` spelling or names.
 Incomplete signatures, legacy-attribute migration and mixed macro/function

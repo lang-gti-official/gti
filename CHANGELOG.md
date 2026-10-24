@@ -9,13 +9,24 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.469.2 — Nested constructor argument staging
+## 0.470.1 — Nested constructor argument staging
 
 - Restore class-field initialization from nested constructor arguments when
   MIR proves the consuming constructor failure-free. The C++ backend preserves
   the prepared argument handoff and direct field publication instead of
   rejecting the constructor with `GTI-B0001`; this applies to ordinary user
   types as well as clock-point fields.
+
+## 0.470.0 — Macro results and written expression metadata
+
+- Value macros use `#macro Result NAME(typed parameters)` and ordinary calls.
+  Macro-local `return` statements publish their result without exiting the
+  caller, with checked movement and deterministic local/failure cleanup.
+- Fresh lambda arguments retain lexical callable identity and initialize
+  their captures only where the argument expression is evaluated.
+- `std::expression_text(expression)` in `<std/source_location>` obtains
+  literal-backed written argument text without evaluating the expression.
+  Default assertion messages include their original condition text.
 
 ## 0.469.0 — Test selection, isolated execution and richer assertions
 

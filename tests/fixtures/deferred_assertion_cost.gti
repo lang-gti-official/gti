@@ -3,6 +3,7 @@
 #include <std/format>
 #include <std/string>
 #include <std/vector>
+#include <std/source_location>
 
 #ifdef COST_MANUAL
 #define COST_MANUAL
@@ -36,13 +37,50 @@ std::string diagnostic() {
   }
 }
 
+// Result publication and a fresh capture must disappear into the same native
+// hot loop as the explicit control below, without runtime macro machinery.
+#macro uint64_t advance(uint64_t expression) {
+  mut uint64_t saved = expression;
+  saved = saved ^ (saved << uint(13));
+  saved = saved ^ (saved >> uint(7));
+  saved = saved ^ (saved << uint(17));
+  return saved;
+}
+#macro uint64_t invoke<F>(F action) { return action(); }
+#macro F retain<F>(F action) { return action; }
+#macro F relay_callable<F>(F action) { return retain(action); }
+
+struct StateValue {
+  uint64_t value;
+  StateValue(uint64_t value) : value(value) {}
+};
+#macro StateValue rewrap(uint64_t expression) {
+  StateValue saved{expression};
+  return saved;
+}
+uint64_t read_state(StateValue state) { return state.value; }
+
 int main(int argc, std::vector<std::string> argv) {
   mut uint64_t state = uint64_t(argc);
   unsafe { adoption_count_begin(); }
   for (mut uint index = 0; index < uint(20000000); index++) {
+#ifdef COST_MANUAL
     state = state ^ (state << uint(13));
     state = state ^ (state >> uint(7));
     state = state ^ (state << uint(17));
+    StateValue saved_state{state};
+    state = read_state(saved_state);
+    auto callback = [state]() -> uint64_t { return state; };
+    state = callback();
+#else
+    state = advance(state);
+    state = read_state(rewrap(state));
+    state = invoke([state]() -> uint64_t { return state; });
+    auto callback = relay_callable([state]() -> uint64_t { return state; });
+    state = callback();
+    std::string_view written = std::expression_text(++state);
+    if (written != "++state") { return 3; }
+#endif
 #ifdef COST_MANUAL
     uint64_t saved = state;
     for (mut uint32_t stage = uint32_t(0); stage < uint32_t(2); ++stage) {

@@ -1,0 +1,91 @@
+#include <std/cstdio>
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+void trace(std::string_view label) {
+  [[discard]] std::try_write_stderr(label);
+}
+
+struct OuterGuard {
+  ~OuterGuard() { trace("outer\n"); }
+};
+
+class Resource {
+  int value;
+  bool fail_cleanup;
+public:
+  Resource(int value, bool fail_cleanup)
+      : value(value), fail_cleanup(fail_cleanup) { trace("created\n"); }
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {
+    trace("result\n");
+    if (this.fail_cleanup) {
+      std::panic("result cleanup"); // result-cleanup-panic
+    }
+  }
+  int read() { return this.value; }
+};
+
+struct LocalGuard {
+  bool fail_cleanup;
+  LocalGuard(bool fail_cleanup) : fail_cleanup(fail_cleanup) {}
+  ~LocalGuard() {
+    trace("local\n");
+    if (this.fail_cleanup) {
+      std::panic("macro local cleanup"); // local-cleanup-panic
+    }
+  }
+};
+
+void before_result() {
+  std::panic("before result"); // before-result-panic
+}
+
+int later_argument() {
+  trace("later\n");
+  std::panic("later argument"); // later-argument-panic
+}
+
+void consume(Resource resource, int later) {
+  trace("entered\n");
+}
+
+#macro Resource produce(bool fail_before, bool fail_local, bool fail_result) {
+  LocalGuard local{fail_local};
+  if (fail_before) { before_result(); }
+  Resource result{7, fail_result};
+  return std::move(result);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  OuterGuard outer{};
+  if (argc == 1) {
+    Resource result = produce(false, false, false);
+    trace("received\n");
+    return result.read() == 7 ? 0 : 99;
+  }
+  if (argc == 2) {
+    Resource result = produce(true, false, false);
+    trace("unreachable\n");
+  }
+  if (argc == 3) {
+    Resource result = produce(false, true, false);
+    trace("unreachable\n");
+  }
+  if (argc == 4) {
+    consume(produce(false, false, false), later_argument());
+    trace("unreachable\n");
+  }
+  if (argc == 5) {
+    Resource result = produce(false, true, true);
+    trace("unreachable\n");
+  }
+  if (argc == 6) {
+    Resource result = produce(false, false, true);
+    trace("received\n");
+    return 0;
+  }
+  return 98;
+}
