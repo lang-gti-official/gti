@@ -64,7 +64,10 @@ extern "C" std::size_t fread(void *destination, std::size_t size,
   if (armed == Fault::TruncatedRead && size == 1 && count > 3) {
     // A real short file reports EOF without ferror. It must not become a
     // complete capture after the parent already measured the larger extent.
-    if (ftruncate(fileno(stream), 3) != 0)
+    // POSIX fflush on a seekable input/update stream synchronizes its file
+    // offset and discards unread buffered input. Otherwise glibc may return
+    // bytes buffered before ftruncate instead of observing the shorter file.
+    if (std::fflush(stream) != 0 || ftruncate(fileno(stream), 3) != 0)
       std::abort();
     inject(Fault::TruncatedRead);
     errno = 0;
@@ -150,8 +153,9 @@ int main(int argc, char **argv) {
           std::pair{Fault::TruncatedRead, "read"},
           std::pair{Fault::Close, "close"}}) {
       const auto result = run(fault, childStatus);
-      const std::string label =
-          std::string(operation) + "/exit=" + std::to_string(childStatus);
+      const std::string label = std::string(operation) +
+                                "/fault=" + std::to_string(int(fault)) +
+                                "/exit=" + std::to_string(childStatus);
       check(!result.succeeded(), label + " must never silently pass");
       check(result.exitCode == (childStatus == 0 ? 74 : childStatus),
             label + " must preserve genuine nonzero child status");
