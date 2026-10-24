@@ -99,6 +99,9 @@ int main(int argc, std::vector<std::string> argv) {
   auto fifth = viewed.value().begin();
   std::println(*fourth);
   std::println(*fifth);
+  std::string_view& selected = viewed.value();
+  auto sixth = selected.begin();
+  std::println(*sixth);
 
   Counter reading{4};
   Panel panel{Gauge(reading)};

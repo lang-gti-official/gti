@@ -49,6 +49,15 @@ returned referent instead of the `view` reference binding. Its parent and
 stored dependency are unchanged, its C++ is byte-identical, and
 `text_view_iterator_compiler` and `text_view_iterator_runtime` pass.
 
+0.468.0's nested relay check (`dependentDesignationPath`) read an accessor
+result's owner path for a `string_view&` argument, so the owner-backed optional
+forms, including the named `std::string_view& selected = viewed.value();
+selected.begin()` that worked before 0.468.0, failed with "dependent text value
+is relayed where its text field may outlive the call". The fixture now covers
+that named form, and `view_field_nesting_runtime`,
+`dependent_reference_results_runtime` and `view_field_conversions_runtime`
+still pass.
+
 A combined full run in an earlier batch found the new runtime test missing
 from the bounded-case-workers list in `tests/TestThroughput.cmake`
 (`test_throughput_registration`); it is registered there now. The owner had

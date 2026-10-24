@@ -31,6 +31,9 @@ for what minor and patch releases mean.
 - The returned reference stays borrowed while the iterator or carrier lives:
   changing the text's owner, or assigning the accessor's receiver, is still
   rejected with `error[GTI-S2017]`.
+- Fixed: since 0.468.0, `std::string_view& view = maybe.value();
+  view.begin()` on a `std::optional<std::string_view>` holding text owned by a
+  `std::string` reported `error[GTI-B0001]`; it works again.
 - Not yet supported: constructing a carrier class directly from a returned
   reference, as in `Cursor(box.get())`, still reports `GTI-B0001`. Call a
   function that constructs it, as `open(box.get())` does.

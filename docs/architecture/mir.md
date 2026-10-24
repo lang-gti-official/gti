@@ -2061,6 +2061,12 @@ Phase 3 verifies nested paths:
   origin's prefix (`classReferenceSources`), and a whole use of the result
   requires it. A relay of a nested path is contracted only through a payload
   prefix.
+- A reference to text that an accessor returned (a `CallResult` loan whose
+  operand is `string_view&` or `c_string&`) designates no path:
+  `dependentDesignationPath` would otherwise read the path of the accessor's
+  owner, the loan's source, and check it against the view. A view has no
+  fields to relay; its owner is the result loan's stored dependency, which
+  the carrier-shell rules verify.
 
 A text field result (`textFieldResult`: one `returnBorrowFields` mapping of an
 Argument or Receiver origin to one source field, no result fields) carries the
