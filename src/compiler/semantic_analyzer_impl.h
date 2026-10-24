@@ -6333,6 +6333,8 @@ private:
     ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
     std::size_t constructorDepth = 0;
     std::size_t destructorDepth = 0;
+    // Lexical executable-body depth, shared by callable bodies and scoped
+    // result regions. Declaration/effect ownership is tracked separately.
     std::size_t functionDepth = 0;
     std::size_t loopDepth = 0;
     std::size_t switchDepth = 0;
@@ -6637,7 +6639,12 @@ private:
   void processLexicalLeaf(const StmtPtr &statement, bool measure);
   void indexLexicallyReachableFunctions(const StmtList &declarations);
   [[nodiscard]] bool lexicalAdvanceAllowed() const {
-    return (functionDepth > 0 || constructorDepth > 0 || destructorDepth > 0) &&
+    // A local executable region does not itself grant callable-body demand
+    // advancement to a namespace/field initializer. Keep the actual callable
+    // context as the authority independently of lexical local-binding depth.
+    const bool callableBody =
+        functionDepth > 0 && (currentFunctionDeclaration || lambdaDepth > 0);
+    return (callableBody || constructorDepth > 0 || destructorDepth > 0) &&
            !analyzingFieldInitializer && !analyzingDefaultArgument;
   }
   void beginClassBody(const ClassDecl &stmt, const ClassInfo &info,

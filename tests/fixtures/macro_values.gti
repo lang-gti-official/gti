@@ -36,6 +36,7 @@ int effect(int value) { effects += 1; return value; }
   return second;
 }
 #macro Owner local(int value) { Owner saved{value}; return saved; }
+int observe_owner(Owner& owner) { return owner.read(); }
 #macro int read_borrowed(Owner expression) {
   Owner& saved = expression;
   return saved.read();
@@ -47,6 +48,8 @@ struct Box {
   int value;
   implicit Box(int value) : value(value) {}
 };
+#macro Box boxed(int value) { return Box(value); }
+int observe_box(Box& box) { return box.value; }
 struct Flag {
   operator bool() { return true; }
   implicit operator int() { return 19; }
@@ -73,6 +76,37 @@ expected<int, int> continued(bool fail) {
     std::source_location location = std::source_location::current()) {
   return location;
 }
+
+mut int initializer_drops = 0;
+class InitOwner {
+public:
+  InitOwner() {}
+  InitOwner(InitOwner& other) = delete;
+  InitOwner(InitOwner&& other) = default;
+  ~InitOwner() { initializer_drops += 1; }
+};
+struct InitPair {
+  int first;
+  int second;
+  InitPair(int first, int second) : first(first), second(second) {}
+};
+#macro T typed_relay<T>(T expression) { return expression; }
+#macro T initial_value<T>(T expression) {
+  InitOwner owner{};
+  mut auto saved = expression;
+  saved += T(1);
+  auto& alias = saved;
+  InitPair pair{2, 3};
+  auto [left, right] = pair;
+  return typed_relay(alias + T(left + right));
+}
+struct InitRecord {
+  int field = initial_value(7);
+  static int shared = initial_value(9);
+  uint64_t wide = initial_value(uint64_t(5));
+};
+int initialized_global = initial_value(3);
+namespace setup { int namespaced = initial_value(4); }
 
 int main() {
   if (choose(false, effect(9), nested(effect(5))) != 10 || effects != 1) { return 1; }
@@ -110,5 +144,16 @@ int main() {
   std::source_location direct = std::source_location::current(); std::source_location defaulted = here();
   if (defaulted.line() != direct.line() || defaulted.file_name() != direct.file_name() ||
       defaulted.function_name() != "main") { return 14; }
+  int before_argument = drops;
+  int observed_owner = observe_owner(local(83));
+  if (observed_owner != 83 || drops != before_argument + 1) { return 17; }
+  int observed_box = observe_box(boxed(89));
+  if (observed_box != 89) { return 18; }
+  if (initializer_drops != 3 || initialized_global != 9 || setup::namespaced != 10 ||
+      InitRecord::shared != 15) { return 16; }
+  InitRecord record{};
+  if (record.field != 13 || record.wide != uint64_t(11) || initializer_drops != 5) {
+    return 17;
+  }
   return 0;
 }

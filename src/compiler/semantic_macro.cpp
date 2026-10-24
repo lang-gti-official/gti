@@ -794,6 +794,16 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
                                 .expansion = bodyExpansion,
                                 .type = resultType});
   {
+    // This is an executable lexical body even inside a namespace or field
+    // initializer. Declaration classification shares the ordinary local
+    // rules; the real enclosing callable/effect owner stays unchanged.
+    struct ExecutableBodyScope {
+      std::size_t &depth;
+      explicit ExecutableBodyScope(std::size_t &depth) : depth(depth) {
+        ++depth;
+      }
+      ~ExecutableBodyScope() { --depth; }
+    } executableBody(functionDepth);
     MacroLookupScope definitionScope(*this, macroLookup.at(bodyExpansion));
     analyze(expansion.statement);
   }

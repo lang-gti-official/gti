@@ -324,6 +324,10 @@ struct IndexedMirBody {
   const MirProgram *conditionalViewProgram = nullptr;
   const void *conditionalViewRepresentations = nullptr;
   std::optional<std::unordered_set<const MirPlace *>> conditionalViewStorages;
+  const MirProgram *moduleLocalProgram = nullptr;
+  std::optional<
+      std::unordered_map<HirBindingId, const MirProgramInitializationLocal *>>
+      moduleLocals;
 };
 
 // Each emitter operation remembers which index belongs to each body it has
@@ -1871,6 +1875,52 @@ hasExecutableProgramInitialization(const MirProgram &program) {
                              return !instruction.definedFailure.empty();
                            });
                      });
+}
+
+// Module/0 also evaluates lexical bindings inside one planned initializer.
+// Their explicit verified inventory, not body kind or source spelling, decides
+// whether a binding uses an ordinary local carrier rather than global storage.
+[[nodiscard]] const MirProgramInitializationLocal *
+moduleInitializationLocal(const MirProgram &program, const MirBody &body,
+                          const MirPlace &place) {
+  if (body.kind != MirBodyKind::Module ||
+      place.root != MirPlaceRootKind::Binding)
+    return nullptr;
+  const auto exactLocal = [&](const MirProgramInitializationLocal *local) {
+    if (local == nullptr || local->binding != place.binding ||
+        local->symbol != place.symbol)
+      return static_cast<const MirProgramInitializationLocal *>(nullptr);
+    const MirPlace *root = body.findPlace(local->place);
+    return root != nullptr && root->root == MirPlaceRootKind::Binding &&
+                   root->binding == local->binding &&
+                   root->symbol == local->symbol && root->projections.empty()
+               ? local
+               : nullptr;
+  };
+  if (auto *index = indexedMirBody(body)) {
+    if (index->moduleLocalProgram != &program) {
+      index->moduleLocalProgram = &program;
+      index->moduleLocals.reset();
+    }
+    if (!index->moduleLocals) {
+      index->moduleLocals.emplace();
+      for (const auto &step : program.programInitializationPlan().steps)
+        for (const auto &local : step.locals) {
+          const auto [found, inserted] =
+              index->moduleLocals->emplace(local.binding, &local);
+          if (!inserted)
+            found->second = nullptr;
+        }
+    }
+    const auto found = index->moduleLocals->find(place.binding);
+    return found == index->moduleLocals->end() ? nullptr
+                                               : exactLocal(found->second);
+  }
+  for (const auto &step : program.programInitializationPlan().steps)
+    for (const auto &local : step.locals)
+      if (const auto *found = exactLocal(&local))
+        return found;
+  return nullptr;
 }
 
 [[nodiscard]] const MirProgramInitializationStep *
@@ -18960,7 +19010,10 @@ fixedArrayValueDestinationSlot(const MirProgram &program, const MirBody &body,
   // Initialize establishes the one object lifetime instead.
   if (valueDrop == nullptr) {
     const auto &publication = initialize->lifecycle.front();
-    return call && body.kind != MirBodyKind::Module && bindingDrop != nullptr &&
+    return call &&
+                   (body.kind != MirBodyKind::Module ||
+                    moduleInitializationLocal(program, body, *destination)) &&
+                   bindingDrop != nullptr &&
                    bindingDrop->kind == MirDropObligationKind::Binding &&
                    bindingDrop->dropType.type == instruction.info.type &&
                    !bindingDrop->dropType.requiresActiveCleanup &&
@@ -19029,7 +19082,8 @@ fixedArrayValueDestinationSlot(const MirProgram &program, const MirBody &body,
   }
 
   const MirLifecycleEvent &publication = initialize->lifecycle.front();
-  if (body.kind != MirBodyKind::Module) {
+  if (body.kind != MirBodyKind::Module ||
+      moduleInitializationLocal(program, body, *destination)) {
     return bindingDrop != nullptr &&
                    publication.kind == MirLifecycleEventKind::Reparent &&
                    publication.source == valueDrop->id &&
@@ -21877,7 +21931,8 @@ lifetimeSlotPlace(const MirProgram &program,
                        });
   }
   if (body.kind == MirBodyKind::Module &&
-      place.root == MirPlaceRootKind::Binding) {
+      place.root == MirPlaceRootKind::Binding &&
+      moduleInitializationLocal(program, body, place) == nullptr) {
     const auto *step =
         program.programInitializationPlan().findStepForSymbol(place.symbol);
     if (step != nullptr &&
@@ -23282,7 +23337,8 @@ private:
     }
     std::optional<SemanticType> currentType = rootType(body, place);
     if (place.root == MirPlaceRootKind::Binding &&
-        result.body.kind == MirBodyKind::Module) {
+        result.body.kind == MirBodyKind::Module &&
+        moduleInitializationLocal(program, body, place) == nullptr) {
       const MirProgramInitializationStep *step =
           program.programInitializationPlan().findStepForSymbol(place.symbol);
       const MirPlace *storage =
@@ -30471,13 +30527,14 @@ public:
                << place.id << ";\n";
         continue;
       }
-      // Module binding roots are the exact program-storage places named by
-      // the initialization plan. Their C++ definitions live outside this
-      // function; declaring a body-local carrier would initialize the wrong
-      // object and leave the real global untouched.
+      // Persistent Module binding roots are the exact program-storage places
+      // named by the initialization plan. Their C++ definitions live outside
+      // this function; declaring a body-local carrier would initialize the
+      // wrong object and leave the real global untouched.
       if (facts.kind == MirBodyKind::Module &&
           place.root == MirPlaceRootKind::Binding &&
-          place.projections.empty() && place.symbol != 0) {
+          place.projections.empty() && place.symbol != 0 &&
+          moduleInitializationLocal(program, facts.body, place) == nullptr) {
         const CppMirSymbolRepresentation *storage =
             storageRepresentationForBody(program, representations, std::nullopt,
                                          place.symbol);
@@ -34171,7 +34228,8 @@ private:
     const MirPlace *place = facts.body.findPlace(destination);
     if (place != nullptr && facts.kind == MirBodyKind::Module &&
         place->root == MirPlaceRootKind::Binding &&
-        place->projections.empty() && place->symbol != 0) {
+        place->projections.empty() && place->symbol != 0 &&
+        moduleInitializationLocal(program, facts.body, *place) == nullptr) {
       const CppMirSymbolRepresentation *storage = storageRepresentationForBody(
           program, representations, facts.owner, place->symbol);
       if (storage == nullptr || storage->spelling.empty()) {
@@ -42384,7 +42442,8 @@ private:
     }
     if (facts.kind == MirBodyKind::Module &&
         place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
-        place.symbol != 0) {
+        place.symbol != 0 &&
+        moduleInitializationLocal(program, facts.body, place) == nullptr) {
       output << storageSpelling(facts, place.symbol);
       return;
     }
@@ -50617,7 +50676,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     if (address.kind == MirBodyKind::Module &&
         place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
-        place.symbol != 0) {
+        place.symbol != 0 &&
+        moduleInitializationLocal(program_, body, place) == nullptr) {
       const CppMirSymbolRepresentation *storage = storageRepresentationForBody(
           program_, representations_, std::nullopt, place.symbol);
       if (storage == nullptr || storage->spelling.empty() ||
@@ -56968,6 +57028,15 @@ initializerScheduleFromAnalysis(const MirProgram &program_,
   }
   case MirBodyKind::Module:
     body = &program_.module();
+    if (std::any_of(program_.programInitializationPlan().steps.begin(),
+                    program_.programInitializationPlan().steps.end(),
+                    [](const MirProgramInitializationStep &step) {
+                      return !step.locals.empty() ||
+                             !step.nestedFullExpressions.empty();
+                    }))
+      // Lexical initializer execution belongs to the complete body text, not
+      // the passive expression-only persistent-storage schedule.
+      return result;
     break;
   default:
     return result;
