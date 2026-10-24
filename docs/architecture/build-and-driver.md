@@ -380,6 +380,13 @@ independently; forcing colour on a redirected stream never enables cursor
 rewriting. Live rows are bounded to the terminal width and source/path control
 bytes are escaped.
 
+Native dependency `Built`/`Reused` summaries are durable messages, including
+under `--progress=never`. They and captured verbose build-script output go
+through the renderer's synchronized message writer: it clears any unfinished
+live row, writes complete lines, and leaves subsequent telemetry enabled.
+Captured output missing its final newline receives one before the next summary.
+This coordination does not add terminal controls to redirected or plain output.
+
 Timings use a monotonic clock. Completed phase rows show a duration for slower
 work (at least 100 ms in terminals, one second in logs); `Finished`/`Failed`
 always includes total elapsed time. A heartbeat means the operation remains
