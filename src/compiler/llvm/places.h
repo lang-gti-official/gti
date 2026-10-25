@@ -19,6 +19,8 @@ public:
   [[nodiscard]] llvm::Value *loan(MirLoanId id);
   void publish(MirLoanId id, llvm::Value *address);
   void parameter(HirBindingId binding, llvm::Value *argument, bool indirect);
+  void receiver(llvm::Value *address, const SemanticType &type);
+  [[nodiscard]] llvm::Value *temporary(const SemanticType &type);
   [[nodiscard]] llvm::Value *load(llvm::Value *address,
                                   const SemanticType &type);
   void store(llvm::Value *value, llvm::Value *address,
@@ -49,6 +51,8 @@ private:
   std::map<Key, Root> roots;
   std::vector<llvm::Value *> loans;
   std::vector<SemanticType> loanTypes;
+  llvm::Value *receiverAddress = nullptr;
+  SemanticType receiverType = SemanticType::Unknown;
   [[nodiscard]] static Key key(const MirPlace &place);
   [[nodiscard]] Root root(const MirPlace &place);
   [[nodiscard]] llvm::Value *slot(llvm::Type *type);

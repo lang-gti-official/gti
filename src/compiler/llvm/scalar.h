@@ -22,6 +22,9 @@ public:
                                      bool checked = true);
   [[nodiscard]] llvm::Value *compute(const MirInstruction &instruction,
                                      std::span<llvm::Value *const> inputs);
+  [[nodiscard]] llvm::Value *mutate(const MirInstruction &instruction,
+                                    const SemanticType &target,
+                                    std::span<llvm::Value *const> inputs);
   [[nodiscard]] SemanticType domain(const SemanticType &type) const;
   [[nodiscard]] SemanticType common(const SemanticType &left,
                                     const SemanticType &right) const;

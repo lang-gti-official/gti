@@ -1695,6 +1695,10 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_place_execution_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(llvm_place_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_class_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_class_execution_test.py"
+                   "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_class_execution PROPERTIES TIMEOUT 1200)
   add_test(NAME runtime_abi_inventory
            COMMAND "${Python3_EXECUTABLE}"
                    "${PROJECT_SOURCE_DIR}/tests/runtime_abi_inventory_test.py"

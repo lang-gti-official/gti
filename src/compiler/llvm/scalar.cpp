@@ -74,8 +74,35 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
     return llvm::ConstantArray::get(llvm::cast<llvm::ArrayType>(storage),
                                     elements);
   }
+  if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
+      aggregate && aggregate->value &&
+      aggregate->value->kind == ConstantAggregateKind::Object &&
+      type.kind == SemanticType::Class) {
+    const auto &object = *aggregate->value;
+    const auto &owner = session.layouts().instance(type);
+    if (!object.exactType || *object.exactType != type ||
+        object.identity != owner.declaration || !owner.bases.empty() ||
+        owner.requiresActiveCleanup ||
+        object.fields.size() != owner.declaredFields.size())
+      throw BackendUnsupportedError("LLVM static object requires its complete "
+                                    "passive concrete constant");
+    auto *record = llvm::cast<llvm::StructType>(storage);
+    std::vector<llvm::Constant *> fields;
+    for (auto *element : record->elements())
+      fields.push_back(llvm::Constant::getNullValue(element));
+    for (const auto &field : owner.declaredFields) {
+      const auto selected = std::find_if(
+          object.fields.begin(), object.fields.end(),
+          [&](const auto &value) { return value.symbol == field.symbol; });
+      if (selected == object.fields.end())
+        throw std::logic_error("LLVM static object lost a sealed field");
+      fields.at(session.layouts().fieldIndex(type, field.symbol)) =
+          constant(selected->value, field.type);
+    }
+    return llvm::ConstantStruct::get(record, fields);
+  }
   throw BackendUnsupportedError("LLVM static datum requires an admitted scalar "
-                                "or passive array constant");
+                                "or aggregate constant");
 }
 
 SemanticType Scalars::domain(const SemanticType &type) const {
@@ -439,6 +466,22 @@ llvm::Value *Scalars::compute(const MirInstruction &instruction,
     types.push_back(operand.type);
   const auto operation = baseOperation(instruction.operation);
   return arithmetic(operation, inputs, types, instruction.info.type);
+}
+
+llvm::Value *Scalars::mutate(const MirInstruction &instruction,
+                             const SemanticType &target,
+                             std::span<llvm::Value *const> inputs) {
+  if (instruction.operands.size() != 1 || inputs.size() != 2)
+    throw std::logic_error("LLVM compound assignment lost its evaluated input");
+  const auto operation = baseOperation(instruction.operation);
+  const auto &right = instruction.operands.front().type;
+  const auto computation = operation == MirOperation::ShiftLeft ||
+                                   operation == MirOperation::ShiftRight
+                               ? promoted(domain(target))
+                               : common(target, right);
+  const std::array types{target, right};
+  auto *value = arithmetic(operation, inputs, types, computation);
+  return convert(value, computation, target);
 }
 
 } // namespace lang::native_llvm

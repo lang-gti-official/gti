@@ -139,17 +139,19 @@ TypeLayout Layouts::record(const SemanticType &type) {
     throw std::logic_error("recursive by-value LLVM record layout");
   const auto &instance = *entry.instance;
   if (instance.cOpaqueHandle || instance.polymorphic ||
-      !instance.bases.empty() || !instance.structuralBases.empty() ||
-      instance.compilerCapability != CompilerCapabilityTypeKind::None ||
-      (instance.requiresActiveDropState && !instance.unionLayout))
+      instance.compilerCapability != CompilerCapabilityTypeKind::None)
     throw BackendUnsupportedError(
         "LLVM record representation requires its later "
         "lifecycle/capability/dispatch milestone");
   entry.building = true;
   try {
     std::vector<llvm::Type *> fields;
+    for (const auto &base : instance.bases)
+      fields.push_back(get(base.type).storage);
     for (const auto &field : instance.declaredFields)
       fields.push_back(get(field.type).storage);
+    if (instance.requiresActiveDropState)
+      fields.push_back(llvm::Type::getInt8Ty(session.context()));
     if (instance.unionLayout) {
       const auto &expected = *instance.unionLayout;
       llvm::Type *anchor = llvm::Type::getInt8Ty(session.context());
@@ -220,7 +222,7 @@ TypeLayout Layouts::record(const SemanticType &type) {
     }
     entry.storage->setBody(fields);
     result.storage = entry.storage;
-    result.value = entry.storage;
+    result.value = pointer();
     entry.layout = result;
     entry.building = false;
     return result;
@@ -229,6 +231,43 @@ TypeLayout Layouts::record(const SemanticType &type) {
     entry.building = false;
     throw;
   }
+}
+
+const MirClassInstance &Layouts::instance(const SemanticType &type) const {
+  const MirClassInstance *result = nullptr;
+  if (auto found = classes.find(type.classId); found != classes.end())
+    for (auto id : found->second)
+      if (records.at(id).instance->type == type) {
+        if (result)
+          throw std::logic_error("ambiguous concrete LLVM class identity");
+        result = records.at(id).instance;
+      }
+  if (!result)
+    throw BackendUnsupportedError(
+        "LLVM class requires an exact concrete instance");
+  return *result;
+}
+unsigned Layouts::fieldIndex(const SemanticType &type, SymbolId symbol) const {
+  const auto &owner = instance(type);
+  for (unsigned index = 0; index < owner.declaredFields.size(); ++index)
+    if (owner.declaredFields[index].symbol == symbol)
+      return static_cast<unsigned>(owner.bases.size()) + index;
+  throw std::logic_error("LLVM projection lost its sealed field identity");
+}
+unsigned Layouts::baseIndex(const SemanticType &type,
+                            HirClassInstanceId base) const {
+  const auto &owner = instance(type);
+  for (unsigned index = 0; index < owner.bases.size(); ++index)
+    if (owner.bases[index].instance == base)
+      return index;
+  throw std::logic_error("LLVM projection lost its sealed base identity");
+}
+std::optional<unsigned> Layouts::activeIndex(const SemanticType &type) const {
+  const auto &owner = instance(type);
+  if (!owner.requiresActiveDropState)
+    return {};
+  return static_cast<unsigned>(owner.bases.size() +
+                               owner.declaredFields.size());
 }
 
 } // namespace lang::native_llvm

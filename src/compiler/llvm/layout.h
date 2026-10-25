@@ -26,6 +26,14 @@ class Layouts final {
 public:
   [[nodiscard]] TypeLayout get(const SemanticType &type);
   [[nodiscard]] llvm::PointerType *pointer() const;
+  [[nodiscard]] const MirClassInstance &
+  instance(const SemanticType &type) const;
+  [[nodiscard]] unsigned fieldIndex(const SemanticType &type,
+                                    SymbolId field) const;
+  [[nodiscard]] unsigned baseIndex(const SemanticType &type,
+                                   HirClassInstanceId base) const;
+  [[nodiscard]] std::optional<unsigned>
+  activeIndex(const SemanticType &type) const;
 
 private:
   friend class Session;

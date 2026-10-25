@@ -63,15 +63,43 @@ void Places::allocate(
         loanTypes.at(*instruction.loan) = instruction.info.type;
 }
 llvm::Value *Places::load(llvm::Value *address, const SemanticType &type) {
+  if (type.kind == SemanticType::Class)
+    return address;
   auto *value = ir.CreateLoad(session.layouts().get(type).storage, address);
   return type == SemanticType::Bool ? ir.CreateTrunc(value, ir.getInt1Ty())
                                     : value;
 }
 void Places::store(llvm::Value *value, llvm::Value *address,
                    const SemanticType &type) {
+  if (type.kind == SemanticType::Class) {
+    const auto layout = session.layouts().get(type);
+    ir.CreateMemCpy(address, llvm::MaybeAlign(layout.alignment), value,
+                    llvm::MaybeAlign(layout.alignment), layout.size);
+    return;
+  }
   if (type == SemanticType::Bool)
     value = ir.CreateZExt(value, ir.getInt8Ty());
   ir.CreateStore(value, address);
+}
+llvm::Value *Places::temporary(const SemanticType &type) {
+  return slot(session.layouts().get(type).storage);
+}
+void Places::receiver(llvm::Value *address, const SemanticType &type) {
+  receiverAddress = address;
+  receiverType = type;
+  if (body.kind != MirBodyKind::FieldInitializers)
+    return;
+  const auto &owner = session.layouts().instance(type);
+  for (const auto &place : body.places)
+    if (place.root == MirPlaceRootKind::Binding && place.projections.empty())
+      for (const auto &field : owner.declaredFields)
+        if (field.symbol == place.symbol)
+          roots.insert_or_assign(
+              key(place),
+              Root{ir.CreateStructGEP(
+                       session.layouts().get(type).storage, address,
+                       session.layouts().fieldIndex(type, field.symbol)),
+                   field.type});
 }
 llvm::Value *Places::loan(MirLoanId id) {
   return ir.CreateLoad(session.layouts().pointer(), loans.at(id));
@@ -86,8 +114,11 @@ void Places::parameter(HirBindingId binding, llvm::Value *argument,
         !place.projections.empty())
       continue;
     auto &target = roots.at(key(place));
-    store(indirect ? load(argument, place.type) : argument, target.address,
-          place.type);
+    if (place.type.kind == SemanticType::Class && indirect)
+      target.address = argument;
+    else
+      store(indirect ? load(argument, place.type) : argument, target.address,
+            place.type);
   }
   for (const auto &entry : body.loans)
     if (entry.entry && entry.kind != MirLoanKind::Stored &&
@@ -100,12 +131,14 @@ Places::Root Places::root(const MirPlace &place) {
     return found->second;
   if (place.root == MirPlaceRootKind::Loan)
     return {loan(place.loan), loanTypes.at(place.loan)};
+  if (place.root == MirPlaceRootKind::This && receiverAddress)
+    return {receiverAddress, receiverType};
   if (place.root == MirPlaceRootKind::Value) {
     const auto &type = body.findValue(place.value)->info.type;
     auto *value = values.at(place.value);
     if (!value)
       throw std::logic_error("LLVM place root has no dominating value");
-    return {arrayValue(value), type};
+    return {type.kind == SemanticType::Class ? value : arrayValue(value), type};
   }
   throw BackendUnsupportedError("LLVM place root has no admitted storage");
 }
@@ -158,6 +191,24 @@ llvm::Value *Places::address(MirPlaceId id) {
   auto [address, type] = root(place);
   for (const auto &projection : place.projections) {
     switch (projection.kind) {
+    case MirProjectionKind::Field: {
+      const auto &owner = session.layouts().instance(type);
+      const auto index = session.layouts().fieldIndex(type, projection.field);
+      const auto field = owner.declaredFields.at(index - owner.bases.size());
+      address = ir.CreateStructGEP(session.layouts().get(type).storage, address,
+                                   index);
+      type = field.type;
+      break;
+    }
+    case MirProjectionKind::Base: {
+      const auto &owner = session.layouts().instance(type);
+      const auto index =
+          session.layouts().baseIndex(type, projection.selection);
+      address = ir.CreateStructGEP(session.layouts().get(type).storage, address,
+                                   index);
+      type = owner.bases.at(index).type;
+      break;
+    }
     case MirProjectionKind::Dereference:
     case MirProjectionKind::RawDereference:
       address = load(address, type);

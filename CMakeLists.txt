@@ -612,6 +612,8 @@ add_library(
   "src/compiler/llvm/scalar.cpp"
   "src/compiler/llvm/body.cpp"
   "src/compiler/llvm/places.cpp"
+  "src/compiler/llvm/lifetimes.cpp"
+  "src/compiler/llvm/thread_locals.cpp"
   "src/compiler/llvm/text.cpp"
 )
 file(

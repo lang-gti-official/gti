@@ -32,7 +32,7 @@ def main() -> int:
         run([sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)], 0)
         run([str(output)], 0)
         output.unlink()
-        source.write_text("class Owner { public: Owner() {} ~Owner() {} }; int main() { Owner value{}; return 0; }\n", encoding="utf-8")
+        source.write_text("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }\n", encoding="utf-8")
         unsupported = run(
             [sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)],
             65,

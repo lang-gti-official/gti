@@ -21,22 +21,23 @@ bool cleanup(void *storage, gti_failure_record_v2 *,
 }
 } // namespace
 int main() {
-  if (gti_runtime_detail::thread_local_storage_lifetime_active())
+  if (gti_rt_thread_locals_attached_v1() || gti_rt_thread_locals_closing_v1())
     return 1;
   gti_rt_thread_locals_begin_v1();
-  if (!gti_runtime_detail::thread_local_storage_lifetime_active())
+  if (!gti_rt_thread_locals_attached_v1() || gti_rt_thread_locals_closing_v1())
     return 2;
   int first = 1, second = 2;
   gti_runtime_detail::thread_local_cleanup_entry a{.storage = &first,
                                                    .cleanup = cleanup};
   gti_runtime_detail::thread_local_cleanup_entry b{.storage = &second,
                                                    .cleanup = cleanup};
-  gti_runtime_detail::register_thread_local_cleanup(&a);
-  gti_runtime_detail::register_thread_local_cleanup(&b);
+  gti_rt_thread_locals_register_v1(&a);
+  gti_rt_thread_locals_register_v1(&b);
   gti_rt_thread_locals_drain_v2(nullptr, nullptr);
   gti_rt_thread_locals_drain_v2(nullptr, nullptr);
   return order == std::vector<int>({2, 1}) && !a.registered && !b.registered &&
-                 !gti_runtime_detail::thread_local_storage_lifetime_active()
+                 !gti_rt_thread_locals_attached_v1() &&
+                 gti_rt_thread_locals_closing_v1()
              ? 0
              : 3;
 }

@@ -6,6 +6,7 @@
 
 #include <iomanip>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <tuple>
@@ -179,6 +180,110 @@ public:
   bool executable = false;
   const MirBody *currentBody = nullptr;
 
+  bool nativeValue(const SemanticType &type) const {
+    std::set<HirClassInstanceId> visiting;
+    const auto supported = [&](const auto &self,
+                               const SemanticType &selected) -> bool {
+      if (passiveReferenceType(selected) || passiveAddress(selected) ||
+          selected == SemanticType::Void ||
+          selected == SemanticType::StringView ||
+          selected == SemanticType::CString ||
+          selected == SemanticType::NullPtr)
+        return true;
+      if (selected.kind == SemanticType::Reference ||
+          selected.kind == SemanticType::RawPointer)
+        return selected.arguments.size() == 1 &&
+               selected.arguments[0].kind != SemanticType::Unknown &&
+               selected.arguments[0].kind != SemanticType::TypeParameter;
+      if (selected.kind == SemanticType::Enum)
+        return std::any_of(
+            program.integralEnums().begin(), program.integralEnums().end(),
+            [&](const auto &entry) { return entry.type == selected; });
+      if (selected.kind == SemanticType::Array)
+        return selected.arguments.size() == 1 &&
+               !selected.arrayLengthParameterId &&
+               self(self, selected.arguments[0]);
+      if (selected.kind != SemanticType::Class)
+        return false;
+      const MirClassInstance *owner = nullptr;
+      for (const auto &candidate : program.classInstances())
+        if (candidate.type == selected) {
+          if (owner)
+            return false;
+          owner = &candidate;
+        }
+      if (!owner ||
+          owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+          (!owner->traits.copyable && !owner->traits.movable) ||
+          owner->polymorphic || owner->abstract || owner->unionLayout ||
+          owner->cOpaqueHandle || !owner->bases.empty() ||
+          !owner->structuralBases.empty() || !visiting.insert(owner->id).second)
+        return false;
+      bool valid = true;
+      for (const auto &field : owner->declaredFields)
+        valid = valid && self(self, field.type);
+      visiting.erase(owner->id);
+      return valid;
+    };
+    return supported(supported, type);
+  }
+  std::optional<Shape> classShape(const SemanticType &type) const {
+    const auto *leaf = &type;
+    while ((leaf->kind == SemanticType::Array ||
+            leaf->kind == SemanticType::Reference ||
+            leaf->kind == SemanticType::RawPointer) &&
+           leaf->arguments.size() == 1)
+      leaf = &leaf->arguments[0];
+    if (leaf->kind == SemanticType::Class && nativeValue(type))
+      return Shape::NativeClassStorage;
+    return {};
+  }
+  const MirClassInstance *bodyClass() const {
+    if (!body)
+      return nullptr;
+    if (body->kind == MirBodyKind::FieldInitializers ||
+        body->kind == MirBodyKind::StaticFieldInitializers)
+      return program.findClassInstance(body->owner);
+    if (body->kind == MirBodyKind::Constructor)
+      return program.findClassInstance(
+          program.findConstructorInstance(body->owner)->owner);
+    if (body->kind == MirBodyKind::Destructor)
+      return program.findClassInstance(
+          program.findDestructorInstance(body->owner)->owner);
+    if (body->kind == MirBodyKind::Function) {
+      const auto *target = program.findFunctionInstance(body->owner);
+      if (target->owner)
+        return program.findClassInstance(*target->owner);
+    }
+    return nullptr;
+  }
+  std::optional<Shape> bodyClassShape() const {
+    if (body && body->kind == MirBodyKind::ThreadLocalInitializer)
+      if (const auto *storage = program.findThreadLocalStorage(body->owner))
+        if (nativeValue(storage->type))
+          return Shape::NativeThreadStorage;
+    const auto *owner = bodyClass();
+    return owner ? classShape(owner->type) : std::nullopt;
+  }
+  std::optional<Shape> placeClassShape(const MirPlace &place) const {
+    if (const auto selected = classShape(place.type))
+      return selected;
+    if (place.root == MirPlaceRootKind::This)
+      return bodyClassShape();
+    if (place.root == MirPlaceRootKind::Value && currentBody) {
+      const auto *value = currentBody->findValue(place.value);
+      return value ? classShape(value->info.type) : std::nullopt;
+    }
+    if (currentBody)
+      for (const auto &root : currentBody->places)
+        if (root.root == place.root && root.binding == place.binding &&
+            root.symbol == place.symbol && root.temporary == place.temporary &&
+            root.projections.empty())
+          if (const auto selected = classShape(root.type))
+            return selected;
+    return {};
+  }
+
   bool opaqueReferent(const SemanticType &type) const {
     if (type.kind != SemanticType::Class)
       return false;
@@ -273,7 +378,7 @@ public:
           : passiveArray       ? std::optional(Shape::PassiveArrayValue)
           : reference          ? std::optional(Shape::PassiveReference)
           : arrayAddress       ? std::optional(Shape::CheckedArrayProjection)
-                               : std::nullopt);
+                               : classShape(type));
       if (type.nativeCScalar != NativeCScalarKind::None) {
         add(type.nativeCScalar);
         add(Shape::NativeScalar);
@@ -281,7 +386,7 @@ public:
       if (type.kind == SemanticType::Array)
         add(Shape::FixedArray, passiveArray
                                    ? std::optional(Shape::PassiveArrayValue)
-                                   : std::nullopt);
+                                   : classShape(type));
       if (!type.arguments.empty())
         add(Shape::TypeArguments);
       for (const SemanticType &argument : type.arguments)
@@ -294,18 +399,20 @@ public:
   }
 
   void traits(const SemanticTypeTraits &traits, const SemanticType &value) {
+    const auto shape = classShape(value);
     if (traits.containsBorrowedState)
-      add(Shape::BorrowedCarrier);
-    add(traits.ownership);
-    add(traits.drop);
+      add(Shape::BorrowedCarrier, shape);
+    add(traits.ownership, shape);
+    add(traits.drop, shape);
     if (traits.drop != DropKind::Trivial) {
-      add(Shape::CleanupValue);
+      add(Shape::CleanupValue, shape);
     }
     if ((value.kind == SemanticType::Class && !opaqueReferent(value)) ||
         value.kind == SemanticType::Lambda) {
       add(traits.copyable  ? Shape::CopyableValue
           : traits.movable ? Shape::MoveOnlyValue
-                           : Shape::ImmovableValue);
+                           : Shape::ImmovableValue,
+          shape);
     }
   }
 
@@ -322,7 +429,7 @@ public:
                       : operand.kind == MirOperandKind::Address && place &&
                               arrayProjection(*currentBody, *place)
                           ? std::optional(Shape::CheckedArrayProjection)
-                          : std::nullopt);
+                          : classShape(operand.type));
     type(operand.type);
   }
 
@@ -332,18 +439,19 @@ public:
       const auto &drop = *pending.back();
       pending.pop_back();
       type(drop.type);
+      const auto shape = classShape(drop.type);
       if (drop.fixedArray)
-        add(Shape::ArrayDrop);
+        add(Shape::ArrayDrop, shape);
       if (drop.destructor)
-        add(Shape::UserDestructor);
+        add(Shape::UserDestructor, shape);
       if (drop.polymorphicCleanup)
         add(Shape::PolymorphicClass);
       if (drop.payloadVariant)
         add(Shape::PayloadEnum);
       if (!drop.aggregate.empty())
-        add(Shape::FieldDrop);
+        add(Shape::FieldDrop, shape);
       if (drop.requiresActiveCleanup)
-        add(Shape::CleanupValue);
+        add(Shape::CleanupValue, shape);
       for (const auto &child : drop.aggregate)
         pending.push_back(&child);
     }
@@ -351,8 +459,14 @@ public:
 
   void lifecycle(const MirLifecycleEvent &event) {
     add(event.kind);
-    if (event.conditional)
-      add(Shape::ConditionalDrop);
+    if (event.conditional) {
+      const auto *drop = currentBody
+                             ? currentBody->findDropObligation(
+                                   event.source ? event.source : event.target)
+                             : nullptr;
+      add(Shape::ConditionalDrop,
+          drop ? classShape(drop->dropType.type) : std::nullopt);
+    }
   }
 
   void inspect(const LoweredBody &row, const MirBody &mir, bool needed) {
@@ -365,7 +479,18 @@ public:
     instruction = 0;
     add(row.role);
     add(row.identity.definition);
-    add(mir.kind);
+    add(mir.kind, bodyClassShape());
+    if (mir.kind == MirBodyKind::Constructor) {
+      const auto *constructor = program.findConstructorInstance(body->owner);
+      for (const auto &initializer : constructor->initializers)
+        if (initializer.storesReference &&
+            std::none_of(
+                mir.loans.begin(), mir.loans.end(), [&](const auto &loan) {
+                  return loan.entry && loan.kind == MirLoanKind::Stored &&
+                         loan.storedField == initializer.field;
+                }))
+          add(Shape::StoredFieldPublication);
+    }
     if (row.role != LoweredBodyRole::SourceExecutable)
       return;
     executable = true;
@@ -378,7 +503,7 @@ public:
         mir.returnType.kind == SemanticType::Reference &&
                 passiveReference(mir.returnType)
             ? std::optional(Shape::PassiveReference)
-            : std::nullopt);
+            : classShape(mir.returnType));
     if (mir.hasCallerLocation)
       add(Shape::CallerLocation);
     for (const auto &value : mir.values) {
@@ -391,7 +516,7 @@ public:
               ? std::optional(Shape::PrimitiveRawAccess)
           : place.root == MirPlaceRootKind::Loan && passiveReference(place.type)
               ? std::optional(Shape::PassiveReference)
-              : std::nullopt);
+              : placeClassShape(place));
       add(place.access);
       type(place.type);
       traits(place.traits, place.type);
@@ -404,7 +529,7 @@ public:
             : projection.kind == MirProjectionKind::Dereference &&
                     passiveReference(place.type)
                 ? std::optional(Shape::PassiveReference)
-                : std::nullopt);
+                : placeClassShape(place));
       if (place.foreignStorage)
         add(Shape::NativeCall);
     }
@@ -412,13 +537,15 @@ public:
       const auto *origin = mir.findPlace(loan.source);
       const bool selected = origin && passiveReference(origin->type) &&
                             !loan.referenceSelection && loan.conditions.empty();
-      add(loan.kind,
-          selected ? std::optional(Shape::PassiveReference) : std::nullopt);
+      add(loan.kind, selected ? std::optional(Shape::PassiveReference)
+                     : origin ? placeClassShape(*origin)
+                              : std::nullopt);
       add(loan.access);
       if (loan.referenceSelection)
         add(Shape::SelectedReferenceAddress);
       if (loan.twoPhase)
-        add(Shape::TwoPhaseBorrow);
+        add(Shape::TwoPhaseBorrow,
+            origin ? placeClassShape(*origin) : std::nullopt);
       if (!loan.additionalDependencies.empty())
         add(Shape::MultipleBorrowOrigins);
       if (!loan.conditions.empty())
@@ -430,7 +557,7 @@ public:
       }
     }
     for (const auto &drop : mir.dropObligations) {
-      add(drop.kind);
+      add(drop.kind, classShape(drop.dropType.type));
       cleanup(drop.dropType);
     }
     for (const auto &boundary : mir.cleanupBoundaries)
@@ -452,10 +579,28 @@ public:
           add(Shape::Tombstone);
           continue;
         }
-        add(stage.kind, stage.kind == MirInstructionKind::Borrow &&
-                                passiveReference(stage.info.type)
-                            ? std::optional(Shape::PassiveReference)
-                            : std::nullopt);
+        std::optional<Shape> storageShape;
+        if (stage.kind == MirInstructionKind::EnsureThreadLocal)
+          if (const auto *storage =
+                  program.findThreadLocalStorage(stage.threadLocalStorage))
+            if (nativeValue(storage->type))
+              storageShape = Shape::NativeThreadStorage;
+        if (stage.kind == MirInstructionKind::Construct)
+          storageShape = classShape(stage.info.type);
+        if (stage.kind == MirInstructionKind::Drop ||
+            stage.kind == MirInstructionKind::CleanupBeforeAssign)
+          for (const auto &drop : mir.dropObligations)
+            for (const auto &event : stage.lifecycle)
+              if (event.source == drop.id)
+                storageShape = classShape(drop.dropType.type);
+        if (stage.kind == MirInstructionKind::CleanupBeforeAssign &&
+            stage.replacementCleanup)
+          storageShape = classShape(stage.replacementCleanup->type);
+        add(stage.kind, stage.kind == MirInstructionKind::Borrow
+                            ? (passiveReference(stage.info.type)
+                                   ? std::optional(Shape::PassiveReference)
+                                   : classShape(stage.info.type))
+                            : storageShape);
         if (stage.callInputRole) {
           if (stage.info.type == SemanticType::CString &&
               stage.operands.size() == 1 &&
@@ -464,15 +609,25 @@ public:
                 native_llvm::wholeCStringLiteral(mir, stage.operands[0])
                     ? std::optional(Shape::PassiveAddressValue)
                     : std::nullopt);
-          add(*stage.callInputRole);
+          add(*stage.callInputRole, classShape(stage.info.type));
           add(stage.callInputKind,
               passiveReference(stage.info.type) &&
                       (stage.callInputKind == HirCallInputKind::ReadBorrow ||
                        stage.callInputKind == HirCallInputKind::MutableBorrow)
                   ? std::optional(Shape::PassiveReference)
-                  : std::nullopt);
+                  : classShape(stage.info.type));
         }
         if (stage.operation != MirOperation::None) {
+          const auto *mutationPlace =
+              stage.destination ? mir.findPlace(*stage.destination) : nullptr;
+          const bool scalarMutation =
+              (stage.kind == MirInstructionKind::Compute ||
+               stage.kind == MirInstructionKind::Assign) &&
+              mutationPlace && isPassiveScalarValueType(mutationPlace->type) &&
+              stage.operands.size() == 1 &&
+              isPassiveScalarValueType(stage.operands.front().type) &&
+              stage.operation >= MirOperation::AddAssign &&
+              stage.operation <= MirOperation::ShiftRightAssign;
           if ((stage.operation == MirOperation::Equal ||
                stage.operation == MirOperation::NotEqual) &&
               std::any_of(stage.operands.begin(), stage.operands.end(),
@@ -500,13 +655,19 @@ public:
               stage.operands[0].type.kind == SemanticType::StringView &&
               stage.info.type == SemanticType::Char;
           add(stage.operation,
-              primitiveRawIndex(stage) || primitivePointerArithmetic(stage)
+              scalarMutation ? std::optional(Shape::InPlaceScalarMutation)
+              : primitiveRawIndex(stage) || primitivePointerArithmetic(stage)
                   ? std::optional(Shape::PrimitiveRawAccess)
-              : arrayAggregate   ? std::optional(Shape::PassiveArrayValue)
+              : arrayAggregate ? std::optional(Shape::PassiveArrayValue)
+              : stage.operation == MirOperation::Aggregate &&
+                      stage.info.type.kind == SemanticType::Array
+                  ? classShape(stage.info.type)
               : textIndex        ? std::optional(Shape::CountedText)
               : referenceAddress ? std::optional(Shape::PassiveReference)
               : arrayAddress     ? std::optional(Shape::CheckedArrayProjection)
-                                 : std::nullopt);
+              : stage.operation == MirOperation::AddressOf && addressPlace
+                  ? placeClassShape(*addressPlace)
+                  : std::nullopt);
         }
         if (stage.intrinsic != IntrinsicKind::None) {
           const bool textQuery =
@@ -559,7 +720,7 @@ public:
             stage.lambdaTarget)
           add(stage.dispatch);
         if (stage.constructorTarget)
-          add(stage.constructorKind);
+          add(stage.constructorKind, classShape(stage.info.type));
         if (stage.lambdaTarget || stage.functionPointerFunctionTarget ||
             stage.functionPointerLambdaTarget)
           add(Shape::IndirectCall);
@@ -570,9 +731,11 @@ public:
         if (!stage.scopedThreadTasks.empty())
           add(Shape::ScopedThreadTasks);
         if (stage.preparedParameterDrop)
-          add(Shape::PreparedOwnerInput);
+          add(Shape::PreparedOwnerInput,
+              classShape(mir.findDropObligation(*stage.preparedParameterDrop)
+                             ->dropType.type));
         if (stage.successResultDrop || stage.successResultDestination)
-          add(Shape::SuccessResultPublication);
+          add(Shape::SuccessResultPublication, classShape(stage.info.type));
         if (stage.tracksCaller || stage.callerLocation ||
             stage.sourceLocation || stage.forwardsCallerLocation)
           add(Shape::CallerLocation);
@@ -658,7 +821,7 @@ public:
         }
         if (!stage.definedFailure.empty()) {
           add(Shape::CheckedFailure);
-          add(stage.definedFailure.propagation);
+          add(stage.definedFailure.propagation, storageShape);
           for (const auto &origin : stage.definedFailure.localOrigins)
             for (const auto &outcome : origin.outcomes) {
               const bool arrayBound =
@@ -670,7 +833,7 @@ public:
               const auto shape =
                   arrayBound  ? std::optional(Shape::CheckedArrayProjection)
                   : textBound ? std::optional(Shape::CountedText)
-                              : std::nullopt;
+                              : storageShape;
               add(outcome.code, shape);
               add(outcome.detail, shape);
             }
@@ -801,7 +964,7 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     if (instance.compilerCapability != CompilerCapabilityTypeKind::None)
       inventory.add(instance.compilerCapability);
     if (!instance.declaredFields.empty())
-      inventory.add(Shape::ClassFields);
+      inventory.add(Shape::ClassFields, inventory.classShape(instance.type));
     for (const auto &field : instance.declaredFields)
       inventory.type(field.type);
     if (!instance.bases.empty() || !instance.structuralBases.empty())
@@ -809,7 +972,7 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     if (instance.polymorphic)
       inventory.add(Shape::PolymorphicClass);
     if (instance.cAbiLayout)
-      inventory.add(Shape::NativeRecord);
+      inventory.add(Shape::NativeRecord, inventory.classShape(instance.type));
     if (instance.unionLayout)
       inventory.add(Shape::NativeUnion);
     if (instance.cOpaqueHandle)
@@ -824,7 +987,9 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     inventory.add(function.linkage);
     inventory.add(function.entryKind);
     if (function.owner)
-      inventory.add(function.receiverMutability);
+      inventory.add(
+          function.receiverMutability,
+          inventory.classShape(mir.findClassInstance(*function.owner)->type));
     inventory.type(function.returnType);
     for (const auto &type : function.parameterTypes)
       inventory.type(type);
@@ -854,7 +1019,11 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     if (function.mayRaiseDefinedFailure)
       inventory.add(Shape::FailureReturn);
     if (function.receiverMutability != ReceiverMutability::ReadOnly)
-      inventory.add(Shape::MutableReceiver);
+      inventory.add(Shape::MutableReceiver,
+                    function.owner
+                        ? inventory.classShape(
+                              mir.findClassInstance(*function.owner)->type)
+                        : std::nullopt);
   }
   inventory.body.reset();
   inventory.required = true;
@@ -878,7 +1047,10 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
       inventory.source = row->identity.source;
     inventory.type(storage.type);
     inventory.add(storage.dataInitializer ? Shape::ThreadLocalPassive
-                                          : Shape::ThreadLocalDynamic);
+                                          : Shape::ThreadLocalDynamic,
+                  inventory.nativeValue(storage.type)
+                      ? std::optional(Shape::NativeThreadStorage)
+                      : std::nullopt);
     if (storage.requiresActiveCleanup)
       inventory.cleanup(storage.cleanup);
   }
@@ -912,10 +1084,25 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   }
   for (const auto &item : input.generatedItems()) {
     inventory.required = closure.contains(item.identity);
-    inventory.add(item.identity.kind);
-    inventory.add(item.sourceKind);
+    std::optional<Shape> shape;
+    if (item.identity.kind == LoweredGeneratedItemKind::ThreadLocalStorage)
+      if (const auto *storage = mir.findThreadLocalStorage(item.identity.owner))
+        if (inventory.nativeValue(storage->type))
+          shape = Shape::NativeThreadStorage;
+    if (const auto *cleanup =
+            std::get_if<LoweredLifecycleCleanupItem>(&item.payload))
+      if (const auto *owner = mir.findClassInstance(cleanup->classInstance))
+        shape = inventory.classShape(owner->type);
+    if (const auto *adapter =
+            std::get_if<LoweredConcreteInstanceAdapterItem>(&item.payload))
+      if (adapter->ownerClassInstance)
+        if (const auto *owner =
+                mir.findClassInstance(adapter->ownerClassInstance))
+          shape = inventory.classShape(owner->type);
+    inventory.add(item.identity.kind, shape);
+    inventory.add(item.sourceKind, shape);
     if (!item.dependencies.empty())
-      inventory.add(Shape::GeneratedDependencies);
+      inventory.add(Shape::GeneratedDependencies, shape);
   }
   // Declarations describe the source surface too, including uninstantiated
   // generics. Inventory them without demanding executable representations.

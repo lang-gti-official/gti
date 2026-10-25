@@ -1,9 +1,11 @@
 #include "../src/compiler/llvm/abi.h"
+#include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/places.h"
 #include "../src/compiler/llvm/runtime_abi.h"
 #include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/runtime_execution.h"
 #include "gti/runtime_failure.h"
 
 #include <llvm/IR/Constants.h>
@@ -611,6 +613,215 @@ int main(void) {
            "linked C consumer observes exact object bytes");
   }
 }
+// Real source -> verified lowered bodies -> private native body component.
+// Admission is tested separately; this does not grant a public coverage row.
+void testClassBodyComponent() {
+  const auto frontend = Frontend().analyze("llvm-class-component.gti", R"(
+mut int events = 0;
+class Ticket {
+public:
+  mut int value = 1;
+  Ticket(int input) : value(input) { events = events * 10 + 1; }
+  ~Ticket() { events = events * 10 + 2; }
+  int read() { return this.value; }
+};
+int divide(int value) { return 1 / value; }
+class Field {
+  int id;
+public:
+  Field(int id, bool fail) : id(id) {
+    if (fail) { [[discard]] divide(0); }
+  }
+  ~Field() { events = events * 10 + this.id; }
+};
+class Partial {
+  Field first;
+  Field second;
+  Field third;
+public:
+  Partial(bool fail) : first(Field(1, false)), second(Field(2, false)),
+                       third(Field(3, fail)) {}
+  ~Partial() { events = events * 10 + 4; }
+};
+int rollback(bool fail) { Partial value{fail}; return 0; }
+int main() {
+  { Ticket ticket{7}; if (ticket.read() != 7) { return 1; } }
+  if (events != 12) { return 2; }
+  return rollback(false);
+}
+)");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("invalid native class component fixture");
+  std::vector<LoweredProgramIssue> issues;
+  const auto program = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!program)
+    throw std::runtime_error("unverified native class component fixture");
+  const auto root =
+      std::filesystem::temp_directory_path() /
+      ("gti-llvm-class-component-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(root);
+  const auto layout = driver::discoverToolchainLayout(nullptr);
+  driver::NativeToolchain toolchain;
+  for (const auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Less,
+        LlvmCodegenOptimization::Default,
+        LlvmCodegenOptimization::Aggressive}) {
+    Session session(*program, {.optimization = level});
+    const auto admission = planLlvmAdmission(*program);
+    expect(admission.admitted(), "real class component has public admission");
+    lowerScalarProgram(session, admission);
+    auto *registration = llvm::StructType::getTypeByName(
+        session.context(), "gti_thread_local_cleanup_entry_v1");
+    const auto *shape = session.dataLayout().getStructLayout(registration);
+    expect(shape->getSizeInBytes() ==
+                   sizeof(gti_thread_local_cleanup_entry_v1) &&
+               shape->getElementOffset(1) ==
+                   offsetof(gti_thread_local_cleanup_entry_v1, storage) &&
+               shape->getElementOffset(2) ==
+                   offsetof(gti_thread_local_cleanup_entry_v1, cleanup) &&
+               shape->getElementOffset(3) ==
+                   offsetof(gti_thread_local_cleanup_entry_v1, artifact) &&
+               shape->getElementOffset(4) ==
+                   offsetof(gti_thread_local_cleanup_entry_v1, registered),
+           "native TLS registration agrees with the public C record layout");
+    // A test-only C main observes the real checked GTI call after failure,
+    // rather than inferring cleanup from the process's terminal exit code.
+    auto *original = session.module().getFunction("main");
+    original->setName("gti_class_success_oracle");
+    auto *main = llvm::Function::Create(original->getFunctionType(),
+                                        llvm::GlobalValue::ExternalLinkage,
+                                        "main", session.module());
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", main));
+    auto *success = ir.CreateCall(original);
+    const auto symbol = program->program()
+                            .mir()
+                            .programInitializationPlan()
+                            .steps.front()
+                            .symbol;
+    auto *events = session.module().getGlobalVariable(
+        "__gti_native_v1_g" + std::to_string(symbol), true);
+    ir.CreateStore(ir.getInt32(0), events);
+    for (const auto &target : program->program().mir().functionInstances()) {
+      const auto *declaration =
+          program->program().findFunctionDeclaration(target.declaration);
+      if (!declaration || declaration->qualifiedName != "rollback")
+        continue;
+      const auto abi =
+          session.abi().gti(target.returnType, target.parameterTypes,
+                            target.mayRaiseDefinedFailure);
+      expect(abi.statusResult && abi.resultDestination,
+             "rollback oracle uses the real checked value ABI");
+      auto *result = ir.CreateAlloca(ir.getInt32Ty());
+      auto *failure = ir.CreateAlloca(session.abi().failureChannel());
+      auto *status = ir.CreateCall(session.abi().declareFunction(target.id),
+                                   {result, failure, ir.getTrue()});
+      abi.applyTo(*status);
+      auto *code = ir.CreateLoad(
+          ir.getInt16Ty(),
+          ir.CreateStructGEP(
+              session.abi().failureRecord(),
+              ir.CreateStructGEP(session.abi().failureChannel(), failure, 0),
+              1));
+      auto *correct = ir.CreateAnd(
+          ir.CreateICmpEQ(success, ir.getInt32(0)),
+          ir.CreateAnd(
+              ir.CreateNot(status),
+              ir.CreateAnd(
+                  ir.CreateICmpEQ(ir.CreateLoad(ir.getInt32Ty(), events),
+                                  ir.getInt32(21)),
+                  ir.CreateICmpEQ(code,
+                                  ir.getInt16(static_cast<unsigned>(
+                                      DefinedFailureCode::DivisionByZero))))));
+      ir.CreateRet(ir.CreateSelect(correct, ir.getInt32(0), ir.getInt32(1)));
+      break;
+    }
+    expect(!ir.GetInsertBlock()->empty() &&
+               ir.GetInsertBlock()->back().isTerminator(),
+           "rollback function was found by sealed declaration identity");
+    const auto object = session.emitObject();
+    const auto path = root / "probe.o";
+    expect(driver::writeArtifact(path, object.contents) ==
+               driver::ArtifactWriteStatus::Success,
+           "write class component object");
+    driver::NativeInputs inputs;
+    inputs.finalLibraryFiles.push_back(layout.runtimeLibrary);
+    const auto executable = root / "probe";
+    const auto linked = toolchain.invoke(driver::NativeLinkRequest(
+        driver::discoverNativeCompiler(), path, executable, inputs));
+    if (!linked.succeeded())
+      std::cerr << linked.output;
+    expect(linked.succeeded(), "link class component with the C runtime ABI");
+    if (linked.succeeded()) {
+      const auto run = driver::invokeProcess({executable.string()});
+      if (!run.succeeded())
+        std::cerr << run.output;
+      expect(run.succeeded(), "source lifecycle success and exact partial "
+                              "rollback execute at O0-O3");
+    }
+  }
+  std::filesystem::remove_all(root);
+}
+
+void testExecutionCAbi() {
+  const auto root =
+      std::filesystem::temp_directory_path() /
+      ("gti-tls-c-oracle-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(root);
+  const auto layout = driver::discoverToolchainLayout(nullptr);
+  const auto source = root / "oracle.c";
+  expect(driver::writeArtifact(source, R"(
+#include <gti/runtime_execution.h>
+static int order;
+static bool cleanup(void *value, gti_failure_record_v2 *failure,
+                    const gti_failure_record_v2 *primary,
+                    const gti_failure_artifact_descriptor_v1 *artifact) {
+  (void)failure; (void)primary; (void)artifact;
+  order = order * 10 + *(int *)value;
+  return true;
+}
+int main(void) {
+  int first = 1, second = 2;
+  gti_thread_local_cleanup_entry_v1 a = {0}, b = {0};
+  if (gti_rt_thread_locals_attached_v1() || gti_rt_thread_locals_closing_v1()) return 1;
+  gti_rt_thread_locals_begin_v1();
+  a.storage = &first; a.cleanup = cleanup;
+  b.storage = &second; b.cleanup = cleanup;
+  gti_rt_thread_locals_register_v1(&a);
+  gti_rt_thread_locals_register_v1(&b);
+  gti_rt_thread_locals_drain_v2(0, 0);
+  gti_rt_thread_locals_drain_v2(0, 0);
+  return order == 21 && !a.registered && !b.registered &&
+         gti_rt_thread_locals_closing_v1() && !gti_rt_thread_locals_attached_v1() ? 0 : 2;
+}
+)") == driver::ArtifactWriteStatus::Success,
+         "write C TLS oracle");
+  driver::NativeToolchain toolchain;
+  const auto object = root / "oracle.o";
+  const auto compiled = toolchain.invoke(driver::NativeCCompileRequest(
+      driver::discoverCCompiler(), source, object, driver::CStandard::C17,
+      OptimizationLevel::O2, {layout.runtimeInclude}, {}));
+  expect(compiled.succeeded(),
+         "TLS runtime header and callback compile as C17");
+  if (compiled.succeeded()) {
+    driver::NativeInputs inputs;
+    inputs.finalLibraryFiles.push_back(layout.runtimeLibrary);
+    const auto executable = root / "oracle";
+    const auto linked = toolchain.invoke(driver::NativeLinkRequest(
+        driver::discoverNativeCompiler(), object, executable, inputs));
+    expect(linked.succeeded(),
+           "C TLS oracle links only to the runtime archive");
+    if (linked.succeeded())
+      expect(driver::invokeProcess({executable.string()}).succeeded(),
+             "C TLS registration drains in reverse order exactly once");
+  }
+  std::filesystem::remove_all(root);
+}
 } // namespace
 
 int main() {
@@ -620,6 +831,8 @@ int main() {
     testInvalidModule(input);
     testDiagnostics(input);
     testObjectHandoff(input);
+    testClassBodyComponent();
+    testExecutionCAbi();
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';
     return 1;

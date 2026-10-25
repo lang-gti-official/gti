@@ -4546,11 +4546,79 @@ This is one bounded workload, not a general backend speedup claim.
 
 Integral-enum/nonprimitive array/reference composition and fixed-array value
 equality remain explicit preflight limitations. Scalar equality does not imply
-an array element comparison implementation. Class fields/lifecycles, owning storage,
-payloads and native calls remain their later milestones. Source restrictions
+an array element comparison implementation. Ordinary class execution is described
+below; private owning storage, payloads and native calls remain later milestones. Source restrictions
 are unchanged: explicit array-reference declarators and conditional lvalue
 initialization are not added by backend work. Constrained range references to
 fixed arrays are the implemented source entry point for whole-array borrowing.
+
+### LLVM Classes, Lifecycles And Storage
+
+The O-LLVM-06 execution profile admits exact concrete, non-polymorphic,
+copyable or movable classes, including concrete generic classes. `layout.cpp`
+owns target-native field offsets and an additional active-state byte only when
+the sealed class requires source-destructor state. Class values travel as
+addresses through the private GTI ABI, not native C aggregate registers.
+`places.cpp` projects fields by exact symbol identity. Constructor entry Stored
+loans publish reference-field addresses rather than copying referent contents.
+
+`body.cpp` emits selected constructors, direct methods, field/static initializer
+bodies and explicit lifecycle transitions. Fresh construction/call results with
+one initializing destination use that destination directly. Copy operands
+snapshot their values at the MIR stage, before a later argument can mutate the
+source. Already-staged class parameters retain their prepared storage address.
+Ordinary, direct/braced/designated construction, generated copy/move transport,
+returned movable values, replacement cleanup and fixed arrays of movable class
+objects use the same operations; no native representation destructor runs GTI
+cleanup. In-place scalar assignments use the existing promoted arithmetic and
+checked conversion implementation before publishing the updated value.
+
+`lifetimes.cpp` caches native move-state and cleanup helpers by exact layout or
+sealed drop recipe. It follows the explicit source destructor and reverse field
+or array-element cleanup order. Source state and body-local obligations retire
+before invoking cleanup. A first ordinary cleanup failure drains remaining
+subobjects; another failure terminates through the existing emergency protocol.
+During unwinding the first new failure returns to the owning MIR failure edge.
+Partial-construction rollback executes only the completed obligations; cleanup
+recipes also add their selected destructors to native reachability.
+
+Passive namespace/static class objects consume complete typed object constants
+or the existing ordered initialization plan. Owning process globals remain a
+source-language rejection, not a backend limitation to work around. TLS uses
+its separate sealed storage and initializer inventory. Literal slots are native
+TLS data; dynamic slots have explicit uninitialized/initializing/live/retired
+state. A live-slot check precedes the cold initialization path. The cold path
+checks recursive initialization, runtime attachment and shutdown, resets state
+on failure, and registers exactly once after successful publication. Cleanup
+marks the slot retired and follows its exact drop recipe. Already-live slots
+remain accessible during drain; new initialization and resurrection reject.
+
+`runtime_execution.h` now exposes the standard-layout C
+`gti_thread_local_cleanup_entry_v1` record plus registration/attached/closing
+services alongside begin/drain. The existing C++ helper name aliases that C
+record; its intrusive registry and drain algorithm are unchanged. LLVM models
+the C layout and callback signature directly, with no C++ cleanup-entry API,
+exception transport, hidden allocation or native TLS destructor. A C17 oracle
+and target-layout assertions check this boundary independently.
+
+Remaining O-LLVM-06 boundaries are explicit: immovable object publication needs
+end-to-end destination placement (including array elements), and reference-field
+initialization without an exact entry Stored loan needs an address-publication
+schedule. Both remain preflight limitations, not silent byte relocation or
+uninitialized storage. Bases/dispatch, union/payload storage and private ownership
+capabilities retain their later milestones. Function-local TLS with compound
+assignment and moving owner-bearing array fields out of a containing class are
+tested natively; the C++ comparator currently rejects those specific
+representation shapes. This task does not relax its gates. Recursive source
+move-state clearing covers class arrays as well as class subobjects, while
+passive arrays/classes emit no state-clear walk.
+
+A self-checking eight-million-step class-field/method workload on macOS arm64
+measured C++23/O3 at 15.60 ms and LLVM O3 at 14.36 ms (five warmups, twenty
+samples). Executables were 16,848/17,016 bytes; direct builds took 0.213/0.096 s.
+The program contains no GTI heap-allocation operation; process-startup
+allocations were not measured. This bounded probe shows no material regression,
+not a general class-backend speedup claim.
 
 ### LLVM Coverage And Admission
 
@@ -4567,7 +4635,8 @@ synchronization, native-runtime, declaration/generated-item and startup enum to
 a named O-LLVM milestone. Entries distinguish pending lowering, implemented
 lowering and verified nonexecuting facts. Scalar execution entries name the
 `llvm_scalar_execution` gate; implemented places/text shapes name
-`llvm_place_execution`. A nonexecuting permission/provenance fact can be inventoried without a
+`llvm_place_execution`; class/TLS shapes name `llvm_class_execution`.
+A nonexecuting permission/provenance fact can be inventoried without a
 runtime operation; a source-only query marked `MustBeAbsent` cannot silently
 be erased if it appears as executable input. Neither classification grants LLVM
 attributes or permits removing a runtime check.

@@ -63,6 +63,10 @@ enum class Shape {
   ErasedReference,
   CStringLiteralInput,
   ArrayValueComparison,
+  NativeClassStorage,
+  NativeThreadStorage,
+  InPlaceScalarMutation,
+  StoredFieldPublication,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

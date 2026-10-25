@@ -1,0 +1,58 @@
+mut int destroyed = 0;
+mut int initialized = 0;
+
+class Pair<std::numeric T> {
+  mut T first;
+  T second;
+
+public:
+  Pair(T first, T second) : first(first), second(second) {}
+
+  T sum() { return this.first + this.second; }
+  void set_first(T value) mut { this.first = value; }
+};
+
+class Ticket {
+  int id;
+
+public:
+  Ticket(int id) : id(id) {}
+  ~Ticket() { destroyed += this.id; }
+  int read() { return this.id; }
+};
+
+struct Configuration {
+  int limit = 7;
+};
+
+Configuration configuration{};
+
+int initialize() {
+  initialized += 1;
+  return 9;
+}
+
+thread_local int per_thread = initialize();
+
+Ticket make_ticket(int id) {
+  Ticket result{id};
+  return result;
+}
+
+int main() {
+  mut Pair<int> pair{2, 3};
+  pair.set_first(4);
+  if (pair.sum() != configuration.limit || initialized != 0) {
+    return 1;
+  }
+  if (per_thread != 9 || per_thread != 9 || initialized != 1) {
+    return 2;
+  }
+  {
+    Ticket ticket = make_ticket(3);
+    if (ticket.read() != 3) {
+      return 3;
+    }
+  }
+  return destroyed == 3 ? 0 : 4;
+}

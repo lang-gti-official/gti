@@ -7,6 +7,9 @@ namespace lang::native_llvm {
 enum class RuntimeService {
   BeginThreadLocals,
   DrainThreadLocals,
+  ThreadLocalsAttached,
+  ThreadLocalsClosing,
+  RegisterThreadLocal,
   TerminateFailure,
   TerminateCleanupFailure,
   AbortAllocation,

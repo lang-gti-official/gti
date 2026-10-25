@@ -1,5 +1,13 @@
 # GTI examples
 
+[`llvm/classes-and-lifetimes.gti`](llvm/classes-and-lifetimes.gti) exercises
+concrete generic classes, direct methods, returned owners, deterministic cleanup,
+passive globals and lazy thread-local initialization. Build with
+`gti examples/llvm/classes-and-lifetimes.gti --backend llvm -O3 -o classes`.
+The `llvm_class_execution` gate runs this example alongside its differential
+lifecycle, rollback and TLS probes; it is outside the numbered full-language
+corpus, just like the other bounded LLVM profiles.
+
 [`llvm/places-and-text.gti`](llvm/places-and-text.gti) exercises the native
 O-LLVM-05 array/reference/text profile. It demonstrates constrained fixed-array
 ranges, selected mutable references, multidimensional storage, raw addresses,

@@ -18,6 +18,17 @@ llvm::Function *declareRuntimeService(Session &session,
     name = "gti_rt_thread_locals_drain_v2";
     parameters = {ptr, ptr};
     break;
+  case RuntimeService::ThreadLocalsAttached:
+  case RuntimeService::ThreadLocalsClosing:
+    name = service == RuntimeService::ThreadLocalsAttached
+               ? "gti_rt_thread_locals_attached_v1"
+               : "gti_rt_thread_locals_closing_v1";
+    result = llvm::Type::getInt32Ty(context);
+    break;
+  case RuntimeService::RegisterThreadLocal:
+    name = "gti_rt_thread_locals_register_v1";
+    parameters = {ptr};
+    break;
   case RuntimeService::TerminateFailure:
     name = "gti_rt_failure_terminate_v2";
     parameters = {ptr, ptr, ptr, ptr};
