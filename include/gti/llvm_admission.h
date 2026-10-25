@@ -31,8 +31,16 @@ struct LlvmCoverageEntry {
   LlvmCoverageState state = LlvmCoverageState::Pending;
   LlvmNonExecutingRule nonExecuting = LlvmNonExecutingRule::None;
   std::string_view predicate;
-  std::string_view positiveTest = "llvm_admission";
+  // An implemented executable row names the execution test and the exact
+  // case or profile which owns its acceptance evidence. Pending rows leave
+  // both fields empty: a declared obligation is not observed execution.
+  std::string_view positiveTest;
+  std::string_view positiveAssertion;
+  // An explicit gap preserves an existing implementation state while making
+  // the missing executable evidence visible to promotion-readiness tooling.
+  std::string_view positiveEvidenceGap;
   std::string_view negativeTest = "llvm_coverage_exhaustiveness";
+  std::string_view negativeAssertion = "vocabulary-and-shape-drift";
 
   [[nodiscard]] std::string key() const {
     return std::string(family) + "." + std::string(name);

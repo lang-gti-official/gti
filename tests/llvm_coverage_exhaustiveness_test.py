@@ -54,7 +54,17 @@ int main() {
             "struct MirInstruction {", "struct MirInstruction { bool unclassifiedShape = false;", 1))
         result = subprocess.run(command, capture_output=True, text=True, timeout=120)
         assert result.returncode != 0 and "MirInstruction" in result.stderr, result.stderr
-    print("LLVM enum and input-field drift controls passed")
+
+        # An implementation-state promotion must name its actual execution
+        # test and assertion at the row. It cannot inherit a milestone-wide
+        # default merely by changing Pending to a bare Implemented token.
+        (include / "mir.h").write_text(header)
+        coverage = (root / "src/compiler/llvm/coverage.def").read_text()
+        (temporary / "coverage.def").write_text(
+            coverage.replace(", Pending, None,", ", Implemented, None,", 1))
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        assert result.returncode != 0 and "Implemented" in result.stderr, result.stderr
+    print("LLVM enum, input-field and evidence-claim drift controls passed")
 
 
 if __name__ == "__main__":

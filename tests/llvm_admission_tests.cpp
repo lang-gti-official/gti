@@ -1316,15 +1316,35 @@ void testLedger() {
            "each entry states its admission boundary");
     pending += entry.state == LlvmCoverageState::Pending;
     nonexecuting += entry.state == LlvmCoverageState::VerifiedNonExecuting;
-    if (entry.state == LlvmCoverageState::Implemented)
-      expect(entry.positiveTest ==
-                 (entry.milestone == 9   ? "llvm_callable_execution"
-                  : entry.milestone == 8 ? "llvm_memory_execution"
-                  : entry.milestone == 7 ? "llvm_payload_execution"
-                  : entry.milestone == 6 ? "llvm_class_execution"
-                  : entry.milestone == 5 ? "llvm_place_execution"
-                                         : "llvm_scalar_execution"),
-             "implemented families name real execution evidence");
+    if (entry.state == LlvmCoverageState::Implemented) {
+      const bool hasEvidence = !entry.positiveTest.empty() &&
+                               !entry.positiveAssertion.empty() &&
+                               entry.positiveTest != "llvm_admission";
+      const bool hasGap = !entry.positiveEvidenceGap.empty();
+      expect(hasEvidence != hasGap,
+             "implemented rows name execution evidence or one explicit gap");
+    } else if (entry.state == LlvmCoverageState::Pending) {
+      expect(entry.positiveTest.empty() && entry.positiveAssertion.empty() &&
+                 entry.positiveEvidenceGap.empty(),
+             "pending rows cannot masquerade as accepted execution");
+    } else {
+      expect(entry.positiveTest == "llvm_admission" &&
+                 entry.positiveAssertion == "ledger.nonexecuting" &&
+                 entry.positiveEvidenceGap.empty() &&
+                 entry.nonExecuting != LlvmNonExecutingRule::None,
+             "nonexecuting rows retain structural evidence");
+    }
+    expect(!entry.negativeTest.empty() && !entry.negativeAssertion.empty(),
+           "each row names its negative drift control");
+    if (entry.key() == "MirOperation.None")
+      expect(entry.state == LlvmCoverageState::VerifiedNonExecuting &&
+                 entry.nonExecuting == LlvmNonExecutingRule::VerifiedMetadata,
+             "the no-operation marker is structural metadata");
+    if (entry.key() == "IntrinsicKind.ExactTypeParameterConstruction")
+      expect(entry.state == LlvmCoverageState::VerifiedNonExecuting &&
+                 entry.nonExecuting == LlvmNonExecutingRule::MustBeAbsent,
+             "the HIR-only exact pack construction cannot reach executable "
+             "MIR");
   }
   expect(pending > 250 && nonexecuting > 20,
          "the full input vocabulary is inventoried");
@@ -1357,6 +1377,78 @@ void testLedger() {
 #undef LLVM_COVERAGE_ENTRY
 #undef LLVM_COVERAGE_SENTINEL
 #undef LLVM_COVERAGE_END
+}
+
+constexpr std::string_view exactPackConstructionSource = R"(
+T pack_construct<T, Args...>(Args... values) { return T(values...); }
+int main() { return pack_construct<int>(7) - 7; }
+)";
+
+void testNonExecutingEvidence() {
+  const auto packed = lower(exactPackConstructionSource);
+  std::size_t identities = 0;
+  std::size_t exactIntrinsics = 0;
+  for (const auto &instance : packed.program().mir().functionInstances()) {
+    for (const auto &block : instance.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        identities += instruction.operation == lang::MirOperation::Identity;
+        exactIntrinsics += instruction.intrinsic ==
+                           lang::IntrinsicKind::ExactTypeParameterConstruction;
+      }
+    }
+  }
+  const auto plan = lang::planLlvmAdmission(packed);
+  expect(identities != 0 && exactIntrinsics == 0 &&
+             has(plan, "MirOperation", "Identity") &&
+             !has(plan, "IntrinsicKind", "ExactTypeParameterConstruction"),
+         "exact pack construction lowers to Identity before LLVM admission");
+
+  auto frontend = lang::Frontend().analyze(
+      "llvm-exact-pack-forge.gti", std::string(exactPackConstructionSource));
+  expect(frontend.canGenerateCode(),
+         "exact pack forge fixture must pass the frontend");
+  bool forged = false;
+  for (const auto &instance : frontend.mir.functionInstances()) {
+    auto *body = lang::findMirBody(frontend.mir,
+                                   {lang::MirBodyKind::Function, instance.id});
+    if (!body)
+      continue;
+    for (auto &block : body->blocks) {
+      for (auto &instruction : block.instructions) {
+        if (instruction.operation != lang::MirOperation::Identity)
+          continue;
+        instruction.intrinsic =
+            lang::IntrinsicKind::ExactTypeParameterConstruction;
+        forged = true;
+        break;
+      }
+      if (forged)
+        break;
+    }
+    if (forged)
+      break;
+  }
+  expect(forged, "fixture must expose one lowered exact Identity operation");
+  auto build = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host(), true);
+  expect(build.valid(),
+         "the current core MIR verifier delegates this HIR-only absence "
+         "boundary to sealed backend admission");
+  if (!build.valid())
+    return;
+  std::vector<lang::LoweredProgramIssue> issues;
+  const auto verified =
+      lang::verifiedLoweredProgram(std::move(*build.program), issues);
+  expect(verified.has_value(),
+         "the forged fixture must still pass the current construction seal");
+  if (!verified)
+    return;
+  const auto rejected = lang::planLlvmAdmission(*verified);
+  expect(!rejected.admitted() && rejected.firstUnsupported() &&
+             rejected.firstUnsupported()->entry->key() ==
+                 "IntrinsicKind.ExactTypeParameterConstruction",
+         "LLVM admission rejects a forged executable HIR-only intrinsic");
 }
 
 void testSnapshotAndWholeProgram() {
@@ -1744,6 +1836,7 @@ int main() {
     testUnstagedConstructorFieldPublicationPlan();
     testStoredFieldPublicationPlan();
     testLedger();
+    testNonExecutingEvidence();
     testSnapshotAndWholeProgram();
     testShapeWitnesses();
     testIntegralEnumReferences();
