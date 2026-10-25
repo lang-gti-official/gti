@@ -1793,6 +1793,7 @@ if(Python3_Interpreter_FOUND)
       "$<TARGET_FILE:gti_llvm_coverage_evidence>" "${CMAKE_CTEST_COMMAND}"
       "${CMAKE_BINARY_DIR}" "${PROJECT_SOURCE_DIR}"
       "${GTI_LLVM_EVIDENCE_REGISTRY}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_readiness_baseline.json"
   )
   set_tests_properties(llvm_coverage_evidence PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_placement_execution

@@ -5077,6 +5077,39 @@ observable exit/stdout/stderr comparison without C++ representation options.
 Current LLVM corpus runs must fail until their requirements are implemented;
 unsupported builds are never counted as successful execution.
 
+Readiness reporting keeps three different claims separate. The coverage ledger
+classifies the complete compiler vocabulary, so its global `Pending` count
+remains visible. Admission is use-specific: a required use of a pending family
+is supported only when that exact `LlvmCoverageUse` carries an implemented
+shape selected by the inventory. The test-only coverage probe serializes that
+binding directly from the admission plan in
+`gti.llvm.required-uses/v1`; seeing the base and shape keys elsewhere is not a
+witness. Production admission and `firstUnsupported()` remain authoritative.
+
+`tests/llvm_readiness_baseline.json` is the versioned durable readiness
+contract. It pins the frozen-baseline provenance, canonical source providers,
+supported-family obligations, shipped target/profile identities and complete
+O-LLVM-16 gate names without copying body/block/instruction inventories. Exact
+required-use inventories, counts and digests are run artifacts tied to the
+source, compiler, build and target that produced them. Receipts for a different,
+truncated or stale artifact do not apply. The normal focused evidence gate
+emits `gti.llvm.readiness-run/v1` with an explicit
+`focused-schema-control` scope and therefore cannot make a candidate promotion
+ready.
+
+Baseline structural readiness means every member of every canonical provider
+has an exact admitted use artifact for each required target/profile, including
+the actual implemented witness on each pending required use. It is still only a
+prerequisite. General language-family review, registered positive and negative
+execution, cross-family interactions, both shipped platforms, optimized cost,
+sanitizers and installed-package gates remain independent requirements for
+campaign promotion. Missing providers, unrepresented supported families,
+unrun gates and unavailable platforms are reported as unresolved; they are not
+converted into a count of missing features. The additive
+`gti.llvm.coverage-readiness/v2` summary retains the preceding global-row fields
+for consumers of the unversioned report while adding the distinct baseline and
+campaign results.
+
 The remaining architecture obligations have explicit owners:
 
 | Obligation | Producer / representation owner | Verification and next gate |

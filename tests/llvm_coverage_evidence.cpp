@@ -91,6 +91,16 @@ std::string_view ruleName(lang::LlvmNonExecutingRule rule) {
   return "unknown";
 }
 
+std::string_view closureName(lang::LlvmAdmissionClosure closure) {
+  switch (closure) {
+  case lang::LlvmAdmissionClosure::AllExecutableBodies:
+    return "all-executable-bodies";
+  case lang::LlvmAdmissionClosure::SealedEntryDependencies:
+    return "sealed-entry-dependencies";
+  }
+  return "unknown";
+}
+
 void writeField(std::ostream &output, std::string_view name,
                 std::string_view value) {
   writeJsonString(output, name);
@@ -147,15 +157,52 @@ int writeLedger() {
   return 0;
 }
 
+void writeCoverageEntry(std::ostream &output,
+                        const lang::LlvmCoverageEntry &entry) {
+  output << '{';
+  writeField(output, "key", entry.key());
+  output << ',';
+  writeField(output, "state", stateName(entry.state));
+  output << ',';
+  writeField(output, "nonexecuting", ruleName(entry.nonExecuting));
+  output << ',';
+  writeField(output, "predicate", entry.predicate);
+  output << '}';
+}
+
+void writeTarget(std::ostream &output, const lang::TargetInfo &target) {
+  output << '{';
+  writeField(output, "os", target.os);
+  output << ',';
+  writeField(output, "vendor", target.vendor);
+  output << ',';
+  writeField(output, "arch", target.arch);
+  output << ',';
+  writeField(output, "endianness",
+             lang::targetEndiannessName(target.dataLayout.endianness()));
+  output << ",\"pointer_width_bits\":" << target.dataLayout.pointerWidthBits()
+         << ',';
+  writeField(output, "execution_profile",
+             lang::executionProfileName(target.executionProfile));
+  output << ",\"threads\":"
+         << (target.runtimeCapabilities.threads ? "true" : "false") << '}';
+}
+
 void printDiagnostics(const lang::FrontendResult &frontend) {
   for (const lang::Diagnostic &diagnostic : frontend.diagnostics)
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
 }
 
-int probeSource(const std::filesystem::path &root,
-                const std::filesystem::path &source) {
+std::optional<lang::VerifiedLoweredProgram>
+lowerSource(const std::filesystem::path &root,
+            const std::filesystem::path &source,
+            lang::ExecutionProfile profile) {
   lang::FrontendOptions options;
   options.target = lang::TargetInfo::host();
+  options.target.executionProfile = profile;
+  options.target.runtimeCapabilities.threads =
+      profile == lang::ExecutionProfile::Concurrent;
+  const lang::TargetInfo target = options.target;
   options.lowerReachableOnly = true;
   const std::filesystem::path standardLibrary = root / "stdlib";
   const lang::FrontendResult frontend =
@@ -164,25 +211,35 @@ int probeSource(const std::filesystem::path &root,
                    {standardLibrary});
   if (!frontend.canGenerateCode()) {
     printDiagnostics(frontend);
-    return 1;
+    return std::nullopt;
   }
   lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, lang::TargetInfo::host(), true);
+      frontend.mir, {}, target, true);
   if (!lowered.valid()) {
     for (const lang::LoweredProgramIssue &issue : lowered.issues)
       std::cerr << issue.detail << '\n';
-    return 1;
+    return std::nullopt;
   }
   std::vector<lang::LoweredProgramIssue> issues;
-  const auto verified =
+  auto verified =
       lang::verifiedLoweredProgram(std::move(*lowered.program), issues);
   if (!verified) {
     for (const lang::LoweredProgramIssue &issue : issues)
       std::cerr << issue.detail << '\n';
-    return 1;
+    return std::nullopt;
   }
-  const lang::LlvmAdmissionPlan plan = lang::planLlvmAdmission(*verified);
+  return verified;
+}
+
+int probeSource(const std::filesystem::path &root,
+                const std::filesystem::path &source) {
+  auto verified =
+      lowerSource(root, source, lang::ExecutionProfile::SingleThreaded);
+  if (!verified)
+    return 1;
+  const lang::LlvmAdmissionPlan plan =
+      lang::planLlvmAdmission(std::move(*verified));
   std::set<std::string> keys;
   for (const lang::LlvmCoverageUse &use : plan.requirements())
     if (use.entry) {
@@ -195,6 +252,86 @@ int probeSource(const std::filesystem::path &root,
   return 0;
 }
 
+int probeUses(const std::filesystem::path &root,
+              const std::filesystem::path &source,
+              lang::ExecutionProfile profile) {
+  auto verified = lowerSource(root, source, profile);
+  if (!verified)
+    return 1;
+  const lang::LlvmAdmissionPlan plan =
+      lang::planLlvmAdmission(std::move(*verified));
+  const auto requirements = plan.requirements();
+  const lang::LlvmCoverageUse *unsupported = plan.firstUnsupported();
+  std::optional<std::size_t> unsupportedIndex;
+  std::size_t requiredIndex = 0;
+  std::size_t requiredCount = 0;
+  for (const lang::LlvmCoverageUse &use : requirements)
+    if (use.required) {
+      if (&use == unsupported)
+        unsupportedIndex = requiredIndex;
+      ++requiredIndex;
+      ++requiredCount;
+    }
+
+  std::cout << "{\"schema\":\"gti.llvm.required-uses/v1\",\"compiler\":{";
+  writeField(std::cout, "commit", GTI_COMPILER_SOURCE_COMMIT);
+  std::cout << ',';
+  writeField(std::cout, "state", GTI_COMPILER_SOURCE_STATE);
+  std::cout << "},\"build\":{";
+  writeField(std::cout, "configuration", GTI_COVERAGE_BUILD_CONFIG);
+  std::cout << ',';
+  writeField(std::cout, "system", GTI_COVERAGE_SYSTEM_NAME);
+  std::cout << ',';
+  writeField(std::cout, "processor", GTI_COVERAGE_SYSTEM_PROCESSOR);
+  std::cout << ',';
+  writeField(std::cout, "compiler", GTI_COVERAGE_COMPILER);
+  std::cout << ',';
+  writeField(std::cout, "llvm", GTI_COVERAGE_LLVM_VERSION);
+  std::cout << "},\"target\":";
+  writeTarget(std::cout, plan.program().target());
+  std::cout << ',';
+  writeField(std::cout, "closure", closureName(plan.closure()));
+  std::cout << ",\"admitted\":" << (plan.admitted() ? "true" : "false")
+            << ",\"first_unsupported\":";
+  if (unsupportedIndex)
+    std::cout << *unsupportedIndex;
+  else
+    std::cout << "null";
+  std::cout << ",\"use_count\":" << requiredCount << ",\"uses\":[";
+  bool first = true;
+  for (const lang::LlvmCoverageUse &use : requirements) {
+    if (!use.required)
+      continue;
+    if (!first)
+      std::cout << ',';
+    first = false;
+    std::cout << "{\"base\":";
+    writeCoverageEntry(std::cout, *use.entry);
+    std::cout << ",\"witness\":";
+    if (use.implementedShape)
+      writeCoverageEntry(std::cout, *use.implementedShape);
+    else
+      std::cout << "null";
+    std::cout << ",\"executable\":" << (use.executable ? "true" : "false")
+              << ",\"body\":";
+    if (use.body) {
+      std::cout << "{\"kind\":" << static_cast<unsigned>(use.body->kind)
+                << ",\"owner\":" << use.body->owner << '}';
+    } else {
+      std::cout << "null";
+    }
+    std::cout << ",\"block\":" << use.block
+              << ",\"instruction\":" << use.instruction
+              << ",\"occurrences\":" << use.occurrences << ",\"source\":{";
+    writeField(std::cout, "path", use.source.source);
+    std::cout << ",\"start\":" << use.source.start
+              << ",\"end\":" << use.source.end
+              << ",\"line\":" << use.source.line << "}}";
+  }
+  std::cout << "]}\n";
+  return 0;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -203,7 +340,17 @@ int main(int argc, char **argv) {
   if (argc == 4 && std::string_view(argv[1]) == "--probe")
     return probeSource(std::filesystem::weakly_canonical(argv[2]),
                        std::filesystem::weakly_canonical(argv[3]));
+  if (argc == 5 && std::string_view(argv[1]) == "--probe-uses") {
+    const auto profile = lang::parseExecutionProfile(argv[4]);
+    if (!profile) {
+      std::cerr << "invalid execution profile: " << argv[4] << '\n';
+      return 2;
+    }
+    return probeUses(std::filesystem::weakly_canonical(argv[2]),
+                     std::filesystem::weakly_canonical(argv[3]), *profile);
+  }
   std::cerr << "usage: gti_llvm_coverage_evidence --ledger | --probe "
-               "<repo-root> <source>\n";
+               "<repo-root> <source> | --probe-uses <repo-root> <source> "
+               "<single-threaded|concurrent>\n";
   return 2;
 }
