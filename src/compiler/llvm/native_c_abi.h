@@ -38,7 +38,8 @@ struct NativeCRecordAbi {
 // raw pointers, float or double fields. No bool/enums/arrays/nesting/unions,
 // ownership, packing, over-alignment, variadic or non-C calling conventions.
 // Plans and LLVM types belong to this Session. Callers must account for scalar
-// arguments in the register budget; storage layout alone never grants admission.
+// arguments in the register budget; storage layout alone never grants
+// admission.
 [[nodiscard]] NativeCRecordAbi
 classifyNativeCRecord(Session &session, const SemanticType &type,
                       NativeCRegisterBudget available);

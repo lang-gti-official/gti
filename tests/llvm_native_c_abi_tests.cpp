@@ -2,14 +2,14 @@
 #include "../src/compiler/llvm/native_c_abi.h"
 #include "cpp_backend_test_support.h"
 
+#include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/IRBuilder.h>
-#include <llvm/Config/llvm-config.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/TargetParser/Triple.h>
 
-#include <filesystem>
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -63,32 +63,34 @@ const MirClassInstance &record(Session &session, const std::string &name) {
 
 llvm::Value *offset(llvm::IRBuilder<> &builder, llvm::Value *pointer,
                     std::uint64_t bytes) {
-  return builder.CreateGEP(builder.getInt8Ty(), pointer, builder.getInt64(bytes));
+  return builder.CreateGEP(builder.getInt8Ty(), pointer,
+                           builder.getInt64(bytes));
 }
 
 // Coercions may be wider than the object (e.g. Darwin's i64 for a 3-byte
 // record). Use zeroed, correctly sized scratch and copy only actual bytes.
 llvm::Value *pack(Session &session, llvm::IRBuilder<> &builder,
-                  llvm::Value *storage, llvm::Type *carrier,
-                  std::uint64_t at, std::uint64_t size) {
+                  llvm::Value *storage, llvm::Type *carrier, std::uint64_t at,
+                  std::uint64_t size) {
   const auto carrierSize =
       session.dataLayout().getTypeAllocSize(carrier).getFixedValue();
   auto *scratch = builder.CreateAlloca(carrier);
   builder.CreateStore(llvm::Constant::getNullValue(carrier), scratch);
-  builder.CreateMemCpy(scratch, llvm::MaybeAlign(1), offset(builder, storage, at),
-                      llvm::MaybeAlign(1), std::min(carrierSize, size - at));
+  builder.CreateMemCpy(scratch, llvm::MaybeAlign(1),
+                       offset(builder, storage, at), llvm::MaybeAlign(1),
+                       std::min(carrierSize, size - at));
   return builder.CreateLoad(carrier, scratch);
 }
 
-void unpack(Session &session, llvm::IRBuilder<> &builder,
-            llvm::Value *storage, llvm::Value *value, std::uint64_t at,
-            std::uint64_t size) {
+void unpack(Session &session, llvm::IRBuilder<> &builder, llvm::Value *storage,
+            llvm::Value *value, std::uint64_t at, std::uint64_t size) {
   const auto carrierSize =
       session.dataLayout().getTypeAllocSize(value->getType()).getFixedValue();
   auto *scratch = builder.CreateAlloca(value->getType());
   builder.CreateStore(value, scratch);
-  builder.CreateMemCpy(offset(builder, storage, at), llvm::MaybeAlign(1), scratch,
-                      llvm::MaybeAlign(1), std::min(carrierSize, size - at));
+  builder.CreateMemCpy(offset(builder, storage, at), llvm::MaybeAlign(1),
+                       scratch, llvm::MaybeAlign(1),
+                       std::min(carrierSize, size - at));
 }
 
 void applyByval(Session &session, const NativeCRecordAbi &plan,
@@ -97,9 +99,9 @@ void applyByval(Session &session, const NativeCRecordAbi &plan,
     return;
   function.addParamAttr(index, llvm::Attribute::getWithByValType(
                                    session.context(), plan.storage.storage));
-  function.addParamAttr(index, llvm::Attribute::getWithAlignment(
-                                   session.context(),
-                                   llvm::Align(plan.argument.stackAlignment)));
+  function.addParamAttr(
+      index, llvm::Attribute::getWithAlignment(
+                 session.context(), llvm::Align(plan.argument.stackAlignment)));
 }
 
 void applyByval(Session &session, const NativeCRecordAbi &plan,
@@ -108,9 +110,9 @@ void applyByval(Session &session, const NativeCRecordAbi &plan,
     return;
   call.addParamAttr(index, llvm::Attribute::getWithByValType(
                                session.context(), plan.storage.storage));
-  call.addParamAttr(index, llvm::Attribute::getWithAlignment(
-                               session.context(),
-                               llvm::Align(plan.argument.stackAlignment)));
+  call.addParamAttr(
+      index, llvm::Attribute::getWithAlignment(
+                 session.context(), llvm::Align(plan.argument.stackAlignment)));
 }
 
 struct Probe {
@@ -125,10 +127,11 @@ struct Probe {
 void emitProbe(Session &session, const Probe &probe) {
   const auto &instance = record(session, probe.recordName);
   const auto prefix = probe.integerPrefix + probe.vectorPrefix;
-  const auto plan = classifyNativeCRecord(
-      session, instance.type,
-      {6 - probe.integerPrefix, 8 - probe.vectorPrefix});
-  const bool sysv = llvm::Triple(session.module().getTargetTriple()).isOSLinux();
+  const auto plan =
+      classifyNativeCRecord(session, instance.type,
+                            {6 - probe.integerPrefix, 8 - probe.vectorPrefix});
+  const bool sysv =
+      llvm::Triple(session.module().getTargetTriple()).isOSLinux();
   const bool pressure = prefix != 0;
   require(plan.argument.byValue == (sysv && pressure),
           "System V pressure must roll back whole aggregate to byval stack");
@@ -158,22 +161,24 @@ void emitProbe(Session &session, const Probe &probe) {
     parameters.push_back(llvm::Type::getDoubleTy(session.context()));
   auto *signature =
       llvm::FunctionType::get(plan.result.coercion, parameters, false);
-  auto *callee = llvm::Function::Create(signature, llvm::Function::ExternalLinkage,
-                                       "c_" + probe.symbol, session.module());
-  auto *function = llvm::Function::Create(
-      signature, llvm::Function::ExternalLinkage, "llvm_" + probe.symbol,
-      session.module());
+  auto *callee =
+      llvm::Function::Create(signature, llvm::Function::ExternalLinkage,
+                             "c_" + probe.symbol, session.module());
+  auto *function =
+      llvm::Function::Create(signature, llvm::Function::ExternalLinkage,
+                             "llvm_" + probe.symbol, session.module());
   applyByval(session, plan, *function, prefix);
   applyByval(session, plan, *callee, prefix);
   llvm::IRBuilder<> builder(
       llvm::BasicBlock::Create(session.context(), "entry", function));
   auto *local = builder.CreateAlloca(plan.storage.storage);
-  builder.CreateStore(llvm::Constant::getNullValue(plan.storage.storage), local);
+  builder.CreateStore(llvm::Constant::getNullValue(plan.storage.storage),
+                      local);
   if (plan.argument.byValue) {
     builder.CreateMemCpy(local, llvm::MaybeAlign(plan.storage.alignment),
-                        function->getArg(prefix),
-                        llvm::MaybeAlign(plan.argument.stackAlignment),
-                        plan.storage.size);
+                         function->getArg(prefix),
+                         llvm::MaybeAlign(plan.argument.stackAlignment),
+                         plan.storage.size);
   } else if (plan.argument.expand) {
     for (unsigned i = 0; i < plan.argument.pieces.size(); ++i)
       unpack(session, builder, local, function->getArg(prefix + i),
@@ -188,22 +193,23 @@ void emitProbe(Session &session, const Probe &probe) {
     auto *fieldType = session.layouts().get(field.type).storage;
     auto *address = offset(builder, local, field.offsetBytes);
     auto *value = builder.CreateLoad(fieldType, address);
-    llvm::Value *increment = fieldType->isFloatingPointTy()
-                                 ? llvm::ConstantFP::get(fieldType, 1.0)
-                                 : static_cast<llvm::Value *>(builder.getInt64(1));
+    llvm::Value *increment =
+        fieldType->isFloatingPointTy()
+            ? llvm::ConstantFP::get(fieldType, 1.0)
+            : static_cast<llvm::Value *>(builder.getInt64(1));
     if (pressure) {
       if (index == 0) {
         increment = probe.vectorPrefix
-                        ? static_cast<llvm::Value *>(llvm::ConstantFP::get(
-                              builder.getDoubleTy(), 0.0))
+                        ? static_cast<llvm::Value *>(
+                              llvm::ConstantFP::get(builder.getDoubleTy(), 0.0))
                         : static_cast<llvm::Value *>(builder.getInt64(0));
         for (unsigned i = 0; i < prefix; ++i)
           increment = probe.vectorPrefix
                           ? builder.CreateFAdd(increment, function->getArg(i))
                           : builder.CreateAdd(increment, function->getArg(i));
         if (probe.symbol == "gpr")
-          increment = builder.CreateAdd(increment, function->getArg(
-                                                       parameters.size() - 1));
+          increment = builder.CreateAdd(
+              increment, function->getArg(parameters.size() - 1));
       } else if (probe.symbol != "gpr") {
         increment = function->getArg(parameters.size() - 1);
         if (probe.integerTail)
@@ -227,20 +233,22 @@ void emitProbe(Session &session, const Probe &probe) {
     llvm::Value *value = llvm::PoisonValue::get(plan.result.coercion);
     for (unsigned i = 0; i < plan.result.pieces.size(); ++i) {
       const auto &piece = plan.result.pieces[i];
-      value = builder.CreateInsertValue(
-          value, pack(session, builder, storage, piece.type, piece.offset,
-                      plan.storage.size), i);
+      value =
+          builder.CreateInsertValue(value,
+                                    pack(session, builder, storage, piece.type,
+                                         piece.offset, plan.storage.size),
+                                    i);
     }
     return value;
   };
   builder.CreateRet(resultValue(local));
 
   auto *pointer = session.layouts().pointer();
-  auto *bridgeType = llvm::FunctionType::get(builder.getVoidTy(),
-                                             {pointer, pointer}, false);
-  auto *bridge = llvm::Function::Create(bridgeType, llvm::Function::ExternalLinkage,
-                                       "import_" + probe.symbol,
-                                       session.module());
+  auto *bridgeType =
+      llvm::FunctionType::get(builder.getVoidTy(), {pointer, pointer}, false);
+  auto *bridge =
+      llvm::Function::Create(bridgeType, llvm::Function::ExternalLinkage,
+                             "import_" + probe.symbol, session.module());
   builder.SetInsertPoint(
       llvm::BasicBlock::Create(session.context(), "entry", bridge));
   std::vector<llvm::Value *> arguments;
@@ -253,15 +261,16 @@ void emitProbe(Session &session, const Probe &probe) {
     auto *copy = builder.CreateAlloca(plan.storage.storage);
     copy->setAlignment(llvm::Align(plan.argument.stackAlignment));
     builder.CreateMemCpy(copy, llvm::MaybeAlign(plan.argument.stackAlignment),
-                        bridge->getArg(0), llvm::MaybeAlign(1), plan.storage.size);
+                         bridge->getArg(0), llvm::MaybeAlign(1),
+                         plan.storage.size);
     arguments.push_back(copy);
   } else if (plan.argument.expand) {
     for (const auto &piece : plan.argument.pieces)
       arguments.push_back(pack(session, builder, bridge->getArg(0), piece.type,
-                                piece.offset, plan.storage.size));
+                               piece.offset, plan.storage.size));
   } else {
     arguments.push_back(pack(session, builder, bridge->getArg(0),
-                              plan.argument.coercion, 0, plan.storage.size));
+                             plan.argument.coercion, 0, plan.storage.size));
   }
   if (probe.integerTail)
     arguments.push_back(builder.getInt64(17));
@@ -283,51 +292,49 @@ void emitProbe(Session &session, const Probe &probe) {
     return;
   auto *layoutType = llvm::FunctionType::get(builder.getInt64Ty(),
                                              {builder.getInt32Ty()}, false);
-  auto *layout = llvm::Function::Create(layoutType, llvm::Function::ExternalLinkage,
-                                       "layout_" + probe.symbol,
-                                       session.module());
+  auto *layout =
+      llvm::Function::Create(layoutType, llvm::Function::ExternalLinkage,
+                             "layout_" + probe.symbol, session.module());
   builder.SetInsertPoint(
       llvm::BasicBlock::Create(session.context(), "entry", layout));
   std::vector<std::uint64_t> facts{plan.storage.size, plan.storage.alignment};
   facts.insert(facts.end(), plan.storage.fieldOffsets.begin(),
-                plan.storage.fieldOffsets.end());
+               plan.storage.fieldOffsets.end());
   llvm::Value *answer = builder.getInt64(UINT64_MAX);
   for (unsigned i = 0; i < facts.size(); ++i)
-    answer = builder.CreateSelect(builder.CreateICmpEQ(layout->getArg(0),
-                                                       builder.getInt32(i)),
-                                    builder.getInt64(facts[i]), answer);
+    answer = builder.CreateSelect(
+        builder.CreateICmpEQ(layout->getArg(0), builder.getInt32(i)),
+        builder.getInt64(facts[i]), answer);
   builder.CreateRet(answer);
 }
 
 void negativeChecks(Session &session) {
-  for (const auto *name : {"Nested", "ArrayField", "Large", "Boolean",
-                            "UnionRecord", "Ordinary"})
+  for (const auto *name :
+       {"Nested", "ArrayField", "Large", "Boolean", "UnionRecord", "Ordinary"})
     rejects([&] {
-      static_cast<void>(classifyNativeCRecord(session, record(session, name).type,
-                                               {6, 8}));
+      static_cast<void>(
+          classifyNativeCRecord(session, record(session, name).type, {6, 8}));
     });
   rejects([&] {
-    static_cast<void>(classifyNativeCRecord(session, SemanticType::Int64, {6, 8}));
+    static_cast<void>(
+        classifyNativeCRecord(session, SemanticType::Int64, {6, 8}));
   });
   const auto pair = record(session, "Pair").type;
-  rejects([&] {
-    static_cast<void>(classifyNativeCRecord(session, pair, {7, 8}));
-  });
+  rejects(
+      [&] { static_cast<void>(classifyNativeCRecord(session, pair, {7, 8})); });
   const auto triple = session.module().getTargetTriple();
 #if LLVM_VERSION_MAJOR >= 21
   session.module().setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
 #else
   session.module().setTargetTriple("x86_64-pc-windows-msvc");
 #endif
-  rejects([&] {
-    static_cast<void>(classifyNativeCRecord(session, pair, {6, 8}));
-  });
+  rejects(
+      [&] { static_cast<void>(classifyNativeCRecord(session, pair, {6, 8})); });
   session.module().setTargetTriple(triple);
   const auto layout = session.module().getDataLayout();
   session.module().setDataLayout("e-p:64:64-i64:32:32");
-  rejects<std::logic_error>([&] {
-    static_cast<void>(classifyNativeCRecord(session, pair, {6, 8}));
-  });
+  rejects<std::logic_error>(
+      [&] { static_cast<void>(classifyNativeCRecord(session, pair, {6, 8})); });
   session.module().setDataLayout(layout);
 }
 
@@ -344,10 +351,10 @@ int main(int argc, char **argv) {
         LlvmCodegenOptimization::Default, LlvmCodegenOptimization::Aggressive};
     Session session(input, {.optimization = levels[level]});
     negativeChecks(session);
-    for (const auto *name : {"Byte", "Tiny", "Shorts", "Words", "Tail", "Pair",
-                              "Pointer", "Float1", "Float2", "Float3", "Float4",
-                              "Double1", "Double2", "IntDouble", "DoubleInt",
-                              "FloatInt", "FloatDouble"})
+    for (const auto *name :
+         {"Byte", "Tiny", "Shorts", "Words", "Tail", "Pair", "Pointer",
+          "Float1", "Float2", "Float3", "Float4", "Double1", "Double2",
+          "IntDouble", "DoubleInt", "FloatInt", "FloatDouble"})
       emitProbe(session, {name, name});
     emitProbe(session, {"Pair", "gpr", 5, 0, true, false});
     emitProbe(session, {"IntDouble", "mixed", 6, 0, false, true});

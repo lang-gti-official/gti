@@ -46,17 +46,16 @@ llvm::Type *joined(llvm::LLVMContext &context,
 } // namespace
 
 NativeCRecordAbi classifyNativeCRecord(Session &session,
-                                      const SemanticType &type,
-                                      NativeCRegisterBudget available) {
+                                       const SemanticType &type,
+                                       NativeCRegisterBudget available) {
   const llvm::Triple triple(session.module().getTargetTriple());
   const bool darwin = triple.getArch() == llvm::Triple::aarch64 &&
                       triple.isOSDarwin() && triple.isOSBinFormatMachO();
   const bool sysv = triple.getArch() == llvm::Triple::x86_64 &&
                     triple.isOSLinux() && triple.isOSBinFormatELF();
   if ((!darwin && !sysv) || !session.dataLayout().isLittleEndian() ||
-      session.dataLayout().getPointerSize() != 8 ||
-      available.integers > 6 || available.vectors > 8 ||
-      type.kind != SemanticType::Class)
+      session.dataLayout().getPointerSize() != 8 || available.integers > 6 ||
+      available.vectors > 8 || type.kind != SemanticType::Class)
     unsupported();
   session.verify();
   auto &layouts = session.layouts();
@@ -81,8 +80,9 @@ NativeCRecordAbi classifyNativeCRecord(Session &session,
       unsupported();
     homogeneous &= field.type.kind == firstKind;
   }
-  homogeneous &= (firstKind == SemanticType::Float ||
-                  firstKind == SemanticType::Double) && fields.size() <= 4;
+  homogeneous &=
+      (firstKind == SemanticType::Float || firstKind == SemanticType::Double) &&
+      fields.size() <= 4;
 
   NativeCRecordAbi plan;
   plan.storage = storage;
@@ -97,13 +97,13 @@ NativeCRecordAbi classifyNativeCRecord(Session &session,
       plan.argument.coercion = llvm::ArrayType::get(element, fields.size());
       plan.result.coercion = storage.storage;
     } else {
-      auto *i64 = llvm::Type::getInt64Ty(context);
-      plan.argument.coercion = storage.size <= 8
-                                   ? i64
-                                   : llvm::ArrayType::get(i64, 2);
-      plan.result.coercion = storage.size <= 8
-                                 ? llvm::IntegerType::get(context, storage.size * 8)
-                                 : llvm::ArrayType::get(i64, 2);
+      llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+      plan.argument.coercion =
+          storage.size <= 8 ? i64 : llvm::ArrayType::get(i64, 2);
+      plan.result.coercion =
+          storage.size <= 8 ? static_cast<llvm::Type *>(llvm::IntegerType::get(
+                                  context, storage.size * 8))
+                            : llvm::ArrayType::get(i64, 2);
     }
     plan.argument.pieces = {{plan.argument.coercion, 0}};
     plan.result.pieces = {{plan.result.coercion, 0}};
@@ -138,8 +138,7 @@ NativeCRecordAbi classifyNativeCRecord(Session &session,
           context, static_cast<unsigned>((chunk.end - index * 8) * 8));
     } else {
       ++vectors;
-      carrier = chunk.doubleField
-                    ? llvm::Type::getDoubleTy(context)
+      carrier = chunk.doubleField ? llvm::Type::getDoubleTy(context)
                 : chunk.floats == 2
                     ? static_cast<llvm::Type *>(llvm::FixedVectorType::get(
                           llvm::Type::getFloatTy(context), 2))
@@ -153,7 +152,8 @@ NativeCRecordAbi classifyNativeCRecord(Session &session,
     // consuming a pointer register. Never substitute an ordinary pointer here.
     plan.argument.coercion = layouts.pointer();
     plan.argument.byValue = true;
-    plan.argument.stackAlignment = std::max<std::uint64_t>(8, storage.alignment);
+    plan.argument.stackAlignment =
+        std::max<std::uint64_t>(8, storage.alignment);
   } else {
     plan.argument = plan.result;
     plan.argument.expand = true;
