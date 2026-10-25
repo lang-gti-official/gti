@@ -6962,6 +6962,17 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
       reportOwnerDependentTextStorage(element, "nested in a fixed array");
     }
     if (!isOwnershipAssignable(elementType, valueType, element)) {
+      const auto *info = semanticModel.findExpression(*element);
+      const bool move = info && info->category == ValueCategory::Value;
+      if (elementType == valueType && info &&
+          !(move ? info->traits.movable : info->traits.copyable)) {
+        report(expressionToken(element),
+               "Cannot " + std::string(move ? "move" : "copy") +
+                   " array element of non-" + (move ? "movable" : "copyable") +
+                   " type '" + typeSpelling(elementType) + "'.",
+               "GTI-S2003");
+        continue;
+      }
       report(expressionToken(element),
              "Cannot initialize array element of type '" +
                  typeSpelling(elementType) + "' with a value of type '" +

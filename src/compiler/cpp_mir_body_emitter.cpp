@@ -19034,14 +19034,20 @@ failureFreeFixedArrayAggregateMove(const MirProgram &program,
       instruction.lifecycle.empty() ||
       instruction.lifecycle.size() > instruction.operands.size() + 1 ||
       instruction.literal || !instruction.definedFailure.empty() ||
-      !instruction.localFailureSites.empty() ||
-      (!elementMoveDefinedFailureFree &&
-       !freshFixedArrayAggregate(body, instruction))) {
+      !instruction.localFailureSites.empty()) {
     return false;
   }
 
   const std::vector<InlineFixedArrayElement> inlined =
       inlineFixedArrayElements(program, body, instruction);
+  const bool exactCopies =
+      inlined.size() == instruction.operands.size() &&
+      std::all_of(inlined.begin(), inlined.end(), [](const auto &element) {
+        return static_cast<bool>(element) && !element.moved;
+      });
+  if (!elementMoveDefinedFailureFree && !exactCopies &&
+      !freshFixedArrayAggregate(body, instruction))
+    return false;
   std::unordered_set<MirDropObligationId> transferred;
   std::size_t transfers = 0;
   const SemanticType &elementType = instruction.info.type.arguments.front();

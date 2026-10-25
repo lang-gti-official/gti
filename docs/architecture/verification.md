@@ -10105,7 +10105,7 @@ ownership or entry-signature inference.
 `llvm_placement_execution` extends the class profile with fresh-result final
 addresses: immovable return chains and fields/defaults/TLS, fresh immovable
 direct/nested/default/field/TLS arrays (including passive and low-alignment
-elements), array copy snapshots/movement, evaluated
+elements), copy-only element initialization, array copy snapshots/movement, evaluated
 shared/exclusive/projected stored references, and deleted-copy/move/argument/conditional
 rejections. Run on macOS arm64 and Linux x86_64. The named native-only cases record
 existing C++ comparator limitations, never silent comparator skips.

@@ -88,6 +88,21 @@ int main() {
   return destroyed == 21 ? 0 : 1;
 }
 ''',
+    "copy-only-elements": r'''
+class CopyOnly {
+  int id;
+public:
+  CopyOnly(int id) : id(id) {}
+  CopyOnly(CopyOnly&) = default;
+  CopyOnly(CopyOnly&&) = delete;
+  int read() { return this.id; }
+};
+int main() {
+  CopyOnly source{7};
+  CopyOnly values[2] = {source, source};
+  return values[0].read() == 7 && values[1].read() == 7 ? 0 : 1;
+}
+''',
     "passive-immovable-array": r'''
 class Passive {
   mut Passive* address = nullptr;

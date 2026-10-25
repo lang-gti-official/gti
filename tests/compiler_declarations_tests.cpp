@@ -9528,10 +9528,10 @@ int main() {
       lang::Frontend().analyze("copy-array-element.gti", prefix + R"(
 int main() { Pinned original{}; Pinned values[1] = {original}; return 0; }
 )");
-  expect(
-      !invalid.canGenerateCode() &&
-          hasDiagnostic(invalid.diagnostics, "Cannot initialize array element"),
-      "each array element still requires its exact ownership operation");
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Cannot copy array element of non-copyable type"),
+         "each array element still requires its exact ownership operation");
 }
 
 void testFixedArrays() {

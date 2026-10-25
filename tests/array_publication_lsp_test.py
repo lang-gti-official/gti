@@ -50,7 +50,7 @@ def main():
                 errors = diagnostics(version)
                 if version == 2:
                     error = next(item for item in errors if item.get("code") == "GTI-S2003")
-                    assert "array element" in error["message"], error
+                    assert "Cannot copy array element of non-copyable type" in error["message"], error
                     assert error["range"]["start"]["line"] == 8, error
                 else:
                     assert not errors, errors
