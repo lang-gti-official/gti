@@ -4454,7 +4454,10 @@ The admitted profile includes fixed-width integers, bool/char, binary32/64,
 integral scoped enums, concrete generic scalar functions, ordinary recursion,
 local scalar and staging slots, branches/short-circuit flow, switch and loops.
 PHIs are declared before predecessor emission, and bodies emit in reverse
-postorder so dominating SSA definitions are available. Scalar namespace/static
+postorder so dominating SSA definitions are available. Edges carrying arguments
+use transfer blocks, preserving distinct edge values even when a branch or
+switch shares both endpoints; place-copy arguments execute only on that edge.
+Scalar namespace/static
 storage and ordered scalar initialization are implemented as a prerequisite of
 the ordinary numeric and panic wrappers; no class layout or lifecycle support
 is inferred from that overlap with O-LLVM-05/06.

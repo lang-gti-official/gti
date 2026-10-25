@@ -12,6 +12,7 @@ from backend_execution import Endpoint, execute
 
 SCALARS = r'''
 T identity<T>(T value) { return value; }
+int pick(bool condition, int left, int right) { return condition ? left : right; }
 int fib(int value) {
   if (value < 2) { return value; }
   return fib(value - 1) + fib(value - 2);
@@ -49,6 +50,7 @@ bool floating(double value) {
 }
 int main() {
   if (identity<int>(7) != 7 || fib(10) != 55 || choose(Choice::second) != 22) { return 1; }
+  if (pick(true, 4, 9) != 4 || pick(false, 4, 9) != 9) { return 10; }
   if (loop(20) != 31 || !short_circuit(0) || !floating(double(0))) { return 2; }
   mut int counter = 0;
   counter += 9; counter -= 1; counter *= 3; counter /= 2; counter %= 5;

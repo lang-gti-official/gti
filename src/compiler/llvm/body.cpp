@@ -91,19 +91,32 @@ private:
     throw BackendUnsupportedError(
         "LLVM scalar operand requires a value or a local copy");
   }
-  void edge(MirBlockId target, std::span<const MirOperand> arguments) {
+  llvm::BasicBlock *edge(MirBlockId target,
+                         std::span<const MirOperand> arguments) {
     const auto *destination = input.findBlock(target);
     if (!destination || destination->parameters.size() != arguments.size())
       throw std::logic_error("LLVM edge lost verified MIR parameters");
+    if (arguments.empty())
+      return blocks.at(target);
+    // MIR arguments belong to edges, not predecessors. Distinct branch/switch
+    // edges may share both endpoints but pass different values; LLVM PHIs need
+    // distinct predecessor blocks in that case. Copy operands execute only on
+    // the selected edge, preserving the MIR schedule as well.
+    const auto insertion = ir.saveIP();
+    auto *transfer =
+        llvm::BasicBlock::Create(session.context(), "edge", &function);
+    ir.SetInsertPoint(transfer);
     for (std::size_t index = 0; index < arguments.size(); ++index) {
       auto *value = operand(arguments[index]);
       llvm::cast<llvm::PHINode>(values.at(destination->parameters[index].value))
           ->addIncoming(value, ir.GetInsertBlock());
     }
+    ir.CreateBr(blocks.at(target));
+    ir.restoreIP(insertion);
+    return transfer;
   }
   void jump(MirBlockId target, std::span<const MirOperand> arguments) {
-    edge(target, arguments);
-    ir.CreateBr(blocks.at(target));
+    ir.CreateBr(edge(target, arguments));
   }
   void guard(llvm::Value *condition, DefinedFailureOutcome outcome) {
     bool authorized = false;
@@ -339,10 +352,9 @@ private:
     }
     case MirTerminatorKind::Branch: {
       auto *condition = operand(*term.value);
-      edge(term.target, term.targetArguments);
-      edge(term.elseTarget, term.elseArguments);
-      ir.CreateCondBr(condition, blocks.at(term.target),
-                      blocks.at(term.elseTarget));
+      auto *taken = edge(term.target, term.targetArguments);
+      auto *alternate = edge(term.elseTarget, term.elseArguments);
+      ir.CreateCondBr(condition, taken, alternate);
       break;
     }
     case MirTerminatorKind::Switch: {
@@ -350,8 +362,7 @@ private:
       llvm::BasicBlock *fallback = nullptr;
       for (const auto &target : term.switchTargets)
         if (!target.value) {
-          fallback = blocks.at(target.target);
-          edge(target.target, target.arguments);
+          fallback = edge(target.target, target.arguments);
         }
       if (!fallback) {
         fallback = llvm::BasicBlock::Create(session.context(),
@@ -367,11 +378,7 @@ private:
               llvm::cast<llvm::IntegerType>(value->getType()),
               constant.negative ? uint64_t(0) - constant.magnitude
                                 : constant.magnitude);
-          // Edges carry SSA values; insert any place-copy before the switch.
-          ir.SetInsertPoint(output);
-          edge(target.target, target.arguments);
-          output->addCase(bits, blocks.at(target.target));
-          ir.SetInsertPoint(output->getParent());
+          output->addCase(bits, edge(target.target, target.arguments));
         }
       break;
     }
