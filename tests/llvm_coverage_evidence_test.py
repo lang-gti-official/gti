@@ -16,12 +16,15 @@ def run(command: list[str], *, timeout: int = 120) -> subprocess.CompletedProces
     return subprocess.run(command, capture_output=True, text=True, timeout=timeout)
 
 
-def ctest_names(ctest: str, build: Path) -> set[str]:
+def ctest_inventory(ctest: str, build: Path) -> dict[str, dict]:
     result = run([ctest, "--test-dir", str(build), "--show-only=json-v1"])
     if result.returncode != 0:
         raise AssertionError(result.stderr)
     inventory = json.loads(result.stdout)
-    return {test["name"] for test in inventory["tests"]}
+    tests = {test["name"]: test for test in inventory["tests"]}
+    if len(tests) != len(inventory["tests"]):
+        raise AssertionError("CTest inventory contains duplicate test names")
+    return tests
 
 
 def ledger(evidence: Path) -> dict:
@@ -31,7 +34,27 @@ def ledger(evidence: Path) -> dict:
     return json.loads(result.stdout)
 
 
-def load_registry(registry: Path, root: Path, registered: set[str]) -> dict:
+def repository_source(root: Path) -> dict:
+    head = run(["git", "-C", str(root), "rev-parse", "HEAD"])
+    status = run(["git", "-C", str(root), "status", "--porcelain=v1",
+                  "--untracked-files=all"])
+    if head.returncode != 0 or status.returncode != 0:
+        raise AssertionError("cannot establish LLVM evidence repository identity")
+    commit = head.stdout.strip()
+    state = "dirty" if status.stdout else "clean"
+    return {"commit": commit, "state": state,
+            "exact": state == "clean" and len(commit) == 40}
+
+
+def repository_source_errors(report: dict, observed: dict) -> list[str]:
+    declared = report.get("source", {})
+    return ([] if declared == observed else [
+        "compiled LLVM evidence source identity does not match the repository"
+    ])
+
+
+def load_registry(registry: Path, root: Path,
+                  registered: dict[str, dict]) -> dict:
     modules = {}
     for index, line in enumerate(registry.read_text(encoding="utf-8").splitlines(), 1):
         fields = line.split("\t")
@@ -45,6 +68,14 @@ def load_registry(registry: Path, root: Path, registered: set[str]) -> dict:
         script = Path(raw_script).resolve()
         if root not in script.parents or script.suffix != ".py" or not script.is_file():
             raise AssertionError(f"invalid LLVM evidence script for {test}: {script}")
+        command_scripts = {
+            Path(argument).resolve()
+            for argument in registered[test].get("command", [])
+            if isinstance(argument, str) and argument.endswith(".py")
+        }
+        if script not in command_scripts:
+            raise AssertionError(
+                f"registered LLVM evidence test {test} does not execute {script}")
         module_name = f"gti_llvm_evidence_{index}"
         spec = importlib.util.spec_from_file_location(module_name, script)
         if spec is None or spec.loader is None:
@@ -129,14 +160,14 @@ def manifest_mutation_controls(root: Path, modules: dict) -> None:
 
 
 def registry_mutation_controls(registry: Path, root: Path,
-                               registered: set[str]) -> None:
+                               registered: dict[str, dict]) -> None:
     lines = registry.read_text(encoding="utf-8").splitlines()
     if not lines:
         raise AssertionError("cannot mutate an empty LLVM evidence registry")
     test, script = lines[0].split("\t")
 
     def expect_failure(contents: str, expected: str,
-                       available: set[str] = registered) -> None:
+                       available: dict[str, dict] = registered) -> None:
         with tempfile.NamedTemporaryFile(
                 mode="w", encoding="utf-8", suffix=".tsv") as mutated:
             mutated.write(contents)
@@ -158,8 +189,16 @@ def registry_mutation_controls(registry: Path, root: Path,
                    "unregistered LLVM evidence test")
     expect_failure(f"{test}\t{root / 'tests' / 'missing_evidence.py'}\n",
                    "invalid LLVM evidence script")
-    expect_failure(f"{test}\t{root / 'tests' / 'backend_execution.py'}\n",
-                   f"{test}: missing evidence_cases")
+    unrelated = root / "tests" / "backend_execution.py"
+    expect_failure(f"{test}\t{unrelated}\n", "does not execute")
+    matching = deepcopy(registered)
+    matching[test]["command"] = [
+        str(unrelated) if Path(argument).resolve() == Path(script).resolve()
+        else argument
+        for argument in matching[test].get("command", [])
+    ]
+    expect_failure(f"{test}\t{unrelated}\n",
+                   f"{test}: missing evidence_cases", matching)
 
 
 def observed_profiles(report: dict, evidence: Path, root: Path,
@@ -280,6 +319,85 @@ def mutation_controls(report: dict, registered: set[str],
                for error in validate(report, unavailable, observations))
 
 
+def readiness_summary(report: dict) -> dict:
+    states = ("implemented", "pending", "verified-nonexecuting")
+    statuses = ("passed", "failed", "unrun", "unavailable")
+    counts = {state: sum(row["state"] == state for row in report["rows"])
+              for state in states}
+    gaps = sum(bool(row["acceptance"]["gap"]) for row in report["rows"])
+    required_acceptance = [
+        row["acceptance"] for row in report["rows"]
+        if row["state"] != "pending" and row["acceptance"]["test"]
+    ]
+    boundaries = [row["boundary"] for row in report["rows"]]
+    observed = {
+        "acceptance": {
+            status: sum(item["observed"] == status
+                        for item in required_acceptance)
+            for status in statuses
+        },
+        "boundary": {
+            status: sum(item["observed"] == status for item in boundaries)
+            for status in statuses
+        },
+    }
+    structural_ready = counts["pending"] == 0 and gaps == 0
+    execution_ready = (bool(required_acceptance) and bool(boundaries) and
+                       all(item["observed"] == "passed"
+                           for item in required_acceptance) and
+                       all(item["observed"] == "passed"
+                           for item in boundaries))
+    return {
+        "source": report["source"],
+        "build": report["build"],
+        "rows": counts,
+        "implemented_evidence_gaps": gaps,
+        "observations": observed,
+        "structural_ready": structural_ready,
+        "execution_ready": execution_ready,
+        "promotion_ready": (bool(report["source"]["exact"]) and
+                            structural_ready and execution_ready),
+    }
+
+
+def readiness_mutation_controls(report: dict) -> None:
+    if readiness_summary(report)["promotion_ready"]:
+        raise AssertionError("an unobserved raw ledger was promotion-ready")
+
+    complete = deepcopy(report)
+    complete["source"] = {"commit": "1" * 40, "state": "clean", "exact": True}
+    for row in complete["rows"]:
+        if row["state"] == "pending":
+            row["state"] = "verified-nonexecuting"
+            row["acceptance"]["test"] = "llvm_admission"
+            row["acceptance"]["assertion"] = "ledger.nonexecuting"
+        elif not row["acceptance"]["test"]:
+            row["acceptance"]["test"] = "synthetic_execution"
+            row["acceptance"]["assertion"] = "complete"
+        row["acceptance"]["gap"] = ""
+        row["acceptance"]["observed"] = "passed"
+        row["boundary"]["observed"] = "passed"
+    ready = readiness_summary(complete)
+    if not (ready["structural_ready"] and ready["execution_ready"] and
+            ready["promotion_ready"]):
+        raise AssertionError("complete exact observations were not promotion-ready")
+
+    complete["rows"][0]["acceptance"]["observed"] = "unrun"
+    if readiness_summary(complete)["promotion_ready"]:
+        raise AssertionError("one unrun acceptance remained promotion-ready")
+
+    complete["rows"][0]["acceptance"]["observed"] = "passed"
+    complete["source"]["state"] = "dirty"
+    complete["source"]["exact"] = False
+    if readiness_summary(complete)["promotion_ready"]:
+        raise AssertionError("dirty source remained promotion-ready")
+
+    stale = deepcopy(report)
+    stale["source"]["commit"] = "0" * 40
+    if not repository_source_errors(stale, report["source"]):
+        raise AssertionError("stale compiled source identity was accepted")
+
+
 def main() -> None:
     if len(sys.argv) != 6:
         raise SystemExit(
@@ -291,22 +409,20 @@ def main() -> None:
     root = Path(sys.argv[4]).resolve()
     registry = Path(sys.argv[5]).resolve()
     report = ledger(evidence)
-    registered = ctest_names(ctest, build)
-    modules = load_registry(registry, root, registered)
-    registry_mutation_controls(registry, root, registered)
+    observed_source = repository_source(root)
+    inventory = ctest_inventory(ctest, build)
+    registered = set(inventory)
+    modules = load_registry(registry, root, inventory)
+    registry_mutation_controls(registry, root, inventory)
     manifest_mutation_controls(root, modules)
     observations = observed_profiles(report, evidence, root, modules)
-    errors = validate(report, registered, observations)
+    errors = (repository_source_errors(report, observed_source) +
+              validate(report, registered, observations))
     if errors:
         raise AssertionError("LLVM coverage evidence audit failed:\n" + "\n".join(errors))
     mutation_controls(report, registered, observations)
-    counts = {state: sum(row["state"] == state for row in report["rows"])
-              for state in ("implemented", "pending", "verified-nonexecuting")}
-    gaps = sum(bool(row["acceptance"]["gap"]) for row in report["rows"])
-    print(json.dumps({"source": report["source"], "build": report["build"],
-                      "rows": counts, "implemented_evidence_gaps": gaps,
-                      "promotion_ready": counts["pending"] == 0 and gaps == 0},
-                     sort_keys=True))
+    readiness_mutation_controls(report)
+    print(json.dumps(readiness_summary(report), sort_keys=True))
 
 
 if __name__ == "__main__":
