@@ -11,6 +11,9 @@ from backend_execution import Endpoint, execute
 
 def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
+    selection = sys.argv[3] if len(sys.argv) > 3 else "all"
+    if selection not in {"all", "startup", "status", "source-location"}:
+        raise ValueError(f"unknown hosted case: {selection}")
     cases = (
         ("llvm_hosted_success.gti", None),
         ("llvm_hosted_startup_failure.gti", "hosted startup failure"),
@@ -25,6 +28,12 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-llvm-hosted-cli-") as temporary:
         scratch = Path(temporary)
         for filename, failure in cases:
+            if selection == "status":
+                continue
+            if selection == "startup" and filename == "stdlib_surface_source_location.gti":
+                continue
+            if selection == "source-location" and filename != "stdlib_surface_source_location.gti":
+                continue
             observations = []
             for index, endpoint in enumerate(endpoints):
                 result = execute(gti, root, scratch / filename / str(index),
@@ -44,6 +53,8 @@ def main():
             print(f"{filename}: uninstrumented C++20/23 O3 and LLVM O0/O3 passed",
                   flush=True)
         for status in (-2147483648, -1, 0, 1, 70, 255, 256, 512, 2147483647):
+            if selection not in {"all", "status"}:
+                continue
             expression = "-2147483647 - 1" if status == -2147483648 else str(status)
             source = scratch / f"exit-{status}.gti"
             source.write_text(

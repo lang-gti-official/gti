@@ -1,4 +1,5 @@
 #include "../src/compiler/llvm/body.h"
+#include "../src/compiler/llvm/hosted.h"
 #include "../src/compiler/llvm/runtime_abi.h"
 #include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
@@ -108,6 +109,29 @@ void run(const std::filesystem::path &repository,
   require(matches == 1, "trace has one sealed identity");
 
   Session session(*program, {.optimization = optimization});
+  const auto returned = std::find_if(
+      startup->operations.begin(), startup->operations.end(),
+      [](const auto &operation) {
+        return operation.kind == MirHostedStartupOperationKind::ReturnEntry;
+      });
+  require(returned != startup->operations.end(),
+          "startup has one exact return operation");
+  llvm::IRBuilder<> invalidBuilder(session.context());
+  const auto rejectReturn = [&](MirHostedStartupOperation operation,
+                                llvm::Value *value) {
+    bool rejected = false;
+    try {
+      static_cast<void>(hostedReturnStatus(invalidBuilder, operation, value));
+    } catch (const std::logic_error &) {
+      rejected = true;
+    }
+    require(rejected, "malformed hosted status lowering rejects its input");
+  };
+  rejectReturn(*returned, invalidBuilder.getInt64(256));
+  rejectReturn(*returned, nullptr);
+  auto wrongOperation = *returned;
+  wrongOperation.kind = MirHostedStartupOperationKind::CallEntry;
+  rejectReturn(wrongOperation, invalidBuilder.getInt32(256));
   lowerScalarProgram(session, admission);
   auto &module = session.module();
   auto *global = module.getGlobalVariable(

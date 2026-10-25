@@ -12,7 +12,7 @@ thread_local Marker late{2};
 int initialize() {
   [[discard]] early.read();
   [[discard]] late.read();
-  { Marker local{3}; }
+  Marker local{3};
   std::panic("hosted startup failure");
 }
 int value = initialize();

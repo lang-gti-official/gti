@@ -1,5 +1,6 @@
 #include "body.h"
 #include "failure.h"
+#include "hosted.h"
 #include "lifetimes.h"
 #include "placement.h"
 #include "places.h"
@@ -800,6 +801,15 @@ private:
       if (input.kind == MirBodyKind::Constructor && owner)
         lifetimes.active(ir, thisAddress, owner->type, true);
       auto *value = term.value ? operand(*term.value) : nullptr;
+      if (input.kind == MirBodyKind::HostedStartup) {
+        const auto &plan = session.program().mir().hostedStartupPlan();
+        const auto *operation =
+            plan ? plan->findOperation(term.hostedStartupOperation) : nullptr;
+        if (!operation || operation->block != block.id)
+          throw std::logic_error(
+              "LLVM hosted return lost its sealed startup operation");
+        value = hostedReturnStatus(ir, *operation, value);
+      }
       if (returnDestination && value &&
           !(term.value->kind == MirOperandKind::Value &&
             placement.target(term.value->value) &&

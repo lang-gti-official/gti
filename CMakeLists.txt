@@ -607,6 +607,7 @@ add_library(
   "src/compiler/llvm/layout.cpp"
   "src/compiler/llvm/abi.cpp"
   "src/compiler/llvm/runtime_abi.cpp"
+  "src/compiler/llvm/hosted.cpp"
   "src/compiler/llvm/reachability.cpp"
   "src/compiler/llvm/failure.cpp"
   "src/compiler/llvm/scalar.cpp"
