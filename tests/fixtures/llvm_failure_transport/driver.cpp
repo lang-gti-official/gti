@@ -77,7 +77,8 @@ Channel originate(Context *c, bool secondary) {
   record.code = GTI_FAILURE_CODE_PANIC_V2;
   record.detail = GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2;
   record.site_index = 1;
-  std::memcpy(record.artifact_identity, failure.artifact->artifact_identity, 32);
+  std::memcpy(record.artifact_identity, failure.artifact->artifact_identity,
+              32);
   char message[64];
   std::strcpy(message, secondary ? "secondary-owned" : "owned-before-cleanup");
   require(gti_rt_failure_capture_panic_bytes_v2(
@@ -95,6 +96,14 @@ Channel originate(Context *c, bool secondary) {
 void audit(const Channel &failure, const Context &c) {
   require(gti_rt_failure_validate_v2(&failure.record, failure.artifact) ==
           GTI_FAILURE_REPORT_OK_V1);
+  auto invalid = failure.record;
+  invalid.artifact_identity[0] ^= 127;
+  require(gti_rt_failure_validate_v2(&invalid, failure.artifact) ==
+          GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1);
+  invalid = failure.record;
+  invalid.site_index = 2;
+  require(gti_rt_failure_validate_v2(&invalid, failure.artifact) ==
+          GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1);
   require(failure.artifact == c.original.artifact);
   require(std::memcmp(&failure.record, &c.original.record,
                       sizeof(failure.record)) == 0);
@@ -103,7 +112,7 @@ void audit(const Channel &failure, const Context &c) {
 }
 
 [[noreturn]] void emergency(Context *c, const Channel &primary,
-                           const Channel &secondary) {
+                            const Channel &secondary) {
   audit(primary, *c);
   require(gti_rt_failure_validate_v2(&secondary.record, secondary.artifact) ==
           GTI_FAILURE_REPORT_OK_V1);
@@ -111,9 +120,10 @@ void audit(const Channel &failure, const Context &c) {
   require(secondary.record.message_size == 15);
   require(std::memcmp(secondary.record.message, "secondary-owned", 15) == 0);
   summary(*c, -999);
-  const gti_failure_emergency_v2 envelope{2, 0, primary.record, secondary.record};
+  const gti_failure_emergency_v2 envelope{2, 0, primary.record,
+                                          secondary.record};
   gti_rt_failure_terminate_cleanup_v2(&envelope, primary.artifact,
-                                     secondary.artifact);
+                                      secondary.artifact);
 }
 
 #ifdef TRANSPORT_ALLOCATION_AUDIT
@@ -127,8 +137,9 @@ int main(int argc, char **argv) {
   const bool dynamic = mode.starts_with("dynamic");
   const bool fail = mode != "direct-success" && mode != "dynamic-success";
   // Opaque across translation units, with two exact-signature targets.
-  Target target = dynamic ? (std::getenv("TRANSPORT_ALTERNATE") ? alternate : leaf)
-                          : nullptr;
+  Target target = dynamic
+                      ? (std::getenv("TRANSPORT_ALTERNATE") ? alternate : leaf)
+                      : nullptr;
   Context c;
   c.secondary = mode == "secondary";
   c.return_failure = mode == "return-cleanup";
@@ -142,7 +153,8 @@ int main(int argc, char **argv) {
     std::uint64_t checksum = 0;
     for (std::uint64_t i = 0; i < iterations; ++i) {
       int result = -999;
-      const bool ok = invoke(&c, target, static_cast<int>(i & 65535), fail, &result);
+      const bool ok =
+          invoke(&c, target, static_cast<int>(i & 65535), fail, &result);
       require(ok == !fail);
       checksum += ok ? result : c.contained.record.message[0];
     }
@@ -202,7 +214,7 @@ int main(int argc, char **argv) {
   if (!ok) {
     audit(c.contained, c);
     gti_rt_failure_terminate_v2(&c.contained.record, c.contained.artifact,
-                               nullptr, nullptr);
+                                nullptr, nullptr);
   }
   return 0;
 }

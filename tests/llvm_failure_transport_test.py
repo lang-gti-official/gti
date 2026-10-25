@@ -70,6 +70,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--clang", default="clang++")
+    parser.add_argument("--base", default="origin/main",
+                        help="explicit base SHA for managed snapshots without remote refs")
     parser.add_argument("--optimizations", nargs="+", choices=("0", "1", "2", "3"),
                         default=["0", "3"])
     parser.add_argument("--sanitize", action="store_true")
@@ -101,13 +103,13 @@ def main():
     manifest = {
         "schema": 1, "status": "running", "kind": "exploratory-not-production-coverage",
         "platform": platform.platform(), "machine": platform.machine(),
-        "slot": args.slot, "timing": [], "commands": [], "cases": [],
+        "slot": args.slot, "timing": [], "commands": [], "cases": [], "sizes": [],
         "limitations": ["Clang C++ personality/carrier, not a GTI personality",
                         "fixed cleanup schedules, not general MIR translation",
                         "synthetic pinned descriptors; no unload/pinning or hash proof",
                         "no O-LLVM-06-A2/06-B, generated dynamic/worker/embedding evidence",
                         "no OOM, cancellation, forced/foreign unwind, or unsupported targets",
-                        "no complete malloc/emergency-pool or peak-RSS audit",
+                        "no complete malloc/emergency-pool audit or whole-compiler build-cost comparison",
                         "no whole-program inline/devirtualization cost evidence"],
     }
     env = dict(os.environ, NO_COLOR="1", GTI_COLOR="never")
@@ -118,13 +120,17 @@ def main():
 
     def run(command, *, expected=0, timeout=90, run_env=None):
         number = len(manifest["commands"])
+        argv = [str(x) for x in command]
+        compile_command = argv[0] in (clang, cc)
+        if compile_command and Path("/usr/bin/time").is_file():
+            argv = ["/usr/bin/time", "-l" if platform.system() == "Darwin" else "-v", *argv]
         start = time.perf_counter()
-        result = subprocess.run([str(x) for x in command], cwd=root, env=run_env or env,
+        result = subprocess.run(argv, cwd=root, env=run_env or env,
                                 text=True, capture_output=True, timeout=timeout)
         seconds = time.perf_counter() - start
         log = output / f"command-{number:03}.log"
         log.write_text(result.stdout + result.stderr)
-        manifest["commands"].append({"argv": [str(x) for x in command],
+        manifest["commands"].append({"argv": argv,
                                      "returncode": result.returncode,
                                      "seconds_diagnostic_only": seconds, "log": log.name})
         save()
@@ -134,7 +140,7 @@ def main():
 
     try:
         manifest["head"] = run(["git", "rev-parse", "HEAD"])[0].stdout.strip()
-        manifest["base"] = run(["git", "rev-parse", "origin/main"])[0].stdout.strip()
+        manifest["base"] = run(["git", "rev-parse", "--verify", f"{args.base}^{{commit}}"])[0].stdout.strip()
         manifest["dirty"] = run(["git", "status", "--short"])[0].stdout
         files = [Path(__file__), *sorted(fixtures.iterdir()),
                  root / "runtime/src/failure.cpp", root / "runtime/src/thread.cpp",
@@ -158,6 +164,17 @@ def main():
         binaries = {}
         size_tool = shutil.which("llvm-size")
         check(size_tool, "llvm-size is required for code/unwind section evidence")
+
+        def sizes(path):
+            result, _ = run([size_tool, "-A", path])
+            sections = {}
+            for line in result.stdout.splitlines():
+                fields = line.split()
+                if len(fields) == 3 and fields[1].isdigit() and fields[2].isdigit():
+                    sections[fields[0]] = int(fields[1])
+            check(sections, "llvm-size produced no section-size evidence")
+            manifest["sizes"].append({"file": path.name, "file_bytes": path.stat().st_size,
+                                      "section_bytes": sections})
         for optimization in args.optimizations:
             for mode in ("status", "unwind"):
                 name = f"{mode}-O{optimization}"
@@ -181,11 +198,11 @@ def main():
                         check(re.search(r"(?:call|invoke)[^\n]* %\w+\(", text),
                               "indirect invocation was optimized away")
                     run([clang, *sanitizer, f"-O{optimization}", "-c", ir, "-o", obj])
-                    run([size_tool, "-A", obj])
+                    sizes(obj)
                     objects.append(obj)
                 binary = output / name
                 run([clang, "-pthread", *sanitizer, *objects, *runtime, host, "-o", binary])
-                run([size_tool, "-A", binary])
+                sizes(binary)
                 run((["otool", "-L"] if platform.system() == "Darwin" else ["ldd"]) + [binary])
                 binaries[(mode, optimization)] = binary
                 for case, (trace, drops) in TRACES.items():
