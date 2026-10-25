@@ -23,6 +23,15 @@ struct BaseSubobjectLayout {
   SemanticType type = SemanticType::Unknown;
   std::uint64_t offset = 0;
   std::vector<unsigned> indices;
+  friend bool operator==(const BaseSubobjectLayout &,
+                         const BaseSubobjectLayout &) = default;
+};
+
+struct DispatchLocation {
+  BaseSubobjectLayout owner;
+  unsigned index = 0;
+  friend bool operator==(const DispatchLocation &,
+                         const DispatchLocation &) = default;
 };
 
 struct FieldSubobjectLayout {
@@ -49,6 +58,10 @@ public:
   activeIndex(const SemanticType &type) const;
   [[nodiscard]] std::optional<unsigned>
   dispatchIndex(const SemanticType &type) const;
+  [[nodiscard]] std::optional<DispatchLocation>
+  dispatchLocation(const SemanticType &type);
+  [[nodiscard]] const HirBaseInstance *
+  primaryBase(const SemanticType &type) const;
   [[nodiscard]] BaseSubobjectLayout
   basePath(const SemanticType &type, std::span<const HirClassInstanceId> path);
   [[nodiscard]] BaseSubobjectLayout baseSubobject(const SemanticType &source,

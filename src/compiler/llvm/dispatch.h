@@ -2,6 +2,10 @@
 
 #include "abi.h"
 
+#include <llvm/IR/IRBuilder.h>
+
+#include <tuple>
+
 namespace lang::native_llvm {
 
 struct DispatchSlotPlan {
@@ -10,6 +14,8 @@ struct DispatchSlotPlan {
   HirClassInstanceId targetOwner = 0;
   std::int64_t receiverAdjustment = 0;
   bool pure = false;
+  friend bool operator==(const DispatchSlotPlan &,
+                         const DispatchSlotPlan &) = default;
 };
 
 struct DispatchViewPlan {
@@ -17,7 +23,8 @@ struct DispatchViewPlan {
   HirClassInstanceId viewClass = 0;
   std::vector<HirClassInstanceId> path;
   std::uint64_t offset = 0;
-  unsigned dispatchIndex = 0;
+  DispatchLocation location;
+  HirClassInstanceId profileOwner = 0;
   std::vector<DispatchSlotPlan> slots;
 };
 
@@ -30,11 +37,30 @@ public:
   [[nodiscard]] const std::vector<DispatchViewPlan> &
   views(HirClassInstanceId activeClass);
   [[nodiscard]] VirtualRootAbi rootAbi(HirFunctionInstanceId root);
+  [[nodiscard]] const std::vector<HirFunctionInstanceId> &
+  slotProfile(HirClassInstanceId view);
+  // Entry receivers are the physical dispatch-pointer owner, not the logical
+  // source view. These helpers are not wired to production admission yet.
+  [[nodiscard]] llvm::Function *adjustment(HirClassInstanceId activeClass,
+                                           HirClassInstanceId sourceView,
+                                           HirFunctionInstanceId root);
+  [[nodiscard]] llvm::GlobalVariable *table(HirClassInstanceId activeClass,
+                                            HirClassInstanceId sourceView);
+  void install(llvm::IRBuilder<> &ir, llvm::Value *completeObject,
+               HirClassInstanceId activeClass);
 
 private:
   Session &session;
   std::map<HirClassInstanceId, std::vector<DispatchViewPlan>> views_;
   std::map<HirFunctionInstanceId, std::vector<HirFunctionInstanceId>> targets_;
+  std::map<HirClassInstanceId, std::vector<HirFunctionInstanceId>> profiles_;
+  using AdjustmentKey =
+      std::tuple<HirClassInstanceId, HirClassInstanceId, HirClassInstanceId,
+                 HirFunctionInstanceId, HirFunctionInstanceId, std::int64_t>;
+  using TableKey =
+      std::tuple<HirClassInstanceId, std::vector<unsigned>, unsigned>;
+  std::map<AdjustmentKey, llvm::Function *> adjustments_;
+  std::map<TableKey, llvm::GlobalVariable *> tables_;
 };
 
 } // namespace lang::native_llvm

@@ -1,3 +1,5 @@
+#include <std/string_view>
+
 interface Reader { int read(); };
 interface Writer { void write(int value) mut; };
 
@@ -31,6 +33,42 @@ public:
   int read() override { return 19; }
 };
 
+class Front : public Reader, public Root {
+public:
+  Front(int value) : Root(value) {}
+  int read() override { return this.base_value() + 1; }
+  virtual int extra() { return 43; }
+};
+
+class FrontLeaf : public Writer, public Front {
+  mut int value = 0;
+public:
+  FrontLeaf(int input) : Front(input) {}
+  void write(int next) mut override { this.value = next; }
+  int written() { return this.value; }
+};
+
+class Snapshot {
+public:
+  int value;
+  Snapshot(int input) : value(input) {}
+};
+interface SnapshotMaker { Snapshot make(); };
+class MakeSnapshot : public SnapshotMaker {
+public:
+  Snapshot make() override { return Snapshot(3); }
+};
+interface Truth { bool yes(); };
+class TrueValue : public Truth {
+public:
+  bool yes() override { return true; }
+};
+interface TextLabel { std::string_view label(); };
+class Labeled : public TextLabel {
+public:
+  std::string_view label() override { return "gti"; }
+};
+
 int via_reader(Reader& value) { return value.read(); }
 int via_root(Root& value) { return value.read(); }
 void via_writer(mut Writer& value, int next) { value.write(next); }
@@ -38,9 +76,18 @@ void via_writer(mut Writer& value, int next) { value.write(next); }
 int main() {
   mut Leaf leaf{7};
   Other other{};
+  mut FrontLeaf front{4};
+  MakeSnapshot maker{};
+  Snapshot snapshot = maker.make();
+  TrueValue truth{};
+  Labeled labeled{};
   if (via_reader(leaf) != 10 || via_reader(other) != 19) { return 1; }
   if (via_root(leaf) != 10 || leaf.read() != 10) { return 2; }
   via_writer(leaf, 23);
   if (leaf.leaf_value() != 23) { return 3; }
+  via_writer(front, 9);
+  if (via_reader(front) != 5 || front.extra() != 43 || front.written() != 9) { return 4; }
+  if (snapshot.value != 3 || !truth.yes()) { return 5; }
+  if (labeled.label().size() != 3) { return 6; }
   return 0;
 }

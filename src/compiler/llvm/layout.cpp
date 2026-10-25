@@ -156,7 +156,7 @@ TypeLayout Layouts::record(const SemanticType &type) {
       fields.push_back(get(field.type).storage);
     if (instance.requiresActiveDropState)
       fields.push_back(llvm::Type::getInt8Ty(session.context()));
-    if (instance.polymorphic)
+    if (dispatchIndex(type))
       fields.push_back(pointer());
     if (instance.unionLayout) {
       const auto &expected = *instance.unionLayout;
@@ -280,9 +280,49 @@ std::optional<unsigned> Layouts::dispatchIndex(const SemanticType &type) const {
   const auto &owner = instance(type);
   if (!owner.polymorphic)
     return {};
+  if (const auto *base = primaryBase(type);
+      base && instance(base->type).polymorphic)
+    return {};
   return static_cast<unsigned>(owner.bases.size() +
                                owner.declaredFields.size() +
                                (owner.requiresActiveDropState ? 1 : 0));
+}
+
+const HirBaseInstance *Layouts::primaryBase(const SemanticType &type) const {
+  const HirBaseInstance *selected = nullptr;
+  for (const auto &base : instance(type).bases) {
+    const auto &concrete = instance(base.type);
+    if (concrete.id != base.instance ||
+        base.interface != (concrete.kind == ClassKind::Interface))
+      throw std::logic_error(
+          "LLVM primary chain lost its sealed base identity");
+    if (!base.interface) {
+      if (selected)
+        throw std::logic_error("LLVM primary chain has multiple state bases");
+      selected = &base;
+    }
+  }
+  return selected;
+}
+
+std::optional<DispatchLocation>
+Layouts::dispatchLocation(const SemanticType &type) {
+  if (!instance(type).polymorphic)
+    return {};
+  auto selected = type;
+  std::vector<HirClassInstanceId> path;
+  std::unordered_set<HirClassInstanceId> seen;
+  while (seen.insert(instance(selected).id).second) {
+    if (const auto index = dispatchIndex(selected))
+      return DispatchLocation{basePath(type, path), *index};
+    const auto *base = primaryBase(selected);
+    if (!base || !instance(base->type).polymorphic)
+      throw std::logic_error(
+          "LLVM dispatch pointer has no sealed primary owner");
+    path.push_back(base->instance);
+    selected = base->type;
+  }
+  throw std::logic_error("LLVM dispatch primary chain is cyclic");
 }
 
 BaseSubobjectLayout

@@ -4394,6 +4394,21 @@ readonly/mutable permission. An already-selected base view is not adjusted
 again, and no general downcast or source member/access/override lookup is
 introduced. These helpers do not yet admit production LLVM virtual dispatch.
 
+The private dispatch planner reuses a polymorphic state-bearing base's physical
+pointer for its derived class views; interfaces retain distinct locations.
+Locations carry exact physical-owner paths, including nonzero offsets when an
+interface precedes the state base. Slot profiles preserve the ancestor prefix
+and append only new sealed roots; aliases of one physical location share one
+table and one installation store. Isolated nonpure adjustment thunks use the
+central ABI channels and exact selected target, adjust from the pointer owner,
+and forward failure/result destinations without publishing success on failure.
+Infallible direct results use target-aligned storage (including boolean `i8`);
+address-only results reuse the destination. This is the current central
+planner's provisional transport, not resolution of C04. Pure-bearing tables
+and infallible terminal targets remain explicitly gated; no failure meaning,
+null callee, trap or unreachable continuation is invented. These table/thunk
+helpers remain isolated from production body/lifetime wiring and admission.
+
 `Abi` centralizes signatures for definitions, calls and future adapters:
 
 | Private GTI ABI v1 shape | Transport |

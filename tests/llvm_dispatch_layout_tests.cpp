@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <string_view>
 
@@ -207,6 +208,226 @@ void testPlaces(Session &session) {
          "reference probes cover both supported access modes");
 }
 
+void testThunks(Session &session) {
+  Dispatch dispatch(session);
+  bool failing = false, direct = false, indirect = false, boolean = false,
+       noResult = false;
+  for (const auto &active : session.program().mir().classInstances()) {
+    if (!active.polymorphic || active.abstract ||
+        active.kind == ClassKind::Interface)
+      continue;
+    std::map<std::pair<std::vector<unsigned>, unsigned>, llvm::GlobalVariable *>
+        physical;
+    for (const auto &view : dispatch.views(active.id)) {
+      auto *table = dispatch.table(active.id, view.viewClass);
+      const auto key =
+          std::pair{view.location.owner.indices, view.location.index};
+      const auto [shared, inserted] = physical.emplace(key, table);
+      expect(inserted || shared->second == table,
+             "one physical pointer location has one exact constant table");
+      expect(dispatch.table(active.id, view.viewClass) == table,
+             "table requests are stable within one immutable session");
+      const auto *initializer =
+          llvm::dyn_cast<llvm::ConstantArray>(table->getInitializer());
+      if (!initializer)
+        throw std::runtime_error(
+            "dispatch table lost its immutable slot array");
+      expect(initializer->getNumOperands() == view.slots.size(),
+             "table slots retain their complete canonical profile");
+      for (std::size_t index = 0; index < view.slots.size(); ++index) {
+        const auto &slot = view.slots[index];
+        auto *thunk =
+            llvm::dyn_cast<llvm::Function>(initializer->getOperand(index));
+        const auto root = dispatch.rootAbi(slot.root);
+        const auto plans = session.abi().virtualAdjustment(root, slot.target);
+        const auto *target =
+            session.program().mir().findFunctionInstance(slot.target);
+        expect(thunk && thunk->getFunctionType() == root.call.type &&
+                   !llvm::verifyFunction(*thunk),
+               "every adjustment thunk has the central root signature and "
+               "valid typed IR");
+        if (!thunk)
+          continue;
+        expect(
+            dispatch.adjustment(active.id, view.profileOwner, slot.root) ==
+                thunk,
+            "thunk cache retains source and physical receiver presentations");
+        llvm::CallInst *call = nullptr;
+        std::vector<const llvm::StoreInst *> stores;
+        for (auto &block : *thunk)
+          for (auto &instruction : block) {
+            if (auto *candidate =
+                    llvm::dyn_cast<llvm::CallInst>(&instruction)) {
+              expect(!call,
+                     "one adjustment performs exactly one implementation call");
+              call = candidate;
+            }
+            if (const auto *store =
+                    llvm::dyn_cast<llvm::StoreInst>(&instruction))
+              stores.push_back(store);
+            expect(!llvm::isa<llvm::BitCastInst>(instruction),
+                   "typed adapters never cast a function pointer");
+          }
+        expect(call &&
+                   call->getCalledFunction() ==
+                       session.abi().declareFunction(slot.target) &&
+                   call->getFunctionType() == plans.implementation.type,
+               "the exact real target is declared through shared ABI "
+               "definition demand");
+        if (!call)
+          continue;
+        for (unsigned argument = 0;
+             argument < plans.implementation.parameters.size(); ++argument) {
+          const auto &parameter = plans.implementation.parameters[argument];
+          const auto entry = std::find(plans.entry.parameters.begin(),
+                                       plans.entry.parameters.end(), parameter);
+          expect(entry != plans.entry.parameters.end(),
+                 "implementation channel has an exact root source");
+          if (entry == plans.entry.parameters.end())
+            continue;
+          const auto ordinal =
+              static_cast<unsigned>(entry - plans.entry.parameters.begin());
+          const auto *actual = call->getArgOperand(argument);
+          if (parameter.channel == AbiChannel::Receiver &&
+              slot.receiverAdjustment) {
+            const auto *projection = llvm::dyn_cast<llvm::GEPOperator>(actual);
+            const auto *delta = projection ? llvm::dyn_cast<llvm::ConstantInt>(
+                                                 projection->getOperand(1))
+                                           : nullptr;
+            expect(
+                projection &&
+                    projection->getPointerOperand() == thunk->getArg(ordinal) &&
+                    delta && delta->getSExtValue() == slot.receiverAdjustment,
+                "one signed receiver adjustment starts at the physical pointer "
+                "owner");
+          } else {
+            expect(actual == thunk->getArg(ordinal),
+                   "argument/result/failure channels preserve exact "
+                   "sourceIndex and attributes");
+          }
+        }
+        const auto *returned =
+            llvm::dyn_cast<llvm::ReturnInst>(thunk->back().getTerminator());
+        if (plans.implementation.statusResult) {
+          failing = true;
+          expect(stores.empty() && returned &&
+                     returned->getReturnValue() == call,
+                 "failure-capable thunks forward status without copying "
+                 "failure or publishing a result");
+        } else if (plans.implementation.resultDestination) {
+          indirect = true;
+          expect(stores.empty(), "infallible address-only bodies publish "
+                                 "directly to the shared destination");
+        } else if (!call->getType()->isVoidTy()) {
+          direct = true;
+          expect(stores.size() == 1 &&
+                     stores.front()->getPointerOperand() ==
+                         thunk->getArg(*plans.entry.resultDestination) &&
+                     stores.front()->getAlign().value() ==
+                         session.layouts().get(target->returnType).alignment,
+                 "an infallible direct result publishes once with exact target "
+                 "alignment");
+          if (target->returnType == SemanticType::Bool) {
+            boolean = true;
+            expect(stores.front()->getValueOperand()->getType()->isIntegerTy(8),
+                   "boolean results retain i1 values and i8 storage");
+          }
+        } else {
+          noResult = true;
+          expect(stores.empty(), "void success fabricates no result storage");
+        }
+      }
+    }
+    auto *installer = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                                {session.layouts().pointer()}, false),
+        llvm::GlobalValue::InternalLinkage, "dispatch.install.probe",
+        session.module());
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", installer));
+    dispatch.install(ir, installer->getArg(0), active.id);
+    std::size_t stores = 0;
+    for (const auto &instruction : installer->getEntryBlock())
+      if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
+        ++stores;
+        const auto offset = offsetFrom(session, store->getPointerOperand(),
+                                       installer->getArg(0));
+        expect(std::any_of(dispatch.views(active.id).begin(),
+                           dispatch.views(active.id).end(),
+                           [&](const auto &view) {
+                             return offset ==
+                                    view.location.owner.offset +
+                                        session.layouts()
+                                            .get(view.location.owner.type)
+                                            .fieldOffsets.at(
+                                                view.location.index);
+                           }),
+               "installation stores only to exact physical dispatch fields");
+      }
+    expect(stores == physical.size(),
+           "installation deduplicates physical locations, not class names");
+    ir.CreateRetVoid();
+    expect(!llvm::verifyFunction(*installer),
+           "isolated state installation forms valid LLVM IR");
+  }
+  std::cout << "thunk-contracts: failure=" << failing << " direct=" << direct
+            << " indirect=" << indirect << " bool=" << boolean
+            << " void=" << noResult << '\n';
+  expect(failing && direct && indirect && boolean && noResult,
+         "isolated thunks cover failing, scalar, address-only, boolean and "
+         "void contracts");
+  session.verify();
+  rejects<BackendUnsupportedError>(
+      [&] { static_cast<void>(session.emitObject()); },
+      "isolated helper tests cannot publish an artifact with demanded source "
+      "bodies missing");
+}
+
+void testPureGates() {
+  const auto frontend =
+      Frontend().analyze("llvm-dispatch-pure-gate.gti", std::string(R"(
+class Open { public: Open() {} virtual int read() = 0; };
+class Closed : public Open {
+public:
+  Closed() : Open() {}
+  int read() override { return 1; }
+};
+int main() { Closed value{}; return value.read() - 1; }
+)"));
+  expect(frontend.canGenerateCode(),
+         "unused pure contracts do not reject an abstract base constructor");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!input)
+    throw std::runtime_error("pure gate fixture failed its source seal");
+  Session session(*input, {});
+  Dispatch dispatch(session);
+  const auto &open = named(session.program(), "Open");
+  const auto &closed = named(session.program(), "Closed");
+  expect(dispatch.views(open.id).front().slots.front().pure,
+         "the abstract active-state plan preserves its pure fact");
+  const auto functions = session.module().size();
+  const auto globals = session.module().global_size();
+  rejects<BackendUnsupportedError>(
+      [&] { static_cast<void>(dispatch.table(open.id, open.id)); },
+      "pure-bearing table publication stays explicitly gated without a failure "
+      "invention");
+  rejects<BackendUnsupportedError>(
+      [&] {
+        static_cast<void>(dispatch.adjustment(
+            open.id, open.id, dispatch.slotProfile(open.id).front()));
+      },
+      "a pure target cannot acquire a null, trap or UB call adapter");
+  expect(session.module().size() == functions &&
+             session.module().global_size() == globals,
+         "unsupported pure tables publish no partial functions or data");
+  expect(dispatch.table(closed.id, closed.id) != nullptr,
+         "the same pure root has a valid nonpure concrete dispatch table");
+}
+
 void test(Session &session, const VerifiedLoweredProgram &input) {
   const auto &program = session.program();
   const auto &root = named(program, "Root");
@@ -273,8 +494,8 @@ void test(Session &session, const VerifiedLoweredProgram &input) {
     const auto path = layouts.basePath(leaf.type, view.path);
     const auto *owner = program.mir().findClassInstance(view.viewClass);
     expect(path.type == owner->type && path.offset == view.offset &&
-               layouts.get(owner->type)
-                       .storage->getStructElementType(view.dispatchIndex) ==
+               layouts.get(view.location.owner.type)
+                       .storage->getStructElementType(view.location.index) ==
                    layouts.pointer(),
            "every view uses the shared exact base path and pointer storage");
     for (const auto &slot : view.slots) {
@@ -288,7 +509,8 @@ void test(Session &session, const VerifiedLoweredProgram &input) {
       if (selected == leaf.virtualDispatch.end())
         continue;
       const auto target = layouts.basePath(leaf.type, selected->targetPath);
-      expect(static_cast<std::int64_t>(view.offset) + slot.receiverAdjustment ==
+      expect(static_cast<std::int64_t>(view.location.owner.offset) +
+                     slot.receiverAdjustment ==
                  static_cast<std::int64_t>(target.offset),
              "receiver adjustment reaches the exact implementation subobject");
       if (view.viewClass == reader.id)
@@ -329,8 +551,21 @@ void test(Session &session, const VerifiedLoweredProgram &input) {
       "a base path cannot repeat or invent a direct edge");
   const auto readerRoot = reader.virtualDispatch.front().root;
   const auto plan = dispatch.rootAbi(readerRoot);
-  expect(plan.implementations.size() == 2,
-         "root ABI retains both implementations in the sealed family");
+  std::vector<HirFunctionInstanceId> expectedTargets;
+  for (const auto owner :
+       {middle.id, named(program, "Other").id, named(program, "Front").id}) {
+    const auto &rows = program.mir().findClassInstance(owner)->virtualDispatch;
+    const auto selected =
+        std::find_if(rows.begin(), rows.end(),
+                     [&](const auto &row) { return row.root == readerRoot; });
+    if (selected == rows.end())
+      throw std::runtime_error("fixture lost an intended Reader target family");
+    expectedTargets.push_back(selected->target);
+  }
+  std::sort(expectedTargets.begin(), expectedTargets.end());
+  expect(
+      plan.implementations == expectedTargets,
+      "root ABI retains exactly the Middle, Other and Front implementations");
   rejects<std::invalid_argument>(
       [&] {
         auto incomplete = plan.implementations;
@@ -365,10 +600,60 @@ void test(Session &session, const VerifiedLoweredProgram &input) {
             foreign, foreign.implementations.front()));
       },
       "LLVM plans from an independent context cannot be reused");
+  std::set<std::pair<std::vector<unsigned>, unsigned>> physical;
+  for (const auto &view : views)
+    physical.emplace(view.location.owner.indices, view.location.index);
+  expect(physical.size() == 3 && layouts.get(leaf.type).size < 64,
+         "primary-chain reuse removes two pointers without merging interface "
+         "views");
+  for (const auto &view : views)
+    if (view.location.owner.type == root.type)
+      expect(view.slots == views.front().slots && view.profileOwner == leaf.id,
+             "all aliases of one primary location share exactly one derived "
+             "table");
+  for (const auto ancestor : {root.id, middle.id}) {
+    const auto &prefix = dispatch.slotProfile(ancestor);
+    const auto &derived = dispatch.slotProfile(leaf.id);
+    expect(derived.size() >= prefix.size() &&
+               std::equal(prefix.begin(), prefix.end(), derived.begin()),
+           "derived slot profiles never renumber the ancestor prefix");
+  }
+  const auto &front = named(program, "Front");
+  const auto &frontLeaf = named(program, "FrontLeaf");
+  const auto location = layouts.dispatchLocation(frontLeaf.type);
+  expect(location && location->owner.type == root.type &&
+             location->owner.indices == std::vector<unsigned>({1, 1}) &&
+             location->owner.offset != 0,
+         "interfaces preceding the state base retain a nonzero physical "
+         "pointer-owner path");
+  const auto &frontViews = dispatch.views(frontLeaf.id);
+  const auto &frontPrefix = dispatch.slotProfile(front.id);
+  const auto &frontProfile = dispatch.slotProfile(frontLeaf.id);
+  expect(frontProfile.size() >= frontPrefix.size() &&
+             std::equal(frontPrefix.begin(), frontPrefix.end(),
+                        frontProfile.begin()),
+         "a preceding interface cannot renumber the primary ancestor slots");
+  bool adjustedFromPhysicalOwner = false;
+  for (const auto &view : frontViews)
+    if (view.location == frontViews.front().location) {
+      expect(view.slots == frontViews.front().slots,
+             "nonzero primary aliases also retain one exact table plan");
+      for (const auto &slot : view.slots)
+        if (slot.targetOwner == front.id)
+          adjustedFromPhysicalOwner |=
+              slot.receiverAdjustment < 0 &&
+              static_cast<std::int64_t>(view.location.owner.offset) +
+                      slot.receiverAdjustment ==
+                  static_cast<std::int64_t>(
+                      layouts.baseSubobject(frontLeaf.type, front.type).offset);
+    }
+  expect(adjustedFromPhysicalOwner,
+         "thunk adjustment starts at the physical pointer owner, not the "
+         "logical derived receiver");
   std::cout << "dispatch-layout-cost: leaf-size=" << layouts.get(leaf.type).size
             << " leaf-alignment=" << layouts.get(leaf.type).alignment
             << " views=" << views.size() << " dispatch-pointer-bytes="
-            << views.size() * session.dataLayout().getPointerSize() << '\n';
+            << physical.size() * session.dataLayout().getPointerSize() << '\n';
 }
 } // namespace
 
@@ -402,5 +687,7 @@ int main() { return 0; }
   Session session(*input, {});
   test(session, *input);
   testPlaces(session);
+  testThunks(session);
+  testPureGates();
   return failures ? 1 : 0;
 }
