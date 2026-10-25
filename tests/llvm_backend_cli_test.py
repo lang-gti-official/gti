@@ -36,30 +36,34 @@ def main() -> int:
         run([sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)], 0)
         run([str(output)], 0)
         output.unlink()
-        source.write_text("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }\n", encoding="utf-8")
+        source.write_text("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; Owner copied = value; return copied.read(); }\n", encoding="utf-8")
+        transfer_mir = root / "unsupported.mir"
+        run([sys.argv[1], str(source), "-O0", "--emit-mir", "-o", str(transfer_mir)], 0)
+        if not re.search(r"^\s+i\d+ load\b", transfer_mir.read_text(encoding="utf-8"), re.MULTILINE):
+            raise AssertionError("the transfer control lost its verified class-copy load")
         unsupported = run(
-            [sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)],
+            [sys.argv[1], str(source), "-O0", "--backend", "llvm", "-o", str(output)],
             65,
         )
         if "error[GTI-B0003]" not in unsupported.stderr or (
             "executable LLVM lowering is not implemented yet"
             not in unsupported.stderr
-        ) or "O-LLVM-" not in unsupported.stderr or "MirInstructionKind.Construct" not in unsupported.stderr:
+        ) or "O-LLVM-10" not in unsupported.stderr or "Shape.PolymorphicTransfer" not in unsupported.stderr or str(source) + ":" not in unsupported.stderr:
             raise AssertionError(
                 "LLVM selection did not preserve the structured limitation:\n"
                 + unsupported.stderr
             )
-        if output.exists():
-            raise AssertionError("an unsupported LLVM build published an executable")
+        if output.exists() or list(root.glob("*.o")) or list(root.glob("*.obj")):
+            raise AssertionError("an unsupported LLVM build published native output")
 
         output.write_bytes(b"existing artifact")
-        run([sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)], 65)
-        if output.read_bytes() != b"existing artifact":
+        run([sys.argv[1], str(source), "-O0", "--backend", "llvm", "-o", str(output)], 65)
+        if output.read_bytes() != b"existing artifact" or list(root.glob("*.o")) or list(root.glob("*.obj")):
             raise AssertionError("unsupported LLVM admission replaced an existing artifact")
 
         # O0 deliberately retains this unused construction. Required-body
         # assertions for read -> helper live in llvm_admission_tests; the CLI
-        # may still report the earlier Construct gate, not the helper itself.
+        # preserves the structured rejection and artifact boundary here.
         source.write_text("""
 int helper() { auto call = []() -> int { return 9; }; return call(); }
 class Value { public: virtual int read() { return helper(); } };
