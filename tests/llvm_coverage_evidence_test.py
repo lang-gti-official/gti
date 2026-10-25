@@ -576,6 +576,8 @@ def use_is_unsupported(use: dict) -> bool:
 
 
 def validate_use_artifact(artifact: dict, report: dict) -> list[str]:
+    if not isinstance(artifact, dict):
+        return ["use artifact must be an object"]
     errors: list[str] = []
     if artifact.get("schema") != USE_SCHEMA:
         errors.append(f"use artifact schema must be {USE_SCHEMA}")
@@ -595,7 +597,8 @@ def validate_use_artifact(artifact: dict, report: dict) -> list[str]:
         errors.append("use artifact count does not match its complete inventory")
         uses = []
     rows = {row["key"]: row for row in report.get("rows", [])}
-    computed_unsupported = None
+    fallback_unsupported = None
+    located_unsupported = None
     for index, use in enumerate(uses):
         if not isinstance(use, dict) or set(use) != {
                 "base", "witness", "executable", "body", "block",
@@ -604,7 +607,9 @@ def validate_use_artifact(artifact: dict, report: dict) -> list[str]:
             continue
         base = use.get("base")
         witness = use.get("witness")
-        if not isinstance(base, dict) or base.get("key") not in rows:
+        if (not isinstance(base, dict) or
+                not isinstance(base.get("key"), str) or
+                base["key"] not in rows):
             errors.append(f"use {index} has an unknown base row")
             continue
         expected = rows[base["key"]]
@@ -612,9 +617,13 @@ def validate_use_artifact(artifact: dict, report: dict) -> list[str]:
                 expected["key"], expected["state"], expected["nonexecuting"],
                 expected["predicate"]):
             errors.append(f"use {index} base row identity/state drifted")
+            continue
         if witness is not None:
-            if not isinstance(witness, dict) or witness.get("key") not in rows:
+            if (not isinstance(witness, dict) or
+                    not isinstance(witness.get("key"), str) or
+                    witness["key"] not in rows):
                 errors.append(f"use {index} has an unknown witness row")
+                continue
             else:
                 expected_witness = rows[witness["key"]]
                 if coverage_identity(witness) != (
@@ -622,17 +631,44 @@ def validate_use_artifact(artifact: dict, report: dict) -> list[str]:
                         expected_witness["nonexecuting"],
                         expected_witness["predicate"]):
                     errors.append(f"use {index} witness identity/state drifted")
+                    continue
         if not isinstance(use.get("executable"), bool):
             errors.append(f"use {index} executable flag is malformed")
             continue
-        if not isinstance(use.get("occurrences"), int) or use["occurrences"] <= 0:
+        if type(use.get("occurrences")) is not int or use["occurrences"] <= 0:
             errors.append(f"use {index} occurrence count is malformed")
+            continue
+        body = use.get("body")
+        if body is not None and (
+                not isinstance(body, dict) or set(body) != {"kind", "owner"} or
+                any(type(body[field]) is not int or body[field] < 0
+                    for field in ("kind", "owner"))):
+            errors.append(f"use {index} body identity is malformed")
+            continue
+        if any(type(use.get(field)) is not int or use[field] < 0
+               for field in ("block", "instruction")):
+            errors.append(f"use {index} instruction identity is malformed")
+            continue
         source = use.get("source")
         if not isinstance(source, dict) or set(source) != {
                 "path", "start", "end", "line"}:
             errors.append(f"use {index} source identity is malformed")
-        if computed_unsupported is None and use_is_unsupported(use):
-            computed_unsupported = index
+            continue
+        if (not isinstance(source["path"], str) or
+                any(type(source[field]) is not int or source[field] < 0
+                    for field in ("start", "end", "line"))):
+            errors.append(f"use {index} source identity is malformed")
+            continue
+        if use_is_unsupported(use):
+            if fallback_unsupported is None:
+                fallback_unsupported = index
+            # Match LlvmAdmissionPlan::firstUnsupported(): prefer the first
+            # source-located instruction, retaining the earliest fallback.
+            if (located_unsupported is None and body is not None and
+                    use["instruction"] != 0 and source["path"]):
+                located_unsupported = index
+    computed_unsupported = (located_unsupported if located_unsupported is not None
+                            else fallback_unsupported)
     if artifact.get("first_unsupported") != computed_unsupported:
         errors.append("use artifact firstUnsupported disagrees with its plan records")
     if artifact.get("admitted") != (computed_unsupported is None):
@@ -641,6 +677,63 @@ def validate_use_artifact(artifact: dict, report: dict) -> list[str]:
             "all-executable-bodies", "sealed-entry-dependencies"}:
         errors.append("use artifact closure is malformed")
     return errors
+
+
+def use_artifact_validation_controls(report: dict,
+                                    probes: dict[str, dict]) -> None:
+    original = probes["unsupported"]
+    unsupported = original["uses"][original["first_unsupported"]]
+    located = deepcopy(unsupported)
+    located.update(body={"kind": 0, "owner": 1}, instruction=1,
+                   source={"path": "probe.gti", "start": 1, "end": 2, "line": 1})
+    no_body = deepcopy(located)
+    no_body["body"] = None
+    no_instruction = deepcopy(located)
+    no_instruction["instruction"] = 0
+    no_source = deepcopy(located)
+    no_source["source"]["path"] = ""
+
+    def selection(uses: list[dict], selected: int) -> dict:
+        artifact = deepcopy(original)
+        artifact.update(uses=deepcopy(uses), use_count=len(uses),
+                        first_unsupported=selected, admitted=False)
+        return artifact
+
+    # A fallback may precede the first instruction, and a later instruction
+    # must not displace the first source-located unsupported instruction.
+    preferred = selection([no_body, located, located], 1)
+    require(not validate_use_artifact(preferred, report),
+            "source-located unsupported instruction did not outrank fallback")
+    for incorrect in (0, 2):
+        changed = deepcopy(preferred)
+        changed["first_unsupported"] = incorrect
+        require(any("firstUnsupported" in error
+                    for error in validate_use_artifact(changed, report)),
+                "incorrect unsupported instruction selection was accepted")
+
+    fallback = selection([no_body, no_instruction, no_source], 0)
+    require(not validate_use_artifact(fallback, report),
+            "earliest unsupported fallback was not retained")
+    fallback["first_unsupported"] = 1
+    require(any("firstUnsupported" in error
+                for error in validate_use_artifact(fallback, report)),
+            "later fallback displaced the first unsupported record")
+
+    callable_artifact = probes["callable"]
+    conditional_index = next(
+        index for index, use in enumerate(callable_artifact["uses"])
+        if use["base"]["state"] == "pending" and use.get("witness"))
+    known_key = callable_artifact["uses"][conditional_index]["witness"]["key"]
+    malformed_witnesses = (
+        {}, {"key": known_key}, {"key": "unknown"}, {"key": []},
+        {"key": known_key, "state": "implemented"}, "bad", ["bad"], 1,
+    )
+    for witness in malformed_witnesses:
+        changed = deepcopy(callable_artifact)
+        changed["uses"][conditional_index]["witness"] = witness
+        require(any("witness" in error
+                    for error in validate_use_artifact(changed, report)),
+                f"malformed witness was not rejected: {witness!r}")
 
 
 def target_id(target: dict) -> str | None:
@@ -1130,6 +1223,7 @@ def main() -> None:
         raise AssertionError("LLVM coverage evidence audit failed:\n" + "\n".join(errors))
     mutation_controls(report, registered, observations)
     probes = focused_use_probes(evidence, root, report)
+    use_artifact_validation_controls(report, probes)
     readiness_mutation_controls(report, probes)
     run_artifact = build / "gti_llvm_readiness_focused.json"
     run_artifact.write_text(

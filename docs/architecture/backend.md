@@ -5085,6 +5085,10 @@ shape selected by the inventory. The test-only coverage probe serializes that
 binding directly from the admission plan in
 `gti.llvm.required-uses/v1`; seeing the base and shape keys elsewhere is not a
 witness. Production admission and `firstUnsupported()` remain authoritative.
+The report validator preserves the plan's diagnostic selection: the first
+unsupported source-located instruction takes precedence, with the earliest
+unsupported record retained as fallback. Malformed base rows, witnesses and
+location records reject before that selection is evaluated.
 
 `tests/llvm_readiness_baseline.json` is the versioned durable readiness
 contract. It pins the frozen-baseline provenance, canonical source providers,
