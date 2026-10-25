@@ -1549,7 +1549,7 @@ template <typename T, bool DestroyRepresentationAtScopeExit = false,
           bool ExternalStorage = false>
 class mir_lifetime_slot {
 public:
-  mir_lifetime_slot() = default;
+  mir_lifetime_slot() requires (!ExternalStorage) = default;
   explicit mir_lifetime_slot(T *address) requires ExternalStorage
       : storage_(address) {}
   mir_lifetime_slot(const mir_lifetime_slot &) = delete;
