@@ -2,6 +2,7 @@
 #include "gti/driver/build.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
+#include "gti/llvm_backend.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -69,11 +70,36 @@ void checkBuild(const ExecutableBuildResult &result) {
               << " driver=" << result.driverDiagnostic.value_or("none") << '\n';
     if (result.nativeProcess)
       std::cerr << result.nativeProcess->output << '\n';
+    for (const auto &diagnostic : result.compilation.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
   require(result.succeeded(), "real cache fixture build failed");
 }
 
 void runChecks(const std::filesystem::path &self) {
+  std::string identityError;
+  const auto identity =
+      queryLlvmBackendIdentity(TargetInfo::host(), {}, identityError);
+  const auto optimizedIdentity = queryLlvmBackendIdentity(
+      TargetInfo::host(), {.optimization = LlvmCodegenOptimization::Aggressive},
+      identityError);
+  require(identity && optimizedIdentity && identity->privateAbi != 0 &&
+              !identity->schema.empty() && !identity->llvmVersion.empty() &&
+              !identity->triple.empty() && !identity->dataLayout.empty() &&
+              !identity->cpu.empty() &&
+              std::filesystem::is_regular_file(identity->compilerExecutable) &&
+              identity->triple == optimizedIdentity->triple &&
+              identity->cpu == optimizedIdentity->cpu &&
+              identity->features == optimizedIdentity->features &&
+              identity->codegenOptimization !=
+                  optimizedIdentity->codegenOptimization,
+          "backend identity must contain resolved producer facts and actual "
+          "optimization");
+  require(!queryLlvmBackendIdentity(
+              TargetInfo::host(),
+              {.optimization = static_cast<LlvmCodegenOptimization>(999)},
+              identityError),
+          "an invalid producer policy must not yield a cache identity");
   for (const char *name :
        {"CPATH", "CPLUS_INCLUDE_PATH", "C_INCLUDE_PATH", "OBJC_INCLUDE_PATH",
         "LIBRARY_PATH", "SDKROOT", "COMPILER_PATH", "GCC_EXEC_PREFIX"})
@@ -179,8 +205,18 @@ void runChecks(const std::filesystem::path &self) {
   changed.audit = RawPointerAuditMode::Warn;
   miss(changed, "audit policy must invalidate native objects");
   changed = {};
+  changed.target.runtimeCapabilities.threads =
+      !changed.target.runtimeCapabilities.threads;
+  miss(changed, "target runtime capability must invalidate native objects");
+  changed = {};
   changed.target.executionProfile = ExecutionProfile::Concurrent;
-  miss(changed, "execution target policy must invalidate native objects");
+  const auto beforeConcurrent = read(output);
+  const auto concurrent = build(changed);
+  require(!concurrent.succeeded() && concurrent.cache.key != first.cache.key &&
+              concurrent.cache.status == BuildCacheStatus::Miss &&
+              read(output) == beforeConcurrent,
+          "concurrent policy must reanalyze and reject the mutable global, not "
+          "restore a single-threaded artifact");
   changed = {};
   changed.compilerIdentity += "-changed";
   miss(changed, "compiler policy identity must invalidate native objects");
@@ -326,8 +362,9 @@ void runChecks(const std::filesystem::path &self) {
 
 int main(int argc, char **argv) {
   try {
-    require(argc == 1, "unexpected cache test arguments");
-    runChecks(std::filesystem::absolute(argv[0]));
+    require(argc == 1 || argc == 2,
+            "usage: llvm cache test [toolchain executable]");
+    runChecks(std::filesystem::absolute(argv[argc == 2 ? 1 : 0]));
     return 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

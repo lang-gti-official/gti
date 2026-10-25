@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Stage, archive, relocate and consume the LLVM-enabled toolchain and driver."""
+
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+
+def run(arguments, cwd, env):
+    result = subprocess.run(
+        [str(value) for value in arguments], cwd=cwd, env=env,
+        capture_output=True, text=True, timeout=300, check=False,
+    )
+    if result.returncode:
+        raise AssertionError(
+            f"{arguments}: exit {result.returncode}\n"
+            f"stdout:\n{result.stdout[-6000:]}\nstderr:\n{result.stderr[-6000:]}"
+        )
+    return result
+
+
+def main():
+    if len(sys.argv) != 3:
+        raise SystemExit("usage: llvm_cache_installed_test.py source-root build-root")
+    source, build = (Path(value).resolve() for value in sys.argv[1:])
+    cache = {}
+    for line in (build / "CMakeCache.txt").read_text().splitlines():
+        key, separator, value = line.partition("=")
+        if separator and not key.startswith(("#", "//")):
+            cache[key.split(":", 1)[0]] = value
+    assert cache["CMAKE_BUILD_TYPE"] in ("Release", "RelWithDebInfo", "MinSizeRel")
+    environment = os.environ.copy()
+    for name in ("GTI_STDLIB", "GTI_STDLIB_ROOT", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY"):
+        environment.pop(name, None)
+    with tempfile.TemporaryDirectory(prefix="gti-llvm-installed-") as temporary:
+        root = Path(temporary).resolve()
+        stage = root / "original-stage"
+        run(["cmake", "--install", build, "--prefix", stage,
+             "--component", "gti_toolchain"], root, environment)
+        archive = root / "gti-toolchain.tar.gz"
+        with tarfile.open(archive, "w:gz") as output:
+            output.add(stage, arcname="gti")
+        shutil.rmtree(stage)
+        relocated_root = root / "relocated with spaces"
+        relocated_root.mkdir()
+        with tarfile.open(archive, "r:gz") as packet:
+            packet.extractall(relocated_root, filter="data")
+        prefix = relocated_root / "gti"
+        gti = prefix / "bin/gti"
+        run([gti, "--version"], root, environment)
+        program = root / "main.gti"
+        program.write_text("int main() { return 0; }\n", encoding="utf-8")
+        report = root / "build-report.json"
+        executable = root / "program"
+        run([gti, program, "--backend", "llvm", "-O3", "-o", executable,
+             "--build-report", report], root, environment)
+        run([executable], root, environment)
+        record = json.loads(report.read_text())
+        serialized = json.dumps(record)
+        assert str(prefix / "lib/libgti_runtime.a") in serialized, serialized
+        assert str(prefix / "share/gti/stdlib/prelude.gti") in serialized, serialized
+        assert record["native"]["runtime"]["headers"] == [], record["native"]
+        assert str(stage) not in serialized and str(build) not in serialized
+        run([sys.executable, source / "tests/llvm_cache_project_test.py", gti],
+            root, environment)
+        consumer = root / "consumer-build"
+        configure = ["cmake", "-S", source / "tests/llvm_cache_installed_consumer",
+                     "-B", consumer, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+                     f"-DCMAKE_PREFIX_PATH={prefix}"]
+        if cache.get("GTI_BUNDLE_LLVM") != "ON" and cache.get("LLVM_DIR"):
+            configure.append(f"-DLLVM_DIR={cache['LLVM_DIR']}")
+        run(configure, root, environment)
+        run(["cmake", "--build", consumer, "--target", "gti_installed_llvm_cache",
+             "--parallel", "2"], root, environment)
+        run([consumer / "gti_installed_llvm_cache", gti], root, environment)
+    channel = "bundled" if cache.get("GTI_BUNDLE_LLVM") == "ON" else "system"
+    print(f"Relocated {channel}-LLVM toolchain archive, resource provenance, "
+          "project workflows and installed driver cache passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
