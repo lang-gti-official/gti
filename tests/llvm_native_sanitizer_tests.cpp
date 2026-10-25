@@ -23,7 +23,8 @@ using namespace lang::native_llvm;
 int main(int argc, char **argv) {
   if (argc != 4 && argc != 5)
     return 2;
-  const bool threadControls = argc == 5 && std::string_view(argv[4]) == "thread-controls";
+  const bool threadControls =
+      argc == 5 && std::string_view(argv[4]) == "thread-controls";
   if (argc == 5 && !threadControls)
     return 2;
   const auto mode = static_cast<InstrumentationMode>(std::stoi(argv[2]));
@@ -128,12 +129,14 @@ unsafe void write(int* address, int offset, int value) { unsafe { address[offset
     for (unsigned bits : {8, 16, 32, 64}) {
       auto *integer = llvm::IntegerType::get(context, bits);
       auto *store = llvm::Function::Create(
-          llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pointer, wide}, false),
+          llvm::FunctionType::get(llvm::Type::getVoidTy(context),
+                                  {pointer, wide}, false),
           llvm::GlobalValue::ExternalLinkage,
           "gti_test_atomic_store" + std::to_string(bits), session.module());
       llvm::IRBuilder<> ir(llvm::BasicBlock::Create(context, "entry", store));
       auto *value = ir.CreateTruncOrBitCast(store->getArg(1), integer);
-      auto *write = ir.CreateAlignedStore(value, store->getArg(0), llvm::Align(bits / 8));
+      auto *write =
+          ir.CreateAlignedStore(value, store->getArg(0), llvm::Align(bits / 8));
       write->setAtomic(llvm::AtomicOrdering::Release);
       ir.CreateRetVoid();
       auto *load = llvm::Function::Create(
@@ -141,7 +144,8 @@ unsafe void write(int* address, int offset, int value) { unsafe { address[offset
           llvm::GlobalValue::ExternalLinkage,
           "gti_test_atomic_load" + std::to_string(bits), session.module());
       ir.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", load));
-      auto *read = ir.CreateAlignedLoad(integer, load->getArg(0), llvm::Align(bits / 8));
+      auto *read =
+          ir.CreateAlignedLoad(integer, load->getArg(0), llvm::Align(bits / 8));
       read->setAtomic(llvm::AtomicOrdering::Acquire);
       ir.CreateRet(ir.CreateZExtOrBitCast(read, wide));
     }

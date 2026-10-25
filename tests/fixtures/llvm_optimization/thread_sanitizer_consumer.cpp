@@ -5,8 +5,8 @@
 
 extern "C" int gti_test_read(int *, int);
 extern "C" void gti_test_write(int *, int, int);
-#define DECLARE_ATOMIC(BITS) \
-  extern "C" void gti_test_atomic_store##BITS(void *, std::uint64_t); \
+#define DECLARE_ATOMIC(BITS)                                                   \
+  extern "C" void gti_test_atomic_store##BITS(void *, std::uint64_t);          \
   extern "C" std::uint64_t gti_test_atomic_load##BITS(void *);
 DECLARE_ATOMIC(8)
 DECLARE_ATOMIC(16)
@@ -15,7 +15,8 @@ DECLARE_ATOMIC(64)
 #undef DECLARE_ATOMIC
 
 template <class Load> bool awaitPublished(Load load) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
   while (load() != 1) {
     if (std::chrono::steady_clock::now() >= deadline)
       return false;
@@ -27,7 +28,7 @@ template <class Load> bool awaitPublished(Load load) {
 
 template <class T>
 bool publication(bool generatedProducer, void (*store)(void *, std::uint64_t),
-                 std::uint64_t (*load)(void *)) {
+                 std::uint64_t (*load)(void *), bool relaxedControl) {
   static_assert(__atomic_always_lock_free(sizeof(T), nullptr));
   alignas(sizeof(T)) T flag = 0;
   int payload = 0;
@@ -39,11 +40,17 @@ bool publication(bool generatedProducer, void (*store)(void *, std::uint64_t),
       store(&flag, 1);
     } else {
       payload = 73;
-      __atomic_store_n(&flag, T(1), __ATOMIC_RELEASE);
+      if (relaxedControl)
+        __atomic_store_n(&flag, T(1), __ATOMIC_RELAXED);
+      else
+        __atomic_store_n(&flag, T(1), __ATOMIC_RELEASE);
     }
   });
   const bool ready = awaitPublished([&]() -> std::uint64_t {
-    return generatedProducer ? __atomic_load_n(&flag, __ATOMIC_ACQUIRE) : load(&flag);
+    if (!generatedProducer)
+      return load(&flag);
+    return relaxedControl ? __atomic_load_n(&flag, __ATOMIC_RELAXED)
+                          : __atomic_load_n(&flag, __ATOMIC_ACQUIRE);
   });
   const bool valid = ready && gti_test_read(&payload, 0) == 73;
   producer.join();
@@ -75,15 +82,20 @@ int main(int argc, char **argv) {
     generated.join();
     return 0;
   }
-  const bool generated = !std::strncmp(argv[1], "generated-publication-", 22);
-  const bool host = !std::strncmp(argv[1], "host-publication-", 17);
+  const bool relaxedControl = !std::strncmp(argv[1], "relaxed-", 8);
+  const char *selected = argv[1] + (relaxedControl ? 8 : 0);
+  const bool generated = !std::strncmp(selected, "generated-publication-", 22);
+  const bool host = !std::strncmp(selected, "host-publication-", 17);
   if (!generated && !host)
     return 2;
-  const char *width = argv[1] + (generated ? 22 : 17);
-#define CHECK_WIDTH(BITS) \
-  if (!std::strcmp(width, #BITS)) \
-    return publication<std::uint##BITS##_t>(generated, gti_test_atomic_store##BITS, \
-                                          gti_test_atomic_load##BITS) ? 0 : 4;
+  const char *width = selected + (generated ? 22 : 17);
+#define CHECK_WIDTH(BITS)                                                      \
+  if (!std::strcmp(width, #BITS))                                              \
+    return publication<std::uint##BITS##_t>(                                   \
+               generated, gti_test_atomic_store##BITS,                         \
+               gti_test_atomic_load##BITS, relaxedControl)                     \
+               ? 0                                                             \
+               : 4;
   CHECK_WIDTH(8)
   CHECK_WIDTH(16)
   CHECK_WIDTH(32)

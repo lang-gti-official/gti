@@ -79,6 +79,10 @@ def main():
                     manifest["cases"].append({"mode": mode, "IR_optimization": level, "case": case,
                                               "expected_failure_exit": result.returncode})
                 for direction in ("generated", "host"):
+                    case = f"relaxed-{direction}-publication-32"
+                    result = run([binary, case], "ThreadSanitizer: data race")
+                    manifest["cases"].append({"mode": mode, "IR_optimization": level, "case": case,
+                                              "expected_failure_exit": result.returncode})
                     for bits in (8, 16, 32, 64):
                         case = f"{direction}-publication-{bits}"
                         run([binary, case])

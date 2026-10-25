@@ -62,14 +62,14 @@ std::size_t instrumentUndefinedMemory(llvm::Module &module) {
             const auto *address =
                 load ? load->getPointerOperand() : store->getPointerOperand();
             if (address->getType()->getPointerAddressSpace() != 0)
-              throw std::logic_error(
-                  "LLVM memory instrumentation requires native address space zero");
+              throw std::logic_error("LLVM memory instrumentation requires "
+                                     "native address space zero");
             accesses.push_back(&instruction);
           }
   if (accesses.empty())
     return 0;
   auto *handlerType = llvm::FunctionType::get(llvm::Type::getVoidTy(context),
-                                             {pointer, integer}, false);
+                                              {pointer, integer}, false);
   constexpr const char *handlerName = "__ubsan_handle_type_mismatch_v1_abort";
   if (const auto *existing = module.getNamedValue(handlerName)) {
     const auto *function = llvm::dyn_cast<llvm::Function>(existing);
@@ -138,6 +138,14 @@ std::size_t instrumentUndefinedMemory(llvm::Module &module) {
 
 void instrumentAddress(llvm::Module &module,
                        llvm::ModuleAnalysisManager &analyses) {
+  for (const auto &value : module.global_values())
+    if (value.getName().starts_with("__tsan_"))
+      throw std::logic_error(
+          "LLVM address and thread instrumentation are incompatible");
+  for (const auto &function : module)
+    if (function.hasFnAttribute(llvm::Attribute::SanitizeThread))
+      throw std::logic_error(
+          "LLVM address and thread instrumentation are incompatible");
   for (auto &function : module)
     if (!function.isDeclaration())
       function.addFnAttr(llvm::Attribute::SanitizeAddress);
@@ -159,7 +167,8 @@ void instrumentThread(llvm::Module &module,
       !(triple.isOSDarwin() || triple.isOSLinux()) ||
       !(triple.getArch() == llvm::Triple::aarch64 ||
         triple.getArch() == llvm::Triple::x86_64))
-    throw std::logic_error("LLVM thread instrumentation needs a supported native layout");
+    throw std::logic_error(
+        "LLVM thread instrumentation needs a supported native layout");
   // A fresh diagnostic pipeline owns these runtime names. Reject collisions or
   // repeated instrumentation before changing attributes or inserting callbacks.
   for (const auto &value : module.global_values())
@@ -168,21 +177,29 @@ void instrumentThread(llvm::Module &module,
   for (const auto &function : module) {
     if (function.hasFnAttribute(llvm::Attribute::SanitizeAddress) ||
         function.hasFnAttribute(llvm::Attribute::SanitizeThread) ||
-        function.hasFnAttribute(llvm::Attribute::DisableSanitizerInstrumentation))
-      throw std::logic_error("conflicting LLVM thread instrumentation attributes");
+        function.hasFnAttribute(
+            llvm::Attribute::DisableSanitizerInstrumentation) ||
+        function.hasFnAttribute(llvm::Attribute::Naked) ||
+        function.hasFnAttribute("sanitize_thread_no_checking_at_run_time"))
+      throw std::logic_error(
+          "conflicting LLVM thread instrumentation attributes");
     for (const auto &block : function)
       for (const auto &instruction : block) {
         const llvm::Value *address = nullptr;
         if (const auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction))
           address = load->getPointerOperand();
-        else if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction))
+        else if (const auto *store =
+                     llvm::dyn_cast<llvm::StoreInst>(&instruction))
           address = store->getPointerOperand();
-        else if (const auto *exchange = llvm::dyn_cast<llvm::AtomicRMWInst>(&instruction))
+        else if (const auto *exchange =
+                     llvm::dyn_cast<llvm::AtomicRMWInst>(&instruction))
           address = exchange->getPointerOperand();
-        else if (const auto *compare = llvm::dyn_cast<llvm::AtomicCmpXchgInst>(&instruction))
+        else if (const auto *compare =
+                     llvm::dyn_cast<llvm::AtomicCmpXchgInst>(&instruction))
           address = compare->getPointerOperand();
         if (address && address->getType()->getPointerAddressSpace() != 0)
-          throw std::logic_error("LLVM thread instrumentation requires native address space zero");
+          throw std::logic_error(
+              "LLVM thread instrumentation requires native address space zero");
       }
   }
   for (auto &function : module)
