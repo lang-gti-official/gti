@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -600,6 +601,131 @@ int main() {
           "ordinary witness does not admit an unsupported referent layout");
 }
 
+void hostedArgumentsContract(const std::filesystem::path &repository) {
+  for (const auto triple :
+       {"arm64-apple-macos", "x86_64-apple-macos", "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu"}) {
+    const auto target = parseTargetTriple(triple);
+    require(target.has_value(), "hosted ABI test names an accepted target");
+    const auto parameters = hostedNativeParameters(*target);
+    require(parameters && parameters->front() == SemanticType::Int32 &&
+                parameters->back().kind == SemanticType::RawPointer &&
+                parameters->back().arguments.size() == 1 &&
+                parameters->back().arguments.front().kind ==
+                    SemanticType::RawPointer,
+            "hosted argc and argv derive from exact target C declarations");
+  }
+  auto unsupported = TargetInfo::host();
+  unsupported.arch = "unsupported";
+  require(!hostedNativeParameters(unsupported),
+          "unsupported target cannot guess a hosted native ABI");
+  llvm::LLVMContext context;
+  llvm::IRBuilder<> ir(context);
+  const auto low = std::int64_t(std::numeric_limits<std::int32_t>::min());
+  const auto high = std::int64_t(std::numeric_limits<std::int32_t>::max());
+  for (const auto count :
+       {std::numeric_limits<std::int64_t>::min(), low - 1, low,
+        std::int64_t(-1), std::int64_t(0), high, high + 1,
+        std::numeric_limits<std::int64_t>::max()}) {
+    const auto *outside = llvm::dyn_cast<llvm::ConstantInt>(
+        hostedCountOutOfRange(ir, ir.getInt64(count)));
+    require(outside && outside->isOne() == (count < low || count > high),
+            "count narrowing checks the entire sealed Int64 domain");
+  }
+  bool wrongWidth = false;
+  try {
+    static_cast<void>(hostedCountOutOfRange(ir, ir.getInt32(0)));
+  } catch (const std::logic_error &) {
+    wrongWidth = true;
+  }
+  require(wrongWidth,
+          "a native-width count cannot impersonate the stabilized count");
+
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      repository / "tests/fixtures/llvm_hosted_arguments.gti", std::nullopt,
+      {repository / "stdlib/prelude.gti"}, {}, {repository / "stdlib"});
+  require(frontend.canGenerateCode() && verifyMirProgram(frontend.mir).valid(),
+          "hosted arguments have a real verified source startup plan");
+  const auto &body = *frontend.mir.hostedStartup();
+  std::array<bool, 3> seen{};
+  for (const auto &block : body.blocks)
+    for (const auto &stage : block.instructions) {
+      const auto *operation =
+          hostedArgumentOperation(frontend.mir, body, block, stage);
+      if (!operation)
+        continue;
+      const auto index =
+          operation->kind ==
+                  MirHostedStartupOperationKind::ValidateArgumentCount
+              ? 0
+          : operation->kind ==
+                  MirHostedStartupOperationKind::ConvertArgumentCount
+              ? 1
+              : 2;
+      seen[index] = true;
+      auto detached = stage;
+      bool rejected = false;
+      try {
+        static_cast<void>(
+            hostedArgumentOperation(frontend.mir, body, block, detached));
+      } catch (const std::logic_error &) {
+        rejected = true;
+      }
+      require(
+          rejected,
+          "copied stage identities cannot impersonate the sealed instruction");
+      for (unsigned mutation = 0; mutation != 6; ++mutation) {
+        auto invalid = frontend.mir;
+        auto &plan = *MirProgramTestAccess::hostedPlan(invalid);
+        auto &invalidBody = *const_cast<MirBody *>(invalid.hostedStartup());
+        auto &invalidBlock = invalidBody.blocks[block.id - 1];
+        auto &invalidStage = *std::find_if(
+            invalidBlock.instructions.begin(), invalidBlock.instructions.end(),
+            [&](const auto &candidate) { return candidate.id == stage.id; });
+        auto &invalidOperation = plan.operations[operation->id - 1];
+        switch (mutation) {
+        case 0:
+          ++invalidOperation.block;
+          break;
+        case 1:
+          ++invalidOperation.instruction;
+          break;
+        case 2:
+          invalidOperation.value = 0;
+          break;
+        case 3:
+          if (invalidStage.operands.empty())
+            invalidStage.info.type = SemanticType::Int32;
+          else
+            invalidStage.operands.front().value = 0;
+          break;
+        case 4:
+          if (!invalidStage.localFailureSites.empty())
+            invalidStage.localFailureSites.front() = 0;
+          else
+            invalidOperation.failureBehavior =
+                MirHostedStartupFailureBehavior::Detect;
+          break;
+        case 5:
+          if (invalidBlock.terminator.kind == MirTerminatorKind::Invoke)
+            invalidBlock.terminator.elseTarget = invalidBlock.terminator.target;
+          else
+            invalidBlock.terminator.target = 0;
+          break;
+        }
+        require(
+            !verifyMirProgram(invalid).valid(),
+            "malformed hosted identity, site or edge cannot cross MIR sealing");
+      }
+    }
+  require(seen[0] && seen[1] && seen[2],
+          "count validation/conversion and argument view have real producer "
+          "contracts");
+}
+
 void sourceMetadataContract(const std::filesystem::path &repository) {
   FrontendOptions options;
   options.lowerReachableOnly = true;
@@ -905,6 +1031,7 @@ int main(int argc, char **argv) {
     classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]),
                                    "llvm_hosted_class_pointee_reference.gti");
     sourceMetadataContract(std::filesystem::canonical(argv[1]));
+    hostedArgumentsContract(std::filesystem::canonical(argv[1]));
     for (const auto &test : cases)
       for (auto optimization :
            {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive})
