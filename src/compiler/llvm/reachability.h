@@ -12,6 +12,13 @@ struct Reachability {
   [[nodiscard]] bool contains(LoweredGeneratedItemIdentity identity) const;
 };
 
+// Exact source implementations already selected by the sealed active-class
+// contract. This is not overload/override lookup or a native table graph.
+// Every demanded Source target must have its own sealed executable body.
+[[nodiscard]] std::vector<MirBodyAddress>
+dispatchSourceBodies(const LoweredProgram &program,
+                     HirClassInstanceId activeClass);
+
 // Unknown indirect dispatch conservatively retains the complete executable
 // inventory. Omission is never inferred from a source spelling or visibility.
 [[nodiscard]] Reachability reachableProgram(const LoweredProgram &program);

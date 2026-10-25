@@ -19,8 +19,8 @@ namespace {
 
 class Bodies final {
 public:
-  explicit Bodies(Session &session)
-      : session(session), failures(session), dispatch(session),
+  Bodies(Session &session, const LlvmAdmissionPlan &admission)
+      : session(session), failures(session), dispatch(session, admission),
         lifetimes(session, failures, dispatch,
                   [&](MirBodyAddress address) { return function(address); }),
         threadLocals(
@@ -1111,7 +1111,7 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
 } // namespace
 
 void lowerScalarProgram(Session &session, const LlvmAdmissionPlan &admission) {
-  Bodies(session).lower(admission);
+  Bodies(session, admission).lower(admission);
 }
 
 } // namespace lang::native_llvm

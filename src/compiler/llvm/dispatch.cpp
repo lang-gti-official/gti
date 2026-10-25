@@ -1,4 +1,5 @@
 #include "dispatch.h"
+#include "reachability.h"
 
 #include <algorithm>
 #include <limits>
@@ -75,6 +76,25 @@ Dispatch::Dispatch(Session &session) : session(session) {
     std::sort(family.begin(), family.end());
     family.erase(std::unique(family.begin(), family.end()), family.end());
   }
+}
+
+Dispatch::Dispatch(Session &session, const LlvmAdmissionPlan &admission)
+    : Dispatch(session) {
+  if (&admission.program() != &session.program() ||
+      admission.options().optimization != session.options().optimization ||
+      admission.options().debugInfo != session.options().debugInfo)
+    throw std::invalid_argument(
+        "LLVM dispatch admission identity differs from its session");
+  this->admission = &admission;
+}
+
+void Dispatch::preflightSourceBodies(HirClassInstanceId activeClass) const {
+  for (const auto target : dispatchSourceBodies(session.program(), activeClass))
+    if (admission && std::find(admission->requiredBodies().begin(),
+                               admission->requiredBodies().end(),
+                               target) == admission->requiredBodies().end())
+      throw BackendUnsupportedError(
+          "LLVM source dispatch implementation is outside checked admission");
 }
 
 const std::vector<DispatchViewPlan> &
@@ -186,6 +206,7 @@ VirtualRootAbi Dispatch::rootAbi(HirFunctionInstanceId root) {
 llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
                                      HirClassInstanceId sourceView,
                                      HirFunctionInstanceId root) {
+  preflightSourceBodies(activeClass);
   const auto &family = views(activeClass);
   const auto view =
       std::find_if(family.begin(), family.end(), [&](const auto &row) {
@@ -291,6 +312,7 @@ llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
 
 llvm::GlobalVariable *Dispatch::table(HirClassInstanceId activeClass,
                                       HirClassInstanceId sourceView) {
+  preflightSourceBodies(activeClass);
   const auto &family = views(activeClass);
   const auto view =
       std::find_if(family.begin(), family.end(), [&](const auto &row) {

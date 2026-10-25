@@ -390,6 +390,123 @@ int main() { Pinned value{}; return 0; }
                             "placement rather than byte transport");
 }
 
+void testDispatchStateDependencies() {
+  using namespace lang;
+  const auto verified = lower(R"(
+int selected_helper() { return 7; }
+int unused_helper() { auto call = []() -> int { return 9; }; return call(); }
+class Generated {
+public:
+  virtual int read() { return selected_helper(); }
+  int unused() { return unused_helper(); }
+};
+class Source {
+public:
+  Source() {}
+  virtual int read() { return 8; }
+};
+class Base {
+public:
+  Base() {}
+  virtual int phase() { return 1; }
+};
+class Derived : public Base {
+public:
+  Derived() : Base() {}
+  int phase() override { return 2; }
+  ~Derived() {}
+};
+class Dormant { public: virtual int read() { return unused_helper(); } };
+class EmptyBase { public: virtual int phase() { return 3; } };
+class EmptyLeaf : public EmptyBase {
+public:
+  EmptyLeaf() : EmptyBase() {}
+  int phase() override { return 4; }
+};
+void dormant(Dormant& value) {}
+int main() {
+  Generated generated{};
+  Source source{};
+  Derived derived{};
+  EmptyLeaf empty{};
+  return 0;
+}
+)");
+  const auto plan = planLlvmAdmission(verified);
+  const auto required = [&](MirBodyAddress body) {
+    return std::find(plan.requiredBodies().begin(), plan.requiredBodies().end(),
+                     body) != plan.requiredBodies().end();
+  };
+  expect(plan.closure() == LlvmAdmissionClosure::SealedEntryDependencies,
+         "no-call dispatch states retain the exact sealed dependency closure");
+  unsigned activeClasses = 0;
+  for (const auto &object : verified.program().mir().classInstances()) {
+    const auto *declaration =
+        verified.program().findClassDeclaration(object.declaration);
+    if (!declaration)
+      continue;
+    if (declaration->qualifiedName == "Dormant") {
+      for (const auto &selection : object.virtualDispatch)
+        expect(!required({MirBodyKind::Function, selection.target}),
+               "an unreachable class does not root its virtual implementation");
+    } else if (declaration->qualifiedName == "Generated" ||
+               declaration->qualifiedName == "Source" ||
+               declaration->qualifiedName == "Base" ||
+               declaration->qualifiedName == "Derived" ||
+               declaration->qualifiedName == "EmptyBase" ||
+               declaration->qualifiedName == "EmptyLeaf") {
+      ++activeClasses;
+      for (const auto &selection : object.virtualDispatch)
+        expect(
+            required({MirBodyKind::Function, selection.target}),
+            "generated/source construction and static cleanup require each "
+            "exact base/derived phase implementation without a virtual call");
+    }
+  }
+  expect(activeClasses == 6,
+         "all no-call dispatch-state controls are instantiated");
+  bool helper = false;
+  for (const auto &function : verified.program().mir().functionInstances()) {
+    const auto *declaration =
+        verified.program().findFunctionDeclaration(function.declaration);
+    if (!declaration)
+      continue;
+    if (declaration->qualifiedName == "selected_helper") {
+      helper = true;
+      expect(required({MirBodyKind::Function, function.id}),
+             "a selected table target retains its transitive ordinary helper");
+    }
+    if (declaration->qualifiedName == "unused_helper" ||
+        declaration->qualifiedName == "Generated::unused" ||
+        declaration->qualifiedName == "dormant")
+      expect(!required({MirBodyKind::Function, function.id}),
+             "dispatch-state demand does not root unrelated class methods or "
+             "helpers");
+  }
+  expect(helper, "the transitive helper has a sealed source instance");
+  const auto repeated = planLlvmAdmission(verified);
+  expect(std::equal(plan.requiredBodies().begin(), plan.requiredBodies().end(),
+                    repeated.requiredBodies().begin(),
+                    repeated.requiredBodies().end()),
+         "dispatch-state closure is deterministic in sealed inventory order");
+  const auto unsupported = planLlvmAdmission(lower(R"(
+int unsupported_helper() { auto call = []() -> int { return 9; }; return call(); }
+class Value { public: virtual int read() { return unsupported_helper(); } };
+int main() { Value value{}; return 0; }
+)"));
+  expect(unsupported.closure() == LlvmAdmissionClosure::AllExecutableBodies &&
+             !unsupported.admitted() &&
+             std::any_of(unsupported.requirements().begin(),
+                         unsupported.requirements().end(),
+                         [](const auto &use) {
+                           return use.required &&
+                                  use.entry->family == "MirBodyKind" &&
+                                  use.entry->name == "Lambda";
+                         }),
+         "a table target's unsupported helper retains existing unknown-call "
+         "conservative closure and its checked requirements");
+}
+
 void testConservativeClassWitnesses() {
   using namespace lang;
   const auto classesProved = [](const LlvmAdmissionPlan &plan) {
@@ -581,6 +698,7 @@ int main() {
     testLedger();
     testSnapshotAndWholeProgram();
     testShapeWitnesses();
+    testDispatchStateDependencies();
     testConservativeClassWitnesses();
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';

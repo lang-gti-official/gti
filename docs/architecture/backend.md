@@ -4417,6 +4417,19 @@ is limited to the shared verified exact-receiver proof and readonly access.
 No source overload/override selection or general downcast is reconstructed.
 Private tests inspect this wiring independently of public admission.
 
+Native required-body closure also follows exact selected source implementations
+from required constructor active states, verified no-schedule generated default
+events and static class cleanup recipes, even if no source virtual call occurs.
+A shared pure enumeration reads the sealed active-class target rows and requires
+each Source target's sealed executable body; the normal transitive worklist then
+checks its helpers and generated dependencies. Unreachable classes and unrelated
+methods are not new roots. Existing unknown-call/native/thread conservative
+triggers remain unchanged. Production dispatch binds the actual immutable
+admission plan and checks the complete source-target demand before publishing
+tables or adjustment bodies; final unresolved-definition checking is not an
+admission substitute. Only the owning structural test can construct an unbound
+private inspection probe. This does not admit production polymorphic execution.
+
 Source constructor bodies consume the verified constructor dispatch-state
 schedule: entry activation when there is no state-bearing base, or activation
 on the exact `InitializeBase` normal continuation. Base calls use the selected

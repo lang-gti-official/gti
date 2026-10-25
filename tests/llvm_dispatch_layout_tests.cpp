@@ -20,6 +20,14 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/Passes/PassBuilder.h>
 
+namespace lang::native_llvm {
+// This friend is intentionally defined only in the owning structural test.
+// It cannot publish a production backend artifact or replace an admission plan.
+struct DispatchStructuralTestAccess {
+  static Dispatch inspect(Session &session) { return Dispatch(session); }
+};
+} // namespace lang::native_llvm
+
 namespace {
 using namespace lang;
 using namespace lang::native_llvm;
@@ -216,7 +224,7 @@ void testPlaces(Session &session) {
 }
 
 void testThunks(Session &session) {
-  Dispatch dispatch(session);
+  auto dispatch = DispatchStructuralTestAccess::inspect(session);
   bool failing = false, direct = false, indirect = false, boolean = false,
        noResult = false;
   for (const auto &active : session.program().mir().classInstances()) {
@@ -411,7 +419,7 @@ int main() { Closed value{}; return value.read() - 1; }
   if (!input)
     throw std::runtime_error("pure gate fixture failed its source seal");
   Session session(*input, {});
-  Dispatch dispatch(session);
+  auto dispatch = DispatchStructuralTestAccess::inspect(session);
   const auto &open = named(session.program(), "Open");
   const auto &closed = named(session.program(), "Closed");
   expect(dispatch.views(open.id).front().slots.front().pure,
@@ -436,7 +444,7 @@ int main() { Closed value{}; return value.read() - 1; }
 }
 
 void testCallPlans(Session &session) {
-  Dispatch dispatch(session);
+  auto dispatch = DispatchStructuralTestAccess::inspect(session);
   std::size_t calls = 0;
   const MirInstruction *readerCall = nullptr;
   const auto &reader = named(session.program(), "Reader");
@@ -601,7 +609,7 @@ int via(Reader& value) { return value.read(); }
       for (const auto &instruction : block.instructions) {
         if (instruction.dispatch != CallDispatch::Virtual)
           continue;
-        Dispatch dispatch(session);
+        auto dispatch = DispatchStructuralTestAccess::inspect(session);
         const auto plan = dispatch.planCall(instruction);
         for (const auto &native : *lowered)
           for (const auto &operation : native)
@@ -748,7 +756,7 @@ void testStaticLifecycle() {
     throw std::runtime_error(
         "static lifecycle test lost its complete drop recipe");
   };
-  Dispatch dispatch(session);
+  auto dispatch = DispatchStructuralTestAccess::inspect(session);
   Failures failureChannel(session);
   Lifetimes lifetimes(session, failureChannel, dispatch, nativeBody);
   const auto &recipe = recipeFor(derived.id);
@@ -949,6 +957,72 @@ void testStaticLifecycle() {
   }
 }
 
+void testDispatchAdmissionBinding() {
+  const auto frontend = Frontend().analyze("llvm-dispatch-demand.gti", R"(
+class Active { public: virtual int read() { return 7; } };
+class Dormant : public Active { public: virtual int extra() { return 8; } };
+void dormant(Dormant& value) {}
+int main() { Active value{}; return 0; }
+)");
+  expect(frontend.canGenerateCode(), "no-call dispatch demand source verifies");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!input)
+    throw std::runtime_error("no-call dispatch demand source seal failed");
+  const auto admission = planLlvmAdmission(*input);
+  expect(!admission.admitted() &&
+             admission.closure() ==
+                 LlvmAdmissionClosure::SealedEntryDependencies,
+         "checked dispatch dependencies do not widen public admission or force "
+         "all unreachable bodies");
+  Session session(*input, {});
+  Dispatch dispatch(session, admission);
+  const auto &dormant = named(session.program(), "Dormant");
+  const auto functions = session.module().size();
+  const auto globals = session.module().global_size();
+  rejects<BackendUnsupportedError>(
+      [&] { static_cast<void>(dispatch.table(dormant.id, dormant.id)); },
+      "a real plan excluding a dormant implementation rejects the complete "
+      "table demand, even when another selected body is already required");
+  rejects<BackendUnsupportedError>(
+      [&] {
+        static_cast<void>(dispatch.adjustment(
+            dormant.id, dormant.id, dormant.virtualDispatch.front().root));
+      },
+      "an unrequired active class cannot bypass admission through direct "
+      "adjustment publication");
+  const auto wrongOptions = planLlvmAdmission(
+      *input, {.optimization = LlvmCodegenOptimization::Aggressive});
+  rejects<std::invalid_argument>(
+      [&] { Dispatch mismatched(session, wrongOptions); },
+      "a different options identity cannot bind checked dispatch publication");
+  const auto otherInput = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!otherInput)
+    throw std::runtime_error("no-call dispatch test lost its second snapshot");
+  const auto otherPlan = planLlvmAdmission(*otherInput);
+  rejects<std::invalid_argument>(
+      [&] { Dispatch mismatched(session, otherPlan); },
+      "equal source text is not the actual immutable admission snapshot");
+  expect(session.module().size() == functions &&
+             session.module().global_size() == globals,
+         "all missing-target/identity controls reject before any function, "
+         "thunk or table publication");
+  // Private complete-body inspection with the actual unchanged plan. There
+  // are no source virtual calls to trigger the historical all-body fallback.
+  lowerScalarProgram(session, admission);
+  const auto &active = named(session.program(), "Active");
+  auto *implementation =
+      session.abi().declareFunction(active.virtualDispatch.front().target);
+  expect(!implementation->empty(),
+         "no-call construction defines its checked source table target through "
+         "the normal body worklist, not emit-on-demand");
+  session.verify();
+}
+
 void testGeneratedEmpty() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto frontend = Frontend().analyze(
@@ -968,7 +1042,7 @@ void testGeneratedEmpty() {
   // Inspect the unchanged rejected plan privately, never publish native O10
   // artifacts or claim execution coverage from these representation probes.
   lowerScalarProgram(session, admission);
-  Dispatch dispatch(session);
+  auto dispatch = DispatchStructuralTestAccess::inspect(session);
   Failures failureChannel(session);
   const auto nativeBody = [&](MirBodyAddress address) {
     auto *function = session.module().getFunction(
@@ -1522,7 +1596,7 @@ int main() { return apply(40) - 41; }
     throw std::runtime_error(
         "optimized receiver presentation failed source coherence");
   Session session(*input, {});
-  Dispatch dispatch(session);
+  auto dispatch = DispatchStructuralTestAccess::inspect(session);
   bool found = false;
   for (const auto address : enumerateMirBodyAddresses(session.program().mir()))
     for (const auto &block :
@@ -1640,7 +1714,7 @@ void test(Session &session, const VerifiedLoweredProgram &input) {
   rejects<BackendUnsupportedError>(
       [&] { static_cast<void>(layouts.baseSubobject(leaf.type, foreignType)); },
       "an unsealed concrete target cannot enter physical layout");
-  Dispatch dispatch(session);
+  auto dispatch = DispatchStructuralTestAccess::inspect(session);
   const auto &views = dispatch.views(leaf.id);
   expect(views.size() == 5,
          "leaf state plans its own and all four inherited polymorphic views");
@@ -1759,7 +1833,7 @@ void test(Session &session, const VerifiedLoweredProgram &input) {
       },
       "an adapter cannot conceal different physical channels");
   Session independent(input, {});
-  Dispatch other(independent);
+  auto other = DispatchStructuralTestAccess::inspect(independent);
   const auto foreign = other.rootAbi(readerRoot);
   rejects<std::invalid_argument>(
       [&] {
@@ -1859,6 +1933,7 @@ int main() { return 0; }
   testPureGates();
   testBodyCallHook();
   testStaticLifecycle();
+  testDispatchAdmissionBinding();
   testGeneratedEmpty();
   testDeclarationInitializers();
   testProvedDirectReceiver();

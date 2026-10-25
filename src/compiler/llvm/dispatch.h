@@ -49,14 +49,15 @@ struct LoadedVirtualCall {
 // to the immutable input and LLVM context of one emission session.
 class Dispatch final {
 public:
-  explicit Dispatch(Session &session);
+  Dispatch(Session &session, const LlvmAdmissionPlan &admission);
+  Dispatch(Session &, const LlvmAdmissionPlan &&) = delete;
   [[nodiscard]] const std::vector<DispatchViewPlan> &
   views(HirClassInstanceId activeClass);
   [[nodiscard]] VirtualRootAbi rootAbi(HirFunctionInstanceId root);
   [[nodiscard]] const std::vector<HirFunctionInstanceId> &
   slotProfile(HirClassInstanceId view);
   // Entry receivers are the physical dispatch-pointer owner, not the logical
-  // source view. These helpers are not wired to production admission yet.
+  // source view. Public native polymorphism remains independently gated.
   [[nodiscard]] llvm::Function *adjustment(HirClassInstanceId activeClass,
                                            HirClassInstanceId sourceView,
                                            HirFunctionInstanceId root);
@@ -74,7 +75,13 @@ public:
                                             llvm::Value *evaluatedReceiver);
 
 private:
+  // Only the owning structural test defines this access shim. Production
+  // cannot construct an unbound publisher or substitute a caller-made set.
+  friend struct DispatchStructuralTestAccess;
+  explicit Dispatch(Session &session);
+  void preflightSourceBodies(HirClassInstanceId activeClass) const;
   Session &session;
+  const LlvmAdmissionPlan *admission = nullptr;
   std::map<HirClassInstanceId, std::vector<DispatchViewPlan>> views_;
   std::map<HirFunctionInstanceId, std::vector<HirFunctionInstanceId>> targets_;
   std::map<HirClassInstanceId, std::vector<HirFunctionInstanceId>> profiles_;
