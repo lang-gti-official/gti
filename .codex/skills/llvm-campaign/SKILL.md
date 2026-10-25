@@ -69,6 +69,11 @@ If that model/effort is unavailable, report it instead of silently substituting.
 
 ## Implementation Boundaries
 
+- Follow [the backend development policy](../../../docs/decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25):
+  LLVM is primary; C++ is deprecated as primary and bug-fix-only through v1.0.
+  Do not extend C++ merely to make an LLVM feature comparable. Keep supported
+  comparator regressions and independent native evidence for documented gaps;
+  neither post-1.0 C++ catch-up nor changing today's CLI default is automatic.
 - Consume verified lowered identities, MIR publication/cleanup/effects and exact
   target policy. Add genuinely missing facts to their producer and verifier;
   never rediscover source meaning in the backend or add public-type name magic.

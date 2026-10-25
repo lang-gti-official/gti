@@ -11,8 +11,29 @@ Do not restore GitHub remotes or use `gh` to publish GTI work.
 GTI is an independent, experimental, statically typed systems language with
 strong C++ syntax familiarity, explicit ownership, and deterministic cleanup.
 Its goal is a fully usable systems language with excellent safety and sound
-architecture. The reference compiler currently generates native code through
-C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
+architecture. LLVM is the primary development backend. The C++ backend is
+deprecated as the primary backend and receives bug fixes only through v1.0,
+preserving its existing supported behavior as a comparison oracle. The shipped
+default remains C++ until LLVM passes its production-promotion gates; that
+transitional default does not authorize parallel feature development. GTI is
+not a C++ wrapper, and neither backend defines its semantics.
+
+## Backend Development Policy
+
+- Prioritize new backend capabilities, optimization and feature implementation
+  in LLVM. Do not implement C++ feature parity or catch-up work during the
+  pre-1.0 campaign. C++ changes are limited to bug fixes needed to preserve its
+  existing behavior and usefulness as an oracle, including repairs for shared
+  interface changes. Do not disguise missing feature support as a bug fix.
+- Retain valid C++ regression and differential checks. Where C++ lacks support
+  or has a documented defect, require independent GTI semantic/MIR and native
+  execution evidence; do not weaken LLVM acceptance, silently skip a comparator,
+  or extend C++ merely to make a new LLVM feature testable.
+- After v1.0, C++ catch-up may be reconsidered by an explicit owner decision;
+  development does not automatically resume and parity is not promised. This
+  policy does not remove the backend or prematurely change CLI defaults.
+- See [ADR 031](docs/decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25)
+  for the budget rationale, support distinction and promotion boundary.
 
 ## Language Direction
 
