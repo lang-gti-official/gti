@@ -1,6 +1,7 @@
 #include "body.h"
 #include "failure.h"
 #include "lifetimes.h"
+#include "placement.h"
 #include "places.h"
 #include "runtime_abi.h"
 #include "scalar.h"
@@ -64,7 +65,8 @@ public:
                  guard(condition, outcome);
                }),
         channels(body.failureRecords.size() + 1),
-        blocks(body.blocks.size() + 1), live(body.dropObligations.size() + 1) {
+        blocks(body.blocks.size() + 1), live(body.dropObligations.size() + 1),
+        placement(body) {
     emit(parameters);
   }
 
@@ -88,11 +90,32 @@ private:
   std::vector<llvm::BasicBlock *> blocks;
   std::vector<llvm::Value *> live;
   llvm::Value *thisAddress = nullptr;
-  std::map<MirValueId, MirPlaceId> destinations;
+  Placement placement;
+  std::map<MirValueId, llvm::Value *> temporaries;
   llvm::Value *returnDestination = nullptr, *failureDestination = nullptr;
   llvm::Value *callerSite = nullptr, *callerArtifact = nullptr;
   const MirBlock *current = nullptr;
   const MirInstruction *stage = nullptr;
+
+  [[nodiscard]] llvm::Value *destination(MirValueId value) {
+    if (const auto *target = placement.target(value)) {
+      if (target->place)
+        return memory.address(target->place);
+      if (target->returned) {
+        if (!returnDestination)
+          throw std::logic_error("LLVM object return lost its ABI destination");
+        return returnDestination;
+      }
+      const auto &type = input.findValue(target->aggregate)->info.type;
+      return ir.CreateGEP(session.layouts().get(type).storage,
+                          destination(target->aggregate),
+                          {ir.getInt64(0), ir.getInt64(target->element)});
+    }
+    auto [entry, inserted] = temporaries.try_emplace(value, nullptr);
+    if (inserted)
+      entry->second = memory.temporary(input.findValue(value)->info.type);
+    return entry->second;
+  }
 
   [[nodiscard]] llvm::Value *load(llvm::Value *address,
                                   const SemanticType &type) {
@@ -121,7 +144,7 @@ private:
                           operand.kind == MirOperandKind::Move)) {
       auto *source = memory.address(operand.place);
       auto *value = load(source, operand.type);
-      if (operand.type.kind == SemanticType::Class) {
+      if (addressValue(operand.type)) {
         auto *target = memory.temporary(operand.type);
         store(value, target, operand.type);
         if (operand.kind == MirOperandKind::Move)
@@ -298,8 +321,8 @@ private:
       llvm::IRBuilder<> entry(&function.getEntryBlock(),
                               function.getEntryBlock().begin());
       resultSlot =
-          instruction.result && destinations.contains(*instruction.result)
-              ? memory.address(destinations.at(*instruction.result))
+          instruction.result && addressValue(resultType)
+              ? destination(*instruction.result)
               : entry.CreateAlloca(session.layouts().get(resultType).storage);
     }
     std::vector<llvm::Value *> arguments;
@@ -324,8 +347,8 @@ private:
       case AbiChannel::Argument: {
         auto *value = operand(instruction.operands.at(parameter.sourceIndex));
         if (parameter.indirect &&
-            instruction.operands.at(parameter.sourceIndex).type.kind !=
-                SemanticType::Class) {
+            !addressValue(
+                instruction.operands.at(parameter.sourceIndex).type)) {
           llvm::IRBuilder<> entry(&function.getEntryBlock(),
                                   function.getEntryBlock().begin());
           auto *slot = entry.CreateAlloca(value->getType());
@@ -494,6 +517,23 @@ private:
         if (type.kind != SemanticType::Array)
           throw BackendUnsupportedError(
               "LLVM aggregate requires a fixed array");
+        if (addressValue(type)) {
+          result = destination(*instruction.result);
+          for (std::size_t index = 0; index < instruction.operands.size();
+               ++index) {
+            const auto &source = instruction.operands[index];
+            // Fresh elements already occupy this slot. Do not even load them
+            // into an SSA aggregate: their constructor observed this address.
+            if (source.kind == MirOperandKind::Value &&
+                placement.fresh(source.value))
+              continue;
+            auto *slot =
+                ir.CreateGEP(session.layouts().get(type).storage, result,
+                             {ir.getInt64(0), ir.getInt64(index)});
+            store(operand(source), slot, type.arguments.at(0));
+          }
+          break;
+        }
         result =
             llvm::Constant::getNullValue(session.layouts().get(type).value);
         for (std::size_t index = 0; index < instruction.operands.size();
@@ -520,8 +560,8 @@ private:
             source.type.kind == SemanticType::RawPointer
                 ? memory.advance(container, source.type.arguments.at(0), index,
                                  true, false)
-                : memory.index(memory.arrayValue(container), source.type, index,
-                               true);
+                : memory.index(memory.arrayValue(container, source.type),
+                               source.type, index, true);
         result = load(address, instruction.info.type);
         break;
       }
@@ -567,6 +607,10 @@ private:
                                 result};
         result = scalars.mutate(instruction, place.type, inputs);
       }
+      if (instruction.kind == MirInstructionKind::Initialize &&
+          instruction.operands[0].kind == MirOperandKind::Value &&
+          placement.fresh(instruction.operands[0].value))
+        break;
       if (place.type.kind != SemanticType::Reference)
         result = scalars.convert(result, instruction.operands[0].type,
                                  place.type, false);
@@ -574,21 +618,18 @@ private:
       break;
     }
     case MirInstructionKind::Construct: {
-      auto *destination =
-          instruction.result && destinations.contains(*instruction.result)
-              ? memory.address(destinations.at(*instruction.result))
-              : memory.temporary(instruction.info.type);
-      lifetimes.active(ir, destination, instruction.info.type, false);
+      auto *target = destination(*instruction.result);
+      lifetimes.active(ir, target, instruction.info.type, false);
       if (instruction.constructorTarget) {
-        result = call(instruction, destination);
+        result = call(instruction, target);
       } else if (instruction.info.type.kind == SemanticType::Class &&
                  instruction.operands.size() == 1 &&
                  instruction.constructorKind != ConstructorKind::Ordinary) {
         auto *source = operand(instruction.operands[0]);
-        store(source, destination, instruction.info.type);
+        store(source, target, instruction.info.type);
         if (instruction.constructorKind == ConstructorKind::Move)
           lifetimes.moved(ir, source, instruction.info.type);
-        result = destination;
+        result = target;
       } else {
         throw BackendUnsupportedError("LLVM construction requires a selected "
                                       "constructor or generated transfer");
@@ -712,7 +753,9 @@ private:
       if (input.kind == MirBodyKind::Constructor && owner)
         lifetimes.active(ir, thisAddress, owner->type, true);
       auto *value = term.value ? operand(*term.value) : nullptr;
-      if (returnDestination && value)
+      if (returnDestination && value &&
+          !(term.value->kind == MirOperandKind::Value &&
+            placement.fresh(term.value->value)))
         store(value, returnDestination, input.returnType);
       if (abi.statusResult)
         ir.CreateRet(ir.getTrue());
@@ -764,31 +807,6 @@ private:
             header.CreatePHI(session.layouts().get(parameter.type).value, 0);
     }
     memory.allocate(globals);
-    // A fresh construction/result consumed by one exact Initialize can use
-    // that destination directly. This preserves object identity; it is not
-    // inferred from source syntax or a C++ copy-elision convention.
-    for (const auto &block : input.blocks)
-      for (const auto &stage : block.instructions)
-        if (!stage.tombstone && stage.kind == MirInstructionKind::Initialize &&
-            stage.destination && stage.operands.size() == 1 &&
-            stage.operands[0].kind == MirOperandKind::Value &&
-            stage.operands[0].type.kind == SemanticType::Class) {
-          const auto value = stage.operands[0].value;
-          const auto *definition = input.findValue(value);
-          const auto *producerBlock =
-              definition ? input.findBlock(definition->definitionBlock)
-                         : nullptr;
-          if (!producerBlock)
-            continue;
-          for (const auto &producer : producerBlock->instructions)
-            if (producer.id == definition->definition &&
-                (producer.kind == MirInstructionKind::Construct ||
-                 producer.kind == MirInstructionKind::Call)) {
-              if (!destinations.emplace(value, *stage.destination).second)
-                throw std::logic_error(
-                    "LLVM fresh value has multiple initializing destinations");
-            }
-        }
     for (std::size_t index = 0; index < abi.parameters.size(); ++index) {
       auto *argument = function.getArg(index);
       const auto &parameter = abi.parameters[index];

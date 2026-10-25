@@ -1,0 +1,26 @@
+mut int destroyed = 0;
+
+class Pinned {
+  mut Pinned* constructed_at = nullptr;
+  int id;
+
+public:
+  Pinned(int id) : id(id) { this.constructed_at = &this; }
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+  ~Pinned() { destroyed = destroyed * 10 + this.id; }
+  bool stable() { return this.constructed_at == &this; }
+};
+
+Pinned make(int id) { return Pinned(id); }
+Pinned relay(int id) { return make(id); }
+
+int main() {
+  {
+    Pinned value = relay(1);
+    if (!value.stable()) { return 1; }
+    Pinned items[2] = {make(2), Pinned(3)};
+    if (!items[0].stable() || !items[1].stable()) { return 2; }
+  }
+  return destroyed == 321 ? 0 : 3;
+}

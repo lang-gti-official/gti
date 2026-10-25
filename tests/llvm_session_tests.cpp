@@ -628,11 +628,18 @@ public:
 int divide(int value) { return 1 / value; }
 class Field {
   int id;
+  mut Field* constructed_at = nullptr;
 public:
   Field(int id, bool fail) : id(id) {
+    this.constructed_at = &this;
     if (fail) { [[discard]] divide(0); }
   }
-  ~Field() { events = events * 10 + this.id; }
+  Field(Field&) = delete;
+  Field(Field&&) = delete;
+  ~Field() {
+    if (this.constructed_at != &this) { events = 9; }
+    events = events * 10 + this.id;
+  }
 };
 class Partial {
   Field first;
@@ -644,14 +651,28 @@ public:
   ~Partial() { events = events * 10 + 4; }
 };
 int rollback(bool fail) { Partial value{fail}; return 0; }
+int array_rollback(bool fail) {
+  Field values[3] = {Field(1, false), Field(2, false), Field(3, fail)};
+  return 0;
+}
+class Exit {
+  bool fail;
+public:
+  Exit(bool fail) : fail(fail) {}
+  ~Exit() { events = 4; if (this.fail) { [[discard]] divide(0); } }
+};
+Field return_rollback(bool fail) { Exit guard{fail}; return Field(5, false); }
 int main() {
   { Ticket ticket{7}; if (ticket.read() != 7) { return 1; } }
   if (events != 12) { return 2; }
   return rollback(false);
 }
 )");
-  if (!frontend.canGenerateCode())
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
     throw std::runtime_error("invalid native class component fixture");
+  }
   std::vector<LoweredProgramIssue> issues;
   const auto program = verifiedLoweredProgram(
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
@@ -705,17 +726,24 @@ int main() {
     auto *events = session.module().getGlobalVariable(
         "__gti_native_v1_g" + std::to_string(symbol), true);
     ir.CreateStore(ir.getInt32(0), events);
+    auto *correct = ir.CreateICmpEQ(success, ir.getInt32(0));
+    unsigned probes = 0;
     for (const auto &target : program->program().mir().functionInstances()) {
       const auto *declaration =
           program->program().findFunctionDeclaration(target.declaration);
-      if (!declaration || declaration->qualifiedName != "rollback")
+      if (!declaration || (declaration->qualifiedName != "rollback" &&
+                           declaration->qualifiedName != "array_rollback" &&
+                           declaration->qualifiedName != "return_rollback"))
         continue;
+      const bool returned = declaration->qualifiedName == "return_rollback";
+      ir.CreateStore(ir.getInt32(0), events);
       const auto abi =
           session.abi().gti(target.returnType, target.parameterTypes,
                             target.mayRaiseDefinedFailure);
       expect(abi.statusResult && abi.resultDestination,
              "rollback oracle uses the real checked value ABI");
-      auto *result = ir.CreateAlloca(ir.getInt32Ty());
+      auto *result =
+          ir.CreateAlloca(session.layouts().get(target.returnType).storage);
       auto *failure = ir.CreateAlloca(session.abi().failureChannel());
       auto *status = ir.CreateCall(session.abi().declareFunction(target.id),
                                    {result, failure, ir.getTrue()});
@@ -726,19 +754,21 @@ int main() {
               session.abi().failureRecord(),
               ir.CreateStructGEP(session.abi().failureChannel(), failure, 0),
               1));
-      auto *correct = ir.CreateAnd(
-          ir.CreateICmpEQ(success, ir.getInt32(0)),
+      correct = ir.CreateAnd(
+          correct,
           ir.CreateAnd(
               ir.CreateNot(status),
               ir.CreateAnd(
                   ir.CreateICmpEQ(ir.CreateLoad(ir.getInt32Ty(), events),
-                                  ir.getInt32(21)),
+                                  ir.getInt32(returned ? 45 : 21)),
                   ir.CreateICmpEQ(code,
                                   ir.getInt16(static_cast<unsigned>(
                                       DefinedFailureCode::DivisionByZero))))));
-      ir.CreateRet(ir.CreateSelect(correct, ir.getInt32(0), ir.getInt32(1)));
-      break;
+      ++probes;
     }
+    expect(probes == 3,
+           "field, array and prepared-return rollback probes found");
+    ir.CreateRet(ir.CreateSelect(correct, ir.getInt32(0), ir.getInt32(1)));
     expect(!ir.GetInsertBlock()->empty() &&
                ir.GetInsertBlock()->back().isTerminator(),
            "rollback function was found by sealed declaration identity");

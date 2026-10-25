@@ -29,7 +29,8 @@ public:
   [[nodiscard]] llvm::Value *index(llvm::Value *address,
                                    const SemanticType &type,
                                    llvm::Value *offset, bool checked);
-  [[nodiscard]] llvm::Value *arrayValue(llvm::Value *value);
+  [[nodiscard]] llvm::Value *arrayValue(llvm::Value *value,
+                                        const SemanticType &type);
   [[nodiscard]] llvm::Value *advance(llvm::Value *address,
                                      const SemanticType &pointee,
                                      llvm::Value *offset, bool signedOffset,

@@ -259,8 +259,8 @@ public:
 };
 int main() { Pinned value{}; return 0; }
 )"));
-  expect(!pinned.admitted(), "immovable storage needs end-to-end destination "
-                             "placement, not byte transport");
+  expect(pinned.admitted(), "immovable ordinary objects use final destination "
+                            "placement rather than byte transport");
 }
 
 } // namespace
