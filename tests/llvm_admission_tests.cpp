@@ -50,9 +50,10 @@ void testConcreteParameterPackPlan() {
   expect(prefix({SemanticType::Int32, SemanticType::Bool, SemanticType::Double},
                 {1, 3}, 3, pack) == 1,
          "expanded parameter types can retain one source-level pack binding");
-  expect(prefix({SemanticType::Int32, SemanticType::Bool, SemanticType::Double},
-                {1, 3, 0}, 3, pack) == 1,
-         "expanded parameter lanes retain a verified pack continuation");
+  expect(
+      !prefix({SemanticType::Int32, SemanticType::Bool, SemanticType::Double},
+              {1, 3, 0}, 3, pack),
+      "zero-valued pack continuations are not a verified owner binding form");
 
   SemanticType empty = pack;
   empty.arguments.clear();
@@ -62,10 +63,6 @@ void testConcreteParameterPackPlan() {
       !prefix({SemanticType::Int32, SemanticType::Double, SemanticType::Bool},
               {1, 3}, 3, pack),
       "pack mapping rejects reordered concrete lanes");
-  expect(
-      !prefix({SemanticType::Int32, SemanticType::Bool, SemanticType::Double},
-              {1, 0, 3}, 3, pack),
-      "pack mapping rejects ambiguous zero bindings before the pack");
   expect(!prefix({pack, SemanticType::Int32}, {3, 1}, 3, pack),
          "pack mapping rejects a non-trailing source pack");
   SemanticType symbolic = pack;

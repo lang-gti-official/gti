@@ -72,23 +72,7 @@ concretePackPrefix(std::span<const SemanticType> parameters,
       return prefix;
   }
 
-  if (parameters.size() != bindings.size())
-    return std::nullopt;
-
-  const auto first = std::find(bindings.begin(), bindings.end(), packBinding);
-  if (first == bindings.end() ||
-      std::find(first + 1, bindings.end(), packBinding) != bindings.end())
-    return std::nullopt;
-  const std::size_t prefix = static_cast<std::size_t>(first - bindings.begin());
-  if (prefix + packType.arguments.size() != parameters.size() ||
-      !std::equal(packType.arguments.begin(), packType.arguments.end(),
-                  parameters.begin() + prefix) ||
-      std::any_of(bindings.begin(), first,
-                  [](HirBindingId binding) { return binding == 0; }) ||
-      std::any_of(first + 1, bindings.end(),
-                  [](HirBindingId binding) { return binding != 0; }))
-    return std::nullopt;
-  return prefix;
+  return std::nullopt;
 }
 
 std::optional<ConcreteParameterPlan>

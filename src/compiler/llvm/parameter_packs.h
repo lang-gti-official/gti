@@ -33,9 +33,9 @@ flattenConcreteParameters(std::span<const SemanticType> parameters);
 
 // Concrete instances currently retain either the source trailing TypePack or
 // already-expanded ABI lanes. Expanded owners may retain the source binding
-// list (one trailing binding for the whole pack), or assign the source binding
-// to the first lane and zero to continuation lanes. Resolve all verified forms
-// through one exact plan; an empty trailing pack has no ABI lane.
+// list with one trailing binding for the whole pack. Resolve both verified
+// forms through one exact plan; an empty trailing pack has no ABI lane. A
+// per-lane binding vector with zero-valued continuations is not sealed MIR.
 [[nodiscard]] std::optional<std::size_t>
 concretePackPrefix(std::span<const SemanticType> parameters,
                    std::span<const HirBindingId> bindings,
