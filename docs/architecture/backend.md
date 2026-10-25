@@ -5130,6 +5130,9 @@ The scalar producer supplies a `gti.llvm.case-context-sidecar/v1` envelope bound
 to its unchanged execution-evidence manifest. Its runtime-failure programs are
 positive compilation obligations with exit/diagnostic and complete differential
 assertions; historical unsupported-operation controls remain a separate set.
+An explicit producer-declared partition policy binds each set's roles;
+swapping a valid role across that boundary rejects rather than redefining the
+source obligation. Unclassified roles require an explicit policy declaration.
 Source materialization, endpoint arguments, cwd/environment policy, time bounds
 and assertion data come from the harness's own records and argument planner.
 The sidecar is unrun metadata, never a passing execution receipt. Unresolved

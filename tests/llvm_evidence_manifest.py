@@ -14,18 +14,20 @@ def manifest_digest(manifest: dict) -> str:
     return sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def build_context_sidecar(manifest: dict, cases: dict, controls: dict) -> dict:
+def build_context_sidecar(manifest: dict, cases: dict, controls: dict, *,
+                          partition_policy: dict[str, str]) -> dict:
     result = {"schema": CONTEXT_SCHEMA, "test": manifest["test"],
               "manifest_sha256": manifest_digest(manifest),
               "profiles": manifest["profiles"], "cases": cases,
-              "controls": controls, "observed": "unrun"}
+              "controls": controls, "partition_policy": dict(partition_policy), "observed": "unrun"}
     validate_context_sidecar(result, manifest)
     return result
 
 
 def validate_context_sidecar(sidecar: dict, manifest: dict) -> None:
     if not isinstance(sidecar, dict) or set(sidecar) != {
-            "schema", "test", "manifest_sha256", "profiles", "cases", "controls", "observed"}:
+            "schema", "test", "manifest_sha256", "profiles", "cases", "controls", "observed",
+            "partition_policy"}:
         raise ValueError("unknown or missing case-context sidecar field")
     if (sidecar["schema"] != CONTEXT_SCHEMA or sidecar["test"] != manifest["test"] or
             sidecar["manifest_sha256"] != manifest_digest(manifest) or
@@ -35,6 +37,11 @@ def validate_context_sidecar(sidecar: dict, manifest: dict) -> None:
     if (not isinstance(cases, dict) or not isinstance(controls, dict) or
             set(cases) != set(manifest["sources"]) or set(cases) & set(controls)):
         raise ValueError("case-context membership differs from its execution manifest")
+    roles = {"positive-admission", "expected-rejection-control", "unclassified"}
+    policy = sidecar["partition_policy"]
+    if (not isinstance(policy, dict) or set(policy) != {"cases", "controls"} or
+            any(not isinstance(role, str) or role not in roles for role in policy.values())):
+        raise ValueError("case-context needs an explicit provider partition policy")
     for name, record in {**cases, **controls}.items():
         if not isinstance(record, dict) or set(record) != {"context", "role", "observation"}:
             raise ValueError("case-context record is malformed")
@@ -49,9 +56,9 @@ def validate_context_sidecar(sidecar: dict, manifest: dict) -> None:
             if (context.source_kind != expected_kind or
                     expected_kind == "repository" and context.source != source["origin"]):
                 raise ValueError("case-context source origin drifted")
-        if not isinstance(record["role"], str) or record["role"] not in {
-                "positive-admission", "expected-rejection-control", "unclassified"}:
-            raise ValueError("case-context role is unknown")
+        partition = "cases" if name in cases else "controls"
+        if record["role"] != policy[partition]:
+            raise ValueError("case-context role violates its declared provider partition")
         observation = record["observation"]
         if (not isinstance(observation, dict) or
                 not isinstance(observation.get("expectation"), dict) or

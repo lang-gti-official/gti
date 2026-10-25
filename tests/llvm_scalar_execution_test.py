@@ -311,7 +311,8 @@ def evidence_context(root: Path) -> dict:
     return build_context_sidecar(
         evidence_manifest(root),
         {name: case.sidecar_record() for name, case in cases.items() if not case.is_control},
-        {name: case.sidecar_record() for name, case in cases.items() if case.is_control})
+        {name: case.sidecar_record() for name, case in cases.items() if case.is_control},
+        partition_policy={'cases': 'positive-admission', 'controls': 'expected-rejection-control'})
 
 
 def list_evidence(root: Path) -> None:

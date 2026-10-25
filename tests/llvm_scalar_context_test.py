@@ -78,9 +78,12 @@ def equivalent(root: Path, cases: dict, sidecar: dict) -> None:
     manifest = scalar.evidence_manifest(root)
     assert manifest_digest(manifest) == FROZEN_MANIFEST, 'v1 membership/source/profile drift'
     validate_context_sidecar(sidecar, manifest)
+    assert sidecar['partition_policy'] == {
+        'cases': 'positive-admission', 'controls': 'expected-rejection-control'}
     assert set(cases) == set(FROZEN_SUCCESSES) | set(FROZEN_DIAGNOSTICS) | set(FROZEN_CONTROLS)
     assert set(sidecar['cases']) == set(manifest['sources'])
     assert set(sidecar['controls']) == set(FROZEN_CONTROLS)
+    assert all(sidecar['cases'][name]['role'] == 'positive-admission' for name in FROZEN_DIAGNOSTICS)
     for name, case in cases.items():
         control = name in FROZEN_CONTROLS
         record = sidecar['controls' if control else 'cases'][name]
@@ -196,6 +199,11 @@ def main() -> None:
         lambda value: value['profiles'].pop('scalars'),
         lambda value: value['cases']['scalars']['context'].__setitem__('source_sha256', '0' * 64),
         lambda value: value['cases']['scalars'].__setitem__('role', {}),
+        lambda value: value['cases']['scalars'].__setitem__('role', 'expected-rejection-control'),
+        lambda value: value['controls']['polymorphic-owner'].__setitem__('role', 'positive-admission'),
+        lambda value: value['cases']['signed-add'].__setitem__('role', 'expected-rejection-control'),
+        lambda value: value.pop('partition_policy'),
+        lambda value: value['partition_policy'].__setitem__('cases', 'expected-rejection-control'),
         lambda value: value['cases']['scalars']['observation'].__setitem__('expectation', 'named assertion'),
     ):
         changed = deepcopy(sidecar)
