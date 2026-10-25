@@ -229,6 +229,9 @@ public:
         }
       if (!owner)
         return false;
+      if (native_llvm::sharedOwnerRepresentation(program, *owner))
+        return self(self,
+                    SemanticType::uniqueOwnerOf(owner->type.arguments[0]));
       if (native_llvm::uninitializedStorageRepresentation(program, *owner)) {
         if (!visiting.insert(owner->id).second)
           return false;
@@ -259,10 +262,62 @@ public:
     if (leaf->kind == SemanticType::UniqueOwner && nativeValue(type))
       return Shape::NativeUniqueOwnership;
     if (leaf->kind == SemanticType::Class && nativeValue(type))
+      for (const auto &owner : program.classInstances())
+        if (owner.type == *leaf &&
+            native_llvm::sharedOwnerRepresentation(program, owner))
+          return Shape::NativeSharedOwnership;
+    if (leaf->kind == SemanticType::Class && nativeValue(type))
       return Shape::NativeClassStorage;
     return {};
   }
   bool memoryOperation(const MirInstruction &stage) const {
+    if (stage.intrinsic >= IntrinsicKind::SharedOwnerEmpty &&
+        stage.intrinsic <= IntrinsicKind::SharedOwnerSwap) {
+      const bool empty = stage.intrinsic == IntrinsicKind::SharedOwnerEmpty;
+      const bool promote =
+          stage.intrinsic == IntrinsicKind::SharedOwnerFromUnique;
+      const bool clone = stage.intrinsic == IntrinsicKind::SharedOwnerClone;
+      const bool borrow = stage.intrinsic == IntrinsicKind::SharedOwnerBorrow;
+      const bool swap = stage.intrinsic == IntrinsicKind::SharedOwnerSwap;
+      if (stage.kind != MirInstructionKind::Call || stage.functionTarget ||
+          stage.receiver ||
+          stage.operands.size() != (empty  ? 0
+                                    : swap ? 2
+                                           : 1) ||
+          stage.parameterTypes.size() != stage.operands.size())
+        return false;
+      const auto *ownerType = &stage.info.type;
+      if (!empty && !promote) {
+        const auto &parameter = stage.parameterTypes[0];
+        if (parameter.kind != SemanticType::Reference ||
+            parameter.arguments.size() != 1 ||
+            parameter.referenceAccess !=
+                (swap ? AccessMode::Mutable : AccessMode::ReadOnly))
+          return false;
+        ownerType = &parameter.arguments[0];
+        for (std::size_t index = 0; index < stage.operands.size(); ++index)
+          if (stage.operands[index].type != parameter ||
+              stage.parameterTypes[index] != parameter)
+            return false;
+      }
+      if (classShape(*ownerType) != Shape::NativeSharedOwnership)
+        return false;
+      if (empty || promote || clone)
+        return stage.info.type == *ownerType && stage.result &&
+               (!promote ||
+                stage.parameterTypes[0] ==
+                    SemanticType::uniqueOwnerOf(ownerType->arguments[0]));
+      if (borrow)
+        return stage.loan && stage.info.category == ValueCategory::Place &&
+               stage.info.access == AccessMode::ReadOnly &&
+               stage.info.type == ownerType->arguments[0];
+      return !stage.loan &&
+             stage.info.type ==
+                 (swap ? SemanticType::Void
+                  : stage.intrinsic == IntrinsicKind::SharedOwnerIsNull
+                      ? SemanticType::Bool
+                      : SemanticType::UInt64);
+    }
     if (stage.kind == MirInstructionKind::AllocateObject)
       return stage.info.type.kind == SemanticType::UniqueOwner &&
              nativeValue(stage.info.type) && stage.destination && currentBody &&
@@ -1282,6 +1337,9 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
           native_llvm::uninitializedStorageRepresentation(mir, instance) &&
                   inventory.nativeValue(instance.type)
               ? std::optional(Shape::NativeMemoryOperation)
+          : native_llvm::sharedOwnerRepresentation(mir, instance) &&
+                  inventory.nativeValue(instance.type)
+              ? std::optional(Shape::NativeSharedOwnership)
               : std::nullopt);
     if (!instance.declaredFields.empty())
       inventory.add(Shape::ClassFields, inventory.classShape(instance.type));

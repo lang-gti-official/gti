@@ -1690,6 +1690,11 @@ add_executable(gti_llvm_memory_contract_tests llvm_memory_contract_tests.cpp)
 target_include_directories(gti_llvm_memory_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_memory_contract_tests PRIVATE gti_llvm_backend)
 add_test(NAME llvm_memory_contracts COMMAND gti_llvm_memory_contract_tests)
+add_executable(gti_llvm_memory_mechanism_tests llvm_memory_mechanism_tests.cpp)
+target_include_directories(gti_llvm_memory_mechanism_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_memory_mechanism_tests PRIVATE gti_llvm_backend gti_driver)
+add_test(NAME llvm_memory_mechanisms COMMAND gti_llvm_memory_mechanism_tests)
+set_tests_properties(llvm_memory_mechanisms PROPERTIES TIMEOUT 120)
 
 if(Python3_Interpreter_FOUND)
   add_test(NAME llvm_scalar_execution

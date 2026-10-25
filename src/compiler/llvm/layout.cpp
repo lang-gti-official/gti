@@ -25,6 +25,21 @@ llvm::PointerType *Layouts::pointer() const {
   return llvm::PointerType::get(session.context(), 0);
 }
 
+const SharedOwnerLayout &Layouts::sharedOwner() {
+  if (!sharedOwner_) {
+    auto *handle =
+        llvm::StructType::create(session.context(), {pointer(), pointer()},
+                                 "__gti_native_shared_handle_v1");
+    auto *block = llvm::StructType::create(
+        session.context(),
+        {llvm::Type::getInt64Ty(session.context()), pointer()},
+        "__gti_native_shared_block_v1");
+    sharedOwner_ =
+        SharedOwnerLayout{describe(handle, true, pointer()), describe(block)};
+  }
+  return *sharedOwner_;
+}
+
 TypeLayout Layouts::describe(llvm::Type *storage, bool addressOnly,
                              llvm::Type *value) const {
   const auto &data = session.dataLayout();
@@ -142,6 +157,10 @@ TypeLayout Layouts::record(const SemanticType &type) {
   if (entry.building)
     throw std::logic_error("recursive by-value LLVM record layout");
   const auto &instance = *entry.instance;
+  if (sharedOwnerRepresentation(session.program().mir(), instance)) {
+    entry.layout = sharedOwner().handle;
+    return *entry.layout;
+  }
   const bool vacant =
       uninitializedStorageRepresentation(session.program().mir(), instance);
   if (instance.cOpaqueHandle || instance.polymorphic ||

@@ -10,6 +10,8 @@ namespace lang::native_llvm {
 [[nodiscard]] bool
 uninitializedStorageRepresentation(const MirProgram &program,
                                    const MirClassInstance &instance);
+[[nodiscard]] bool sharedOwnerRepresentation(const MirProgram &program,
+                                             const MirClassInstance &instance);
 [[nodiscard]] bool
 nativeObjectConstructionShape(const MirProgram &program,
                               const MirInstruction &instruction);

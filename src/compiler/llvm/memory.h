@@ -17,6 +17,11 @@ public:
     // A cleanup's existing private GTI status, never a second failure protocol.
     llvm::Value *status = nullptr;
   };
+  struct SharedRelease {
+    llvm::Value *last = nullptr;
+    llvm::Value *allocation = nullptr;
+    llvm::Value *block = nullptr;
+  };
 
   Memory(Session &session, llvm::IRBuilder<> &ir, Cleanup cleanup,
          MoveState moveState, Scalars::Guard guard);
@@ -25,6 +30,7 @@ public:
                                          std::span<llvm::Value *const> inputs);
   [[nodiscard]] llvm::Value *allocateObject(const MirInstruction &instruction);
   void releaseBytes(llvm::Value *address);
+  [[nodiscard]] SharedRelease releaseShared(llvm::Value *handle);
   [[nodiscard]] Result emit(const MirInstruction &instruction,
                             std::span<llvm::Value *const> inputs,
                             llvm::Value *failureChannel, bool duringFailure);
@@ -42,6 +48,8 @@ private:
                std::span<llvm::Value *const> inputs);
   [[nodiscard]] llvm::Value *allocateBytes(std::uint64_t size,
                                            std::uint64_t alignment);
+  [[nodiscard]] llvm::Value *shared(const MirInstruction &instruction,
+                                    std::span<llvm::Value *const> inputs);
   void relocate(const MirInstruction &instruction,
                 std::span<llvm::Value *const> inputs);
 };

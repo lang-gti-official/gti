@@ -20,6 +20,8 @@ CASES = {
     "provider": "llvm_memory_provider.gti",
     "empty-unique": "llvm_memory_empty_unique.gti",
     "unique": "llvm_memory_unique.gti",
+    "empty-shared": "llvm_memory_empty_shared.gti",
+    "shared": "llvm_memory_shared.gti",
 }
 REJECT = {"vacant-move": "llvm_memory_reject_vacant_move.gti"}
 FAILURES = {"guard-cleanup": ("llvm_memory_guard_cleanup.gti", "GTI-R0014",

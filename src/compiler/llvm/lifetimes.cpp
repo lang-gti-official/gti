@@ -51,6 +51,11 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
     ir.SetInsertPoint(done);
   } else if (type.kind == SemanticType::Class) {
     const auto &owner = session.layouts().instance(type);
+    if (sharedOwnerRepresentation(session.program().mir(), owner)) {
+      ir.CreateStore(llvm::Constant::getNullValue(storage), address);
+      ir.CreateRetVoid();
+      return function;
+    }
     active(ir, address, type, false);
     for (const auto &base : owner.bases)
       moved(
@@ -76,6 +81,8 @@ bool Lifetimes::needsMoveState(const SemanticType &type) const {
   if (type.kind != SemanticType::Class)
     return false;
   const auto &owner = session.layouts().instance(type);
+  if (sharedOwnerRepresentation(session.program().mir(), owner))
+    return true;
   if (owner.requiresActiveDropState)
     return true;
   for (const auto &field : owner.declaredFields)
@@ -129,6 +136,38 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
   auto *scratch = ir.CreateAlloca(session.abi().failureChannel());
   ir.CreateStore(ir.getFalse(), failed);
   const bool unique = recipe.type.kind == SemanticType::UniqueOwner;
+  const bool shared =
+      recipe.type.kind == SemanticType::Class &&
+      sharedOwnerRepresentation(session.program().mir(),
+                                session.layouts().instance(recipe.type));
+  llvm::Value *sharedBlock = nullptr;
+  llvm::Value *sharedPointee = nullptr;
+  if (shared) {
+    if (!recipe.classInstance ||
+        *recipe.classInstance != session.layouts().instance(recipe.type).id ||
+        recipe.aggregate.size() != 1 ||
+        recipe.aggregate[0].type !=
+            SemanticType::uniqueOwnerOf(recipe.type.arguments[0]) ||
+        recipe.aggregate[0].uniqueOwnerField ||
+        recipe.aggregate[0].uniqueOwnerBase ||
+        recipe.aggregate[0].captureIndex || recipe.destructor ||
+        recipe.fixedArray)
+      throw std::logic_error(
+          "LLVM shared cleanup lost its exact unique pointee recipe");
+    Memory memory(session, ir, {}, {}, {});
+    const auto released = memory.releaseShared(address);
+    sharedBlock = released.block;
+    auto *last =
+        llvm::BasicBlock::Create(session.context(), "shared.last", function);
+    auto *done = llvm::BasicBlock::Create(session.context(), "shared.released",
+                                          function);
+    ir.CreateCondBr(released.last, last, done);
+    ir.SetInsertPoint(done);
+    ir.CreateRet(ir.getTrue());
+    ir.SetInsertPoint(last);
+    sharedPointee = ir.CreateAlloca(pointer);
+    ir.CreateStore(released.allocation, sharedPointee);
+  }
   llvm::Value *allocation = nullptr;
   if (unique) {
     if (recipe.type.arguments.size() != 1 || recipe.fixedArray ||
@@ -187,7 +226,11 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
         {where, scratch,
          ir.CreateOr(duringFailure, ir.CreateLoad(ir.getInt1Ty(), failed))}));
   };
-  if (recipe.fixedArray) {
+  if (shared) {
+    child(recipe.aggregate[0], sharedPointee);
+    Memory memory(session, ir, {}, {}, {});
+    memory.releaseBytes(sharedBlock);
+  } else if (recipe.fixedArray) {
     if (recipe.type.kind != SemanticType::Array ||
         recipe.aggregate.size() > 1 ||
         (recipe.aggregate.empty() && recipe.requiresActiveCleanup))

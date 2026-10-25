@@ -141,6 +141,159 @@ void Memory::releaseBytes(llvm::Value *address) {
                      inputs);
 }
 
+Memory::SharedRelease Memory::releaseShared(llvm::Value *handle) {
+  const auto &layout = session.layouts().sharedOwner();
+  auto *value = ir.CreateLoad(layout.handle.storage, handle);
+  ir.CreateStore(llvm::Constant::getNullValue(layout.handle.storage), handle);
+  auto *block = ir.CreateExtractValue(value, layout.handleBlock);
+  auto *function = ir.GetInsertBlock()->getParent();
+  auto *empty = ir.GetInsertBlock();
+  auto *live =
+      llvm::BasicBlock::Create(session.context(), "release.live", function);
+  auto *done =
+      llvm::BasicBlock::Create(session.context(), "release.done", function);
+  ir.CreateCondBr(ir.CreateIsNull(block), done, live);
+  ir.SetInsertPoint(live);
+  // Read immutable allocation identity while this reference still protects
+  // the block. A non-last release may not touch the block after decrement.
+  auto *allocation = ir.CreateLoad(
+      session.layouts().pointer(),
+      ir.CreateStructGEP(layout.block.storage, block, layout.blockAllocation));
+  auto *strong =
+      ir.CreateStructGEP(layout.block.storage, block, layout.blockStrong);
+  auto *previous =
+      ir.CreateAtomicRMW(llvm::AtomicRMWInst::Sub, strong, ir.getInt64(1),
+                         llvm::Align(layout.block.alignment),
+                         llvm::AtomicOrdering::AcquireRelease);
+  auto *last = ir.CreateICmpEQ(previous, ir.getInt64(1));
+  ir.CreateBr(done);
+  auto *released = ir.GetInsertBlock();
+  ir.SetInsertPoint(done);
+  auto *lastResult = ir.CreatePHI(ir.getInt1Ty(), 2);
+  lastResult->addIncoming(ir.getFalse(), empty);
+  lastResult->addIncoming(last, released);
+  auto *allocationResult = ir.CreatePHI(session.layouts().pointer(), 2);
+  allocationResult->addIncoming(
+      llvm::ConstantPointerNull::get(session.layouts().pointer()), empty);
+  allocationResult->addIncoming(allocation, released);
+  return {lastResult, allocationResult, block};
+}
+
+llvm::Value *Memory::shared(const MirInstruction &instruction,
+                            std::span<llvm::Value *const> inputs) {
+  const auto &layout = session.layouts().sharedOwner();
+  const auto intrinsic = instruction.intrinsic;
+  if (intrinsic == IntrinsicKind::SharedOwnerSwap) {
+    auto *left = ir.CreateLoad(layout.handle.storage, inputs[0]);
+    auto *right = ir.CreateLoad(layout.handle.storage, inputs[1]);
+    ir.CreateStore(right, inputs[0]);
+    ir.CreateStore(left, inputs[1]);
+    return nullptr;
+  }
+  const bool creates = intrinsic == IntrinsicKind::SharedOwnerEmpty ||
+                       intrinsic == IntrinsicKind::SharedOwnerFromUnique ||
+                       intrinsic == IntrinsicKind::SharedOwnerClone;
+  llvm::Value *result = nullptr;
+  if (creates) {
+    llvm::IRBuilder<> entry(
+        &ir.GetInsertBlock()->getParent()->getEntryBlock(),
+        ir.GetInsertBlock()->getParent()->getEntryBlock().begin());
+    result = entry.CreateAlloca(layout.handle.storage);
+    ir.CreateStore(llvm::Constant::getNullValue(layout.handle.storage), result);
+  }
+  if (intrinsic == IntrinsicKind::SharedOwnerEmpty)
+    return result;
+  if (intrinsic == IntrinsicKind::SharedOwnerFromUnique) {
+    auto *function = ir.GetInsertBlock()->getParent();
+    auto *promote =
+        llvm::BasicBlock::Create(session.context(), "promote.live", function);
+    auto *done =
+        llvm::BasicBlock::Create(session.context(), "promote.done", function);
+    ir.CreateCondBr(ir.CreateIsNull(inputs[0]), done, promote);
+    ir.SetInsertPoint(promote);
+    auto *block = allocateBytes(layout.block.size, layout.block.alignment);
+    guard(ir.CreateIsNull(block), {DefinedFailureCode::AllocationFailure,
+                                   DefinedFailureDetail::SharedOwner});
+    ir.CreateStore(
+        ir.getInt64(1),
+        ir.CreateStructGEP(layout.block.storage, block, layout.blockStrong));
+    ir.CreateStore(inputs[0], ir.CreateStructGEP(layout.block.storage, block,
+                                                 layout.blockAllocation));
+    llvm::Value *value = llvm::Constant::getNullValue(layout.handle.storage);
+    value = ir.CreateInsertValue(value, block, layout.handleBlock);
+    value = ir.CreateInsertValue(value, inputs[0], layout.handleView);
+    ir.CreateStore(value, result);
+    ir.CreateBr(done);
+    ir.SetInsertPoint(done);
+    return result;
+  }
+  auto *value = ir.CreateLoad(layout.handle.storage, inputs[0]);
+  auto *block = ir.CreateExtractValue(value, layout.handleBlock);
+  auto *view = ir.CreateExtractValue(value, layout.handleView);
+  if (intrinsic == IntrinsicKind::SharedOwnerIsNull)
+    return ir.CreateIsNull(block);
+  if (intrinsic == IntrinsicKind::SharedOwnerBorrow) {
+    if (instruction.definedFailure.localOrigins.size() != 1 ||
+        instruction.definedFailure.localOrigins[0].outcomes.size() != 1 ||
+        instruction.definedFailure.localOrigins[0].outcomes[0].code !=
+            DefinedFailureCode::EmptyOwnerAccess)
+      throw std::logic_error(
+          "LLVM shared borrow lost its exact access failure");
+    guard(ir.CreateIsNull(view),
+          instruction.definedFailure.localOrigins[0].outcomes[0]);
+    return view;
+  }
+  auto *function = ir.GetInsertBlock()->getParent();
+  auto *empty = ir.GetInsertBlock();
+  auto *live =
+      llvm::BasicBlock::Create(session.context(), "shared.live", function);
+  auto *done =
+      llvm::BasicBlock::Create(session.context(), "shared.done", function);
+  ir.CreateCondBr(ir.CreateIsNull(block), done, live);
+  ir.SetInsertPoint(live);
+  auto *strong =
+      ir.CreateStructGEP(layout.block.storage, block, layout.blockStrong);
+  auto *count = ir.CreateLoad(ir.getInt64Ty(), strong);
+  count->setAlignment(llvm::Align(layout.block.alignment));
+  count->setAtomic(llvm::AtomicOrdering::Monotonic);
+  if (intrinsic == IntrinsicKind::SharedOwnerUseCount) {
+    ir.CreateBr(done);
+    ir.SetInsertPoint(done);
+    auto *observed = ir.CreatePHI(ir.getInt64Ty(), 2);
+    observed->addIncoming(ir.getInt64(0), empty);
+    observed->addIncoming(count, live);
+    return observed;
+  }
+  if (intrinsic != IntrinsicKind::SharedOwnerClone)
+    throw std::logic_error("LLVM shared dispatch lost its sealed operation");
+  auto *retry =
+      llvm::BasicBlock::Create(session.context(), "retain.retry", function);
+  auto *retained =
+      llvm::BasicBlock::Create(session.context(), "retained", function);
+  ir.CreateBr(retry);
+  ir.SetInsertPoint(retry);
+  auto *expected = ir.CreatePHI(ir.getInt64Ty(), 2);
+  expected->addIncoming(count, live);
+  guard(ir.CreateICmpEQ(expected,
+                        ir.getInt64(std::numeric_limits<std::uint64_t>::max())),
+        {DefinedFailureCode::AllocationFailure,
+         DefinedFailureDetail::SharedOwner});
+  // Nonwrapping relaxed retain: there is no transient zero/overflow state
+  // that a concurrent last-release could mistake for an empty block.
+  auto *exchange = ir.CreateAtomicCmpXchg(
+      strong, expected, ir.CreateAdd(expected, ir.getInt64(1)),
+      llvm::Align(layout.block.alignment), llvm::AtomicOrdering::Monotonic,
+      llvm::AtomicOrdering::Monotonic);
+  expected->addIncoming(ir.CreateExtractValue(exchange, 0),
+                        ir.GetInsertBlock());
+  ir.CreateCondBr(ir.CreateExtractValue(exchange, 1), retained, retry);
+  ir.SetInsertPoint(retained);
+  ir.CreateStore(value, result);
+  ir.CreateBr(done);
+  ir.SetInsertPoint(done);
+  return result;
+}
+
 bool uninitializedStorageRepresentation(const MirProgram &program,
                                         const MirClassInstance &instance) {
   return instance.compilerCapability ==
@@ -153,6 +306,22 @@ bool uninitializedStorageRepresentation(const MirProgram &program,
          instance.destructorStatus == SpecialMemberStatus::Generated &&
          !instance.requiresActiveCleanup && !instance.requiresActiveDropState &&
          !instance.polymorphic && !instance.abstract && !instance.cAbiRecord &&
+         !instance.cOpaqueHandle && !instance.cAbiLayout &&
+         !instance.unionLayout;
+}
+
+bool sharedOwnerRepresentation(const MirProgram &program,
+                               const MirClassInstance &instance) {
+  return instance.compilerCapability ==
+             CompilerCapabilityTypeKind::SharedOwner &&
+         instance.type.kind == SemanticType::Class &&
+         instance.type.arguments.size() == 1 &&
+         mir_detail::completeObjectType(program, instance.type.arguments[0]) &&
+         instance.declaredFields.empty() && instance.bases.empty() &&
+         instance.structuralBases.empty() && !instance.destructor &&
+         instance.destructorStatus == SpecialMemberStatus::Generated &&
+         !instance.requiresActiveDropState && !instance.polymorphic &&
+         !instance.abstract && !instance.cAbiRecord &&
          !instance.cOpaqueHandle && !instance.cAbiLayout &&
          !instance.unionLayout;
 }
@@ -259,6 +428,13 @@ bool Memory::handles(IntrinsicKind intrinsic) {
   case IntrinsicKind::UniqueOwnerBorrowMut:
   case IntrinsicKind::UniqueOwnerIsNull:
   case IntrinsicKind::UniqueOwnerSwap:
+  case IntrinsicKind::SharedOwnerEmpty:
+  case IntrinsicKind::SharedOwnerFromUnique:
+  case IntrinsicKind::SharedOwnerClone:
+  case IntrinsicKind::SharedOwnerBorrow:
+  case IntrinsicKind::SharedOwnerIsNull:
+  case IntrinsicKind::SharedOwnerUseCount:
+  case IntrinsicKind::SharedOwnerSwap:
     return true;
   default:
     return false;
@@ -305,6 +481,14 @@ Memory::Result Memory::emit(const MirInstruction &instruction,
   if (inputs.size() != instruction.operands.size())
     throw std::logic_error("LLVM memory operation lost its evaluated inputs");
   switch (instruction.intrinsic) {
+  case IntrinsicKind::SharedOwnerEmpty:
+  case IntrinsicKind::SharedOwnerFromUnique:
+  case IntrinsicKind::SharedOwnerClone:
+  case IntrinsicKind::SharedOwnerBorrow:
+  case IntrinsicKind::SharedOwnerIsNull:
+  case IntrinsicKind::SharedOwnerUseCount:
+  case IntrinsicKind::SharedOwnerSwap:
+    return {true, shared(instruction, inputs)};
   case IntrinsicKind::UniqueOwnerBorrow:
   case IntrinsicKind::UniqueOwnerBorrowMut:
   case IntrinsicKind::UniqueOwnerIsNull: {

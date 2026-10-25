@@ -70,6 +70,7 @@ enum class Shape {
   NativeMemoryOperation,
   NativeProcessMemory,
   NativeUniqueOwnership,
+  NativeSharedOwnership,
   UnstagedConstructorFieldPublication,
   NativeClassRawAccess,
   NativeObjectAddress,
