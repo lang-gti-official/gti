@@ -276,7 +276,7 @@ def main() -> None:
         initialized.mkdir()
         initialized_manifest = collector.read_json(sealed / "run.json")
         initialized_manifest["run_id"] = "initialization-control"
-        initialized_manifest["host"]["run"] = str(initialized)
+        initialized_manifest["host"]["run"] = str(initialized.resolve())
         collector.write_json(initialized / "run.json", initialized_manifest)
         collector.collect(initialized, root, one, helper, report, [single],
                           resume=True, scope="focused-controls")
