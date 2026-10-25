@@ -57,7 +57,8 @@ Abi::Abi(Session &session, Layouts &layouts)
   auto *i32 = llvm::Type::getInt32Ty(c);
   auto *i64 = llvm::Type::getInt64Ty(c);
   auto *ptr = layouts.pointer();
-  textView_ = llvm::StructType::create(c, {ptr, i64}, "gti.c.text_view.v1");
+  textView_ =
+      llvm::cast<llvm::StructType>(layouts.get(SemanticType::StringView).value);
   failureRecord_ = llvm::StructType::create(
       c,
       {i32, i16, i16, i32, i32, llvm::ArrayType::get(i8, 32), i32, i32,

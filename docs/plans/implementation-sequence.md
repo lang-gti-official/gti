@@ -10806,6 +10806,14 @@ or resolve them using source.
 
 ### O-LLVM-05: Places, References, Arrays And Borrowed Text
 
+- **State:** the passive places/reference/array/address/text execution profile
+  is implemented for 0.477.0. It includes constrained fixed-array ranges, raw/
+  null/nested addresses, arithmetic/difference, exact erased-reference transport,
+  owner-backed views and conditional selected reference results. The registered
+  profile tests run LLVM O0/O1/O2/O3 against C++20/23 O3 on macOS arm64 and
+  Linux x86_64; integration and installed-consumer evidence is retained in PR337.
+  This is the core profile, not blanket support for every projected/class or
+  borrowed-carrier shape assigned to this milestone.
 - **Unlock:** array algorithms, reference-based helpers, scalar globals and
   text-view operations without hidden allocations.
 - **Deliver:** place roots and projections, loads/stores, indexing, raw pointer
@@ -10822,6 +10830,24 @@ or resolve them using source.
   NUL/UTF-8 bytes, empty views and byte counts are preserved; conditional returned
   references, array references and mutable access execute correctly. Unsupported
   class/payload storage remains owned by later rows, not guessed from a pointer.
+- **Structural boundary:** the initial executable profile covers passive
+  primitive fixed arrays and their raw/reference forms, counted text and exact
+  opaque erasure identities. The broader enum ledger stays pending with per-use
+  structural witnesses; no whole aggregate/reference family is claimed merely
+  because these shapes execute. Class/payload/field/base/pack composition must
+  extend the same address owner as the corresponding later milestone lands.
+  Integral-enum and other nonprimitive passive array/reference compositions
+  remain explicit admission extensions, not implicit support. Array value
+  comparison also remains pending an explicit element-comparison recipe; the
+  scalar equality ledger row cannot admit it by accident. All reject in
+  preflight before LLVM emission. Extend these bounded shapes through the same
+  component; do not add another place engine or nominal public-type exception.
+- **C-string prerequisite:** current frontend call matching admits arbitrary
+  counted views beyond the documented complete-literal rule. Native admission
+  requires exact NUL-free literal provenance (including immutable local aliases)
+  and rejects the other cases without replacing outputs. Reconcile the source
+  rule and an explicit sealed conversion contract before broadening that gate;
+  do not reproduce the C++ backend's unchecked `.data()` conversion.
 
 ### O-LLVM-06: Classes, Lifecycles And Program Storage
 

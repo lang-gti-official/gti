@@ -41,6 +41,43 @@ MirOperation baseOperation(MirOperation operation) {
 Scalars::Scalars(Session &session, llvm::IRBuilder<> &ir, Guard guard)
     : session(session), ir(ir), guard(std::move(guard)) {}
 
+llvm::Constant *Scalars::constant(const ConstantValue &value,
+                                  const SemanticType &type) {
+  auto *storage = session.layouts().get(type).storage;
+  if (std::holds_alternative<NullConstant>(value))
+    return llvm::ConstantPointerNull::get(session.layouts().pointer());
+  if (const auto *text = std::get_if<std::string>(&value))
+    return llvm::cast<llvm::Constant>(literal(*text, type));
+  if (const auto *integer = std::get_if<ConstantInteger>(&value))
+    return llvm::ConstantInt::get(
+        storage, integer->negative ? uint64_t(0) - integer->magnitude
+                                   : integer->magnitude);
+  if (const auto *enumerator = std::get_if<ConstantEnum>(&value))
+    return llvm::ConstantInt::get(storage, enumerator->value.negative
+                                               ? uint64_t(0) -
+                                                     enumerator->value.magnitude
+                                               : enumerator->value.magnitude);
+  if (const auto *floating = std::get_if<BinaryFloat>(&value))
+    return llvm::cast<llvm::Constant>(literal(*floating, type));
+  if (const auto *character = std::get_if<CharacterLiteral>(&value))
+    return llvm::ConstantInt::get(storage, character->value);
+  if (const auto *boolean = std::get_if<bool>(&value))
+    return llvm::ConstantInt::get(storage, *boolean);
+  if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
+      aggregate && aggregate->value &&
+      aggregate->value->kind == ConstantAggregateKind::Array &&
+      type.kind == SemanticType::Array &&
+      aggregate->value->elements.size() == type.arrayLength) {
+    std::vector<llvm::Constant *> elements;
+    for (const auto &element : aggregate->value->elements)
+      elements.push_back(constant(element, type.arguments.at(0)));
+    return llvm::ConstantArray::get(llvm::cast<llvm::ArrayType>(storage),
+                                    elements);
+  }
+  throw BackendUnsupportedError("LLVM static datum requires an admitted scalar "
+                                "or passive array constant");
+}
+
 SemanticType Scalars::domain(const SemanticType &type) const {
   if (type.kind == SemanticType::Enum) {
     for (const auto &enumeration : session.program().mir().integralEnums())
@@ -82,6 +119,8 @@ SemanticType Scalars::common(const SemanticType &left,
 llvm::Value *Scalars::literal(const Literal &literal,
                               const SemanticType &type) {
   auto *output = session.layouts().get(type).value;
+  if (std::holds_alternative<std::nullptr_t>(literal))
+    return llvm::ConstantPointerNull::get(session.layouts().pointer());
   if (const auto *integer = std::get_if<uint64_t>(&literal))
     return llvm::ConstantInt::get(output, *integer);
   if (const auto *boolean = std::get_if<bool>(&literal))
@@ -98,10 +137,12 @@ llvm::Value *Scalars::literal(const Literal &literal,
   }
   if (const auto *text = std::get_if<std::string>(&literal)) {
     auto *data =
-        llvm::ConstantDataArray::getString(session.context(), *text, false);
+        llvm::ConstantDataArray::getString(session.context(), *text, true);
     auto *storage = new llvm::GlobalVariable(
         session.module(), data->getType(), true,
         llvm::GlobalValue::PrivateLinkage, data, "gti.text");
+    if (type.kind == SemanticType::CString)
+      return storage;
     return llvm::ConstantStruct::get(session.abi().textView(),
                                      {storage, ir.getInt64(text->size())});
   }
@@ -114,6 +155,10 @@ llvm::Value *Scalars::convert(llvm::Value *value, const SemanticType &from,
     return value;
   auto source = domain(from), target = domain(to);
   auto *output = session.layouts().get(target).value;
+  if (value->getType()->isPointerTy() && output->isPointerTy())
+    return value;
+  if (value->getType()->isPointerTy() && to == SemanticType::Bool)
+    return ir.CreateIsNotNull(value);
   if (source == target)
     return value;
   const DefinedFailureOutcome failure{

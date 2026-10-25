@@ -497,6 +497,18 @@ low-risk classification. The plan names the invariant and its affected users.
 | T2 | Shared semantic, generic, ownership or lowering behavior | T1 plus relevant subsystem suites and supported boundaries |
 | T3 | System, layout/ABI/runtime, lifecycle or optimizer invariants | T2 plus explicit platform, runtime/performance and other applicable acceptance gates |
 
+For an independent isolated change, the affected invariant and consumer graph
+determine completion coverage, not patch size or tier alone. An isolated LLVM
+lowering slice that leaves frontend semantics, MIR/LoweredProgram contracts and
+C++ emission unchanged can complete with its backend execution/rejection,
+dependency, driver, ABI, installed-consumer and required platform/performance
+checks. It does not automatically require unrelated C++ runtime matrices or
+an all-target build/full CTest run. Record the untouched boundaries and why the
+selected gates cover the change. Shared-contract or cross-cutting changes need
+broader consumer coverage; full integration/release campaigns and the combined
+batch protocol below retain their explicit full-suite requirements. This is
+test selection, not permission to skip an affected, failed or mandatory gate.
+
 The compiler-smoke execution covers scalar control flow and owning strings in
 a vector at O0/O3. The GTI executable itself is always optimized. Each plan
 also includes `compiler_pipeline`. Shared semantic/IR/representation/runtime

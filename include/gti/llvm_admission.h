@@ -50,6 +50,9 @@ struct LlvmCoverageUse {
   std::size_t occurrences = 0;
   bool required = true;
   bool executable = false;
+  // A pending vocabulary family may have a smaller implemented structural
+  // shape. The owning inventory, never a caller option, establishes this fact.
+  const LlvmCoverageEntry *implementedShape = nullptr;
 };
 
 // Sealed hosted roots admit an exact direct-dependency closure. Unknown

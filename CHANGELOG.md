@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.477.0 - Native LLVM places and borrowed text
+
+- Extend the native backend with passive fixed arrays, selected primitive/array
+  references, raw/null addresses and pointer arithmetic, checked reference
+  erasure, owner-backed text views, array ranges and counted byte operations. C++
+  remains the production default. Owning/class storage remains unsupported.
+
 ## 0.476.0 - Native LLVM scalar execution
 
 - Begin native LLVM execution for scalar functions, direct calls and control

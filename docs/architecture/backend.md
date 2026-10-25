@@ -4490,9 +4490,67 @@ Hosted `main` is emitted from the sealed NoArguments startup body and operations
 not manufactured from a special source example. Its program-initialization call,
 entry call, exit value and containment are ordinary MIR. TLS begin/drain execute
 when present in that plan (the current producer includes them when TLS storage
-exists). Owned arguments, TLS storage, projected places, references, arrays,
-classes, owners, indirect/virtual/native calls and native debug information remain
+exists). The places/text profile below adds passive projections, references and
+arrays. Owned arguments, TLS storage, class/owner storage, indirect/virtual/native
+calls and native debug information remain
 explicit limitations. No mixed-backend fallback is used. C++ stays the default.
+
+### LLVM Places And Counted Text
+
+`places.cpp` owns body-local storage, selected loan addresses and evaluated
+projections. Addresses are computed at their MIR stage, never hoisted or
+recomputed from possible owner origins. Reference results use the ABI planner's
+reference type, including pointer result destinations on checked-call success.
+Verified permission/availability operations erase; no runtime loan manager or
+LLVM alias attribute is inferred from source mutability.
+
+The current added profile admits passive fixed arrays of primitive values,
+their multidimensional projections, by-value snapshots, primitive/array
+references and constrained fixed-array range operations. Array bounds compare
+the evaluated index before address selection or access. Constant global arrays
+consume sealed recursive constants; dynamic initialization keeps MIR order.
+
+Counted byte views retain embedded NUL, UTF-8 bytes and their byte count. Text
+literals, storage, PHIs and ABI values share the session's one text-view type.
+Size/empty/index operations and byte equality require no heap allocation;
+equality checks counts and never touches data for an empty view. The text loop
+and array accesses add no `inbounds`, `noalias` or overflow promises.
+
+Raw primitive/nested addresses, null state, casts through `void*`, pointer-slot
+references, raw indexing, arithmetic and signed element differences use the
+evaluated MIR operands. Integer-plus-pointer preserves source evaluation order.
+Checked address assertions retain verified witness loans while returning the
+selected physical pointer, never the witness's address. Checked erasure uses
+the exact `ErasedObject` capability declaration identity; ordinary classes with
+similar names gain no representation support. Its opaque referent has no
+by-value object representation. Restoration/return publication retains exact
+source, producer, type and access facts. Ordinary unsafe GTI functions remain
+calls to their inventoried source bodies, not intrinsic substitutions.
+
+Literal storage includes a final NUL byte without changing counted length.
+The C-string call-input adaptation requires a complete NUL-free source literal
+or an immutable local alias traced to that literal. Dynamic views and embedded
+NUL values reject before artifact publication. Current frontend call matching
+is broader than the documented C-string rule; the native backend deliberately
+does not copy the C++ backend's unchecked `.data()` conversion. Resolving that
+frontend/MIR contract discrepancy is a separate prerequisite for broader
+C-string argument admission, not authorization for an implicit conversion.
+
+The registered profile and installed-consumer gates cover macOS arm64 and
+Linux x86_64. A self-checking 256-element/1,048,576-round update workload on
+macOS measures C++23/O3 at 85.19 ms and LLVM O3 at 77.27 ms (5 warmups,
+20 samples); executable sizes are 33,440/33,512 bytes, direct builds
+0.203/0.120 seconds, and peak compiler RSS 73.2/98.8 MB. The workload has no
+GTI heap-allocation operations; process-startup allocation was not measured.
+This is one bounded workload, not a general backend speedup claim.
+
+Integral-enum/nonprimitive array/reference composition and fixed-array value
+equality remain explicit preflight limitations. Scalar equality does not imply
+an array element comparison implementation. Class fields/lifecycles, owning storage,
+payloads and native calls remain their later milestones. Source restrictions
+are unchanged: explicit array-reference declarators and conditional lvalue
+initialization are not added by backend work. Constrained range references to
+fixed arrays are the implemented source entry point for whole-array borrowing.
 
 ### LLVM Coverage And Admission
 
@@ -4508,10 +4566,20 @@ terminator, place/projection/operand/loan/lifecycle, intrinsic, failure,
 synchronization, native-runtime, declaration/generated-item and startup enum to
 a named O-LLVM milestone. Entries distinguish pending lowering, implemented
 lowering and verified nonexecuting facts. Scalar execution entries name the
-`llvm_scalar_execution` gate. A nonexecuting permission/provenance fact can be inventoried without a
+`llvm_scalar_execution` gate; implemented places/text shapes name
+`llvm_place_execution`. A nonexecuting permission/provenance fact can be inventoried without a
 runtime operation; a source-only query marked `MustBeAbsent` cannot silently
 be erased if it appears as executable input. Neither classification grants LLVM
 attributes or permits removing a runtime check.
+
+A pending vocabulary family can have a narrower implemented shape. Each use
+retains its original ledger row and an optional inventory-produced structural
+implementation witness. Concrete primitive arrays satisfy `PassiveArrayValue`,
+not the whole `Aggregate` family; class/owning arrays remain rejected. Distinct
+shapes have distinct inventory keys, so a supported occurrence cannot hide an
+unsupported occurrence of the same enum in the same body. `MustBeAbsent` rules
+are never overridden, and callers cannot supply witnesses. These facts live in
+the backend admission plan, not in `LoweredProgram`.
 
 The compiled switches reject new unassigned enum members, including enums with
 no count sentinel. `input_fields.def` checks the decomposition of the central

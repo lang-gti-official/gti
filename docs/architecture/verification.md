@@ -10118,6 +10118,7 @@ remains pending:
 | `runtime_abi_inventory` | Clang parses every active runtime C declaration into a target-specific exact-signature/resource/failure/callback inventory retained in the build. Missing declarations and unclassified headers reject. C++ helper wrappers are not C services. |
 | `llvm_clang_coexistence`, `installed_llvm_clang_coexistence` | Both LLVM's private static backend closure and the real libclang C reader load, parse a header and shut down in the same build-tree/installed consumer. Linux ELF archive symbol isolation prevents registry interposition with libclang's shared LLVM. Tests have bounded deadlines. |
 | `llvm_scalar_execution` | Real GTI scalar/control-flow/generic/recursive programs, local/PHI staging, ordered scalar globals, IEEE special values, conversions and wrapping/saturation at native O0/O3 against C++ O3. Checked failures and plain panic compare exact exit/stdout/stderr, including original source attribution. Unsupported owners/arrays/TLS reject without replacing an existing output. Includes the shipped `examples/llvm/scalar-control-flow.gti`. Required on macOS arm64 and Linux x86_64. |
+| `llvm_place_execution` | Passive arrays/snapshots/bool storage, staged indexing, primitive/pointer-slot references and checked results, conditional selected returns, raw/null/nested/void addresses, pointer arithmetic and differences, ordinary unsafe calls, identity-bound reference erasure and owner-backed counted/C-string views. C++20/23 O3 and LLVM O0/O1/O2/O3 compare exact execution/failure output. Unsafe, expired, overlapping and read-only accesses remain source errors; unsupported C-string proofs preserve existing outputs. Includes `examples/llvm/places-and-text.gti`; required on macOS arm64 and Linux x86_64. |
 
 The existing example oracle now uses `backend_execution.py`. Default C++ runs
 retain both native standards, every marker/count/ownership check, and observable
@@ -10657,18 +10658,29 @@ invalidate many translation units even for a small textual change.
 
 After a coherent slice works, run its affected cross-phase gates, including
 negative cases and relevant native execution, cleanup, formatting, and LSP
-coverage. Keep unrelated native optimization/standard matrices and corpus
-sweeps for completion. Changes to shared lowering, ownership, failure, or
-representation contracts can affect many features, so broaden the slice's
+coverage. Add other native optimization/standard matrices and corpus sweeps
+when the affected consumer graph requires them. Changes to shared lowering,
+ownership, failure, or representation contracts can affect many features, so broaden the slice's
 checks when those dependencies make them relevant.
 
-Before declaring the complete feature delivered, build all targets and run the
-full CTest suite in the production configuration, together with applicable
-sanitizer, Tree-sitter, installed-consumer, and packaging checks. Preserve the
-existing CI/release matrices. If a broad check exposes a defect, reduce it to
-an owning regression, return to focused iteration, then rerun the affected
-gates and full completion suite on the resulting source. A fast focused pass
-is development feedback, not evidence that the whole feature is complete.
+Before declaring a feature delivered, complete a written risk-based acceptance
+plan covering the changed invariant and affected consumers. An independent
+isolated subsystem change does not automatically require building all targets
+or running the full CTest suite. For example, an LLVM-only lowering slice with
+unchanged frontend, MIR/LoweredProgram contracts and C++ emission requires its
+native execution/rejection, dependency, driver, ABI and applicable installed,
+sanitizer, platform and performance checks, not unrelated C++ feature matrices.
+Name those unchanged boundaries; a small diff or a single regression test is
+not sufficient evidence of isolation.
+
+Shared semantic/IR/runtime contracts and cross-cutting changes require broader
+consumer coverage, including the full production suite when their reach cannot
+be bounded confidently. Explicit full integration/release campaigns and the
+combined-batch protocol retain their full-suite requirements. Preserve the
+existing CI/release matrices. If a check exposes a defect, retain the failure,
+reduce it to an owning regression, and rerun affected and required gates on the
+corrected source. Never replace a failed gate with a narrower passing one or
+report an interrupted/partial full run as full-suite acceptance.
 
 Reuse the configured build tree during iteration. For a fresh production
 build, use Ninja and `CMAKE_BUILD_TYPE=Release`; do not replace or reconfigure
@@ -10763,19 +10775,20 @@ either path must receive a minimal deterministic regression in the normal
 owning suite. Snapshots should assert stable codes and narrow semantic/runtime
 markers, not entire generated files or incidental paths.
 
-At feature completion, the broad local sequence for a substantial compiler
-change is (using the chosen production build directory and resource budgets):
+When the acceptance plan requires a full production campaign, use this sequence
+with the chosen build directory and resource budgets. It is not the default
+completion requirement for every isolated compiler subsystem change:
 
 ```sh
 python3 scripts/build_window.py --kind build -- cmake --build build -j4
 python3 scripts/build_window.py --kind suite -- \
     ctest --test-dir build --parallel 4 --output-on-failure
-python3 scripts/build_window.py --kind suite -- \
-    python3 scripts/local_language_audit.py --full
 git diff --check
 ```
 
-Use focused tests first; do not turn every change into the full audit matrix.
+The separate `local_language_audit.py --full` remains opt-in and non-gating;
+run it through the shared suite window when selected. Use focused tests first;
+do not turn every change into the full audit matrix.
 
 ## Failure Capture And Opt-In Fuzzing
 

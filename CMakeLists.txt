@@ -611,6 +611,8 @@ add_library(
   "src/compiler/llvm/failure.cpp"
   "src/compiler/llvm/scalar.cpp"
   "src/compiler/llvm/body.cpp"
+  "src/compiler/llvm/places.cpp"
+  "src/compiler/llvm/text.cpp"
 )
 file(
   GENERATE

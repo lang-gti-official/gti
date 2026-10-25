@@ -75,6 +75,12 @@ C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
   for resource-exhaustion cases and an explicit reason when reproduction is
   unavailable. Code-generation fixes must check resulting execution, cleanup
   and rejection behavior where applicable, not just absence of the crash.
+  Independent isolated changes do not automatically require an all-target build
+  or full CTest run. Select acceptance from the changed invariant and affected
+  consumers; retain applicable platform, ABI/runtime and performance gates.
+  Shared-contract/cross-cutting changes and designated full integration or
+  release campaigns require broader coverage, including the full suite where
+  specified. The combined-batch requirements below remain unchanged.
 - `batch enroll` records focused admission against the published source;
   it means **ready for integration**, not merged, released or fully verified.
   Select at most eight admitted tasks explicitly with `batch prepare` and run

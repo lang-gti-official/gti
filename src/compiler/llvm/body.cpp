@@ -1,7 +1,9 @@
 #include "body.h"
 #include "failure.h"
+#include "places.h"
 #include "runtime_abi.h"
 #include "scalar.h"
+#include "text.h"
 
 #include <algorithm>
 #include <map>
@@ -39,7 +41,10 @@ public:
                   guard(condition, outcome);
                 }),
         findFunction(std::move(findFunction)), values(body.values.size() + 1),
-        places(body.places.size() + 1),
+        memory(session, ir, body, values,
+               [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
+                 guard(condition, outcome);
+               }),
         channels(body.failureRecords.size() + 1),
         blocks(body.blocks.size() + 1) {
     emit(parameters);
@@ -55,7 +60,9 @@ private:
   llvm::IRBuilder<> ir;
   Scalars scalars;
   std::function<llvm::Function *(MirBodyAddress)> findFunction;
-  std::vector<llvm::Value *> values, places, channels;
+  std::vector<llvm::Value *> values;
+  Places memory;
+  std::vector<llvm::Value *> channels;
   std::vector<llvm::BasicBlock *> blocks;
   llvm::Value *returnDestination = nullptr, *failureDestination = nullptr;
   llvm::Value *callerSite = nullptr, *callerArtifact = nullptr;
@@ -64,20 +71,20 @@ private:
 
   [[nodiscard]] llvm::Value *load(llvm::Value *address,
                                   const SemanticType &type) {
-    const auto layout = session.layouts().get(type);
-    auto *value = ir.CreateLoad(layout.storage, address);
-    return type == SemanticType::Bool ? ir.CreateTrunc(value, ir.getInt1Ty())
-                                      : value;
+    return memory.load(address, type);
   }
   void store(llvm::Value *value, llvm::Value *address,
              const SemanticType &type) {
-    if (type == SemanticType::Bool)
-      value = ir.CreateZExt(value, ir.getInt8Ty());
-    ir.CreateStore(value, address);
+    memory.store(value, address, type);
   }
   [[nodiscard]] llvm::Value *operand(const MirOperand &operand) {
     if (operand.literal)
       return scalars.literal(*operand.literal, operand.type);
+    if (operand.kind == MirOperandKind::Address ||
+        operand.kind == MirOperandKind::BorrowRead ||
+        operand.kind == MirOperandKind::BorrowWrite ||
+        operand.kind == MirOperandKind::Loan)
+      return memory.selected(operand);
     if (operand.value) {
       auto *value = values.at(operand.value);
       if (!value)
@@ -87,7 +94,7 @@ private:
     }
     if (operand.place && (operand.kind == MirOperandKind::Copy ||
                           operand.kind == MirOperandKind::Move))
-      return load(places.at(operand.place), operand.type);
+      return load(memory.address(operand.place), operand.type);
     throw BackendUnsupportedError(
         "LLVM scalar operand requires a value or a local copy");
   }
@@ -157,6 +164,44 @@ private:
       return nullptr;
     }
     if (instruction.intrinsic != IntrinsicKind::None) {
+      switch (instruction.intrinsic) {
+      case IntrinsicKind::StringViewSize:
+        return ir.CreateExtractValue(
+            load(memory.selected(*instruction.receiver),
+                 SemanticType::StringView),
+            1);
+      case IntrinsicKind::StringViewEmpty:
+        return ir.CreateICmpEQ(
+            ir.CreateExtractValue(load(memory.selected(*instruction.receiver),
+                                       SemanticType::StringView),
+                                  1),
+            ir.getInt64(0));
+      case IntrinsicKind::ArraySize:
+        return ir.getInt64(instruction.receiver->type.arrayLength);
+      case IntrinsicKind::ArrayRangeBegin:
+        return ir.getInt64(0);
+      case IntrinsicKind::EraseReference:
+      case IntrinsicKind::EraseReferenceMut:
+      case IntrinsicKind::RestoreReference:
+      case IntrinsicKind::RestoreReferenceMut:
+        return memory.selected(instruction.operands.at(0));
+      case IntrinsicKind::RawPointerConversion:
+      case IntrinsicKind::RawBorrow:
+      case IntrinsicKind::RawBorrowMut:
+        return operand(instruction.operands.at(0));
+      case IntrinsicKind::TextViewFromAddress: {
+        llvm::Value *view =
+            llvm::Constant::getNullValue(session.abi().textView());
+        view =
+            ir.CreateInsertValue(view, operand(instruction.operands.at(0)), 0);
+        return ir.CreateInsertValue(view, operand(instruction.operands.at(1)),
+                                    1);
+      }
+      case IntrinsicKind::CStringFromAddress:
+        return operand(instruction.operands.at(0));
+      default:
+        break;
+      }
       if (instruction.intrinsic ==
               IntrinsicKind::NumericTypeParameterConversion ||
           instruction.intrinsic == IntrinsicKind::NumericAliasConversion ||
@@ -205,12 +250,14 @@ private:
                                     !body->failureRecords.empty());
       callee = findFunction(*instruction.bodyTarget);
     }
+    const auto &resultType =
+        target ? target->returnType : instruction.info.type;
     llvm::Value *resultSlot = nullptr;
     if (signature.resultDestination) {
       llvm::IRBuilder<> entry(&function.getEntryBlock(),
                               function.getEntryBlock().begin());
-      resultSlot = entry.CreateAlloca(
-          session.layouts().get(instruction.info.type).storage);
+      resultSlot =
+          entry.CreateAlloca(session.layouts().get(resultType).storage);
     }
     std::vector<llvm::Value *> arguments;
     for (const auto &parameter : signature.parameters) {
@@ -260,7 +307,7 @@ private:
       jump(current->terminator.elseTarget, current->terminator.elseArguments);
       ir.SetInsertPoint(normal);
     }
-    return resultSlot ? load(resultSlot, instruction.info.type)
+    return resultSlot                      ? load(resultSlot, resultType)
            : result->getType()->isVoidTy() ? nullptr
                                            : result;
   }
@@ -271,6 +318,86 @@ private:
     llvm::Value *result = nullptr;
     switch (instruction.kind) {
     case MirInstructionKind::Compute: {
+      if ((instruction.operation == MirOperation::Equal ||
+           instruction.operation == MirOperation::NotEqual) &&
+          instruction.operands.at(0).type.kind == SemanticType::StringView) {
+        result = equalText(session, ir, operand(instruction.operands[0]),
+                           operand(instruction.operands[1]));
+        if (instruction.operation == MirOperation::NotEqual)
+          result = ir.CreateNot(result);
+        break;
+      }
+      if (instruction.operation == MirOperation::AddressOf) {
+        result = memory.selected(instruction.operands.at(0));
+        break;
+      }
+      if (instruction.operation == MirOperation::PointerAdd ||
+          instruction.operation == MirOperation::PointerSubtract ||
+          instruction.operation == MirOperation::PointerDifference) {
+        auto *left = operand(instruction.operands.at(0));
+        auto *right = operand(instruction.operands.at(1));
+        const bool reversed =
+            instruction.operation == MirOperation::PointerAdd &&
+            instruction.operands[1].type.kind == SemanticType::RawPointer;
+        const auto &type = instruction.operands[reversed ? 1 : 0].type;
+        if (reversed)
+          std::swap(left, right);
+        if (instruction.operation == MirOperation::PointerDifference) {
+          result = memory.difference(left, right, type.arguments.at(0));
+        } else {
+          const auto domain = constantIntegerDomain(
+              instruction.operands[reversed ? 0 : 1].type);
+          result = memory.advance(
+              left, type.arguments.at(0), right, domain && domain->signedValue,
+              instruction.operation == MirOperation::PointerSubtract);
+        }
+        break;
+      }
+      if ((instruction.operation == MirOperation::Equal ||
+           instruction.operation == MirOperation::NotEqual) &&
+          session.layouts()
+              .get(instruction.operands.at(0).type)
+              .value->isPointerTy()) {
+        auto *left = operand(instruction.operands[0]);
+        auto *right = operand(instruction.operands[1]);
+        result = instruction.operation == MirOperation::Equal
+                     ? ir.CreateICmpEQ(left, right)
+                     : ir.CreateICmpNE(left, right);
+        break;
+      }
+      if (instruction.operation == MirOperation::Aggregate) {
+        const auto &type = instruction.info.type;
+        if (type.kind != SemanticType::Array)
+          throw BackendUnsupportedError(
+              "LLVM aggregate requires a fixed array");
+        result =
+            llvm::Constant::getNullValue(session.layouts().get(type).value);
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          auto *element = operand(instruction.operands[index]);
+          if (type.arguments.at(0) == SemanticType::Bool)
+            element = ir.CreateZExt(element, ir.getInt8Ty());
+          result = ir.CreateInsertValue(result, element,
+                                        static_cast<unsigned>(index));
+        }
+        break;
+      }
+      if (instruction.operation == MirOperation::Index) {
+        const auto &source = instruction.operands.at(0);
+        auto *container = operand(source);
+        const auto &offset = instruction.operands.at(1);
+        auto domain = constantIntegerDomain(offset.type);
+        auto *index = ir.CreateIntCast(operand(offset), ir.getInt64Ty(),
+                                       domain && domain->signedValue);
+        auto *address =
+            source.type.kind == SemanticType::RawPointer
+                ? memory.advance(container, source.type.arguments.at(0), index,
+                                 true, false)
+                : memory.index(memory.arrayValue(container), source.type, index,
+                               true);
+        result = load(address, instruction.info.type);
+        break;
+      }
       std::vector<llvm::Value *> inputs;
       for (const auto &value : instruction.operands)
         inputs.push_back(operand(value));
@@ -281,9 +408,18 @@ private:
     case MirInstructionKind::CallInput:
     case MirInstructionKind::Move:
       result = operand(instruction.operands.at(0));
+      if (instruction.kind == MirInstructionKind::CallInput &&
+          instruction.info.type == SemanticType::CString &&
+          instruction.operands[0].type == SemanticType::StringView) {
+        if (!wholeCStringLiteral(input, instruction.operands[0]))
+          throw BackendUnsupportedError(
+              "LLVM C-string call input requires exact complete source-literal "
+              "provenance");
+        result = ir.CreateExtractValue(result, 0);
+      }
       if (instruction.kind == MirInstructionKind::Move &&
           instruction.destination)
-        store(result, places.at(*instruction.destination),
+        store(result, memory.address(*instruction.destination),
               input.findPlace(*instruction.destination)->type);
       break;
     case MirInstructionKind::Initialize:
@@ -296,17 +432,28 @@ private:
               "LLVM data initialization lost its sealed global");
         break;
       }
-      result = scalars.convert(operand(instruction.operands.at(0)),
-                               instruction.operands[0].type, place.type, false);
-      store(result, places.at(place.id), place.type);
+      result = operand(instruction.operands.at(0));
+      if (place.type.kind != SemanticType::Reference)
+        result = scalars.convert(result, instruction.operands[0].type,
+                                 place.type, false);
+      store(result, memory.address(place.id), place.type);
       break;
     }
     case MirInstructionKind::Call:
     case MirInstructionKind::CallBody:
       result = call(instruction);
+      if (instruction.loan && result && result->getType()->isPointerTy())
+        memory.publish(*instruction.loan, result);
+      break;
+    case MirInstructionKind::Borrow:
+      result = memory.selected(instruction.operands.at(0));
+      memory.publish(*instruction.loan, result);
       break;
     case MirInstructionKind::Lifecycle:
     case MirInstructionKind::EndBorrow:
+    case MirInstructionKind::ActivateBorrow:
+    case MirInstructionKind::ParkRangeCursor:
+    case MirInstructionKind::RestoreRangeCursor:
       break; // Scalar permission/availability transitions have no runtime
              // state.
     case MirInstructionKind::BeginThreadLocals:
@@ -435,33 +582,7 @@ private:
         values.at(parameter.value) =
             header.CreatePHI(session.layouts().get(parameter.type).value, 0);
     }
-    std::map<std::tuple<MirPlaceRootKind, std::size_t, std::size_t>,
-             llvm::Value *>
-        storage;
-    for (const auto &place : input.places) {
-      if (place.projections.empty() && globals.contains(place.symbol) &&
-          (place.root == MirPlaceRootKind::Symbol ||
-           input.kind == MirBodyKind::Module)) {
-        places.at(place.id) = globals.at(place.symbol);
-        continue;
-      }
-      if (!place.projections.empty() ||
-          (place.root != MirPlaceRootKind::Binding &&
-           place.root != MirPlaceRootKind::Temporary))
-        throw BackendUnsupportedError(
-            "LLVM scalar places require unprojected local bindings");
-      const auto key =
-          std::tuple(place.root,
-                     place.root == MirPlaceRootKind::Binding ? place.binding
-                                                             : place.temporary,
-                     place.root == MirPlaceRootKind::Binding ? place.symbol
-                                                             : std::size_t(0));
-      auto [slot, inserted] = storage.try_emplace(key, nullptr);
-      if (inserted)
-        slot->second =
-            ir.CreateAlloca(session.layouts().get(place.type).storage);
-      places.at(place.id) = slot->second;
-    }
+    memory.allocate(globals);
     for (std::size_t index = 0; index < abi.parameters.size(); ++index) {
       auto *argument = function.getArg(index);
       const auto &parameter = abi.parameters[index];
@@ -479,10 +600,8 @@ private:
         callerArtifact = argument;
         break;
       case AbiChannel::Argument:
-        for (const auto &place : input.places)
-          if (place.binding == parameters[parameter.sourceIndex])
-            store(parameter.indirect ? load(argument, place.type) : argument,
-                  places.at(place.id), place.type);
+        memory.parameter(parameters[parameter.sourceIndex], argument,
+                         parameter.indirect);
         break;
       case AbiChannel::Receiver:
         throw BackendUnsupportedError(
@@ -587,31 +706,12 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
   for (const auto &step :
        session.program().mir().programInitializationPlan().steps) {
     const auto &type = module->findPlace(step.storagePlace)->type;
-    if (!isPassiveScalarValueType(type) && type.kind != SemanticType::Enum)
-      continue;
+    // Admission establishes the storage family. Allocate every admitted
+    // initialization-plan root, including pointer and counted-text globals.
     auto *storage = session.layouts().get(type).storage;
     llvm::Constant *initial = llvm::Constant::getNullValue(storage);
-    if (step.dataConstant) {
-      const auto &value = *step.dataConstant;
-      if (const auto *integer = std::get_if<ConstantInteger>(&value))
-        initial = llvm::ConstantInt::get(
-            storage, integer->negative ? uint64_t(0) - integer->magnitude
-                                       : integer->magnitude);
-      else if (const auto *enumerator = std::get_if<ConstantEnum>(&value))
-        initial = llvm::ConstantInt::get(
-            storage, enumerator->value.negative
-                         ? uint64_t(0) - enumerator->value.magnitude
-                         : enumerator->value.magnitude);
-      else if (const auto *floating = std::get_if<BinaryFloat>(&value))
-        initial = llvm::cast<llvm::Constant>(scalars.literal(*floating, type));
-      else if (const auto *character = std::get_if<CharacterLiteral>(&value))
-        initial = llvm::ConstantInt::get(storage, character->value);
-      else if (const auto *boolean = std::get_if<bool>(&value))
-        initial = llvm::ConstantInt::get(storage, *boolean);
-      else
-        throw BackendUnsupportedError(
-            "LLVM static datum requires a scalar constant");
-    }
+    if (step.dataConstant)
+      initial = scalars.constant(*step.dataConstant, type);
     globals.emplace(step.symbol,
                     new llvm::GlobalVariable(
                         session.module(), storage, false,
