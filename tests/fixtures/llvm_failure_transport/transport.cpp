@@ -49,6 +49,24 @@ __attribute__((noinline)) bool frame(int *out, Channel *failure, Context *c,
   return true;
 }
 #else
+namespace {
+struct UnwindCleanup {
+  Context *context;
+  unsigned depth;
+  bool active = true;
+
+  // A fixed cleanup-only landingpad/resume schedule, not a per-frame catch,
+  // rethrow, TLS query, or new primary record. The boundary owns the record.
+  ~UnwindCleanup() noexcept {
+    if (!active)
+      return;
+    drop(context, static_cast<char>('a' + depth));
+    if (depth == 0 && context->secondary)
+      emergency(context, context->original, originate(context, true));
+  }
+};
+} // namespace
+
 __attribute__((noinline)) int leaf(Context *c, int value, bool fail) {
   event(c, 'D');
   if (fail) {
@@ -70,17 +88,11 @@ __attribute__((noinline)) int alternate(Context *c, int value, bool fail) {
 __attribute__((noinline)) int frame(Context *c, int value, bool fail,
                                     unsigned depth, Target target) {
   event(c, static_cast<char>('A' + depth));
-  int prepared;
-  try {
-    prepared = depth    ? frame(c, value, fail, depth - 1, target)
-               : target ? target(c, value, fail)
-                        : leaf(c, value, fail);
-  } catch (const Channel &failure) {
-    drop(c, static_cast<char>('a' + depth));
-    if (depth == 0 && c->secondary)
-      emergency(c, failure, originate(c, true));
-    throw; // Resume the original carrier, not a new detector/source token.
-  }
+  UnwindCleanup cleanup{c, depth};
+  const int prepared = depth    ? frame(c, value, fail, depth - 1, target)
+                       : target ? target(c, value, fail)
+                                : leaf(c, value, fail);
+  cleanup.active = false;
   drop(c, static_cast<char>('a' + depth));
   if (depth == 0 && c->return_failure) {
     const Channel failure = originate(c);

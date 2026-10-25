@@ -7,8 +7,9 @@ Example (outputs must be outside the repository):
 Two fixed C++ fixtures compile through LLVM IR to separate native executables.
 Status models Abi::gti's result/failure destinations and Boolean success return;
 unwind uses Clang's platform C++ personality and exception storage as a temporary
-carrier for the identical GTI runtime record. Explicit schedules, not C++ RAII,
-model selected MIR cleanup edges. No GTI parser, evaluator or ABI switch exists
+carrier for the identical GTI runtime record. Fixed cleanup schedules model
+selected MIR edges; a scoped guard makes Clang emit cleanup-only landingpads
+and resume, not per-frame catches. No GTI parser, evaluator or ABI switch exists
 here. Direct/dynamic fixtures are noinline, separate-TU and non-LTO on purpose;
 they do not predict whole-program inlining/devirtualization costs.
 
@@ -25,7 +26,8 @@ It excludes terminal IO and worker creation, retains checks and counts cleanup.
 Linux --wrap audits exception-storage requests (not underlying malloc calls).
 --build-resources retains per-command peak-RSS/time diagnostics via /usr/bin/time
 (on macOS this needs permission to read kernel accounting). These are not a
-whole-compiler cost comparison. Darwin allocation instrumentation remains pending.
+whole-compiler cost comparison. Darwin audits use a separate interposition dylib,
+never timing instrumentation.
 
 References (mechanism/precedent, never GTI semantic authority):
 https://llvm.org/docs/ExceptionHandling.html
@@ -200,6 +202,8 @@ def main():
                         if mode == "unwind":
                             for instruction in ("invoke ", "landingpad ", "resume ", "__gxx_personality_v0"):
                                 check(instruction in text, f"native EH machinery missing: {instruction}")
+                            check("__cxa_rethrow" not in text and "__cxa_begin_catch" not in text,
+                                  "transport frames must use cleanup/resume, not per-frame catch/rethrow")
                         else:
                             check("landingpad " not in text and "invoke " not in text,
                                   "status fixture unexpectedly unwinds")

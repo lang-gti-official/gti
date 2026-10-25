@@ -58,7 +58,7 @@ extern "C" int callback(void *opaque) noexcept {
 }
 } // namespace
 
-void event(Context *c, char tag) {
+void event(Context *c, char tag) noexcept {
   if (c->tracing) {
     require(c->used + 1 < sizeof(c->trace));
     c->trace[c->used++] = tag;
@@ -66,12 +66,12 @@ void event(Context *c, char tag) {
   }
 }
 
-void drop(Context *c, char tag) {
+void drop(Context *c, char tag) noexcept {
   ++c->drops;
   event(c, tag);
 }
 
-Channel originate(Context *c, bool secondary) {
+Channel originate(Context *c, bool secondary) noexcept {
   Channel failure{};
   failure.artifact = &artifacts[secondary ? 2 : c->caller ? 1 : 0];
   auto &record = failure.record;
@@ -95,7 +95,7 @@ Channel originate(Context *c, bool secondary) {
   return failure;
 }
 
-void audit(const Channel &failure, const Context &c) {
+void audit(const Channel &failure, const Context &c) noexcept {
   require(gti_rt_failure_validate_v2(&failure.record, failure.artifact) ==
           GTI_FAILURE_REPORT_OK_V1);
   auto invalid = failure.record;
@@ -114,7 +114,7 @@ void audit(const Channel &failure, const Context &c) {
 }
 
 [[noreturn]] void emergency(Context *c, const Channel &primary,
-                            const Channel &secondary) {
+                           const Channel &secondary) noexcept {
   audit(primary, *c);
   require(gti_rt_failure_validate_v2(&secondary.record, secondary.artifact) ==
           GTI_FAILURE_REPORT_OK_V1);

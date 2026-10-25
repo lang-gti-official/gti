@@ -22,11 +22,11 @@ struct Context {
   Channel contained{};
 };
 
-void event(Context *, char);
-void drop(Context *, char);
-Channel originate(Context *, bool secondary = false);
-void audit(const Channel &, const Context &);
-[[noreturn]] void emergency(Context *, const Channel &, const Channel &);
+void event(Context *, char) noexcept;
+void drop(Context *, char) noexcept;
+Channel originate(Context *, bool secondary = false) noexcept;
+void audit(const Channel &, const Context &) noexcept;
+[[noreturn]] void emergency(Context *, const Channel &, const Channel &) noexcept;
 
 #if TRANSPORT_STATUS
 using Target = bool (*)(int *, Channel *, Context *, int, bool);
