@@ -1686,6 +1686,11 @@ target_link_libraries(gti_llvm_clang_coexistence_smoke PRIVATE gti_llvm_backend 
 add_test(NAME llvm_clang_coexistence COMMAND gti_llvm_clang_coexistence_smoke)
 set_tests_properties(llvm_clang_coexistence PROPERTIES TIMEOUT 30)
 
+add_executable(gti_llvm_memory_contract_tests llvm_memory_contract_tests.cpp)
+target_include_directories(gti_llvm_memory_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_memory_contract_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_memory_contracts COMMAND gti_llvm_memory_contract_tests)
+
 if(Python3_Interpreter_FOUND)
   add_test(NAME llvm_scalar_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_scalar_execution_test.py"

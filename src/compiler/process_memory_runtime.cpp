@@ -7,13 +7,6 @@
 namespace lang {
 namespace {
 
-struct ProcessMemoryRuntimeSignature {
-  ProcessMemoryRuntimeOperation operation;
-  std::string_view symbol;
-  SemanticType returnType;
-  std::vector<SemanticType> parameters;
-};
-
 [[nodiscard]] const std::vector<ProcessMemoryRuntimeSignature> &signatures() {
   static const std::vector<ProcessMemoryRuntimeSignature> table = [] {
     const SemanticType address = SemanticType::rawPointerTo(SemanticType::Void);
@@ -64,13 +57,20 @@ struct ProcessMemoryRuntimeSignature {
 
 } // namespace
 
-std::string_view
-processMemoryRuntimeSymbol(ProcessMemoryRuntimeOperation operation) {
+const ProcessMemoryRuntimeSignature *
+processMemoryRuntimeSignature(ProcessMemoryRuntimeOperation operation) {
   for (const auto &signature : signatures()) {
     if (signature.operation == operation) {
-      return signature.symbol;
+      return &signature;
     }
   }
+  return nullptr;
+}
+
+std::string_view
+processMemoryRuntimeSymbol(ProcessMemoryRuntimeOperation operation) {
+  if (const auto *signature = processMemoryRuntimeSignature(operation))
+    return signature->symbol;
   return {};
 }
 

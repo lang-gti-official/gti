@@ -66,7 +66,13 @@ public:
                  guard(condition, outcome);
                }),
         objectMemory(
-            session, ir, lifetimes,
+            session, ir,
+            [this](const MirDropType &recipe) {
+              return this->lifetimes.cleanup(recipe);
+            },
+            [this](llvm::Value *address, const SemanticType &type) {
+              this->lifetimes.moved(ir, address, type);
+            },
             [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
               guard(condition, outcome);
             }),
@@ -270,7 +276,7 @@ private:
     }
     std::size_t argumentOffset = 0;
     if (instruction.intrinsic == IntrinsicKind::ObjectConstruct) {
-      if (!Memory::objectConstruction(session.program().mir(), instruction))
+      if (!nativeObjectConstructionShape(session.program().mir(), instruction))
         throw BackendUnsupportedError("LLVM object construction requires its "
                                       "exact selected/generated plan");
       constructed = operand(instruction.operands[0]);
@@ -384,6 +390,13 @@ private:
     if (!target && !instruction.bodyTarget && !constructor)
       throw BackendUnsupportedError(
           "LLVM scalar call requires an exact direct target");
+    if (target &&
+        target->processMemoryOperation != ProcessMemoryRuntimeOperation::None) {
+      std::vector<llvm::Value *> inputs;
+      for (const auto &value : instruction.operands)
+        inputs.push_back(operand(value));
+      return objectMemory.processCall(*target, inputs);
+    }
     FunctionAbi signature;
     llvm::Function *callee = nullptr;
     if (target) {
@@ -727,7 +740,7 @@ private:
     case MirInstructionKind::Construct: {
       auto *target = destination(*instruction.result);
       if (instruction.info.type.kind == SemanticType::Class &&
-          Memory::uninitializedStorage(
+          uninitializedStorageRepresentation(
               session.program().mir(),
               session.layouts().instance(instruction.info.type))) {
         const auto &object = session.layouts().instance(instruction.info.type);

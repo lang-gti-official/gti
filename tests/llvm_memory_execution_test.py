@@ -16,6 +16,8 @@ CASES = {
     "vacant": "llvm_memory_vacant.gti",
     "guards": "llvm_memory_guards.gti",
     "lifetimes": "llvm_memory_lifetimes.gti",
+    "value-lifetimes": "llvm_memory_value_lifetimes.gti",
+    "provider": "llvm_memory_provider.gti",
 }
 REJECT = {"vacant-move": "llvm_memory_reject_vacant_move.gti"}
 FAILURES = {"guard-cleanup": ("llvm_memory_guard_cleanup.gti", "GTI-R0014",

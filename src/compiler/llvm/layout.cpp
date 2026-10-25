@@ -1,5 +1,5 @@
 #include "layout.h"
-#include "memory.h"
+#include "memory_types.h"
 #include "placement.h"
 
 #include <limits>
@@ -142,7 +142,7 @@ TypeLayout Layouts::record(const SemanticType &type) {
     throw std::logic_error("recursive by-value LLVM record layout");
   const auto &instance = *entry.instance;
   const bool vacant =
-      Memory::uninitializedStorage(session.program().mir(), instance);
+      uninitializedStorageRepresentation(session.program().mir(), instance);
   if (instance.cOpaqueHandle || instance.polymorphic ||
       (instance.compilerCapability != CompilerCapabilityTypeKind::None &&
        !vacant))

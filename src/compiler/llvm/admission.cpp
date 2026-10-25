@@ -2,7 +2,7 @@
 
 #include "../mir_verification_queries.h"
 #include "coverage.h"
-#include "memory.h"
+#include "memory_types.h"
 #include "reachability.h"
 #include "text.h"
 
@@ -216,7 +216,7 @@ public:
         }
       if (!owner)
         return false;
-      if (native_llvm::Memory::uninitializedStorage(program, *owner)) {
+      if (native_llvm::uninitializedStorageRepresentation(program, *owner)) {
         if (!visiting.insert(owner->id).second)
           return false;
         const bool valid = self(self, owner->type.arguments[0]);
@@ -249,7 +249,7 @@ public:
   }
   bool memoryOperation(const MirInstruction &stage) const {
     if (stage.intrinsic == IntrinsicKind::ObjectConstruct)
-      return native_llvm::Memory::objectConstruction(program, stage) &&
+      return native_llvm::nativeObjectConstructionShape(program, stage) &&
              nativeValue(stage.parameterTypes[0].arguments[0]);
     if (stage.intrinsic == IntrinsicKind::ObjectSize ||
         stage.intrinsic == IntrinsicKind::ObjectAlignment)
@@ -1210,11 +1210,12 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     inventory.traits(instance.traits, instance.type);
     inventory.add(instance.kind);
     if (instance.compilerCapability != CompilerCapabilityTypeKind::None)
-      inventory.add(instance.compilerCapability,
-                    native_llvm::Memory::uninitializedStorage(mir, instance) &&
-                            inventory.nativeValue(instance.type)
-                        ? std::optional(Shape::NativeMemoryOperation)
-                        : std::nullopt);
+      inventory.add(
+          instance.compilerCapability,
+          native_llvm::uninitializedStorageRepresentation(mir, instance) &&
+                  inventory.nativeValue(instance.type)
+              ? std::optional(Shape::NativeMemoryOperation)
+              : std::nullopt);
     if (!instance.declaredFields.empty())
       inventory.add(Shape::ClassFields, inventory.classShape(instance.type));
     for (const auto &field : instance.declaredFields)
@@ -1235,8 +1236,12 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     inventory.required = closure.contains(*inventory.body);
     if (const auto *row = input.findBody(*inventory.body))
       inventory.source = row->identity.source;
-    inventory.add(function.definitionKind);
-    inventory.add(function.linkage);
+    const auto processMemory =
+        native_llvm::nativeProcessMemoryBinding(mir, function)
+            ? std::optional(Shape::NativeProcessMemory)
+            : std::nullopt;
+    inventory.add(function.definitionKind, processMemory);
+    inventory.add(function.linkage, processMemory);
     inventory.add(function.entryKind);
     if (function.owner)
       inventory.add(
@@ -1261,13 +1266,13 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     if (function.cThreadOperation != CThreadRuntimeOperation::None)
       inventory.add(function.cThreadOperation);
     if (function.processMemoryOperation != ProcessMemoryRuntimeOperation::None)
-      inventory.add(function.processMemoryOperation);
+      inventory.add(function.processMemoryOperation, processMemory);
     if (function.definitionKind == MirDefinitionKind::RuntimeBinding)
       inventory.add(Shape::RuntimeBinding);
     if (function.definitionKind == MirDefinitionKind::Declaration)
-      inventory.add(Shape::LibraryDeclaration);
+      inventory.add(Shape::LibraryDeclaration, processMemory);
     if (function.linkage == LanguageLinkage::C)
-      inventory.add(Shape::NativeCall);
+      inventory.add(Shape::NativeCall, processMemory);
     if (function.mayRaiseDefinedFailure)
       inventory.add(Shape::FailureReturn);
     if (function.receiverMutability != ReceiverMutability::ReadOnly)

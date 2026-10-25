@@ -68,6 +68,7 @@ enum class Shape {
   InPlaceScalarMutation,
   StoredFieldPublication,
   NativeMemoryOperation,
+  NativeProcessMemory,
   NativeClassRawAccess,
   NativeObjectAddress,
 };
