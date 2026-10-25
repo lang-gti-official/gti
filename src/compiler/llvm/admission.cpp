@@ -1166,7 +1166,11 @@ public:
               callee->requiresUnsafe &&
               stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall;
           add(stage.unsafeOperation,
-              rawClassStage &&
+              stage.unsafeOperation ==
+                          UnsafeOperationKind::ForeignPointerCall &&
+                      native_llvm::nativeProcessMemoryCall(program, stage)
+                  ? std::optional(Shape::NativeProcessMemory)
+              : rawClassStage &&
                       stage.unsafeOperation == UnsafeOperationKind::RawMember &&
                       nativeRawFieldStage(mir, stage)
                   ? std::optional(Shape::NativeClassRawAccess)

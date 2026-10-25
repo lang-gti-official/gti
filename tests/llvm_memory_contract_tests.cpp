@@ -3,6 +3,7 @@
 #include "gti/process_memory_runtime.h"
 
 #include <array>
+#include <filesystem>
 #include <iostream>
 #include <set>
 
@@ -44,7 +45,6 @@ void providerContracts() {
     target.returnType = signature->returnType;
     target.parameterTypes = signature->parameters;
     target.processMemoryOperation = operation;
-    target.mayRaiseDefinedFailure = false;
     return target;
   };
   // No source function instance exists: synthesized owner allocation still
@@ -95,10 +95,115 @@ void providerContracts() {
   ir.CreateRetVoid();
   session.verify();
 }
+
+void sourceProviderContracts(const std::filesystem::path &root) {
+  using namespace lang;
+  using namespace lang::native_llvm;
+  FrontendOptions options;
+  options.requireEntryPoint = true;
+  options.requireFunctionDefinitions = true;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      root / "tests/fixtures/llvm_memory_provider.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "public provider fixture produces verified MIR");
+    return;
+  }
+  std::vector<LoweredProgramIssue> issues;
+  auto verified = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!verified) {
+    expect(false, "public provider fixture produces a sealed lowered snapshot");
+    return;
+  }
+  const auto &program = verified->program().mir();
+  unsigned calls = 0;
+  for (const auto &function : program.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *target =
+            instruction.functionTarget
+                ? program.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (!target ||
+            target->processMemoryOperation ==
+                ProcessMemoryRuntimeOperation::None ||
+            instruction.unsafeOperation !=
+                UnsafeOperationKind::ForeignPointerCall)
+          continue;
+        ++calls;
+        expect(nativeProcessMemoryCall(program, instruction),
+               "source process-resource foreign pointer calls have an exact "
+               "per-call witness");
+        const auto reject = [&](auto mutate) {
+          auto changed = instruction;
+          mutate(changed);
+          expect(!nativeProcessMemoryCall(program, changed),
+                 "provider call mutation cannot borrow the trusted native "
+                 "adapter witness");
+        };
+        // Unit mutations exercise the shape predicate, not accepted programs.
+        reject([](auto &call) { call.functionTarget.reset(); });
+        reject([](auto &call) { call.functionTarget = 0; });
+        reject([](auto &call) { call.parameterTypes.clear(); });
+        reject([](auto &call) { call.operands[0].type = SemanticType::Bool; });
+        reject([](auto &call) {
+          call.operands[0].kind = MirOperandKind::BorrowRead;
+        });
+        reject([](auto &call) { call.info.type = SemanticType::Bool; });
+        reject([](auto &call) { call.receiver = call.operands[0]; });
+        reject([](auto &call) { call.constructorTarget = 1; });
+        reject([](auto &call) { call.lambdaTarget = 1; });
+        reject([](auto &call) {
+          call.bodyTarget = MirBodyAddress{MirBodyKind::Function, 1};
+        });
+        reject([](auto &call) { call.nativeCalleeType = SemanticType::Void; });
+        reject([](auto &call) {
+          call.unsafeOperation = UnsafeOperationKind::None;
+        });
+        reject([](auto &call) {
+          call.definedFailure.propagation = FailurePropagationKind::DirectCall;
+        });
+        reject([](auto &call) {
+          call.definedFailure.localOrigins.emplace_back();
+        });
+        reject([](auto &call) {
+          call.callableInvocation = CallableInvocationCapability::Read;
+        });
+        reject([](auto &call) { call.dispatch = CallDispatch::Virtual; });
+        reject([](auto &call) { call.info.category = ValueCategory::Place; });
+        reject([](auto &call) { call.operands[0].place = 1; });
+        reject([](auto &call) { call.operands[0].loan = 1; });
+      }
+  expect(calls >= 2,
+         "source allocation and matching release are both inspected");
+  const auto admission = planLlvmAdmission(*verified);
+  unsigned rows = 0;
+  for (const auto &use : admission.requirements())
+    if (use.required && use.entry->family == "UnsafeOperationKind" &&
+        use.entry->name == "ForeignPointerCall") {
+      ++rows;
+      expect(
+          use.implementedShape &&
+              use.implementedShape->name == "NativeProcessMemory",
+          "canonical provider witness precedes generic foreign-call admission");
+    }
+  expect(rows >= 2,
+         "the public allocator publishes required provider call requirements");
+  // Payload and constructor prerequisites are deliberately not waived by a
+  // native-call witness; full source execution is a separate mandatory gate.
+}
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+  if (argc != 2)
+    return 2;
   providerContracts();
+  sourceProviderContracts(std::filesystem::path(argv[1]));
   using namespace lang;
   using Operation = ProcessMemoryRuntimeOperation;
   std::set<std::string_view> symbols;

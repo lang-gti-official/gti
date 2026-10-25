@@ -21,5 +21,7 @@ nativeUniqueConstructionShape(const MirProgram &program,
 [[nodiscard]] bool
 nativeProcessMemoryBinding(const MirProgram &program,
                            const MirFunctionInstance &function);
+[[nodiscard]] bool nativeProcessMemoryCall(const MirProgram &program,
+                                           const MirInstruction &instruction);
 
 } // namespace lang::native_llvm

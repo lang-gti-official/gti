@@ -13,10 +13,14 @@ bool nativeProcessMemoryBinding(const MirProgram &program,
                                 const MirFunctionInstance &function) {
   const auto *signature =
       processMemoryRuntimeSignature(function.processMemoryOperation);
+  // Declaration-level mayRaiseDefinedFailure is conservative, not this C
+  // ABI's transport. The sealed source call must independently carry no GTI
+  // failure operation; neither value of that declaration bit grants one.
   return signature &&
          function.definitionKind == MirDefinitionKind::Declaration &&
          function.linkage == LanguageLinkage::C && !function.owner &&
-         !function.staticMember && !function.mayRaiseDefinedFailure &&
+         !function.staticMember && !function.cArrayCountParameter &&
+         !function.virtualMethod && !function.pureVirtual &&
          !function.requiresUnsafe && !function.tracksCaller &&
          !function.neverReturns && function.typeArguments.empty() &&
          function.valueArguments.empty() &&
@@ -26,6 +30,56 @@ bool nativeProcessMemoryBinding(const MirProgram &program,
          function.parameterTypes == signature->parameters &&
          processMemoryRuntimeSelectedForTarget(signature->operation,
                                                program.target().os);
+}
+
+bool nativeProcessMemoryCall(const MirProgram &program,
+                             const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None ||
+      instruction.intrinsic != IntrinsicKind::None ||
+      !instruction.functionTarget || instruction.receiver ||
+      instruction.constructorTarget || instruction.lambdaTarget ||
+      instruction.bodyTarget || instruction.nativeCalleeType ||
+      instruction.nativeCallbackAdapter || instruction.threadTaskAdapter ||
+      !instruction.scopedThreadTasks.empty() ||
+      instruction.dispatch != CallDispatch::Static || instruction.loan ||
+      instruction.tracksCaller || instruction.neverReturns ||
+      !instruction.definedFailure.empty() ||
+      !instruction.callableArguments.empty() ||
+      instruction.callableInvocation || instruction.callableBoundary ||
+      instruction.functionPointerFunctionTarget ||
+      instruction.functionPointerLambdaTarget)
+    return false;
+  const auto *target =
+      program.findFunctionInstance(*instruction.functionTarget);
+  if (!target || !nativeProcessMemoryBinding(program, *target) ||
+      instruction.parameterTypes != target->parameterTypes ||
+      instruction.info.type != target->returnType ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.operands.size() != target->parameterTypes.size() ||
+      instruction.result.has_value() ==
+          (target->returnType == SemanticType::Void))
+    return false;
+  for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
+    const auto &operand = instruction.operands[index];
+    if (operand.type != target->parameterTypes[index] || operand.place ||
+        operand.loan ||
+        !((operand.kind == MirOperandKind::Value && operand.value &&
+           !operand.literal) ||
+          (operand.kind == MirOperandKind::Constant && !operand.value &&
+           operand.literal)))
+      return false;
+  }
+  const bool pointer =
+      target->returnType.kind == SemanticType::RawPointer ||
+      std::any_of(target->parameterTypes.begin(), target->parameterTypes.end(),
+                  [](const auto &type) {
+                    return type.kind == SemanticType::RawPointer;
+                  });
+  return instruction.unsafeOperation ==
+         (pointer ? UnsafeOperationKind::ForeignPointerCall
+                  : UnsafeOperationKind::None);
 }
 
 Memory::Memory(Session &session, llvm::IRBuilder<> &ir, Cleanup cleanup,
