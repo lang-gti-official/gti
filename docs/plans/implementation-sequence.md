@@ -11383,8 +11383,39 @@ and allocation-symbol/optimized-cost probes pass. This is not the milestone
 exit: ownership wrappers whose
 representation needs allocator/control-block services still compose with
 O-LLVM-08, polymorphic callable erasure composes with O-LLVM-10, native
-callbacks compose with O-LLVM-11, Linux evidence and the integration campaign
-remain pending, and C04's physical failure-transport evaluation remains open.
+callbacks compose with O-LLVM-11, and the integration campaign remains
+pending. Exact-head Linux x86_64 Release evidence for `1628331a` passed
+`llvm_admission`, `llvm_placement_execution` and `llvm_callable_execution`
+serially in managed run `run-a4928e5a4d2b40dd9da315abc06d557c`. C04's
+physical failure-transport evaluation remains open. Optimized function-pointer
+and mixed-callable probes remain about seven times slower than the C++23
+reference: the checked indirect path retains two call boundaries and a large
+failure record. The campaign lead assigned the legally proven visibility,
+inlining and devirtualization prerequisite to O-LLVM-15; O-LLVM-09 retains the
+verified signature/effect contract and does not select an infallible ABI from
+the current target.
+
+**Named O-LLVM-08/O-LLVM-09 integration prerequisite:**
+`llvm_callable_owned_composition_test.py` is the callable-owned composition
+proof and is intentionally not part of the passing O-LLVM-09 component gate.
+It uses an unrelated source-defined `Stored<F>` adapter and covers a returned/
+stored consuming closure whose environment contains ordinary owned values and
+a source shared owner, explicit clone/reset/last release, reverse exactly-once
+cleanup, borrowed-capture nonownership, wrapper rollback after publication and
+later-argument rollback. The O-LLVM-09 branch validates its production C++23
+oracle with
+`python3 tests/llvm_callable_owned_composition_test.py build/gti . --oracle-only`.
+The coordinator-designated candidate containing published O-LLVM-08 and
+O-LLVM-09 must run
+`python3 tests/llvm_callable_owned_composition_test.py build/gti .`.
+Its success observable is `(0, "", "")` at native O0--O3. The later-argument
+failure must exactly match its C++23 oracle with status 70 and contain
+`owned callable later argument failed`. The native-only wrapper rollback must
+produce status 70 with `owned callable later initializer failed` consistently
+at O0--O3. Both outer cleanup observers require the exact `2, 7, 1` rollback
+trace and one final shared-payload drop.
+This prerequisite is pending until that combined source is tested; its presence
+is not a skip or milestone-exit claim.
 
 - **Unlock:** higher-order algorithms, capturing callbacks and source-defined
   function wrappers, including owned/borrowed and read/mut/once forms.
