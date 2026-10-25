@@ -104,17 +104,6 @@ void applyByval(Session &session, const NativeCRecordAbi &plan,
                  session.context(), llvm::Align(plan.argument.stackAlignment)));
 }
 
-void applyByval(Session &session, const NativeCRecordAbi &plan,
-                llvm::CallBase &call, unsigned index) {
-  if (!plan.argument.byValue)
-    return;
-  call.addParamAttr(index, llvm::Attribute::getWithByValType(
-                               session.context(), plan.storage.storage));
-  call.addParamAttr(
-      index, llvm::Attribute::getWithAlignment(
-                 session.context(), llvm::Align(plan.argument.stackAlignment)));
-}
-
 struct Probe {
   std::string recordName;
   std::string symbol;
@@ -139,10 +128,9 @@ void emitProbe(Session &session, const Probe &probe) {
     require(plan.remaining.integers == 6 - probe.integerPrefix &&
                 plan.remaining.vectors == 8 - probe.vectorPrefix,
             "stack rollback must preserve remaining registers for later args");
-  rejects([&] {
-    const std::vector<SemanticType> args{instance.type};
-    static_cast<void>(session.abi().nativeC(instance.type, args));
-  });
+  const std::vector<SemanticType> sourceArguments{instance.type};
+  require(session.abi().nativeC(instance.type, sourceArguments).type != nullptr,
+          "one native planner supplies concrete import/export signatures");
 
   std::vector<llvm::Type *> parameters;
   for (unsigned i = 0; i < probe.integerPrefix; ++i)
@@ -253,40 +241,31 @@ void emitProbe(Session &session, const Probe &probe) {
   builder.SetInsertPoint(
       llvm::BasicBlock::Create(session.context(), "entry", bridge));
   std::vector<llvm::Value *> arguments;
+  std::vector<SemanticType> sourceTypes;
   for (unsigned i = 0; i < probe.integerPrefix; ++i)
     arguments.push_back(builder.getInt64(i + 1));
+  sourceTypes.insert(sourceTypes.end(), probe.integerPrefix,
+                     SemanticType::UInt64);
   for (unsigned i = 0; i < probe.vectorPrefix; ++i)
     arguments.push_back(llvm::ConstantFP::get(builder.getDoubleTy(), i + 1));
-  if (plan.argument.byValue) {
-    // byval pointer alignment must be real, not asserted on an arbitrary input.
-    auto *copy = builder.CreateAlloca(plan.storage.storage);
-    copy->setAlignment(llvm::Align(plan.argument.stackAlignment));
-    builder.CreateMemCpy(copy, llvm::MaybeAlign(plan.argument.stackAlignment),
-                         bridge->getArg(0), llvm::MaybeAlign(1),
-                         plan.storage.size);
-    arguments.push_back(copy);
-  } else if (plan.argument.expand) {
-    for (const auto &piece : plan.argument.pieces)
-      arguments.push_back(pack(session, builder, bridge->getArg(0), piece.type,
-                               piece.offset, plan.storage.size));
-  } else {
-    arguments.push_back(pack(session, builder, bridge->getArg(0),
-                             plan.argument.coercion, 0, plan.storage.size));
-  }
-  if (probe.integerTail)
+  sourceTypes.insert(sourceTypes.end(), probe.vectorPrefix,
+                     SemanticType::Double);
+  arguments.push_back(bridge->getArg(0));
+  sourceTypes.push_back(instance.type);
+  if (probe.integerTail) {
     arguments.push_back(builder.getInt64(17));
-  if (probe.vectorTail)
-    arguments.push_back(llvm::ConstantFP::get(builder.getDoubleTy(), 17.25));
-  auto *call = builder.CreateCall(callee, arguments);
-  applyByval(session, plan, *call, prefix);
-  if (!sysv || plan.result.pieces.size() == 1) {
-    unpack(session, builder, bridge->getArg(1), call, 0, plan.storage.size);
-  } else {
-    for (unsigned i = 0; i < plan.result.pieces.size(); ++i)
-      unpack(session, builder, bridge->getArg(1),
-             builder.CreateExtractValue(call, i), plan.result.pieces[i].offset,
-             plan.storage.size);
+    sourceTypes.push_back(SemanticType::UInt64);
   }
+  if (probe.vectorTail) {
+    arguments.push_back(llvm::ConstantFP::get(builder.getDoubleTy(), 17.25));
+    sourceTypes.push_back(SemanticType::Double);
+  }
+  const auto nativePlan =
+      planNativeCFunction(session, instance.type, sourceTypes);
+  require(nativePlan.signature.type == callee->getFunctionType(),
+          "function-level budgets agree with the independent record oracle");
+  static_cast<void>(emitNativeCCall(session, builder, nativePlan, callee,
+                                    arguments, bridge->getArg(1)));
   builder.CreateRetVoid();
 
   if (pressure)
@@ -310,12 +289,16 @@ void emitProbe(Session &session, const Probe &probe) {
 }
 
 void negativeChecks(Session &session) {
-  for (const auto *name :
-       {"Nested", "ArrayField", "Large", "Boolean", "UnionRecord", "Ordinary"})
+  for (const auto *name : {"Ordinary"})
     rejects([&] {
       static_cast<void>(
           classifyNativeCRecord(session, record(session, name).type, {6, 8}));
     });
+  for (const auto *name :
+       {"Nested", "ArrayField", "Large", "Boolean", "UnionRecord"})
+    require(classifyNativeCRecord(session, record(session, name).type, {6, 8})
+                    .storage.size != 0,
+            "general passive classification subsumes the original flat bound");
   rejects([&] {
     static_cast<void>(
         classifyNativeCRecord(session, SemanticType::Int64, {6, 8}));

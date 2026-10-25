@@ -1,4 +1,5 @@
 #include "abi.h"
+#include "native_c_abi.h"
 
 #include <llvm/IR/Attributes.h>
 #include <llvm/IR/InstrTypes.h>
@@ -8,20 +9,6 @@
 
 namespace lang::native_llvm {
 namespace {
-
-AbiExtension nativeExtension(const SemanticType &type) {
-  switch (type.kind) {
-  case SemanticType::Bool:
-  case SemanticType::UInt8:
-  case SemanticType::UInt16:
-    return AbiExtension::Unsigned;
-  case SemanticType::Int8:
-  case SemanticType::Int16:
-    return AbiExtension::Signed;
-  default:
-    return AbiExtension::None;
-  }
-}
 
 template <typename Callable>
 void applyExtensions(Callable &function, const FunctionAbi &abi) {
@@ -34,6 +21,19 @@ void applyExtensions(Callable &function, const FunctionAbi &abi) {
   for (unsigned index = 0; index < abi.parameters.size(); ++index)
     if (abi.parameters[index].extension != AbiExtension::None)
       function.addParamAttr(index, attribute(abi.parameters[index].extension));
+  for (const auto &memory : abi.nativeMemory) {
+    if (memory.result)
+      function.addParamAttr(memory.index,
+                            llvm::Attribute::getWithStructRetType(
+                                abi.type->getContext(), memory.storage));
+    else if (memory.byValue)
+      function.addParamAttr(memory.index,
+                            llvm::Attribute::getWithByValType(
+                                abi.type->getContext(), memory.storage));
+    function.addParamAttr(memory.index, llvm::Attribute::getWithAlignment(
+                                            abi.type->getContext(),
+                                            llvm::Align(memory.alignment)));
+  }
 }
 
 } // namespace
@@ -122,47 +122,7 @@ FunctionAbi Abi::gti(const SemanticType &result,
 
 FunctionAbi Abi::nativeC(const SemanticType &result,
                          std::span<const SemanticType> parameters) {
-  const auto scalar = [&](const SemanticType &type,
-                          bool allowVoid) -> llvm::Type * {
-    switch (type.kind) {
-    case SemanticType::Void:
-      if (allowVoid)
-        return llvm::Type::getVoidTy(session.context());
-      break;
-    case SemanticType::Bool:
-      return llvm::Type::getInt1Ty(session.context());
-    case SemanticType::Int8:
-    case SemanticType::Int16:
-    case SemanticType::Int32:
-    case SemanticType::Int64:
-    case SemanticType::UInt8:
-    case SemanticType::UInt16:
-    case SemanticType::UInt32:
-    case SemanticType::UInt64:
-    case SemanticType::Float:
-    case SemanticType::Double:
-    case SemanticType::RawPointer:
-    case SemanticType::CString:
-    case SemanticType::NativeFunction:
-      return layouts.get(type).value;
-    default:
-      break;
-    }
-    throw BackendUnsupportedError(
-        "LLVM native C ABI supports only exact scalars/pointers here; "
-        "aggregate classification is pending O-LLVM-11");
-  };
-  FunctionAbi plan;
-  auto *returnType = scalar(result, true);
-  plan.resultExtension = nativeExtension(result);
-  std::vector<llvm::Type *> types;
-  for (std::size_t index = 0; index < parameters.size(); ++index) {
-    types.push_back(scalar(parameters[index], false));
-    plan.parameters.push_back({AbiChannel::Argument, index, false,
-                               nativeExtension(parameters[index])});
-  }
-  plan.type = llvm::FunctionType::get(returnType, types, false);
-  return plan;
+  return planNativeCFunction(session, result, parameters).signature;
 }
 
 llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {

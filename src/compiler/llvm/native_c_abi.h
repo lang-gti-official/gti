@@ -1,6 +1,10 @@
 #pragma once
 
-#include "layout.h"
+#include "abi.h"
+
+#include <llvm/IR/IRBuilder.h>
+
+#include <map>
 
 namespace lang::native_llvm {
 
@@ -23,6 +27,7 @@ struct NativeCRecordTransport {
   bool expand = false;
   // A pointer with byval(storage) and stack alignment, NOT an invisible ref.
   bool byValue = false;
+  bool indirect = false;
   std::uint64_t stackAlignment = 1;
 };
 
@@ -33,15 +38,40 @@ struct NativeCRecordAbi {
   NativeCRegisterBudget remaining;
 };
 
-// Private groundwork only; Abi::nativeC and aggregate admission remain closed.
-// Accepts flat, natural LP64 C records, 1..16 bytes, with fixed-width integers,
-// raw pointers, float or double fields. No bool/enums/arrays/nesting/unions,
-// ownership, packing, over-alignment, variadic or non-C calling conventions.
-// Plans and LLVM types belong to this Session. Callers must account for scalar
-// arguments in the register budget; storage layout alone never grants
-// admission.
+// Natural passive C records, including sealed nested records/unions and fixed
+// arrays. Storage, arguments and results remain distinct. Plans belong to the
+// Session; this query alone never grants executable admission.
 [[nodiscard]] NativeCRecordAbi
 classifyNativeCRecord(Session &session, const SemanticType &type,
                       NativeCRegisterBudget available);
+
+struct NativeCValueAbi {
+  SemanticType type = SemanticType::Unknown;
+  TypeLayout storage;
+  NativeCRecordTransport transport;
+  bool aggregate = false;
+  unsigned firstParameter = 0;
+};
+
+struct NativeCFunctionAbi {
+  FunctionAbi signature;
+  NativeCValueAbi result;
+  std::vector<NativeCValueAbi> arguments;
+};
+
+[[nodiscard]] NativeCFunctionAbi
+planNativeCFunction(Session &session, const SemanticType &result,
+                    std::span<const SemanticType> parameters);
+
+// Arguments are already staged MIR body values, not reconstructed source
+// expressions. Aggregate results are written to their final destination.
+[[nodiscard]] llvm::Value *
+emitNativeCCall(Session &session, llvm::IRBuilder<> &ir,
+                const NativeCFunctionAbi &plan, llvm::Value *callee,
+                std::span<llvm::Value *const> arguments,
+                llvm::Value *resultDestination = nullptr);
+
+void declareNativeCStorage(Session &session,
+                           std::map<SymbolId, llvm::GlobalVariable *> &globals);
 
 } // namespace lang::native_llvm
