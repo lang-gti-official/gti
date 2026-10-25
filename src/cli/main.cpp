@@ -1502,7 +1502,8 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   if (options.command == ProjectCommand::Install) {
     if (options.list &&
         (options.target || options.package || options.projectPath ||
-         options.profileSelected || options.targetTriple || options.force)) {
+         options.profileSelected || options.targetTriple || options.force ||
+         options.backend)) {
       std::cerr << "gti: gti install --list accepts only --root\n";
       return ArgumentResult::ExitFailure;
     }

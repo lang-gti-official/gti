@@ -102,7 +102,8 @@ void runChecks(const std::filesystem::path &self) {
           "an invalid producer policy must not yield a cache identity");
   for (const char *name :
        {"CPATH", "CPLUS_INCLUDE_PATH", "C_INCLUDE_PATH", "OBJC_INCLUDE_PATH",
-        "LIBRARY_PATH", "SDKROOT", "COMPILER_PATH", "GCC_EXEC_PREFIX"})
+        "LIBRARY_PATH", "SDKROOT", "COMPILER_PATH", "GCC_EXEC_PREFIX",
+        "DEVELOPER_DIR", "MACOSX_DEPLOYMENT_TARGET"})
     unsetenv(name);
 
   TemporaryDirectory temporary;
@@ -166,6 +167,27 @@ void runChecks(const std::filesystem::path &self) {
   const auto executable = read(output);
   const auto executableMode = std::filesystem::status(output).permissions();
   execute(17);
+  auto explicitTarget = Policy{};
+  explicitTarget.native.targetPolicy.sysroot = "/";
+  const auto targetRejected = build(explicitTarget);
+  require(!targetRejected.succeeded() && !targetRejected.nativeProcess &&
+              targetRejected.cache.status == BuildCacheStatus::Bypassed &&
+              targetRejected.driverDiagnostic.value_or("").find(
+                  "matching target-built runtime") != std::string::npos &&
+              read(output) == executable,
+          "uncoordinated native target policy must reject before cache/link "
+          "publication");
+#if defined(__APPLE__)
+  setenv("MACOSX_DEPLOYMENT_TARGET", "11.0", 1);
+  const auto deploymentRejected = build();
+  unsetenv("MACOSX_DEPLOYMENT_TARGET");
+  require(!deploymentRejected.succeeded() &&
+              !deploymentRejected.nativeProcess &&
+              deploymentRejected.cache.status == BuildCacheStatus::Bypassed &&
+              read(output) == executable,
+          "deployment overrides must not publish objects/runtime built for a "
+          "different minimum OS");
+#endif
   std::filesystem::remove(output);
   auto retained = Policy{};
   retained.keep = true;

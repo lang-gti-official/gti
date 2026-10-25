@@ -689,9 +689,12 @@ for an effective LLVM plan. Backend selection is not a frontend analysis policy;
 Metadata schema 15 exposes profile/output `backend` and output
 `generatedArtifact`; the compatibility `generatedCpp` field is empty for LLVM.
 Native C/C++ dependency objects and consumer-approved package build commands
-still join the normal native link and cache identity. A separately compiled GTI
-host build program retains its explicit host-tool compilation path; it is not
-a fallback for target GTI bodies.
+still join the normal native link and cache identity. GTI-authored host build
+programs use the effective backend too: an unsupported LLVM build program
+rejects rather than silently generating C++. LLVM host-program compilation uses
+the exact executable cache, but its execution conservatively bypasses the older
+script-output state cache, which does not identify transitive GTI/backend/runtime
+inputs. Command build programs retain their existing declared-input contract.
 
 ### Raw pointer audit policy
 
@@ -2323,7 +2326,12 @@ C calls, generated embedding wrappers, automatic test dispatchers and further
 families retain their owning backend admission gates. Debug companion production
 depends on O-LLVM-15; this driver change does not implement debug metadata.
 LLVM cross-target admission remains host-only pending initialized target,
-runtime/sysroot and execution evidence. System-LLVM installed evidence does not
+runtime/sysroot and execution evidence. LLVM executable requests reject explicit
+native target/sysroot policies and, on Darwin, `MACOSX_DEPLOYMENT_TARGET`,
+`SDKROOT` or `DEVELOPER_DIR` overrides before cache lookup or publication until
+the backend factory and runtime artifacts share a verified policy. This avoids
+publishing a lower-deployment executable containing newer-deployment objects.
+System-LLVM installed evidence does not
 substitute for the pinned bundled-LLVM packaging gate.
 The LSP consumes the driver-published project facts for host-target analysis and
 supports a named editor profile, with source-based target inference. Explicit

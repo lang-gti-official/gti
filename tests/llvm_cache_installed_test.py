@@ -35,13 +35,25 @@ def main():
             cache[key.split(":", 1)[0]] = value
     assert cache["CMAKE_BUILD_TYPE"] in ("Release", "RelWithDebInfo", "MinSizeRel")
     environment = os.environ.copy()
-    for name in ("GTI_STDLIB", "GTI_STDLIB_ROOT", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY"):
+    for name in ("GTI_STDLIB", "GTI_STDLIB_ROOT", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY",
+                 "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "LIBRARY_PATH",
+                 "SDKROOT", "DEVELOPER_DIR", "MACOSX_DEPLOYMENT_TARGET"):
         environment.pop(name, None)
     with tempfile.TemporaryDirectory(prefix="gti-llvm-installed-") as temporary:
         root = Path(temporary).resolve()
         stage = root / "original-stage"
         run(["cmake", "--install", build, "--prefix", stage,
              "--component", "gti_toolchain"], root, environment)
+        pure = root / "pure-project"
+        pure.mkdir()
+        (pure / "gti.toml").write_text(
+            'manifest-version = 1\n[package]\nname = "pure-relocation"\n'
+            'version = "0.1.0"\n[targets.app]\nkind = "executable"\n'
+            'root = "main.gti"\n[profiles.dev]\nbackend = "llvm"\n',
+            encoding="utf-8")
+        (pure / "main.gti").write_text("int main() { return 0; }\n", encoding="utf-8")
+        cold = run([stage / "bin/gti", "build", "--verbose"], pure, environment)
+        assert "gti: cache miss " in cold.stderr, cold.stderr
         archive = root / "gti-toolchain.tar.gz"
         with tarfile.open(archive, "w:gz") as output:
             output.add(stage, arcname="gti")
@@ -53,6 +65,15 @@ def main():
         prefix = relocated_root / "gti"
         gti = prefix / "bin/gti"
         run([gti, "--version"], root, environment)
+        moved = root / "moved-project"
+        pure.rename(moved)
+        executable_metadata = json.loads(run([gti, "metadata"], moved, environment).stdout)
+        plan = next(value for value in executable_metadata["targets"][0]["outputs"]
+                    if value["profile"] == "dev")
+        Path(plan["executable"]).unlink()
+        restored = run([gti, "build", "--verbose"], moved, environment)
+        assert "gti: cache hit " in restored.stderr, restored.stderr
+        run([plan["executable"]], moved, environment)
         program = root / "main.gti"
         program.write_text("int main() { return 0; }\n", encoding="utf-8")
         report = root / "build-report.json"

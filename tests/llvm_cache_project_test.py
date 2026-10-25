@@ -36,6 +36,7 @@ def main():
         "LIBRARY_PATH", "COMPILER_PATH", "GCC_EXEC_PREFIX", "SDKROOT",
         "DEVELOPER_DIR", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH",
         "DYLD_FRAMEWORK_PATH", "DYLD_FALLBACK_FRAMEWORK_PATH", "INCLUDE", "LIB",
+        "MACOSX_DEPLOYMENT_TARGET",
     ):
         environment.pop(name, None)
 
@@ -143,6 +144,8 @@ def main():
         no_cache = invoke("build", "app", "--cxx", wrapper, "--no-cache", "--verbose")
         assert "cache disabled by --no-cache" in no_cache.stderr
         installed_root = root / "programs"
+        invoke("install", "--list", "--backend", "llvm", "--root", installed_root,
+               expected=64)
         invoke("install", "app", "--profile", "dev", "--backend", "llvm",
                "--cxx", wrapper, "--root", installed_root)
         run([installed_root / "bin/app"], root, env=environment)
@@ -162,6 +165,29 @@ def main():
                           "--verbose")
         assert "gti: cache hit " in restored.stderr, restored.stderr
         preserved = output.read_bytes()
+        if sys.platform == "darwin":
+            deployment = environment | {"MACOSX_DEPLOYMENT_TARGET": "11.0"}
+            rejected_deployment = run(
+                [gti, "build", "app", "--backend", "llvm"], project,
+                expected=78, env=deployment)
+            assert "matching target-built runtime" in rejected_deployment.stderr
+            assert output.read_bytes() == preserved
+        dependency_manifest = dependency / "gti.toml"
+        old_dependency_manifest = dependency_manifest.read_text()
+        dependency_manifest.write_text(
+            'manifest-version = 1\n[package]\nname = "cache-dependency"\n'
+            'version = "1.0.0"\n[package.build-script]\n'
+            'source = "build.gti"\ninputs = []\n', encoding="utf-8")
+        (dependency / "build.gti").write_text(
+            '#include <std/build>\n#include <std/string>\n#include <std/vector>\n'
+            'int main(int argc, std::vector<std::string> argv) {\n'
+            '  mut auto context = std::build::context_from_args(argv);\n'
+            '  mut auto outputs = std::build::outputs();\n'
+            '  return outputs.publish(context);\n}\n', encoding="utf-8")
+        unsupported_script = invoke("build", "app", "--backend", "llvm", expected=65)
+        assert "GTI-B0003" in unsupported_script.stderr, unsupported_script.stderr
+        assert output.read_bytes() == preserved
+        dependency_manifest.write_text(old_dependency_manifest, encoding="utf-8")
         (project / "src/main.gti").write_text(
             'extern "C" { int32_t cache_native_value(); }\n'
             "int main() { return cache_native_value(); }\n", encoding="utf-8")
@@ -179,6 +205,8 @@ def main():
                                  encoding="utf-8")
         invalid = invoke("metadata", expected=65)
         assert "GTI-B1005" in invalid.stderr and "backend" in invalid.stderr
+        backend_line = manifest.count("\n", 0, manifest.index('backend = "llvm"')) + 1
+        assert f"gti.toml:{backend_line}:11:" in invalid.stderr, invalid.stderr
     print("LLVM project/native dependency/cache/run/install/backend isolation passed")
     return 0
 

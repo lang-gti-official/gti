@@ -3086,6 +3086,30 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
                                       ProgressObserver *progress) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
+  if (nativeObjectCache(request)) {
+    const auto configured = [](const char *name) {
+      const char *value = std::getenv(name);
+      return value != nullptr && *value != '\0';
+    };
+    const auto &policy = request.nativeInputs().targetPolicy;
+    const bool darwinPolicy =
+        request.compilation().target().os == "macos" &&
+        (configured("MACOSX_DEPLOYMENT_TARGET") || configured("SDKROOT") ||
+         configured("DEVELOPER_DIR"));
+    if (!policy.triple.empty() || !policy.sysroot.empty() || darwinPolicy) {
+      result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
+      result.driverDiagnostic =
+          "gti: explicit LLVM native target, sysroot or deployment policy "
+          "requires coordinated backend target options and a matching "
+          "target-built runtime; the current profile supports implicit host "
+          "policy only";
+      if (request.cache()) {
+        result.cache.status = BuildCacheStatus::Bypassed;
+        result.cache.detail = "LLVM native target/runtime identity unavailable";
+      }
+      return result;
+    }
+  }
   const auto hasObjectiveCpp = [](const auto &sources) {
     return std::any_of(sources.begin(), sources.end(), [](const auto &source) {
       return source.extension() == ".mm";
