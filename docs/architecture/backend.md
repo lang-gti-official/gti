@@ -4337,6 +4337,10 @@ not another branch in the C++ emitter.
 
 See [ADR 031](../decisions/031-native-llvm-backend-foundation.md) for the
 dependency, initialization, packaging, status, and first-lowering decision.
+The campaign's [shared cross-milestone contracts](../plans/implementation-sequence.md#shared-cross-milestone-contracts)
+and [parallel assignment matrix](../plans/implementation-sequence.md#agent-assignment-and-evidence)
+govern remaining work. Those accepted implementation constraints do not expand
+the currently admitted execution profiles described below.
 
 ### LLVM Target, Layout And Execution ABI
 
