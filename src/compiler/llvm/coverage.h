@@ -68,6 +68,8 @@ enum class Shape {
   InPlaceScalarMutation,
   StoredFieldPublication,
   NativeMemoryOperation,
+  NativeClassRawAccess,
+  NativeObjectAddress,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

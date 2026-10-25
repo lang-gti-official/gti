@@ -292,6 +292,157 @@ public:
     }
     return false;
   }
+  const MirClassInstance *nativeClass(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class || !nativeValue(type))
+      return nullptr;
+    for (const auto &owner : program.classInstances())
+      if (owner.type == type &&
+          owner.compilerCapability == CompilerCapabilityTypeKind::None)
+        return &owner;
+    return nullptr;
+  }
+  bool nativeClassPointee(const SemanticType &type) const {
+    const auto *leaf = &type;
+    while (leaf->kind == SemanticType::Array && leaf->arguments.size() == 1) {
+      if (!leaf->arrayLength || leaf->arrayLengthParameterId)
+        return false;
+      leaf = &leaf->arguments[0];
+    }
+    return nativeClass(*leaf) && nativeValue(type);
+  }
+  bool nativeRawPlace(const MirBody &mir, const MirPlace &place) const {
+    const auto *root = mir.findValue(place.value);
+    if (place.root != MirPlaceRootKind::Value || !root ||
+        root->info.type.kind != SemanticType::RawPointer ||
+        root->info.type.arguments.size() != 1 ||
+        !nativeClassPointee(root->info.type.arguments[0]))
+      return false;
+    auto type = root->info.type;
+    auto access = AccessMode::ReadOnly;
+    bool raw = false;
+    for (const auto &projection : place.projections) {
+      if (projection.kind == MirProjectionKind::RawDereference ||
+          projection.kind == MirProjectionKind::RawIndex) {
+        if (type.kind != SemanticType::RawPointer ||
+            type.arguments.size() != 1 ||
+            type.arguments[0] == SemanticType::Void ||
+            !nativeValue(type.arguments[0]))
+          return false;
+        access = type.pointerAccess;
+        auto element = type.arguments[0];
+        type = std::move(element);
+        raw = true;
+      } else if (projection.kind == MirProjectionKind::Field) {
+        const auto *owner = nativeClass(type);
+        if (!owner)
+          return false;
+        const auto field =
+            std::find_if(owner->declaredFields.begin(),
+                         owner->declaredFields.end(), [&](const auto &field) {
+                           return field.symbol == projection.field;
+                         });
+        if (field == owner->declaredFields.end())
+          return false;
+        if (field->access != AccessMode::Mutable)
+          access = AccessMode::ReadOnly;
+        type = field->type;
+      } else if (projection.kind == MirProjectionKind::Index) {
+        if (type.kind != SemanticType::Array || type.arguments.size() != 1)
+          return false;
+        auto element = type.arguments[0];
+        type = std::move(element);
+      } else {
+        return false;
+      }
+      if (projection.kind == MirProjectionKind::Index ||
+          projection.kind == MirProjectionKind::RawIndex) {
+        const auto *index = mir.findValue(projection.index);
+        if (static_cast<bool>(projection.index) ==
+                projection.constantIndex.has_value() ||
+            (projection.index &&
+             (!index || !constantIntegerDomain(index->info.type))))
+          return false;
+      }
+    }
+    return raw && type == place.type && nativeValue(type) &&
+           (place.access != AccessMode::Mutable ||
+            access == AccessMode::Mutable);
+  }
+  bool nativeRawIndex(const MirInstruction &stage) const {
+    return stage.operation == MirOperation::Index &&
+           stage.operands.size() == 2 &&
+           stage.operands[0].type.kind == SemanticType::RawPointer &&
+           stage.operands[0].type.arguments.size() == 1 &&
+           nativeClassPointee(stage.operands[0].type.arguments[0]) &&
+           stage.info.type == stage.operands[0].type.arguments[0] &&
+           constantIntegerDomain(stage.operands[1].type).has_value();
+  }
+  std::pair<bool, bool> nativeRawStage(const MirBody &mir,
+                                       const MirInstruction &stage) const {
+    bool extended = nativeRawIndex(stage), valid = true;
+    const auto place = [&](MirPlaceId id) {
+      const auto *selected = mir.findPlace(id);
+      if (!selected ||
+          !std::any_of(selected->projections.begin(),
+                       selected->projections.end(), [](const auto &projection) {
+                         return projection.kind ==
+                                    MirProjectionKind::RawDereference ||
+                                projection.kind == MirProjectionKind::RawIndex;
+                       }))
+        return;
+      if (!primitiveRawAccess(mir, *selected)) {
+        extended = true;
+        valid &= nativeRawPlace(mir, *selected);
+      }
+    };
+    if (stage.destination)
+      place(*stage.destination);
+    if (stage.receiver)
+      place(stage.receiver->place);
+    for (const auto &operand : stage.operands)
+      place(operand.place);
+    return {extended, valid};
+  }
+  bool nativePointerArithmetic(const MirInstruction &stage) const {
+    if (stage.operands.size() != 2)
+      return false;
+    const bool reversed =
+        stage.operation == MirOperation::PointerAdd &&
+        stage.operands[1].type.kind == SemanticType::RawPointer;
+    const auto &pointer = stage.operands[reversed ? 1 : 0].type;
+    if (pointer.kind != SemanticType::RawPointer ||
+        pointer.arguments.size() != 1 ||
+        !nativeClassPointee(pointer.arguments[0]))
+      return false;
+    if (stage.operation == MirOperation::PointerDifference)
+      return stage.operands[1].type == pointer &&
+             stage.info.type == SemanticType::Int64;
+    return (stage.operation == MirOperation::PointerAdd ||
+            stage.operation == MirOperation::PointerSubtract) &&
+           stage.info.type == pointer &&
+           constantIntegerDomain(stage.operands[reversed ? 0 : 1].type)
+               .has_value();
+  }
+  bool nativeAddressConversion(const MirInstruction &stage) const {
+    if (stage.intrinsic != IntrinsicKind::RawPointerConversion ||
+        stage.kind != MirInstructionKind::Call || stage.operands.size() != 1 ||
+        stage.parameterTypes !=
+            std::vector<SemanticType>{stage.operands[0].type} ||
+        stage.info.type.kind != SemanticType::RawPointer ||
+        stage.info.type.arguments.size() != 1)
+      return false;
+    const auto &source = stage.operands[0].type;
+    const auto &target = stage.info.type;
+    if (source.kind != SemanticType::RawPointer ||
+        source.arguments.size() != 1 ||
+        (source.pointerAccess == AccessMode::ReadOnly &&
+         target.pointerAccess == AccessMode::Mutable))
+      return false;
+    return (source.arguments[0] == SemanticType::Void ||
+            nativeValue(source.arguments[0])) &&
+           (target.arguments[0] == SemanticType::Void ||
+            nativeValue(target.arguments[0]));
+  }
   const MirClassInstance *bodyClass() const {
     if (!body)
       return nullptr;
@@ -580,8 +731,10 @@ public:
       traits(value.info.traits, value.info.type);
     }
     for (const auto &place : mir.places) {
+      const bool rawClassPlace = nativeRawPlace(mir, place);
       add(place.root,
-          primitiveRawAccess(mir, place)
+          rawClassPlace ? std::optional(Shape::NativeClassRawAccess)
+          : primitiveRawAccess(mir, place)
               ? std::optional(Shape::PrimitiveRawAccess)
           : place.root == MirPlaceRootKind::Loan && passiveReference(place.type)
               ? std::optional(Shape::PassiveReference)
@@ -591,7 +744,8 @@ public:
       traits(place.traits, place.type);
       for (const auto &projection : place.projections)
         add(projection.kind,
-            primitiveRawAccess(mir, place)
+            rawClassPlace ? std::optional(Shape::NativeClassRawAccess)
+            : primitiveRawAccess(mir, place)
                 ? std::optional(Shape::PrimitiveRawAccess)
             : arrayProjection(mir, place)
                 ? std::optional(Shape::CheckedArrayProjection)
@@ -649,6 +803,9 @@ public:
           continue;
         }
         const bool typedMemory = memoryOperation(stage);
+        const auto [extendedRaw, validRaw] = nativeRawStage(mir, stage);
+        const bool rawClassStage = extendedRaw && validRaw;
+        const bool classArithmetic = nativePointerArithmetic(stage) && validRaw;
         std::optional<Shape> storageShape =
             typedMemory ? std::optional(Shape::NativeMemoryOperation)
                         : std::nullopt;
@@ -727,7 +884,9 @@ public:
               stage.operands[0].type.kind == SemanticType::StringView &&
               stage.info.type == SemanticType::Char;
           add(stage.operation,
-              scalarMutation ? std::optional(Shape::InPlaceScalarMutation)
+              (nativeRawIndex(stage) && validRaw) || classArithmetic
+                  ? std::optional(Shape::NativeClassRawAccess)
+              : scalarMutation ? std::optional(Shape::InPlaceScalarMutation)
               : primitiveRawIndex(stage) || primitivePointerArithmetic(stage)
                   ? std::optional(Shape::PrimitiveRawAccess)
               : arrayAggregate ? std::optional(Shape::PassiveArrayValue)
@@ -749,7 +908,9 @@ public:
               (stage.intrinsic == IntrinsicKind::StringViewSize ||
                stage.intrinsic == IntrinsicKind::StringViewEmpty);
           add(stage.intrinsic,
-              typedMemory ? std::optional(Shape::NativeMemoryOperation)
+              nativeAddressConversion(stage) && validRaw
+                  ? std::optional(Shape::NativeObjectAddress)
+              : typedMemory ? std::optional(Shape::NativeMemoryOperation)
               : erasedReference(stage) ? std::optional(Shape::ErasedReference)
               : passiveTextViewAddress(stage) || passiveCStringAddress(stage)
                   ? std::optional(Shape::CountedText)
@@ -825,9 +986,12 @@ public:
           if (const auto *place = mir.findPlace(operand.place))
             rawAccess |= primitiveRawAccess(mir, *place);
         if (stage.rawMemoryAccess)
-          add(Shape::RawMemory, rawAccess
-                                    ? std::optional(Shape::PrimitiveRawAccess)
-                                    : std::nullopt);
+          add(Shape::RawMemory,
+              extendedRaw
+                  ? (validRaw ? std::optional(Shape::NativeClassRawAccess)
+                              : std::nullopt)
+              : rawAccess ? std::optional(Shape::PrimitiveRawAccess)
+                          : std::nullopt);
         // Lifecycle marks repeat the source unsafe context but execute no
         // memory operation. The typed access/arithmetic stages are inventoried
         // independently; their pending shapes cannot be hidden by this marker.
@@ -855,8 +1019,15 @@ public:
               callee->requiresUnsafe &&
               stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall;
           add(stage.unsafeOperation,
-              typedMemory && stage.unsafeOperation ==
-                                 UnsafeOperationKind::ObjectLifetime
+              (rawClassStage || classArithmetic) &&
+                      (stage.unsafeOperation ==
+                           UnsafeOperationKind::RawDereference ||
+                       stage.unsafeOperation == UnsafeOperationKind::RawIndex ||
+                       stage.unsafeOperation ==
+                           UnsafeOperationKind::PointerArithmetic)
+                  ? std::optional(Shape::NativeClassRawAccess)
+              : typedMemory && stage.unsafeOperation ==
+                                   UnsafeOperationKind::ObjectLifetime
                   ? std::optional(Shape::NativeMemoryOperation)
               : ordinaryUnsafe ? std::optional(Shape::OrdinaryUnsafeInvocation)
               : stage.unsafeOperation ==
