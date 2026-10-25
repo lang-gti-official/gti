@@ -77,6 +77,8 @@ llvm::OptimizationLevel pipelineLevel(LlvmCodegenOptimization level) {
   throw std::invalid_argument("invalid LLVM optimization policy");
 }
 
+} // namespace
+
 std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
                                                  LlvmBackendOptions options) {
   const auto host = TargetInfo::host();
@@ -111,8 +113,6 @@ std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
     throw std::runtime_error("LLVM target machine construction failed");
   return machine;
 }
-
-} // namespace
 
 void verifyTargetLayout(const TargetInfo &target,
                         const llvm::DataLayout &layout,

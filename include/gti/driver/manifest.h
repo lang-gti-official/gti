@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/backend.h"
 #include "gti/configuration_flags.h"
 #include "gti/cpp_standard.h"
 #include "gti/diagnostic.h"
@@ -235,6 +236,7 @@ struct ProjectProfile {
   ConfigurationFlags defines;
   std::vector<SourceSpan> defineDeclarations;
   ProjectNativeSettings native;
+  BackendKind backend = BackendKind::Cpp;
 };
 
 struct ProjectBuildSettings {

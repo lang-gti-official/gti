@@ -2,6 +2,7 @@
 
 #include "build_source_identity.h"
 #include "gti/build_identity_config.h"
+#include "gti/llvm_backend.h"
 #include "sha256.h"
 
 #include <algorithm>
@@ -1296,6 +1297,48 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   identity.add("cache.schema", buildCacheSchema(request));
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
+  if (nativeObjectCache(request)) {
+    LlvmBackendOptions options;
+    switch (request.compilation().optimization()) {
+    case OptimizationLevel::O0:
+      options.optimization = LlvmCodegenOptimization::None;
+      break;
+    case OptimizationLevel::O1:
+      options.optimization = LlvmCodegenOptimization::Less;
+      break;
+    case OptimizationLevel::O2:
+      options.optimization = LlvmCodegenOptimization::Default;
+      break;
+    case OptimizationLevel::O3:
+      options.optimization = LlvmCodegenOptimization::Aggressive;
+      break;
+    }
+    options.debugInfo = request.compilation().debugInfo();
+    const auto backend = queryLlvmBackendIdentity(
+        request.compilation().target(), options, errorMessage);
+    if (!backend || backend->schema.empty() || backend->llvmVersion.empty() ||
+        backend->triple.empty() || backend->dataLayout.empty() ||
+        backend->cpu.empty() || backend->privateAbi == 0) {
+      if (errorMessage.empty())
+        errorMessage = "incomplete LLVM backend identity";
+      return std::nullopt;
+    }
+    // CMake requires a static LLVM closure. The containing executable's bytes
+    // identify the actual GTI + LLVM implementation, including dirty builds.
+    if (!addFileIdentity(identity, "llvm.compiler-image",
+                         backend->compilerExecutable, false, errorMessage))
+      return std::nullopt;
+    identity.add("llvm.schema", backend->schema);
+    identity.add("llvm.version", backend->llvmVersion);
+    identity.add("llvm.private-abi", backend->privateAbi);
+    identity.add("llvm.triple", backend->triple);
+    identity.add("llvm.data-layout", backend->dataLayout);
+    identity.add("llvm.cpu", backend->cpu);
+    identity.add("llvm.features", backend->features);
+    identity.add("llvm.relocation", backend->relocation);
+    identity.add("llvm.code-model", backend->codeModel);
+    identity.add("llvm.codegen-optimization", backend->codegenOptimization);
+  }
   addNativeEnvironmentIdentity(identity);
   identity.add("backend.kind",
                static_cast<std::uint64_t>(request.compilation().backend()));
@@ -1768,8 +1811,7 @@ bool validDigest(std::string_view digest) {
 }
 
 std::optional<CacheMetadata>
-readCacheMetadata(const std::filesystem::path &path,
-                  bool object,
+readCacheMetadata(const std::filesystem::path &path, bool object,
                   std::string &errorMessage) {
   std::ifstream input(path, std::ios::binary);
   if (!input) {
@@ -1796,8 +1838,8 @@ readCacheMetadata(const std::filesystem::path &path,
   std::string executableLabel;
   std::string symbolsLabel;
   std::string symbolsHash;
-  if (!(input >> generatedLabel >>
-        metadata.generated.hash >> metadata.generated.size >> executableLabel >>
+  if (!(input >> generatedLabel >> metadata.generated.hash >>
+        metadata.generated.size >> executableLabel >>
         metadata.executable.hash >> metadata.executable.size >>
         metadata.executablePermissions >> symbolsLabel >> symbolsHash) ||
       generatedLabel != (object ? "representation" : "generated") ||
@@ -1930,7 +1972,8 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
     for (const auto &path : {metadataPath, generatedPath, executablePath}) {
       error.clear();
       if (!std::filesystem::is_regular_file(
-              std::filesystem::symlink_status(path, error)) || error) {
+              std::filesystem::symlink_status(path, error)) ||
+          error) {
         return {.status = CacheLookupStatus::Corrupt,
                 .detail = "native cache payload is not a regular file"};
       }
@@ -2104,7 +2147,7 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
 
   const bool object = nativeObjectCache(request);
   if (artifact.kind != (object ? BackendArtifactKind::Object
-                              : BackendArtifactKind::Source) ||
+                               : BackendArtifactKind::Source) ||
       artifact.extension != (object ? ".o" : ".cpp")) {
     errorMessage = "backend artifact does not match the cache schema";
     return false;
@@ -2348,9 +2391,9 @@ std::optional<std::string>
 nativeCacheBypassDetail(const ExecutableBuildRequest &request,
                         NativeLinkIdentityPlan &plan) {
   plan = {};
-  if (request.compilation().backend() != BackendKind::Cpp) {
-    return "native-object backend artifacts are not yet represented by the "
-           "build cache format";
+  if (request.compilation().backend() != BackendKind::Cpp &&
+      request.compilation().backend() != BackendKind::Llvm) {
+    return "unknown backend artifact identity";
   }
   const NativeInputs &inputs = request.nativeInputs();
   if (!inputs.compilerArguments.empty() || !inputs.cCompilerArguments.empty() ||

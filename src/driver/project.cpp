@@ -509,11 +509,21 @@ composeBuildScriptPlans(const ProjectWorkspace &workspace,
   return plans;
 }
 
-const ProjectProfile *selectProfile(const ProjectManifest &manifest,
-                                    std::string_view requested,
-                                    std::vector<Diagnostic> &diagnostics) {
+const ProjectProfile *
+selectProfile(const ProjectManifest &manifest, std::string_view requested,
+              std::vector<Diagnostic> &diagnostics,
+              const ProjectBuildOverrides &overrides = {}) {
   const ProjectProfile *profile = manifest.findProfile(requested);
   if (profile != nullptr) {
+    if (overrides.backend.value_or(profile->backend) == BackendKind::Llvm &&
+        (overrides.cppStandard ||
+         overrides.keepCpp.value_or(profile->keepCpp))) {
+      diagnostics.push_back(projectDiagnostic(
+          "GTI-B1005", profile->declaration,
+          "LLVM project builds cannot use C++ backend retention or --std; "
+          "select backend 'cpp' or disable keep-cpp and remove --std."));
+      return nullptr;
+    }
     return profile;
   }
 
@@ -641,6 +651,8 @@ ProjectBuildPlan makeBuildPlan(
       overrides.optimization.value_or(selectedProfile.optimization);
   const CppStandard cppStandard =
       overrides.cppStandard.value_or(selectedProfile.cppStandard);
+  const BackendKind backend =
+      overrides.backend.value_or(selectedProfile.backend);
   const bool keepCpp = overrides.keepCpp.value_or(selectedProfile.keepCpp);
   const bool debugInfo =
       overrides.debugInfo.value_or(selectedProfile.debugInfo);
@@ -700,7 +712,8 @@ ProjectBuildPlan makeBuildPlan(
   const std::filesystem::path output = outputDirectory / executableName;
   const std::filesystem::path generatedSource =
       outputDirectory / ".gti-intermediate" /
-      (selectedTarget.name + ".gti.cpp");
+      (selectedTarget.name +
+       (backend == BackendKind::Cpp ? ".gti.cpp" : ".gti.o"));
   // The selected target and the toolchain realizing it are model facts. A
   // host build and a cross build must never share a cache entry, and
   // changing the declared compiler, sysroot, or native triple must
@@ -708,6 +721,8 @@ ProjectBuildPlan makeBuildPlan(
   nativeInputs.targetPolicy = {.triple = toolchain.nativeTarget,
                                .sysroot = toolchain.sysroot};
   std::string modelIdentity = workspace.modelIdentity();
+  if (backend != BackendKind::Cpp)
+    modelIdentity += "\nbackend:" + std::string(backendKindName(backend));
   modelIdentity += "\nraw-pointer-audit:" +
                    std::string(rawPointerAuditModeName(rawPointerAudit));
   modelIdentity += rawPointerAuditLibraryFindings
@@ -850,7 +865,7 @@ ProjectBuildPlan makeBuildPlan(
       std::move(buildScripts), std::move(toolchain), debugInfo,
       std::move(packageWarningPolicy), rawPointerAudit, selectedTarget.linkage,
       selectedTarget.exports, configuration.declaredConfigurationFlags(),
-      rawPointerAuditLibraryFindings);
+      rawPointerAuditLibraryFindings, backend);
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -1034,7 +1049,7 @@ ProjectBuildPlan::ProjectBuildPlan(
     PackageWarningPolicy packageWarnings, RawPointerAuditMode rawPointerAudit,
     ProjectTargetLinkage targetLinkage, std::vector<ProjectExport> exports,
     ConfigurationFlags declaredConfigurationFlags,
-    bool rawPointerAuditLibraryFindings)
+    bool rawPointerAuditLibraryFindings, BackendKind backend)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
@@ -1046,7 +1061,8 @@ ProjectBuildPlan::ProjectBuildPlan(
       outputPath(std::move(output)),
       generatedSourcePath(std::move(generatedSource)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
-      backendStandard(cppStandard), retainGeneratedSource(keepCpp),
+      backendStandard(cppStandard), selectedBackend(backend),
+      retainGeneratedSource(keepCpp),
       resolvedNativeInputs(std::move(nativeInputs)),
       resolvedPackageSources(std::move(packageSourceRoots)),
       resolvedConfigurationFlags(std::move(configurationFlags)),
@@ -1138,6 +1154,8 @@ OptimizationLevel ProjectBuildPlan::optimization() const {
 }
 
 CppStandard ProjectBuildPlan::cppStandard() const { return backendStandard; }
+
+BackendKind ProjectBuildPlan::backend() const { return selectedBackend; }
 
 bool ProjectBuildPlan::keepCpp() const { return retainGeneratedSource; }
 
@@ -1331,8 +1349,8 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
     }
   }
 
-  const ProjectProfile *selectedProfile =
-      selectProfile(manifest, request.profileName(), result.diagnostics);
+  const ProjectProfile *selectedProfile = selectProfile(
+      manifest, request.profileName(), result.diagnostics, request.overrides());
 
   if (!result.diagnostics.empty() || selectedTarget == nullptr ||
       selectedProfile == nullptr) {
@@ -1464,8 +1482,8 @@ resolveProjectTests(const ProjectBuildRequest &request) {
     }
   }
 
-  const ProjectProfile *selectedProfile =
-      selectProfile(manifest, request.profileName(), result.diagnostics);
+  const ProjectProfile *selectedProfile = selectProfile(
+      manifest, request.profileName(), result.diagnostics, request.overrides());
 
   if (!result.diagnostics.empty() || selectedProfile == nullptr) {
     result.status = ProjectResolutionStatus::SelectionFailure;
@@ -1574,8 +1592,8 @@ resolveAllProjectTargets(const ProjectBuildRequest &request) {
     result.diagnostics.push_back(std::move(diagnostic));
   }
 
-  const ProjectProfile *selectedProfile =
-      selectProfile(manifest, request.profileName(), result.diagnostics);
+  const ProjectProfile *selectedProfile = selectProfile(
+      manifest, request.profileName(), result.diagnostics, request.overrides());
   if (!result.diagnostics.empty() || selectedProfile == nullptr) {
     result.status = ProjectResolutionStatus::SelectionFailure;
     return result;

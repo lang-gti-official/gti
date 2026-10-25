@@ -18,6 +18,9 @@ class Abi;
 // Private, invalidatable whole-program ABI, not an external GTI ABI promise.
 inline constexpr unsigned executionAbiVersion = 1;
 
+[[nodiscard]] std::unique_ptr<llvm::TargetMachine>
+makeMachine(const TargetInfo &target, LlvmBackendOptions options);
+
 class Session final {
 public:
   explicit Session(VerifiedLoweredProgram program, LlvmBackendOptions options);

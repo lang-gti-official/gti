@@ -267,12 +267,13 @@ void runChecks(const std::filesystem::path &self) {
   checkBuild(opaque);
   require(opaque.cache.status == BuildCacheStatus::Bypassed,
           "opaque native inputs must retain conservative cache bypass");
+  const auto beforeDebug = read(output);
   changed = {};
   changed.debug = true;
   const auto debug = build(changed);
   require(!debug.succeeded() &&
               debug.cache.status == BuildCacheStatus::Bypassed &&
-              read(output) == executable,
+              read(output) == beforeDebug,
           "unsupported LLVM debug policy must bypass and preserve destination");
 
   const auto outside = temporary.root / "outside";

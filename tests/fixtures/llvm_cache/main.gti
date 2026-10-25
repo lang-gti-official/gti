@@ -1,5 +1,21 @@
 #include "value.gti"
 
+mut int destroyed_value = 0;
+
+class CacheTicket {
+  int value;
+public:
+  CacheTicket(int value) : value(value) {}
+  ~CacheTicket() { destroyed_value += this.value; }
+  int read() { return this.value; }
+};
+
 int main() {
-  return cache_value();
+  {
+    CacheTicket ticket{cache_value()};
+    if (ticket.read() != cache_value()) { return 1; }
+  }
+  int values[2] = {destroyed_value, 0};
+  int& selected = values[0];
+  return selected;
 }
