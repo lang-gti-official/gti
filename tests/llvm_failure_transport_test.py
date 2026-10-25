@@ -23,7 +23,9 @@ without those, the manifest explicitly records that production evidence is owed.
 Timing requires a coordinator-approved idle slot and explicit --measure/--slot.
 It excludes terminal IO and worker creation, retains checks and counts cleanup.
 Linux --wrap audits exception-storage requests (not underlying malloc calls).
-Darwin allocation instrumentation and complete build/RSS costs remain pending.
+--build-resources retains per-command peak-RSS/time diagnostics via /usr/bin/time
+(on macOS this needs permission to read kernel accounting). These are not a
+whole-compiler cost comparison. Darwin allocation instrumentation remains pending.
 
 References (mechanism/precedent, never GTI semantic authority):
 https://llvm.org/docs/ExceptionHandling.html
@@ -75,6 +77,7 @@ def main():
     parser.add_argument("--optimizations", nargs="+", choices=("0", "1", "2", "3"),
                         default=["0", "3"])
     parser.add_argument("--sanitize", action="store_true")
+    parser.add_argument("--build-resources", action="store_true")
     parser.add_argument("--gti", type=Path)
     parser.add_argument("--gti-build-cache", type=Path)
     parser.add_argument("--measure", action="store_true")
@@ -121,7 +124,7 @@ def main():
     def run(command, *, expected=0, timeout=90, run_env=None):
         number = len(manifest["commands"])
         argv = [str(x) for x in command]
-        compile_command = argv[0] in (clang, cc)
+        compile_command = args.build_resources and argv[0] in (clang, cc) and "-o" in argv
         if compile_command and Path("/usr/bin/time").is_file():
             argv = ["/usr/bin/time", "-l" if platform.system() == "Darwin" else "-v", *argv]
         start = time.perf_counter()
@@ -260,7 +263,7 @@ def main():
                         result, _ = run([binary], expected=70 if case.endswith("failure") else 0)
                         if case.endswith("failure"):
                             check(result.stdout == "1\n2\n" and result.stderr ==
-                                  "status_failure.gti:11: runtime error[GTI-R0001]: integer_overflow in addition\n",
+                                  "status_failure.gti:10: runtime error[GTI-R0001]: integer_overflow in addition\n",
                                   "actual GTI cleanup/source attribution mismatch")
                         else:
                             check(not result.stdout and not result.stderr, "GTI success mismatch")
