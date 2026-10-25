@@ -1,0 +1,33 @@
+[[c_abi]] struct Byte { mut uint8_t a; };
+[[c_abi]] struct Tiny { mut uint8_t a; mut uint8_t b; mut uint8_t c; };
+[[c_abi]] struct Shorts { mut int16_t a; mut uint8_t b; };
+[[c_abi]] struct Words { mut uint32_t a; mut uint32_t b; };
+[[c_abi]] struct Tail { mut uint64_t a; mut uint8_t b; };
+[[c_abi]] struct Pair { mut uint64_t a; mut uint64_t b; };
+[[c_abi]] struct Pointer { mut uint8_t* a; mut uint32_t b; };
+[[c_abi]] struct Float1 { mut float a; };
+[[c_abi]] struct Float2 { mut float a; mut float b; };
+[[c_abi]] struct Float3 { mut float a; mut float b; mut float c; };
+[[c_abi]] struct Float4 { mut float a; mut float b; mut float c; mut float d; };
+[[c_abi]] struct Double1 { mut double a; };
+[[c_abi]] struct Double2 { mut double a; mut double b; };
+[[c_abi]] struct IntDouble { mut int64_t a; mut double b; };
+[[c_abi]] struct DoubleInt { mut double a; mut int64_t b; };
+[[c_abi]] struct FloatInt { mut float a; mut int32_t b; };
+[[c_abi]] struct FloatDouble { mut float a; mut double b; };
+
+[[c_abi]] struct Nested { mut Pair a; };
+[[c_abi]] struct ArrayField { mut uint32_t a[2]; };
+[[c_abi]] struct Large { mut uint64_t a; mut uint64_t b; mut uint64_t c; };
+[[c_abi]] struct Boolean { mut bool a; };
+[[c_abi]] union UnionRecord { mut uint64_t a; mut double b; };
+struct Ordinary { mut int32_t a; };
+
+int main() {
+  return int(sizeof(Byte) + sizeof(Tiny) + sizeof(Shorts) + sizeof(Words)
+    + sizeof(Tail) + sizeof(Pair) + sizeof(Pointer) + sizeof(Float1)
+    + sizeof(Float2) + sizeof(Float3) + sizeof(Float4) + sizeof(Double1)
+    + sizeof(Double2) + sizeof(IntDouble) + sizeof(DoubleInt) + sizeof(FloatInt)
+    + sizeof(FloatDouble) + sizeof(Nested) + sizeof(ArrayField) + sizeof(Large)
+    + sizeof(Boolean) + sizeof(UnionRecord) + sizeof(Ordinary));
+}
