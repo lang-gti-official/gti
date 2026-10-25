@@ -324,6 +324,7 @@ int main() {
   int value = 42;
   Reading reading = create<Reading, int&>(value);
   if (prefixed<int, int>(2, 20, 20) != 42) { return 4; }
+  if (create<int>(42) != 42) { return 5; }
   return pair.sum() == 42 && reading.read() == 42 ? 0 : 1;
 }
 ''',
