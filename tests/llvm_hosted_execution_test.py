@@ -1,18 +1,58 @@
 #!/usr/bin/env python3
 """Uninstrumented hosted programs through the real compiler/driver boundary."""
 
+import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
 
 
+def source_literals(gti, root, scratch, endpoints, env):
+    library = scratch / "stdlib"
+    shutil.copytree(root / "stdlib", library)
+    declarations = library / "std/source_location.gti"
+    with declarations.open("a", encoding="utf-8") as stream:
+        stream.write("""
+namespace llvm_source_metadata {
+  bool file(std::string_view expected, std::size_t bytes,
+            std::string_view value = gti_internal::source_file_name()) {
+    return value == expected && value.size() == bytes;
+  }
+  bool function(std::string_view expected,
+                std::string_view value = gti_internal::source_function_name()) {
+    return value == expected;
+  }
+  uint32_t line(uint32_t value = gti_internal::source_line()) { return value; }
+  uint32_t column(uint32_t value = gti_internal::source_column()) { return value; }
+}
+""")
+    source = scratch / "metadata-\u00e9.gti"
+    filename = json.dumps(str(source.resolve()), ensure_ascii=False)
+    source.write_text(
+        "#include <std/source_location>\n"
+        "int main() {\n"
+        f"  if (!llvm_source_metadata::file({filename}, std::size_t({len(str(source.resolve()).encode('utf-8'))}))) {{ return 1; }}\n"
+        '  if (!llvm_source_metadata::function("main")) { return 2; }\n'
+        "  if (llvm_source_metadata::line() != 5 || llvm_source_metadata::column() != 0) { return 3; }\n"
+        "  return 0;\n}\n", encoding="utf-8")
+    configured = {**env, "GTI_STDLIB_PATH": str(library)}
+    for index, endpoint in enumerate(endpoints):
+        result = execute(gti, root, scratch / f"source-literals-{index}",
+                         source, endpoint, configured)
+        if result.error or result.observable != (0, "", ""):
+            raise AssertionError(f"source literals {endpoint}: {result}")
+    print("source literals: UTF-8 byte extent and caller metadata passed all endpoints",
+          flush=True)
+
+
 def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selection = sys.argv[3] if len(sys.argv) > 3 else "all"
-    if selection not in {"all", "startup", "status", "source-location"}:
+    if selection not in {"all", "startup", "status", "source-location", "source-literals"}:
         raise ValueError(f"unknown hosted case: {selection}")
     cases = (
         ("llvm_hosted_success.gti", None),
@@ -27,8 +67,10 @@ def main():
     env = {**os.environ, "NO_COLOR": "1"}
     with tempfile.TemporaryDirectory(prefix="gti-llvm-hosted-cli-") as temporary:
         scratch = Path(temporary)
+        if selection in {"all", "source-literals"}:
+            source_literals(gti, root, scratch, endpoints, env)
         for filename, failure in cases:
-            if selection == "status":
+            if selection in {"status", "source-literals"}:
                 continue
             if selection == "startup" and filename == "stdlib_surface_source_location.gti":
                 continue
