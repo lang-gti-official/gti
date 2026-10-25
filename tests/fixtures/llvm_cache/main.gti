@@ -1,0 +1,5 @@
+#include "value.gti"
+
+int main() {
+  return cache_value();
+}

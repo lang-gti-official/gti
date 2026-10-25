@@ -101,6 +101,19 @@ publishDebugBundle(const std::filesystem::path &staged,
 }
 
 constexpr std::string_view cacheSchema = "gti-build-cache-v4";
+constexpr std::string_view objectCacheSchema = "gti-build-cache-v5";
+
+bool nativeObjectCache(const ExecutableBuildRequest &request) {
+  return request.compilation().backend() == BackendKind::Llvm;
+}
+
+std::string_view buildCacheSchema(const ExecutableBuildRequest &request) {
+  return nativeObjectCache(request) ? objectCacheSchema : cacheSchema;
+}
+
+std::string_view cacheRepresentationFile(bool object) {
+  return object ? "artifact.o" : "generated.cpp";
+}
 using detail::IdentityBuilder;
 
 struct FileDigest {
@@ -1280,7 +1293,7 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                                          std::string &errorMessage,
                                          std::string &policyBypassDetail) {
   IdentityBuilder identity;
-  identity.add("cache.schema", cacheSchema);
+  identity.add("cache.schema", buildCacheSchema(request));
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
   addNativeEnvironmentIdentity(identity);
@@ -1654,6 +1667,7 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
 
 struct CacheMetadata {
   std::string key;
+  bool object = false;
   FileDigest generated;
   FileDigest executable;
   std::uint32_t executablePermissions = 0;
@@ -1755,6 +1769,7 @@ bool validDigest(std::string_view digest) {
 
 std::optional<CacheMetadata>
 readCacheMetadata(const std::filesystem::path &path,
+                  bool object,
                   std::string &errorMessage) {
   std::ifstream input(path, std::ios::binary);
   if (!input) {
@@ -1764,15 +1779,28 @@ readCacheMetadata(const std::filesystem::path &path,
 
   std::string schema;
   CacheMetadata metadata;
+  metadata.object = object;
+  if (object) {
+    std::string label, kind, extension;
+    if (!(input >> schema >> metadata.key >> label >> kind >> extension) ||
+        schema != objectCacheSchema || label != "artifact" ||
+        kind != "object" || extension != ".o") {
+      errorMessage = "metadata has an invalid native artifact schema";
+      return std::nullopt;
+    }
+  } else if (!(input >> schema >> metadata.key) || schema != cacheSchema) {
+    errorMessage = "metadata has an invalid source artifact schema";
+    return std::nullopt;
+  }
   std::string generatedLabel;
   std::string executableLabel;
   std::string symbolsLabel;
   std::string symbolsHash;
-  if (!(input >> schema >> metadata.key >> generatedLabel >>
+  if (!(input >> generatedLabel >>
         metadata.generated.hash >> metadata.generated.size >> executableLabel >>
         metadata.executable.hash >> metadata.executable.size >>
         metadata.executablePermissions >> symbolsLabel >> symbolsHash) ||
-      schema != cacheSchema || generatedLabel != "generated" ||
+      generatedLabel != (object ? "representation" : "generated") ||
       executableLabel != "executable" || symbolsLabel != "symbols" ||
       !validDigest(metadata.key) || !validDigest(metadata.generated.hash) ||
       !validDigest(metadata.executable.hash)) {
@@ -1825,7 +1853,9 @@ readCacheMetadata(const std::filesystem::path &path,
 
 std::string renderCacheMetadata(const CacheMetadata &metadata) {
   std::string text =
-      std::string(cacheSchema) + "\n" + metadata.key + "\n" + "generated " +
+      std::string(metadata.object ? objectCacheSchema : cacheSchema) + "\n" +
+      metadata.key + "\n" +
+      (metadata.object ? "artifact object .o\nrepresentation " : "generated ") +
       metadata.generated.hash + " " + std::to_string(metadata.generated.size) +
       "\n" + "executable " + metadata.executable.hash + " " +
       std::to_string(metadata.executable.size) + " " +
@@ -1879,9 +1909,10 @@ std::optional<std::string> readTextFile(const std::filesystem::path &path,
 }
 
 CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
-                                   std::string_view expectedKey) {
+                                   std::string_view expectedKey, bool object) {
   const std::filesystem::path metadataPath = entry / "metadata";
-  const std::filesystem::path generatedPath = entry / "generated.cpp";
+  const std::filesystem::path generatedPath =
+      entry / cacheRepresentationFile(object);
   const std::filesystem::path executablePath = entry / "executable";
   std::error_code error;
   const bool entryExists = std::filesystem::exists(entry, error);
@@ -1895,8 +1926,18 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
   }
 
   std::string detail;
+  if (object) {
+    for (const auto &path : {metadataPath, generatedPath, executablePath}) {
+      error.clear();
+      if (!std::filesystem::is_regular_file(
+              std::filesystem::symlink_status(path, error)) || error) {
+        return {.status = CacheLookupStatus::Corrupt,
+                .detail = "native cache payload is not a regular file"};
+      }
+    }
+  }
   const std::optional<CacheMetadata> metadata =
-      readCacheMetadata(metadataPath, detail);
+      readCacheMetadata(metadataPath, object, detail);
   if (!metadata) {
     return {.status = CacheLookupStatus::Corrupt, .detail = std::move(detail)};
   }
@@ -2047,7 +2088,7 @@ ArtifactPublishResult copyFileAtomically(
 
 bool storeCacheEntry(const ExecutableBuildRequest &request,
                      const std::filesystem::path &entry, std::string_view key,
-                     std::string_view generated,
+                     const BackendArtifact &artifact,
                      const std::vector<std::string> &testCases,
                      std::string &errorMessage) {
   if (!request.managedOutput()) {
@@ -2061,7 +2102,16 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
     return false;
   }
 
-  const std::filesystem::path generatedPath = entry / "generated.cpp";
+  const bool object = nativeObjectCache(request);
+  if (artifact.kind != (object ? BackendArtifactKind::Object
+                              : BackendArtifactKind::Source) ||
+      artifact.extension != (object ? ".o" : ".cpp")) {
+    errorMessage = "backend artifact does not match the cache schema";
+    return false;
+  }
+  const std::string_view generated = artifact.contents;
+  const std::filesystem::path generatedPath =
+      entry / cacheRepresentationFile(object);
   const std::filesystem::path executablePath = entry / "executable";
   const FileDigest generatedDigest{.hash = digestText(generated),
                                    .size = generated.size()};
@@ -2089,6 +2139,7 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
   }
 
   CacheMetadata metadata{.key = std::string(key),
+                         .object = object,
                          .generated = generatedDigest,
                          .executable = *executableDigest,
                          .executablePermissions =
@@ -3198,7 +3249,9 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = "cache requires a managed project output policy";
     } else {
-      const std::filesystem::path versionRoot = request.cache()->root / "v4";
+      const bool object = nativeObjectCache(request);
+      const std::filesystem::path versionRoot =
+          request.cache()->root / (object ? "v5" : "v4");
       const std::filesystem::path cacheProbe = versionRoot / "probe/metadata";
       if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
               *request.managedOutput(), cacheProbe, false)) {
@@ -3229,7 +3282,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
           return result;
         }
 
-        const CacheLookupResult lookup = lookupCacheEntry(*cacheEntry, *key);
+        const CacheLookupResult lookup =
+            lookupCacheEntry(*cacheEntry, *key, object);
         if (lookup.status == CacheLookupStatus::Hit) {
           cacheProgress.update("hit; restoring executable");
           result.cache.status = BuildCacheStatus::Hit;
@@ -3250,9 +3304,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
           result.compilation.diagnostics =
               std::move(compilationInputs.diagnostics);
           result.compilation.artifact =
-              BackendArtifact{.kind = BackendArtifactKind::Source,
+              BackendArtifact{.kind = object ? BackendArtifactKind::Object
+                                             : BackendArtifactKind::Source,
                               .contents = lookup.generated,
-                              .extension = ".cpp"};
+                              .extension = object ? ".o" : ".cpp"};
           if (request.keepGeneratedSource()) {
             std::string writeError;
             if (!publishTextAtomically(request.generatedSource(),
@@ -3754,7 +3809,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   if (cacheEntry && !result.cache.key.empty()) {
     std::string cacheStoreError;
     if (storeCacheEntry(request, *cacheEntry, result.cache.key,
-                        result.compilation.artifact->contents,
+                        *result.compilation.artifact,
                         result.compilation.testCases, cacheStoreError)) {
       if (corruptCacheEntry) {
         result.cache.status = BuildCacheStatus::RecoveredCorruption;
