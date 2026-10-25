@@ -177,7 +177,8 @@ void testLedger() {
     nonexecuting += entry.state == LlvmCoverageState::VerifiedNonExecuting;
     if (entry.state == LlvmCoverageState::Implemented)
       expect(entry.positiveTest ==
-                 (entry.milestone == 6   ? "llvm_class_execution"
+                 (entry.milestone == 7   ? "llvm_payload_execution"
+                  : entry.milestone == 6 ? "llvm_class_execution"
                   : entry.milestone == 5 ? "llvm_place_execution"
                                          : "llvm_scalar_execution"),
              "implemented families name real execution evidence");
