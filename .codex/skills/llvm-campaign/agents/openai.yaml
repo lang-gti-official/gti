@@ -1,4 +1,4 @@
 interface:
   display_name: "GTI LLVM Campaign"
-  short_description: "Bounded parallel LLVM implementation and validation"
-  default_prompt: "Use $llvm-campaign to implement the assigned GTI LLVM slice within its ownership and validation boundaries."
+  short_description: "Milestone-owned LLVM implementation and validation"
+  default_prompt: "Use $llvm-campaign to implement the assigned GTI LLVM milestone within its ownership and validation boundaries."
