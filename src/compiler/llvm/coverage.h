@@ -69,6 +69,8 @@ enum class Shape {
   StoredFieldPublication,
   NativeMemoryOperation,
   NativeProcessMemory,
+  NativeUniqueOwnership,
+  UnstagedConstructorFieldPublication,
   NativeClassRawAccess,
   NativeObjectAddress,
 };

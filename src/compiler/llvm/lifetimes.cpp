@@ -1,4 +1,5 @@
 #include "lifetimes.h"
+#include "memory.h"
 
 namespace lang::native_llvm {
 
@@ -28,8 +29,11 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
   moves.emplace(storage, function);
   llvm::IRBuilder<> ir(
       llvm::BasicBlock::Create(session.context(), "entry", function));
-  auto *address = function->getArg(0);
-  if (type.kind == SemanticType::Array && type.arrayLength) {
+  llvm::Value *address = function->getArg(0);
+  if (type.kind == SemanticType::UniqueOwner) {
+    ir.CreateStore(llvm::ConstantPointerNull::get(session.layouts().pointer()),
+                   address);
+  } else if (type.kind == SemanticType::Array && type.arrayLength) {
     auto *entry = ir.GetInsertBlock();
     auto *loop =
         llvm::BasicBlock::Create(session.context(), "elements", function);
@@ -65,6 +69,8 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
   return function;
 }
 bool Lifetimes::needsMoveState(const SemanticType &type) const {
+  if (type.kind == SemanticType::UniqueOwner)
+    return true;
   if (type.kind == SemanticType::Array)
     return needsMoveState(type.arguments.at(0));
   if (type.kind != SemanticType::Class)
@@ -91,8 +97,16 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
   for (const auto &[previous, function] : cleanups)
     if (previous == recipe)
       return function;
-  if (recipe.polymorphicCleanup || recipe.recursiveCleanup ||
-      recipe.uniquePointeeClass || recipe.lambdaInstance ||
+  if (recipe.recursiveCleanup) {
+    for (auto entry = buildingCleanups.rbegin();
+         entry != buildingCleanups.rend(); ++entry)
+      if (!entry->first.recursiveCleanup && entry->first.type == recipe.type &&
+          entry->first.classInstance == recipe.classInstance)
+        return entry->second;
+    throw std::logic_error(
+        "LLVM recursive cleanup lost its exact enclosing recipe");
+  }
+  if (recipe.polymorphicCleanup || recipe.lambdaInstance ||
       recipe.payloadVariant)
     throw BackendUnsupportedError(
         "LLVM cleanup requires its later ownership/dispatch milestone");
@@ -105,14 +119,38 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
       "__gti_native_cleanup_" + std::to_string(cleanups.size()),
       session.module());
   cleanups.emplace_back(recipe, function);
+  buildingCleanups.emplace_back(recipe, function);
   llvm::IRBuilder<> ir(
       llvm::BasicBlock::Create(session.context(), "entry", function));
-  auto *address = function->getArg(0);
+  llvm::Value *address = function->getArg(0);
   auto *output = function->getArg(1);
   auto *duringFailure = function->getArg(2);
   auto *failed = ir.CreateAlloca(ir.getInt1Ty());
   auto *scratch = ir.CreateAlloca(session.abi().failureChannel());
   ir.CreateStore(ir.getFalse(), failed);
+  const bool unique = recipe.type.kind == SemanticType::UniqueOwner;
+  llvm::Value *allocation = nullptr;
+  if (unique) {
+    if (recipe.type.arguments.size() != 1 || recipe.fixedArray ||
+        (recipe.uniquePointeeClass &&
+         session.layouts().instance(recipe.type.arguments[0]).id !=
+             *recipe.uniquePointeeClass))
+      throw std::logic_error(
+          "LLVM unique cleanup lost its exact pointee recipe");
+    allocation = ir.CreateLoad(pointer, address);
+    ir.CreateStore(llvm::ConstantPointerNull::get(session.layouts().pointer()),
+                   address);
+    auto *live =
+        llvm::BasicBlock::Create(session.context(), "owner.live", function);
+    auto *empty =
+        llvm::BasicBlock::Create(session.context(), "owner.empty", function);
+    ir.CreateCondBr(ir.CreateIsNull(allocation), empty, live);
+    ir.SetInsertPoint(empty);
+    ir.CreateRet(ir.getTrue());
+    ir.SetInsertPoint(live);
+    address = allocation;
+  }
+  const auto &objectType = unique ? recipe.type.arguments[0] : recipe.type;
 
   // Save the first normal-cleanup failure, drain remaining children, and stop
   // immediately on a second failure. A caller already unwinding owns its first
@@ -178,14 +216,14 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
     if (recipe.destructor) {
       const auto *target =
           session.program().mir().findDestructorInstance(*recipe.destructor);
-      if (!target || recipe.type.kind != SemanticType::Class)
+      if (!target || objectType.kind != SemanticType::Class)
         throw std::logic_error("LLVM cleanup lost its selected destructor");
-      const auto index = session.layouts().activeIndex(recipe.type);
+      const auto index = session.layouts().activeIndex(objectType);
       if (!index)
         throw std::logic_error(
             "LLVM source destructor has no active-state representation");
       auto *state = ir.CreateStructGEP(
-          session.layouts().get(recipe.type).storage, address, *index);
+          session.layouts().get(objectType).storage, address, *index);
       auto *run = llvm::BasicBlock::Create(session.context(), "body", function);
       auto *done =
           llvm::BasicBlock::Create(session.context(), "body.done", function);
@@ -209,6 +247,15 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
       ir.SetInsertPoint(done);
     }
     for (const auto &selected : recipe.aggregate) {
+      if (unique) {
+        if (recipe.aggregate.size() != 1 || selected.type != objectType ||
+            selected.uniqueOwnerField || selected.uniqueOwnerBase ||
+            selected.captureIndex || selected.payloadVariant)
+          throw std::logic_error(
+              "LLVM unique cleanup lost its unprojected pointee child");
+        child(selected, address);
+        continue;
+      }
       unsigned index;
       if (selected.uniqueOwnerField)
         index = session.layouts().fieldIndex(recipe.type,
@@ -224,7 +271,12 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
                                address, index));
     }
   }
+  if (unique) {
+    Memory memory(session, ir, {}, {}, {});
+    memory.releaseBytes(allocation);
+  }
   ir.CreateRet(ir.CreateNot(ir.CreateLoad(ir.getInt1Ty(), failed)));
+  buildingCleanups.pop_back();
   return function;
 }
 

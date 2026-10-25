@@ -83,6 +83,7 @@ TypeLayout Layouts::get(const SemanticType &type) {
   case SemanticType::NullPtr:
   case SemanticType::CString:
   case SemanticType::NativeFunction:
+  case SemanticType::UniqueOwner:
     return describe(pointer());
   case SemanticType::StringView:
     return describe(textView_, true);

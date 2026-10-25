@@ -14,6 +14,9 @@ uninitializedStorageRepresentation(const MirProgram &program,
 nativeObjectConstructionShape(const MirProgram &program,
                               const MirInstruction &instruction);
 [[nodiscard]] bool
+nativeUniqueConstructionShape(const MirProgram &program,
+                              const MirInstruction &instruction);
+[[nodiscard]] bool
 nativeProcessMemoryBinding(const MirProgram &program,
                            const MirFunctionInstance &function);
 

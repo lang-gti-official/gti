@@ -205,6 +205,19 @@ public:
         return selected.arguments.size() == 1 &&
                !selected.arrayLengthParameterId &&
                self(self, selected.arguments[0]);
+      if (selected.kind == SemanticType::UniqueOwner) {
+        if (selected.arguments.size() != 1 ||
+            !mir_detail::completeObjectType(program, selected.arguments[0]))
+          return false;
+        const auto &pointee = selected.arguments[0];
+        if (pointee.kind == SemanticType::Class)
+          for (const auto &owner : program.classInstances())
+            if (owner.type == pointee && visiting.contains(owner.id))
+              return !owner.polymorphic && !owner.abstract &&
+                     owner.compilerCapability ==
+                         CompilerCapabilityTypeKind::None;
+        return self(self, pointee);
+      }
       if (selected.kind != SemanticType::Class)
         return false;
       const MirClassInstance *owner = nullptr;
@@ -243,11 +256,62 @@ public:
             leaf->kind == SemanticType::RawPointer) &&
            leaf->arguments.size() == 1)
       leaf = &leaf->arguments[0];
+    if (leaf->kind == SemanticType::UniqueOwner && nativeValue(type))
+      return Shape::NativeUniqueOwnership;
     if (leaf->kind == SemanticType::Class && nativeValue(type))
       return Shape::NativeClassStorage;
     return {};
   }
   bool memoryOperation(const MirInstruction &stage) const {
+    if (stage.kind == MirInstructionKind::AllocateObject)
+      return stage.info.type.kind == SemanticType::UniqueOwner &&
+             nativeValue(stage.info.type) && stage.destination && currentBody &&
+             currentBody->findDropObligation(stage.objectAllocation) &&
+             currentBody->findDropObligation(stage.objectAllocation)->kind ==
+                 MirDropObligationKind::ObjectAllocation;
+    if (stage.intrinsic == IntrinsicKind::AllocateUniqueOwner)
+      return native_llvm::nativeUniqueConstructionShape(program, stage) &&
+             nativeValue(stage.info.type);
+    if (stage.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+        stage.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
+        stage.intrinsic == IntrinsicKind::UniqueOwnerIsNull ||
+        stage.intrinsic == IntrinsicKind::UniqueOwnerSwap) {
+      const bool swap = stage.intrinsic == IntrinsicKind::UniqueOwnerSwap;
+      const bool borrow =
+          stage.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+          stage.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut;
+      const bool writable =
+          swap || stage.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut;
+      if (stage.kind != MirInstructionKind::Call || stage.functionTarget ||
+          stage.receiver || stage.parameterTypes.size() != (swap ? 2 : 1) ||
+          stage.operands.size() != stage.parameterTypes.size())
+        return false;
+      const auto &parameter = stage.parameterTypes[0];
+      if (!swap) {
+        if (parameter.kind != SemanticType::UniqueOwner ||
+            !nativeValue(parameter) || stage.operands[0].type != parameter)
+          return false;
+        return borrow
+                   ? stage.loan &&
+                         stage.info.category == ValueCategory::Place &&
+                         stage.info.type == parameter.arguments[0] &&
+                         stage.info.access == (writable ? AccessMode::Mutable
+                                                        : AccessMode::ReadOnly)
+                   : !stage.loan && stage.info.type == SemanticType::Bool;
+      }
+      if (parameter.kind != SemanticType::Reference ||
+          parameter.arguments.size() != 1 ||
+          parameter.referenceAccess !=
+              (writable ? AccessMode::Mutable : AccessMode::ReadOnly) ||
+          parameter.arguments[0].kind != SemanticType::UniqueOwner ||
+          !nativeValue(parameter.arguments[0]))
+        return false;
+      for (std::size_t index = 0; index < stage.operands.size(); ++index)
+        if (stage.parameterTypes[index] != parameter ||
+            stage.operands[index].type != parameter)
+          return false;
+      return !stage.loan && stage.info.type == SemanticType::Void;
+    }
     if (stage.intrinsic == IntrinsicKind::ObjectConstruct)
       return native_llvm::nativeObjectConstructionShape(program, stage) &&
              nativeValue(stage.parameterTypes[0].arguments[0]);
@@ -802,6 +866,9 @@ public:
           add(Shape::Tombstone);
           continue;
         }
+        if (mirRecordPublishedConstructorInitializer(program, mir, body->owner,
+                                                     stage))
+          add(Shape::UnstagedConstructorFieldPublication);
         const bool typedMemory = memoryOperation(stage);
         const auto [extendedRaw, validRaw] = nativeRawStage(mir, stage);
         const bool rawClassStage = extendedRaw && validRaw;

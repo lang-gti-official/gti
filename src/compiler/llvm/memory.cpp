@@ -205,6 +205,48 @@ bool nativeObjectConstructionShape(const MirProgram &program,
   return passive(passive, type);
 }
 
+bool nativeUniqueConstructionShape(const MirProgram &program,
+                                   const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::AllocateUniqueOwner ||
+      !instruction.result ||
+      instruction.info.type.kind != SemanticType::UniqueOwner ||
+      instruction.info.type.arguments.size() != 1)
+    return false;
+  const auto &type = instruction.info.type.arguments[0];
+  if (type.kind != SemanticType::Class)
+    return type != SemanticType::Void &&
+           (isPassiveScalarValueType(type) ||
+            type == SemanticType::StringView ||
+            type.kind == SemanticType::RawPointer ||
+            type.kind == SemanticType::NativeFunction) &&
+           !instruction.constructorTarget && instruction.operands.size() <= 1 &&
+           instruction.operands.size() == instruction.parameterTypes.size() &&
+           (instruction.operands.empty() ||
+            instruction.parameterTypes[0] == type);
+  const auto found = std::find_if(
+      program.classInstances().begin(), program.classInstances().end(),
+      [&](const auto &owner) { return owner.type == type; });
+  if (found == program.classInstances().end() || found->polymorphic ||
+      found->abstract)
+    return false;
+  if (instruction.constructorTarget) {
+    const auto *target =
+        program.findConstructorInstance(*instruction.constructorTarget);
+    return target && target->owner == found->id &&
+           instruction.parameterTypes == target->parameterTypes;
+  }
+  if (!mir_detail::generatedUniqueConstruction(instruction))
+    return false;
+  if (instruction.constructorKind == ConstructorKind::Ordinary)
+    return found->defaultConstructor == SpecialMemberStatus::Generated &&
+           !found->generatedDefaultRequiresSchedule &&
+           found->declaredFields.empty() && found->bases.empty();
+  return instruction.constructorKind == ConstructorKind::Move
+             ? found->moveConstructor == SpecialMemberStatus::Generated
+             : found->copyConstructor == SpecialMemberStatus::Generated;
+}
+
 bool Memory::handles(IntrinsicKind intrinsic) {
   switch (intrinsic) {
   case IntrinsicKind::ObjectSize:
@@ -213,6 +255,10 @@ bool Memory::handles(IntrinsicKind intrinsic) {
   case IntrinsicKind::ObjectRelocate:
   case IntrinsicKind::ObjectRelocateRange:
   case IntrinsicKind::StorageBoundsCheck:
+  case IntrinsicKind::UniqueOwnerBorrow:
+  case IntrinsicKind::UniqueOwnerBorrowMut:
+  case IntrinsicKind::UniqueOwnerIsNull:
+  case IntrinsicKind::UniqueOwnerSwap:
     return true;
   default:
     return false;
@@ -259,6 +305,30 @@ Memory::Result Memory::emit(const MirInstruction &instruction,
   if (inputs.size() != instruction.operands.size())
     throw std::logic_error("LLVM memory operation lost its evaluated inputs");
   switch (instruction.intrinsic) {
+  case IntrinsicKind::UniqueOwnerBorrow:
+  case IntrinsicKind::UniqueOwnerBorrowMut:
+  case IntrinsicKind::UniqueOwnerIsNull: {
+    auto *address =
+        inputs[0]; // Verified copy-load of the unique handle, not its slot.
+    if (instruction.intrinsic == IntrinsicKind::UniqueOwnerIsNull)
+      return {true, ir.CreateIsNull(address)};
+    if (instruction.definedFailure.localOrigins.size() != 1 ||
+        instruction.definedFailure.localOrigins[0].outcomes.size() != 1 ||
+        instruction.definedFailure.localOrigins[0].outcomes[0].code !=
+            DefinedFailureCode::EmptyOwnerAccess)
+      throw std::logic_error(
+          "LLVM owner borrow lost its sealed access failure");
+    guard(ir.CreateIsNull(address),
+          instruction.definedFailure.localOrigins[0].outcomes[0]);
+    return {true, address};
+  }
+  case IntrinsicKind::UniqueOwnerSwap: {
+    auto *left = ir.CreateLoad(session.layouts().pointer(), inputs[0]);
+    auto *right = ir.CreateLoad(session.layouts().pointer(), inputs[1]);
+    ir.CreateStore(right, inputs[0]);
+    ir.CreateStore(left, inputs[1]);
+    return {true};
+  }
   case IntrinsicKind::ObjectSize:
   case IntrinsicKind::ObjectAlignment: {
     if (!mir_detail::objectLayoutQuery(session.program().mir(), instruction))

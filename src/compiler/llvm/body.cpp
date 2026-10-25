@@ -178,7 +178,8 @@ private:
         return target;
       }
       if (operand.kind == MirOperandKind::Move &&
-          operand.type.kind == SemanticType::Array)
+          (operand.type.kind == SemanticType::Array ||
+           operand.type.kind == SemanticType::UniqueOwner))
         lifetimes.moved(ir, source, operand.type);
       return value;
     }
@@ -283,18 +284,55 @@ private:
       argumentOffset = 1;
       if (!instruction.constructorTarget) {
         const auto &type = instruction.parameterTypes[0].arguments[0];
-        auto *value = instruction.operands.size() == 2
-                          ? operand(instruction.operands[1])
-                          : llvm::Constant::getNullValue(
-                                session.layouts().get(type).value);
-        store(value, constructed, type);
-        if (instruction.constructorKind == ConstructorKind::Move)
-          lifetimes.moved(ir, value, type);
+        if (instruction.operands.size() == 2) {
+          auto *value = operand(instruction.operands[1]);
+          store(value, constructed, type);
+          if (instruction.constructorKind == ConstructorKind::Move &&
+              addressValue(type))
+            lifetimes.moved(ir, value, type);
+        } else {
+          ir.CreateStore(
+              llvm::Constant::getNullValue(session.layouts().get(type).storage),
+              constructed);
+        }
         lifetimes.active(ir, constructed, type, true);
         return nullptr;
       }
       // Keep the original MIR instruction, stage and ownership events. Only
       // source-argument indexing skips the already evaluated raw destination.
+    } else if (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner) {
+      if (!nativeUniqueConstructionShape(session.program().mir(), instruction))
+        throw BackendUnsupportedError("LLVM unique construction requires its "
+                                      "exact selected/generated plan");
+      const auto &type = instruction.info.type.arguments[0];
+      if (type.kind == SemanticType::Class) {
+        const auto *allocation =
+            input.findDropObligation(instruction.objectAllocation);
+        if (!allocation ||
+            allocation->kind != MirDropObligationKind::ObjectAllocation ||
+            allocation->dropType.type != instruction.info.type)
+          throw std::logic_error(
+              "LLVM unique construction lost its allocation-only obligation");
+        constructed =
+            load(memory.address(allocation->place), instruction.info.type);
+      } else {
+        constructed = objectMemory.allocateObject(instruction);
+      }
+      if (!instruction.constructorTarget) {
+        if (instruction.operands.empty()) {
+          ir.CreateStore(
+              llvm::Constant::getNullValue(session.layouts().get(type).storage),
+              constructed);
+        } else {
+          auto *value = operand(instruction.operands[0]);
+          store(value, constructed, type);
+          if (instruction.constructorKind == ConstructorKind::Move &&
+              addressValue(type))
+            lifetimes.moved(ir, value, type);
+        }
+        lifetimes.active(ir, constructed, type, true);
+        return constructed;
+      }
     } else if (instruction.intrinsic != IntrinsicKind::None) {
       if (Memory::handles(instruction.intrinsic)) {
         std::vector<llvm::Value *> inputs;
@@ -535,6 +573,16 @@ private:
     }
     auto *address = memory.address(
         instruction.destination.value_or(obligation ? obligation->place : 0));
+    if (obligation &&
+        obligation->kind == MirDropObligationKind::ObjectAllocation) {
+      auto *allocation = load(address, recipe->type);
+      store(llvm::ConstantPointerNull::get(session.layouts().pointer()),
+            address, recipe->type);
+      objectMemory.releaseBytes(allocation);
+      ir.CreateBr(done);
+      ir.SetInsertPoint(done);
+      return;
+    }
     auto *status = ir.CreateCall(
         lifetimes.cleanup(*recipe),
         {address, channel, ir.getInt1(current->activeFailure != 0)});
@@ -737,6 +785,10 @@ private:
       store(result, memory.address(place.id), place.type);
       break;
     }
+    case MirInstructionKind::AllocateObject:
+      store(objectMemory.allocateObject(instruction),
+            memory.address(*instruction.destination), instruction.info.type);
+      break;
     case MirInstructionKind::Construct: {
       auto *target = destination(*instruction.result);
       if (instruction.info.type.kind == SemanticType::Class &&

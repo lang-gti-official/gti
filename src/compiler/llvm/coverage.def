@@ -850,6 +850,8 @@ LLVM_COVERAGE_ENTRY(NativeClassRawAccess, 8, Implemented, None, "exact supported
 LLVM_COVERAGE_ENTRY(NativeObjectAddress, 8, Implemented, None, "inert const-preserving typed/erased address conversion for represented object storage; no lifetime, borrow or ownership authority")
 LLVM_COVERAGE_ENTRY(NativeMemoryOperation, 8, Implemented, None, "verified typed object layout, relocation and destruction of admitted native value shapes; source-computed bounds/slot/allocation guards; construction and owning capabilities independently pending")
 LLVM_COVERAGE_ENTRY(NativeProcessMemory, 8, Implemented, None, "exact target-selected sealed process-memory declarations through their canonical scalar C ABI; no arbitrary runtime binding or foreign call")
+LLVM_COVERAGE_ENTRY(NativeUniqueOwnership, 8, Implemented, None, "typed one-pointer unique mechanism; exact verified moves and nonpolymorphic cleanup recipes; public ownership policy remains source-defined")
+LLVM_COVERAGE_ENTRY(UnstagedConstructorFieldPublication, 6, Pending, None, "metadata-only constructor field initialization requires exact publication through the shared constructor service before owning values are admitted")
 LLVM_COVERAGE_ENTRY(NativeClassStorage, 6, Implemented, None, "exact nonpolymorphic ordinary class storage, final-address fresh publication and verified lifecycle schedules; no unions, private ownership capabilities or dynamic dispatch")
 LLVM_COVERAGE_ENTRY(NativeThreadStorage, 6, Implemented, None, "exact admitted native TLS storage, checked lazy initialization and C runtime registration")
 LLVM_COVERAGE_ENTRY(InPlaceScalarMutation, 6, Implemented, None, "exact evaluated scalar destination and RHS, promoted arithmetic and checked narrowing before publication")

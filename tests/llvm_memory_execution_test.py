@@ -18,6 +18,8 @@ CASES = {
     "lifetimes": "llvm_memory_lifetimes.gti",
     "value-lifetimes": "llvm_memory_value_lifetimes.gti",
     "provider": "llvm_memory_provider.gti",
+    "empty-unique": "llvm_memory_empty_unique.gti",
+    "unique": "llvm_memory_unique.gti",
 }
 REJECT = {"vacant-move": "llvm_memory_reject_vacant_move.gti"}
 FAILURES = {"guard-cleanup": ("llvm_memory_guard_cleanup.gti", "GTI-R0014",
@@ -27,6 +29,23 @@ FAILURES = {"guard-cleanup": ("llvm_memory_guard_cleanup.gti", "GTI-R0014",
 def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selected = sys.argv[3] if len(sys.argv) > 3 else None
+    if selected == "publication-rejection":
+        # Component-only prerequisite check. The positive empty-unique program
+        # remains in CASES and must execute after O09's publication composition.
+        with tempfile.TemporaryDirectory(prefix="gti-llvm-memory-preflight-") as directory:
+            for level in ("O0", "O1", "O2", "O3"):
+                output = Path(directory) / f"publication-{level}"
+                output.write_text("preserved", encoding="utf-8")
+                result = subprocess.run(
+                    [str(gti), str(root / "tests/fixtures/llvm_memory_empty_unique.gti"),
+                     "--backend", "llvm", f"-{level}", "-o", str(output)],
+                    cwd=root, capture_output=True, text=True, timeout=60)
+                if (result.returncode != 65 or "GTI-B0003" not in result.stderr
+                        or "UnstagedConstructorFieldPublication" not in result.stderr
+                        or output.read_text() != "preserved"):
+                    raise AssertionError(f"publication preflight {level}: {result}")
+        print("publication prerequisite: LLVM O0-O3 rejection preserved artifacts", flush=True)
+        return
     if selected and selected not in CASES and selected not in REJECT and selected not in FAILURES:
         raise ValueError(f"unknown memory case: {selected}")
     endpoints = (Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
