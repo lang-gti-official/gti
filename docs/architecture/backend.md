@@ -1,11 +1,16 @@
 # Backend And Native Handoff
 
-Status: current architecture. The C++ backend is production; the LLVM backend
-has its build, selection, initialization, and boundary foundation but does not
-yet lower GTI instructions or produce native artifacts.
+Status: current architecture. LLVM is the primary development backend. C++ is
+deprecated as the primary backend and maintained with bug fixes only through
+v1.0 as a comparison oracle. It remains the shipped default until LLVM passes
+O-LLVM-16; a future C++ catch-up requires a separate owner decision. See
+[ADR 031's backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25).
 
-GTI ships a production C++ source backend and a foundational native LLVM
-backend. Both consume one compiler-owned, backend-neutral `LoweredProgram`;
+GTI ships a C++ source backend and a selectable native LLVM backend, which
+already emits the documented scalar, places/text and ordinary class/lifecycle
+profiles. Unsupported required LLVM shapes reject before artifact publication;
+full-language coverage remains in progress. Both consume one compiler-owned,
+backend-neutral `LoweredProgram`;
 they do not receive the AST,
 `SemanticModel`, `HirProgram`, source MIR, optimizer side tables, or generated
 C++. The backend chooses target representation, but it cannot recover missing

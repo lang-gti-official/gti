@@ -66,6 +66,11 @@ negative cases so an ICE cannot silently become a miscompile.
   to shipped behavior.
 - For documentation-only changes, do not build by default unless examples,
   commands, generated material, or claimed behavior require execution.
+- Apply [the backend development policy](../../../docs/decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25):
+  C++ is bug-fix-only through v1.0, not a feature-parity gate for LLVM. Preserve
+  its supported regressions/differential checks; record comparator gaps and
+  require independent GTI/native execution, rejection, cleanup and applicable
+  platform/performance evidence instead of silent skips or new C++ features.
 - For changes affecting runtime execution, apply
   [ADR 012's performance acceptance](../../../docs/decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09).
   Verify representative optimized execution and report runtime, allocations,
