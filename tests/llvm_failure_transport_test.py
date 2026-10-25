@@ -43,6 +43,8 @@ import platform
 import re
 import shutil
 import statistics
+import math
+from fractions import Fraction
 import subprocess
 import time
 
@@ -292,25 +294,44 @@ def main():
             # Warm both variants, then alternate order per sample, never run in parallel.
             for case in ("direct-success", "dynamic-success", "direct-failure", "dynamic-failure"):
                 iterations = args.success_iterations if case.endswith("success") else args.iterations
+                counts = {}
                 for mode in ("status", "unwind"):
-                    run([binaries[(mode, "3")], case, "--bench", str(iterations)])
+                    count = min((100000000 // 65536) * 65536, math.ceil(iterations / 65536) * 65536)
+                    for calibration in range(4):
+                        result, _ = run([binaries[(mode, "3")], case, "--bench", str(count)])
+                        fields = dict(field.split("=", 1) for field in result.stdout.split())
+                        elapsed = int(fields["elapsed_ns"]) / 1e9
+                        if elapsed >= .15:
+                            break
+                        count = min((100000000 // 65536) * 65536,
+                                    math.ceil(count * .25 / max(elapsed, 1e-9) / 65536) * 65536)
+                    check(elapsed >= .15, "cannot obtain a sufficiently long sample")
+                    counts[mode] = count
                 samples = {"status": [], "unwind": []}
+                cpu_ratios = {"status": [], "unwind": []}
                 observables = {}
                 for index in range(args.samples):
                     for mode in (("status", "unwind") if index % 2 == 0 else ("unwind", "status")):
                         check(os.getloadavg()[0] <= max(1, os.cpu_count() * 0.25), "host became busy")
-                        result, _ = run([binaries[(mode, "3")], case, "--bench", str(iterations)])
+                        result, _ = run([binaries[(mode, "3")], case, "--bench", str(counts[mode])])
                         check(not result.stderr, "timing execution emitted stderr")
                         fields = dict(field.split("=", 1) for field in result.stdout.split())
                         seconds = int(fields.pop("elapsed_ns")) / 1e9
+                        cpu_ratio = int(fields.pop("cpu_ns")) / (seconds * 1e9)
+                        check(cpu_ratio >= .95, "sample was descheduled; retry on an uncontended host")
                         check(seconds >= 0.1, "sample too short: increase the corresponding iteration count")
-                        observables.setdefault(mode, fields)
-                        check(observables[mode] == fields, "unstable timing checksum")
+                        normalized = {key: Fraction(int(value), counts[mode]) for key, value in fields.items()}
+                        observables.setdefault(mode, normalized)
+                        check(observables[mode] == normalized, "unstable timing checksum")
                         samples[mode].append(seconds)
+                        cpu_ratios[mode].append(cpu_ratio)
                 check(observables["status"] == observables["unwind"], "non-equivalent timing workloads")
-                manifest["timing"].append({"case": case, "iterations": iterations,
+                manifest["timing"].append({"case": case, "iterations": counts,
                                            "seconds": samples,
-                                           "median_seconds": {m: statistics.median(s) for m, s in samples.items()}})
+                                           "cpu_wall_ratio": cpu_ratios,
+                                           "median_seconds": {m: statistics.median(s) for m, s in samples.items()},
+                                           "median_ns_per_call": {m: statistics.median(s) * 1e9 / counts[m]
+                                                                  for m, s in samples.items()}})
             manifest["load_after"] = os.getloadavg()
         manifest["status"] = "passed-bounded-experiment"
     except BaseException as error:

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string_view>
 #include <thread>
 
@@ -152,6 +153,7 @@ int main(int argc, char **argv) {
     require(iterations > 0 && iterations <= 100000000);
     c.tracing = false;
     std::uint64_t checksum = 0;
+    const auto cpuStarted = std::clock();
     const auto started = std::chrono::steady_clock::now();
     for (std::uint64_t i = 0; i < iterations; ++i) {
       int result = -999;
@@ -163,9 +165,12 @@ int main(int argc, char **argv) {
     const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
                              std::chrono::steady_clock::now() - started)
                              .count();
+    const auto cpu =
+        (std::clock() - cpuStarted) * (1000000000.0 / CLOCKS_PER_SEC);
     std::printf("checksum=%llu drops=%llu", (unsigned long long)checksum,
                 (unsigned long long)c.drops);
     std::printf(" elapsed_ns=%llu", (unsigned long long)elapsed);
+    std::printf(" cpu_ns=%llu", (unsigned long long)cpu);
 #ifdef TRANSPORT_ALLOCATION_AUDIT
     std::printf(" exception_storage_requests=%llu",
                 (unsigned long long)transport_exception_requests());
