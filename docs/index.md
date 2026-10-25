@@ -41,7 +41,8 @@ while canonical language documents continue to describe actual support.
   reusable dataflow/SCCP, bounded loop and alias facts, stable proof replay,
   per-instance effects, and optimizer observability.
 - [Backend](architecture/backend.md) — the sealed `LoweredProgram` consumer
-  contract, production C++ backend, bounded native LLVM backend, and native
+  contract, bug-fix-only C++ comparison backend, primary-development native LLVM
+  backend with bounded current coverage, and native
   artifact handoff; [LLVM coverage/admission](architecture/backend.md#llvm-coverage-and-admission)
   records complete vocabulary ownership and the current conservative body inventory;
   [LLVM target/layout/ABI](architecture/backend.md#llvm-target-layout-and-execution-abi)
@@ -171,8 +172,9 @@ while canonical language documents continue to describe actual support.
   runtime closures or assertion-name compiler magic.
 - [031: Native LLVM backend foundation](decisions/031-native-llvm-backend-foundation.md)
   — establishes an independent `LoweredProgram` consumer, target-scoped LLVM
-  build ownership, explicit selection and fail-closed pre-lowering status;
-  records LLVM as the intended public production backend, pending conformance.
+  build ownership, explicit selection and fail-closed admission;
+  records LLVM as the primary development backend, with production promotion
+  pending conformance, and [C++ primary-backend deprecation](decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25).
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.
@@ -194,7 +196,7 @@ than mixed into the active queue.
   with complete current-language coverage buckets, prerequisite gates,
   [reviewed shared implementation contracts](plans/implementation-sequence.md#shared-cross-milestone-contracts),
   the open [failure-transport evaluation](plans/implementation-sequence.md#c04-failure-transport-evaluation),
-  [bounded campaign waves and validation](plans/implementation-sequence.md#llvm-campaign-waves-and-validation),
+  [milestone ownership and campaign validation](plans/implementation-sequence.md#llvm-campaign-waves-and-validation),
   and [parallel assignment boundaries](plans/implementation-sequence.md#agent-assignment-and-evidence)
 - [Systems-readiness roadmap](plans/roadmap-to-1.0.md) — capability outcomes
   and the soft, revisable path to a full-featured 1.0
