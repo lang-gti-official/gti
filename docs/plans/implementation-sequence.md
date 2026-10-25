@@ -11518,6 +11518,53 @@ or resolve them using source.
 
 #### LLVM Campaign Waves And Validation
 
+##### Current Milestone Ownership
+
+**Owner revision (2026-10-25):** prefer one complete O-LLVM milestone per
+implementation agent. The narrow first-wave assignments below are historical
+checkpoints, not the ongoing limit on each worker. Owners continue within their
+milestone through routine implementation decisions and focused verification;
+they publish intermediate evidence without waiting for another prompt after
+each small slice. Explicit shared-contract reviews and real prerequisite gates
+remain mandatory. No milestone closes from a helper, prototype or partial
+profile alone.
+
+[PR 343](https://git.internal.howetotech.dev/gti-lang/gti/pulls/343) is merged
+at `881d8534b8052277fc580a8f752b07ec61a0ecd9`, including the 06-A2/06-B
+publication changes. Reconcile current main before relying on those contracts;
+do not restart or duplicate that completed PR.
+
+| Owner | Milestone / current work | Dependency and write boundary |
+| --- | --- | --- |
+| Laplace / LLVM-NativeC | O-LLVM-11: C ABI classification, production native call/storage transport, callbacks and embedding. Continue PR 346. | Own native-C portions of `abi.*`, family helpers/tests and the classifier/test CMake registration. Do not alter the internal GTI calling convention. Callbacks require O-LLVM-09 facts; failure containment follows C04. Coordinate shared body/admission/lifetime hooks. |
+| Faraday / LLVM-Cache | O-LLVM-14: project selection, native artifacts/cache, linking, packages and relocated installed toolchains. Continue PR 345. | Own driver integration and backend identity query; the specific `session.*` transfer exposes the existing unchanged target-machine factory rather than duplicating policy. Own the cache-test registration. Coordinate debug companion artifacts with O-LLVM-15. |
+| Dalton / LLVM-Optimization | O-LLVM-15: optimization pipelines, debugging, SIMD and representative runtime cost. Finish C04 evaluation in PR 347; keep production O-LLVM-15 changes in a separate task/PR. | Own pipeline/debug helpers and corresponding `session.cpp` hooks, excluding the identity factory transfer. Coordinate target/debug options with O-LLVM-14. No production failure-transport switch is authorized by comparison evidence alone. |
+| External handoff, agent not yet identified | O-LLVM-07: unions, payloads and conditional publication. | Reserved for the owner's additional agent, not launched by this coordinator. Own family helpers/tests; coordinate shared layout/body/lifetime registration. Compose owning payloads with O-LLVM-08 before admitting them. |
+| External handoff, agent not yet identified | O-LLVM-08: allocation, object lifetimes and ownership. | Reserved for a second external agent, not launched here. Own memory helpers, required byte-provider adapters and tests; coordinate shared runtime/ABI/lifetime contracts. Primitive allocation can proceed independently of O-LLVM-07. |
+
+Record the external agents' branches and actual file scopes when they accept;
+these handoffs do not claim that either agent has started. Five milestone owners
+are a practical current allocation, not an architectural concurrency maximum.
+Delay additional callable/dispatch/thread owners until their failure/ownership
+prerequisites and shared-file ownership are concrete enough to avoid duplicate
+implementations. Independent work inside those families remains possible when
+specifically assigned.
+
+The coordinator retains common plan/backend/verification summaries, VERSION,
+untransferred shared dispatch/admission/lifecycle sections and integration.
+Transferred sections are not permission to rewrite the rest of a shared file.
+Each milestone must retain its full exit matrix, including shapes awaiting
+another milestone. Continue independent work while a dependent shape is blocked.
+Keep component PRs separate and do not hold completed, ready components merely
+to finish every owner. The validation ladder below still applies unchanged.
+
+macOS validation runs locally on the current Mac mini, through the shared
+window where required; no SSH-to-self or host-key change is needed. Managed
+Linux runners provide Linux evidence. Preserve existing live run IDs and their
+exact-source results rather than launching replacement runs after reconciliation.
+
+##### First-Wave Checkpoint Record
+
 **Wave 1 launch (2026-10-25):** baseline
 `96c48d133dad8515c65c3fe0c9968df241665747`. Use the temporary
 [`llvm-campaign` skill](../../.codex/skills/llvm-campaign/SKILL.md) for this
@@ -11526,10 +11573,9 @@ the coordinating agent owns shared contracts, registration and integration.
 These are bounded first assignments, not authorization to finish the entire
 backend or to spawn additional workers recursively.
 
-Existing [PR 343](https://git.internal.howetotech.dev/gti-lang/gti/pulls/343)
-owns the remaining 06-A2/06-B array/stored-reference publication work. It is
-external to this wave: do not duplicate, interrupt or assume its completion.
-Inspect its current head before integrating any dependent work.
+At launch, [PR 343](https://git.internal.howetotech.dev/gti-lang/gti/pulls/343)
+owned the remaining 06-A2/06-B array/stored-reference publication work outside
+this wave. It has since merged as recorded above.
 
 | Worker / slice | Bounded outcome and exclusive implementation scope | Stop / integration boundary |
 | --- | --- | --- |
@@ -11546,10 +11592,10 @@ registration patches are serialized; independent implementation does not wait
 for another worker's unrelated tests. Workers publish draft PRs and stop at
 their assigned handoff; the coordinator alone integrates this wave.
 
-The next wave is selected from evidence, not launched automatically. Completing
-C04's evaluation and 06-A2/06-B unlocks better-scoped payload, allocation,
-callable and dispatch assignments; source/runtime threading follows their
-verified composition rather than assuming those foundations already exist.
+The owner subsequently expanded these assignments to the current milestones
+above. C04 still gates choices about failure signatures, not all payload,
+allocation or ABI work; source/runtime threading follows verified composition
+rather than assuming its prerequisites already exist.
 
 ##### Validation Ladder
 

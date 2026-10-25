@@ -1,11 +1,11 @@
 ---
 name: llvm-campaign
-description: Implement or coordinate an explicitly assigned slice of GTI's active O-LLVM production-backend campaign. Use for campaign workers and integration, not unrelated compiler work, ordinary LLVM questions, or a new backend campaign after O-LLVM-16 closes.
+description: Implement or coordinate an assigned milestone of GTI's active O-LLVM production-backend campaign. Use for campaign workers and integration, not unrelated compiler work, ordinary LLVM questions, or a new backend campaign after O-LLVM-16 closes.
 ---
 
 # GTI LLVM Campaign
 
-This temporary skill coordinates bounded parallel implementation of the
+This temporary skill coordinates milestone-owned parallel implementation of the
 [LLVM production campaign](../../../docs/plans/implementation-sequence.md#llvm-production-backend-campaign).
 It does not replace the language specification, implemented backend architecture,
 or the reviewed LLVM-C01 through LLVM-C09 contracts. Retire it when O-LLVM-16
@@ -21,16 +21,24 @@ load language/build/diagnostic skills only when those boundaries change.
 
 Before edits, return a short assignment card to the coordinator:
 
-- slice ID and concrete supported program or necessary infrastructure outcome;
+- milestone ID and concrete supported program or necessary infrastructure outcome;
 - base SHA, task branch/worktree, existing overlapping PRs;
 - input facts, owning layer, contract IDs and unresolved prerequisites;
 - exclusive files, shared registration patches needed, explicit exclusions;
 - admission/rejection shapes, risk tier, focused tests and platform/cost gates;
-- bounded deliverable and stopping condition for this wave.
+- milestone exit gates, useful checkpoints and actual prerequisite blockers.
+
+The default assignment is one complete O-LLVM milestone. Use smaller checkpoints
+to review and integrate progress, not as artificial stopping points requiring a
+new prompt. Continue routine design, implementation and focused verification
+within the agreed ownership. A missing prerequisite blocks its dependent shapes,
+not independent work elsewhere in the milestone. Never mark the whole milestone
+complete from a prototype or one admitted profile.
 
 The coordinator grants write scopes, not authority to redesign shared contracts.
 Inspect current source and tests before accepting stale milestone assumptions.
-Stop and report a missing prerequisite rather than silently widening the task.
+Report cross-owner prerequisites and request specific shared changes rather than
+silently widening the task or duplicating another owner's work.
 
 ## Parallel Ownership
 
@@ -43,8 +51,10 @@ Workers edit only their agreed files. The coordinator owns shared registrations
 in `body.cpp`, admission/coverage inventories, root/test CMake lists, common plan
 status and VERSION unless a specific bounded ownership transfer is recorded.
 Propose those patches with exact insertion points; do not independently rewrite
-shared dispatch/planning files. The coordinator serializes these small changes
-on the component branch before its final exact-source checks. Meanwhile the
+shared dispatch/planning files. The coordinator may transfer a specific shared
+section or registration to its milestone owner, recording the boundary so other
+workers do not edit it. Integrate these changes on the component branch before
+its final exact-source checks. Meanwhile the
 worker can exercise its isolated harness directly; an unregistered or unwired
 test/helper is not a completed production slice.
 
@@ -95,7 +105,8 @@ The named gates are a lower bound, not permission to skip an affected invariant.
 
 Use `--parallel 2`/`-j2` for builds and `--parallel 1` for CTest. Full builds and
 broad tests use `build_window.py`; T2/T3 admission uses its required reservation.
-Prefer `remote_runner.py` on an idle appropriate host for heavy validation;
+On this campaign's Mac mini, run macOS validation locally; do not SSH back to
+the `mini` runner. Use `remote_runner.py` on an idle appropriate Linux host;
 coordinate host allocation rather than creating ad hoc remote checkouts.
 Focused independent commands can run concurrently. Never increase window
 capacity, steal a reservation, or restart a quiet live run.
@@ -106,12 +117,15 @@ noise controlled; do not make timing claims while other work saturates the
 measurement host. Inspect native C oracles on each targeted ABI. A macOS-only
 result is not Linux ABI evidence, and CI is not a substitute or completion gate.
 
-## Handoff And Stop
+## Checkpoints And Completion
 
-At the assigned boundary publish the exact branch/PR and return: changed paths,
+At a checkpoint publish the exact branch/PR and return: changed paths,
 admitted/pending shapes, shared patches, check commands/results/logs and live
 handles, platform/cost evidence, risks and next prerequisite. Identify whether
 the result is exploratory, ready for integration, or integrated. Do not merge
 or mark production support complete from component evidence alone. Integration
 and main synchronization belong to the designated coordinator for this wave.
-Stop after the assigned slice; do not start another family to fill a wait.
+Continue the assigned milestone after intermediate checkpoints unless explicitly
+paused or all remaining work needs another owner's prerequisite. Stop at its
+review/integration boundary with outstanding gates explicit; do not claim
+completion or start a different milestone merely to fill a wait.
