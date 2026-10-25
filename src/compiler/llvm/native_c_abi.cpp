@@ -12,6 +12,17 @@
 
 namespace lang::native_llvm {
 
+bool nativeCScalarValueContract(const TargetInfo &target,
+                                const SemanticType &type) {
+  if (!((target.os == "macos" && target.arch == "arm64") ||
+        (target.os == "linux" && target.arch == "x86_64")) ||
+      type.nativeCScalar == NativeCScalarKind::None)
+    return false;
+  const auto canonical =
+      SemanticType::nativeCScalarType(type.nativeCScalar, target);
+  return canonical && *canonical == type;
+}
+
 bool nativeCValueContract(const MirProgram &program, const TargetInfo &target,
                           const SemanticType &type, NativeCValueRole role) {
   if (!((target.os == "macos" && target.arch == "arm64") ||
@@ -21,6 +32,9 @@ bool nativeCValueContract(const MirProgram &program, const TargetInfo &target,
   const auto value = [&](const auto &self, const SemanticType &selected,
                          NativeCValueRole position, unsigned depth) -> bool {
     if (depth > 256)
+      return false;
+    if (selected.nativeCScalar != NativeCScalarKind::None &&
+        !nativeCScalarValueContract(target, selected))
       return false;
     switch (selected.kind) {
     case SemanticType::Void:

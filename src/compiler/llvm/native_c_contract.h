@@ -6,6 +6,9 @@ namespace lang::native_llvm {
 
 enum class NativeCValueRole { Argument, Result, Storage };
 
+[[nodiscard]] bool nativeCScalarValueContract(const TargetInfo &target,
+                                              const SemanticType &type);
+
 // Representation eligibility for an already verified program, not a source
 // type checker or a register classifier. The physical planner consumes the
 // same bounded family and separately verifies LLVM's target/layout contract.

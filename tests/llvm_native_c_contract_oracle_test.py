@@ -82,16 +82,16 @@ def main():
     executions = 0
     for c_level in (0, 3):
         objects = []
-        for source in ("contracts_oracle", "native_calls"):
+        for source in ("contracts_oracle", "native_calls", "scalar_types_oracle"):
             obj = output / f"host-{source}-O{c_level}.o"
             run([args.cc, "-std=c17", "-Wall", "-Wextra", "-Werror", f"-O{c_level}",
                  "-DGTI_SOURCE_HOST", "-I", repo / "runtime/include", "-c",
                  fixture / f"{source}.c", "-o", obj], f"host-{source}-O{c_level}")
             objects.append(obj)
         for level in range(4):
-            for source in (("scalar_calls", "service_math", "native_failure")
+            for source in (("scalar_calls", "scalar_types", "service_math", "native_failure")
                            if args.preflight or args.profile == "scalar"
-                           else ("contracts", "service_math", "native_failure")):
+                           else ("contracts", "scalar_types", "service_math", "native_failure")):
                 executable = output / f"source-{source}-llvm{level}-c{c_level}"
                 tag = executable.name
                 if args.preflight:

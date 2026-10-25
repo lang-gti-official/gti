@@ -1,5 +1,6 @@
 #include "../src/compiler/llvm/abi.h"
 #include "../src/compiler/llvm/body.h"
+#include "../src/compiler/llvm/coverage.h"
 #include "../src/compiler/llvm/failure.h"
 #include "../src/compiler/llvm/native_c_abi.h"
 #include "../src/compiler/llvm/native_c_contract.h"
@@ -16,6 +17,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <set>
 #include <stdexcept>
 
 namespace {
@@ -456,6 +458,16 @@ void emitContractProbes(Session &session) {
       SemanticType::UInt16};
   checkImportContract(session.abi().nativeC(SemanticType::Int8, narrow));
   checkImportContract(session.abi().nativeC(SemanticType::UInt8, narrow));
+  const auto nativeChar =
+      SemanticType::nativeCScalarType(NativeCScalarKind::Char, target);
+  require(nativeChar && nativeCScalarValueContract(target, *nativeChar),
+          "native scalar identity consumes the canonical target query");
+  auto forgedChar = *nativeChar;
+  forgedChar.kind = SemanticType::UInt64;
+  require(!nativeCScalarValueContract(target, forgedChar) &&
+              !nativeCValueContract(program, target, forgedChar,
+                                    NativeCValueRole::Argument),
+          "a native C scalar spelling cannot override its canonical domain");
   unsigned direct = 0, indirect = 0;
   for (const auto &function : program.functionInstances()) {
     if (function.linkage == LanguageLinkage::C) {
@@ -637,7 +649,26 @@ void emitContractProbes(Session &session) {
 void emitSourcePreflight(Session &session,
                          const VerifiedLoweredProgram &input) {
   const auto &program = session.program().mir();
+  std::set<std::string> scalarRequirements;
+  const auto inspectScalar = [&](const auto &self,
+                                 const SemanticType &type) -> void {
+    if (type.nativeCScalar != NativeCScalarKind::None) {
+      require(nativeCScalarValueContract(session.program().target(), type),
+              "source preflight requires each canonical native scalar domain");
+      scalarRequirements.insert(
+          llvm_detail::coverage(type.nativeCScalar).key());
+    }
+    for (const auto &argument : type.arguments)
+      self(self, argument);
+  };
   for (const auto &function : program.functionInstances()) {
+    inspectScalar(inspectScalar, function.returnType);
+    for (const auto &parameter : function.parameterTypes)
+      inspectScalar(inspectScalar, parameter);
+    for (const auto &value : function.body.values)
+      inspectScalar(inspectScalar, value.info.type);
+    for (const auto &place : function.body.places)
+      inspectScalar(inspectScalar, place.type);
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions) {
         const auto *target =
@@ -663,6 +694,10 @@ void emitSourcePreflight(Session &session,
         (entry.family == "LanguageLinkage" && entry.name == "C") ||
         (entry.family == "MirDefinitionKind" && entry.name == "Declaration");
     bool witnessed = false;
+    if (entry.family == "NativeCScalarKind")
+      witnessed = scalarRequirements.contains(entry.key());
+    if (entry.family == "Shape" && entry.name == "NativeScalar")
+      witnessed = !scalarRequirements.empty();
     if (declarationRequirement && use.body &&
         use.body->kind == MirBodyKind::Function)
       if (const auto *function = program.findFunctionInstance(use.body->owner))
