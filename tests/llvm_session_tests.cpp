@@ -48,6 +48,7 @@ VerifiedLoweredProgram fixture() {
 struct Node { mut Node* next = nullptr; mut int32_t value = 0; };
 [[c_abi]] struct Packet { mut uint8_t tag; mut uint64_t value; };
 [[c_abi]] union Overlay { mut uint64_t bits; mut double value; };
+enum Data { empty, number(int value), pair(uint8_t tag, uint64_t value), node(Node value), flag(bool value) };
 int recurse(int value) {
   if (value == 0) { return 0; }
   return recurse(value - 1);
@@ -133,6 +134,22 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
           layout.size == 16 &&
               layout.fieldOffsets == std::vector<std::uint64_t>({0, 8}),
           "recursive pointer records are planned without recursive expansion");
+  }
+  expect(input.program().mir().payloadEnums().size() == 1,
+         "layout fixture retains its concrete payload definition");
+  for (const auto &payload : input.program().mir().payloadEnums()) {
+    const auto &layout = layouts.payload(payload.type);
+    expect(layout.type.addressOnly && layout.type.value->isPointerTy() &&
+               layout.type.size == 24 && layout.type.alignment == 8 &&
+               layout.type.fieldOffsets == std::vector<std::uint64_t>({0, 8}),
+           "payload storage shares one aligned overlap after its exact tag");
+    expect(layout.variants.size() == 5 &&
+               layout.variants[0]->getNumElements() == 0 &&
+               layout.variants[4]->getElementType(0)->isIntegerTy(8),
+           "unit alternatives and bool payload storage retain exact shapes");
+    expect(&layout == &layouts.payload(payload.type) &&
+               layouts.get(payload.type).storage == layout.storage,
+           "all payload layout consumers share a session-owned plan");
   }
   rejects<BackendUnsupportedError>(
       [&] {

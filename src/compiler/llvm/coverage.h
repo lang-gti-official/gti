@@ -64,6 +64,8 @@ enum class Shape {
   CStringLiteralInput,
   ArrayValueComparison,
   NativeClassStorage,
+  NativePayloadStorage,
+  ConcreteParameterPack,
   NativeThreadStorage,
   InPlaceScalarMutation,
   StoredFieldPublication,

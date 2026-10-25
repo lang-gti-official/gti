@@ -19,12 +19,24 @@ struct TypeLayout {
   std::vector<std::uint64_t> fieldOffsets;
 };
 
+struct PayloadLayout {
+  TypeLayout type;
+  llvm::StructType *storage = nullptr;
+  std::vector<llvm::StructType *> variants;
+  unsigned tagIndex = 0;
+  unsigned payloadIndex = 1;
+  // Verified variants have consecutive indices strictly below this encoding.
+  // It denotes representation-only empty/moved state, never a source case.
+  static constexpr std::uint32_t inactive = UINT32_MAX;
+};
+
 // All layout queries, allocation sizes and ABI address-only choices share this
 // session-owned map. Opaque LLVM declarations are allocated before their
 // bodies.
 class Layouts final {
 public:
   [[nodiscard]] TypeLayout get(const SemanticType &type);
+  [[nodiscard]] const PayloadLayout &payload(const SemanticType &type);
   [[nodiscard]] llvm::PointerType *pointer() const;
   [[nodiscard]] const MirClassInstance &
   instance(const SemanticType &type) const;
@@ -50,6 +62,11 @@ private:
   llvm::StructType *textView_ = nullptr;
   std::map<HirClassInstanceId, Record> records;
   std::unordered_map<ClassId, std::vector<HirClassInstanceId>> classes;
+  struct PayloadRecord {
+    bool building = false;
+    std::optional<PayloadLayout> layout;
+  };
+  std::map<const MirPayloadEnum *, PayloadRecord> payloads;
   [[nodiscard]] TypeLayout record(const SemanticType &type);
   [[nodiscard]] TypeLayout describe(llvm::Type *storage,
                                     bool addressOnly = false,

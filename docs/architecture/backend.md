@@ -4690,6 +4690,40 @@ The program contains no GTI heap-allocation operation; process-startup
 allocations were not measured. This bounded probe shows no material regression,
 not a general class-backend speedup claim.
 
+### LLVM Unions And Payloads
+
+The native payload plan belongs to `Layouts`, keyed by exact concrete sealed
+enum identity in one session. Safe sums use a 32-bit alternative index followed
+by aligned overlapping storage; every alternative has its exact field storage
+types, including byte-backed booleans. All consumers query that plan for tag and
+field addresses. The reserved `UINT32_MAX` encoding is representation-only
+inactive/moved state: the plan verifies that every source alternative index is
+strictly smaller. No niche optimization or source-visible empty case is inferred.
+
+Fresh payload arguments share destination publication with classes and arrays.
+The complete tag is written only after the operands have completed. Cleanup
+consumes the exact MIR alternative/field recipes, retires the active tag before
+running children, and preserves reverse cleanup and primary/secondary failure
+handling. Consuming extraction selects the original payload field rather than
+moving a whole enum before each extraction. Borrowed extractions retain the
+evaluated field address and upstream loan permissions. Native unions instead
+use the sealed overlapping layout with no hidden tag or active-member guarantee.
+
+Concrete variadic parameters remain flattened in the existing private ABI.
+Their MIR pack binding is metadata: each projected element aliases its own
+incoming argument cell, preserving final addresses without a tuple allocation
+or a second aggregate copy. The admission witness requires a concrete input
+binding and absence of runtime pack SSA values. Symbolic packs and whole-pack
+runtime operations remain unsupported. Direct consuming methods similarly use
+their exact selected source target and verified receiver transfer; this does
+not admit erased callables or introduce a separate invocation ABI.
+
+O-LLVM-07 remains under implementation. The initial execution matrix covers
+generic scalar alternatives and owning replacement/consuming cleanup. Complete
+wrapper, reference, failure and slot-capability composition remains an acceptance
+obligation, not a claim supplied by the existence of a layout. Unsupported field
+families remain gated by their own native storage witnesses.
+
 ### LLVM Coverage And Admission
 
 `llvm_admission.h` exposes `llvmCoverageLedger()` and

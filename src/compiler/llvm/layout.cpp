@@ -1,6 +1,7 @@
 #include "layout.h"
 #include "placement.h"
 
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 
@@ -97,17 +98,18 @@ TypeLayout Layouts::get(const SemanticType &type) {
                                 element.size))
       throw BackendUnsupportedError(
           "LLVM array extent exceeds the target object-size limit");
-    auto result =
-        describe(llvm::ArrayType::get(element.storage, type.arrayLength), true,
-                 addressValue(type) ? pointer() : nullptr);
+    auto result = describe(
+        llvm::ArrayType::get(element.storage, type.arrayLength), true,
+        addressValue(session.program().mir(), type) ? pointer() : nullptr);
     result.stride = element.size;
     return result;
   }
   case SemanticType::Enum: {
     const auto *declaration = session.program().findEnumDeclaration(type);
-    if (!declaration || declaration->payload)
-      throw BackendUnsupportedError(
-          "LLVM payload enum layout is pending O-LLVM-07");
+    if (!declaration)
+      throw std::logic_error("LLVM enum lost its sealed declaration");
+    if (declaration->payload)
+      return payload(type).type;
     return get(declaration->underlyingType);
   }
   case SemanticType::Class:
@@ -115,6 +117,57 @@ TypeLayout Layouts::get(const SemanticType &type) {
   default:
     throw BackendUnsupportedError(
         "LLVM layout for this type family is not implemented yet");
+  }
+}
+
+const PayloadLayout &Layouts::payload(const SemanticType &type) {
+  const auto *selected = session.program().mir().findPayloadEnum(type);
+  if (!selected || selected->variants.empty() ||
+      selected->variants.size() >= PayloadLayout::inactive)
+    throw BackendUnsupportedError(
+        "LLVM payload requires exact bounded alternatives");
+  auto &entry = payloads[selected];
+  if (entry.layout)
+    return *entry.layout;
+  if (entry.building)
+    throw std::logic_error("recursive inline LLVM payload layout");
+  entry.building = true;
+  try {
+    PayloadLayout result;
+    auto *anchor =
+        static_cast<llvm::Type *>(llvm::Type::getInt8Ty(session.context()));
+    std::uint64_t extent = 1;
+    for (const auto &variant : selected->variants) {
+      if (variant.variantIndex != result.variants.size())
+        throw std::logic_error(
+            "LLVM payload lost its sealed alternative index");
+      std::vector<llvm::Type *> fields;
+      for (const auto &field : variant.payloadTypes)
+        fields.push_back(get(field).storage);
+      auto *storage = llvm::StructType::get(session.context(), fields);
+      const auto layout = describe(storage);
+      extent = std::max(extent, layout.size);
+      if (layout.alignment >
+          session.dataLayout().getABITypeAlign(anchor).value())
+        anchor = storage;
+      result.variants.push_back(storage);
+    }
+    const auto anchorSize =
+        session.dataLayout().getTypeAllocSize(anchor).getFixedValue();
+    auto *overlap = llvm::StructType::get(
+        session.context(),
+        {anchor, llvm::ArrayType::get(llvm::Type::getInt8Ty(session.context()),
+                                      extent - anchorSize)});
+    result.storage = llvm::StructType::get(
+        session.context(),
+        {llvm::Type::getInt32Ty(session.context()), overlap});
+    result.type = describe(result.storage, true, pointer());
+    entry.layout = std::move(result);
+    entry.building = false;
+    return *entry.layout;
+  } catch (...) {
+    entry.building = false;
+    throw;
   }
 }
 

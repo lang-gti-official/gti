@@ -41,8 +41,8 @@ public:
 private:
   using Key = std::tuple<MirPlaceRootKind, std::size_t, std::size_t>;
   struct Root {
-    llvm::Value *address;
-    SemanticType type;
+    llvm::Value *address = nullptr;
+    SemanticType type = SemanticType::Unknown;
   };
   Session &session;
   llvm::IRBuilder<> &ir;
@@ -50,6 +50,8 @@ private:
   std::vector<llvm::Value *> &values;
   Scalars::Guard guard;
   std::map<Key, Root> roots;
+  std::map<Key, std::vector<Root>> packParameters;
+  std::map<Key, std::size_t> packNext;
   std::vector<llvm::Value *> loans;
   std::vector<SemanticType> loanTypes;
   llvm::Value *receiverAddress = nullptr;

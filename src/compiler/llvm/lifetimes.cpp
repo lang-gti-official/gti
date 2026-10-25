@@ -1,4 +1,5 @@
 #include "lifetimes.h"
+#include "payloads.h"
 
 namespace lang::native_llvm {
 
@@ -67,6 +68,8 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
 bool Lifetimes::needsMoveState(const SemanticType &type) const {
   if (type.kind == SemanticType::Array)
     return needsMoveState(type.arguments.at(0));
+  if (type.kind == SemanticType::Enum)
+    return session.program().mir().findPayloadEnum(type) != nullptr;
   if (type.kind != SemanticType::Class)
     return false;
   const auto &owner = session.layouts().instance(type);
@@ -83,6 +86,13 @@ bool Lifetimes::needsMoveState(const SemanticType &type) const {
 
 void Lifetimes::moved(llvm::IRBuilder<> &ir, llvm::Value *address,
                       const SemanticType &type) {
+  if (type.kind == SemanticType::Enum &&
+      session.program().mir().findPayloadEnum(type)) {
+    ir.CreateStore(
+        ir.getInt32(PayloadLayout::inactive),
+        payloadTagAddress(ir, session.layouts().payload(type), address));
+    return;
+  }
   if (needsMoveState(type))
     ir.CreateCall(moveHelper(type), {address});
 }
@@ -92,8 +102,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
     if (previous == recipe)
       return function;
   if (recipe.polymorphicCleanup || recipe.recursiveCleanup ||
-      recipe.uniquePointeeClass || recipe.lambdaInstance ||
-      recipe.payloadVariant)
+      recipe.uniquePointeeClass || recipe.lambdaInstance)
     throw BackendUnsupportedError(
         "LLVM cleanup requires its later ownership/dispatch milestone");
   auto *pointer = session.layouts().pointer();
@@ -149,7 +158,31 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
         {where, scratch,
          ir.CreateOr(duringFailure, ir.CreateLoad(ir.getInt1Ty(), failed))}));
   };
-  if (recipe.fixedArray) {
+  if (recipe.type.kind == SemanticType::Enum &&
+      session.program().mir().findPayloadEnum(recipe.type)) {
+    const auto &layout = session.layouts().payload(recipe.type);
+    auto *tagAddress = payloadTagAddress(ir, layout, address);
+    auto *tag = ir.CreateLoad(ir.getInt32Ty(), tagAddress);
+    ir.CreateStore(ir.getInt32(PayloadLayout::inactive), tagAddress);
+    auto *done =
+        llvm::BasicBlock::Create(session.context(), "payload.done", function);
+    auto *dispatch = ir.CreateSwitch(tag, done);
+    for (std::size_t variant = 0; variant < layout.variants.size(); ++variant) {
+      auto *run =
+          llvm::BasicBlock::Create(session.context(), "payload", function);
+      dispatch->addCase(ir.getInt32(variant), run);
+      ir.SetInsertPoint(run);
+      for (const auto &selected : recipe.aggregate)
+        if (selected.payloadVariant == variant) {
+          if (!selected.payloadField)
+            throw std::logic_error("LLVM payload cleanup lost its exact field");
+          child(selected, payloadFieldAddress(ir, layout, address, variant,
+                                              *selected.payloadField));
+        }
+      ir.CreateBr(done);
+    }
+    ir.SetInsertPoint(done);
+  } else if (recipe.fixedArray) {
     if (recipe.type.kind != SemanticType::Array ||
         recipe.aggregate.size() > 1 ||
         (recipe.aggregate.empty() && recipe.requiresActiveCleanup))

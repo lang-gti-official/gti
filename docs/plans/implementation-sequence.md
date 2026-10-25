@@ -11323,6 +11323,11 @@ or resolve them using source.
 
 ### O-LLVM-07: Unions, Payloads And Conditional Publication
 
+- **State:** implementation in progress. The initial native tag/aligned-payload
+  plan, exact final destinations, field extraction and active-alternative cleanup
+  execute generic scalar and owning replacement/consuming probes. End-to-end
+  completion still requires the full loan/wrapper/failure/slot composition and
+  macOS/Linux acceptance below; this is not a completed milestone.
 - **Unlock:** source-defined optional/expected, payload enums, matching and
   propagation in arbitrary user types.
 - **Deliver:** native union overlapping storage and tag/payload layouts for

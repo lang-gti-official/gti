@@ -41,6 +41,12 @@ void Places::allocate(
         !globals.contains(place.symbol))
       throw BackendUnsupportedError(
           "LLVM symbol place requires declared global storage");
+    if (place.type.kind == SemanticType::TypePack && place.type.concretePack &&
+        place.root == MirPlaceRootKind::Binding) {
+      roots.try_emplace(key(place), Root{nullptr, place.type});
+      packParameters.try_emplace(key(place), place.type.arguments.size());
+      continue;
+    }
     auto *storage = globals.contains(place.symbol) &&
                             (place.root == MirPlaceRootKind::Symbol ||
                              body.kind == MirBodyKind::Module)
@@ -64,7 +70,7 @@ void Places::allocate(
         loanTypes.at(*instruction.loan) = instruction.info.type;
 }
 llvm::Value *Places::load(llvm::Value *address, const SemanticType &type) {
-  if (addressValue(type))
+  if (addressValue(session.program().mir(), type))
     return address;
   auto *value = ir.CreateLoad(session.layouts().get(type).storage, address);
   return type == SemanticType::Bool ? ir.CreateTrunc(value, ir.getInt1Ty())
@@ -72,7 +78,7 @@ llvm::Value *Places::load(llvm::Value *address, const SemanticType &type) {
 }
 void Places::store(llvm::Value *value, llvm::Value *address,
                    const SemanticType &type) {
-  if (addressValue(type)) {
+  if (addressValue(session.program().mir(), type)) {
     if (value == address)
       return;
     const auto layout = session.layouts().get(type);
@@ -112,12 +118,25 @@ void Places::publish(MirLoanId id, llvm::Value *address) {
 }
 void Places::parameter(HirBindingId binding, llvm::Value *argument,
                        bool indirect) {
+  std::optional<std::size_t> packElement;
   for (const auto &place : body.places) {
     if (place.root != MirPlaceRootKind::Binding || place.binding != binding ||
         !place.projections.empty())
       continue;
     auto &target = roots.at(key(place));
-    if (addressValue(place.type) && indirect)
+    if (target.type.kind == SemanticType::TypePack) {
+      const auto index = packNext[key(place)]++;
+      const auto &element = target.type.arguments.at(index);
+      auto *address = addressValue(session.program().mir(), element) && indirect
+                          ? argument
+                          : slot(session.layouts().get(element).storage);
+      if (address != argument)
+        store(indirect ? load(argument, element) : argument, address, element);
+      packParameters.at(key(place)).at(index) = {address, element};
+      packElement = index;
+      continue;
+    }
+    if (addressValue(session.program().mir(), place.type) && indirect)
       target.address = argument;
     else
       store(indirect ? load(argument, place.type) : argument, target.address,
@@ -127,7 +146,14 @@ void Places::parameter(HirBindingId binding, llvm::Value *argument,
     if (entry.entry && entry.kind != MirLoanKind::Stored &&
         std::find(entry.carriers.begin(), entry.carriers.end(), binding) !=
             entry.carriers.end())
-      publish(entry.id, argument);
+      if (!packElement || [&] {
+            const auto *source = body.findPlace(entry.source);
+            return source && !source->projections.empty() &&
+                   source->projections.front().kind ==
+                       MirProjectionKind::PackElement &&
+                   source->projections.front().constantIndex == packElement;
+          }())
+        publish(entry.id, argument);
 }
 Places::Root Places::root(const MirPlace &place) {
   if (auto found = roots.find(key(place)); found != roots.end())
@@ -141,12 +167,14 @@ Places::Root Places::root(const MirPlace &place) {
     auto *value = values.at(place.value);
     if (!value)
       throw std::logic_error("LLVM place root has no dominating value");
+    if (body.findValue(place.value)->info.category == ValueCategory::Place)
+      return {value, type};
     return {arrayValue(value, type), type};
   }
   throw BackendUnsupportedError("LLVM place root has no admitted storage");
 }
 llvm::Value *Places::arrayValue(llvm::Value *value, const SemanticType &type) {
-  if (addressValue(type))
+  if (addressValue(session.program().mir(), type))
     return value;
   auto *address = slot(value->getType());
   ir.CreateStore(value, address);
@@ -196,12 +224,27 @@ llvm::Value *Places::address(MirPlaceId id) {
   auto [address, type] = root(place);
   for (const auto &projection : place.projections) {
     switch (projection.kind) {
+    case MirProjectionKind::PackElement: {
+      if (type.kind != SemanticType::TypePack || !type.concretePack ||
+          !projection.constantIndex)
+        throw std::logic_error(
+            "LLVM pack projection lost its concrete parameter");
+      const auto &selected =
+          packParameters.at(key(place)).at(*projection.constantIndex);
+      if (!selected.address)
+        throw std::logic_error(
+            "LLVM pack element has no incoming ABI argument");
+      address = selected.address;
+      type = selected.type;
+      break;
+    }
     case MirProjectionKind::Field: {
       const auto &owner = session.layouts().instance(type);
       const auto index = session.layouts().fieldIndex(type, projection.field);
       const auto field = owner.declaredFields.at(index - owner.bases.size());
-      address = ir.CreateStructGEP(session.layouts().get(type).storage, address,
-                                   index);
+      if (!owner.unionLayout)
+        address = ir.CreateStructGEP(session.layouts().get(type).storage,
+                                     address, index);
       type = field.type;
       break;
     }
