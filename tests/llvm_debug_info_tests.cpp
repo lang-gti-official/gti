@@ -5,8 +5,10 @@
 #include "gti/lowered_program_builder.h"
 
 #include <llvm/IR/DebugInfo.h>
+#include <llvm/IR/DebugProgramInstruction.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Transforms/Utils/Cloning.h>
 
 #include <iostream>
 #include <stdexcept>
@@ -144,11 +146,124 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
   return text;
 }
 
+void inlinedLocations() {
+  const auto frontend = Frontend().analyze("inline-debug.gti", R"(
+int identity(int input) { return input; }
+int caller(int input) { return identity(input); }
+)");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("invalid inline debug source");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host(), true);
+  std::vector<LoweredProgramIssue> issues;
+  if (!lowered.valid())
+    throw std::runtime_error("invalid inline debug lowered source");
+  auto input = verifiedLoweredProgram(*lowered.program, issues);
+  if (!input)
+    throw std::runtime_error("unverified inline debug source");
+  Session session(*input, {});
+  DebugInfo debug(session);
+  const MirFunctionInstance *calleeSource = nullptr, *callerSource = nullptr;
+  for (const auto &source : input->program().mir().functionInstances()) {
+    const auto *declaration =
+        input->program().findFunctionDeclaration(source.declaration);
+    if (declaration && declaration->qualifiedName == "identity")
+      calleeSource = &source;
+    else if (declaration && declaration->qualifiedName == "caller")
+      callerSource = &source;
+  }
+  if (!calleeSource || !callerSource)
+    throw std::runtime_error("lost inline source identities");
+  auto *callee = session.abi().declareFunction(calleeSource->id);
+  auto *caller = session.abi().declareFunction(callerSource->id);
+  auto *integer = llvm::Type::getInt32Ty(session.context());
+  if (callee->getReturnType() != integer ||
+      caller->getReturnType() != integer || callee->arg_size() != 1 ||
+      caller->arg_size() != 1 || callee->getArg(0)->getType() != integer ||
+      caller->getArg(0)->getType() != integer)
+    throw std::runtime_error(
+        "inline metadata control changed its central scalar ABI");
+  const MirBodyAddress calleeAddress{MirBodyKind::Function, calleeSource->id};
+  const MirBodyAddress callerAddress{MirBodyKind::Function, callerSource->id};
+  debug.begin(calleeAddress, *callee);
+  debug.begin(callerAddress, *caller);
+  auto *calleeScope = callee->getSubprogram();
+  auto *callerScope = caller->getSubprogram();
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", callee));
+  const auto &calleeLocations =
+      input->program().findBody(calleeAddress)->sourceLocations;
+  const auto &callerLocations =
+      input->program().findBody(callerAddress)->sourceLocations;
+  if (calleeLocations.empty() || callerLocations.empty())
+    throw std::runtime_error(
+        "inline source has no sealed instruction locations");
+  debug.location(ir, calleeLocations.front().block,
+                 calleeLocations.front().instruction);
+  auto *storage = ir.CreateAlloca(integer);
+  ir.CreateStore(callee->getArg(0), storage);
+  bool parameter = false;
+  for (const auto &place :
+       findMirBody(input->program().mir(), calleeAddress)->places)
+    if (place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
+        place.binding == calleeSource->parameterBindings.front()) {
+      debug.local(ir, place, storage, 1);
+      parameter = true;
+      break;
+    }
+  if (!parameter)
+    throw std::runtime_error("inline control lost its sealed parameter place");
+  ir.CreateRet(ir.CreateLoad(integer, storage));
+  ir.SetInsertPoint(
+      llvm::BasicBlock::Create(session.context(), "entry", caller));
+  debug.location(ir, callerLocations.front().block,
+                 callerLocations.front().instruction);
+  auto *call = ir.CreateCall(callee, {caller->getArg(0)});
+  const auto callLocation = call->getDebugLoc();
+  ir.CreateRet(call);
+  debug.finalize();
+  // Controlled LLVM metadata transformation only, not a production inlining
+  // policy or execution proof. No alwaysinline/semantic attributes are added.
+  llvm::InlineFunctionInfo information;
+  if (!llvm::InlineFunction(*call, information).isSuccess())
+    throw std::runtime_error("LLVM rejected the inline debug control");
+  bool found = false, parameterFound = false;
+  for (const auto &block : *caller)
+    for (const auto &instruction : block) {
+      const auto location = instruction.getDebugLoc();
+      if (location && location->getScope()->getSubprogram() == calleeScope) {
+        const auto *chain = location->getInlinedAt();
+        if (!chain || chain->getScope()->getSubprogram() != callerScope ||
+            chain->getLine() != callLocation.getLine())
+          throw std::runtime_error("inlining lost the caller source chain");
+        found = true;
+      }
+      for (const auto &record : instruction.getDbgRecordRange()) {
+        const auto *variable = llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
+        if (!variable || variable->getVariable()->getScope() != calleeScope)
+          continue;
+        const auto location = variable->getDebugLoc();
+        if (variable->getVariable()->getArg() != 1 ||
+            variable->getVariable()->getName() != "input" || !location ||
+            !location->getInlinedAt() ||
+            location->getInlinedAt()->getScope()->getSubprogram() !=
+                callerScope)
+          throw std::runtime_error("inlining lost the parameter source chain");
+        parameterFound = true;
+      }
+    }
+  if (!found || !parameterFound ||
+      llvm::verifyModule(session.module(), &llvm::errs()))
+    throw std::runtime_error("inlining lost callee source metadata");
+}
+
 int main() {
   if (metadata("/checkout-one/debug.gti") !=
       metadata("/other-checkout/debug.gti"))
     throw std::runtime_error(
         "debug metadata depends on an absolute checkout root");
-  std::cout << "sealed debug identities, locations, locals, recursive layout "
-               "and root relocation passed\n";
+  inlinedLocations();
+  std::cout << "sealed debug identities, locations, locals, recursive layout, "
+               "root relocation and inlined source/parameter chains passed\n";
 }
