@@ -232,7 +232,7 @@ def main():
         if platform.system() == "Linux":
             for mode in ("status", "unwind"):
                 binary = output / f"{mode}-allocation-audit"
-                run([clang, *common, "-O3", f"-DTRANSPORT_STATUS={int(mode == 'status')}",
+                run([clang, *common, *sanitizer, "-O3", f"-DTRANSPORT_STATUS={int(mode == 'status')}",
                      "-DTRANSPORT_ALLOCATION_AUDIT=1", fixtures / "driver.cpp",
                      fixtures / "transport.cpp", fixtures / "allocation_audit.cpp",
                      *runtime, host, "-Wl,--wrap=__cxa_allocate_exception", "-o", binary])
@@ -262,8 +262,10 @@ def main():
                              f"-O{optimization}", "-o", binary], timeout=240)
                         result, _ = run([binary], expected=70 if case.endswith("failure") else 0)
                         if case.endswith("failure"):
-                            check(result.stdout == "1\n2\n" and result.stderr ==
-                                  "status_failure.gti:10: runtime error[GTI-R0001]: integer_overflow in addition\n",
+                            check(not result.stdout and result.stderr ==
+                                  "status_failure.gti:19: runtime error[GTI-R0014]: failure_during_cleanup; "
+                                  "primary [GTI-R0001] at status_failure.gti:11; "
+                                  "secondary [GTI-R0017] message=\"cleanup verified\"\n",
                                   "actual GTI cleanup/source attribution mismatch")
                         else:
                             check(not result.stdout and not result.stderr, "GTI success mismatch")
