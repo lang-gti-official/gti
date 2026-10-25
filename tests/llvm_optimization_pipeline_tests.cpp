@@ -14,7 +14,9 @@ using namespace lang;
 using namespace lang::native_llvm;
 
 int main() {
-  const auto frontend = Frontend().analyze("pipeline.gti", R"(
+  FrontendOptions frontendOptions;
+  frontendOptions.requireEntryPoint = true;
+  const auto frontend = Frontend(frontendOptions).analyze("pipeline.gti", R"(
 int promote(int input) { mut int local = input; return local; }
 int checked(int left, int right) { return left + right; }
 double strict(double left, double right, double addend) { return left * right + addend; }
@@ -50,7 +52,14 @@ int main() {
       throw std::runtime_error(admission.limitation());
     Session session(*input, options);
     lowerScalarProgram(session, admission);
+    for (const auto &address : admission.requiredBodies())
+      if (address.kind == MirBodyKind::Function) {
+        auto *function = session.abi().declareFunction(address.owner);
+        // Models the coordinated ABI hook using genuinely lowered GTI bodies.
+        session.requireSourceDefinition(address.owner, *function);
+      }
     llvm::Function *promote = nullptr, *checked = nullptr, *strict = nullptr;
+    std::string privateName, entryName;
     for (const auto &function : input->program().mir().functionInstances()) {
       const auto *declaration =
           input->program().findFunctionDeclaration(function.declaration);
@@ -62,6 +71,10 @@ int main() {
         checked = session.abi().declareFunction(function.id);
       if (declaration->qualifiedName == "strict")
         strict = session.abi().declareFunction(function.id);
+      if (declaration->qualifiedName == "divide")
+        privateName = session.abi().declareFunction(function.id)->getName().str();
+      if (function.entryKind != ProgramEntryKind::None)
+        entryName = session.abi().declareFunction(function.id)->getName().str();
     }
     if (!promote || !checked || !strict)
       throw std::runtime_error("missing pipeline function");
@@ -97,6 +110,12 @@ int main() {
     floating();
     session.verify();
     const auto artifact = session.emitObject();
+    const auto *privateFunction = session.module().getFunction(privateName);
+    const auto *entryFunction = session.module().getFunction(entryName);
+    if (privateName.empty() || entryName.empty() ||
+        (privateFunction && !privateFunction->hasInternalLinkage()) ||
+        !entryFunction || !entryFunction->hasExternalLinkage())
+      throw std::runtime_error("real GTI private/hosted visibility policy failed");
     if (artifact.kind != BackendArtifactKind::Object ||
         artifact.contents.empty())
       throw std::runtime_error("pipeline did not emit a real object");
@@ -133,6 +152,6 @@ int main() {
     ++levels;
   }
   std::cout << levels
-            << " real pipelines: storage promotion, strict FP, checked "
+            << " real pipelines: private/hosted visibility, storage promotion, strict FP, checked "
                "overflow and rejection passed\n";
 }
