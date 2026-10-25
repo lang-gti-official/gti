@@ -1,0 +1,20 @@
+enum Step { plain(uint64_t value), adjusted(uint64_t value, uint64_t carry) };
+
+uint64_t select(uint64_t value) {
+  Step step = value % uint64_t(2) == uint64_t(0)
+      ? Step::plain(value) : Step::adjusted(value, uint64_t(3));
+  switch (step) {
+  case Step::plain(auto& current): return current;
+  case Step::adjusted(auto& current, auto& carry): return current + carry;
+  }
+}
+
+int main() {
+  mut uint64_t seed = 1;
+  mut uint64_t checksum = 0;
+  for (mut int index = 0; index < 2000000; index++) {
+    seed = (seed * uint64_t(48271)) % uint64_t(2147483647);
+    checksum = (checksum + select(seed)) % uint64_t(2147483647);
+  }
+  return seed == uint64_t(24123260) && checksum == uint64_t(2111565664) ? 0 : 1;
+}

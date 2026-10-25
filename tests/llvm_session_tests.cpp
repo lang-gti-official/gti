@@ -626,8 +626,11 @@ int main(void) {
             .succeeded(),
         "NativeLinkRequest links LLVM objects without a source compilation "
         "step");
-    expect(driver::invokeProcess({executable.string()}).succeeded(),
-           "linked C consumer observes exact object bytes");
+    const auto executed = driver::invokeProcess({executable.string()});
+    expect(executed.succeeded(),
+           ("linked C consumer observes exact object bytes (exit " +
+            std::to_string(executed.exitCode) + ")")
+               .c_str());
   }
 }
 // Real source -> verified lowered bodies -> private native body component.

@@ -54,6 +54,7 @@ private:
   std::map<Key, std::size_t> packNext;
   std::vector<llvm::Value *> loans;
   std::vector<SemanticType> loanTypes;
+  std::vector<bool> selectedValues;
   llvm::Value *receiverAddress = nullptr;
   SemanticType receiverType = SemanticType::Unknown;
   [[nodiscard]] static Key key(const MirPlace &place);

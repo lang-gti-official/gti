@@ -11328,6 +11328,21 @@ or resolve them using source.
   execute generic scalar and owning replacement/consuming probes. End-to-end
   completion still requires the full loan/wrapper/failure/slot composition and
   macOS/Linux acceptance below; this is not a completed milestone.
+- **Composition checkpoint:** the native matrix now exercises ordinary enum
+  optional/expected wrappers, source `?`, nested cleanup-owning alternatives,
+  stored/external reference selection, static constants with typed relocations,
+  globals/TLS, replacement, partial-input failure and failure during active
+  payload destruction. Conditions/dependency groups erase only as verified
+  permissions; evaluated MIR addresses determine actual references. Existing
+  raw-pointer component checks guard the distinction between a pointer value
+  and a selected payload place.
+- **Prerequisite audit:** current `stdlib/std/optional.gti` uses ordinary enums;
+  `tests/optional_compiler_tests.cpp` verifies no private optional storage is
+  instantiated. Do not create an unused capability to satisfy historical plan
+  wording. Live `PolymorphicStorage` construction/read/transfer requires the
+  polymorphic model/base layout owned by O-LLVM-10, even without a virtual call.
+  Heap-owned field composition requires O-LLVM-08. These remain explicit open
+  acceptance dependencies, not silently supported or removed deliverables.
 - **Unlock:** source-defined optional/expected, payload enums, matching and
   propagation in arbitrary user types.
 - **Deliver:** native union overlapping storage and tag/payload layouts for

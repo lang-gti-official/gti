@@ -593,25 +593,52 @@ public:
     }
     for (const auto &loan : mir.loans) {
       const auto *origin = mir.findPlace(loan.source);
+      const auto nativeConditions = [&](const auto &conditions) {
+        return std::all_of(
+            conditions.begin(), conditions.end(), [&](const auto &condition) {
+              const auto *payload =
+                  program.findPayloadEnum(condition.enumeration);
+              return payload && condition.variant < payload->variants.size() &&
+                     nativeValue(condition.enumeration);
+            });
+      };
+      bool nativeBorrow = origin && nativeValue(origin->type) &&
+                          nativeConditions(loan.conditions);
+      for (const auto &dependency : loan.additionalDependencies) {
+        const auto *source = mir.findPlace(dependency.source);
+        nativeBorrow &= nativeConditions(dependency.conditions) &&
+                        (source ? nativeValue(source->type)
+                                : !dependency.source &&
+                                      !dependency.designatedFields.empty());
+      }
+      if (loan.referenceSelection) {
+        const auto *value = mir.findValue(loan.referenceSelection->value);
+        nativeBorrow &= value && nativeValue(value->info.type) &&
+                        nativeConditions(loan.referenceSelection->conditions);
+      }
+      const auto borrowShape = nativeBorrow
+                                   ? std::optional(Shape::NativeBorrowMetadata)
+                                   : std::nullopt;
       const bool selected = origin && passiveReference(origin->type) &&
                             !loan.referenceSelection && loan.conditions.empty();
-      add(loan.kind, selected ? std::optional(Shape::PassiveReference)
-                     : origin ? placeClassShape(*origin)
-                              : std::nullopt);
+      add(loan.kind, borrowShape ? borrowShape
+                     : selected  ? std::optional(Shape::PassiveReference)
+                     : origin    ? placeClassShape(*origin)
+                                 : std::nullopt);
       add(loan.access);
       if (loan.referenceSelection)
-        add(Shape::SelectedReferenceAddress);
+        add(Shape::SelectedReferenceAddress, borrowShape);
       if (loan.twoPhase)
         add(Shape::TwoPhaseBorrow,
             origin ? placeClassShape(*origin) : std::nullopt);
       if (!loan.additionalDependencies.empty())
-        add(Shape::MultipleBorrowOrigins);
+        add(Shape::MultipleBorrowOrigins, borrowShape);
       if (!loan.conditions.empty())
-        add(Shape::ConditionalBorrow);
+        add(Shape::ConditionalBorrow, borrowShape);
       for (const auto &dependency : loan.additionalDependencies) {
         add(dependency.access);
         if (!dependency.conditions.empty())
-          add(Shape::ConditionalBorrow);
+          add(Shape::ConditionalBorrow, borrowShape);
       }
     }
     for (const auto &drop : mir.dropObligations) {

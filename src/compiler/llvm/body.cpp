@@ -761,7 +761,15 @@ private:
         memory.publish(*instruction.loan, result);
       break;
     case MirInstructionKind::Borrow:
-      result = memory.selected(instruction.operands.at(0));
+      if (const auto &selection =
+              input.findLoan(*instruction.loan)->referenceSelection) {
+        result = values.at(selection->value);
+        if (!result)
+          throw std::logic_error(
+              "LLVM payload reference lost its dominating selected address");
+      } else {
+        result = memory.selected(instruction.operands.at(0));
+      }
       memory.publish(*instruction.loan, result);
       publishStoredField(*input.findLoan(*instruction.loan), result);
       break;
@@ -1150,11 +1158,17 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     llvm::Constant *initial = llvm::Constant::getNullValue(storage);
     if (step.dataConstant)
       initial = scalars.constant(*step.dataConstant, type);
-    globals.emplace(step.symbol,
-                    new llvm::GlobalVariable(
-                        session.module(), storage, false,
-                        llvm::GlobalValue::InternalLinkage, initial,
-                        "__gti_native_v1_g" + std::to_string(step.symbol)));
+    const auto layout = session.layouts().get(type);
+    if (session.dataLayout().getTypeAllocSize(initial->getType()) !=
+        layout.size)
+      throw std::logic_error(
+          "LLVM global initializer differs from its sealed extent");
+    auto *global = new llvm::GlobalVariable(
+        session.module(), initial->getType(), false,
+        llvm::GlobalValue::InternalLinkage, initial,
+        "__gti_native_v1_g" + std::to_string(step.symbol));
+    global->setAlignment(llvm::Align(layout.alignment));
+    globals.emplace(step.symbol, global);
   }
   for (auto address : admission.requiredBodies())
     static_cast<void>(function(address));

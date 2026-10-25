@@ -9,7 +9,8 @@ Places::Places(Session &session, llvm::IRBuilder<> &ir, const MirBody &body,
                std::vector<llvm::Value *> &values, Scalars::Guard guard)
     : session(session), ir(ir), body(body), values(values),
       guard(std::move(guard)), loans(body.loans.size() + 1),
-      loanTypes(body.loans.size() + 1) {}
+      loanTypes(body.loans.size() + 1), selectedValues(body.values.size() + 1) {
+}
 
 Places::Key Places::key(const MirPlace &place) {
   return {place.root,
@@ -63,11 +64,18 @@ void Places::allocate(
     }
   }
   for (const auto &block : body.blocks)
-    for (const auto &instruction : block.instructions)
-      if (!instruction.tombstone && instruction.loan &&
-          (instruction.kind == MirInstructionKind::Call ||
-           instruction.kind == MirInstructionKind::Borrow))
+    for (const auto &instruction : block.instructions) {
+      if (instruction.tombstone)
+        continue;
+      if (instruction.result &&
+          instruction.operation == MirOperation::PayloadExtract &&
+          instruction.payloadExtractionKind &&
+          isReferencePayloadBinding(*instruction.payloadExtractionKind))
+        selectedValues.at(*instruction.result) = true;
+      if (instruction.loan && (instruction.kind == MirInstructionKind::Call ||
+                               instruction.kind == MirInstructionKind::Borrow))
         loanTypes.at(*instruction.loan) = instruction.info.type;
+    }
 }
 llvm::Value *Places::load(llvm::Value *address, const SemanticType &type) {
   if (addressValue(session.program().mir(), type))
@@ -167,7 +175,9 @@ Places::Root Places::root(const MirPlace &place) {
     auto *value = values.at(place.value);
     if (!value)
       throw std::logic_error("LLVM place root has no dominating value");
-    if (body.findValue(place.value)->info.category == ValueCategory::Place)
+    // A place-category Load is still a loaded value (notably a raw pointer).
+    // Reference-binding extractions carry the selected referent address.
+    if (selectedValues.at(place.value))
       return {value, type};
     return {arrayValue(value, type), type};
   }

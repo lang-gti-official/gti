@@ -4709,6 +4709,23 @@ moving a whole enum before each extraction. Borrowed extractions retain the
 evaluated field address and upstream loan permissions. Native unions instead
 use the sealed overlapping layout with no hidden tag or active-member guarantee.
 
+Dependency groups and active-alternative conditions remain verifier-owned
+permissions. Their native witness requires concrete native source places and
+exact alternative identities; it does not select the first possible owner as
+the physical address. `MirReferenceSelection` uses its evaluated MIR value,
+and reference-binding payload extractions retain the field or stored referent
+address. A place-category `Load` is still a value, including a loaded raw
+pointer; source category alone never decides this physical distinction.
+
+Static payload constants preserve the same canonical offsets, extent and
+alignment. A packed initializer with explicit padding and typed field fragments
+represents the selected alternative, including pointer/text relocations. Arrays
+and containing classes preserve their canonical strides and field offsets;
+global storage receives explicit canonical alignment. This creates no startup
+evaluation or allocation and does not introduce another constexpr evaluator.
+Tracked inactive-state failures use sealed caller-location metadata just like
+panic, retaining source attribution through source-defined wrappers.
+
 Concrete variadic parameters remain flattened in the existing private ABI.
 Their MIR pack binding is metadata: each projected element aliases its own
 incoming argument cell, preserving final addresses without a tuple allocation
@@ -4718,11 +4735,18 @@ runtime operations remain unsupported. Direct consuming methods similarly use
 their exact selected source target and verified receiver transfer; this does
 not admit erased callables or introduce a separate invocation ABI.
 
-O-LLVM-07 remains under implementation. The initial execution matrix covers
-generic scalar alternatives and owning replacement/consuming cleanup. Complete
-wrapper, reference, failure and slot-capability composition remains an acceptance
-obligation, not a claim supplied by the existence of a layout. Unsupported field
-families remain gated by their own native storage witnesses.
+O-LLVM-07 remains under implementation. Its owning matrix covers nested and
+generic alternatives, static/global/thread-local storage, ordinary source
+optional/expected wrappers, stored references, source propagation, replacement,
+consuming cleanup, partial-input failure and sibling cleanup after a destructor
+fails. A C++ vocabulary gap for an owning conditional-result body is explicitly
+recorded; native execution checks its values and exact destructor trace rather
+than extending the deprecated comparator. Full platform/cost acceptance and
+slot-capability composition remain obligations. The current optional library
+uses ordinary enums, not the legacy `OptionalStorage` capability. The live
+`PolymorphicStorage` family requires concrete polymorphic object layout from
+O-LLVM-10; heap-owned compositions also require O-LLVM-08. Neither dependency is
+silently granted by the existence of a payload layout.
 
 ### LLVM Coverage And Admission
 
