@@ -10517,8 +10517,13 @@ admitted. Exact report identity and raw samples live in
 
 ### LLVM Production Backend Campaign
 
-**Direction (2026-10-24):** LLVM is the intended public production backend.
-C++ remains the working production default until O-LLVM-16 passes. This campaign
+**Direction (revised 2026-10-25):** LLVM is the primary development and intended
+public production backend. C++ is deprecated as the primary backend, with bug
+fixes only through v1.0 to preserve its existing supported comparison-oracle
+behavior. Do not spend campaign capacity on C++ feature parity; post-1.0
+catch-up requires a separate owner decision and is not promised. See the
+[policy rationale](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25).
+C++ remains the shipped default until O-LLVM-16 passes. This campaign
 implements the current language, not a new LLVM-specific subset or edition.
 The [architecture audit](../architecture/backend.md#llvm-readiness-audit-2026-10-24)
 and [ADR 031](../decisions/031-native-llvm-backend-foundation.md) explain the
@@ -10535,7 +10540,10 @@ macOS/Linux target combinations and cross builds need their own execution and
 ABI evidence; host support must not silently claim them.
 
 New language changes during this campaign must update the coverage ledger and
-enter an owned bucket. The frozen baseline cannot be reduced to make a release
+enter an owned LLVM bucket without requiring a C++ implementation. Use valid
+C++ comparators where available and independent native semantic/MIR oracles for
+documented gaps; neither a silent skip nor comparator parity alone is acceptance.
+The frozen baseline cannot be reduced to make a release
 gate pass, and the final release must also reconcile everything added on main.
 O-LLVM-01/02/03 are implemented. O-LLVM-04/05/06 now execute their documented
 scalar, places/text and ordinary class/TLS profiles; their remaining shape
@@ -11532,11 +11540,62 @@ or resolve them using source.
   general language coverage. Record remaining platform exclusions explicitly.
 - **Delivery:** update defaults, docs, toolchain fingerprints, project/cache
   migration, packaging and backend-selection tests in one reviewed release.
-  C++ stays an explicitly selectable reference during validation; no per-function
+  C++ stays an explicitly selectable, bug-fix-only reference for its supported
+  shapes during validation, not a parity gate for LLVM-only features; no per-function
   fallback, cross-backend private object ABI or generated-C++ dependency is
-  introduced. Retiring C++ is a separate decision after production evidence.
+  introduced. Removing C++ or resuming its feature development after v1.0
+  requires a separate owner decision; neither is automatic at promotion.
 
 #### LLVM Campaign Waves And Validation
+
+##### Current Milestone Ownership
+
+**Owner revision (2026-10-25):** prefer one complete O-LLVM milestone per
+implementation agent. The narrow first-wave assignments below are historical
+checkpoints, not the ongoing limit on each worker. Owners continue within their
+milestone through routine implementation decisions and focused verification;
+they publish intermediate evidence without waiting for another prompt after
+each small slice. Explicit shared-contract reviews and real prerequisite gates
+remain mandatory. No milestone closes from a helper, prototype or partial
+profile alone.
+
+[PR 343](https://git.internal.howetotech.dev/gti-lang/gti/pulls/343) is merged
+at `881d8534b8052277fc580a8f752b07ec61a0ecd9`, including the 06-A2/06-B
+publication changes. Reconcile current main before relying on those contracts;
+do not restart or duplicate that completed PR.
+
+| Owner | Milestone / current work | Dependency and write boundary |
+| --- | --- | --- |
+| Laplace / LLVM-NativeC | O-LLVM-11: C ABI classification, production native call/storage transport, callbacks and embedding. Continue PR 346. | Own native-C portions of `abi.*`, family helpers/tests and the classifier/test CMake registration. Do not alter the internal GTI calling convention. Callbacks require O-LLVM-09 facts; failure containment follows C04. Coordinate shared body/admission/lifetime hooks. |
+| Faraday / LLVM-Cache | O-LLVM-14: project selection, native artifacts/cache, linking, packages and relocated installed toolchains. Continue PR 345. | Own driver integration and backend identity query; the specific `session.*` transfer exposes the existing unchanged target-machine factory rather than duplicating policy. Own the cache-test registration. Coordinate debug companion artifacts with O-LLVM-15. |
+| Dalton / LLVM-Optimization | O-LLVM-15: optimization pipelines, debugging, SIMD and representative runtime cost. Finish C04 evaluation in PR 347; keep production O-LLVM-15 changes in a separate task/PR. | Own pipeline/debug helpers and corresponding `session.cpp` hooks, excluding the identity factory transfer. Coordinate target/debug options with O-LLVM-14. No production failure-transport switch is authorized by comparison evidence alone. |
+| External handoff, agent not yet identified | O-LLVM-07: unions, payloads and conditional publication. | Reserved for the owner's additional agent, not launched by this coordinator. Own family helpers/tests; coordinate shared layout/body/lifetime registration. Compose owning payloads with O-LLVM-08 before admitting them. |
+| External LLVM-Memory owner | O-LLVM-08: allocation, object lifetimes and ownership, accepted on `codex/llvm08-memory` from `881d8534b`. | Own `memory.*` helpers, required memory byte-provider adapters, dedicated tests and their CMake registration; coordinate shared runtime/ABI/lifetime contracts. Primitive allocation can proceed independently of O-LLVM-07. |
+| External handoff, agent not yet identified | O-LLVM-09: function values, lambdas and callable adapters. | Own callable/environment helpers and tests after confirming the actual scope. Scalar/borrowed captures can proceed; owned environments compose with O-LLVM-08, C callbacks with O-LLVM-11, and failure adapters with the central C04 ABI authority. |
+
+Record external branches and actual file scopes when accepted; an offered
+handoff is not a running agent. The memory owner has accepted and the owner has
+requested an additional callable handoff, making six potential milestone lanes.
+This is not an architectural concurrency maximum. C04 does not block all
+callable implementation; it gates committing independent failure signatures.
+Additional dispatch/thread owners need sufficiently concrete shared-file and
+failure/ownership boundaries to avoid duplicate implementations. Independent
+work inside those families remains possible when specifically assigned.
+
+The coordinator retains common plan/backend/verification summaries, VERSION,
+untransferred shared dispatch/admission/lifecycle sections and integration.
+Transferred sections are not permission to rewrite the rest of a shared file.
+Each milestone must retain its full exit matrix, including shapes awaiting
+another milestone. Continue independent work while a dependent shape is blocked.
+Keep component PRs separate and do not hold completed, ready components merely
+to finish every owner. The validation ladder below still applies unchanged.
+
+macOS validation runs locally on the current Mac mini, through the shared
+window where required; no SSH-to-self or host-key change is needed. Managed
+Linux runners provide Linux evidence. Preserve existing live run IDs and their
+exact-source results rather than launching replacement runs after reconciliation.
+
+##### First-Wave Checkpoint Record
 
 **Wave 1 launch (2026-10-25):** baseline
 `96c48d133dad8515c65c3fe0c9968df241665747`. Use the temporary
@@ -11546,10 +11605,9 @@ the coordinating agent owns shared contracts, registration and integration.
 These are bounded first assignments, not authorization to finish the entire
 backend or to spawn additional workers recursively.
 
-Existing [PR 343](https://git.internal.howetotech.dev/gti-lang/gti/pulls/343)
-owns the remaining 06-A2/06-B array/stored-reference publication work. It is
-external to this wave: do not duplicate, interrupt or assume its completion.
-Inspect its current head before integrating any dependent work.
+At launch, [PR 343](https://git.internal.howetotech.dev/gti-lang/gti/pulls/343)
+owned the remaining 06-A2/06-B array/stored-reference publication work outside
+this wave. It has since merged as recorded above.
 
 | Worker / slice | Bounded outcome and exclusive implementation scope | Stop / integration boundary |
 | --- | --- | --- |
@@ -11566,10 +11624,10 @@ registration patches are serialized; independent implementation does not wait
 for another worker's unrelated tests. Workers publish draft PRs and stop at
 their assigned handoff; the coordinator alone integrates this wave.
 
-The next wave is selected from evidence, not launched automatically. Completing
-C04's evaluation and 06-A2/06-B unlocks better-scoped payload, allocation,
-callable and dispatch assignments; source/runtime threading follows their
-verified composition rather than assuming those foundations already exist.
+The owner subsequently expanded these assignments to the current milestones
+above. C04 still gates choices about failure signatures, not all payload,
+allocation or ABI work; source/runtime threading follows verified composition
+rather than assuming its prerequisites already exist.
 
 ##### Validation Ladder
 

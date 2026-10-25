@@ -86,26 +86,34 @@ invalid GTI before backend entry.
 
 ## Enforce The Executable Authority Gate
 
-Do not implement new or changed executable language behavior by adding or
-extending a C++ emission path that reads only AST, semantic, or HIR facts.
-Treat verified MIR that the production backend ignores as incomplete, not as
+Apply [the backend development policy](../../../docs/decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25):
+LLVM is the primary backend for new executable feature work. C++ is deprecated
+as primary and bug-fix-only through v1.0, not a required parallel implementation.
+Record backend support explicitly; lack of a C++ comparator needs independent
+GTI/native evidence, not C++ catch-up or weaker LLVM acceptance. The current
+shipped default does not override this development policy.
+
+Do not implement new or changed executable language behavior through an
+emission path that reads only AST, semantic, or HIR facts.
+Treat verified MIR that the selected executable backend ignores as incomplete, not as
 backend-independent execution.
 
 For an executable slice, either:
 
 1. lower the complete selected operation/body family through semantic analysis,
    concrete HIR, body-local MIR, effects and verification, then emit that family
-   from verified `BackendInput::mir`; or
+   from the sealed, verified `LoweredProgram` MIR; or
 2. stop and record the missing representation or migration prerequisite under
    `M-EXEC-01`, `M-FAIL-01`, `M-BACK-01`, or `M-BACK-02` in
    [`docs/plans/implementation-sequence.md`](../../../docs/plans/implementation-sequence.md).
 
 Keep one executable authority inside a body. Do not mix a MIR schedule with
-AST/HIR recursive emission, reconstruct missing semantics in `CppBackend` or
-`CppEmitter`, or call a feature complete because MIR snapshots exist while the
-runtime path bypasses them. Add verifier mutations and O0/O1/O3 runtime evidence
-for the selected MIR-emitted family; include C++20/C++23 parity when the backend
-representation can differ.
+AST/HIR recursive emission, reconstruct missing semantics in any backend,
+or call a feature complete because MIR snapshots exist while the
+runtime path bypasses them. Add verifier mutations and the owning native
+optimization-level matrix for the selected MIR-emitted family; retain
+C++20/C++23 comparisons for supported shapes and C++ bug fixes where applicable,
+without extending that backend for a new feature.
 
 While the immediate backend-authority recovery campaign in the implementation
 sequence is active, pause unrelated executable language expansion. Treat the
@@ -188,8 +196,9 @@ obligations; do not claim a source-defined replacement before it is implemented.
 
 1. Add focused valid and invalid tests in the owning suite, including recovery
    and concrete generic/ownership composition where applicable.
-2. Inspect HIR/MIR and emitted C++ when their representation changes; test
-   runtime edges independently.
+2. Inspect HIR/MIR and the affected backend output when their representation
+   changes; test runtime edges independently. Do not assume emitted C++ is
+   available or authoritative for every new language feature.
 3. Synchronize formatter, Tree-sitter, semantic tokens, completion, hover, and
    examples only when the change crosses those surfaces. Use
    `$lsp-synchronization` for semantic editor changes.
