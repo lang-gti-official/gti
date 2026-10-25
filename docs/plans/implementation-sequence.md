@@ -11516,6 +11516,94 @@ or resolve them using source.
   fallback, cross-backend private object ABI or generated-C++ dependency is
   introduced. Retiring C++ is a separate decision after production evidence.
 
+#### LLVM Campaign Waves And Validation
+
+**Wave 1 launch (2026-10-25):** baseline
+`96c48d133dad8515c65c3fe0c9968df241665747`. Use the temporary
+[`llvm-campaign` skill](../../.codex/skills/llvm-campaign/SKILL.md) for this
+campaign only. Three named workers use `gpt-6.1-sol` with `ultra` reasoning;
+the coordinating agent owns shared contracts, registration and integration.
+These are bounded first assignments, not authorization to finish the entire
+backend or to spawn additional workers recursively.
+
+Existing [PR 343](https://git.internal.howetotech.dev/gti-lang/gti/pulls/343)
+owns the remaining 06-A2/06-B array/stored-reference publication work. It is
+external to this wave: do not duplicate, interrupt or assume its completion.
+Inspect its current head before integrating any dependent work.
+
+| Worker / slice | Bounded outcome and exclusive implementation scope | Stop / integration boundary |
+| --- | --- | --- |
+| LLVM-Failure / C04-E1 | Repeatable status-versus-native-unwind comparison harness and evidence for equivalent representative success, cleanup and propagation paths. Own new `tests/llvm_failure_transport_*` files and their dedicated fixtures only; no production ABI/runtime rewrite. | Return reproducible measurements, target/runtime prerequisites and a reasoned recommendation with limitations. A prototype does not close C04; final transport and production migration remain a separate reviewed decision. |
+| LLVM-NativeC / O-LLVM-11A | Target-specific small passive C-record classification plans and executable C compiler oracles. Own new `src/compiler/llvm/native_c_abi.*` and `tests/llvm_native_c_abi_*` files/fixtures. Reuse verified layout facts and LLVM infrastructure; define admitted shapes structurally. | Demonstrate classification/marshalling oracle agreement for selected Darwin AArch64 and Linux x86_64 System V shapes; reject unsupported shapes. Production C aggregate admission remains closed until complete import/export call transport is wired and verified. Request `abi.*`/call-emitter integration from the coordinator, not independent shared-file edits. |
+| LLVM-Cache / O-LLVM-14A | Sound backend-aware project artifact identity and cache round trips for the currently executable LLVM profile. Own `src/driver/build.cpp`, a bounded backend-identity query in `include/gti/llvm_backend.h` and `src/compiler/llvm_backend.cpp`, new `tests/llvm_cache_*` fixtures and the build-driver documentation section. | Preserve C++ cache behavior, corruption/path/publication defenses and conservative bypass for unidentifiable inputs. No new language coverage, ABI selection, driver rewrite or changed source/lowered identity. Stop if a coherent bounded cache slice needs new unresolved shared contracts. |
+
+Before editing, each worker confirms the actual files, current overlap, intended
+test gates and any required changes to this proposed scope. A new helper must
+have an executable consumer/oracle, not be an empty future framework. Shared
+`abi.*`, body/admission/coverage registrations, build/test CMake, backend and
+verification summaries, plan status and VERSION are coordinator-owned. Small
+registration patches are serialized; independent implementation does not wait
+for another worker's unrelated tests. Workers publish draft PRs and stop at
+their assigned handoff; the coordinator alone integrates this wave.
+
+The next wave is selected from evidence, not launched automatically. Completing
+C04's evaluation and 06-A2/06-B unlocks better-scoped payload, allocation,
+callable and dispatch assignments; source/runtime threading follows their
+verified composition rather than assuming those foundations already exist.
+
+##### Validation Ladder
+
+The goal is to avoid duplicate whole-compiler campaigns, not postpone known
+correctness failures until a distant final sweep. Apply the existing
+[risk-based validation contract](../architecture/agent-workflow.md#risk-based-batch-validation)
+and [native LLVM gates](../architecture/verification.md#native-llvm-admission-gates).
+
+1. **Edit loop:** one new/reproducing fixture and exact owning tests, using only
+   required optimized build targets. Test observable execution, cleanup/order,
+   defined failures and unsupported rejection as applicable. A syntax-only or
+   LLVM-verifier-only pass does not establish code generation correctness.
+2. **Component checkpoint:** the published exact head/base receives its owning
+   and affected cross-phase/subsystem gates, compiler smoke and
+   `compiler_pipeline` where compiler behavior changes. LLVM source additions
+   include `llvm_backend_dependency_controls`; layout/ABI changes include
+   `llvm_target_layout_abi` and their native oracles; cache changes include
+   `driver_pipeline`, `llvm_backend_cli`, focused cache hit/miss/corruption/
+   invalidation tests and affected project workflow coverage. Use the actual
+   registered matrices and required optimization levels; this list is not a
+   waiver for additional changed consumers. Untouched frontend/C++/LSP/formatter
+   surfaces need an explanation, not automatically duplicated full suites.
+3. **Milestone integration:** one owner composes ready exact sources, runs their
+   union of focused gates and applicable cross-family/runtime/performance
+   checks. A narrowly independent slice may complete with proportionate checks
+   under existing policy. A combined batch, shared-contract implementation,
+   production failure-transport switch or production promotion requires the
+   broader/full campaign specified by the owning contracts. Run one full
+   optimized suite per required platform on that combined candidate, not one
+   per agent. Full LLVM-language corpus acceptance waits for its actual support
+   prerequisites; unsupported cases are never counted as passing skips.
+
+For a combined batch, use `batch enroll`/`prepare`/`verify`; preserve original
+PRs and exact source evidence. Once ready work is enrolled, collect for at most
+ten minutes, including allowing a single ready component to proceed. Do not
+hold admitted work for an unfinished feature to manufacture a larger milestone.
+After failures, the violated-invariant owner fixes them and the candidate is
+revalidated; no tests are weakened to make integration green.
+
+ABI/runtime/platform and representative runtime-cost obligations are not
+deferred merely because a slice is small. C04 prototypes must label what they
+do not model; classifier-only evidence cannot claim production C interop.
+Contended hosts are unsuitable for speedup claims. Builds use at most two jobs,
+CTest one; broad runs use the shared window and managed remote runners. Focused
+independent commands may run concurrently. Keep each operation's handle and
+logs; do not launch duplicate runs while waiting. CI remains advisory.
+
+At the first cross-family execution milestone (for example owning payloads with
+allocation or callable failure with worker cleanup), schedule a combined full
+campaign with focused composition probes. Repeat at transport replacement and
+production promotion, or earlier when the affected invariants demand it. Do not
+promise an arbitrary number of prompts or a fixed calendar cadence in place of
+these acceptance gates.
+
 #### Agent Assignment And Evidence
 
 Assign one milestone (or an explicitly bounded substep) with its prerequisites,
