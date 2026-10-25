@@ -4287,7 +4287,7 @@ sealed value, restricts this first stage to the configured host target,
 and builds an immutable admission plan before LLVM initialization. Pending
 requirements report `GTI-B0003` with their exact pending family. Native target
 and assembly-printer initialization remains backend-owned and idempotent.
-The admitted [scalar profile](#llvm-scalar-execution) emits real native objects;
+The admitted scalar, places/text and class/lifecycle profiles below emit real native objects;
 unsupported shapes never fall back to C++ or a dummy program.
 
 The public backend header has no LLVM include or type. LLVM context, target
@@ -4314,18 +4314,17 @@ lowered construction, verification, diagnostic, and progress path as
 continues to select C++. C++-only `--std` and `--keep-cpp` policy cannot be
 combined with LLVM selection.
 
-`BackendArtifactKind::Object` is the neutral future native handoff. Object
+`BackendArtifactKind::Object` is the neutral native handoff. Object
 contents remain opaque bytes; the driver, not the backend, owns atomic
 publication, runtime/native inputs, linking, caches, diagnostics, and final
 executable publication. A dedicated `NativeLinkRequest` composes an object
 artifact with declared native objects, ordered link inputs, and the GTI runtime
 without applying C++ standard, preprocessing, strict-floating-point, or source
 optimization flags. Object-backend cache entries remain conservatively
-bypassed until their binary metadata format is implemented. This foundation
-never returns that artifact kind, so the production build continues entirely
-through C++ source.
+bypassed until their binary metadata format is implemented. LLVM returns this
+artifact kind for admitted programs; C++ remains the default backend.
 
-The first real LLVM lowering slice starts from this boundary. It must not link
+LLVM lowering preserves this boundary. It must not link
 frontend representations, receive source MIR or optimizer tables, parse
 generated C++, depend on C++ spelling helpers, or treat HIR as executable
 authority. If a backend-neutral fact is missing, the compiler extends and
@@ -4341,7 +4340,7 @@ dependency, initialization, packaging, status, and first-lowering decision.
 
 ### LLVM Target, Layout And Execution ABI
 
-O-LLVM-03 provides the private machinery used by O-LLVM-04's scalar lowering.
+O-LLVM-03 provides the private machinery shared by all native lowering profiles.
 `Session` owns the exact
 `VerifiedLoweredProgram`, context, native target machine, module, unique layout
 and ABI planners, diagnostic collector and emission state. Planner construction
@@ -4371,9 +4370,10 @@ extents and target padding; zero-size storage retains its alignment. Plain
 non-polymorphic records are backend-owned, with one byte for an empty record.
 Native C records and unions must match every sealed size/alignment/offset.
 Pointer recursion does not recursively instantiate its pointee; by-value
-cycles and unresolved types reject. Lifecycle drop-state, compiler-capability,
-inheritance/dispatch and payload-enum representations remain owned by their
-later milestones. No public ordinary-class `sizeof` contract is invented.
+cycles and unresolved types reject. Ordinary class drop-state is described
+below; private ownership capabilities, inheritance/dispatch and payload-enum
+representations retain their later milestones. No public ordinary-class
+`sizeof` contract is invented.
 
 `Abi` centralizes signatures for definitions, calls and future adapters:
 
@@ -4407,8 +4407,8 @@ It models text views and all required v2 failure/v1 descriptor records and
 checks them against native C layout in tests. Initial containment uses the
 existing `gti_rt_failure_terminate_v2`, not C++ exception transport. The new
 `runtime_execution.h` begin/drain C hooks preserve startup/shutdown operations
-when present in the sealed plan; typed TLS storage/registration remains
-O-LLVM-06. Backend policy cannot remove a verified startup operation merely
+when present in the sealed plan; O-LLVM-06 adds typed TLS storage and the C
+registration bridge described below. Backend policy cannot remove a verified startup operation merely
 because it considers that operation unnecessary.
 
 `runtime_abi_inventory` asks Clang to inventory **every active C declaration**
@@ -4477,8 +4477,8 @@ NaN comparisons and truncation-before-range-check conversion are explicit.
 Failure descriptors retain canonical bytes, artifact identity and source/outcome
 tables. Channels carry a copied v2 record and its pinned descriptor through
 propagation and shared continuations. Containment uses the runtime C reporting
-boundary; emergency-envelope construction is retained for cleanup lowering, but
-owning cleanup bodies remain inadmissible. Plain `std::panic(string_view)` is
+boundary; class cleanup uses the same channels and emergency envelope as
+described below. Plain `std::panic(string_view)` is
 source-defined and forwards caller attribution through ordinary direct calls.
 The scalar-ABI `gti_rt_failure_capture_panic_bytes_v2` is a thin form of the
 existing bounded UTF-8-aware capture operation, not a foreign aggregate ABI
@@ -4491,9 +4491,10 @@ not manufactured from a special source example. Its program-initialization call,
 entry call, exit value and containment are ordinary MIR. TLS begin/drain execute
 when present in that plan (the current producer includes them when TLS storage
 exists). The places/text profile below adds passive projections, references and
-arrays. Owned arguments, TLS storage, class/owner storage, indirect/virtual/native
-calls and native debug information remain
-explicit limitations. No mixed-backend fallback is used. C++ stays the default.
+arrays; the class profile adds ordinary owning class arguments, cleanup and
+TLS. Private ownership capabilities, indirect/virtual dispatch, general native
+calls and native debug information remain explicit limitations. No mixed-backend
+fallback is used. C++ stays the default.
 
 ### LLVM Places And Counted Text
 
@@ -4576,6 +4577,11 @@ classes; a raw-pointer value must still be materialized as pointer storage when
 its MIR place selects that value rather than its pointee. Copy operands
 snapshot their values at the MIR stage, before a later argument can mutate the
 source. Already-staged class parameters retain their prepared storage address.
+Every `CallInput` with a destination publishes into that exact MIR place before
+activating its prepared-parameter obligation. Address-only class results then
+refer to that storage, so failure of a later argument and successful transfer
+to the callee observe the same object. Merely activating the obligation without
+populating its destination is invalid, including for moves from named locals.
 Ordinary, direct/braced/designated construction, generated copy/move transport,
 fresh immovable returns, returned movable values, replacement cleanup and fixed arrays of movable class
 objects use the same operations; no native representation destructor runs GTI
@@ -4673,7 +4679,8 @@ attributes or permits removing a runtime check.
 A pending vocabulary family can have a narrower implemented shape. Each use
 retains its original ledger row and an optional inventory-produced structural
 implementation witness. Concrete primitive arrays satisfy `PassiveArrayValue`,
-not the whole `Aggregate` family; class/owning arrays remain rejected. Distinct
+not the whole `Aggregate` family; admitted ordinary class arrays use the separate
+`NativeClassStorage` witness. Private capability/payload arrays remain rejected. Distinct
 shapes have distinct inventory keys, so a supported occurrence cannot hide an
 unsupported occurrence of the same enum in the same body. `MustBeAbsent` rules
 are never overridden, and callers cannot supply witnesses. These facts live in
@@ -4802,5 +4809,27 @@ verified success/failure split; it does not require LLVM exception-handling
 The accepted production direction and complete prerequisite/acceptance sequence
 are in [ADR 031](../decisions/031-native-llvm-backend-foundation.md) and
 [O-LLVM](../plans/implementation-sequence.md#llvm-production-backend-campaign).
+
+### LLVM Execution Audit (2026-10-25)
+
+Baseline `237129c6c0ab2974babaeb6c4b9eb226c321e344` includes O-LLVM-05/06
+places, ordinary class lifecycles and TLS. The earlier readiness audit above is
+historical; its missing session, dependency gates and TLS C registry are now
+implemented. The sealed-input/session/layout/ABI separation remains sound; this
+audit does not justify another IR or a backend-wide refactor.
+
+The three existing native execution suites passed, but a new differential probe
+found an admitted-program bug: a moved named class argument activated its
+prepared drop without storing the object in that place. A later argument panic
+then destroyed uninitialized storage. `body.cpp` now publishes the `CallInput`
+destination before lifecycle activation and uses that same address for class
+transport. `llvm_class_execution` checks reverse cleanup of staged arguments,
+constructor-argument failure before invocation, and exactly-once cleanup after
+callee failure, against C++20/23 and native O0/O1/O2/O3.
+
+This is bounded execution evidence, not whole-language conformance. Native C
+aggregate classification, private ownership capabilities, virtual dispatch,
+worker/callback containment, object caching and default-backend promotion retain
+their campaign prerequisites. No pending admission rule is weakened by this fix.
 The sequence owns future implementation instructions. The sections above remain
 the authority for what is implemented today.
