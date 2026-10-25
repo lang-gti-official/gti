@@ -485,8 +485,23 @@ public:
         if (initializer.storesReference &&
             std::none_of(
                 mir.loans.begin(), mir.loans.end(), [&](const auto &loan) {
-                  return loan.entry && loan.kind == MirLoanKind::Stored &&
-                         loan.storedField == initializer.field;
+                  return loan.kind == MirLoanKind::Stored &&
+                         loan.storedField == initializer.field &&
+                         (loan.entry ||
+                          std::any_of(
+                              mir.blocks.begin(), mir.blocks.end(),
+                              [&](const auto &block) {
+                                return std::any_of(
+                                    block.instructions.begin(),
+                                    block.instructions.end(),
+                                    [&](const auto &instruction) {
+                                      return !instruction.tombstone &&
+                                             instruction.kind ==
+                                                 MirInstructionKind::Borrow &&
+                                             instruction.loan == loan.id &&
+                                             instruction.operands.size() == 1;
+                                    });
+                              }));
                 }))
           add(Shape::StoredFieldPublication);
     }

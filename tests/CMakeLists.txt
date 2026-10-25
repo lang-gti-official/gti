@@ -1703,6 +1703,10 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_placement_execution_test.py"
                    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
   set_tests_properties(llvm_placement_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME array_publication_lsp
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/array_publication_lsp_test.py"
+                   "$<TARGET_FILE:gti_lsp>")
+  set_tests_properties(array_publication_lsp PROPERTIES TIMEOUT 120)
   add_test(NAME runtime_abi_inventory
            COMMAND "${Python3_EXECUTABLE}"
                    "${PROJECT_SOURCE_DIR}/tests/runtime_abi_inventory_test.py"

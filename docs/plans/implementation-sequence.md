@@ -10928,7 +10928,7 @@ only for an owned implementation need and keep package/link boundary tests.
 | O-LLVM-03 | Target, layout, private call ABI, runtime ABI and emission session (complete) | 02 |
 | O-LLVM-04 | Scalar execution, CFG, direct calls and defined failures (scalar profile implemented) | 03 |
 | O-LLVM-05 | Places, references, raw addresses, arrays and text views (bounded profile implemented) | 04 |
-| O-LLVM-06 | Classes, construction, movement, cleanup and global/thread-local storage (bounded profile implemented; 06-A/06-B remain) | 05 |
+| O-LLVM-06 | Classes, construction, movement, cleanup and global/thread-local storage (bounded profile and 06-A2/06-B publication implemented) | 05 |
 | O-LLVM-07 | Native unions, tagged payloads and conditional value publication | 06 |
 | O-LLVM-08 | Object storage, allocation, unique/shared ownership and relocation | 06, 07 where payload-bearing |
 | O-LLVM-09 | Function values, lambdas, erased callables and adapters | 06, 08 for owned captures |
@@ -11127,20 +11127,22 @@ or resolve them using source.
   returned, field/default and TLS forms; movable array-element address identity
   is preserved. `llvm_placement_execution` and the checked ABI rollback oracle
   supply O0-O3 execution/rejection evidence.
-- **Remaining 06-A2 source prerequisite:** fixed-array fresh initialization
-  currently requires movable elements in semantic ownership assignability.
-  Generalize initial publication separately from copying/moving existing arrays,
-  preserve exact element ownership checks and MIR rollback, and provide both
-  backend consumers before admitting deleted-move arrays. The native transport
-  path is ready; removing the frontend check alone is not completion. Acceptance:
-  direct/nested/default immovable arrays retain final addresses, reject lvalue
-  copies and explicit moves, and drop only completed elements on failure.
-- **Remaining 06-B:** non-entry stored-reference field publication. Prerequisite:
-  consume an exact evaluated loan address at its initializer publication stage,
-  rather than treating the loaded referent as a value field. Accept when
-  side-effecting reference-return initializer probes preserve address/evaluation
-  order and the existing lifetime rejections. Shapes without the current entry
-  Stored-loan witness explicitly reject until then.
+- **06-A2 (implemented):** exact fresh fixed-array initialization is separate
+  from element copying/movement. Every explicit element is ownership-checked;
+  direct, nested and default-initialized immovable arrays construct at final
+  addresses. C++ uses external lifetime-slot views into that storage, including
+  its proved disarmed field shells, rather than relocating staged elements.
+  MIR retains completed-element rollback. Named-element/array copies and
+  explicit moves remain rejected when their operations are deleted. Arrays
+  still require a written initializer (`{}` requests default construction).
+- **06-B (implemented):** non-entry Stored loans publish their exact evaluated
+  address at the MIR Borrow stage, after initializer evaluation/success, never
+  loaded referent bytes or a reconstructed origin. Entry loans retain their
+  existing publication. Side-effect, projected-referent, shared/exclusive and
+  failure-cleanup probes retain the source lifetime rejections. Missing
+  publication witnesses still reject. This native support does not claim that
+  C++ can represent every reference-return initializer; its prior prefix and
+  failure restrictions remain explicit comparator gaps.
 - **Comparator finding:** dynamic function-local TLS compound assignment is an
   existing C++ representation-vocabulary limitation; native-only cases cover
   its correct arithmetic, checked narrowing and shift failures. Moving owning
@@ -11148,11 +11150,11 @@ or resolve them using source.
   native single/multidimensional probes verify transferred element drop state.
   Keep these discrepancies visible rather than weakening the C++ gates or
   claiming parity.
-- **06-A comparator findings:** C++ currently relocates address-sensitive
-  nested/default class fields and class-array elements, and rejects the new
-  class-array argument/copy/move probe in its representation vocabulary. Keep
-  the native independent oracles and the discrepancies explicit; repair C++
-  final-destination publication before using it as the 06-A2 comparator.
+- **06-A comparator findings:** C++ still relocates address-sensitive
+  nested/default scalar class fields, and rejects the class-array
+  argument/copy/move probe in its representation vocabulary. Fresh array
+  publication now has C++20/C++23 and native comparators; the remaining
+  discrepancies keep independent native oracles.
 - **Unlock:** user records/classes, constructors, field methods and deterministic
   cleanup, including concrete generic classes and static/global objects.
 - **Deliver:** field layouts/projections and initializers; selected ordinary and
@@ -11389,12 +11391,12 @@ do not repeat a complete corpus for every small source edit.
 
 The [shared contracts](#shared-cross-milestone-contracts) make the following
 parallel assignments possible. They do not declare all of O-LLVM-06 complete:
-06-A/06-B remain prerequisites for the shapes that need them, not a reason to
+06-A/06-B publication contracts remain prerequisites for the shapes that need them, not a reason to
 block unrelated scalar allocation, ABI classification or driver work.
 
 | Lane | Independent work and primary write scope | Required integration boundary |
 | --- | --- | --- |
-| Shared representation/publication owner | Finish 06-A/06-B; own `src/compiler/llvm/{session,layout,abi,places,lifetimes,failure}.*`, common dispatch/publication in `body.cpp`, admission/reachability registration and any lowered-schema changes. Review LLVM-C01 through C04. | Publish concrete prerequisite changes with their tests before dependent shapes are admitted; coordinate registrations from the family workers. Do not introduce empty interfaces for anticipated clients. |
+| Shared representation/publication owner | Maintain the implemented 06-A/06-B contracts; own `src/compiler/llvm/{session,layout,abi,places,lifetimes,failure}.*`, common dispatch/publication in `body.cpp`, admission/reachability registration and any lowered-schema changes. Review LLVM-C01 through C04. | Publish concrete prerequisite changes with their tests before dependent shapes are admitted; coordinate registrations from the family workers. Do not introduce empty interfaces for anticipated clients. |
 | Payloads, O-LLVM-07 | Typed payload/union lowering helper, family-specific tests and coverage entries; start with already-supported scalar/passive payloads under LLVM-C06. | Immovable/stored-reference payloads need 06-A/06-B; owning payloads compose with O-LLVM-08 before being admitted. |
 | Memory, O-LLVM-08 | Allocation/capability lowering helper, runtime byte-provider adapters and allocation/cleanup tests under LLVM-C06/07. Primitive allocation can start without payload execution. | Use shared destination/lifetime services; control-block and owned-payload behavior require the relevant layout and payload plans. |
 | Callables, O-LLVM-09 | Callable/environment lowering helper, exact adapters and callable tests under LLVM-C04/05. Direct and borrowed environments can precede heap-owned environments. | Concrete signature/effect/attribution facts must be sealed first; owned environments require the relevant O-LLVM-08 services. Coordinate C callbacks with O-LLVM-11. |

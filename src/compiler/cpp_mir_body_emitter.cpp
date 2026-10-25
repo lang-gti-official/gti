@@ -12538,6 +12538,109 @@ containedFailureConstructorRepresentation(
                                              instruction);
 }
 
+// A fresh aggregate publishes its already completed elements, not copies or
+// moves of them. Keep this independent of element transfer availability.
+[[nodiscard]] std::vector<MirValueUse> freshPublicationUses(const MirBody &body,
+                                                            MirValueId value) {
+  std::vector<MirValueUse> uses;
+  for (const auto &use : body.usesOf(value)) {
+    const auto *place = use.kind == MirValueUseKind::PlaceRoot
+                            ? body.findPlace(use.place)
+                            : nullptr;
+    if (place && place->root == MirPlaceRootKind::Value &&
+        place->value == value && place->projections.empty())
+      continue;
+    uses.push_back(use);
+  }
+  return uses;
+}
+
+[[nodiscard]] bool freshFixedArrayAggregate(const MirBody &body,
+                                            const MirInstruction &aggregate) {
+  if (aggregate.kind != MirInstructionKind::Compute ||
+      aggregate.operation != MirOperation::Aggregate || !aggregate.result ||
+      aggregate.info.type.kind != SemanticType::Array ||
+      aggregate.info.type.arguments.size() != 1 ||
+      aggregate.info.type.arrayLengthParameterId ||
+      aggregate.operands.size() != aggregate.info.type.arrayLength ||
+      aggregate.operands.empty())
+    return false;
+  const auto &element = aggregate.info.type.arguments.front();
+  if (element.kind != SemanticType::Class &&
+      element.kind != SemanticType::Array)
+    return false;
+  for (const auto &operand : aggregate.operands) {
+    const auto *value = operand.kind == MirOperandKind::Value
+                            ? body.findValue(operand.value)
+                            : nullptr;
+    const auto *producer =
+        value ? findInstruction(body, value->definition) : nullptr;
+    if (!producer || operand.type != element || value->info.type != element ||
+        producer->loan || producer->intrinsic != IntrinsicKind::None ||
+        producer->destination || producer->receiver ||
+        (producer->kind != MirInstructionKind::Construct &&
+         producer->kind != MirInstructionKind::Call &&
+         !freshFixedArrayAggregate(body, *producer)))
+      return false;
+    if (producer->kind == MirInstructionKind::Construct &&
+        producer->constructorKind != ConstructorKind::Ordinary)
+      return false;
+    const auto uses = freshPublicationUses(body, value->id);
+    if (uses.size() != 1 ||
+        uses.front().kind != MirValueUseKind::InstructionOperand ||
+        uses.front().instruction != aggregate.id)
+      return false;
+  }
+  return true;
+}
+
+struct FixedArrayPlacement {
+  const MirPlace *destination = nullptr;
+  std::vector<std::size_t> indices;
+  explicit operator bool() const { return destination != nullptr; }
+};
+
+// Resolve only final, exact initialization destinations. Existing values,
+// replacement and caller arguments retain their separate transfer protocols.
+[[nodiscard]] FixedArrayPlacement fixedArrayPlacement(const MirProgram &program,
+                                                      const MirBody &body,
+                                                      MirValueId value) {
+  const auto uses = freshPublicationUses(body, value);
+  if (uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand)
+    return {};
+  const auto *consumer = findInstruction(body, uses.front().instruction);
+  const auto *input = body.findValue(value);
+  if (!consumer || !input)
+    return {};
+  if (consumer->kind == MirInstructionKind::Initialize &&
+      consumer->destination && consumer->operands.size() == 1 &&
+      input->info.type.kind == SemanticType::Array) {
+    const auto *destination = body.findPlace(*consumer->destination);
+    const auto *producer = findInstruction(body, input->definition);
+    const bool field =
+        destination && body.kind == MirBodyKind::Constructor &&
+        destination->root == MirPlaceRootKind::This &&
+        destination->projections.size() == 1 &&
+        destination->projections.front().kind == MirProjectionKind::Field &&
+        cppMirFailureConstructorEmptyStateTypeEligible(program,
+                                                       destination->type);
+    if (destination &&
+        ((destination->root == MirPlaceRootKind::Binding &&
+          destination->projections.empty()) ||
+         field) &&
+        destination->type == input->info.type && producer &&
+        freshFixedArrayAggregate(body, *producer))
+      return {destination, {}};
+  }
+  if (!freshFixedArrayAggregate(body, *consumer))
+    return {};
+  auto parent = fixedArrayPlacement(program, body, *consumer->result);
+  if (parent)
+    parent.indices.push_back(uses.front().operandIndex);
+  return parent;
+}
+
 [[nodiscard]] bool
 failureFreeFixedArrayAggregateMove(const MirProgram &program,
                                    const MirBody &body,
@@ -18921,7 +19024,8 @@ failureFreeFixedArrayAggregateMove(const MirProgram &program,
       instruction.lifecycle.size() > instruction.operands.size() + 1 ||
       instruction.literal || !instruction.definedFailure.empty() ||
       !instruction.localFailureSites.empty() ||
-      !elementMoveDefinedFailureFree) {
+      (!elementMoveDefinedFailureFree &&
+       !freshFixedArrayAggregate(body, instruction))) {
     return false;
   }
 
@@ -31490,6 +31594,12 @@ public:
         // place retains only the pre-publication MIR obligation identity.
         continue;
       }
+      if (place.root == MirPlaceRootKind::Value && place.projections.empty()) {
+        const auto publication =
+            fixedArrayPlacement(program, facts.body, place.value);
+        if (publication && !publication.indices.empty())
+          continue; // Declare aliases after their final array's storage.
+      }
       // An owning class local lives in a sealed lifetime slot so failure
       // and scope cleanup can destroy it exactly once from verified MIR.
       if (slotPlace(facts.body, place)) {
@@ -31765,6 +31875,28 @@ public:
       }
       output << ";\n";
     }
+    for (const auto &place : facts.body.places) {
+      if (place.root != MirPlaceRootKind::Value || !place.projections.empty())
+        continue;
+      const auto publication =
+          fixedArrayPlacement(program, facts.body, place.value);
+      if (!publication || publication.indices.empty())
+        continue;
+      writeIndent();
+      output << lifetimeSlotSpelling() << '<' << typeSpelling(place.type)
+             << ", false, true> __gti_mir_p_" << place.id
+             << "(std::addressof((";
+      if (publication.destination->root == MirPlaceRootKind::This)
+        output << destinationSpelling(facts, publication.destination->id);
+      else
+        output << "*__gti_mir_p_"
+               << canonicalSlotPlaceId(facts.body, *publication.destination)
+               << ".construction_address()";
+      output << ')';
+      for (const auto index : publication.indices)
+        output << '[' << index << ']';
+      output << "));\n";
+    }
     for (const MirValue &value : facts.body.values) {
       if (const auto *producer = findInstruction(facts.body, value.definition);
           producer && passivePayloadFieldConstruction(program, facts.body,
@@ -31782,6 +31914,19 @@ public:
       if (admittedInlineFixedArrayElement(program, facts.body, value.id)) {
         // The array's braced initializer copies or moves the binding itself;
         // a staged local would copy or move the element twice.
+        continue;
+      }
+      if (fixedArrayPlacement(program, facts.body, value.id)) {
+        const auto *producer = findInstruction(facts.body, value.definition);
+        const auto *drop =
+            uniqueValueLifetimeDrop(facts.body, value.id, value.info.type);
+        if (producer && producer->kind == MirInstructionKind::Call && drop) {
+          writeIndent();
+          output << "auto &__gti_mir_v_" << value.id << " = __gti_mir_p_"
+                 << canonicalSlotPlaceId(facts.body,
+                                         *facts.body.findPlace(drop->place))
+                 << ";\n";
+        }
         continue;
       }
       if (returnedCallResultSlot(program, facts.body, value.id) != nullptr ||
@@ -34707,6 +34852,35 @@ private:
       }
     }
     if (instruction.operation == MirOperation::Aggregate) {
+      if (instruction.result) {
+        const auto publication =
+            fixedArrayPlacement(program, facts.body, *instruction.result);
+        if (publication && freshFixedArrayAggregate(facts.body, instruction)) {
+          const auto *drop = uniqueValueLifetimeDrop(
+              facts.body, *instruction.result, instruction.info.type);
+          const auto *slot = publication.indices.empty()
+                                 ? publication.destination
+                             : drop ? facts.body.findPlace(drop->place)
+                                    : nullptr;
+          if (!slot)
+            throw std::logic_error("fresh array lost its publication slot");
+          if (slot->root != MirPlaceRootKind::This)
+            output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
+                   << ".mark_constructed();\n";
+          for (const auto &operand : instruction.operands) {
+            const auto *element = uniqueValueLifetimeDrop(
+                facts.body, operand.value, operand.type);
+            if (!element)
+              throw std::logic_error("fresh array lost element lifetime");
+            writeIndent();
+            output << "__gti_mir_p_"
+                   << canonicalSlotPlaceId(
+                          facts.body, *facts.body.findPlace(element->place))
+                   << ".release();\n";
+          }
+          return;
+        }
+      }
       // An inlined element spells its binding, so its copy or move runs here,
       // once, into the array's storage.
       const auto emitInlinedElement = [&](const MirOperand &operand) {
@@ -37685,6 +37859,25 @@ private:
     if (instruction.tombstone) {
       return;
     }
+    if (instruction.result &&
+        instruction.info.type.kind == SemanticType::Class &&
+        (instruction.kind == MirInstructionKind::Construct ||
+         instruction.kind == MirInstructionKind::Call)) {
+      const auto publication =
+          fixedArrayPlacement(program, facts.body, *instruction.result);
+      if (publication && !publication.indices.empty() &&
+          publication.destination->root == MirPlaceRootKind::This) {
+        const auto *drop = uniqueValueLifetimeDrop(
+            facts.body, *instruction.result, instruction.info.type);
+        if (!drop)
+          throw std::logic_error("fresh field element lost its lifetime");
+        writeIndent();
+        output << "std::destroy_at(__gti_mir_p_"
+               << canonicalSlotPlaceId(facts.body,
+                                       *facts.body.findPlace(drop->place))
+               << ".construction_address());\n";
+      }
+    }
     if (instruction.kind == MirInstructionKind::EnsureThreadLocal) {
       writeIndent();
       output << "__gti_mir_tls_success_" << instruction.id
@@ -39198,6 +39391,26 @@ private:
       output << "// construct " << *instruction.result
              << " publishes at its consuming return\n";
       return;
+    }
+    if (instruction.kind == MirInstructionKind::Construct &&
+        instruction.result &&
+        !invokePairedInstruction(facts.body, instruction.id)) {
+      const auto publication =
+          fixedArrayPlacement(program, facts.body, *instruction.result);
+      if (publication && !publication.indices.empty()) {
+        const auto *drop = uniqueValueLifetimeDrop(
+            facts.body, *instruction.result, instruction.info.type);
+        if (!drop)
+          throw std::logic_error("fresh element lost its publication slot");
+        writeIndent();
+        output << "__gti_mir_p_"
+               << canonicalSlotPlaceId(facts.body,
+                                       *facts.body.findPlace(drop->place))
+               << ".construct_from([&]() { return ";
+        emitClassConstructionExpression(facts, instruction);
+        output << "; });\n";
+        return;
+      }
     }
     if (instruction.kind == MirInstructionKind::Construct &&
         instruction.result && !instruction.destination &&

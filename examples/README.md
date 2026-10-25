@@ -2,7 +2,8 @@
 
 [`llvm/immovable-placement.gti`](llvm/immovable-placement.gti) demonstrates
 deleted-copy/deleted-move objects constructed directly through fresh return
-chains, with stable addresses and exactly-once cleanup. Build with
+chains and nested fixed-array elements, with stable addresses and exactly-once
+cleanup. Build with
 `gti examples/llvm/immovable-placement.gti --backend llvm -O3 -o placement`.
 `llvm_placement_execution` validates it at O0-O3. Like the other bounded LLVM
 profiles it is separate from the numbered full-language census.

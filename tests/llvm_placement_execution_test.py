@@ -67,6 +67,41 @@ int main() {
   return constructed == 1234 && destroyed == 4321 ? 0 : 2;
 }
 ''',
+    "direct-immovable-array": r'''
+int main() {
+  { Pinned values[2] = {Pinned(1), Pinned(2)};
+    if (!values[0].stable() || !values[1].stable()) { return 1; } }
+  return constructed == 12 && destroyed == 21 ? 0 : 2;
+}
+''',
+    "field-arrays": r'''
+struct Group {
+  Pinned values[2][2] = {{Pinned(1), make(2)}, {relay(3), Pinned(4)}};
+  bool stable() { return this.values[0][0].stable() && this.values[1][1].stable(); }
+};
+int main() {
+  { Group value{}; if (!value.stable()) { return 1; } }
+  return constructed == 1234 && destroyed == 4321 ? 0 : 2;
+}
+''',
+    "stored-reference-publication": r'''
+mut int order = 0;
+mut int& select(mut int& value) { order = order * 10 + 1; return value; }
+int finish() { order = order * 10 + 2; return 42; }
+class View {
+  mut int& value;
+  int stamp;
+public:
+  View(mut int& value) : value(select(value)), stamp(finish()) {}
+  void update() mut { this.value += this.stamp; }
+};
+int main() {
+  mut int value = 3;
+  { mut View view = View(value); view.update(); }
+  return value == 45 && order == 12 ? 0 : 1;
+}
+
+''',
     "array-copy-and-move": r'''
 class Cell { public: mut int value; Cell(int value) : value(value) {} };
 int inspect(Cell values[2], mut Cell& original) {
@@ -81,12 +116,45 @@ int main() {
   return transferred[0].value == 9 && transferred[1].value == 4 ? 0 : 2;
 }
 ''',
+    "projected-reference-publication": r'''
+struct Input { mut int first = 5; mut int second = 7; };
+mut int visits = 0;
+mut int& selected_field(mut Input& input) { visits += 1; return input.second; }
+class View {
+  mut int& value;
+public:
+  View(mut Input& input) : value(selected_field(input)) {}
+  void update() mut { this.value = 42; }
+};
+int main() {
+  mut Input input{};
+  { mut View view = View(input); view.update(); }
+  return input.first == 5 && input.second == 42 && visits == 1 ? 0 : 1;
+}
+''',
+    "shared-reference-publication": r'''
+mut int visits = 0;
+int& identity(int& input) { visits += 1; return input; }
+class View {
+  int& value;
+public:
+  View(int& input) : value(identity(input)) {}
+  int read() { return this.value; }
+};
+int main() {
+  int value = 42;
+  View first{value}; View second{value};
+  return first.read() == 42 && second.read() == 42 && visits == 2 ? 0 : 1;
+}
+''',
     "default-arrays": r'''
 class Element {
   mut Element* original = nullptr;
   int id;
 public:
   Element() : id(constructed + 1) { constructed++; this.original = &this; }
+  Element(Element&) = delete;
+  Element(Element&&) = delete;
   ~Element() {
     if (this.original != &this) { std::panic("relocated default array element"); }
     destroyed = destroyed * 10 + this.id;
@@ -126,24 +194,26 @@ int main() { return item.stable() && constructed == 1 ? 0 : 1; }
 }
 
 REJECT = {
+    "implicit-default-arrays": "int main() { Pinned values[2]; return 0; }",
     "copy": "int main() { Pinned a{1}; Pinned b = a; return 0; }",
     "move": "int main() { mut Pinned a{1}; Pinned b = std::move(a); return 0; }",
     "local-return": "Pinned named() { Pinned a{1}; return a; } int main() { return 0; }",
     "copy-argument": "void consume(Pinned value) {} int main() { Pinned a{1}; consume(a); return 0; }",
     "fresh-value-argument": "void consume(Pinned value) {} int main() { consume(make(1)); return 0; }",
     "conditional-value": "Pinned choose(bool b) { return b ? make(1) : make(2); } int main() { return 0; }",
-    "immovable-array": "int main() { Pinned values[2] = {make(1), make(2)}; return 0; }",
+    "array-element-copy": "int main() { Pinned a{1}; Pinned values[1] = {a}; return 0; }",
+    "array-element-move": "int main() { mut Pinned a{1}; Pinned values[1] = {std::move(a)}; return 0; }",
+    "array-copy": "int main() { Pinned a[1] = {make(1)}; Pinned b[1] = a; return 0; }",
+    "array-move": "int main() { mut Pinned a[1] = {make(1)}; Pinned b[1] = std::move(a); return 0; }",
+    "escaping-reference": "class View { int& value; public: View(int& value) : value(value) {} }; View bad() { int local = 1; return View(local); } int main() { return 0; }",
+    "overlapping-reference": "mut int& select(mut int& value) { return value; } class View { mut int& value; public: View(mut int& value) : value(select(value)) {} int read() { return this.value; } }; int main() { mut int value = 1; View first{value}; View second{value}; return first.read() + second.read(); }",
 }
 
 # The unchanged transitional backend physically relocates these immovable
 # subobjects. Do not use that behavior as the native semantic oracle.
-COMPARATOR_GAPS = {"nested-fields", "nested-arrays", "field-defaults",
-                   "array-copy-and-move", "default-arrays"}
-
-# The source language still requires movable fixed-array elements. This case
-# proves that fresh elements nevertheless observe their final array address;
-# deleted-move array initialization is a separate negative control above.
-MOVABLE_ELEMENTS = {"nested-arrays"}
+COMPARATOR_GAPS = {"nested-fields", "field-defaults", "array-copy-and-move",
+                   "stored-reference-publication", "projected-reference-publication",
+                   "shared-reference-publication"}
 
 
 def main():
@@ -161,7 +231,7 @@ def main():
             if selected and selected != name:
                 continue
             source = work / f"{name}.gti"
-            prelude = PINNED.replace("Pinned(Pinned&&) = delete;", "Pinned(Pinned&&) = default;") if name in MOVABLE_ELEMENTS else PINNED
+            prelude = PINNED
             source.write_text((root / "examples/llvm/immovable-placement.gti").read_text()
                               if text is None else '#include <std/panic>\n' + prelude + text,
                               encoding="utf-8")

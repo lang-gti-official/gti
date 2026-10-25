@@ -6961,7 +6961,7 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
         isOwnerDependentTextExpression(element)) {
       reportOwnerDependentTextStorage(element, "nested in a fixed array");
     }
-    if (!isAssignable(elementType, valueType, element.get())) {
+    if (!isOwnershipAssignable(elementType, valueType, element)) {
       report(expressionToken(element),
              "Cannot initialize array element of type '" +
                  typeSpelling(elementType) + "' with a value of type '" +

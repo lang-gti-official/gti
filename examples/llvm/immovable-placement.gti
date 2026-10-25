@@ -20,5 +20,11 @@ int main() {
     Pinned value = relay(1);
     if (!value.stable()) { return 1; }
   }
-  return destroyed == 1 ? 0 : 2;
+  if (destroyed != 1) { return 2; }
+  destroyed = 0;
+  {
+    Pinned values[2][2] = {{relay(1), Pinned(2)}, {Pinned(3), relay(4)}};
+    if (!values[0][0].stable() || !values[1][1].stable()) { return 3; }
+  }
+  return destroyed == 4321 ? 0 : 4;
 }

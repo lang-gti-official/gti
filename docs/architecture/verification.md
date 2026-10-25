@@ -10103,12 +10103,17 @@ ownership or entry-signature inference.
 ### Native LLVM Admission Gates
 
 `llvm_placement_execution` extends the class profile with fresh-result final
-addresses: immovable return chains and fields/defaults/TLS, movable nested-array
-elements, array copy snapshots/movement, and deleted-copy/move/argument/conditional
+addresses: immovable return chains and fields/defaults/TLS, fresh immovable
+direct/nested/default/field arrays, array copy snapshots/movement, evaluated
+shared/exclusive/projected stored references, and deleted-copy/move/argument/conditional
 rejections. Run on macOS arm64 and Linux x86_64. The named native-only cases record
 existing C++ comparator limitations, never silent comparator skips.
 `llvm_target_layout_abi` additionally observes exact field/array construction
 rollback and prepared-return cleanup after local destruction fails at O0-O3.
+It also observes completed-row cleanup after an immovable nested-array element
+fails and completed-field cleanup when a reference initializer fails before
+publication. `array_publication_lsp` checks shared frontend acceptance, exact
+ownership diagnostics and unsaved-version recovery, without editor-only rules.
 
 O-LLVM-02 adds the following independent checks while full-language LLVM support
 remains pending:
