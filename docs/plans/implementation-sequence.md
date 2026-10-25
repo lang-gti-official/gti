@@ -10806,6 +10806,10 @@ or resolve them using source.
 
 ### O-LLVM-05: Places, References, Arrays And Borrowed Text
 
+- **State:** implementation in progress on `codex/llvm-places`; not admitted or
+  released. The private address component builds and the existing scalar gate
+  passes, but new-family execution/platform evidence is still required before
+  changing coverage admission. Pending ledger rows remain authoritative.
 - **Unlock:** array algorithms, reference-based helpers, scalar globals and
   text-view operations without hidden allocations.
 - **Deliver:** place roots and projections, loads/stores, indexing, raw pointer

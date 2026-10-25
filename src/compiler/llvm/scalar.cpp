@@ -82,6 +82,8 @@ SemanticType Scalars::common(const SemanticType &left,
 llvm::Value *Scalars::literal(const Literal &literal,
                               const SemanticType &type) {
   auto *output = session.layouts().get(type).value;
+  if (std::holds_alternative<std::nullptr_t>(literal))
+    return llvm::ConstantPointerNull::get(session.layouts().pointer());
   if (const auto *integer = std::get_if<uint64_t>(&literal))
     return llvm::ConstantInt::get(output, *integer);
   if (const auto *boolean = std::get_if<bool>(&literal))
@@ -97,11 +99,13 @@ llvm::Value *Scalars::literal(const Literal &literal,
                       llvm::APInt(wide ? 64 : 32, number->bits)));
   }
   if (const auto *text = std::get_if<std::string>(&literal)) {
-    auto *data =
-        llvm::ConstantDataArray::getString(session.context(), *text, false);
+    auto *data = llvm::ConstantDataArray::getString(
+        session.context(), *text, type.kind == SemanticType::CString);
     auto *storage = new llvm::GlobalVariable(
         session.module(), data->getType(), true,
         llvm::GlobalValue::PrivateLinkage, data, "gti.text");
+    if (type.kind == SemanticType::CString)
+      return storage;
     return llvm::ConstantStruct::get(session.abi().textView(),
                                      {storage, ir.getInt64(text->size())});
   }
@@ -114,6 +118,10 @@ llvm::Value *Scalars::convert(llvm::Value *value, const SemanticType &from,
     return value;
   auto source = domain(from), target = domain(to);
   auto *output = session.layouts().get(target).value;
+  if (value->getType()->isPointerTy() && output->isPointerTy())
+    return value;
+  if (value->getType()->isPointerTy() && to == SemanticType::Bool)
+    return ir.CreateIsNotNull(value);
   if (source == target)
     return value;
   const DefinedFailureOutcome failure{
