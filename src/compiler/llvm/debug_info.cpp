@@ -247,6 +247,8 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     const auto *mir = program.mir().findFunctionInstance(address.owner);
     if (!instance || !mir)
       throw std::logic_error("LLVM debug function lost its exact identity");
+    if (!impl->session.hasSourceDefinition(address.owner, function))
+      throw std::logic_error("LLVM debug function does not match its source ABI identity");
     source = &instance->source;
     name =
         program.findFunctionDeclaration(instance->declaration)->qualifiedName;

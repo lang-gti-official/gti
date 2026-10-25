@@ -25,13 +25,16 @@ using namespace lang::native_llvm;
 // Never a backend admission path or a replacement execution engine. The shared
 // Source definitions go through the production ABI hook, not symbol allowlists.
 int replay(int argc, char **argv) {
-  if (argc != 6)
+  if (argc != 6 && argc != 7)
     return 2;
   const std::filesystem::path source(argv[1]), library(argv[2]), packet(argv[3]), output(argv[4]);
   if (std::string(argv[5]) != "rooted") {
     std::cerr << "baseline requires an explicitly retained pre-hook emitter\n";
     return 2;
   }
+  const int level = argc == 7 ? std::stoi(argv[6]) : 3;
+  if (level < 0 || level > 3)
+    return 2;
   FrontendOptions options;
   options.requireEntryPoint = true;
   options.requireFunctionDefinitions = true;
@@ -63,7 +66,7 @@ int replay(int argc, char **argv) {
   const auto input = verifiedLoweredProgram(*lowered.program, issues);
   if (!input)
     throw std::runtime_error("packet source has no verified snapshot");
-  Session session(*input, {.optimization = LlvmCodegenOptimization::Aggressive});
+  Session session(*input, {.optimization = static_cast<LlvmCodegenOptimization>(level)});
   auto buffer = llvm::MemoryBuffer::getFile(packet.string());
   if (!buffer)
     throw std::runtime_error("packet is unavailable");
@@ -157,6 +160,7 @@ int replay(int argc, char **argv) {
     throw std::runtime_error(error.message());
   report << llvm::json::Value(llvm::json::Object{
       {"mode", argv[5]}, {"source_definitions", std::move(definitions)},
+      {"optimization", level},
       {"triple", session.module().getTargetTriple().str()},
       {"data_layout", session.dataLayout().getStringRepresentation()}});
   std::cout << "verified packet source definitions=" << registered

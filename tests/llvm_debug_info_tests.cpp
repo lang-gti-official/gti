@@ -1,4 +1,5 @@
 #include "../src/compiler/llvm/debug_info.h"
+#include "../src/compiler/llvm/abi.h"
 #include "../src/compiler/llvm/layout.h"
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
@@ -51,10 +52,18 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
     throw std::runtime_error("missing debug component identity");
   const MirBodyAddress address{MirBodyKind::Function, selected->id};
   const auto *body = findMirBody(input->program().mir(), address);
-  auto *function = llvm::Function::Create(
-      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
-      llvm::GlobalValue::ExternalLinkage, "debug_metadata_component",
-      session.module());
+  auto *function = session.abi().declareFunction(selected->id);
+  auto *wrong = llvm::Function::Create(
+      function->getFunctionType(), llvm::GlobalValue::ExternalLinkage,
+      "wrong_debug_identity", session.module());
+  bool rejected = false;
+  try {
+    debug.begin(address, *wrong);
+  } catch (const std::logic_error &) {
+    rejected = true;
+  }
+  if (!rejected || wrong->getSubprogram())
+    throw std::runtime_error("debug metadata accepted an unrelated LLVM function");
   const auto attributes = function->getAttributes();
   debug.begin(address, *function);
   if (attributes != function->getAttributes())
@@ -94,7 +103,10 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
       ir.getCurrentDebugLocation().getLine() != 0)
     throw std::runtime_error(
         "generated routing inherited a stale user source line");
-  ir.CreateRetVoid();
+  if (function->getReturnType()->isVoidTy())
+    ir.CreateRetVoid();
+  else
+    ir.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));
   debug.finalize();
   debug.finalize();
   const bool invalid = llvm::verifyModule(session.module(), &llvm::errs());
@@ -105,6 +117,9 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
   }
   std::string text;
   llvm::raw_string_ostream output(text);
+  // Raw IR provenance is not DWARF. Compare debug paths without the deliberate
+  // source-ownership attachment used independently by the ABI boundary.
+  function->setMetadata("gti.source", nullptr);
   session.module().print(output, nullptr);
   if (text.find(path) != std::string::npos ||
       text.find("directory: \".\"") == std::string::npos ||

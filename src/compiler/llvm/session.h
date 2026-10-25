@@ -42,6 +42,8 @@ public:
   // Unregistered/generated functions retain their existing linkage.
   void requireSourceDefinition(HirFunctionInstanceId id,
                                llvm::Function &function);
+  [[nodiscard]] bool hasSourceDefinition(HirFunctionInstanceId id,
+                                         const llvm::Function &function) const;
   // Rejects unresolved GTI definitions, then verifies before and after the
   // selected LLVM pipeline. Never returns partial object bytes on failure.
   [[nodiscard]] BackendArtifact emitObject();

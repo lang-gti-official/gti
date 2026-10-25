@@ -44,6 +44,8 @@ def main():
     parser.add_argument("--cpp", type=Path, help="optional equivalent-contract O09 executable")
     parser.add_argument("--cpp-sha256")
     parser.add_argument("--measure", action="store_true")
+    parser.add_argument("--all-levels", action="store_true",
+                        help="rooted correctness at O0-O3; no timing or legacy baseline")
     parser.add_argument("--slot")
     parser.add_argument("--wait-seconds", type=int, default=1200)
     parser.add_argument("--samples", type=int, default=7)
@@ -56,6 +58,7 @@ def main():
     assert digest(args.source) == SOURCE_SHA, "not the published checked O09 fixture"
     assert digest(args.packet) == PACKET_SHA, "not the published pre-O3 packet"
     assert not args.measure or args.slot, "a coordinated slot is required"
+    assert not args.all_levels or not (args.measure or args.baseline_emitter)
     assert args.samples >= 3 and args.repetitions >= 3
     assert bool(args.cpp) == bool(args.cpp_sha256)
     assert bool(args.baseline_emitter) == bool(args.baseline_emitter_sha256)
@@ -107,23 +110,33 @@ def main():
         manifest["clang_version"] = run([args.clang, "--version"]).stdout.strip()
         manifest["host"] = run(["uname", "-a"]).stdout.strip()
         endpoints = {}
-        for mode in (("baseline", "rooted") if args.baseline_emitter else ("rooted",)):
-            obj, binary = output / f"{mode}.o", output / mode
+        modes = ([("rooted", level) for level in range(4)] if args.all_levels else
+                 ([("baseline", 3), ("rooted", 3)] if args.baseline_emitter else [("rooted", 3)]))
+        for mode, level in modes:
+            label = f"{mode}-O{level}" if args.all_levels else mode
+            obj, binary = output / f"{label}.o", output / label
             emitter = args.baseline_emitter if mode == "baseline" else args.emitter
-            run([emitter, args.source, args.stdlib, args.packet, obj, mode])
+            command = [emitter, args.source, args.stdlib, args.packet, obj, mode]
+            if mode == "rooted":
+                command.append(str(level))
+            run(command)
             run([args.clang, obj, args.runtime, "-pthread", "-o", binary])
             run([binary], execution=True)
             report = json.loads(Path(str(obj) + ".json").read_text())
             ir = Path(str(obj) + ".ll").read_text()
             assert "llvm.uadd.with.overflow.i64" in ir, "checked arithmetic disappeared"
-            manifest[mode] = {"report": report, "object_sha256": digest(obj),
+            manifest[label] = {"report": report, "object_sha256": digest(obj),
                               "binary_sha256": digest(binary), "binary_bytes": binary.stat().st_size}
-            endpoints[mode] = binary
-        after = {x["symbol"]: x["after"] for x in manifest["rooted"]["report"]["source_definitions"]}
+            endpoints[label] = binary
+            states = {x["after"] for x in report["source_definitions"]}
+            if mode == "rooted":
+                assert "external" in states and states & {"internal", "removed"}
+                if level == 3:
+                    assert "removed" in states
         if args.baseline_emitter:
+            after = {x["symbol"]: x["after"] for x in manifest["rooted"]["report"]["source_definitions"]}
             before = {x["symbol"]: x["after"] for x in manifest["baseline"]["report"]["source_definitions"]}
             assert before.keys() == after.keys() and set(before.values()) == {"external"}
-        assert "removed" in after.values() and "external" in after.values()
         if args.cpp:
             run([args.cpp], execution=True)
             endpoints["cpp"] = args.cpp

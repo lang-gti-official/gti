@@ -44,25 +44,37 @@ std::size_t instrumentUndefinedMemory(llvm::Module &module) {
   auto *i32 = llvm::Type::getInt32Ty(context);
   auto *source = llvm::StructType::get(context, {pointer, i32, i32});
   auto *dataType = llvm::StructType::get(context, {source, pointer, i8, i8});
-  auto handler = module.getOrInsertFunction(
-      "__ubsan_handle_type_mismatch_v1_abort",
-      llvm::FunctionType::get(llvm::Type::getVoidTy(context),
-                              {pointer, integer}, false));
   std::vector<llvm::Instruction *> accesses;
   for (auto &function : module)
     if (!function.isDeclaration())
       for (auto &block : function)
         for (auto &instruction : block)
-          if (llvm::isa<llvm::LoadInst, llvm::StoreInst>(instruction))
+          if (llvm::isa<llvm::LoadInst, llvm::StoreInst>(instruction)) {
+            const auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction);
+            const auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+            const auto *address =
+                load ? load->getPointerOperand() : store->getPointerOperand();
+            if (address->getType()->getPointerAddressSpace() != 0)
+              throw std::logic_error(
+                  "LLVM memory instrumentation requires native address space zero");
             accesses.push_back(&instruction);
+          }
+  if (accesses.empty())
+    return 0;
+  auto *handlerType = llvm::FunctionType::get(llvm::Type::getVoidTy(context),
+                                             {pointer, integer}, false);
+  constexpr const char *handlerName = "__ubsan_handle_type_mismatch_v1_abort";
+  if (const auto *existing = module.getNamedValue(handlerName)) {
+    const auto *function = llvm::dyn_cast<llvm::Function>(existing);
+    if (!function || function->getFunctionType() != handlerType)
+      throw std::logic_error("conflicting LLVM undefined-memory handler ABI");
+  }
+  auto handler = module.getOrInsertFunction(handlerName, handlerType);
   for (auto *access : accesses) {
     auto *load = llvm::dyn_cast<llvm::LoadInst>(access);
     auto *store = llvm::dyn_cast<llvm::StoreInst>(access);
     auto *address =
         load ? load->getPointerOperand() : store->getPointerOperand();
-    if (address->getType()->getPointerAddressSpace() != 0)
-      throw std::logic_error(
-          "LLVM memory instrumentation requires native address space zero");
     const auto alignment = load ? load->getAlign() : store->getAlign();
     llvm::IRBuilder<> ir(access);
     ir.SetCurrentDebugLocation(access->getDebugLoc());

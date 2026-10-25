@@ -216,6 +216,15 @@ void Session::requireSourceDefinition(HirFunctionInstanceId id,
   sourceDefinitions_.emplace_back(id, &function);
 }
 
+bool Session::hasSourceDefinition(HirFunctionInstanceId id,
+                                  const llvm::Function &function) const {
+  return std::any_of(sourceDefinitions_.begin(), sourceDefinitions_.end(),
+                     [&](const auto &registered) {
+                       return registered.first == id &&
+                              registered.second == &function;
+                     });
+}
+
 BackendArtifact Session::emitObject() {
   if (emissionStarted_)
     throw std::logic_error("LLVM emission sessions are single-use");
