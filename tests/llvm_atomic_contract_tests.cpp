@@ -25,6 +25,7 @@ void expect(bool condition, std::string_view message) {
 void check(const std::filesystem::path &root) {
   FrontendOptions options;
   options.target.executionProfile = ExecutionProfile::Concurrent;
+  options.target.runtimeCapabilities.threads = true;
   options.requireEntryPoint = true;
   options.requireFunctionDefinitions = true;
   options.lowerReachableOnly = true;
@@ -48,7 +49,9 @@ void check(const std::filesystem::path &root) {
   expect(plan.admitted(), plan.limitation());
   const auto &program = input->program().mir();
   Session session(*input, {});
-  unsigned storage = 0, constructors = 0, calls = 0, compares = 0;
+  unsigned storage = 0, constructors = 0, calls = 0, compares = 0, copied = 0;
+  const MirBody *storeBody = nullptr, *compareBody = nullptr;
+  const MirInstruction *storePlan = nullptr, *comparePlan = nullptr;
   for (const auto &owner : program.classInstances()) {
     const auto element = nativeAtomicElement(program, owner.type);
     if (!element)
@@ -124,6 +127,45 @@ void check(const std::filesystem::path &root) {
         reject([](auto &call) {
           call.definedFailure.propagation = FailurePropagationKind::DirectCall;
         });
+        if (instruction.intrinsic == IntrinsicKind::AtomicStore) {
+          for (const auto &place : owner.body.places)
+            if (place.type == instruction.operands[1].type) {
+              for (const auto kind :
+                   {MirOperandKind::Copy, MirOperandKind::Move}) {
+                auto changed = instruction;
+                changed.operands[1] = {
+                    .kind = kind, .place = place.id, .type = place.type};
+                expect(nativeAtomicCall(program, owner.body, changed),
+                       "atomic.scalar-place: exact Copy/Move uses existing "
+                       "materializer");
+                const auto exact = changed;
+                changed.operands[1].place = 0;
+                expect(!nativeAtomicCall(program, owner.body, changed),
+                       "atomic.near-miss: missing scalar place fails closed");
+                changed = exact;
+                changed.operands[1].value = 1;
+                expect(!nativeAtomicCall(program, owner.body, changed),
+                       "atomic.near-miss: conflicting place/SSA encoding fails "
+                       "closed");
+                changed = exact;
+                changed.operands[1].loan = 1;
+                expect(!nativeAtomicCall(program, owner.body, changed),
+                       "atomic.near-miss: scalar place cannot carry a loan "
+                       "encoding");
+                changed = exact;
+                changed.operands[1].type = SemanticType::Unknown;
+                expect(
+                    !nativeAtomicCall(program, owner.body, changed),
+                    "atomic.near-miss: wrong scalar place type fails closed");
+                ++copied;
+              }
+              break;
+            }
+          if (instruction.operands[1].type == SemanticType::Int32) {
+            storeBody = &owner.body;
+            storePlan = &instruction;
+          }
+        }
         if (instruction.intrinsic == IntrinsicKind::AtomicCompareExchange) {
           ++compares;
           reject([](auto &call) {
@@ -132,11 +174,17 @@ void check(const std::filesystem::path &root) {
           reject([](auto &call) {
             call.operands[3].kind = MirOperandKind::BorrowRead;
           });
+          if (instruction.operands[1].type == SemanticType::Int32) {
+            compareBody = &owner.body;
+            comparePlan = &instruction;
+          }
         }
       }
   expect(
       calls >= 9 * 4 && compares >= 9,
       "atomic.order-shapes: all scalar load/store/exchange/CAS paths execute");
+  expect(copied >= 18,
+         "atomic.scalar-place: Copy and Move for every scalar type");
 
   auto *function = llvm::Function::Create(
       llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
@@ -144,6 +192,31 @@ void check(const std::filesystem::path &root) {
       session.module());
   llvm::IRBuilder<> ir(
       llvm::BasicBlock::Create(session.context(), "entry", function));
+  expect(storePlan && comparePlan,
+         "atomic.materialization: exact int32 plans exist");
+  if (storePlan && comparePlan) {
+    auto *slot = ir.CreateAlloca(ir.getInt32Ty());
+    Atomics atomics(session, ir);
+    const auto rejectLanes = [&](const MirBody &body,
+                                 const MirInstruction &plan,
+                                 std::span<llvm::Value *const> inputs) {
+      const auto before = ir.GetInsertBlock()->size();
+      bool rejected = false;
+      try {
+        static_cast<void>(atomics.emit(body, plan, inputs));
+      } catch (const BackendUnsupportedError &) {
+        rejected = true;
+      }
+      expect(rejected && ir.GetInsertBlock()->size() == before,
+             "atomic.materialization: wrong scalar/address lane emits no "
+             "memory operation");
+    };
+    const std::array<llvm::Value *, 2> pointerValue{slot, slot};
+    rejectLanes(*storeBody, *storePlan, pointerValue);
+    const std::array<llvm::Value *, 4> scalarAddress{
+        slot, ir.getInt32(0), ir.getInt32(1), ir.getInt32(0)};
+    rejectLanes(*compareBody, *comparePlan, scalarAddress);
+  }
   ir.CreateRetVoid();
   for (const unsigned bits : {8U, 16U, 32U, 64U})
     expect(session.supportsNativeAtomic(*function, bits, bits / 8),

@@ -10,14 +10,21 @@ namespace {
 
 bool scalarOperand(const MirBody &body, const MirOperand &operand,
                    const SemanticType &type) {
-  if (operand.type != type || operand.place || operand.loan)
+  if (operand.type != type || operand.loan)
+    return false;
+  if (operand.kind == MirOperandKind::Copy ||
+      operand.kind == MirOperandKind::Move) {
+    const auto *place = body.findPlace(operand.place);
+    return operand.place && !operand.value && !operand.literal && place &&
+           place->type == type;
+  }
+  if (operand.place)
     return false;
   if (operand.kind == MirOperandKind::Constant)
     return operand.literal && !operand.value;
   const auto *value = body.findValue(operand.value);
   return operand.kind == MirOperandKind::Value && operand.value &&
-         !operand.literal && value && value->info.type == type &&
-         value->info.category == ValueCategory::Value;
+         !operand.literal && value && value->info.type == type;
 }
 
 bool referenceOperand(const MirBody &body, const MirOperand &operand,
@@ -225,6 +232,18 @@ llvm::Value *Atomics::emit(const MirBody &body,
         "LLVM atomic call lost its exact staged plan");
   const auto layout = session.layouts().atomicStorage(
       instruction.operands[0].type.arguments[0]);
+  const auto scalar = session.layouts().get(layout.element);
+  for (std::size_t index = 0; index < inputs.size(); ++index) {
+    const bool address =
+        index == 0 ||
+        (instruction.intrinsic == IntrinsicKind::AtomicCompareExchange &&
+         index == 3);
+    if (!inputs[index] ||
+        inputs[index]->getType() !=
+            (address ? session.layouts().pointer() : scalar.value))
+      throw BackendUnsupportedError(
+          "LLVM atomic input lost its exact materialized scalar/address lane");
+  }
   if (!session.supportsNativeAtomic(*ir.GetInsertBlock()->getParent(),
                                     layout.lane->getBitWidth(),
                                     layout.object.alignment))
