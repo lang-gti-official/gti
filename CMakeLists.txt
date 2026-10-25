@@ -250,6 +250,10 @@ endforeach()
 if(NOT COMMAND llvm_map_components_to_libnames)
   include("${LLVM_CMAKE_DIR}/LLVM-Config.cmake")
 endif()
+if(GTI_BUNDLE_LLVM)
+  # LLVM's native-architecture variable is local to its added subdirectory.
+  set(LLVM_NATIVE_ARCH "${GTI_LLVM_NATIVE_TARGET}")
+endif()
 llvm_map_components_to_libnames(
   GTI_LLVM_BACKEND_DIRECT_LIBRARIES core nativecodegen passes)
 if(NOT GTI_LLVM_BACKEND_DIRECT_LIBRARIES)

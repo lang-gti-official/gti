@@ -548,6 +548,11 @@ target_compile_definitions(gti_llvm_cache_tests PRIVATE
   GTI_LLVM_CACHE_FIXTURE="${PROJECT_SOURCE_DIR}/tests/fixtures/llvm_cache")
 add_test(NAME llvm_cache_round_trip COMMAND gti_llvm_cache_tests)
 set_tests_properties(llvm_cache_round_trip PROPERTIES TIMEOUT 180)
+add_test(NAME llvm_cache_component_mapping
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/llvm_cache_component_mapping_test.py"
+          "${CMAKE_BINARY_DIR}" "${CMAKE_SYSTEM_PROCESSOR}")
+set_tests_properties(llvm_cache_component_mapping PROPERTIES TIMEOUT 30)
 add_test(NAME llvm_cache_project_workflows
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/llvm_cache_project_test.py" "$<TARGET_FILE:gti>")

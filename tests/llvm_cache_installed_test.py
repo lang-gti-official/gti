@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Stage, archive, relocate and consume the LLVM-enabled toolchain and driver."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
+import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -54,17 +57,43 @@ def main():
         (pure / "main.gti").write_text("int main() { return 0; }\n", encoding="utf-8")
         cold = run([stage / "bin/gti", "build", "--verbose"], pure, environment)
         assert "gti: cache miss " in cold.stderr, cold.stderr
-        archive = root / "gti-toolchain.tar.gz"
-        with tarfile.open(archive, "w:gz") as output:
-            output.add(stage, arcname="gti")
+        bundled = cache.get("GTI_BUNDLE_LLVM") == "ON"
+        if bundled:
+            archive_platform = {("darwin", "arm64"): "darwin-arm64",
+                                ("linux", "x86_64"): "linux-x86_64"}[
+                                    (sys.platform, platform.machine().lower())]
+            packaged = root / "packages"
+            version = (source / "VERSION").read_text().strip()
+            run(["cmake", f"-DGTI_SOURCE_DIR={source}", f"-DGTI_STAGE_DIR={stage}",
+                 f"-DGTI_OUTPUT_DIR={packaged}", f"-DGTI_PLATFORM={archive_platform}",
+                 f"-DGTI_EXPECTED_TAG=v{version}",
+                 "-P", source / "cmake/PackageRelease.cmake"], root, environment)
+            archive, = packaged.glob("*.tar.gz")
+            checksum = Path(f"{archive}.sha256").read_text().split()[0]
+            with archive.open("rb") as packet:
+                assert hashlib.file_digest(packet, "sha256").hexdigest() == checksum
+        else:
+            archive = root / "gti-toolchain.tar.gz"
+            with tarfile.open(archive, "w:gz") as output:
+                output.add(stage, arcname="gti")
         shutil.rmtree(stage)
         relocated_root = root / "relocated with spaces"
         relocated_root.mkdir()
-        with tarfile.open(archive, "r:gz") as packet:
-            packet.extractall(relocated_root, filter="data")
         prefix = relocated_root / "gti"
+        with tarfile.open(archive, "r:gz") as packet:
+            if bundled:
+                prefix.mkdir()
+                packet.extractall(prefix, filter="data")
+            else:
+                packet.extractall(relocated_root, filter="data")
         gti = prefix / "bin/gti"
         run([gti, "--version"], root, environment)
+        if bundled:
+            inspector = ["otool", "-L"] if sys.platform == "darwin" else ["ldd"]
+            for binary in (gti, prefix / "bin/gti_lsp"):
+                dependencies = run([*inspector, binary], root, environment).stdout
+                assert not re.search(r"\blibLLVM[^/\s]*\.(?:so|dylib)", dependencies), dependencies
+                assert str(stage) not in dependencies and str(build) not in dependencies
         moved = root / "moved-project"
         pure.rename(moved)
         executable_metadata = json.loads(run([gti, "metadata"], moved, environment).stdout)
