@@ -10132,6 +10132,17 @@ ownership diagnostics and unsaved-version recovery, without editor-only rules.
 O-LLVM-02 adds the following independent checks while full-language LLVM support
 remains pending:
 
+The combined O-LLVM-07/08 scalar-owner probe,
+`gti_llvm_session_tests --payload-unique-owner <source-root>`, retains normal
+source lowering, verified scalar-owner payload extraction and both drops. Its
+C byte-provider shim updates ordinary GTI mutable scalar counters through
+test-only aliases of exact sealed global identities, installed before LLVM
+module verification and optimization. Source checks require one allocation and
+no release while the extracted owner remains live, followed by exactly one
+release after its drop; the shim also rejects double release. These aliases
+are test instrumentation, not production exports or arbitrary foreign-C call
+coverage. General foreign counter getters remain an O-LLVM-11 prerequisite.
+
 | Gate | Evidence |
 | --- | --- |
 | `llvm_admission` | Every typed ledger row has a milestone/predicate; unknown values and sentinels reject; snapshot/target/policy identity survives; sealed entry/dependency reachability separates dormant metadata from required execution, with conservative all-body fallbacks; scalar, array, borrow, cleanup, native and TLS shapes are inventoried; pending generation carries source provenance and emits no artifact. |
