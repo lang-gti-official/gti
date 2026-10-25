@@ -227,6 +227,29 @@ int main() {
 ''',
 }
 
+FAILURES = {
+    "nested-array-rollback": r'''
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    if (constructed != 12 || destroyed != 21) {
+      std::panic("incorrect partial array cleanup");
+    }
+  }
+};
+Pinned checked(int id) {
+  if (id == 3) { std::panic("array element failure"); }
+  return Pinned(id);
+}
+int main() {
+  Guard guard{};
+  Pinned values[2][2] = {{checked(1), checked(2)}, {checked(3), checked(4)}};
+  return 0;
+}
+''',
+}
+
 REJECT = {
     "implicit-default-arrays": "int main() { Pinned values[2]; return 0; }",
     "copy": "int main() { Pinned a{1}; Pinned b = a; return 0; }",
@@ -254,7 +277,7 @@ def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selected = sys.argv[3] if len(sys.argv) > 3 else None
     cases = {**CASES, "example": None}
-    if selected and selected not in cases and selected not in REJECT:
+    if selected and selected not in cases and selected not in REJECT and selected not in FAILURES:
         raise ValueError(f"unknown placement case: {selected}")
     env = {**os.environ, "NO_COLOR": "1"}
     endpoints = (Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
@@ -275,6 +298,22 @@ def main():
                     raise AssertionError(f"{name} {endpoint}: {result}")
             comparators = "LLVM O0-O3 (recorded C++ comparator gap)" if name in COMPARATOR_GAPS else "C++20/23 and LLVM O0-O3"
             print(f"{name}: final addresses/cleanup {comparators} passed", flush=True)
+        for name, text in FAILURES.items():
+            if selected and selected != name:
+                continue
+            source = work / f"{name}.gti"
+            source.write_text('#include <std/panic>\n' + PINNED + text, encoding="utf-8")
+            observables = []
+            for endpoint in endpoints:
+                result = execute(gti, root, work / f"{name}-{endpoint}", source, endpoint, env)
+                if (result.error or result.returncode != 70 or "GTI-R0017" not in result.stderr
+                        or "array element failure" not in result.stderr
+                        or "incorrect partial array cleanup" in result.stderr):
+                    raise AssertionError(f"{name} {endpoint}: {result}")
+                observables.append(result.observable)
+            if any(value != observables[0] for value in observables):
+                raise AssertionError(f"failure attribution drift in {name}: {observables}")
+            print(f"{name}: exact failure and completed-element cleanup passed", flush=True)
         for name, text in REJECT.items():
             if selected and selected != name:
                 continue
