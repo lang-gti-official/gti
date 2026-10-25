@@ -22,6 +22,7 @@ enum class Mode : int64_t { Minus = -1, Plus = 7 };
 int inspect(Node& owner, int input) {
   mut int local = input;
   Mode mode = Mode::Minus;
+  auto text = "bytes";
   return local + owner.value;
 }
 int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
@@ -97,7 +98,7 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
   debug.finalize();
   debug.finalize();
   const bool invalid = llvm::verifyModule(session.module(), &llvm::errs());
-  if (locals != 4 || !lines || invalid) {
+  if (locals != 5 || !lines || invalid) {
     std::cerr << "locals=" << locals << " lines=" << lines
               << " invalid=" << invalid << '\n';
     throw std::runtime_error("invalid local/recursive type debug metadata");
@@ -110,7 +111,9 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
       text.find("name: \"Node\"") == std::string::npos ||
       text.find("name: \"local\"") == std::string::npos ||
       text.find("name: \"Minus\", value: -1") == std::string::npos ||
-      text.find("name: \"Plus\", value: 7") == std::string::npos)
+      text.find("name: \"Plus\", value: 7") == std::string::npos ||
+      text.find("name: \"string_view\"") == std::string::npos ||
+      text.find("name: \"uint8_t\", size: 8") == std::string::npos)
     throw std::runtime_error(
         "debug metadata leaks a host path or loses a source type/name");
   return text;

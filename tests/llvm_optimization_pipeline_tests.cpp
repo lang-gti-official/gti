@@ -5,6 +5,7 @@
 
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/Operator.h>
+#include <llvm/Transforms/Utils/ModuleUtils.h>
 
 #include <iostream>
 #include <stdexcept>
@@ -64,6 +65,8 @@ int main() {
     }
     if (!promote || !checked || !strict)
       throw std::runtime_error("missing pipeline function");
+    // Keep these unknown-input observation roots available after optimization.
+    llvm::appendToUsed(session.module(), {promote, checked, strict});
     const auto allocas = [](const llvm::Function &function) {
       unsigned count = 0;
       for (const auto &block : function)
