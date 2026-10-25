@@ -194,7 +194,7 @@ than mixed into the active queue.
   with complete current-language coverage buckets, prerequisite gates,
   [reviewed shared implementation contracts](plans/implementation-sequence.md#shared-cross-milestone-contracts),
   the open [failure-transport evaluation](plans/implementation-sequence.md#c04-failure-transport-evaluation),
-  [bounded campaign waves and validation](plans/implementation-sequence.md#llvm-campaign-waves-and-validation),
+  [milestone ownership and campaign validation](plans/implementation-sequence.md#llvm-campaign-waves-and-validation),
   and [parallel assignment boundaries](plans/implementation-sequence.md#agent-assignment-and-evidence)
 - [Systems-readiness roadmap](plans/roadmap-to-1.0.md) — capability outcomes
   and the soft, revisable path to a full-featured 1.0
