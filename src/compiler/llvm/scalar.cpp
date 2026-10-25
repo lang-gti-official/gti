@@ -44,6 +44,10 @@ Scalars::Scalars(Session &session, llvm::IRBuilder<> &ir, Guard guard)
 llvm::Constant *Scalars::constant(const ConstantValue &value,
                                   const SemanticType &type) {
   auto *storage = session.layouts().get(type).storage;
+  if (std::holds_alternative<NullConstant>(value))
+    return llvm::ConstantPointerNull::get(session.layouts().pointer());
+  if (const auto *text = std::get_if<std::string>(&value))
+    return llvm::cast<llvm::Constant>(literal(*text, type));
   if (const auto *integer = std::get_if<ConstantInteger>(&value))
     return llvm::ConstantInt::get(
         storage, integer->negative ? uint64_t(0) - integer->magnitude
@@ -132,8 +136,8 @@ llvm::Value *Scalars::literal(const Literal &literal,
                       llvm::APInt(wide ? 64 : 32, number->bits)));
   }
   if (const auto *text = std::get_if<std::string>(&literal)) {
-    auto *data = llvm::ConstantDataArray::getString(
-        session.context(), *text, type.kind == SemanticType::CString);
+    auto *data =
+        llvm::ConstantDataArray::getString(session.context(), *text, true);
     auto *storage = new llvm::GlobalVariable(
         session.module(), data->getType(), true,
         llvm::GlobalValue::PrivateLinkage, data, "gti.text");

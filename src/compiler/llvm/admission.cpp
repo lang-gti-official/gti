@@ -2,6 +2,7 @@
 
 #include "coverage.h"
 #include "reachability.h"
+#include "text.h"
 
 #include <iomanip>
 #include <map>
@@ -33,13 +34,47 @@ bool passiveAddress(const SemanticType &type) {
          passiveAddress(pointee);
 }
 
-bool passiveReference(const SemanticType &type) {
+bool passiveReferenceType(const SemanticType &type) {
   return passiveArrayElement(type) || passiveAddress(type) ||
          type.kind == SemanticType::StringView ||
+         type.kind == SemanticType::CString ||
          (type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
           (passiveArrayElement(type.arguments.front()) ||
            passiveAddress(type.arguments.front()) ||
            type.arguments.front().kind == SemanticType::StringView));
+}
+
+bool passiveTextViewAddress(const MirInstruction &stage) {
+  if (stage.intrinsic != IntrinsicKind::TextViewFromAddress ||
+      stage.kind != MirInstructionKind::Call || !stage.loan ||
+      stage.borrowOrigin != BorrowOriginKind::Argument ||
+      stage.borrowArgument != 2 || stage.operands.size() != 3 ||
+      stage.parameterTypes.size() != 3 ||
+      stage.info.type != SemanticType::StringView ||
+      stage.parameterTypes[2].kind != SemanticType::Reference ||
+      !passiveReferenceType(stage.operands[2].type))
+    return false;
+  const auto &pointer = stage.operands[0].type;
+  return pointer.kind == SemanticType::RawPointer &&
+         pointer.arguments.size() == 1 &&
+         pointer.arguments[0] == SemanticType::Char &&
+         stage.operands[1].type == SemanticType::UInt64;
+}
+
+bool passiveCStringAddress(const MirInstruction &stage) {
+  if (stage.intrinsic != IntrinsicKind::CStringFromAddress ||
+      stage.functionTarget || stage.kind != MirInstructionKind::Call ||
+      !stage.loan || stage.borrowOrigin != BorrowOriginKind::Argument ||
+      stage.borrowArgument != 1 || stage.operands.size() != 2 ||
+      stage.parameterTypes.size() != 2 ||
+      stage.info.type != SemanticType::CString ||
+      stage.parameterTypes[1].kind != SemanticType::Reference ||
+      !passiveReferenceType(stage.operands[1].type))
+    return false;
+  const auto &pointer = stage.operands[0].type;
+  return pointer.kind == SemanticType::RawPointer &&
+         pointer.arguments.size() == 1 &&
+         pointer.arguments[0] == SemanticType::Char;
 }
 
 bool primitiveRawIndex(const MirInstruction &stage) {
@@ -51,10 +86,31 @@ bool primitiveRawIndex(const MirInstruction &stage) {
          constantIntegerDomain(stage.operands[1].type).has_value();
 }
 
+// The verifier establishes the witness's lifetime/access. Representation
+// transports the independently evaluated pointer, not that witness's address.
+bool passiveRawReference(const MirInstruction &stage) {
+  const bool assertion = stage.intrinsic == IntrinsicKind::RawBorrow ||
+                         stage.intrinsic == IntrinsicKind::RawBorrowMut;
+  if (!assertion || stage.kind != MirInstructionKind::Call ||
+      stage.functionTarget || stage.operands.size() != 2 ||
+      stage.parameterTypes.size() != 2 || !stage.loan ||
+      stage.borrowOrigin != BorrowOriginKind::Argument ||
+      stage.borrowArgument != 1 ||
+      stage.info.category != ValueCategory::Place ||
+      !passiveAddress(stage.operands[0].type) ||
+      stage.parameterTypes[1].kind != SemanticType::Reference)
+    return false;
+  return stage.info.type == stage.operands[0].type.arguments.front() &&
+         passiveReferenceType(stage.info.type) &&
+         passiveReferenceType(stage.operands[1].type);
+}
+
 bool primitivePointerArithmetic(const MirInstruction &stage) {
   if (stage.operands.size() != 2)
     return false;
-  const auto &pointer = stage.operands[0].type;
+  const bool reversed = stage.operation == MirOperation::PointerAdd &&
+                        stage.operands[1].type.kind == SemanticType::RawPointer;
+  const auto &pointer = stage.operands[reversed ? 1 : 0].type;
   if (!passiveAddress(pointer) ||
       pointer.arguments.front().kind == SemanticType::Void)
     return false;
@@ -63,7 +119,8 @@ bool primitivePointerArithmetic(const MirInstruction &stage) {
              : (stage.operation == MirOperation::PointerAdd ||
                 stage.operation == MirOperation::PointerSubtract) &&
                    stage.info.type == pointer &&
-                   constantIntegerDomain(stage.operands[1].type).has_value();
+                   constantIntegerDomain(stage.operands[reversed ? 0 : 1].type)
+                       .has_value();
 }
 
 bool primitiveRawAccess(const MirBody &body, const MirPlace &place) {
@@ -111,7 +168,8 @@ bool arrayProjection(const MirBody &body, const MirPlace &place) {
 // scalar operations do not allocate a duplicate diagnostic record per use.
 class Inventory final {
 public:
-  explicit Inventory(std::vector<LlvmCoverageUse> &uses) : uses(uses) {}
+  Inventory(std::vector<LlvmCoverageUse> &uses, const MirProgram &program)
+      : uses(uses), program(program) {}
 
   std::optional<MirBodyAddress> body;
   SourceSpan source;
@@ -120,6 +178,64 @@ public:
   bool required = true;
   bool executable = false;
   const MirBody *currentBody = nullptr;
+
+  bool opaqueReferent(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class)
+      return false;
+    return std::any_of(program.classInstances().begin(),
+                       program.classInstances().end(),
+                       [&](const auto &instance) {
+                         return instance.type == type &&
+                                instance.compilerCapability ==
+                                    CompilerCapabilityTypeKind::ErasedObject;
+                       });
+  }
+  bool passiveReference(const SemanticType &type) const {
+    return passiveReferenceType(type) || opaqueReferent(type) ||
+           (type.kind == SemanticType::Reference &&
+            type.arguments.size() == 1 && opaqueReferent(type.arguments[0]));
+  }
+  bool erasedReference(const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::Call || !stage.loan ||
+        stage.functionTarget || stage.operands.size() != 1 ||
+        stage.parameterTypes.size() != 1 ||
+        stage.parameterTypes[0].kind != SemanticType::Reference ||
+        stage.info.category != ValueCategory::Place)
+      return false;
+    const bool erase = stage.intrinsic == IntrinsicKind::EraseReference ||
+                       stage.intrinsic == IntrinsicKind::EraseReferenceMut;
+    const bool restore = stage.intrinsic == IntrinsicKind::RestoreReference ||
+                         stage.intrinsic == IntrinsicKind::RestoreReferenceMut;
+    return (erase && opaqueReferent(stage.info.type) &&
+            passiveReferenceType(stage.parameterTypes[0])) ||
+           (restore && opaqueReferent(stage.parameterTypes[0].arguments[0]) &&
+            passiveReferenceType(stage.info.type));
+  }
+  bool restoredLoanTransport(const MirBody &body,
+                             const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::Borrow || !stage.loan ||
+        stage.operands.size() != 1 ||
+        stage.operands[0].kind != MirOperandKind::Loan ||
+        !passiveReference(stage.info.type))
+      return false;
+    const auto *target = body.findLoan(*stage.loan);
+    const auto *source = body.findLoan(stage.operands[0].loan);
+    if (!target || !source || target->access != stage.info.access ||
+        source->access != target->access ||
+        !(target->parent == source->id ||
+          (target->kind == MirLoanKind::Return && target->escapes &&
+           target->source == source->source &&
+           target->producedBy == source->producedBy)))
+      return false;
+    for (const auto &block : body.blocks)
+      for (const auto &producer : block.instructions)
+        if (!producer.tombstone && producer.loan == stage.operands[0].loan &&
+            producer.restoresReferenceResult && erasedReference(producer) &&
+            producer.info.type == stage.info.type &&
+            producer.info.access == stage.info.access)
+          return true;
+    return false;
+  }
 
   template <class T> void add(T value, std::optional<Shape> implemented = {}) {
     const LlvmCoverageEntry &entry = coverage(value);
@@ -151,12 +267,13 @@ public:
       const bool address = passiveAddress(type) ||
                            type.kind == SemanticType::NullPtr ||
                            type.kind == SemanticType::CString;
-      add(type.kind, address        ? std::optional(Shape::PassiveAddressValue)
-                     : passiveArray ? std::optional(Shape::PassiveArrayValue)
-                     : reference    ? std::optional(Shape::PassiveReference)
-                     : arrayAddress
-                         ? std::optional(Shape::CheckedArrayProjection)
-                         : std::nullopt);
+      add(type.kind,
+          opaqueReferent(type) ? std::optional(Shape::ErasedReference)
+          : address            ? std::optional(Shape::PassiveAddressValue)
+          : passiveArray       ? std::optional(Shape::PassiveArrayValue)
+          : reference          ? std::optional(Shape::PassiveReference)
+          : arrayAddress       ? std::optional(Shape::CheckedArrayProjection)
+                               : std::nullopt);
       if (type.nativeCScalar != NativeCScalarKind::None) {
         add(type.nativeCScalar);
         add(Shape::NativeScalar);
@@ -184,7 +301,7 @@ public:
     if (traits.drop != DropKind::Trivial) {
       add(Shape::CleanupValue);
     }
-    if (value.kind == SemanticType::Class ||
+    if ((value.kind == SemanticType::Class && !opaqueReferent(value)) ||
         value.kind == SemanticType::Lambda) {
       add(traits.copyable  ? Shape::CopyableValue
           : traits.movable ? Shape::MoveOnlyValue
@@ -340,6 +457,13 @@ public:
                             ? std::optional(Shape::PassiveReference)
                             : std::nullopt);
         if (stage.callInputRole) {
+          if (stage.info.type == SemanticType::CString &&
+              stage.operands.size() == 1 &&
+              stage.operands[0].type == SemanticType::StringView)
+            add(Shape::CStringLiteralInput,
+                native_llvm::wholeCStringLiteral(mir, stage.operands[0])
+                    ? std::optional(Shape::PassiveAddressValue)
+                    : std::nullopt);
           add(*stage.callInputRole);
           add(stage.callInputKind,
               passiveReference(stage.info.type) &&
@@ -385,7 +509,12 @@ public:
               (stage.intrinsic == IntrinsicKind::StringViewSize ||
                stage.intrinsic == IntrinsicKind::StringViewEmpty);
           add(stage.intrinsic,
-              stage.intrinsic == IntrinsicKind::RawPointerConversion &&
+              erasedReference(stage) ? std::optional(Shape::ErasedReference)
+              : passiveTextViewAddress(stage) || passiveCStringAddress(stage)
+                  ? std::optional(Shape::CountedText)
+              : passiveRawReference(stage)
+                  ? std::optional(Shape::PassiveReference)
+              : stage.intrinsic == IntrinsicKind::RawPointerConversion &&
                       stage.operands.size() == 1 &&
                       passiveAddress(stage.info.type) &&
                       passiveAddress(stage.operands[0].type)
@@ -441,7 +570,11 @@ public:
             stage.sourceLocation || stage.forwardsCallerLocation)
           add(Shape::CallerLocation);
         bool rawAccess =
-            primitiveRawIndex(stage) ||
+            passiveRawReference(stage) || primitiveRawIndex(stage) ||
+            (stage.kind == MirInstructionKind::Borrow &&
+             stage.operands.size() == 1 &&
+             stage.operands[0].kind == MirOperandKind::Loan &&
+             passiveReference(stage.info.type)) ||
             (stage.destination &&
              primitiveRawAccess(mir, *mir.findPlace(*stage.destination)));
         for (const auto &operand : stage.operands)
@@ -454,20 +587,55 @@ public:
         // Lifecycle marks repeat the source unsafe context but execute no
         // memory operation. The typed access/arithmetic stages are inventoried
         // independently; their pending shapes cannot be hidden by this marker.
+        const auto &instructionCoverage = coverage(stage.kind);
+        const bool permissionOnly =
+            stage.kind == MirInstructionKind::Lifecycle ||
+            (instructionCoverage.state ==
+                 LlvmCoverageState::VerifiedNonExecuting &&
+             instructionCoverage.nonExecuting ==
+                 LlvmNonExecutingRule::VerifiedMetadata);
         if (stage.unsafeOperation != UnsafeOperationKind::None &&
-            stage.kind != MirInstructionKind::Lifecycle)
+            !permissionOnly) {
+          const auto *callee =
+              stage.functionTarget
+                  ? program.findFunctionInstance(*stage.functionTarget)
+                  : nullptr;
+          // Caller permission never turns an ordinary source function into an
+          // intrinsic. Its exact body is in the required dependency closure
+          // and every unsupported operation there still rejects admission.
+          const bool ordinaryUnsafe =
+              stage.kind == MirInstructionKind::Call &&
+              stage.intrinsic == IntrinsicKind::None && callee &&
+              callee->definitionKind == MirDefinitionKind::Source &&
+              callee->linkage == LanguageLinkage::Gti &&
+              callee->requiresUnsafe &&
+              stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall;
           add(stage.unsafeOperation,
-              ((rawAccess &&
-                (stage.unsafeOperation == UnsafeOperationKind::RawIndex ||
-                 stage.unsafeOperation ==
-                     UnsafeOperationKind::RawDereference)) ||
-               ((primitivePointerArithmetic(stage) ||
-                 (stage.kind == MirInstructionKind::Assign &&
-                  passiveAddress(stage.info.type))) &&
-                stage.unsafeOperation ==
-                    UnsafeOperationKind::PointerArithmetic))
+              ordinaryUnsafe ? std::optional(Shape::OrdinaryUnsafeInvocation)
+              : stage.unsafeOperation ==
+                          UnsafeOperationKind::ErasedReferenceRestore &&
+                      (erasedReference(stage) ||
+                       restoredLoanTransport(mir, stage))
+                  ? std::optional(Shape::ErasedReference)
+              : ((stage.unsafeOperation ==
+                      UnsafeOperationKind::RawDereference &&
+                  (passiveTextViewAddress(stage) ||
+                   passiveCStringAddress(stage))) ||
+                 (stage.unsafeOperation ==
+                      UnsafeOperationKind::DeclaredUnsafeCall &&
+                  passiveRawReference(stage)) ||
+                 (rawAccess &&
+                  (stage.unsafeOperation == UnsafeOperationKind::RawIndex ||
+                   stage.unsafeOperation ==
+                       UnsafeOperationKind::RawDereference)) ||
+                 ((primitivePointerArithmetic(stage) ||
+                   (stage.kind == MirInstructionKind::Assign &&
+                    passiveAddress(stage.info.type))) &&
+                  stage.unsafeOperation ==
+                      UnsafeOperationKind::PointerArithmetic))
                   ? std::optional(Shape::PrimitiveRawAccess)
                   : std::nullopt);
+        }
         if (stage.payloadExtractionKind)
           add(*stage.payloadExtractionKind);
         if (stage.callableBoundary)
@@ -537,6 +705,7 @@ private:
   using Key = std::tuple<std::string_view, std::string_view, bool, MirBodyKind,
                          std::size_t, bool, bool, const LlvmCoverageEntry *>;
   std::vector<LlvmCoverageUse> &uses;
+  const MirProgram &program;
   std::map<Key, std::size_t> indices;
 };
 
@@ -595,7 +764,7 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   plan.closure_ = closure.conservative
                       ? LlvmAdmissionClosure::AllExecutableBodies
                       : LlvmAdmissionClosure::SealedEntryDependencies;
-  Inventory inventory(plan.uses);
+  Inventory inventory(plan.uses, mir);
   inventory.add(Shape::ObjectArtifact);
   inventory.add(input.programKind());
   inventory.add(mir.executionProfile());

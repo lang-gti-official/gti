@@ -846,6 +846,9 @@ LLVM_COVERAGE_ENTRY(Library, 11, Pending, None, "all represented shapes remain p
 LLVM_COVERAGE_END()
 
 LLVM_COVERAGE_BEGIN(Shape)
+LLVM_COVERAGE_ENTRY(CStringLiteralInput, 5, Pending, None, "whole source literal with no embedded NUL, explicitly staged for an exact C-string parameter")
+LLVM_COVERAGE_ENTRY(ErasedReference, 5, Implemented, None, "exact identity-bound opaque referent used only by checked erasure/restoration; no object value, owning class, or runtime type construction")
+LLVM_COVERAGE_ENTRY(OrdinaryUnsafeInvocation, 5, Implemented, None, "exact source-defined GTI callee requiring caller permission; ordinary call emission and complete reachable body remain independently admitted")
 LLVM_COVERAGE_ENTRY(PassiveAddressValue, 5, Implemented, None, "null, c-string literal and recursively passive raw pointer transport; no class pointees or ownership")
 LLVM_COVERAGE_ENTRY(PrimitiveRawAccess, 5, Implemented, None, "one verified raw dereference/index of an exact primitive pointer; native component oracle at O0-O3; no class fields or ownership")
 LLVM_COVERAGE_ENTRY(CountedText, 5, Implemented, None, "counted byte view size/empty/index with exact byte length; no owning text storage")

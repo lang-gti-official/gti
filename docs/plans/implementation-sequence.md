@@ -10809,8 +10809,10 @@ or resolve them using source.
 - **State:** implementation in progress on `codex/llvm-places`; not merged or
   released. Passive arrays, primitive/array references, constrained fixed-array
   ranges and counted text now have structural admission and macOS O0/O3
-  execution evidence. Raw-address admission and final platform/performance
-  verification remain pending; this is not completion of the milestone.
+  execution evidence. Raw/null/nested addresses, arithmetic/difference, exact
+  erased-reference transport, owner-backed views and conditional selected
+  reference results now execute as well. Final platform/performance verification
+  remains pending; this is not completion of the milestone.
 - **Unlock:** array algorithms, reference-based helpers, scalar globals and
   text-view operations without hidden allocations.
 - **Deliver:** place roots and projections, loads/stores, indexing, raw pointer
@@ -10827,6 +10829,20 @@ or resolve them using source.
   NUL/UTF-8 bytes, empty views and byte counts are preserved; conditional returned
   references, array references and mutable access execute correctly. Unsupported
   class/payload storage remains owned by later rows, not guessed from a pointer.
+- **Structural boundary:** the initial executable profile covers passive
+  primitive fixed arrays and their raw/reference forms, counted text and exact
+  opaque erasure identities. The broader enum ledger stays pending with per-use
+  structural witnesses; no whole aggregate/reference family is claimed merely
+  because these shapes execute. Class/payload/field/base/pack composition must
+  extend the same address owner as the corresponding later milestone lands.
+  Integral-enum and other nonprimitive passive array/reference compositions
+  remain explicit admission extensions, not implicit support.
+- **C-string prerequisite:** current frontend call matching admits arbitrary
+  counted views beyond the documented complete-literal rule. Native admission
+  requires exact NUL-free literal provenance (including immutable local aliases)
+  and rejects the other cases without replacing outputs. Reconcile the source
+  rule and an explicit sealed conversion contract before broadening that gate;
+  do not reproduce the C++ backend's unchecked `.data()` conversion.
 
 ### O-LLVM-06: Classes, Lifecycles And Program Storage
 

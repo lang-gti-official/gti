@@ -12,7 +12,8 @@ for what minor and patch releases mean.
 ## 0.477.0 - Native LLVM places and borrowed text
 
 - Extend the native backend with passive fixed arrays, selected primitive/array
-  references, array range operations, and counted byte-view operations. C++
+  references, raw/null addresses and pointer arithmetic, checked reference
+  erasure, owner-backed text views, array ranges and counted byte operations. C++
   remains the production default. Owning/class storage remains unsupported.
 
 ## 0.476.0 - Native LLVM scalar execution

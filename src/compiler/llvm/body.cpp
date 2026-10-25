@@ -186,6 +186,8 @@ private:
       case IntrinsicKind::RestoreReferenceMut:
         return memory.selected(instruction.operands.at(0));
       case IntrinsicKind::RawPointerConversion:
+      case IntrinsicKind::RawBorrow:
+      case IntrinsicKind::RawBorrowMut:
         return operand(instruction.operands.at(0));
       case IntrinsicKind::TextViewFromAddress: {
         llvm::Value *view =
@@ -334,12 +336,17 @@ private:
           instruction.operation == MirOperation::PointerDifference) {
         auto *left = operand(instruction.operands.at(0));
         auto *right = operand(instruction.operands.at(1));
-        const auto &type = instruction.operands[0].type;
+        const bool reversed =
+            instruction.operation == MirOperation::PointerAdd &&
+            instruction.operands[1].type.kind == SemanticType::RawPointer;
+        const auto &type = instruction.operands[reversed ? 1 : 0].type;
+        if (reversed)
+          std::swap(left, right);
         if (instruction.operation == MirOperation::PointerDifference) {
           result = memory.difference(left, right, type.arguments.at(0));
         } else {
-          const auto domain =
-              constantIntegerDomain(instruction.operands[1].type);
+          const auto domain = constantIntegerDomain(
+              instruction.operands[reversed ? 0 : 1].type);
           result = memory.advance(
               left, type.arguments.at(0), right, domain && domain->signedValue,
               instruction.operation == MirOperation::PointerSubtract);
@@ -401,6 +408,15 @@ private:
     case MirInstructionKind::CallInput:
     case MirInstructionKind::Move:
       result = operand(instruction.operands.at(0));
+      if (instruction.kind == MirInstructionKind::CallInput &&
+          instruction.info.type == SemanticType::CString &&
+          instruction.operands[0].type == SemanticType::StringView) {
+        if (!wholeCStringLiteral(input, instruction.operands[0]))
+          throw BackendUnsupportedError(
+              "LLVM C-string call input requires exact complete source-literal "
+              "provenance");
+        result = ir.CreateExtractValue(result, 0);
+      }
       if (instruction.kind == MirInstructionKind::Move &&
           instruction.destination)
         store(result, memory.address(*instruction.destination),
@@ -690,9 +706,8 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
   for (const auto &step :
        session.program().mir().programInitializationPlan().steps) {
     const auto &type = module->findPlace(step.storagePlace)->type;
-    if (!isPassiveScalarValueType(type) && type.kind != SemanticType::Enum &&
-        type.kind != SemanticType::Array)
-      continue;
+    // Admission establishes the storage family. Allocate every admitted
+    // initialization-plan root, including pointer and counted-text globals.
     auto *storage = session.layouts().get(type).storage;
     llvm::Constant *initial = llvm::Constant::getNullValue(storage);
     if (step.dataConstant)

@@ -124,6 +124,9 @@ llvm::Value *Places::advance(llvm::Value *address, const SemanticType &pointee,
 }
 llvm::Value *Places::difference(llvm::Value *left, llvm::Value *right,
                                 const SemanticType &pointee) {
+  if (!session.layouts().get(pointee).size)
+    throw BackendUnsupportedError(
+        "LLVM pointer difference requires nonzero element storage");
   auto *bytes = ir.CreateSub(ir.CreatePtrToInt(left, ir.getInt64Ty()),
                              ir.CreatePtrToInt(right, ir.getInt64Ty()));
   return ir.CreateSDiv(bytes, ir.getInt64(session.layouts().get(pointee).size));

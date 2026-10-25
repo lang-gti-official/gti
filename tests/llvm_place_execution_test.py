@@ -98,12 +98,18 @@ int main() {
 '''
 
 GLOBAL_ARRAYS = r'''
+#include <std/string_view>
 mut int grid[2][2] = {{1, 2}, {3, 4}};
 bool flags[2] = {true, false};
+std::string_view label = "a\0b";
+mut int* pointer = nullptr;
 void update() { grid[1][0] = 7; }
 int main() {
   update();
   if (grid[1][0] != 7 || grid[0][1] != 2 || !flags[0] || flags[1]) { return 1; }
+  if (label.size() != uint64_t(3) || label[1] != '\0' || pointer != nullptr) { return 2; }
+  pointer = &grid[1][0];
+  unsafe { if (*pointer != 7) { return 3; } }
   return 0;
 }
 '''
@@ -151,7 +157,7 @@ int main() {
     first--;
     ++first;
     first -= 2;
-    if (first + uint64_t(1) != middle || first - middle != -1) { return 4; }
+    if (first + uint64_t(1) != middle || uint64_t(1) + first != middle || first - middle != -1) { return 4; }
   }
   if (values[1] != 22) { return 2; }
   return 0;
@@ -215,7 +221,55 @@ int main() {
     c_string ctext = std::assume_c_string(&bytes[0], bytes);
     if (!present(ctext)) { return 4; }
   }
-  if (!present("hello") || present(nullptr)) { return 5; }
+  auto literal_alias = "hello";
+  if (!present("hello") || !present(literal_alias) || present(nullptr)) { return 5; }
+  return 0;
+}
+'''
+
+RAW_CLAIMS = r'''
+[[borrowed_from(owner)]] unsafe mut int& claim(int* address, mut int& owner) {
+  unsafe { return *address; }
+}
+int main() {
+  mut int value = 7;
+  unsafe { claim(&value, value) += 2; }
+  return value - 9;
+}
+'''
+
+UNSAFE_WRAPPER = r'''
+#include <std/string_view>
+unsafe std::string_view different(const char* address, uint64_t count, int& owner) {
+  return "not the address";
+}
+unsafe int identity(int value) { return value; }
+int main() {
+  char bytes[3] = {'a', 'b', 'c'};
+  int owner = 0;
+  unsafe {
+    auto text = different(&bytes[0], uint64_t(3), owner);
+    if (text != "not the address") { return 1; }
+    return identity(0);
+  }
+}
+'''
+
+CONDITIONAL_REFERENCES = r'''
+[[borrowed_from(owner)]] unsafe int& choose<Owner>(
+    const int* left, const int* right, bool last, Owner& owner) {
+  unsafe {
+    if (last) { return *right; }
+    return *left;
+  }
+}
+int main() {
+  int values[3] = {3, 7, 11};
+  unsafe {
+    int& first = choose(&values[0], &values[2], false, values);
+    int& last = choose(&values[0], &values[2], true, values);
+    if (first != 3 || last != 11) { return 1; }
+  }
   return 0;
 }
 '''
@@ -227,7 +281,8 @@ def main() -> None:
     env = dict(os.environ, GTI_STDLIB_DIR=str(root / 'stdlib'))
     successes = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS, 'arrays': ARRAYS, 'basic-references': BASIC_REFERENCES, 'references': REFERENCES,
                  'pointers': POINTERS, 'primitive-pointers': PRIMITIVE_POINTERS, 'text': TEXT,
-                 'owner-addresses': OWNER_ADDRESSES}
+                 'owner-addresses': OWNER_ADDRESSES, 'raw-claims': RAW_CLAIMS,
+                 'unsafe-wrapper': UNSAFE_WRAPPER, 'conditional-references': CONDITIONAL_REFERENCES}
     successes['shipped-example'] = (root / 'examples/llvm/places-and-text.gti').read_text()
     # The production C++ backend currently rejects this valid nested text
     # transport in its representation vocabulary. The native expected result
@@ -243,8 +298,23 @@ def main() -> None:
         'text-negative': '#include <std/string_view>\nchar get(std::string_view s, int i) { return s[i]; } int main() { [[discard]] get("ab", -1); return 0; }',
         'reference-failure': 'mut int& get(mut int& v, int n) { v = v / n; return v; } int main() { mut int x = 2; get(x, 0) = 4; return 0; }',
     }
-    endpoints = (Endpoint('cpp', 'O3', 'c++23'), Endpoint('llvm', 'O0'), Endpoint('llvm', 'O3'))
-    if selection and selection not in successes and selection not in failures and selection not in native_only:
+    rejections = {
+        'unsafe-dereference': 'int main() { int value = 1; int* pointer = &value; return *pointer; }',
+        'unsafe-index': 'int main() { int values[2] = {1, 2}; int* pointer = &values[0]; return pointer[1]; }',
+        'expired-reference': 'int& expired() { int local = 1; return local; } int main() { return expired(); }',
+        'overlapping-mutable': 'int main() { mut int value = 1; mut int& first = value; mut int& second = value; return first + second; }',
+        'read-only-reference': 'void change(int& value) { value = 2; } int main() { return 0; }',
+    }
+    # Current semantics admits these despite the documented literal-only
+    # contract. Do not reproduce the production backend's unchecked data()
+    # conversion: native admission requires an exact NUL-free literal proof.
+    native_rejections = {
+        'dynamic-c-string': '#include <std/string_view>\nvoid consume(c_string text) {} void relay(std::string_view text) { consume(text); } int main() { relay("hello"); return 0; }',
+        'nul-c-string': 'void consume(c_string text) {} int main() { consume("a\\0b"); return 0; }',
+    }
+    endpoints = (Endpoint('cpp', 'O3', 'c++20'), Endpoint('cpp', 'O3', 'c++23'),
+                 *(Endpoint('llvm', mode) for mode in ('O0', 'O1', 'O2', 'O3')))
+    if selection and selection not in successes and selection not in failures and selection not in native_only and selection not in rejections and selection not in native_rejections:
         raise ValueError(f'unknown execution case: {selection}')
     with tempfile.TemporaryDirectory(prefix='gti-llvm-places-') as directory:
         work = Path(directory)
@@ -255,25 +325,50 @@ def main() -> None:
             source.write_text(source_text, encoding='utf-8')
             results = []
             for endpoint in endpoints:
-                result = execute(gti, root, work / f'{name}-{endpoint.backend}-{endpoint.optimization}', source, endpoint, env)
+                result = execute(gti, root, work / f'{name}-{endpoint.backend}-{endpoint.optimization}-{endpoint.standard}', source, endpoint, env)
                 expected = 70 if name in failures else 0
                 code = 'GTI-R0002' if name == 'reference-failure' else 'GTI-R0007'
                 if result.error or result.returncode != expected or (expected == 70 and code not in result.stderr):
                     raise AssertionError(f'{name} {endpoint}: {result}')
                 results.append(result.observable)
-            if not results[0] == results[1] == results[2]:
+            if any(result != results[0] for result in results):
                 raise AssertionError(f'{name}: observable drift: {results}')
-            print(f'{name}: C++ O3 / LLVM O0 / LLVM O3 passed', flush=True)
+            print(f'{name}: C++20/23 O3 / LLVM O0-O3 passed', flush=True)
         for name, text in native_only.items():
             if selection and selection != name:
                 continue
             source = work / f'{name}.gti'
             source.write_text(text, encoding='utf-8')
-            for endpoint in (Endpoint('llvm', 'O0'), Endpoint('llvm', 'O3')):
+            for endpoint in (Endpoint('llvm', mode) for mode in ('O0', 'O1', 'O2', 'O3')):
                 result = execute(gti, root, work / f'{name}-{endpoint.optimization}', source, endpoint, env)
                 if result.error or result.observable != (0, '', ''):
                     raise AssertionError(f'{name} {endpoint}: {result}')
-            print(f'{name}: LLVM O0 / O3 source-contract oracle passed (known C++ representation limitation)', flush=True)
+            print(f'{name}: LLVM O0-O3 source-contract oracle passed (known C++ representation limitation)', flush=True)
+        for name, text in rejections.items():
+            if selection and selection != name:
+                continue
+            source = work / f'{name}.gti'
+            source.write_text(text, encoding='utf-8')
+            for backend in ('cpp', 'llvm'):
+                output = work / f'{name}-{backend}'
+                result = subprocess.run([str(gti), str(source), '--backend', backend, '-o', str(output)],
+                                        env=env, capture_output=True, text=True, timeout=30)
+                if result.returncode != 65 or 'error[GTI-S' not in result.stderr or output.exists():
+                    raise AssertionError(f'{name} {backend}: expected source safety rejection: {result.stderr}')
+            print(f'{name}: both backends preserve source safety rejection', flush=True)
+        for name, text in native_rejections.items():
+            if selection and selection != name:
+                continue
+            source = work / f'{name}.gti'
+            source.write_text(text, encoding='utf-8')
+            output = work / f'{name}-llvm'
+            output.write_bytes(b'preserved output')
+            for mode in ('-O0', '-O3'):
+                result = subprocess.run([str(gti), str(source), '--backend', 'llvm', mode, '-o', str(output)],
+                                        env=env, capture_output=True, text=True, timeout=30)
+                if result.returncode != 65 or 'error[GTI-B0003]' not in result.stderr or output.read_bytes() != b'preserved output':
+                    raise AssertionError(f'{name}: native C-string proof gate did not fail closed: {result.stderr}')
+            print(f'{name}: native proof rejection preserves existing output', flush=True)
     print('LLVM places, selected references, passive arrays and counted text passed')
 
 

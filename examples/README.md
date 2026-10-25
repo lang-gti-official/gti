@@ -2,7 +2,8 @@
 
 [`llvm/places-and-text.gti`](llvm/places-and-text.gti) exercises the in-progress
 O-LLVM-05 array/reference/text profile. It demonstrates constrained fixed-array
-ranges, selected mutable references, multidimensional storage and counted text.
+ranges, selected mutable references, multidimensional storage, raw addresses,
+checked reference erasure and counted text.
 The LLVM campaign plan records its current platform and completion status.
 
 [`llvm/scalar-control-flow.gti`](llvm/scalar-control-flow.gti) is a native LLVM

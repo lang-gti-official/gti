@@ -4490,8 +4490,9 @@ Hosted `main` is emitted from the sealed NoArguments startup body and operations
 not manufactured from a special source example. Its program-initialization call,
 entry call, exit value and containment are ordinary MIR. TLS begin/drain execute
 when present in that plan (the current producer includes them when TLS storage
-exists). Owned arguments, TLS storage, projected places, references, arrays,
-classes, owners, indirect/virtual/native calls and native debug information remain
+exists). The places/text profile below adds passive projections, references and
+arrays. Owned arguments, TLS storage, class/owner storage, indirect/virtual/native
+calls and native debug information remain
 explicit limitations. No mixed-backend fallback is used. C++ stays the default.
 
 ### LLVM Places And Counted Text
@@ -4515,8 +4516,27 @@ Size/empty/index operations and byte equality require no heap allocation;
 equality checks counts and never touches data for an empty view. The text loop
 and array accesses add no `inbounds`, `noalias` or overflow promises.
 
-The in-progress O-LLVM-05 plan still owns raw-address admission and final
-cross-platform/performance acceptance. Class fields/lifecycles, owning storage,
+Raw primitive/nested addresses, null state, casts through `void*`, pointer-slot
+references, raw indexing, arithmetic and signed element differences use the
+evaluated MIR operands. Integer-plus-pointer preserves source evaluation order.
+Checked address assertions retain verified witness loans while returning the
+selected physical pointer, never the witness's address. Checked erasure uses
+the exact `ErasedObject` capability declaration identity; ordinary classes with
+similar names gain no representation support. Its opaque referent has no
+by-value object representation. Restoration/return publication retains exact
+source, producer, type and access facts. Ordinary unsafe GTI functions remain
+calls to their inventoried source bodies, not intrinsic substitutions.
+
+Literal storage includes a final NUL byte without changing counted length.
+The C-string call-input adaptation requires a complete NUL-free source literal
+or an immutable local alias traced to that literal. Dynamic views and embedded
+NUL values reject before artifact publication. Current frontend call matching
+is broader than the documented C-string rule; the native backend deliberately
+does not copy the C++ backend's unchecked `.data()` conversion. Resolving that
+frontend/MIR contract discrepancy is a separate prerequisite for broader
+C-string argument admission, not authorization for an implicit conversion.
+
+Final cross-platform/performance acceptance is still pending. Class fields/lifecycles, owning storage,
 payloads and native calls remain their later milestones. Source restrictions
 are unchanged: explicit array-reference declarators and conditional lvalue
 initialization are not added by backend work. Constrained range references to
@@ -4536,7 +4556,8 @@ terminator, place/projection/operand/loan/lifecycle, intrinsic, failure,
 synchronization, native-runtime, declaration/generated-item and startup enum to
 a named O-LLVM milestone. Entries distinguish pending lowering, implemented
 lowering and verified nonexecuting facts. Scalar execution entries name the
-`llvm_scalar_execution` gate. A nonexecuting permission/provenance fact can be inventoried without a
+`llvm_scalar_execution` gate; implemented places/text shapes name
+`llvm_place_execution`. A nonexecuting permission/provenance fact can be inventoried without a
 runtime operation; a source-only query marked `MustBeAbsent` cannot silently
 be erased if it appears as executable input. Neither classification grants LLVM
 attributes or permits removing a runtime check.

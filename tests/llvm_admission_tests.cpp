@@ -195,6 +195,19 @@ int main() { Value value{}; return value.read() - 1; }
       "class construction and selected cleanup are independently inventoried");
   expect(!lifecycle.admitted(),
          "passive-address refinements do not admit class lifecycles");
+  const auto unsafeScalar = lang::planLlvmAdmission(lower(R"(
+unsafe int identity(int value) { return value; }
+int main() { unsafe { return identity(0); } }
+)"));
+  expect(unsafeScalar.admitted(),
+         "exact unsafe source calls keep ordinary body admission");
+  const auto unsafeOwner = lang::planLlvmAdmission(lower(R"(
+class Owner { public: Owner() {} ~Owner() {} };
+unsafe int create() { Owner value{}; return 0; }
+int main() { unsafe { return create(); } }
+)"));
+  expect(!unsafeOwner.admitted(),
+         "caller permission cannot admit an unsupported source callee body");
   const auto classArray = lang::planLlvmAdmission(lower(R"(
 class Owner { public: Owner() {} ~Owner() {} };
 int main() { Owner values[2] = {Owner(), Owner()}; return 0; }

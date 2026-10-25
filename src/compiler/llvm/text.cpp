@@ -1,6 +1,60 @@
 #include "text.h"
 
+#include <set>
+
 namespace lang::native_llvm {
+
+const std::string *wholeCStringLiteral(const MirBody &body,
+                                       const MirOperand &operand) {
+  const auto *input = &operand;
+  std::set<MirValueId> visited;
+  while (input->kind == MirOperandKind::Value &&
+         visited.insert(input->value).second) {
+    const auto *value = body.findValue(input->value);
+    const auto *block =
+        value ? body.findBlock(value->definitionBlock) : nullptr;
+    if (!block || value->info.type != SemanticType::StringView)
+      return nullptr;
+    const auto stage =
+        std::find_if(block->instructions.begin(), block->instructions.end(),
+                     [&](const auto &candidate) {
+                       return candidate.id == value->definition;
+                     });
+    if (stage == block->instructions.end() || stage->tombstone ||
+        stage->result != value->id)
+      return nullptr;
+    if (stage->kind == MirInstructionKind::Compute &&
+        stage->operation == MirOperation::Literal &&
+        stage->literalProvenance.kind == MirLiteralProvenanceKind::Source &&
+        stage->literal) {
+      const auto *text = std::get_if<std::string>(&*stage->literal);
+      return text && text->find('\0') == std::string::npos ? text : nullptr;
+    }
+    // Immutable local aliases retain their exact initializer's literal storage.
+    // Parameters, mutable/view computations, projections and multiple stores
+    // do not establish this representation proof.
+    if (stage->kind != MirInstructionKind::Load || stage->operands.size() != 1)
+      return nullptr;
+    const auto *place = body.findPlace(stage->operands[0].place);
+    if (!place || place->root != MirPlaceRootKind::Binding ||
+        !place->projections.empty() || place->access != AccessMode::ReadOnly ||
+        place->initiallyAvailable)
+      return nullptr;
+    const MirInstruction *initializer = nullptr;
+    for (const auto &candidateBlock : body.blocks)
+      for (const auto &candidate : candidateBlock.instructions)
+        if (!candidate.tombstone && candidate.destination == place->id) {
+          if (initializer || candidate.kind != MirInstructionKind::Initialize ||
+              candidate.operands.size() != 1)
+            return nullptr;
+          initializer = &candidate;
+        }
+    if (!initializer)
+      return nullptr;
+    input = &initializer->operands[0];
+  }
+  return nullptr;
+}
 
 llvm::Value *equalText(Session &session, llvm::IRBuilder<> &ir,
                        llvm::Value *left, llvm::Value *right) {

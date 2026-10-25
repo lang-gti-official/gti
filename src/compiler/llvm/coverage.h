@@ -59,6 +59,9 @@ enum class Shape {
   CountedText,
   PrimitiveRawAccess,
   PassiveAddressValue,
+  OrdinaryUnsafeInvocation,
+  ErasedReference,
+  CStringLiteralInput,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

@@ -60,6 +60,9 @@ int place_components(mut int& input, int offset) {
 int raw_components(int* input, int offset) {
   unsafe { return input[offset]; }
 }
+[[borrowed_from(owner)]] unsafe mut int& raw_claim_components(int* address, mut int& owner) {
+  unsafe { return *address; }
+}
 int main() {
   Node node{};
   uint64_t sizes = sizeof(Packet) + sizeof(Overlay);
@@ -423,6 +426,52 @@ void emitRawAddressComponentProbe(Session &session) {
   session.requireDefinition(*function);
 }
 
+void emitRawClaimComponentProbe(Session &session) {
+  const auto &program = session.program().mir();
+  const MirBody *body = nullptr;
+  const MirInstruction *claim = nullptr;
+  for (const auto &candidate : program.functionInstances()) {
+    const auto *current =
+        findMirBody(program, {MirBodyKind::Function, candidate.id});
+    if (!current)
+      continue;
+    for (const auto &block : current->blocks)
+      for (const auto &stage : block.instructions)
+        if (stage.intrinsic == IntrinsicKind::RawBorrowMut) {
+          body = current;
+          claim = &stage;
+        }
+  }
+  if (!claim || !claim->loan ||
+      claim->borrowOrigin != BorrowOriginKind::Argument ||
+      claim->borrowArgument != 1)
+    throw std::logic_error(
+        "missing verified owner-backed raw reference fixture");
+  const std::vector<SemanticType> parameters{
+      SemanticType::rawPointerTo(SemanticType::Int32),
+      SemanticType::rawPointerTo(SemanticType::Int32)};
+  const auto signature = session.abi().nativeC(SemanticType::Int32, parameters);
+  auto *function = llvm::Function::Create(
+      signature.type, llvm::GlobalValue::ExternalLinkage,
+      "gti_llvm_raw_claim_component_probe", session.module());
+  signature.applyTo(*function);
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", function));
+  std::vector<llvm::Value *> values(body->values.size() + 1);
+  Places places(session, ir, *body, values,
+                [](llvm::Value *, DefinedFailureOutcome) {
+                  throw std::logic_error(
+                      "verified raw assertion has no runtime failure check");
+                });
+  places.allocate({});
+  // The owner protects the referent but is not its physical address. Publish
+  // the already evaluated pointer, never the witness's protected source place.
+  places.publish(*claim->loan, function->getArg(0));
+  places.store(ir.getInt32(39), places.loan(*claim->loan), SemanticType::Int32);
+  ir.CreateRet(places.load(function->getArg(1), SemanticType::Int32));
+  session.requireDefinition(*function);
+}
+
 void testObjectHandoff(const VerifiedLoweredProgram &input) {
   namespace fs = std::filesystem;
   const auto root =
@@ -449,6 +498,7 @@ extern double gti_llvm_echo_double(double);
 extern int8_t gti_llvm_call_c_i8(int8_t);
 extern int32_t gti_llvm_place_component_probe(int32_t*, int32_t);
 extern int32_t gti_llvm_raw_address_component_probe(int32_t*, int32_t);
+extern int32_t gti_llvm_raw_claim_component_probe(int32_t*, int32_t*);
 int8_t native_c_echo_i8(int8_t value) { return value; }
 int main(void) {
   const unsigned char expected[8] = {0, 128, 255, 13, 10, 0, 26, 127};
@@ -458,6 +508,8 @@ int main(void) {
   if (!gti_llvm_echo_bool(true) || gti_llvm_echo_bool(false)) return 4;
   if (gti_llvm_echo_double(-3.5) != -3.5) return 5;
   if (gti_llvm_call_c_i8(-127) != -127) return 6;
+  int32_t claimed = 11, owner = 77;
+  if (gti_llvm_raw_claim_component_probe(&claimed, &owner) != 77 || claimed != 39 || owner != 77) return 13;
   int32_t input = 9;
   if (gti_llvm_place_component_probe(&input, 1) != 18 || input != 9) return 7;
   if (gti_llvm_place_component_probe(&input, 0) != 14 || input != 9) return 8;
@@ -489,6 +541,7 @@ int main(void) {
     auto &abi = session.abi();
     emitPlaceComponentProbe(session);
     emitRawAddressComponentProbe(session);
+    emitRawClaimComponentProbe(session);
     // Native ABI oracle only: these identity bodies are not GTI instruction
     // lowering, a hosted entry, or evidence of any admitted language family.
     for (const auto &[name, type] :
