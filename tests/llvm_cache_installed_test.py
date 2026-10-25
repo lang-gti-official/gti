@@ -49,8 +49,9 @@ def main():
         run(["cmake", "--install", build, "--prefix", stage,
              "--component", "gti_toolchain"], root, environment)
         if bundled and sys.platform == "darwin":
-            os.setxattr(stage / "include/gti/runtime.h",
-                        "org.gti.llvm-cache-metadata", b"archive-identity-probe")
+            run(["/usr/bin/xattr", "-w", "org.gti.llvm-cache-metadata",
+                 "archive-identity-probe", stage / "include/gti/runtime.h"],
+                root, environment)
         pure = root / "pure-project"
         pure.mkdir()
         (pure / "gti.toml").write_text(

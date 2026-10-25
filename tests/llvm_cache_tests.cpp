@@ -195,6 +195,41 @@ void runChecks(const std::filesystem::path &self) {
             "deployment/SDK overrides must not publish objects/runtime built "
             "for a different target policy");
   }
+  for (const std::string argument :
+       {"-mmacosx-version-min=11.0", "-mmacos-version-min=11.0",
+        "-miphoneos-version-min=15.0", "-mtargetos=macos11.0",
+        "-darwin-target-variant", "-darwin-target-variant-sdk-version=11.0",
+        "-target-sdk-version=11.0", "-macosx_version_min",
+        "-Wl,-macosx_version_min,11.0", "-Wl,-platform_version,macos,11.0,11.0",
+        "-Xlinker=-macosx_version_min"}) {
+    for (const bool trailing : {false, true}) {
+      auto deployment = Policy{};
+      auto &arguments = trailing ? deployment.native.trailingArguments
+                                 : deployment.native.linkerArguments;
+      arguments.push_back(argument);
+      const auto deploymentRejected = build(deployment);
+      require(!deploymentRejected.succeeded() &&
+                  !deploymentRejected.nativeProcess &&
+                  deploymentRejected.cache.status ==
+                      BuildCacheStatus::Bypassed &&
+                  deploymentRejected.driverDiagnostic.value_or("").find(
+                      "matching target-built runtime") != std::string::npos &&
+                  read(output) == executable,
+              "opaque final-link deployment overrides must reject before "
+              "publication and preserve the existing output");
+    }
+  }
+  auto nonDeployment = Policy{};
+  nonDeployment.native.trailingArguments = {
+      "-DGTI_CACHE_DEPLOYMENT_MARKER=-mmacosx-version-min=11.0"};
+  nonDeployment.native.compilerArguments = {"-mmacosx-version-min=11.0"};
+  const auto nonDeploymentBuild = build(nonDeployment);
+  checkBuild(nonDeploymentBuild);
+  require(nonDeploymentBuild.cache.status == BuildCacheStatus::Bypassed &&
+              nonDeploymentBuild.nativeProcess,
+          "non-option text and inactive source-compile flags must not be "
+          "mistaken for LLVM final-link deployment overrides");
+  execute(17);
 #endif
   std::filesystem::remove(output);
   auto retained = Policy{};

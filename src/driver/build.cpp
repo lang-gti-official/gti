@@ -108,6 +108,33 @@ bool nativeObjectCache(const ExecutableBuildRequest &request) {
   return request.compilation().backend() == BackendKind::Llvm;
 }
 
+bool darwinDeploymentArgument(std::string_view argument) {
+  const auto changesDeployment = [](std::string_view component) {
+    const auto option = component.substr(0, component.find('='));
+    return (option.starts_with("-m") && option.ends_with("-version-min")) ||
+           (option.starts_with('-') && option.ends_with("_version_min")) ||
+           option == "-mtargetos" || option == "-platform_version" ||
+           option == "-sdk_version" || option == "-target-sdk-version" ||
+           option == "-darwin-target-variant" ||
+           option == "-darwin-target-variant-triple" ||
+           option == "-darwin-target-variant-sdk-version";
+  };
+  if (argument.starts_with("-Xlinker="))
+    return changesDeployment(
+        argument.substr(std::string_view("-Xlinker=").size()));
+  if (!argument.starts_with("-Wl,"))
+    return changesDeployment(argument);
+  argument.remove_prefix(std::string_view("-Wl,").size());
+  while (true) {
+    const auto separator = argument.find(',');
+    if (changesDeployment(argument.substr(0, separator)))
+      return true;
+    if (separator == std::string_view::npos)
+      return false;
+    argument.remove_prefix(separator + 1);
+  }
+}
+
 std::string_view buildCacheSchema(const ExecutableBuildRequest &request) {
   return nativeObjectCache(request) ? objectCacheSchema : cacheSchema;
 }
@@ -3092,10 +3119,16 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
       return value != nullptr && *value != '\0';
     };
     const auto &policy = request.nativeInputs().targetPolicy;
+    const auto hasDeploymentArgument = [](const auto &arguments) {
+      return std::any_of(arguments.begin(), arguments.end(),
+                         darwinDeploymentArgument);
+    };
     const bool darwinPolicy =
         request.compilation().target().os == "macos" &&
         (configured("MACOSX_DEPLOYMENT_TARGET") || configured("SDKROOT") ||
-         configured("DEVELOPER_DIR"));
+         configured("DEVELOPER_DIR") ||
+         hasDeploymentArgument(request.nativeInputs().linkerArguments) ||
+         hasDeploymentArgument(request.nativeInputs().trailingArguments));
     if (!policy.triple.empty() || !policy.sysroot.empty() || darwinPolicy) {
       result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
       result.driverDiagnostic =

@@ -2334,7 +2334,11 @@ LLVM cross-target admission remains host-only pending initialized target,
 runtime/sysroot and execution evidence. LLVM executable requests reject explicit
 native target/sysroot policies and, on Darwin, `MACOSX_DEPLOYMENT_TARGET`,
 `SDKROOT` or `DEVELOPER_DIR` overrides before cache lookup or publication until
-the backend factory and runtime artifacts share a verified policy. This avoids
+the backend factory and runtime artifacts share a verified policy. Recognized
+Darwin deployment options in final native-link arguments are rejected too,
+including compiler minimum-version/target-OS options and linker forwarding
+through `-Wl,` or `-Xlinker=`. A cache bypass alone would not make those
+inconsistent objects safe to publish. This avoids
 publishing a lower-deployment executable containing newer-deployment objects.
 System-LLVM installed evidence does not
 substitute for the pinned bundled-LLVM packaging gate.
