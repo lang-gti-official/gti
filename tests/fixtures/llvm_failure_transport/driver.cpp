@@ -1,5 +1,6 @@
 #include "transport.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -151,6 +152,7 @@ int main(int argc, char **argv) {
     require(iterations > 0 && iterations <= 100000000);
     c.tracing = false;
     std::uint64_t checksum = 0;
+    const auto started = std::chrono::steady_clock::now();
     for (std::uint64_t i = 0; i < iterations; ++i) {
       int result = -999;
       const bool ok =
@@ -158,8 +160,12 @@ int main(int argc, char **argv) {
       require(ok == !fail);
       checksum += ok ? result : c.contained.record.message[0];
     }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             std::chrono::steady_clock::now() - started)
+                             .count();
     std::printf("checksum=%llu drops=%llu", (unsigned long long)checksum,
                 (unsigned long long)c.drops);
+    std::printf(" elapsed_ns=%llu", (unsigned long long)elapsed);
 #ifdef TRANSPORT_ALLOCATION_AUDIT
     std::printf(" exception_storage_requests=%llu",
                 (unsigned long long)transport_exception_requests());

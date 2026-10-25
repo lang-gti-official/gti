@@ -83,6 +83,7 @@ def main():
     parser.add_argument("--measure", action="store_true")
     parser.add_argument("--slot", help="coordinator-approved quiet-host slot identifier")
     parser.add_argument("--iterations", type=int, default=200000)
+    parser.add_argument("--success-iterations", type=int, default=20000000)
     parser.add_argument("--samples", type=int, default=7)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -92,7 +93,9 @@ def main():
     check(not output.exists(), "use a fresh output directory (evidence is never overwritten)")
     check(not args.measure or (args.slot and not args.sanitize and "3" in args.optimizations),
           "timing requires --slot, O3, and no sanitizer")
-    check(1 <= args.iterations <= 100000000 and args.samples >= 3, "invalid measurement bounds")
+    check(1 <= args.iterations <= 100000000 and
+          1 <= args.success_iterations <= 100000000 and args.samples >= 3,
+          "invalid measurement bounds")
     check(platform.system() == "Darwin" and platform.machine() == "arm64" or
           platform.system() == "Linux" and platform.machine() == "x86_64",
           "this experiment is limited to Darwin AArch64 and Linux x86_64 System V")
@@ -228,21 +231,31 @@ def main():
                 check(result.stdout == "trace=CBADEedabc drops=5 published=1 result=93\n" and
                       not result.stderr, "alternate dynamic target mismatch")
 
-        # A separate Linux audit leaves instrumentation out of timing binaries.
-        if platform.system() == "Linux":
+        # Separate audited artifacts leave all instrumentation out of timing.
+        if platform.system() in ("Linux", "Darwin"):
+            audit_library = []
+            audit_env = env
+            if platform.system() == "Darwin":
+                dylib = output / "allocation-audit.dylib"
+                run([clang, *common, *sanitizer, "-O3", "-dynamiclib",
+                     fixtures / "allocation_audit.cpp", "-o", dylib])
+                audit_library = [dylib]
+                audit_env = dict(env, DYLD_INSERT_LIBRARIES=str(dylib))
             for mode in ("status", "unwind"):
                 binary = output / f"{mode}-allocation-audit"
                 run([clang, *common, *sanitizer, "-O3", f"-DTRANSPORT_STATUS={int(mode == 'status')}",
                      "-DTRANSPORT_ALLOCATION_AUDIT=1", fixtures / "driver.cpp",
-                     fixtures / "transport.cpp", fixtures / "allocation_audit.cpp",
-                     *runtime, host, "-Wl,--wrap=__cxa_allocate_exception", "-o", binary])
+                     fixtures / "transport.cpp",
+                     *([fixtures / "allocation_audit.cpp"] if platform.system() == "Linux" else []),
+                     *runtime, host, *audit_library,
+                     *(["-Wl,--wrap=__cxa_allocate_exception"] if platform.system() == "Linux" else []),
+                     "-o", binary])
                 for case in ("direct-success", "dynamic-success", "direct-failure", "dynamic-failure"):
-                    result, _ = run([binary, case, "--bench", "100"])
+                    result, _ = run([binary, case, "--bench", "100"], run_env=audit_env)
                     count = 100 if mode == "unwind" and case.endswith("failure") else 0
                     check(result.stdout.endswith(f"exception_storage_requests={count}\n"),
                           "unexpected exception-storage request count")
-        else:
-            manifest["allocation_audit"] = "pending: Darwin exception-storage/malloc instrumentation"
+            manifest["allocation_audit"] = "passed: exception-storage requests only; not total malloc"
 
         if args.gti:
             check(args.gti_build_cache, "GTI evidence requires its optimized CMakeCache.txt")
@@ -278,20 +291,24 @@ def main():
             manifest["load_before"] = os.getloadavg()
             # Warm both variants, then alternate order per sample, never run in parallel.
             for case in ("direct-success", "dynamic-success", "direct-failure", "dynamic-failure"):
+                iterations = args.success_iterations if case.endswith("success") else args.iterations
                 for mode in ("status", "unwind"):
-                    run([binaries[(mode, "3")], case, "--bench", str(args.iterations)])
+                    run([binaries[(mode, "3")], case, "--bench", str(iterations)])
                 samples = {"status": [], "unwind": []}
                 observables = {}
                 for index in range(args.samples):
                     for mode in (("status", "unwind") if index % 2 == 0 else ("unwind", "status")):
                         check(os.getloadavg()[0] <= max(1, os.cpu_count() * 0.25), "host became busy")
-                        result, seconds = run([binaries[(mode, "3")], case, "--bench", str(args.iterations)])
+                        result, _ = run([binaries[(mode, "3")], case, "--bench", str(iterations)])
                         check(not result.stderr, "timing execution emitted stderr")
-                        observables.setdefault(mode, result.stdout)
-                        check(observables[mode] == result.stdout, "unstable timing checksum")
+                        fields = dict(field.split("=", 1) for field in result.stdout.split())
+                        seconds = int(fields.pop("elapsed_ns")) / 1e9
+                        check(seconds >= 0.1, "sample too short: increase the corresponding iteration count")
+                        observables.setdefault(mode, fields)
+                        check(observables[mode] == fields, "unstable timing checksum")
                         samples[mode].append(seconds)
                 check(observables["status"] == observables["unwind"], "non-equivalent timing workloads")
-                manifest["timing"].append({"case": case, "iterations": args.iterations,
+                manifest["timing"].append({"case": case, "iterations": iterations,
                                            "seconds": samples,
                                            "median_seconds": {m: statistics.median(s) for m, s in samples.items()}})
             manifest["load_after"] = os.getloadavg()
