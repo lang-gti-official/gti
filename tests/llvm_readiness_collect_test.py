@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+from unittest.mock import patch
 
 import llvm_coverage_evidence_test as audit
 import llvm_readiness_collect as collector
@@ -66,6 +67,27 @@ def main() -> None:
     report = audit.ledger(helper)
     canonical = collector.discover(root, baseline, ctest, build, registry)
     collector.validate_plan(canonical)
+    modules = audit.load_registry(registry, root, audit.ctest_inventory(ctest, build))
+    for test, module in modules.items():
+        if not callable(getattr(module, "evidence_context", None)):
+            continue
+        original = module.evidence_context(root)
+        with patch.object(module, "evidence_context", return_value=original), \
+                patch.object(module, "evidence_partition_policy", return_value=None), \
+                patch.object(audit, "load_registry", return_value=modules):
+            rejects(lambda: collector.discover(root, baseline, ctest, build, registry),
+                    "malformed authoritative provider partition contract")
+        for partition, role in (("cases", "expected-rejection-control"),
+                                ("controls", "positive-admission")):
+            coordinated = deepcopy(original)
+            coordinated["partition_policy"][partition] = role
+            for value in coordinated[partition].values():
+                value["role"] = role
+            collector.validate_context_sidecar(coordinated, module.evidence_manifest(root))
+            with patch.object(module, "evidence_context", return_value=coordinated), \
+                    patch.object(audit, "load_registry", return_value=modules):
+                rejects(lambda: collector.discover(root, baseline, ctest, build, registry),
+                        "authoritative provider contract")
     unresolved = [value for value in canonical["members"].values()
                   if value["provider"] in {"shipped-examples", "registered-llvm-evidence"}
                   and "case_context" not in value["contract"]]
@@ -99,6 +121,10 @@ def main() -> None:
     }
     callable_member["contract"]["loading"] = "repository-source-with-standard-prelude"
     positive = miniature(canonical, [scalar, callable_member])
+    positive["provider_partition_contracts"] = {
+        test: deepcopy(sidecar["partition_policy"])
+        for test, sidecar in canonical["case_contexts"].items()
+    }
     with tempfile.TemporaryDirectory(prefix="gti-readiness-controls-") as raw:
         scratch = Path(raw)
         success = scratch / "success"
@@ -124,6 +150,16 @@ def main() -> None:
         collector.collect(success, root, positive, helper, report, [single],
                           resume=True, scope="focused-controls", runner=not_run)
         audit.require(len(collector.event_history(success)) == 2, "resume replaced attempt history")
+        reinterpreted = deepcopy(positive)
+        for policy in reinterpreted["provider_partition_contracts"].values():
+            policy["cases"] = "expected-rejection-control"
+        for value in reinterpreted["members"].values():
+            value["contract"]["role"] = "expected-rejection-control"
+        rejects(lambda: collector.summarize([success], reinterpreted), "contract drifted")
+        rejects(lambda: collector.collect(success, root, reinterpreted, helper, report, [single],
+                                         resume=True, scope="focused-controls"), "contract drifted")
+        audit.require(len(collector.event_history(success)) == 2,
+                      "changed contract silently reused or replaced existing receipts")
         missing_context = deepcopy(scalar)
         missing_context["id"] = "unclassified"
         missing_context["contract"]["role"] = "unclassified"

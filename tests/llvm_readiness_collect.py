@@ -149,7 +149,14 @@ def discover(root: Path, baseline_path: Path, ctest: str,
         context_api = getattr(module, "evidence_context", None)
         sidecar = context_api(root) if callable(context_api) else None
         if sidecar is not None:
-            validate_context_sidecar(sidecar, declared)
+            partition_api = getattr(module, "evidence_partition_policy", None)
+            audit.require(callable(partition_api),
+                          f"{test}: context needs an authoritative provider partition contract")
+            expected_policy = partition_api(root)
+            audit.require(isinstance(expected_policy, dict),
+                          f"{test}: malformed authoritative provider partition contract")
+            validate_context_sidecar(sidecar, declared,
+                                     expected_partition_policy=expected_policy)
             sidecars[test] = sidecar
         for identity, source in declared["sources"].items():
             contextual = sidecar["cases"][identity] if sidecar is not None else None

@@ -306,13 +306,18 @@ def evidence_manifest(root: Path) -> dict:
         origins)
 
 
+def evidence_partition_policy(root: Path) -> dict[str, str]:
+    del root
+    return {'cases': 'positive-admission', 'controls': 'expected-rejection-control'}
+
+
 def evidence_context(root: Path) -> dict:
     cases = scalar_cases(root)
     return build_context_sidecar(
         evidence_manifest(root),
         {name: case.sidecar_record() for name, case in cases.items() if not case.is_control},
         {name: case.sidecar_record() for name, case in cases.items() if case.is_control},
-        partition_policy={'cases': 'positive-admission', 'controls': 'expected-rejection-control'})
+        partition_policy=evidence_partition_policy(root))
 
 
 def list_evidence(root: Path) -> None:

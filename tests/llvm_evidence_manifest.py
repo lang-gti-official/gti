@@ -24,7 +24,8 @@ def build_context_sidecar(manifest: dict, cases: dict, controls: dict, *,
     return result
 
 
-def validate_context_sidecar(sidecar: dict, manifest: dict) -> None:
+def validate_context_sidecar(sidecar: dict, manifest: dict, *,
+                             expected_partition_policy: dict[str, str] | None = None) -> None:
     if not isinstance(sidecar, dict) or set(sidecar) != {
             "schema", "test", "manifest_sha256", "profiles", "cases", "controls", "observed",
             "partition_policy"}:
@@ -42,6 +43,8 @@ def validate_context_sidecar(sidecar: dict, manifest: dict) -> None:
     if (not isinstance(policy, dict) or set(policy) != {"cases", "controls"} or
             any(not isinstance(role, str) or role not in roles for role in policy.values())):
         raise ValueError("case-context needs an explicit provider partition policy")
+    if expected_partition_policy is not None and policy != expected_partition_policy:
+        raise ValueError("case-context policy differs from the authoritative provider contract")
     for name, record in {**cases, **controls}.items():
         if not isinstance(record, dict) or set(record) != {"context", "role", "observation"}:
             raise ValueError("case-context record is malformed")

@@ -77,7 +77,8 @@ def frozen_plans(name: str, gti: Path, root: Path, work: Path) -> list[dict]:
 def equivalent(root: Path, cases: dict, sidecar: dict) -> None:
     manifest = scalar.evidence_manifest(root)
     assert manifest_digest(manifest) == FROZEN_MANIFEST, 'v1 membership/source/profile drift'
-    validate_context_sidecar(sidecar, manifest)
+    validate_context_sidecar(sidecar, manifest,
+                             expected_partition_policy=scalar.evidence_partition_policy(root))
     assert sidecar['partition_policy'] == {
         'cases': 'positive-admission', 'controls': 'expected-rejection-control'}
     assert set(cases) == set(FROZEN_SUCCESSES) | set(FROZEN_DIAGNOSTICS) | set(FROZEN_CONTROLS)
@@ -209,6 +210,16 @@ def main() -> None:
         changed = deepcopy(sidecar)
         mutate(changed)
         rejects(lambda: validate_context_sidecar(changed, scalar.evidence_manifest(root)))
+    for partition, role in (('cases', 'expected-rejection-control'), ('controls', 'positive-admission')):
+        coordinated = deepcopy(sidecar)
+        coordinated['partition_policy'][partition] = role
+        for record in coordinated[partition].values():
+            record['role'] = role
+        # Generic consistency is not authority to reinterpret this provider.
+        validate_context_sidecar(coordinated, scalar.evidence_manifest(root))
+        rejects(lambda: validate_context_sidecar(
+            coordinated, scalar.evidence_manifest(root),
+            expected_partition_policy=scalar.evidence_partition_policy(root)))
     print(json.dumps({'v1_manifest_unchanged': FROZEN_MANIFEST,
                       'positive_cases': len(sidecar['cases']),
                       'separate_controls': len(sidecar['controls']),
