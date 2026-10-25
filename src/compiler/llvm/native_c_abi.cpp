@@ -53,11 +53,16 @@ NativeCRecordAbi classifyNativeCRecord(Session &session,
                       triple.isOSDarwin() && triple.isOSBinFormatMachO();
   const bool sysv = triple.getArch() == llvm::Triple::x86_64 &&
                     triple.isOSLinux() && triple.isOSBinFormatELF();
+  const auto &target = session.program().target();
   if ((!darwin && !sysv) || !session.dataLayout().isLittleEndian() ||
       session.dataLayout().getPointerSize() != 8 || available.integers > 6 ||
-      available.vectors > 8 || type.kind != SemanticType::Class)
+      available.vectors > 8 || type.kind != SemanticType::Class ||
+      (darwin && (target.os != "macos" || target.arch != "arm64")) ||
+      (sysv && (target.os != "linux" || target.arch != "x86_64")))
     unsupported();
-  session.verify();
+  // Classification also runs while a caller's IR body is incomplete. Validate
+  // target facts here; Session verifies the completed module before emission.
+  verifyTargetLayout(target, session.dataLayout(), session.context());
   auto &layouts = session.layouts();
   const auto &record = layouts.instance(type);
   if (!record.cAbiRecord || !record.cAbiLayout || record.unionLayout ||

@@ -20,6 +20,8 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     evidence = {"platform": platform.platform(), "machine": platform.machine(),
                 "cc": args.cc, "steps": [], "production_admission": "closed"}
+    evidence["source_head"] = subprocess.check_output(
+        ["git", "-C", str(root.parents[2]), "rev-parse", "HEAD"], text=True).strip()
 
     def run(command, name):
         started = time.monotonic()
@@ -47,7 +49,7 @@ def main():
                  f"-O{c_level}", root / "oracle.c", obj, "-o", executable],
                 f"link-native{level}-c{c_level}")
             observed = run([executable], f"run-native{level}-c{c_level}")
-            if observed != ("native C ABI: 17 records, 3 register-pressure "
+            if observed != ("native C ABI: 18 records, 3 register-pressure "
                             "signatures, both directions\n"):
                 raise RuntimeError(f"unexpected oracle output: {observed!r}")
             executions += 1

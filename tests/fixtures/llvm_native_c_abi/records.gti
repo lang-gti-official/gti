@@ -2,6 +2,7 @@
 [[c_abi]] struct Tiny { mut uint8_t a; mut uint8_t b; mut uint8_t c; };
 [[c_abi]] struct Shorts { mut int16_t a; mut uint8_t b; };
 [[c_abi]] struct Words { mut uint32_t a; mut uint32_t b; };
+[[c_abi]] struct TripleWords { mut uint32_t a; mut uint32_t b; mut uint32_t c; };
 [[c_abi]] struct Tail { mut uint64_t a; mut uint8_t b; };
 [[c_abi]] struct Pair { mut uint64_t a; mut uint64_t b; };
 [[c_abi]] struct Pointer { mut uint8_t* a; mut uint32_t b; };
@@ -24,10 +25,12 @@
 struct Ordinary { mut int32_t a; };
 
 int main() {
-  return int(sizeof(Byte) + sizeof(Tiny) + sizeof(Shorts) + sizeof(Words)
+  Ordinary ordinary{.a = 0};
+  return ordinary.a + int(sizeof(Byte) + sizeof(Tiny) + sizeof(Shorts) + sizeof(Words)
+    + sizeof(TripleWords)
     + sizeof(Tail) + sizeof(Pair) + sizeof(Pointer) + sizeof(Float1)
     + sizeof(Float2) + sizeof(Float3) + sizeof(Float4) + sizeof(Double1)
     + sizeof(Double2) + sizeof(IntDouble) + sizeof(DoubleInt) + sizeof(FloatInt)
     + sizeof(FloatDouble) + sizeof(Nested) + sizeof(ArrayField) + sizeof(Large)
-    + sizeof(Boolean) + sizeof(UnionRecord) + sizeof(Ordinary));
+    + sizeof(Boolean) + sizeof(UnionRecord));
 }

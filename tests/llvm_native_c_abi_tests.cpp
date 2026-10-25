@@ -193,10 +193,11 @@ void emitProbe(Session &session, const Probe &probe) {
     auto *fieldType = session.layouts().get(field.type).storage;
     auto *address = offset(builder, local, field.offsetBytes);
     auto *value = builder.CreateLoad(fieldType, address);
+    const unsigned delta = pressure ? 1 : index + 1;
     llvm::Value *increment =
         fieldType->isFloatingPointTy()
-            ? llvm::ConstantFP::get(fieldType, 1.0)
-            : static_cast<llvm::Value *>(builder.getInt64(1));
+            ? llvm::ConstantFP::get(fieldType, delta)
+            : static_cast<llvm::Value *>(builder.getInt64(delta));
     if (pressure) {
       if (index == 0) {
         increment = probe.vectorPrefix
@@ -333,9 +334,16 @@ void negativeChecks(Session &session) {
   session.module().setTargetTriple(triple);
   const auto layout = session.module().getDataLayout();
   session.module().setDataLayout("e-p:64:64-i64:32:32");
-  rejects<std::logic_error>(
+  rejects(
       [&] { static_cast<void>(classifyNativeCRecord(session, pair, {6, 8})); });
   session.module().setDataLayout(layout);
+  auto *inProgress = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
+      llvm::Function::InternalLinkage, "in_progress", session.module());
+  auto *block =
+      llvm::BasicBlock::Create(session.context(), "entry", inProgress);
+  static_cast<void>(classifyNativeCRecord(session, pair, {6, 8}));
+  llvm::ReturnInst::Create(session.context(), block);
 }
 
 } // namespace
@@ -352,9 +360,9 @@ int main(int argc, char **argv) {
     Session session(input, {.optimization = levels[level]});
     negativeChecks(session);
     for (const auto *name :
-         {"Byte", "Tiny", "Shorts", "Words", "Tail", "Pair", "Pointer",
-          "Float1", "Float2", "Float3", "Float4", "Double1", "Double2",
-          "IntDouble", "DoubleInt", "FloatInt", "FloatDouble"})
+         {"Byte", "Tiny", "Shorts", "Words", "TripleWords", "Tail", "Pair",
+          "Pointer", "Float1", "Float2", "Float3", "Float4", "Double1",
+          "Double2", "IntDouble", "DoubleInt", "FloatInt", "FloatDouble"})
       emitProbe(session, {name, name});
     emitProbe(session, {"Pair", "gpr", 5, 0, true, false});
     emitProbe(session, {"IntDouble", "mixed", 6, 0, false, true});
@@ -370,8 +378,10 @@ int main(int argc, char **argv) {
     output.write(object.contents.data(), object.contents.size());
     require(output.good(), "cannot write object output");
     std::cout << "classifier/oracle object O" << level
-              << ": 17 records, 3 pressure signatures, explicit rejections; "
-              << object.contents.size() << " bytes\n";
+              << ": 18 records, 3 pressure signatures, explicit rejections; "
+              << object.contents.size() << " bytes; LLVM "
+              << LLVM_VERSION_STRING << "; "
+              << llvm::Triple(session.module().getTargetTriple()).str() << '\n';
     return 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

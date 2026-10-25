@@ -10,7 +10,7 @@
 #define TWO(X) X(a) X(b)
 #define THREE(X) X(a) X(b) X(c)
 #define FOUR(X) X(a) X(b) X(c) X(d)
-#define INC(field) value.field += 1;
+#define INC(field) value.field += (#field[0] - 'a' + 1);
 #define SAME(field)                                                            \
   if (actual.field != expected.field)                                          \
     return __LINE__;
@@ -35,6 +35,7 @@ RECORD(Byte, uint8_t a;, ONE)
 RECORD(Tiny, uint8_t a; uint8_t b; uint8_t c;, THREE)
 RECORD(Shorts, int16_t a; uint8_t b;, TWO)
 RECORD(Words, uint32_t a; uint32_t b;, TWO)
+RECORD(TripleWords, uint32_t a; uint32_t b; uint32_t c;, THREE)
 RECORD(Tail, uint64_t a; uint8_t b;, TWO)
 RECORD(Pair, uint64_t a; uint64_t b;, TWO)
 RECORD(Pointer, uint8_t *a; uint32_t b;, TWO)
@@ -98,6 +99,7 @@ int main(void) {
   CHECK(Tiny, 1, 127, 254);
   CHECK(Shorts, -251, 250);
   CHECK(Words, 0x7ffffffe, 0x81234567);
+  CHECK(TripleWords, 0x12345678, 0x81234567, 0x76543210);
   CHECK(Tail, UINT64_C(0xabcdef1287654321), 253);
   CHECK(Pair, UINT64_C(0x123456789abcdef0), UINT64_C(0xfedcba9876543210));
   CHECK(Pointer, bytes, 0x81726354);
@@ -144,7 +146,11 @@ int main(void) {
   if (sseOut.a != 37.25 || sseOut.b != 9.25)
     return __LINE__;
 
-  // A widened coercion must not read or write beyond a 3-byte source object.
+  if (pair.a != 91 || pair.b != 73 || mixed.a != -91 || mixed.b != 3.5 ||
+      sse.a != 1.25 || sse.b != -7.75)
+    return __LINE__;
+
+  // Widened coercions must not access beyond 3-byte or 12-byte source objects.
   long page = sysconf(_SC_PAGESIZE);
   if (page <= 0)
     return __LINE__;
@@ -158,14 +164,24 @@ int main(void) {
   *edge = (Tiny){1, 2, 3};
   Tiny edgeOut;
   import_Tiny(edge, &edgeOut);
-  if (edgeOut.a != 2 || edgeOut.b != 3 || edgeOut.c != 4)
+  if (edgeOut.a != 2 || edgeOut.b != 4 || edgeOut.c != 6)
     return __LINE__;
   import_Tiny(&edgeOut, edge);
-  if (edge->a != 3 || edge->b != 4 || edge->c != 5)
+  if (edge->a != 3 || edge->b != 6 || edge->c != 9)
+    return __LINE__;
+  TripleWords *edgeWords =
+      (TripleWords *)((char *)pages + page - sizeof(TripleWords));
+  *edgeWords = (TripleWords){11, 13, 17};
+  TripleWords wordsOut;
+  import_TripleWords(edgeWords, &wordsOut);
+  if (wordsOut.a != 12 || wordsOut.b != 15 || wordsOut.c != 20)
+    return __LINE__;
+  import_TripleWords(&wordsOut, edgeWords);
+  if (edgeWords->a != 13 || edgeWords->b != 17 || edgeWords->c != 23)
     return __LINE__;
   if (munmap(pages, (size_t)page * 2))
     return __LINE__;
-  puts("native C ABI: 17 records, 3 register-pressure signatures, both "
+  puts("native C ABI: 18 records, 3 register-pressure signatures, both "
        "directions");
   return 0;
 }
