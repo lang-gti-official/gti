@@ -1196,8 +1196,10 @@ int32_t payload_owner_counts_v1(void) {
     const auto admission = planLlvmAdmission(*program);
     expect(admission.admitted(),
            "combined O7/O8 scalar-owner payload admission");
-    if (!admission.admitted())
+    if (!admission.admitted()) {
+      std::cerr << admission.limitation() << '\n';
       return;
+    }
     lowerScalarProgram(session, admission);
     const auto object = root / "probe.o";
     expect(driver::writeArtifact(object, session.emitObject().contents) ==
