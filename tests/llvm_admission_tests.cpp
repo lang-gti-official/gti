@@ -415,6 +415,26 @@ int main() {
     }
   expect(plan.admitted() && witnessed,
          "ordinary mutable raw field access is admitted");
+  for (const auto &valid :
+       {"class Readonly { public: int value = 7; }; int main() { Readonly "
+        "object{}; unsafe { const Readonly* pointer = &object; return "
+        "pointer->value - 7; } }",
+        "class Padded { public: int8_t tag = int8_t(1); double tail = "
+        "double(42.5); }; int main() { Padded object{}; unsafe { const Padded* "
+        "pointer = &object; return pointer->tail == double(42.5) ? 0 : 1; } }",
+        "class Nested { public: mut int values[3] = {1, 2, 3}; }; int main() { "
+        "mut Nested object{}; unsafe { Nested* pointer = &object; "
+        "pointer->values[1] = 9; return pointer->values[1] - 9; } }",
+        "class Parent { public: int value = 7; }; class Child : public Parent "
+        "{ public: int extra = 2; }; int main() { Child object{}; unsafe { "
+        "const Child* pointer = &object; return pointer->value - 7; } }"}) {
+    const auto frontend =
+        lang::Frontend().analyze("valid-raw-field.gti", valid);
+    expect(frontend.canGenerateCode() &&
+               lang::verifyMirProgram(frontend.mir).valid(),
+           "raw projection type verification preserves readonly, padded, "
+           "nested-array and base fields");
+  }
   const auto method = lang::planLlvmAdmission(lower(R"(
 class Slot { public: int value = 7; int read() { return this.value; } };
 int main() { Slot object{}; unsafe { const Slot* pointer = &object; return pointer->read(); } }
@@ -492,7 +512,30 @@ int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return
                 place.value = 0;
               changed = true;
             }
-    bool rejected = !lang::verifyMirProgram(mir).valid();
+    const auto verification = lang::verifyMirProgram(mir);
+    bool rejected = !verification.valid();
+    expect(changed && rejected,
+           "malformed raw class field is rejected by program verification");
+    if (mutation == 1)
+      expect(std::any_of(verification.errors.begin(), verification.errors.end(),
+                         [](const auto &error) {
+                           return error.bodyKind ==
+                                      lang::MirBodyKind::Function &&
+                                  error.owner != 0 && error.instruction != 0 &&
+                                  error.message.find("place 3") !=
+                                      std::string::npos &&
+                                  error.message.find(
+                                      "exact raw field projection type") !=
+                                      std::string::npos;
+                         }),
+             "field-type integrity error retains its body, root producer and "
+             "place");
+    const auto mirrored = lang::LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, frontend.hir, mir, mir, {},
+        lang::TargetInfo::host(), true);
+    expect(
+        !mirrored.valid(),
+        "mirrored malformed snapshots cannot enter verified lowered sealing");
     std::string rejectedBy = "MIR verifier";
     if (!rejected) {
       auto build = lang::LoweredProgramBuilder().build(
