@@ -20,20 +20,6 @@ const MirLambdaInstance &Callables::lambda(HirLambdaId id) const {
   return *result;
 }
 
-const MirLambdaInstance &Callables::lambda(const SemanticType &type) const {
-  const MirLambdaInstance *result = nullptr;
-  for (const auto &candidate : session.program().mir().lambdaInstances())
-    if (candidate.type == type) {
-      if (result)
-        throw std::logic_error("ambiguous concrete LLVM lambda identity");
-      result = &candidate;
-    }
-  if (!result)
-    throw BackendUnsupportedError(
-        "LLVM closure layout requires an exact concrete lambda instance");
-  return *result;
-}
-
 CallableSignature Callables::pointerSignature(const SemanticType &type) const {
   const auto *signature =
       mir_detail::functionPointerSignature(session.program().mir(), type);

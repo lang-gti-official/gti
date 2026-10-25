@@ -4719,6 +4719,33 @@ storage; the backend does not allocate merely to form or invoke it. Ownership
 capabilities whose storage policy itself requires allocation still compose with
 O-LLVM-08, and polymorphic callable wrappers still compose with O-LLVM-10.
 
+Several instantiated lambda bodies may have the same fully concrete lambda type,
+for example when a default field initializer is retained both as its own body
+and through generated construction. They may share one physical environment
+layout only when every instance agrees on ordered capture storage types, capture
+modes and active-cleanup state. This representation check never selects a body:
+formation and invocation retain their exact `lambdaTarget`, while cleanup
+resolves the exact `MirDropType::lambdaInstance` before checking its capture
+selectors and nested recipes. Body-local bindings, effects, borrow contracts and
+source identity are therefore not canonicalized with storage.
+
+Checked erased-reference transport is admitted from the verifier's exact
+referent type, access, origin and loan facts. The LLVM backend accepts any
+already-represented complete object, plus concrete closure and invocation-
+pointer storage, and carries only the selected address through erase/restore.
+It does not recognize `std::function_ref` or any other public wrapper name;
+wrapper construction and invocation compose from their ordinary source bodies.
+Abstract, opaque, symbolic and unsupported capability storage remains rejected
+even when a similarly spelled source wrapper exists.
+
+An unstaged constructor-field record is also a distinct pending admission
+requirement. One shared plan proves the exact constructor owner, field, SSA
+result and unique record producer before the body may use the field as that
+producer's final destination. A staged `Initialize` sibling suppresses this
+route. The requirement is witnessed only by an independently admitted scalar
+transport or concrete storage shape, so adding an owner representation does not
+silently claim constructor publication for it.
+
 Concrete trailing parameter packs have no runtime pack object. One exact
 `concretePackPrefix` plan accepts the verified MIR forms currently emitted:
 the source trailing `TypePack`, expanded lanes with one binding plus zero-valued

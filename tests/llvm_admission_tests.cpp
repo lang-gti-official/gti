@@ -2,6 +2,8 @@
 #include "gti/llvm_admission.h"
 #include "gti/lowered_program_builder.h"
 
+#include "../src/compiler/llvm/closure_environment.h"
+#include "../src/compiler/llvm/constructor_field_publication.h"
 #include "../src/compiler/llvm/coverage.h"
 #include "../src/compiler/llvm/parameter_packs.h"
 #include "../src/compiler/llvm/placement.h"
@@ -200,6 +202,227 @@ lang::VerifiedLoweredProgram lower(std::string_view source) {
   if (!verified)
     throw std::runtime_error(issues.front().detail);
   return *verified;
+}
+
+void testClosureEnvironmentPlan() {
+  using namespace lang;
+  using native_llvm::closureCleanupInstance;
+  using native_llvm::closureEnvironmentLayout;
+
+  const auto verified = lower(R"(
+int invoke<F>(F callable) { return callable(); }
+class Field {
+  int value = invoke([]() -> int { return 17; });
+public:
+  int read() { return this.value; }
+};
+int main() { Field value{}; return value.read() - 17; }
+)");
+  const auto &mir = verified.program().mir();
+  const MirLambdaInstance *first = nullptr;
+  const MirLambdaInstance *second = nullptr;
+  for (const auto &candidate : mir.lambdaInstances()) {
+    if (first == nullptr)
+      first = &candidate;
+    else if (candidate.type == first->type) {
+      second = &candidate;
+      break;
+    }
+  }
+  expect(first != nullptr && second != nullptr,
+         "field initializers retain duplicate exact lambda bodies");
+  if (first == nullptr || second == nullptr)
+    return;
+  expect(closureEnvironmentLayout(mir, first->type).has_value(),
+         "compatible exact lambda bodies share one physical environment");
+
+  MirLambdaInstance ownedBorrowed;
+  ownedBorrowed.captureTypes = {
+      SemanticType::classType(900),
+      SemanticType::referenceTo(SemanticType::Int32, AccessMode::Mutable)};
+  ownedBorrowed.captureModes = {LambdaCaptureMode::Move,
+                                LambdaCaptureMode::BorrowMut};
+  ownedBorrowed.captureRequiresActiveCleanup = {true, false};
+  MirLambdaInstance compatible = ownedBorrowed;
+  compatible.id = 2;
+  compatible.parameterBindings = {42};
+  expect(closureEnvironmentLayout(ownedBorrowed) ==
+             closureEnvironmentLayout(compatible),
+         "owned and borrowed captures compare only physical environment "
+         "facts, not body-local identities");
+  compatible.captureModes[1] = LambdaCaptureMode::BorrowRead;
+  expect(closureEnvironmentLayout(ownedBorrowed) !=
+             closureEnvironmentLayout(compatible),
+         "capture access modes cannot share a closure environment plan");
+  compatible = ownedBorrowed;
+  compatible.captureRequiresActiveCleanup[0] = false;
+  expect(closureEnvironmentLayout(ownedBorrowed) !=
+             closureEnvironmentLayout(compatible),
+         "capture cleanup-state requirements cannot share an environment");
+  compatible = ownedBorrowed;
+  compatible.captureTypes[0] = SemanticType::Int32;
+  expect(closureEnvironmentLayout(ownedBorrowed) !=
+             closureEnvironmentLayout(compatible),
+         "different ordered capture storage cannot share an environment");
+
+  MirProgram incompatibleMode = mir;
+  auto &modeInstances = const_cast<std::vector<MirLambdaInstance> &>(
+      incompatibleMode.lambdaInstances());
+  modeInstances[second->id - 1].captureModes.push_back(LambdaCaptureMode::Copy);
+  expect(!closureEnvironmentLayout(incompatibleMode, first->type),
+         "incompatible duplicate capture modes fail closed");
+  MirProgram incompatibleCleanup = mir;
+  auto &cleanupInstances = const_cast<std::vector<MirLambdaInstance> &>(
+      incompatibleCleanup.lambdaInstances());
+  cleanupInstances[second->id - 1].captureRequiresActiveCleanup.push_back(
+      false);
+  expect(!closureEnvironmentLayout(incompatibleCleanup, first->type),
+         "incompatible duplicate cleanup state fails closed");
+  MirProgram incompatibleType = mir;
+  auto &typeInstances = const_cast<std::vector<MirLambdaInstance> &>(
+      incompatibleType.lambdaInstances());
+  typeInstances[second->id - 1].captureTypes.push_back(SemanticType::Int32);
+  expect(!closureEnvironmentLayout(incompatibleType, first->type),
+         "incompatible duplicate capture storage fails closed");
+
+  MirDropType cleanup{.type = first->type, .lambdaInstance = first->id};
+  expect(closureCleanupInstance(mir, cleanup) == first,
+         "closure cleanup resolves its exact recorded lambda instance");
+  cleanup.lambdaInstance = mir.lambdaInstances().size() + 1;
+  expect(closureCleanupInstance(mir, cleanup) == nullptr,
+         "closure cleanup rejects a missing exact instance");
+  cleanup.lambdaInstance = first->id;
+  cleanup.type = SemanticType::Int32;
+  expect(closureCleanupInstance(mir, cleanup) == nullptr,
+         "closure cleanup rejects an identity/type mismatch");
+}
+
+void testUnstagedConstructorFieldPublicationPlan() {
+  using namespace lang;
+
+  const auto verified = lower(R"(
+class Holder<F> {
+  F callable;
+public:
+  Holder(F input) : callable(input) {}
+  int invoke() { return this.callable(); }
+};
+int run<F>(F callable) {
+  Holder<F> holder{callable};
+  return holder.invoke();
+}
+int main() {
+  return run([]() -> int { return 7; }) - 7;
+}
+)");
+  const auto &mir = verified.program().mir();
+  const auto admission = planLlvmAdmission(verified);
+  const auto publicationUse = std::find_if(
+      admission.requirements().begin(), admission.requirements().end(),
+      [](const auto &use) {
+        return use.entry->family == "Shape" &&
+               use.entry->name == "UnstagedConstructorFieldPublication";
+      });
+  expect(admission.admitted() &&
+             publicationUse != admission.requirements().end() &&
+             publicationUse->entry->state == LlvmCoverageState::Pending &&
+             publicationUse->implementedShape &&
+             publicationUse->implementedShape->name == "NativeCallableStorage",
+         "an exact callable record publication witnesses the pending shared "
+         "constructor requirement");
+
+  const MirConstructorInstance *publicationConstructor = nullptr;
+  const MirInstruction *publicationInstruction = nullptr;
+  native_llvm::UnstagedConstructorFieldPublicationPlan publication;
+  for (const auto &constructor : mir.constructorInstances())
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        auto candidate = native_llvm::unstagedConstructorFieldPublication(
+            mir, constructor.body, constructor.id, instruction);
+        if (candidate.matched() &&
+            candidate.type.kind == SemanticType::Lambda) {
+          publicationConstructor = &constructor;
+          publicationInstruction = &instruction;
+          publication = candidate;
+        }
+      }
+  expect(publicationConstructor && publicationInstruction &&
+             publication.exact && publication.value != 0,
+         "the callable field initializer has one exact owner, field and "
+         "result publication plan");
+  if (!publicationConstructor || !publicationInstruction)
+    return;
+
+  const auto constructorId = publicationConstructor->id;
+  const auto instructionId = publicationInstruction->id;
+  const auto initializerIndex =
+      static_cast<std::size_t>(publication.initializer -
+                               publicationConstructor->initializers.data()) +
+      1;
+  const auto mutateConstructor =
+      [&](MirProgram &program) -> MirConstructorInstance & {
+    auto &constructors = const_cast<std::vector<MirConstructorInstance> &>(
+        program.constructorInstances());
+    return constructors.at(constructorId - 1);
+  };
+  const auto findInstruction = [&](MirBody &body) -> MirInstruction * {
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == instructionId)
+          return &instruction;
+    return nullptr;
+  };
+
+  MirProgram wrongResult = mir;
+  auto &wrongBody = mutateConstructor(wrongResult).body;
+  auto *wrongInstruction = findInstruction(wrongBody);
+  expect(wrongInstruction != nullptr,
+         "publication mutation retains its exact instruction");
+  if (wrongInstruction) {
+    wrongBody.values.at(*wrongInstruction->result - 1).definition = 0;
+    const auto wrong = native_llvm::unstagedConstructorFieldPublication(
+        wrongResult, wrongBody, constructorId, *wrongInstruction);
+    expect(wrong.matched() && !wrong.exact,
+           "a record whose SSA result has the wrong producer fails "
+           "publication correspondence");
+  }
+
+  MirProgram stagedSibling = mir;
+  auto &stagedBody = mutateConstructor(stagedSibling).body;
+  MirInstruction staged;
+  staged.id = stagedBody.instructionCount() + 1;
+  staged.kind = MirInstructionKind::Initialize;
+  staged.constructorInitializer = initializerIndex;
+  stagedBody.blocks.front().instructions.push_back(staged);
+  auto *stagedOriginal = findInstruction(stagedBody);
+  expect(stagedOriginal &&
+             !native_llvm::unstagedConstructorFieldPublication(
+                  stagedSibling, stagedBody, constructorId, *stagedOriginal)
+                  .matched(),
+         "an explicit Initialize sibling owns publication instead of the "
+         "record-only hook");
+
+  MirProgram duplicate = mir;
+  auto &duplicateBody = mutateConstructor(duplicate).body;
+  auto *original = findInstruction(duplicateBody);
+  expect(original != nullptr,
+         "duplicate-publication mutation retains its source record");
+  if (original) {
+    MirInstruction sibling = *original;
+    sibling.id = duplicateBody.instructionCount() + 1;
+    sibling.result = duplicateBody.values.size() + 1;
+    MirValue value = duplicateBody.values.at(*original->result - 1);
+    value.id = *sibling.result;
+    value.definition = sibling.id;
+    duplicateBody.values.push_back(value);
+    duplicateBody.valueUses.emplace_back();
+    duplicateBody.blocks.front().instructions.push_back(sibling);
+    original = findInstruction(duplicateBody);
+    const auto ambiguous = native_llvm::unstagedConstructorFieldPublication(
+        duplicate, duplicateBody, constructorId, *original);
+    expect(ambiguous.matched() && !ambiguous.exact,
+           "two record-only producers cannot claim one constructor field");
+  }
 }
 
 bool has(const lang::LlvmAdmissionPlan &plan, std::string_view family,
@@ -446,6 +669,8 @@ int main() { Pinned value{}; return 0; }
 int main() {
   try {
     testConcreteParameterPackPlan();
+    testClosureEnvironmentPlan();
+    testUnstagedConstructorFieldPublicationPlan();
     testLedger();
     testSnapshotAndWholeProgram();
     testShapeWitnesses();

@@ -21,6 +21,9 @@ SUCCESS_CASES = (
     "lambda_pack_invocation",
     "nested_callable_results",
     "issue_117_nested_lambda",
+    "llvm_callable_field_initializer",
+    "llvm_erased_class_reference",
+    "checked_callable_transport",
 )
 LLVM_ONLY_SUCCESS_CASES = ("llvm_callable_wrapper",)
 FAILURE_CASES = {

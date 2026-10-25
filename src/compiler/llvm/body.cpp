@@ -1,5 +1,6 @@
 #include "body.h"
 #include "callables.h"
+#include "constructor_field_publication.h"
 #include "failure.h"
 #include "lifetimes.h"
 #include "parameter_packs.h"
@@ -260,87 +261,20 @@ private:
              const SemanticType &type) {
     memory.store(value, address, type);
   }
-  [[nodiscard]] bool recordOnlyResult(MirValueId value) const {
-    for (const MirValueUse &use : input.usesOf(value)) {
-      if (use.kind != MirValueUseKind::PlaceRoot)
-        return false;
-      const MirPlace *place = input.findPlace(use.place);
-      if (!place || !place->projections.empty())
-        return false;
-      if (std::any_of(
-              input.loans.begin(), input.loans.end(),
-              [&](const MirLoan &loan) { return loan.source == place->id; }))
-        return false;
-      for (const MirBlock &block : input.blocks) {
-        if (block.terminator.value &&
-            block.terminator.value->place == place->id)
-          return false;
-        for (const MirInstruction &candidate : block.instructions)
-          if (candidate.destination == place->id ||
-              (candidate.receiver && candidate.receiver->place == place->id) ||
-              std::any_of(candidate.operands.begin(), candidate.operands.end(),
-                          [&](const MirOperand &use) {
-                            return use.place == place->id;
-                          }))
-            return false;
-      }
-    }
-    return true;
-  }
   [[nodiscard]] const MirConstructorInitializer *
   recordPublication(const MirInstruction &instruction) const {
-    if (address.kind != MirBodyKind::Constructor || !owner ||
-        !instruction.result || !recordOnlyResult(*instruction.result))
+    if (address.kind != MirBodyKind::Constructor || !owner)
       return nullptr;
     const auto &program = session.program().mir();
-    const auto *constructor = program.findConstructorInstance(address.owner);
-    const auto *value = input.findValue(*instruction.result);
-    const auto *initializer = mirRecordPublishedConstructorInitializer(
+    const auto plan = unstagedConstructorFieldPublication(
         program, input, address.owner, instruction);
-    if (!constructor || &constructor->body != &input ||
-        constructor->owner != owner->id || !value ||
-        value->definition != instruction.id ||
-        value->info.type != instruction.info.type || !initializer)
+    if (!plan.matched())
       return nullptr;
-    const auto field =
-        std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
-                     [&](const MirClassFieldInfo &candidate) {
-                       return candidate.symbol == initializer->field &&
-                              candidate.type == initializer->targetType;
-                     });
-    if (initializer->kind != ConstructorInitializerTargetKind::Field ||
-        initializer->field == 0 || initializer->storesReference ||
-        initializer->arguments !=
-            std::vector<HirValueId>{instruction.hirValue} ||
-        initializer->targetType != instruction.info.type ||
-        field == owner->declaredFields.end() ||
-        std::count_if(owner->declaredFields.begin(),
-                      owner->declaredFields.end(),
-                      [&](const MirClassFieldInfo &candidate) {
-                        return candidate.symbol == initializer->field;
-                      }) != 1)
+    if (!plan.exact)
       throw BackendUnsupportedError(
           "LLVM constructor record publication has inconsistent sealed "
           "field facts");
-    std::size_t publishers = 0;
-    for (const MirBlock &block : input.blocks)
-      for (const MirInstruction &candidate : block.instructions) {
-        if (candidate.tombstone || !candidate.result ||
-            !recordOnlyResult(*candidate.result))
-          continue;
-        const auto *candidateValue = input.findValue(*candidate.result);
-        if (candidateValue && candidateValue->definition == candidate.id &&
-            candidateValue->info.type == candidate.info.type &&
-            candidate.info.type == initializer->targetType &&
-            mirRecordPublishedConstructorInitializer(
-                program, input, address.owner, candidate) == initializer)
-          ++publishers;
-      }
-    if (publishers != 1)
-      throw BackendUnsupportedError(
-          "LLVM constructor record publication requires one exact MIR "
-          "producer");
-    return initializer;
+    return plan.initializer;
   }
   [[nodiscard]] llvm::Value *
   publicationAddress(const MirConstructorInitializer &initializer) {

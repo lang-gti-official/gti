@@ -11360,13 +11360,19 @@ native callable slice: exact function items and invocation pointers; concrete
 closure environments; direct/indirect read, mutable and consuming invocation;
 copy/move/read-borrow/mutable-borrow captures; returned, stored and nested
 generic closures; concrete trailing callable packs; checked failure adapters;
-and reverse owned-capture cleanup. Focused macOS O0--O3 execution, malformed
-admission controls, borrow rejection, wrapper rollback and allocation-symbol/
-optimized-cost probes pass. This is not the milestone exit: ownership wrappers
-whose representation needs allocator/control-block services still compose with
-O-LLVM-08, polymorphic callable erasure composes with O-LLVM-10, native callbacks
-compose with O-LLVM-11, Linux evidence and the integration campaign remain
-pending, and C04's physical failure-transport evaluation remains open.
+and reverse owned-capture cleanup. Compatible duplicate lambda instantiations
+share only their checked physical environment plan; formation, invocation and
+cleanup retain exact instance identities. Verified complete-object erased
+references now compose source-defined callable views without public-name
+recognition. Unstaged constructor-field records are admitted only through one
+exact owner/field/result/unique-producer plan plus an independently supported
+storage transport. Focused macOS O0--O3 execution, malformed admission
+controls, borrow rejection, wrapper rollback and allocation-symbol/optimized-
+cost probes pass. This is not the milestone exit: ownership wrappers whose
+representation needs allocator/control-block services still compose with
+O-LLVM-08, polymorphic callable erasure composes with O-LLVM-10, native
+callbacks compose with O-LLVM-11, Linux evidence and the integration campaign
+remain pending, and C04's physical failure-transport evaluation remains open.
 
 - **Unlock:** higher-order algorithms, capturing callbacks and source-defined
   function wrappers, including owned/borrowed and read/mut/once forms.

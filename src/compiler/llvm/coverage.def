@@ -850,6 +850,7 @@ LLVM_COVERAGE_ENTRY(NativeClassStorage, 6, Implemented, None, "exact nonpolymorp
 LLVM_COVERAGE_ENTRY(NativeThreadStorage, 6, Implemented, None, "exact admitted native TLS storage, checked lazy initialization and C runtime registration")
 LLVM_COVERAGE_ENTRY(InPlaceScalarMutation, 6, Implemented, None, "exact evaluated scalar destination and RHS, promoted arithmetic and checked narrowing before publication")
 LLVM_COVERAGE_ENTRY(StoredFieldPublication, 6, Pending, None, "reference field initialization requires an exact entry Stored loan or evaluated Borrow publication stage")
+LLVM_COVERAGE_ENTRY(UnstagedConstructorFieldPublication, 6, Pending, None, "an unstaged constructor record requires one exact owner, field, result producer and supported final-destination transport")
 LLVM_COVERAGE_ENTRY(NativeCallableStorage, 9, Implemented, None, "exact function item, invocation pointer or concrete closure environment; ordinary closures use caller-owned storage and verified capture layout")
 LLVM_COVERAGE_ENTRY(CallableMetadata, 9, Implemented, None, "verified callable signature and capability metadata; no independent runtime storage")
 LLVM_COVERAGE_ENTRY(ArrayValueComparison, 5, Pending, None, "array equality requires a separately specified element comparison recipe; scalar equality support is not an array implementation")

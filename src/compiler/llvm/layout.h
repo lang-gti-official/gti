@@ -34,7 +34,6 @@ public:
                                    HirClassInstanceId base) const;
   [[nodiscard]] std::optional<unsigned>
   activeIndex(const SemanticType &type) const;
-  [[nodiscard]] const MirLambdaInstance &lambda(const SemanticType &type) const;
   [[nodiscard]] unsigned captureIndex(const SemanticType &type,
                                       std::size_t capture) const;
 

@@ -1,0 +1,36 @@
+#include <std/memory>
+
+class Box {
+  mut int value;
+public:
+  Box(int value) : value(value) {}
+  int read() { return this.value; }
+  void add(int amount) mut { this.value += amount; }
+};
+
+int read_erased(std::erased_object& object) {
+  unsafe {
+    Box& box = std::restore_ref<Box>(object);
+    return box.read();
+  }
+}
+
+void add_erased(mut std::erased_object& object, int amount) {
+  unsafe {
+    mut Box& box = std::restore_mut<Box>(object);
+    box.add(amount);
+  }
+}
+
+int main() {
+  mut Box box{7};
+  {
+    std::erased_object& object = std::erase_ref(box);
+    if (read_erased(object) != 7) return 1;
+  }
+  {
+    mut std::erased_object& object = std::erase_mut(box);
+    add_erased(object, 5);
+  }
+  return box.read() == 12 ? 0 : 2;
+}

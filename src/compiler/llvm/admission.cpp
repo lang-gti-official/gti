@@ -1,6 +1,8 @@
 #include "gti/llvm_admission.h"
 
 #include "../mir_verification_queries.h"
+#include "closure_environment.h"
+#include "constructor_field_publication.h"
 #include "coverage.h"
 #include "parameter_packs.h"
 #include "reachability.h"
@@ -197,20 +199,16 @@ public:
       if (selected.kind == SemanticType::FunctionSignature)
         return true;
       if (selected.kind == SemanticType::Lambda) {
-        const MirLambdaInstance *lambda = nullptr;
-        for (const auto &candidate : program.lambdaInstances())
-          if (candidate.type == selected) {
-            if (lambda)
-              return false;
-            lambda = &candidate;
-          }
-        if (!lambda ||
-            lambda->captureTypes.size() != lambda->captureModes.size() ||
-            lambda->captureTypes.size() !=
-                lambda->captureRequiresActiveCleanup.size())
+        const auto environment =
+            native_llvm::closureEnvironmentLayout(program, selected);
+        if (!environment ||
+            environment->captureTypes.size() !=
+                environment->captureModes.size() ||
+            environment->captureTypes.size() !=
+                environment->captureRequiresActiveCleanup.size())
           return false;
         return std::all_of(
-            lambda->captureTypes.begin(), lambda->captureTypes.end(),
+            environment->captureTypes.begin(), environment->captureTypes.end(),
             [&](const auto &capture) { return self(self, capture); });
       }
       if (selected.kind == SemanticType::Reference ||
@@ -345,17 +343,27 @@ public:
            (type.kind == SemanticType::Reference &&
             type.arguments.size() == 1 && opaqueReferent(type.arguments[0]));
   }
-  bool callableReference(const SemanticType &type) const {
+  bool representedErasureObject(const SemanticType &type) const {
+    if (!nativeValue(type))
+      return false;
+    if (mir_detail::completeObjectType(program, type))
+      return true;
+    if (type.kind != SemanticType::Lambda && type.kind != SemanticType::Class)
+      return false;
+    return classShape(type) == Shape::NativeCallableStorage;
+  }
+  bool representedErasureReference(const SemanticType &type) const {
     const auto *referent = &type;
     if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
       referent = &type.arguments[0];
-    return referent->kind == SemanticType::Lambda && nativeValue(*referent);
+    return representedErasureObject(*referent);
   }
   bool erasedReference(const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Call || !stage.loan ||
         stage.functionTarget || stage.operands.size() != 1 ||
         stage.parameterTypes.size() != 1 ||
         stage.parameterTypes[0].kind != SemanticType::Reference ||
+        stage.parameterTypes[0].arguments.size() != 1 ||
         stage.info.category != ValueCategory::Place)
       return false;
     const bool erase = stage.intrinsic == IntrinsicKind::EraseReference ||
@@ -363,19 +371,16 @@ public:
     const bool restore = stage.intrinsic == IntrinsicKind::RestoreReference ||
                          stage.intrinsic == IntrinsicKind::RestoreReferenceMut;
     return (erase && opaqueReferent(stage.info.type) &&
-            (passiveReferenceType(stage.parameterTypes[0]) ||
-             callableReference(stage.parameterTypes[0]))) ||
+            representedErasureReference(stage.parameterTypes[0])) ||
            (restore && opaqueReferent(stage.parameterTypes[0].arguments[0]) &&
-            (passiveReferenceType(stage.info.type) ||
-             callableReference(stage.info.type)));
+            representedErasureReference(stage.info.type));
   }
   bool restoredLoanTransport(const MirBody &body,
                              const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Borrow || !stage.loan ||
         stage.operands.size() != 1 ||
         stage.operands[0].kind != MirOperandKind::Loan ||
-        !(passiveReference(stage.info.type) ||
-          callableReference(stage.info.type)))
+        !representedErasureReference(stage.info.type))
       return false;
     const auto *target = body.findLoan(*stage.loan);
     const auto *source = body.findLoan(stage.operands[0].loan);
@@ -394,6 +399,24 @@ public:
             producer.info.access == stage.info.access)
           return true;
     return false;
+  }
+
+  std::optional<Shape>
+  unstagedPublicationShape(const MirBody &mir,
+                           const MirInstruction &stage) const {
+    if (!body || body->kind != MirBodyKind::Constructor)
+      return {};
+    const auto plan = native_llvm::unstagedConstructorFieldPublication(
+        program, mir, body->owner, stage);
+    if (!plan.matched())
+      return {};
+    if (!plan.exact || plan.type != stage.info.type)
+      return std::nullopt;
+    if (isPassiveScalarValueType(plan.type))
+      return Shape::SuccessResultPublication;
+    const auto storage = classShape(plan.type);
+    return storage && *storage != Shape::CallableMetadata ? storage
+                                                          : std::nullopt;
   }
 
   template <class T> void add(T value, std::optional<Shape> implemented = {}) {
@@ -727,6 +750,11 @@ public:
           add(Shape::Tombstone);
           continue;
         }
+        if (body && body->kind == MirBodyKind::Constructor &&
+            mirRecordPublishedConstructorInitializer(program, mir, body->owner,
+                                                     stage))
+          add(Shape::UnstagedConstructorFieldPublication,
+              unstagedPublicationShape(mir, stage));
         std::optional<Shape> storageShape;
         if (stage.kind == MirInstructionKind::EnsureThreadLocal)
           if (const auto *storage =

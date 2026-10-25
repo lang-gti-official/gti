@@ -25,7 +25,6 @@ private:
   FindBody findBody;
   std::vector<std::pair<MirDropType, llvm::Function *>> cleanups;
   std::map<llvm::Type *, llvm::Function *> moves;
-  [[nodiscard]] const MirLambdaInstance &lambda(const SemanticType &type) const;
   [[nodiscard]] bool needsMoveState(const SemanticType &type) const;
   [[nodiscard]] llvm::Function *moveHelper(const SemanticType &type);
 };

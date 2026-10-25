@@ -67,6 +67,7 @@ enum class Shape {
   NativeThreadStorage,
   InPlaceScalarMutation,
   StoredFieldPublication,
+  UnstagedConstructorFieldPublication,
   NativeCallableStorage,
   CallableMetadata,
 };

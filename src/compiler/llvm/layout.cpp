@@ -1,4 +1,5 @@
 #include "layout.h"
+#include "closure_environment.h"
 #include "placement.h"
 
 #include <limits>
@@ -263,14 +264,16 @@ TypeLayout Layouts::record(const SemanticType &type) {
 }
 
 TypeLayout Layouts::closure(const SemanticType &type) {
+  const auto environment =
+      closureEnvironmentLayout(session.program().mir(), type);
+  if (!environment)
+    throw BackendUnsupportedError(
+        "LLVM closure layout requires one compatible concrete environment");
   LambdaRecord *selected = nullptr;
   for (auto &[id, candidate] : lambdas) {
     (void)id;
-    if (candidate.instance->type == type) {
-      if (selected)
-        throw std::logic_error("ambiguous concrete LLVM lambda identity");
+    if (candidate.instance->type == type && !selected)
       selected = &candidate;
-    }
   }
   if (!selected)
     throw BackendUnsupportedError(
@@ -282,8 +285,8 @@ TypeLayout Layouts::closure(const SemanticType &type) {
   selected->building = true;
   try {
     std::vector<llvm::Type *> fields;
-    fields.reserve(selected->instance->captureTypes.size());
-    for (const auto &capture : selected->instance->captureTypes)
+    fields.reserve(environment->captureTypes.size());
+    for (const auto &capture : environment->captureTypes)
       fields.push_back(get(capture).storage);
     if (fields.empty())
       fields.push_back(llvm::Type::getInt8Ty(session.context()));
@@ -298,26 +301,14 @@ TypeLayout Layouts::closure(const SemanticType &type) {
   }
 }
 
-const MirLambdaInstance &Layouts::lambda(const SemanticType &type) const {
-  const MirLambdaInstance *result = nullptr;
-  for (const auto &[id, candidate] : lambdas) {
-    (void)id;
-    if (candidate.instance->type == type) {
-      if (result)
-        throw std::logic_error("ambiguous concrete LLVM lambda identity");
-      result = candidate.instance;
-    }
-  }
-  if (!result)
-    throw BackendUnsupportedError(
-        "LLVM closure requires an exact concrete lambda instance");
-  return *result;
-}
-
 unsigned Layouts::captureIndex(const SemanticType &type,
                                std::size_t capture) const {
-  const auto &instance = lambda(type);
-  if (capture == 0 || capture > instance.captureTypes.size())
+  const auto environment =
+      closureEnvironmentLayout(session.program().mir(), type);
+  if (!environment)
+    throw BackendUnsupportedError(
+        "LLVM closure projection requires one compatible environment");
+  if (capture == 0 || capture > environment->captureTypes.size())
     throw std::logic_error("LLVM closure capture index is out of range");
   return static_cast<unsigned>(capture - 1);
 }
