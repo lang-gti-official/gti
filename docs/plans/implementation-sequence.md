@@ -11424,10 +11424,13 @@ the current target.
 
 The callable checkpoint's concrete trailing-pack support now uses one shared
 native parameter plan for admission, body lowering and storage. Compatible
-same-key MIR aliases coalesce without consuming extra lanes, while divergent
-identities fail closed. Empty packs remain supported only through the verified
-trailing source binding already preserved by function, constructor and lambda
-owners; the former body-root-only fallback was not an owner proof and has been
+MIR aliases coalesce without consuming extra lanes when their verified binding,
+constant element index and type agree. Projected views may omit optional
+ownership-key metadata, while every key that is present must exactly extend the
+pack root; divergent identities fail closed. Empty packs remain supported only
+through the verified trailing source binding already preserved by function,
+constructor and lambda owners; the former body-root-only fallback was not an
+owner proof and has been
 removed. Focused sealed-owner mutations and native O0/O3 duplicate-view
 execution cover this prerequisite for reuse by O-LLVM-07.
 

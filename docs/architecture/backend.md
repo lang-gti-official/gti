@@ -4837,11 +4837,14 @@ pack binding. A per-lane binding vector with zero-valued continuations has no
 sealed producer and is rejected. An empty pack has no physical lane, but its
 trailing source binding remains in the owner's verified binding vector; a
 body-local available pack root is not a substitute for that identity. Repeated
-MIR views with the same place key and type coalesce into one logical pack or
-element root and never consume another ABI lane. Conflicting keys, types or
-formal identities fail closed. The body maps each used projected `PackElement`
-to its typed ABI lane. Concrete packs embedded in a lambda's enclosing
-substitution identity are inventory metadata rather than executable storage.
+MIR views with the same verified binding, constant element index and type
+coalesce into one logical pack or element root and never consume another ABI
+lane. A projected view need not carry an ownership `PlaceKey`; every key that
+is present must exactly extend the pack root with that element index.
+Conflicting keys, types or formal identities fail closed. The body maps each
+used projected `PackElement` to its typed ABI lane. Concrete packs embedded in
+a lambda's enclosing substitution identity are inventory metadata rather than
+executable storage.
 Symbolic, nested, non-trailing and mismatched mappings remain unsupported.
 
 `llvm_callable_execution` compares direct/indirect calls, read/mutable/once
