@@ -2113,6 +2113,25 @@ not discard a successfully published program. Deleting only `build/gti/cache`
 does not modify sources or published target artifacts; `gti clean` deliberately
 removes the entire validated `build/gti` subtree, including both.
 
+Native-object storage has a separate schema-v5 representation under
+`build/gti/cache/v5/<sha256>/`, marked `gti-build-cache-v5`. Its metadata
+requires `artifact object .o`, and `artifact.o` preserves opaque binary bytes,
+including NULs, rather than labeling them generated C++. Lookup verifies the
+object and executable digests, permissions and test catalog before restoration;
+native metadata and payload leaves must be regular files, not symlinks. A
+restored backend result retains object kind and `.o` extension. C++ continues
+to use the unchanged v4 identity and metadata format.
+
+This storage path alone does **not** enable LLVM cache reuse: the native-backend
+bypass remains until the driver can consume an exact producer-owned identity
+for the resolved target machine, backend/schema, compiler and static LLVM
+implementation, private execution ABI, and optimization/debug policy. Existing
+source/dependency, runtime-content and native-toolchain identities must remain
+part of that key. An unavailable identity must bypass, never be replaced with
+guessed CPU, feature, relocation or ABI facts. Project CLI backend selection is
+a separate prerequisite; a managed `ExecutableBuildRequest` is the driver-level
+consumer of this artifact contract.
+
 Three narrowings hold by an exact-identity argument, stated here because each
 one moved an input out of the bypass list.
 
