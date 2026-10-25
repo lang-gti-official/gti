@@ -67,6 +67,19 @@ def main() -> None:
     report = audit.ledger(helper)
     canonical = collector.discover(root, baseline, ctest, build, registry)
     collector.validate_plan(canonical)
+    stdlib_context_api = collector.surface.case_context
+
+    def reinterpret_stdlib(case, repository):
+        result = stdlib_context_api(case, repository)
+        result["role"] = "expected-rejection-control"
+        result["case"]["mode"] = "diagnostic"
+        result["case"]["expected"] = {"exit_code": 65, "stderr_contains": ["invented"]}
+        result["context"]["observation"] = "stdlib-surface-diagnostic"
+        return result
+
+    with patch.object(collector.surface, "case_context", side_effect=reinterpret_stdlib):
+        rejects(lambda: collector.discover(root, baseline, ctest, build, registry),
+                "authoritative manifest case")
     modules = audit.load_registry(registry, root, audit.ctest_inventory(ctest, build))
     for test, module in modules.items():
         if not callable(getattr(module, "evidence_context", None)):
@@ -108,10 +121,13 @@ def main() -> None:
               if value["provider"] == "stdlib-surface"]
     audit.require(stdlib and all("mode" in value["contract"]["metadata"] for value in stdlib),
                   "authoritative stdlib context was lost")
+    audit.require(all(value["contract"]["case_context"]["case"] == value["contract"]["metadata"] and
+                      value["contract"]["case_context"]["observed"] == "unrun" for value in stdlib),
+                  "stdlib setup/expectations became an inferred execution receipt")
     host = "macos-arm64" if report["build"]["system"] == "Darwin" else "linux-x86_64"
     single = f"{host}-single-threaded"
     audit.require(collector.eligibility(stdlib[0], single, canonical["targets"]) in {
-        "unresolved-profile", "unresolved-applicability"},
+        "unresolved-profile", "unresolved-applicability", "unresolved-loading"},
         "missing target applicability was treated as complete")
     scalar = member("scalar", "int main() { return 0; }\n", list(canonical["targets"]))
     callable_member = member("callable", "", list(canonical["targets"]))

@@ -10149,6 +10149,15 @@ and fabricated sidecar observations. These controls complement
 `backend_execution_protocol` and real selected scalar success/defined-failure
 endpoints; controlled outcomes are not native execution receipts.
 
+`stdlib_surface_context_controls` compares every canonical case with frozen
+setup/build/observation plans and controlled results, deriving membership from
+the validated surface manifest. It preserves hex fixtures, ordered native
+inputs, explicit/absent profile flags, compiler environment overrides, separate
+runtime environment inheritance, time bounds, stdin and exact output. Synthetic
+diagnostic/timeout controls exercise existing branches without changing the
+manifest. The representative real owning check uses the existing implicit
+backend and is reported separately from LLVM admission/execution evidence.
+
 The combined O-LLVM-07/08 scalar-owner probe,
 `gti_llvm_session_tests --payload-unique-owner <source-root>`, retains normal
 source lowering, verified scalar-owner payload extraction and both drops. Its

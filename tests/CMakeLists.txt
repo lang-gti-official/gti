@@ -1819,6 +1819,12 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   set_tests_properties(llvm_scalar_context_controls PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME stdlib_surface_context_controls
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/stdlib_surface_context_test.py"
+            "${PROJECT_SOURCE_DIR}"
+  )
+  set_tests_properties(stdlib_surface_context_controls PROPERTIES TIMEOUT 180)
   add_test(NAME llvm_placement_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_placement_execution_test.py"
                    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")

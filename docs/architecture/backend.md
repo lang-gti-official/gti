@@ -5143,6 +5143,13 @@ The sidecar is unrun metadata, never a passing execution receipt. Unresolved
 host/runtime/environment context prevents the collector from guessing a probe.
 Stdlib cases retain their declared context,
 but missing target applicability still prevents a complete collection claim.
+The stdlib provider's own plan now supplies fixture bytes, ordered native
+inputs, compiler arguments/overrides and mode-specific build/runtime
+observations to both its harness and the collector. Runtime environment
+inheritance stays separate from the compiler overrides. Its implicit shipped
+backend and opaque `native_fixture_build` boundary are recorded; the existing
+C++ native-provider route is not LLVM execution evidence. Context role and
+expectation data must match the authoritative validated manifest case.
 An explicit frontend-rejection control can satisfy only its declared control;
 it never establishes executable support.
 

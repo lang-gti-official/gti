@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from copy import deepcopy
 from datetime import datetime, timezone
 import fcntl
 import json
@@ -17,6 +18,7 @@ import time
 import uuid
 
 import example_case_context as examples
+from llvm_case_context import CaseContext
 import llvm_coverage_evidence_test as audit
 from llvm_evidence_manifest import validate_context_sidecar
 import stdlib_surface_test as surface
@@ -132,13 +134,18 @@ def discover(root: Path, baseline_path: Path, ctest: str,
         })
     for source in inventories["stdlib-surface"]["cases"]:
         case = cases[source["id"]]
+        expected_role = surface.case_role(case)
+        contextual = surface.case_context(deepcopy(case), root)
+        context = CaseContext.from_record(contextual["context"])
+        audit.require(contextual["observed"] == "unrun" and contextual["case"] == case and
+                      contextual["role"] == expected_role and context.provider == "stdlib-surface" and
+                      context.identity == case["id"] and context.source == case["source"] and
+                      context.source_sha256 == source["sha256"],
+                      "stdlib context differs from its authoritative manifest case")
         contract = {
-            "role": "positive-admission" if case["mode"] == "run" else "unclassified",
-            "metadata": case,
-            "profile": case.get("execution_profile") or "single-threaded",
-            "loading": "repository-source-with-standard-prelude",
-            "reason": ("" if case["mode"] == "run" else
-                       "diagnostic metadata does not declare its rejection phase"),
+            "role": expected_role, "metadata": case, "case_context": contextual,
+            "profile": context.execution_profile, "loading": context.loading,
+            "reason": "LLVM native-fixture/loading and target applicability remain unresolved",
         }
         add("stdlib-surface", case["id"], {
             **source, "path": source["source"],
