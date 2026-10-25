@@ -41,11 +41,13 @@ while canonical language documents continue to describe actual support.
   reusable dataflow/SCCP, bounded loop and alias facts, stable proof replay,
   per-instance effects, and optimizer observability.
 - [Backend](architecture/backend.md) — the sealed `LoweredProgram` consumer
-  contract, production C++ backend, foundational LLVM backend, and native
+  contract, production C++ backend, bounded native LLVM backend, and native
   artifact handoff; [LLVM coverage/admission](architecture/backend.md#llvm-coverage-and-admission)
   records complete vocabulary ownership and the current conservative body inventory;
   [LLVM target/layout/ABI](architecture/backend.md#llvm-target-layout-and-execution-abi)
-  describes the native session and object-emission infrastructure.
+  describes the native session and object-emission infrastructure;
+  [LLVM scalar execution](architecture/backend.md#llvm-scalar-execution)
+  records the admitted native program profile and defined-failure transport.
 - [Diagnostics](architecture/diagnostics.md) — structured diagnostics, spans,
   fix-its, recovery, and test expectations.
 - [Standard library and runtime](architecture/standard-library-and-runtime.md)

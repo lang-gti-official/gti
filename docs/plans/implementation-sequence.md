@@ -10663,8 +10663,8 @@ only for an owned implementation need and keep package/link boundary tests.
 | --- | --- | --- |
 | O-LLVM-01 | Independent backend/build/driver foundation (complete) | ADR 016 |
 | O-LLVM-02 | Complete coverage inventory, admission and boundary enforcement (complete) | 01 |
-| O-LLVM-03 | Target, layout, private call ABI, runtime ABI and emission session | 02 |
-| O-LLVM-04 | Scalar execution, CFG, direct calls and defined failures | 03 |
+| O-LLVM-03 | Target, layout, private call ABI, runtime ABI and emission session (complete) | 02 |
+| O-LLVM-04 | Scalar execution, CFG, direct calls and defined failures (scalar profile implemented) | 03 |
 | O-LLVM-05 | Places, references, raw addresses, arrays and text views | 04 |
 | O-LLVM-06 | Classes, construction, movement, cleanup and global/thread-local storage | 05 |
 | O-LLVM-07 | Native unions, tagged payloads and conditional value publication | 06 |
