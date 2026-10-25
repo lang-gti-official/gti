@@ -120,10 +120,25 @@ void testConcreteParameterAliases() {
              plan->lanes[2].packElement == 1 && !plan->lanes[2].materialized,
          "same-key pack aliases coalesce into one physical lane");
 
+  MirBody keyless = aliases;
+  keyless.places[2].key.reset();
+  keyless.places[3].key.reset();
+  const auto keylessPlan =
+      native_llvm::planConcreteParameters(parameters, bindings, keyless);
+  expect(keylessPlan && keylessPlan->lanes.size() == 3 &&
+             keylessPlan->lanes[1].packElement == 0 &&
+             keylessPlan->lanes[1].materialized,
+         "compatible keyless pack views share their verified physical lane");
+
   MirBody divergent = aliases;
   divergent.places.back().key->projections.front().index = 1;
   expect(!native_llvm::planConcreteParameters(parameters, bindings, divergent),
          "different-key projected aliases fail closed");
+  divergent = keyless;
+  divergent.places[2].key = elementKey;
+  divergent.places[2].key->projections.front().index = 1;
+  expect(!native_llvm::planConcreteParameters(parameters, bindings, divergent),
+         "a present wrong pack-view key still fails closed");
   divergent = aliases;
   divergent.places[1].key->root = 31;
   expect(!native_llvm::planConcreteParameters(parameters, bindings, divergent),
