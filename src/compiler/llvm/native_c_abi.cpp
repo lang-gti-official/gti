@@ -1,5 +1,6 @@
 #include "native_c_abi.h"
 #include "failure.h"
+#include "native_c_contract.h"
 
 #include <llvm/IR/Constants.h>
 #include <llvm/TargetParser/Triple.h>
@@ -7,8 +8,170 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <set>
 
 namespace lang::native_llvm {
+
+bool nativeCValueContract(const MirProgram &program, const TargetInfo &target,
+                          const SemanticType &type, NativeCValueRole role) {
+  if (!((target.os == "macos" && target.arch == "arm64") ||
+        (target.os == "linux" && target.arch == "x86_64")))
+    return false;
+  std::set<HirClassInstanceId> visiting;
+  const auto value = [&](const auto &self, const SemanticType &selected,
+                         NativeCValueRole position, unsigned depth) -> bool {
+    if (depth > 256)
+      return false;
+    switch (selected.kind) {
+    case SemanticType::Void:
+      return position == NativeCValueRole::Result;
+    case SemanticType::Bool:
+    case SemanticType::Int8:
+    case SemanticType::UInt8:
+    case SemanticType::Int16:
+    case SemanticType::UInt16:
+    case SemanticType::Int32:
+    case SemanticType::UInt32:
+    case SemanticType::Int64:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Double:
+    case SemanticType::CString:
+      return true;
+    case SemanticType::StringView:
+      return position == NativeCValueRole::Argument;
+    case SemanticType::RawPointer:
+      if (selected.arguments.size() != 1)
+        return false;
+      if (selected.arguments.front().kind == SemanticType::Class) {
+        return std::any_of(program.classInstances().begin(),
+                           program.classInstances().end(),
+                           [&](const auto &record) {
+                             return record.type == selected.arguments.front() &&
+                                    (record.cAbiRecord || record.cOpaqueHandle);
+                           });
+      }
+      return self(self, selected.arguments.front(), NativeCValueRole::Result,
+                  depth + 1);
+    case SemanticType::NativeFunction:
+      if (!selected.hasNativeFunctionShape() ||
+          !self(self, *selected.nativeFunctionReturnType(),
+                NativeCValueRole::Result, depth + 1))
+        return false;
+      return std::all_of(selected.nativeFunctionParameterTypes().begin(),
+                         selected.nativeFunctionParameterTypes().end(),
+                         [&](const auto &parameter) {
+                           return self(self, parameter,
+                                       NativeCValueRole::Argument, depth + 1);
+                         });
+    case SemanticType::Array:
+      return position == NativeCValueRole::Storage &&
+             selected.arguments.size() == 1 && selected.arrayLength > 0 &&
+             !selected.arrayLengthParameterId &&
+             self(self, selected.arguments.front(), NativeCValueRole::Storage,
+                  depth + 1);
+    case SemanticType::Class: {
+      const MirClassInstance *record = nullptr;
+      for (const auto &candidate : program.classInstances())
+        if (candidate.type == selected) {
+          if (record)
+            return false;
+          record = &candidate;
+        }
+      if (!record || !record->cAbiRecord || !record->cAbiLayout ||
+          record->cOpaqueHandle || record->polymorphic || record->abstract ||
+          !record->bases.empty() || !record->structuralBases.empty() ||
+          record->requiresActiveCleanup || record->requiresActiveDropState ||
+          record->declaredFields.empty() ||
+          record->cAbiLayout->sizeBytes == 0 ||
+          record->cAbiLayout->abiAlignmentBytes == 0 ||
+          record->cAbiLayout->abiAlignmentBytes > 8 ||
+          record->cAbiLayout->fields.size() != record->declaredFields.size() ||
+          !visiting.insert(record->id).second)
+        return false;
+      bool valid = true;
+      for (std::size_t index = 0; index < record->declaredFields.size();
+           ++index) {
+        const auto &field = record->declaredFields[index];
+        const auto &layout = record->cAbiLayout->fields[index];
+        valid = valid && field.symbol == layout.field &&
+                field.type == layout.type && !field.requiresActiveCleanup &&
+                self(self, field.type, NativeCValueRole::Storage, depth + 1);
+      }
+      visiting.erase(record->id);
+      return valid;
+    }
+    default:
+      return false;
+    }
+  };
+  return value(value, type, role, 0);
+}
+
+bool nativeCDeclarationContract(const MirProgram &program,
+                                const TargetInfo &target,
+                                const MirFunctionInstance &function) {
+  const auto *canonical = program.findFunctionInstance(function.id);
+  if (!canonical || *canonical != function ||
+      function.definitionKind != MirDefinitionKind::Declaration ||
+      function.linkage != LanguageLinkage::C ||
+      function.externalSymbol.empty() ||
+      function.externalSymbol.find('\0') != std::string::npos ||
+      function.owner || function.tracksCaller ||
+      !function.typeArguments.empty() || !function.valueArguments.empty() ||
+      function.virtualMethod ||
+      function.processMemoryOperation != ProcessMemoryRuntimeOperation::None ||
+      function.cThreadOperation != CThreadRuntimeOperation::None ||
+      !function.callableParameters.empty() ||
+      !nativeCValueContract(program, target, function.returnType,
+                            NativeCValueRole::Result))
+    return false;
+  return std::all_of(function.parameterTypes.begin(),
+                     function.parameterTypes.end(), [&](const auto &parameter) {
+                       return nativeCValueContract(program, target, parameter,
+                                                   NativeCValueRole::Argument);
+                     });
+}
+
+bool nativeCDirectCallContract(const MirProgram &program,
+                               const TargetInfo &target,
+                               const MirInstruction &instruction) {
+  const auto *function =
+      instruction.functionTarget
+          ? program.findFunctionInstance(*instruction.functionTarget)
+          : nullptr;
+  if (!function || !nativeCDeclarationContract(program, target, *function) ||
+      instruction.kind != MirInstructionKind::Call || instruction.tombstone ||
+      instruction.intrinsic != IntrinsicKind::None || instruction.receiver ||
+      instruction.nativeCalleeType || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.functionPointerFunctionTarget ||
+      instruction.functionPointerLambdaTarget ||
+      instruction.nativeCallbackAdapter || instruction.callableInvocation ||
+      !instruction.callableArguments.empty() || instruction.tracksCaller ||
+      instruction.callSite == 0 || instruction.rawMemoryAccess ||
+      (instruction.unsafeOperation != UnsafeOperationKind::ForeignPointerCall &&
+       instruction.unsafeOperation != UnsafeOperationKind::None) ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty() ||
+      instruction.parameterTypes != function->parameterTypes ||
+      instruction.info.type != function->returnType ||
+      instruction.operands.size() != function->parameterTypes.size())
+    return false;
+  for (std::size_t index = 0; index < instruction.operands.size(); ++index)
+    if (instruction.operands[index].type != function->parameterTypes[index])
+      return false;
+  return true;
+}
+
+bool nativeCIndirectCallContract(const MirProgram &program,
+                                 const TargetInfo &target, const MirBody &body,
+                                 const MirInstruction &instruction) {
+  return isMirNativeIndirectCall(program, body, instruction) &&
+         nativeCValueContract(program, target, *instruction.nativeCalleeType,
+                              NativeCValueRole::Argument);
+}
+
 namespace {
 
 [[noreturn]] void unsupported() {
@@ -309,6 +472,15 @@ NativeCFunctionAbi
 planNativeCFunction(Session &session, const SemanticType &result,
                     std::span<const SemanticType> parameters) {
   const bool darwin = darwinTarget(session);
+  if (!nativeCValueContract(session.program().mir(), session.program().target(),
+                            result, NativeCValueRole::Result) ||
+      !std::all_of(
+          parameters.begin(), parameters.end(), [&](const auto &parameter) {
+            return nativeCValueContract(session.program().mir(),
+                                        session.program().target(), parameter,
+                                        NativeCValueRole::Argument);
+          }))
+    unsupported();
   NativeCFunctionAbi plan;
   NativeCRegisterBudget available;
   std::vector<llvm::Type *> types;
@@ -436,6 +608,23 @@ llvm::Value *emitNativeCCall(Session &session, llvm::IRBuilder<> &ir,
                pieces[i].offset, plan.result.storage.size);
   }
   return resultDestination;
+}
+
+llvm::Value *emitNativeCDirectCall(Session &session, llvm::IRBuilder<> &ir,
+                                   const MirInstruction &instruction,
+                                   std::span<llvm::Value *const> arguments,
+                                   llvm::Value *resultDestination) {
+  if (!nativeCDirectCallContract(session.program().mir(),
+                                 session.program().target(), instruction))
+    throw BackendUnsupportedError("native C call requires its exact sealed "
+                                  "declaration and staged signature");
+  const auto &target = *session.program().mir().findFunctionInstance(
+      *instruction.functionTarget);
+  const auto plan =
+      planNativeCFunction(session, target.returnType, target.parameterTypes);
+  return emitNativeCCall(session, ir, plan,
+                         session.abi().declareFunction(target.id), arguments,
+                         resultDestination);
 }
 
 std::vector<llvm::Value *>

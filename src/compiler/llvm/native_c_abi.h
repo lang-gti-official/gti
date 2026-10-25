@@ -73,6 +73,12 @@ emitNativeCCall(Session &session, llvm::IRBuilder<> &ir,
                 std::span<llvm::Value *const> arguments,
                 llvm::Value *resultDestination = nullptr);
 
+[[nodiscard]] llvm::Value *
+emitNativeCDirectCall(Session &session, llvm::IRBuilder<> &ir,
+                      const MirInstruction &instruction,
+                      std::span<llvm::Value *const> arguments,
+                      llvm::Value *resultDestination = nullptr);
+
 // Entry adapters use the same plan as imports. Record values become private
 // body storage; neither an incoming byval pointer nor a coercion is a GTI
 // value.

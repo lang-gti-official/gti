@@ -1,6 +1,8 @@
 #include "../src/compiler/llvm/abi.h"
+#include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/failure.h"
 #include "../src/compiler/llvm/native_c_abi.h"
+#include "../src/compiler/llvm/native_c_contract.h"
 #include "cpp_backend_test_support.h"
 
 #include <llvm/Config/llvm-config.h>
@@ -385,14 +387,199 @@ void emitCallbackProbes(Session &session, bool concurrent) {
   }
 }
 
+void emitContractProbes(Session &session) {
+  const auto &program = session.program().mir();
+  const auto &target = session.program().target();
+  unsigned direct = 0, indirect = 0;
+  for (const auto &function : program.functionInstances()) {
+    if (function.linkage == LanguageLinkage::C) {
+      require(nativeCDeclarationContract(program, target, function),
+              "ordinary unrelated C declarations need structural contracts");
+      for (unsigned mutation = 0; mutation < 5; ++mutation) {
+        auto invalid = function;
+        if (mutation == 0)
+          invalid.externalSymbol += "_forged";
+        if (mutation == 1)
+          invalid.definitionKind = MirDefinitionKind::RuntimeBinding;
+        if (mutation == 2)
+          invalid.returnType = SemanticType::Unknown;
+        if (mutation == 3)
+          invalid.tracksCaller = true;
+        if (mutation == 4)
+          invalid.linkage = LanguageLinkage::Gti;
+        require(!nativeCDeclarationContract(program, target, invalid),
+                "mutated C declaration cannot establish a native witness");
+      }
+    }
+    const auto *declaration =
+        session.program().findFunctionDeclaration(function.declaration);
+    if (!declaration || declaration->qualifiedName != "main")
+      continue;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.nativeCalleeType) {
+          require(nativeCIndirectCallContract(program, target, function.body,
+                                              instruction),
+                  "verified native pointer call requires its exact native "
+                  "signature");
+          ++indirect;
+        }
+        const auto *callee =
+            instruction.functionTarget
+                ? program.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (!callee || callee->linkage != LanguageLinkage::C)
+          continue;
+        if (!nativeCDirectCallContract(program, target, instruction))
+          std::cerr << "native contract mismatch: " << callee->externalSymbol
+                    << " kind=" << unsigned(instruction.kind)
+                    << " unsafe=" << unsigned(instruction.unsafeOperation)
+                    << " site=" << instruction.callSite
+                    << " raw=" << instruction.rawMemoryAccess
+                    << " receiver=" << instruction.receiver.has_value()
+                    << " callable="
+                    << instruction.callableInvocation.has_value()
+                    << " failure=" << !instruction.definedFailure.empty()
+                    << " sites=" << instruction.localFailureSites.size()
+                    << " parameters=" << instruction.parameterTypes.size()
+                    << " expected=" << callee->parameterTypes.size()
+                    << " operands=" << instruction.operands.size() << '\n';
+        require(
+            nativeCDirectCallContract(program, target, instruction),
+            "real staged direct C call did not establish its exact witness");
+        ++direct;
+        for (unsigned mutation = 0; mutation < 10; ++mutation) {
+          auto invalid = instruction;
+          if (mutation == 0)
+            invalid.callSite = 0;
+          if (mutation == 1)
+            invalid.tracksCaller = true;
+          if (mutation == 2)
+            invalid.tombstone = true;
+          if (mutation == 3)
+            invalid.rawMemoryAccess = true;
+          if (mutation == 4)
+            invalid.localFailureSites.push_back(1);
+          if (mutation == 5)
+            invalid.info.type = SemanticType::Unknown;
+          if (mutation == 6)
+            invalid.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeCall;
+          if (mutation == 7)
+            invalid.callableInvocation = CallableInvocationCapability::Read;
+          if (mutation == 8)
+            invalid.parameterTypes.push_back(SemanticType::Int32);
+          if (mutation == 9)
+            invalid.functionTarget = 0;
+          require(!nativeCDirectCallContract(program, target, invalid),
+                  "malformed staged C call cannot acquire native admission");
+        }
+        const auto native = planNativeCFunction(session, callee->returnType,
+                                                callee->parameterTypes);
+        require(!native.signature.failureDestination &&
+                    !native.signature.statusResult,
+                "conservative C declaration effects cannot add private GTI "
+                "channels");
+        std::string name;
+        if (callee->externalSymbol == "unrelated_getter")
+          name = "bridge_getter";
+        if (callee->externalSymbol == "unrelated_math")
+          name = "bridge_math";
+        if (callee->externalSymbol == "unrelated_callback_getter")
+          name = "bridge_callback";
+        require(!name.empty(), "unexpected contract fixture target");
+        const bool callback = name == "bridge_callback";
+        auto *type =
+            callback ? llvm::FunctionType::get(
+                           llvm::Type::getInt32Ty(session.context()),
+                           {llvm::Type::getInt32Ty(session.context())}, false)
+                     : native.signature.type;
+        auto *bridge = llvm::Function::Create(
+            type, llvm::Function::ExternalLinkage, name, session.module());
+        llvm::IRBuilder<> ir(
+            llvm::BasicBlock::Create(session.context(), "entry", bridge));
+        std::vector<llvm::Value *> arguments;
+        if (!callback)
+          for (auto &argument : bridge->args())
+            arguments.push_back(&argument);
+        auto *result =
+            emitNativeCDirectCall(session, ir, instruction, arguments);
+        if (callback) {
+          const auto &signature = callee->returnType;
+          const auto plan = planNativeCFunction(
+              session, *signature.nativeFunctionReturnType(),
+              signature.nativeFunctionParameterTypes());
+          const std::vector<llvm::Value *> inputs{bridge->getArg(0)};
+          result = emitNativeCCall(session, ir, plan, result, inputs);
+        }
+        ir.CreateRet(result);
+      }
+  }
+  require(direct == 3 && indirect == 1,
+          "contract fixture must retain all staged C boundaries");
+}
+
+void emitSourcePreflight(Session &session,
+                         const VerifiedLoweredProgram &input) {
+  const auto &program = session.program().mir();
+  for (const auto &function : program.functionInstances()) {
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *target =
+            instruction.functionTarget
+                ? program.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (target && target->linkage == LanguageLinkage::C)
+          require(nativeCDirectCallContract(program, session.program().target(),
+                                            instruction),
+                  "source preflight needs every real C call's exact witness");
+      }
+  }
+  const auto admission = planLlvmAdmission(input, session.options());
+  for (const auto &use : admission.requirements()) {
+    if (!use.required || use.entry->state != LlvmCoverageState::Pending ||
+        (use.implementedShape &&
+         use.implementedShape->state == LlvmCoverageState::Implemented))
+      continue;
+    const auto &entry = *use.entry;
+    const bool declarationRequirement =
+        (entry.family == "Shape" &&
+         (entry.name == "NativeCall" || entry.name == "LibraryDeclaration")) ||
+        (entry.family == "LanguageLinkage" && entry.name == "C") ||
+        (entry.family == "MirDefinitionKind" && entry.name == "Declaration");
+    bool witnessed = false;
+    if (declarationRequirement && use.body &&
+        use.body->kind == MirBodyKind::Function)
+      if (const auto *function = program.findFunctionInstance(use.body->owner))
+        witnessed = nativeCDeclarationContract(
+            program, session.program().target(), *function);
+    if (entry.family == "UnsafeOperationKind" &&
+        entry.name == "ForeignPointerCall" && use.body)
+      if (const auto *body = findMirBody(program, *use.body))
+        if (const auto *block = body->findBlock(use.block))
+          for (const auto &instruction : block->instructions)
+            if (instruction.id == use.instruction)
+              witnessed = nativeCDirectCallContract(
+                  program, session.program().target(), instruction);
+    if (!witnessed)
+      throw std::runtime_error("source preflight still requires " +
+                               entry.key());
+  }
+  // Only this explicit test consumer permits the independently validated
+  // native inventory above. The public backend admission remains unchanged.
+  lowerScalarProgram(session, admission);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
   try {
+    const bool contracts = argc == 6 && std::string(argv[5]) == "--contracts";
+    const bool preflight =
+        argc == 6 && std::string(argv[5]) == "--source-preflight";
     const bool concurrent =
         argc == 6 && std::string(argv[5]) == "--thread-callbacks";
     require(argc == 5 || (argc == 6 && (std::string(argv[5]) == "--callbacks" ||
-                                        concurrent)),
+                                        concurrent || contracts || preflight)),
             "usage: test fixture.gti output.o output.ll O[0-3] "
             "[--callbacks|--thread-callbacks]");
     const auto input = fixture(argv[1], concurrent, argc == 6);
@@ -402,7 +589,11 @@ int main(int argc, char **argv) {
         LlvmCodegenOptimization::None, LlvmCodegenOptimization::Less,
         LlvmCodegenOptimization::Default, LlvmCodegenOptimization::Aggressive};
     Session session(input, {.optimization = levels[level]});
-    if (argc == 6) {
+    if (preflight) {
+      emitSourcePreflight(session, input);
+    } else if (contracts) {
+      emitContractProbes(session);
+    } else if (argc == 6) {
       emitCallbackProbes(session, concurrent);
     } else {
       negativeChecks(session);
@@ -430,7 +621,9 @@ int main(int argc, char **argv) {
     require(output.good(), "cannot write object output");
     std::cout
         << "classifier/oracle object O" << level
-        << (argc == 6
+        << (preflight   ? ": real GTI body native preflight; "
+            : contracts ? ": exact declaration/call contracts; "
+            : argc == 6
                 ? ": isolated callback boundary test bodies; "
                 : ": 25 records, 3 pressure signatures, explicit rejections; ")
         << object.contents.size() << " bytes; LLVM " << LLVM_VERSION_STRING
