@@ -289,6 +289,8 @@ def main() -> None:
                  'owner-addresses': OWNER_ADDRESSES, 'raw-claims': RAW_CLAIMS,
                  'unsafe-wrapper': UNSAFE_WRAPPER, 'conditional-references': CONDITIONAL_REFERENCES}
     successes['shipped-example'] = (root / 'examples/llvm/places-and-text.gti').read_text()
+    successes['enum-references'] = (root / 'tests/fixtures/llvm_enum_references.gti').read_text()
+    successes['enum-payload-borrow'] = (root / 'tests/fixtures/llvm_enum_payload_borrow.gti').read_text()
     # The production C++ backend currently rejects this valid nested text
     # transport in its representation vocabulary. The native expected result
     # comes from the source byte/count contract, not that backend limitation.
@@ -309,12 +311,15 @@ def main() -> None:
         'expired-reference': 'int& expired() { int local = 1; return local; } int main() { return expired(); }',
         'overlapping-mutable': 'int main() { mut int value = 1; mut int& first = value; mut int& second = value; return first + second; }',
         'read-only-reference': 'void change(int& value) { value = 2; } int main() { return 0; }',
+        'enum-reference-escape': 'enum class E { first }; E& expired() { E value = E::first; return value; } int main() { return 0; }',
+        'enum-reference-mutation': 'enum class E { first, second }; void change(E& value) { value = E::second; } int main() { return 0; }',
     }
     # Current semantics admits these despite the documented literal-only
     # contract. Do not reproduce the production backend's unchecked data()
     # conversion: native admission requires an exact NUL-free literal proof.
     native_rejections = {
         'array-comparison': 'int main() { int left[2] = {1, 2}; int right[2] = {1, 2}; return left == right ? 0 : 1; }',
+        'enum-raw-borrow': (root / 'tests/fixtures/llvm_enum_raw_borrow.gti').read_text(),
         'dynamic-c-string': '#include <std/string_view>\nvoid consume(c_string text) {} void relay(std::string_view text) { consume(text); } int main() { relay("hello"); return 0; }',
         'nul-c-string': 'void consume(c_string text) {} int main() { consume("a\\0b"); return 0; }',
     }

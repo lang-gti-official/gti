@@ -866,7 +866,7 @@ LLVM_COVERAGE_ENTRY(OrdinaryUnsafeInvocation, 5, Implemented, None, "exact sourc
 LLVM_COVERAGE_ENTRY(PassiveAddressValue, 5, Implemented, None, "null, c-string literal and recursively passive raw pointer transport; no class pointees or ownership")
 LLVM_COVERAGE_ENTRY(PrimitiveRawAccess, 5, Implemented, None, "one verified raw dereference/index of an exact primitive pointer; native component oracle at O0-O3; no class fields or ownership")
 LLVM_COVERAGE_ENTRY(CountedText, 5, Implemented, None, "counted byte view size/empty/index with exact byte length; no owning text storage")
-LLVM_COVERAGE_ENTRY(PassiveReference, 5, Implemented, None, "exact selected address of a passive primitive or fixed array; no class, payload or owning referent")
+LLVM_COVERAGE_ENTRY(PassiveReference, 5, Implemented, None, "exact selected address of a passive primitive, fixed array or sealed integral enum; no payload or owning referent; raw access remains independently gated")
 LLVM_COVERAGE_ENTRY(PassiveArrayValue, 5, Implemented, None, "concrete fixed arrays recursively containing admitted passive primitives; no classes, owners or cleanup")
 LLVM_COVERAGE_ENTRY(CheckedArrayProjection, 5, Implemented, None, "exact array roots and index-only typed paths; checked address selection before memory access")
 LLVM_COVERAGE_ENTRY(ObjectArtifact, 4, Implemented, None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")

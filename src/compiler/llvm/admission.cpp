@@ -711,7 +711,7 @@ public:
                                     CompilerCapabilityTypeKind::ErasedObject;
                        });
   }
-  bool passiveReference(const SemanticType &type) const {
+  bool passiveNonEnumReference(const SemanticType &type) const {
     return passiveReferenceType(type) || opaqueReferent(type) ||
            (type.kind == SemanticType::Reference &&
             type.arguments.size() == 1 && opaqueReferent(type.arguments[0]));
@@ -730,6 +730,17 @@ public:
     if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
       referent = &type.arguments[0];
     return representedErasureObject(*referent);
+  }
+  bool passiveReference(const SemanticType &type) const {
+    if (passiveNonEnumReference(type))
+      return true;
+    const auto &scalar =
+        type.kind == SemanticType::Reference && type.arguments.size() == 1
+            ? type.arguments[0]
+            : type;
+    return scalar.kind == SemanticType::Enum &&
+           program.findIntegralEnum(scalar) &&
+           !program.findPayloadEnum(scalar) && nativeValue(scalar);
   }
   bool erasedReference(const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Call || !stage.loan ||
@@ -1346,7 +1357,7 @@ public:
             (stage.kind == MirInstructionKind::Borrow &&
              stage.operands.size() == 1 &&
              stage.operands[0].kind == MirOperandKind::Loan &&
-             passiveReference(stage.info.type)) ||
+             passiveNonEnumReference(stage.info.type)) ||
             (stage.destination &&
              primitiveRawAccess(mir, *mir.findPlace(*stage.destination)));
         for (const auto &operand : stage.operands)
