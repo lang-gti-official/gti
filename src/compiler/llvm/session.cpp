@@ -14,6 +14,7 @@
 #include <llvm/TargetParser/Triple.h>
 
 #include <mutex>
+#include <set>
 #include <stdexcept>
 
 namespace lang::native_llvm {
@@ -199,6 +200,22 @@ void Session::requireDefinition(llvm::Function &function) {
     requiredDefinitions_.push_back(&function);
 }
 
+void Session::requireSourceDefinition(HirFunctionInstanceId id,
+                                      llvm::Function &function) {
+  const auto *source = program().mir().findFunctionInstance(id);
+  if (!source || source->definitionKind != MirDefinitionKind::Source)
+    throw std::logic_error("LLVM source definition lost its sealed identity");
+  requireDefinition(function);
+  for (const auto &[previous, output] : sourceDefinitions_) {
+    if (previous == id || output == &function) {
+      if (previous != id || output != &function)
+        throw std::logic_error("LLVM source definition identity is ambiguous");
+      return;
+    }
+  }
+  sourceDefinitions_.emplace_back(id, &function);
+}
+
 BackendArtifact Session::emitObject() {
   if (emissionStarted_)
     throw std::logic_error("LLVM emission sessions are single-use");
@@ -209,6 +226,42 @@ BackendArtifact Session::emitObject() {
   }
   verify();
   emissionStarted_ = true;
+  // A sealed hosted entry and no embedding plan delimit the existing private
+  // whole-program executable ABI. Library/embedding compilation stays open.
+  // Taking an address is conservatively a root, including callbacks/llvm.used;
+  // no escape summary, external linkage promise or function attribute is
+  // invented.
+  const auto &mir = program().mir();
+  if (mir.hostedStartupPlan() && !program().embeddingPlan()) {
+    std::set<HirFunctionInstanceId> retained;
+    for (const auto &callback : mir.nativeCallbackAdapters())
+      retained.insert(callback.target);
+    for (const auto &task : mir.threadTaskAdapters())
+      if (task.functionTarget)
+        retained.insert(*task.functionTarget);
+    for (const auto &row : program().bodies()) {
+      const auto *body = findMirBody(mir, row.identity.address);
+      if (!body)
+        continue;
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.functionPointerFunctionTarget)
+            retained.insert(*instruction.functionPointerFunctionTarget);
+    }
+    for (const auto &[id, function] : sourceDefinitions_) {
+      const auto &source = *mir.findFunctionInstance(id);
+      if (source.linkage != LanguageLinkage::Gti ||
+          !source.externalSymbol.empty() || source.virtualMethod ||
+          retained.contains(id) || source.entryKind != ProgramEntryKind::None ||
+          id == mir.hostedStartupPlan()->entry ||
+          function->hasAddressTaken(nullptr, false, false, false, false,
+                                    false) ||
+          function->hasDLLExportStorageClass() ||
+          !function->hasExternalLinkage() || function->hasComdat())
+        continue;
+      function->setLinkage(llvm::GlobalValue::InternalLinkage);
+    }
+  }
   llvm::LoopAnalysisManager loops;
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager cgscc;

@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--emitter", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--clang", default="clang++")
+    parser.add_argument("--opt", default="opt")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     output = args.output.resolve()
@@ -46,13 +47,20 @@ def main():
         assert "fdiv <" in text and "fcmp oeq <" in text and "fcmp olt <" in text
         assert " fast " not in text and " contract " not in text and "getelementptr inbounds" not in text
         clang = shutil.which(args.clang)
-        assert clang
+        opt = shutil.which(args.opt)
+        assert clang and opt
+        scalar_ir = output / "simd-scalarized.ll"
+        run([opt, ir, "-passes=scalarizer,dce", "-S", "-o", scalar_ir])
+        scalar_text = scalar_ir.read_text()
+        assert not any(f"{operation} <" in scalar_text for operation in ("fadd", "fsub", "fmul", "fdiv", "fcmp oeq", "fcmp olt"))
         oracle = root / "tests/fixtures/llvm_optimization/scalar_oracle.c"
-        for optimization in ("0", "1", "2", "3"):
-            library = output / f"simd-O{optimization}.{'dylib' if platform.system() == 'Darwin' else 'so'}"
+        for optimization, selected_ir in [(str(i), ir) for i in range(4)] + [("0", scalar_ir), ("3", scalar_ir)]:
+            label = f"O{optimization}" + ("-scalarized" if selected_ir == scalar_ir else "")
+            library = output / f"simd-{label}.{'dylib' if platform.system() == 'Darwin' else 'so'}"
             run([clang, f"-O{optimization}", "-fno-fast-math", "-ffp-contract=off", "-fPIC",
+                 "-fno-vectorize", "-fno-slp-vectorize",
                  "-dynamiclib" if platform.system() == "Darwin" else "-shared",
-                 ir, oracle, "-o", library])
+                 selected_ir, oracle, "-o", library])
             loaded = ctypes.CDLL(str(library))
             for suffix, scalar, format_code in (("f", ctypes.c_float, "f"), ("d", ctypes.c_double, "d")):
                 reference = getattr(loaded, f"oracle_{suffix}")
@@ -87,7 +95,7 @@ def main():
                                     assert struct.pack(format_code, actual) == struct.pack(format_code, expected), (
                                         suffix, lanes, operation, shift, lane, actual, expected)
                             count += 1
-        print(f"PASS: {count} strict SIMD execution cases at O0/O1/O2/O3")
+        print(f"PASS: {count} strict SIMD execution cases, including explicit scalarization")
     finally:
         (output / "manifest.json").write_text(json.dumps({"cases": count, "commands": commands}, indent=2) + "\n")
 

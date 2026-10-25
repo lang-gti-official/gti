@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
   if (argc != 3) return 2;
   int family = atoi(argv[1]);
   int iterations = atoi(argv[2]);
-  if (family < 0 || family > 6 || iterations < 1 || iterations > 100000000) return 2;
+  if (family < 0 || family > 6 || iterations < 1 || iterations > 1000000000) return 2;
   unsigned long long wanted = expected(family, iterations);
   unsigned long long wanted_effects = family == 4 ? 1 : family == 6 ? (unsigned)iterations : 0;
   printf("{\"checksum\":%llu,\"effects\":%llu}\n", wanted, wanted_effects);

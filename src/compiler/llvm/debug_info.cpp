@@ -195,7 +195,7 @@ public:
       auto *data = builder.createMemberType(
           unit, "data", nullptr, 0, pointerBits, 0,
           offsets->getElementOffsetInBits(0), llvm::DINode::FlagZero,
-          builder.createPointerType(type(SemanticType::Char), pointerBits));
+          builder.createPointerType(type(SemanticType::UInt8), pointerBits));
       auto *size = builder.createMemberType(
           unit, "size", nullptr, 0, 64, 0, offsets->getElementOffsetInBits(1),
           llvm::DINode::FlagZero, type(SemanticType::UInt64));

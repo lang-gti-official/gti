@@ -155,7 +155,7 @@ def main():
     assert re.search(r"^CMAKE_BUILD_TYPE:STRING=(Release|RelWithDebInfo|MinSizeRel)$", cache, re.M)
     assert args.gti.resolve().parent == args.gti_build_cache.resolve().parent
     assert not args.measure or args.slot, "timing requires a coordinated reserved slot"
-    assert 1 <= args.iterations <= 100000000 and args.samples >= 3
+    assert 1 <= args.iterations <= 1000000000 and args.samples >= 3
     matrix = json.loads((root / "tests/llvm_runtime_cost_matrix.json").read_text())
     assert set(matrix["admitted"]) == set(CASES)
     selected = args.case or list(CASES)
@@ -177,12 +177,16 @@ def main():
         result.cpu_seconds = after.ru_utime + after.ru_stime - before.ru_utime - before.ru_stime
         name = f"command-{len(manifest['commands']):03}.log"
         (output / name).write_text(result.stdout + result.stderr)
-        manifest["commands"].append({"argv": [str(x) for x in argv], "exit": result.returncode, "log": name})
+        manifest["commands"].append({"argv": [str(x) for x in argv], "exit": result.returncode, "log": name,
+                                     "wall_seconds": result.wall_seconds, "cpu_seconds": result.cpu_seconds})
         assert result.returncode == 0, str(output / name)
         return result
 
     def quiet():
-        assert os.getloadavg()[0] <= max(1, (os.cpu_count() or 1) * .25), "measurement host is busy"
+        deadline = time.monotonic() + args.wait_seconds
+        while os.getloadavg()[0] > max(1, (os.cpu_count() or 1) * .25):
+            assert time.monotonic() < deadline, "measurement host did not become quiet"
+            time.sleep(1)
 
     reservation = ExitStack()
     try:
