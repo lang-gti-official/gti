@@ -4690,6 +4690,64 @@ The program contains no GTI heap-allocation operation; process-startup
 allocations were not measured. This bounded probe shows no material regression,
 not a general class-backend speedup claim.
 
+### LLVM Function Values And Closure Environments
+
+O-LLVM-09 lowers exact function items, invocation-pointer capabilities and
+concrete lambda instances from verified MIR. `callables.cpp` resolves only
+sealed body identities and signatures. A function item is physically stateless;
+a function-pointer capability stores a typed internal adapter address; a lambda
+stores its captures in target-layout order. None of these paths recognizes a
+public callable-wrapper name or falls back to generated C++.
+
+Lambda bodies use the private GTI ABI planned by `Abi`. A capturing lambda has
+its environment as the planned receiver; a captureless lambda has no mandatory
+environment channel. Direct calls retain their exact ABI. Invocation pointers
+use a checked adapter built from the same `FunctionAbi`, so failure-free targets
+can participate without a function-type cast and failure-capable targets retain
+the original failure record. This is the implemented status-based C04 baseline,
+not a decision that freezes the campaign's open failure-transport evaluation.
+Native C callback adapters remain the separate O-LLVM-11 boundary.
+
+Capture construction consumes the MIR-owned capture types, order and copy/move/
+borrow modes. Borrowed captures store only the selected referent address and do
+not acquire cleanup. Owned captures use the ordinary typed storage, move-state
+and reverse cleanup machinery. Returned closures, stored closure fields,
+prepared consuming receivers and later-argument or later-field failure therefore
+share the same final-destination publication and rollback rules as ordinary
+classes. An ordinary closure environment stays in its caller-owned object
+storage; the backend does not allocate merely to form or invoke it. Ownership
+capabilities whose storage policy itself requires allocation still compose with
+O-LLVM-08, and polymorphic callable wrappers still compose with O-LLVM-10.
+
+Concrete trailing parameter packs have no runtime pack object. One exact
+`concretePackPrefix` plan accepts the verified MIR forms currently emitted:
+the source trailing `TypePack`, expanded lanes with one binding plus zero-valued
+continuations, or expanded parameter types retaining one source-level pack
+binding (including an empty zero-lane pack). The body maps each projected
+`PackElement` to its typed ABI lane. Concrete packs embedded in a lambda's
+enclosing substitution identity are inventory metadata rather than executable
+storage. Symbolic, nested, non-trailing, mismatched and ambiguous mappings fail
+closed.
+
+`llvm_callable_execution` compares direct/indirect calls, read/mutable/once
+invocation, returned/stored and nested generic closures, failure propagation and
+cleanup with the production backend where that backend has a matching
+representation. Native-only wrapper controls exercise final-field placement and
+rollback after a later initializer. Borrow rejection remains a frontend result.
+The optimized owned-closure probe also audits the linked executable for GTI
+allocation-provider symbols; performance and code-size observations are bounded
+workload evidence, not a general speedup claim.
+
+The 2026-10-25 macOS arm64 checkpoint's 20-million-iteration mixed closure/
+function-pointer probe measured median whole-process execution at 7.064 ms for
+C++23/O3 and 34.689 ms for LLVM/O3 over five samples; a separate 20-run warmed
+measurement reported means of 5.6 and 34.5 ms. Executables were 107,048 and
+122,344 bytes. The separate owned-closure executable was 105,768 bytes and
+retained no GTI allocation-provider symbol. The roughly sixfold runtime and 14%
+size overhead are material for this bounded probe, so this is evidence of a
+remaining indirect-adapter/inlining cost, not final O-LLVM-09 performance
+acceptance.
+
 ### LLVM Coverage And Admission
 
 `llvm_admission.h` exposes `llvmCoverageLedger()` and

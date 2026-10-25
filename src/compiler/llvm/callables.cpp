@@ -20,8 +20,7 @@ const MirLambdaInstance &Callables::lambda(HirLambdaId id) const {
   return *result;
 }
 
-const MirLambdaInstance &
-Callables::lambda(const SemanticType &type) const {
+const MirLambdaInstance &Callables::lambda(const SemanticType &type) const {
   const MirLambdaInstance *result = nullptr;
   for (const auto &candidate : session.program().mir().lambdaInstances())
     if (candidate.type == type) {
@@ -35,16 +34,15 @@ Callables::lambda(const SemanticType &type) const {
   return *result;
 }
 
-CallableSignature
-Callables::pointerSignature(const SemanticType &type) const {
+CallableSignature Callables::pointerSignature(const SemanticType &type) const {
   const auto *signature =
       mir_detail::functionPointerSignature(session.program().mir(), type);
   if (!signature || signature->arguments.empty())
     throw std::logic_error(
         "LLVM function pointer lost its verified invocation signature");
   CallableSignature result{.result = signature->arguments.front()};
-  result.parameters = flattenConcreteParameters(
-      std::span(signature->arguments).subspan(1));
+  result.parameters =
+      flattenConcreteParameters(std::span(signature->arguments).subspan(1));
   return result;
 }
 
@@ -55,8 +53,7 @@ FunctionAbi Callables::pointerAbi(const SemanticType &type) const {
   return session.abi().gti(signature.result, signature.parameters, true);
 }
 
-llvm::Function *
-Callables::pointerAdapter(const MirInstruction &formation) {
+llvm::Function *Callables::pointerAdapter(const MirInstruction &formation) {
   if (!mir_detail::functionPointerOperation(session.program().mir(), formation))
     throw std::logic_error(
         "LLVM function-pointer formation lost its verified target");

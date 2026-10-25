@@ -1,10 +1,10 @@
 #include "gti/llvm_admission.h"
 
+#include "../mir_verification_queries.h"
 #include "coverage.h"
 #include "parameter_packs.h"
 #include "reachability.h"
 #include "text.h"
-#include "../mir_verification_queries.h"
 
 #include <iomanip>
 #include <map>
@@ -209,11 +209,9 @@ public:
             lambda->captureTypes.size() !=
                 lambda->captureRequiresActiveCleanup.size())
           return false;
-        return std::all_of(lambda->captureTypes.begin(),
-                           lambda->captureTypes.end(),
-                           [&](const auto &capture) {
-                             return self(self, capture);
-                           });
+        return std::all_of(
+            lambda->captureTypes.begin(), lambda->captureTypes.end(),
+            [&](const auto &capture) { return self(self, capture); });
       }
       if (selected.kind == SemanticType::Reference ||
           selected.kind == SemanticType::RawPointer)
@@ -416,8 +414,7 @@ public:
   bool concretePackParameter(const MirPlace &place) const {
     if (!body || !currentBody || place.root != MirPlaceRootKind::Binding ||
         !place.projections.empty() ||
-        place.type.kind != SemanticType::TypePack ||
-        !place.type.concretePack)
+        place.type.kind != SemanticType::TypePack || !place.type.concretePack)
       return false;
     const std::vector<HirBindingId> *bindings = nullptr;
     const std::vector<SemanticType> *parameters = nullptr;
@@ -440,15 +437,16 @@ public:
         parameters = &owner->parameterTypes;
       }
     }
-    if (!bindings || !parameters || bindings->empty() ||
-        bindings->back() != place.binding)
+    if (!bindings || !parameters)
       return false;
-    const auto flattened =
-        native_llvm::flattenConcreteParameters(*parameters);
-    const auto prefix = bindings->size() - 1;
-    if (flattened.size() != prefix + place.type.arguments.size() ||
+    const auto prefix = native_llvm::concretePackPrefix(
+        *parameters, *bindings, place.binding, place.type);
+    if (!prefix)
+      return false;
+    const auto flattened = native_llvm::flattenConcreteParameters(*parameters);
+    if (flattened.size() != *prefix + place.type.arguments.size() ||
         !std::equal(place.type.arguments.begin(), place.type.arguments.end(),
-                    flattened.begin() + prefix))
+                    flattened.begin() + *prefix))
       return false;
     for (std::size_t element = 0; element < place.type.arguments.size();
          ++element) {
@@ -520,10 +518,16 @@ public:
         add(Shape::TypeArguments);
       for (const SemanticType &argument : type.arguments)
         pending.push_back(&argument);
+      const auto enclosing = [&](const SemanticType &argument) {
+        if (argument.kind == SemanticType::TypePack && argument.concretePack)
+          this->type(argument, true);
+        else
+          pending.push_back(&argument);
+      };
       for (const SemanticType &argument : type.lambdaEnclosingClassTypes)
-        pending.push_back(&argument);
+        enclosing(argument);
       for (const SemanticType &argument : type.lambdaEnclosingFunctionTypes)
-        pending.push_back(&argument);
+        enclosing(argument);
     }
   }
 
@@ -810,7 +814,7 @@ public:
               : referenceAddress ? std::optional(Shape::PassiveReference)
               : arrayAddress     ? std::optional(Shape::CheckedArrayProjection)
               : stage.operation == MirOperation::Closure ||
-                        stage.operation == MirOperation::FunctionItem
+                      stage.operation == MirOperation::FunctionItem
                   ? classShape(stage.info.type)
               : stage.operation == MirOperation::AddressOf && addressPlace
                   ? placeClassShape(*addressPlace)
@@ -834,7 +838,7 @@ public:
               callableIntrinsic = classShape(receiver.arguments.front());
           }
           add(stage.intrinsic,
-              callableIntrinsic ? callableIntrinsic
+              callableIntrinsic        ? callableIntrinsic
               : erasedReference(stage) ? std::optional(Shape::ErasedReference)
               : passiveTextViewAddress(stage) || passiveCStringAddress(stage)
                   ? std::optional(Shape::CountedText)

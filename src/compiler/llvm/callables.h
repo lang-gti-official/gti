@@ -22,13 +22,11 @@ public:
   Callables(Session &session, FindBody findBody, FindAbi findAbi);
 
   [[nodiscard]] const MirLambdaInstance &lambda(HirLambdaId id) const;
-  [[nodiscard]] const MirLambdaInstance &
-  lambda(const SemanticType &type) const;
+  [[nodiscard]] const MirLambdaInstance &lambda(const SemanticType &type) const;
   [[nodiscard]] CallableSignature
   pointerSignature(const SemanticType &type) const;
   [[nodiscard]] FunctionAbi pointerAbi(const SemanticType &type) const;
-  [[nodiscard]] llvm::Function *
-  pointerAdapter(const MirInstruction &formation);
+  [[nodiscard]] llvm::Function *pointerAdapter(const MirInstruction &formation);
 
 private:
   Session &session;

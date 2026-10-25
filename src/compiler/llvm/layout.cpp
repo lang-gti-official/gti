@@ -298,8 +298,7 @@ TypeLayout Layouts::closure(const SemanticType &type) {
   }
 }
 
-const MirLambdaInstance &
-Layouts::lambda(const SemanticType &type) const {
+const MirLambdaInstance &Layouts::lambda(const SemanticType &type) const {
   const MirLambdaInstance *result = nullptr;
   for (const auto &[id, candidate] : lambdas) {
     (void)id;

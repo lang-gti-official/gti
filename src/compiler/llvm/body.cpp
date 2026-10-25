@@ -24,8 +24,7 @@ struct BodyParameterPlan final {
 };
 
 BodyParameterPlan parameterPlan(const MirProgram &program,
-                                MirBodyAddress address,
-                                const MirBody &body) {
+                                MirBodyAddress address, const MirBody &body) {
   const std::vector<HirBindingId> *bindings = nullptr;
   const std::vector<SemanticType> *types = nullptr;
   if (address.kind == MirBodyKind::Function) {
@@ -58,17 +57,14 @@ BodyParameterPlan parameterPlan(const MirProgram &program,
   const auto flattened = flattenConcreteParameters(*types);
   const MirPlace *packRoot = nullptr;
   for (const auto &place : body.places) {
-    if (place.root != MirPlaceRootKind::Binding ||
-        !place.projections.empty() ||
+    if (place.root != MirPlaceRootKind::Binding || !place.projections.empty() ||
         place.type.kind != SemanticType::TypePack)
       continue;
-    if (!place.type.concretePack ||
-        std::find(bindings->begin(), bindings->end(), place.binding) ==
-            bindings->end())
+    if (!place.type.concretePack)
       throw BackendUnsupportedError(
           "LLVM TypePack place is not an exact concrete parameter");
-    if (packRoot && (packRoot->binding != place.binding ||
-                     packRoot->type != place.type))
+    if (packRoot &&
+        (packRoot->binding != place.binding || packRoot->type != place.type))
       throw BackendUnsupportedError(
           "LLVM supports one trailing concrete parameter pack per body");
     packRoot = &place;
@@ -85,10 +81,12 @@ BodyParameterPlan parameterPlan(const MirProgram &program,
     return result;
   }
 
-  if (bindings->empty() || bindings->back() != packRoot->binding)
+  const auto prefixPlan =
+      concretePackPrefix(*types, *bindings, packRoot->binding, packRoot->type);
+  if (!prefixPlan)
     throw BackendUnsupportedError(
-        "LLVM concrete parameter pack must be the trailing source binding");
-  const std::size_t prefix = bindings->size() - 1;
+        "LLVM concrete parameter pack lost its exact trailing ABI mapping");
+  const std::size_t prefix = *prefixPlan;
   if (flattened.size() != prefix + packRoot->type.arguments.size() ||
       !std::equal(packRoot->type.arguments.begin(),
                   packRoot->type.arguments.end(), flattened.begin() + prefix))
@@ -105,8 +103,7 @@ BodyParameterPlan parameterPlan(const MirProgram &program,
     std::size_t uses = 0;
     for (const auto &place : body.places)
       if (place.root == MirPlaceRootKind::Binding &&
-          place.binding == packRoot->binding &&
-          !place.projections.empty() &&
+          place.binding == packRoot->binding && !place.projections.empty() &&
           place.projections.front().kind == MirProjectionKind::PackElement &&
           place.projections.front().constantIndex == element) {
         ++uses;
@@ -117,11 +114,10 @@ BodyParameterPlan parameterPlan(const MirProgram &program,
     if (uses != 0 && roots != 1)
       throw std::logic_error(
           "LLVM concrete pack element lost its unique projected root");
-    result.lanes.push_back(
-        {.binding = packRoot->binding,
-         .type = packRoot->type.arguments[element],
-         .packElement = element,
-         .materialized = uses != 0});
+    result.lanes.push_back({.binding = packRoot->binding,
+                            .type = packRoot->type.arguments[element],
+                            .packElement = element,
+                            .materialized = uses != 0});
   }
   return result;
 }
@@ -136,9 +132,9 @@ public:
             session, failures, lifetimes,
             [&](MirBodyAddress address) { return function(address); },
             [&](MirBodyAddress address) { return signature(address); }),
-        callables(session,
-                  [&](MirBodyAddress address) { return function(address); },
-                  [&](MirBodyAddress address) { return signature(address); }) {}
+        callables(
+            session, [&](MirBodyAddress address) { return function(address); },
+            [&](MirBodyAddress address) { return signature(address); }) {}
   void lower(const LlvmAdmissionPlan &admission);
 
 private:
@@ -170,8 +166,7 @@ public:
        std::optional<SemanticType> receiverType)
       : session(session), failures(failures), function(function),
         address(address), input(body), abi(std::move(abi)), globals(globals),
-        ir(session.context()),
-        lifetimes(lifetimes), threadLocals(threadLocals),
+        ir(session.context()), lifetimes(lifetimes), threadLocals(threadLocals),
         bodyAbi(std::move(bodyAbi)), owner(owner),
         receiverType(std::move(receiverType)), callables(callables),
         scalars(session, ir,
@@ -179,11 +174,12 @@ public:
                   guard(condition, outcome);
                 }),
         findFunction(std::move(findFunction)), values(body.values.size() + 1),
-        memory(session, ir, body, values,
-               [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
-                 guard(condition, outcome);
-               },
-               lambda, packs),
+        memory(
+            session, ir, body, values,
+            [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
+              guard(condition, outcome);
+            },
+            lambda, packs),
         channels(body.failureRecords.size() + 1),
         blocks(body.blocks.size() + 1), live(body.dropObligations.size() + 1),
         placement(body) {
@@ -271,10 +267,9 @@ private:
       const MirPlace *place = input.findPlace(use.place);
       if (!place || !place->projections.empty())
         return false;
-      if (std::any_of(input.loans.begin(), input.loans.end(),
-                      [&](const MirLoan &loan) {
-                        return loan.source == place->id;
-                      }))
+      if (std::any_of(
+              input.loans.begin(), input.loans.end(),
+              [&](const MirLoan &loan) { return loan.source == place->id; }))
         return false;
       for (const MirBlock &block : input.blocks) {
         if (block.terminator.value &&
@@ -283,8 +278,8 @@ private:
         for (const MirInstruction &candidate : block.instructions)
           if (candidate.destination == place->id ||
               (candidate.receiver && candidate.receiver->place == place->id) ||
-              std::any_of(candidate.operands.begin(),
-                          candidate.operands.end(), [&](const MirOperand &use) {
+              std::any_of(candidate.operands.begin(), candidate.operands.end(),
+                          [&](const MirOperand &use) {
                             return use.place == place->id;
                           }))
             return false;
@@ -307,12 +302,12 @@ private:
         value->definition != instruction.id ||
         value->info.type != instruction.info.type || !initializer)
       return nullptr;
-    const auto field = std::find_if(
-        owner->declaredFields.begin(), owner->declaredFields.end(),
-        [&](const MirClassFieldInfo &candidate) {
-          return candidate.symbol == initializer->field &&
-                 candidate.type == initializer->targetType;
-        });
+    const auto field =
+        std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
+                     [&](const MirClassFieldInfo &candidate) {
+                       return candidate.symbol == initializer->field &&
+                              candidate.type == initializer->targetType;
+                     });
     if (initializer->kind != ConstructorInitializerTargetKind::Field ||
         initializer->field == 0 || initializer->storesReference ||
         initializer->arguments !=
@@ -521,14 +516,13 @@ private:
     }
     auto *status = ir.CreateCall(signature.type, callee, arguments);
     signature.applyTo(*status);
-    auto *normal = llvm::BasicBlock::Create(session.context(), "call.success",
-                                            &function);
-    auto *failed = llvm::BasicBlock::Create(session.context(), "call.failed",
-                                            &function);
+    auto *normal =
+        llvm::BasicBlock::Create(session.context(), "call.success", &function);
+    auto *failed =
+        llvm::BasicBlock::Create(session.context(), "call.failed", &function);
     ir.CreateCondBr(status, normal, failed);
     ir.SetInsertPoint(failed);
-    jump(current->terminator.elseTarget,
-         current->terminator.elseArguments);
+    jump(current->terminator.elseTarget, current->terminator.elseArguments);
     ir.SetInsertPoint(normal);
     return resultSlot ? load(resultSlot, callable.result) : nullptr;
   }
@@ -546,7 +540,8 @@ private:
     auto *environment = destination(*instruction.result);
     auto *storage = session.layouts().get(target.type).storage;
     if (target.captureTypes.empty()) {
-      ir.CreateStore(ir.getInt8(0), ir.CreateStructGEP(storage, environment, 0));
+      ir.CreateStore(ir.getInt8(0),
+                     ir.CreateStructGEP(storage, environment, 0));
       return environment;
     }
     for (std::size_t index = 0; index < target.captureTypes.size(); ++index)
@@ -659,17 +654,15 @@ private:
       callee = session.abi().declareFunction(target->id);
     } else {
       const auto address =
-          constructor  ? MirBodyAddress{MirBodyKind::Constructor, *constructor}
-          : lambdaTarget
-              ? MirBodyAddress{MirBodyKind::Lambda, lambdaTarget->id}
-              : *instruction.bodyTarget;
+          constructor ? MirBodyAddress{MirBodyKind::Constructor, *constructor}
+          : lambdaTarget ? MirBodyAddress{MirBodyKind::Lambda, lambdaTarget->id}
+                         : *instruction.bodyTarget;
       signature = bodyAbi(address);
       callee = findFunction(address);
     }
-    const auto &resultType =
-        target        ? target->returnType
-        : lambdaTarget ? lambdaTarget->returnType
-                       : instruction.info.type;
+    const auto &resultType = target         ? target->returnType
+                             : lambdaTarget ? lambdaTarget->returnType
+                                            : instruction.info.type;
     llvm::Value *resultSlot = nullptr;
     if (signature.resultDestination) {
       llvm::IRBuilder<> entry(&function.getEntryBlock(),
@@ -1402,8 +1395,7 @@ void Bodies::body(MirBodyAddress address) {
     receiverType = lambda->type;
   Body emission(
       session, failures, lifetimes, threadLocals, *function(address), address,
-      input,
-      plan, parameters.lanes, parameters.packs, globals, callables,
+      input, plan, parameters.lanes, parameters.packs, globals, callables,
       [&](MirBodyAddress target) { return function(target); },
       [&](MirBodyAddress target) { return signature(target); }, classOwner,
       lambda, std::move(receiverType));

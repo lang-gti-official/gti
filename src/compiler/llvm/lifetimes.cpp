@@ -5,8 +5,7 @@ namespace lang::native_llvm {
 Lifetimes::Lifetimes(Session &session, Failures &failures, FindBody findBody)
     : session(session), failures(failures), findBody(std::move(findBody)) {}
 
-const MirLambdaInstance &
-Lifetimes::lambda(const SemanticType &type) const {
+const MirLambdaInstance &Lifetimes::lambda(const SemanticType &type) const {
   const MirLambdaInstance *result = nullptr;
   for (const auto &candidate : session.program().mir().lambdaInstances())
     if (candidate.type == type) {
@@ -78,8 +77,7 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
   } else if (type.kind == SemanticType::Lambda) {
     const auto &owner = lambda(type);
     if (owner.captureTypes.size() != owner.captureModes.size() ||
-        owner.captureTypes.size() !=
-            owner.captureRequiresActiveCleanup.size())
+        owner.captureTypes.size() != owner.captureRequiresActiveCleanup.size())
       throw std::logic_error(
           "LLVM lambda move state lost its sealed capture facts");
     for (std::size_t index = 0; index < owner.captureTypes.size(); ++index) {
@@ -90,9 +88,10 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
         continue;
       }
       if (needsMoveState(owner.captureTypes[index]))
-        moved(ir, ir.CreateStructGEP(storage, address,
-                                     static_cast<unsigned>(index)),
-              owner.captureTypes[index]);
+        moved(
+            ir,
+            ir.CreateStructGEP(storage, address, static_cast<unsigned>(index)),
+            owner.captureTypes[index]);
     }
   }
   ir.CreateRetVoid();
@@ -104,8 +103,7 @@ bool Lifetimes::needsMoveState(const SemanticType &type) const {
   if (type.kind == SemanticType::Lambda) {
     const auto &owner = lambda(type);
     if (owner.captureTypes.size() != owner.captureModes.size() ||
-        owner.captureTypes.size() !=
-            owner.captureRequiresActiveCleanup.size())
+        owner.captureTypes.size() != owner.captureRequiresActiveCleanup.size())
       throw std::logic_error(
           "LLVM lambda move state lost its sealed capture facts");
     for (std::size_t index = 0; index < owner.captureTypes.size(); ++index) {
@@ -234,10 +232,9 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
     const auto &owner = lambda(recipe.type);
     if (recipe.type.kind != SemanticType::Lambda ||
         owner.id != *recipe.lambdaInstance || recipe.classInstance ||
-        recipe.destructor || owner.captureTypes.size() !=
-                                 owner.captureModes.size() ||
-        owner.captureTypes.size() !=
-            owner.captureRequiresActiveCleanup.size())
+        recipe.destructor ||
+        owner.captureTypes.size() != owner.captureModes.size() ||
+        owner.captureTypes.size() != owner.captureRequiresActiveCleanup.size())
       throw std::logic_error(
           "LLVM closure cleanup lost its sealed lambda identity");
 
@@ -261,8 +258,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
             "LLVM closure cleanup lost an exact owned capture projection");
       child(selected,
             ir.CreateStructGEP(session.layouts().get(recipe.type).storage,
-                               address,
-                               static_cast<unsigned>(expected[step])));
+                               address, static_cast<unsigned>(expected[step])));
     }
   } else {
     if (recipe.type.kind == SemanticType::Lambda)

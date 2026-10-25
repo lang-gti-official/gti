@@ -3,6 +3,7 @@
 #include "gti/lowered_program_builder.h"
 
 #include "../src/compiler/llvm/coverage.h"
+#include "../src/compiler/llvm/parameter_packs.h"
 #include "../src/compiler/llvm/placement.h"
 
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 namespace {
 
@@ -22,6 +24,55 @@ void expect(bool condition, std::string_view message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+
+void testConcreteParameterPackPlan() {
+  using lang::SemanticType;
+  SemanticType pack = SemanticType::Unknown;
+  pack.kind = SemanticType::TypePack;
+  pack.concretePack = true;
+  pack.arguments = {SemanticType::Bool, SemanticType::Double};
+  const auto prefix = [&](std::vector<SemanticType> parameters,
+                          std::vector<lang::HirBindingId> bindings,
+                          lang::HirBindingId binding,
+                          const SemanticType &type) {
+    return lang::native_llvm::concretePackPrefix(parameters, bindings, binding,
+                                                 type);
+  };
+
+  expect(prefix({SemanticType::Int32, pack}, {1, 3}, 3, pack) == 1,
+         "source parameter packs retain one exact trailing ABI boundary");
+  expect(prefix({SemanticType::Int32, SemanticType::Bool, SemanticType::Double},
+                {1, 3}, 3, pack) == 1,
+         "expanded parameter types can retain one source-level pack binding");
+  expect(prefix({SemanticType::Int32, SemanticType::Bool, SemanticType::Double},
+                {1, 3, 0}, 3, pack) == 1,
+         "expanded parameter lanes retain a verified pack continuation");
+
+  SemanticType empty = pack;
+  empty.arguments.clear();
+  expect(prefix({SemanticType::Int32}, {1, 3}, 3, empty) == 1,
+         "an empty pack keeps its source binding without adding an ABI lane");
+  expect(
+      !prefix({SemanticType::Int32, SemanticType::Double, SemanticType::Bool},
+              {1, 3}, 3, pack),
+      "pack mapping rejects reordered concrete lanes");
+  expect(
+      !prefix({SemanticType::Int32, SemanticType::Bool, SemanticType::Double},
+              {1, 0, 3}, 3, pack),
+      "pack mapping rejects ambiguous zero bindings before the pack");
+  expect(!prefix({pack, SemanticType::Int32}, {3, 1}, 3, pack),
+         "pack mapping rejects a non-trailing source pack");
+  SemanticType symbolic = pack;
+  symbolic.concretePack = false;
+  expect(!prefix({SemanticType::Int32, symbolic}, {1, 3}, 3, symbolic),
+         "pack mapping rejects symbolic packs");
+  SemanticType nested = pack;
+  nested.arguments = {pack};
+  expect(!prefix({pack}, {3}, 3, nested),
+         "pack mapping rejects nested concrete packs");
+  expect(!prefix({SemanticType::Int32}, {1, 0}, 3, empty),
+         "empty pack mapping rejects an inconsistent zero-lane binding");
 }
 
 void testPlacementPlan() {
@@ -270,10 +321,10 @@ void testShapeWitnesses() {
 int dormant(int value) { return value * 3; }
 int main() { auto function = [](int value) -> int { return value; }; return function(0); }
 )"));
-  expect(
-      indirect.closure() == lang::LlvmAdmissionClosure::AllExecutableBodies &&
-          !indirect.admitted(),
-      "unknown callable dispatch conservatively retains all executable bodies");
+  expect(indirect.closure() ==
+                 lang::LlvmAdmissionClosure::SealedEntryDependencies &&
+             indirect.admitted(),
+         "sealed lambda dispatch retains its exact executable body dependency");
   const auto arrays = lang::planLlvmAdmission(lower(R"(
 int main() { mut int values[2] = {1, 2}; return values[0] - 1; }
 )"));
@@ -394,6 +445,7 @@ int main() { Pinned value{}; return 0; }
 
 int main() {
   try {
+    testConcreteParameterPackPlan();
     testLedger();
     testSnapshotAndWholeProgram();
     testShapeWitnesses();

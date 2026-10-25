@@ -28,7 +28,7 @@ Places::Key Places::key(const MirPlace &place) {
           : place.root == MirPlaceRootKind::Symbol    ? place.symbol
           : place.root == MirPlaceRootKind::Loan      ? place.loan
                                                       : place.value,
-          place.root == MirPlaceRootKind::Binding ? place.symbol
+          place.root == MirPlaceRootKind::Binding  ? place.symbol
           : place.root == MirPlaceRootKind::Symbol ? place.capture
                                                    : 0};
 }
@@ -38,8 +38,7 @@ llvm::Value *Places::slot(llvm::Type *type) {
       ir.GetInsertBlock()->getParent()->getEntryBlock().begin());
   return entry.CreateAlloca(type);
 }
-std::optional<std::size_t>
-Places::packElement(const MirPlace &place) const {
+std::optional<std::size_t> Places::packElement(const MirPlace &place) const {
   if (place.root != MirPlaceRootKind::Binding || place.projections.empty() ||
       place.projections.front().kind != MirProjectionKind::PackElement ||
       !place.projections.front().constantIndex)
@@ -47,8 +46,8 @@ Places::packElement(const MirPlace &place) const {
   const auto found = packParameters.find(place.binding);
   if (found == packParameters.end())
     return std::nullopt;
-  const auto index = static_cast<std::size_t>(
-      *place.projections.front().constantIndex);
+  const auto index =
+      static_cast<std::size_t>(*place.projections.front().constantIndex);
   if (index >= found->second.arguments.size())
     throw std::logic_error(
         "LLVM PackElement projection exceeds its concrete parameter pack");
@@ -56,8 +55,7 @@ Places::packElement(const MirPlace &place) const {
       body.places.begin(), body.places.end(), [&](const MirPlace &candidate) {
         return candidate.root == MirPlaceRootKind::Binding &&
                candidate.binding == place.binding &&
-               candidate.projections.empty() &&
-               candidate.type == found->second;
+               candidate.projections.empty() && candidate.type == found->second;
       });
   if (root == body.places.end())
     throw std::logic_error(
@@ -199,8 +197,7 @@ void Places::parameter(const ParameterLane &lane, llvm::Value *argument,
       store(indirect ? load(argument, lane.type) : argument, root.address,
             lane.type);
     }
-    if (!packElements
-             .emplace(std::pair(lane.binding, *lane.packElement), root)
+    if (!packElements.emplace(std::pair(lane.binding, *lane.packElement), root)
              .second)
       throw std::logic_error("LLVM concrete pack ABI lane is duplicated");
     for (const auto &entry : body.loans) {
@@ -316,9 +313,8 @@ llvm::Value *Places::address(MirPlaceId id) {
   const Root selected =
       element ? packElements.at({place.binding, *element}) : root(place);
   auto [address, type] = selected;
-  const auto projections =
-      element ? std::span(place.projections).subspan(1)
-              : std::span(place.projections);
+  const auto projections = element ? std::span(place.projections).subspan(1)
+                                   : std::span(place.projections);
   for (const auto &projection : projections) {
     switch (projection.kind) {
     case MirProjectionKind::Field: {

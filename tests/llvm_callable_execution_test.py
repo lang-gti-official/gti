@@ -18,13 +18,23 @@ SUCCESS_CASES = (
     "llvm_callable_ref",
     "llvm_callable_owned",
     "function_item_pack_contracts",
+    "lambda_pack_invocation",
+    "nested_callable_results",
+    "issue_117_nested_lambda",
 )
+LLVM_ONLY_SUCCESS_CASES = ("llvm_callable_wrapper",)
 FAILURE_CASES = {
     "llvm_callable_failure": ("GTI-R0017", "later callable argument failed"),
     "llvm_callable_pointer_failure": ("GTI-R0002", "division_by_zero"),
     "llvm_callable_cleanup_failure": (
         "GTI-R0017",
         "callable capture cleanup failed",
+    ),
+}
+LLVM_ONLY_FAILURE_CASES = {
+    "llvm_callable_wrapper_failure": (
+        "GTI-R0017",
+        "later callable wrapper initializer failed",
     ),
 }
 ENDPOINTS = (
@@ -34,12 +44,20 @@ ENDPOINTS = (
     Endpoint("llvm", "O2"),
     Endpoint("llvm", "O3"),
 )
+LLVM_ENDPOINTS = ENDPOINTS[1:]
 
 
-def run_case(gti: Path, root: Path, work: Path, name: str, env: dict[str, str]):
+def run_case(
+    gti: Path,
+    root: Path,
+    work: Path,
+    name: str,
+    env: dict[str, str],
+    endpoints=ENDPOINTS,
+):
     source = root / "tests" / "fixtures" / f"{name}.gti"
     results = []
-    for endpoint in ENDPOINTS:
+    for endpoint in endpoints:
         result = execute(
             gti,
             root,
@@ -140,12 +158,25 @@ def main() -> None:
             if any(result.observable != (0, "", "") for result in results):
                 raise AssertionError(f"{name}: execution mismatch: {results}")
 
+        for name in LLVM_ONLY_SUCCESS_CASES:
+            results = run_case(gti, root, work, name, env, LLVM_ENDPOINTS)
+            if any(result.observable != (0, "", "") for result in results):
+                raise AssertionError(f"{name}: native execution mismatch: {results}")
+
         for name, diagnostics in FAILURE_CASES.items():
             results = run_case(gti, root, work, name, env)
             oracle = results[0].observable
             if oracle[0] != 70 or any(text not in oracle[2] for text in diagnostics):
                 raise AssertionError(f"{name}: invalid production oracle: {results[0]}")
             if any(result.observable != oracle for result in results[1:]):
+                raise AssertionError(f"{name}: native failure drift: {results}")
+
+        for name, diagnostics in LLVM_ONLY_FAILURE_CASES.items():
+            results = run_case(gti, root, work, name, env, LLVM_ENDPOINTS)
+            expected = results[0].observable
+            if expected[0] != 70 or any(text not in expected[2] for text in diagnostics):
+                raise AssertionError(f"{name}: invalid native failure: {results[0]}")
+            if any(result.observable != expected for result in results[1:]):
                 raise AssertionError(f"{name}: native failure drift: {results}")
 
         rejection = root / "tests" / "fixtures" / "llvm_callable_borrow_reject.gti"

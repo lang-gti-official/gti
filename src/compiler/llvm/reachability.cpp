@@ -89,8 +89,8 @@ Reachability reachableProgram(const LoweredProgram &program) {
             cleanup(*instruction.replacementCleanup);
           if (instruction.dispatch == CallDispatch::Virtual ||
               instruction.nativeCalleeType ||
-              (instruction.callableInvocation &&
-               !instruction.lambdaTarget && !instruction.functionTarget) ||
+              (instruction.callableInvocation && !instruction.lambdaTarget &&
+               !instruction.functionTarget) ||
               instruction.nativeCallbackAdapter ||
               instruction.threadTaskAdapter ||
               !instruction.scopedThreadTasks.empty())

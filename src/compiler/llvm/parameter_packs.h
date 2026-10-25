@@ -1,7 +1,8 @@
 #pragma once
 
-#include "gti/semantic_core.h"
+#include "gti/hir.h"
 
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -12,5 +13,15 @@ namespace lang::native_llvm {
 // Symbolic, nested and non-trailing packs have no native representation.
 [[nodiscard]] std::vector<SemanticType>
 flattenConcreteParameters(std::span<const SemanticType> parameters);
+
+// Concrete instances currently retain either the source trailing TypePack or
+// already-expanded ABI lanes. Expanded owners may retain the source binding
+// list (one trailing binding for the whole pack), or assign the source binding
+// to the first lane and zero to continuation lanes. Resolve all verified forms
+// through one exact plan; an empty trailing pack has no ABI lane.
+[[nodiscard]] std::optional<std::size_t>
+concretePackPrefix(std::span<const SemanticType> parameters,
+                   std::span<const HirBindingId> bindings,
+                   HirBindingId packBinding, const SemanticType &packType);
 
 } // namespace lang::native_llvm
