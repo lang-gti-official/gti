@@ -21,7 +21,7 @@ class Bodies final {
 public:
   explicit Bodies(Session &session)
       : session(session), failures(session), dispatch(session),
-        lifetimes(session, failures,
+        lifetimes(session, failures, dispatch,
                   [&](MirBodyAddress address) { return function(address); }),
         threadLocals(
             session, failures, lifetimes,
@@ -52,11 +52,11 @@ public:
        const std::map<SymbolId, llvm::GlobalVariable *> &globals,
        std::function<llvm::Function *(MirBodyAddress)> findFunction,
        std::function<FunctionAbi(MirBodyAddress)> bodyAbi,
-       const MirClassInstance *owner)
+       const MirClassInstance *owner, const MirConstructorInstance *constructor)
       : session(session), failures(failures), dispatch(dispatch),
         function(function), input(body), abi(std::move(abi)), globals(globals),
         ir(session.context()), lifetimes(lifetimes), threadLocals(threadLocals),
-        bodyAbi(std::move(bodyAbi)), owner(owner),
+        bodyAbi(std::move(bodyAbi)), owner(owner), constructor(constructor),
         scalars(session, ir,
                 [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
                   guard(condition, outcome);
@@ -85,6 +85,7 @@ private:
   ThreadLocals &threadLocals;
   std::function<FunctionAbi(MirBodyAddress)> bodyAbi;
   const MirClassInstance *owner;
+  const MirConstructorInstance *constructor;
   Scalars scalars;
   std::function<llvm::Function *(MirBodyAddress)> findFunction;
   std::vector<llvm::Value *> values;
@@ -462,7 +463,8 @@ private:
     auto *address = memory.address(
         instruction.destination.value_or(obligation ? obligation->place : 0));
     auto *status = ir.CreateCall(
-        lifetimes.cleanup(*recipe),
+        lifetimes.cleanup(*recipe, instruction.kind ==
+                                       MirInstructionKind::CleanupBeforeAssign),
         {address, channel, ir.getInt1(current->activeFailure != 0)});
     if (checked) {
       auto *bad =
@@ -663,6 +665,23 @@ private:
       store(result, memory.address(place.id), place.type);
       break;
     }
+    case MirInstructionKind::InitializeBase: {
+      if (!constructor || !instruction.destination ||
+          !instruction.constructorTarget)
+        throw BackendUnsupportedError(
+            "LLVM base initialization requires its exact selected constructor "
+            "and destination");
+      auto *target = memory.address(*instruction.destination);
+      lifetimes.active(ir, target, instruction.info.type, false);
+      static_cast<void>(call(instruction, target));
+      // call() leaves IR on the existing normal continuation. A failed base
+      // retains its own phase and cannot install any derived dispatch state.
+      if (constructor->dispatchState &&
+          constructor->dispatchState->afterBaseInitialization == instruction.id)
+        dispatch.install(ir, thisAddress,
+                         constructor->dispatchState->activeClass);
+      break;
+    }
     case MirInstructionKind::Construct: {
       auto *target = destination(*instruction.result);
       lifetimes.active(ir, target, instruction.info.type, false);
@@ -858,6 +877,11 @@ private:
   }
 
   void emit(std::span<const HirBindingId> parameters) {
+    if (constructor && owner && owner->polymorphic &&
+        (!constructor->dispatchState ||
+         constructor->definitionKind != MirDefinitionKind::Source))
+      throw BackendUnsupportedError("LLVM polymorphic construction requires "
+                                    "its verified active-class schedule");
     auto *entry =
         llvm::BasicBlock::Create(session.context(), "entry", &function);
     ir.SetInsertPoint(entry);
@@ -900,6 +924,10 @@ private:
     }
     for (const auto &record : input.failureRecords)
       channels.at(record.id) = ir.CreateAlloca(session.abi().failureChannel());
+    if (constructor && constructor->dispatchState &&
+        constructor->dispatchState->afterBaseInitialization == 0)
+      dispatch.install(ir, thisAddress,
+                       constructor->dispatchState->activeClass);
     // A constructor's entry Stored loans are the sealed field-publication
     // contract. Their referent address, not the Load of its scalar contents,
     // initializes the physical reference field.
@@ -1050,7 +1078,10 @@ void Bodies::body(MirBodyAddress address) {
       session, failures, dispatch, lifetimes, threadLocals, *function(address),
       input, plan, parameters, globals,
       [&](MirBodyAddress target) { return function(target); },
-      [&](MirBodyAddress target) { return signature(target); }, owner(address));
+      [&](MirBodyAddress target) { return signature(target); }, owner(address),
+      address.kind == MirBodyKind::Constructor
+          ? session.program().mir().findConstructorInstance(address.owner)
+          : nullptr);
 }
 void Bodies::lower(const LlvmAdmissionPlan &admission) {
   threadLocals.allocate(globals);

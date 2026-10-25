@@ -4415,10 +4415,34 @@ the original MIR Invoke failure edge and success-only result publication.
 Direct member calls project an exact base path; inverse receiver presentation
 is limited to the shared verified exact-receiver proof and readonly access.
 No source overload/override selection or general downcast is reconstructed.
-Private tests inspect this wiring independently of public admission. Lifecycle
-installation and transfer-state preservation remain pending, so these helpers
-do not yet admit production LLVM virtual dispatch or establish native execution
-coverage.
+Private tests inspect this wiring independently of public admission.
+
+Source constructor bodies consume the verified constructor dispatch-state
+schedule: entry activation when there is no state-bearing base, or activation
+on the exact `InitializeBase` normal continuation. Base calls use the selected
+constructor, physical destination and current shared ABI; a failed base never
+installs derived state. MIR retains all base/subobject rollback publication and
+ordering. Unstaged polymorphic source constructors remain unsupported.
+
+Static destruction recipes install their selected class state before observable
+source/child cleanup only when an existing source-destructor active byte in the
+exact recipe tree witnesses remaining observable work. The predicate is not
+object liveness: entry is already guarded by a completed object/subobject
+obligation. It follows only sealed field/base/fixed-array addresses, with no
+owner/raw-pointer traversal. A cleared own flag cannot hide live children; an
+all-inert shell suppresses header stores but still performs its original guarded
+cleanup. Trivial children omitted by MIR do not acquire invented lifetime state.
+Array descriptor destructor IDs summarize leaf effects, not an array-owned
+active byte. Helpers short-circuit at the first armed source destructor and use
+bounded native loops rather than code expansion per array extent. Source order,
+first/secondary-failure handling and aggregate draining are unchanged.
+
+Polymorphic replacement cleanup remains explicitly rejected: its invocation
+context must establish the receiver-state policy without inferring destruction
+from reuse of a drop recipe. Dynamic owning cleanup, generated-empty
+construction, transfer/assignment-state preservation and observable pure phases
+remain separate obligations. These private prerequisites do not yet admit
+production LLVM virtual dispatch or establish native execution coverage.
 
 `Abi` centralizes signatures for definitions, calls and future adapters:
 

@@ -1,9 +1,158 @@
 #include "lifetimes.h"
 
+#include <algorithm>
+
 namespace lang::native_llvm {
 
-Lifetimes::Lifetimes(Session &session, Failures &failures, FindBody findBody)
-    : session(session), failures(failures), findBody(std::move(findBody)) {}
+Lifetimes::Lifetimes(Session &session, Failures &failures, Dispatch &dispatch,
+                     FindBody findBody)
+    : session(session), failures(failures), dispatch(dispatch),
+      findBody(std::move(findBody)) {}
+
+void Lifetimes::preflight(const MirDropType &recipe, bool replacement) const {
+  std::vector<HirClassInstanceId> path;
+  const auto visit = [&](const auto &self,
+                         const MirDropType &selected) -> void {
+    if (selected.polymorphicCleanup || selected.recursiveCleanup ||
+        selected.uniquePointeeClass || selected.lambdaInstance ||
+        selected.payloadVariant || selected.captureIndex ||
+        selected.payloadField)
+      throw BackendUnsupportedError(
+          "LLVM cleanup requires its later ownership/dispatch milestone");
+    if (selected.type.kind == SemanticType::Class) {
+      const auto &owner = session.layouts().instance(selected.type);
+      if (selected.classInstance != owner.id ||
+          std::find(path.begin(), path.end(), owner.id) != path.end())
+        throw std::logic_error(
+            "LLVM static cleanup lost its finite class identity");
+      if (replacement && owner.polymorphic)
+        throw BackendUnsupportedError("LLVM polymorphic replacement requires a "
+                                      "verified cleanup dispatch context");
+      path.push_back(owner.id);
+    } else if (selected.requiresActiveCleanup &&
+               selected.type.kind != SemanticType::Array) {
+      throw BackendUnsupportedError(
+          "LLVM static cleanup requires addressable class/array recipes");
+    }
+    // fixedArray.destructor summarizes its leaf effect inventory; it is not
+    // a source destructor/active byte belonging to the array storage itself.
+    if (selected.destructor && !selected.fixedArray) {
+      const auto *target =
+          session.program().mir().findDestructorInstance(*selected.destructor);
+      if (!target || target->owner != selected.classInstance ||
+          !session.layouts().activeIndex(selected.type))
+        throw std::logic_error(
+            "LLVM static destructor lost its exact active-state witness");
+    }
+    if (selected.requiresActiveCleanup &&
+        selected.type.kind == SemanticType::Array && !selected.fixedArray)
+      throw BackendUnsupportedError(
+          "LLVM array cleanup requires its exact fixed-array schedule");
+    if (selected.fixedArray) {
+      if (selected.type.kind != SemanticType::Array ||
+          selected.aggregate.size() > 1 ||
+          (selected.aggregate.empty() && selected.requiresActiveCleanup))
+        throw std::logic_error(
+            "LLVM array cleanup lost its sealed element recipe");
+    } else if (!selected.aggregate.empty() &&
+               selected.type.kind != SemanticType::Class) {
+      throw BackendUnsupportedError(
+          "LLVM static cleanup requires its exact aggregate representation");
+    }
+    for (const auto &child : selected.aggregate) {
+      if (!selected.fixedArray) {
+        if (child.uniqueOwnerField)
+          static_cast<void>(session.layouts().fieldIndex(
+              selected.type, child.uniqueOwnerField));
+        else if (child.uniqueOwnerBase)
+          static_cast<void>(session.layouts().baseIndex(
+              selected.type, *child.uniqueOwnerBase));
+        else
+          throw BackendUnsupportedError(
+              "LLVM cleanup subobject requires its later capability milestone");
+      }
+      self(self, child);
+    }
+    if (selected.type.kind == SemanticType::Class)
+      path.pop_back();
+  };
+  visit(visit, recipe);
+}
+
+llvm::Function *Lifetimes::cleanupObservation(const MirDropType &recipe) {
+  for (const auto &[previous, function] : observations)
+    if (previous == recipe)
+      return function;
+  auto *function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getInt1Ty(session.context()),
+                              {session.layouts().pointer()}, false),
+      llvm::GlobalValue::InternalLinkage,
+      "__gti_native_cleanup_observation_" + std::to_string(observations.size()),
+      session.module());
+  observations.emplace_back(recipe, function);
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", function));
+  auto *address = function->getArg(0);
+  // This is NOT an object-liveness predicate. Its caller already owns a
+  // completed object/subobject obligation. False suppresses only header stores;
+  // the original guarded bodies and complete child cleanup still run.
+  if (!recipe.requiresActiveCleanup) {
+    ir.CreateRet(ir.getFalse());
+    return function;
+  }
+  auto *observed =
+      llvm::BasicBlock::Create(session.context(), "observed", function);
+  llvm::IRBuilder<>(observed).CreateRet(ir.getTrue());
+  const auto witness = [&](llvm::Value *value) {
+    auto *next = llvm::BasicBlock::Create(session.context(), "next", function);
+    ir.CreateCondBr(value, observed, next);
+    ir.SetInsertPoint(next);
+  };
+  if (recipe.destructor && !recipe.fixedArray) {
+    const auto index = *session.layouts().activeIndex(recipe.type);
+    auto *state = ir.CreateStructGEP(session.layouts().get(recipe.type).storage,
+                                     address, index);
+    witness(
+        ir.CreateICmpNE(ir.CreateLoad(ir.getInt8Ty(), state), ir.getInt8(0)));
+  }
+  if (recipe.fixedArray) {
+    const auto count = recipe.type.arrayLength;
+    if (count && !recipe.aggregate.empty()) {
+      auto *entry = ir.GetInsertBlock();
+      auto *loop =
+          llvm::BasicBlock::Create(session.context(), "elements", function);
+      auto *done =
+          llvm::BasicBlock::Create(session.context(), "done", function);
+      ir.CreateBr(loop);
+      ir.SetInsertPoint(loop);
+      auto *index = ir.CreatePHI(ir.getInt64Ty(), 2);
+      index->addIncoming(ir.getInt64(0), entry);
+      auto *element = ir.CreateGEP(session.layouts().get(recipe.type).storage,
+                                   address, {ir.getInt64(0), index});
+      witness(ir.CreateCall(cleanupObservation(recipe.aggregate.front()),
+                            {element}));
+      auto *next = ir.CreateAdd(index, ir.getInt64(1));
+      index->addIncoming(next, ir.GetInsertBlock());
+      ir.CreateCondBr(ir.CreateICmpULT(next, ir.getInt64(count)), loop, done);
+      ir.SetInsertPoint(done);
+    }
+  } else {
+    for (const auto &child : recipe.aggregate) {
+      if (!child.requiresActiveCleanup)
+        continue;
+      const auto index = child.uniqueOwnerField
+                             ? session.layouts().fieldIndex(
+                                   recipe.type, child.uniqueOwnerField)
+                             : session.layouts().baseIndex(
+                                   recipe.type, *child.uniqueOwnerBase);
+      auto *where = ir.CreateStructGEP(
+          session.layouts().get(recipe.type).storage, address, index);
+      witness(ir.CreateCall(cleanupObservation(child), {where}));
+    }
+  }
+  ir.CreateRet(ir.getFalse());
+  return function;
+}
 
 void Lifetimes::active(llvm::IRBuilder<> &ir, llvm::Value *address,
                        const SemanticType &type, bool value) {
@@ -87,15 +236,12 @@ void Lifetimes::moved(llvm::IRBuilder<> &ir, llvm::Value *address,
     ir.CreateCall(moveHelper(type), {address});
 }
 
-llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
+llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
+                                   bool replacement) {
+  preflight(recipe, replacement);
   for (const auto &[previous, function] : cleanups)
     if (previous == recipe)
       return function;
-  if (recipe.polymorphicCleanup || recipe.recursiveCleanup ||
-      recipe.uniquePointeeClass || recipe.lambdaInstance ||
-      recipe.payloadVariant)
-    throw BackendUnsupportedError(
-        "LLVM cleanup requires its later ownership/dispatch milestone");
   auto *pointer = session.layouts().pointer();
   auto *function = llvm::Function::Create(
       llvm::FunctionType::get(
@@ -113,6 +259,20 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
   auto *failed = ir.CreateAlloca(ir.getInt1Ty());
   auto *scratch = ir.CreateAlloca(session.abi().failureChannel());
   ir.CreateStore(ir.getFalse(), failed);
+
+  if (recipe.requiresActiveCleanup && recipe.classInstance &&
+      session.layouts().instance(recipe.type).polymorphic) {
+    auto *install = llvm::BasicBlock::Create(session.context(),
+                                             "dispatch.install", function);
+    auto *ready =
+        llvm::BasicBlock::Create(session.context(), "dispatch.ready", function);
+    ir.CreateCondBr(ir.CreateCall(cleanupObservation(recipe), {address}),
+                    install, ready);
+    ir.SetInsertPoint(install);
+    dispatch.install(ir, address, *recipe.classInstance);
+    ir.CreateBr(ready);
+    ir.SetInsertPoint(ready);
+  }
 
   // Save the first normal-cleanup failure, drain remaining children, and stop
   // immediately on a second failure. A caller already unwinding owns its first

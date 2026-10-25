@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dispatch.h"
 #include "failure.h"
 
 #include <functional>
@@ -12,19 +13,25 @@ namespace lang::native_llvm {
 class Lifetimes final {
 public:
   using FindBody = std::function<llvm::Function *(MirBodyAddress)>;
-  Lifetimes(Session &session, Failures &failures, FindBody findBody);
+  Lifetimes(Session &session, Failures &failures, Dispatch &dispatch,
+            FindBody findBody);
   void active(llvm::IRBuilder<> &ir, llvm::Value *address,
               const SemanticType &type, bool value);
   void moved(llvm::IRBuilder<> &ir, llvm::Value *address,
              const SemanticType &type);
-  [[nodiscard]] llvm::Function *cleanup(const MirDropType &recipe);
+  [[nodiscard]] llvm::Function *cleanup(const MirDropType &recipe,
+                                        bool replacement = false);
 
 private:
   Session &session;
   Failures &failures;
+  Dispatch &dispatch;
   FindBody findBody;
   std::vector<std::pair<MirDropType, llvm::Function *>> cleanups;
   std::map<llvm::Type *, llvm::Function *> moves;
+  std::vector<std::pair<MirDropType, llvm::Function *>> observations;
+  void preflight(const MirDropType &recipe, bool replacement) const;
+  [[nodiscard]] llvm::Function *cleanupObservation(const MirDropType &recipe);
   [[nodiscard]] bool needsMoveState(const SemanticType &type) const;
   [[nodiscard]] llvm::Function *moveHelper(const SemanticType &type);
 };

@@ -1,5 +1,6 @@
 #include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/dispatch.h"
+#include "../src/compiler/llvm/lifetimes.h"
 #include "../src/compiler/llvm/places.h"
 #include "cpp_backend_test_support.h"
 
@@ -11,8 +12,10 @@
 #include <stdexcept>
 #include <string_view>
 
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Operator.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/Passes/PassBuilder.h>
 
 namespace {
 using namespace lang;
@@ -648,6 +651,301 @@ int via(Reader& value) { return value.read(); }
   session.verify();
 }
 
+void testStaticLifecycle() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend =
+      Frontend().analyze(root / "tests/fixtures/llvm_dispatch_lifecycle.gti");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "static lifecycle source verifies");
+    return;
+  }
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!input)
+    throw std::runtime_error("static lifecycle source seal failed");
+  Session session(*input, {});
+  const auto admission = planLlvmAdmission(*input);
+  expect(!admission.admitted(),
+         "static lifecycle IR does not widen public admission");
+  // Private component inspection only: no object/executable publication and no
+  // native O10 coverage claim. The original rejected admission is unchanged.
+  lowerScalarProgram(session, admission);
+  const auto nativeBody = [&](MirBodyAddress address) {
+    auto *function = session.module().getFunction(
+        "__gti_native_v1_body_" +
+        std::to_string(static_cast<unsigned>(address.kind)) + "_" +
+        std::to_string(address.owner));
+    if (!function)
+      throw std::runtime_error("static lifecycle test lost its native body");
+    return function;
+  };
+  const auto isTableStore = [](const llvm::Instruction &operation) {
+    const auto *store = llvm::dyn_cast<llvm::StoreInst>(&operation);
+    const auto *table = store
+                            ? llvm::dyn_cast<llvm::GlobalVariable>(
+                                  store->getValueOperand()->stripPointerCasts())
+                            : nullptr;
+    return table && table->getName().starts_with("__gti_dispatch_table_");
+  };
+  const auto &base = named(session.program(), "Base");
+  const auto &derived = named(session.program(), "Derived");
+  const auto &container = named(session.program(), "Container");
+  expect(session.layouts().baseSubobject(derived.type, base.type).offset != 0,
+         "lifecycle fixture retains two interface views before its physical "
+         "state base");
+  bool entry = false, afterBase = false, rollback = false;
+  for (const auto &constructor :
+       session.program().mir().constructorInstances()) {
+    if (!constructor.dispatchState)
+      continue;
+    auto *function = nativeBody({MirBodyKind::Constructor, constructor.id});
+    for (const auto &block : *function)
+      for (const auto &operation : block) {
+        if (!isTableStore(operation))
+          continue;
+        if (constructor.owner == base.id) {
+          entry = true;
+          expect(&block == &function->getEntryBlock(),
+                 "root constructor installs state at its verified entry");
+        }
+        if (constructor.owner == derived.id) {
+          afterBase = true;
+          expect(block.getName().starts_with("call.success"),
+                 "derived state is installed only on successful base "
+                 "construction");
+          const auto *predecessor = block.getSinglePredecessor();
+          expect(
+              predecessor &&
+                  predecessor->getTerminator()->getNumSuccessors() == 2 &&
+                  predecessor->getTerminator()->getSuccessor(0) == &block,
+              "the failed base edge cannot enter derived state installation");
+        }
+      }
+    if (constructor.owner == derived.id)
+      for (const auto &obligation : constructor.body.dropObligations)
+        if (obligation.kind == MirDropObligationKind::ConstructionRollback &&
+            obligation.dropType.classInstance == base.id) {
+          rollback = true;
+          expect(
+              !obligation.initiallyActive,
+              "base rollback remains inactive before successful publication");
+        }
+  }
+  expect(entry && afterBase && rollback,
+         "static lifecycle inspection covers entry, base success and exact "
+         "rollback");
+  const auto recipeFor = [&](HirClassInstanceId owner) -> const MirDropType & {
+    for (const auto &function : session.program().mir().functionInstances())
+      for (const auto &obligation : function.body.dropObligations)
+        if (obligation.dropType.classInstance == owner)
+          return obligation.dropType;
+    throw std::runtime_error(
+        "static lifecycle test lost its complete drop recipe");
+  };
+  Dispatch dispatch(session);
+  Failures failureChannel(session);
+  Lifetimes lifetimes(session, failureChannel, dispatch, nativeBody);
+  const auto &recipe = recipeFor(derived.id);
+  auto *cleanup = lifetimes.cleanup(recipe);
+  llvm::Function *observation = nullptr;
+  llvm::DominatorTree dominance(*cleanup);
+  bool guardedStore = false;
+  for (const auto &block : *cleanup)
+    for (const auto &operation : block) {
+      if (const auto *call = llvm::dyn_cast<llvm::CallInst>(&operation);
+          call && call->getCalledFunction() &&
+          call->getCalledFunction()->getName().starts_with(
+              "__gti_native_cleanup_observation_"))
+        observation = call->getCalledFunction();
+      if (isTableStore(operation)) {
+        guardedStore = true;
+        expect(
+            block.getName() == "dispatch.install" &&
+                dominance.dominates(&cleanup->getEntryBlock(), &block),
+            "cleanup header stores are isolated behind the observation branch");
+      }
+    }
+  expect(observation && guardedStore,
+         "static cleanup has a representation-only observation guard");
+  const auto *entryBranch = cleanup->getEntryBlock().getTerminator();
+  expect(entryBranch && entryBranch->getNumSuccessors() == 2 &&
+             entryBranch->getSuccessor(0)->getName() == "dispatch.install" &&
+             entryBranch->getSuccessor(1)->getName() == "dispatch.ready" &&
+             llvm::isa<llvm::CallInst>(entryBranch->getOperand(0)) &&
+             llvm::cast<llvm::CallInst>(entryBranch->getOperand(0))
+                     ->getCalledFunction() == observation,
+         "only the true cleanup-observation edge can write dispatch headers");
+  const auto functionsBeforeRejection = session.module().size();
+  rejects<BackendUnsupportedError>(
+      [&] { static_cast<void>(lifetimes.cleanup(recipe, true)); },
+      "polymorphic replacement cannot silently adopt destruction-phase "
+      "dispatch");
+  auto excluded = recipe;
+  excluded.polymorphicCleanup = true;
+  rejects<BackendUnsupportedError>(
+      [&] { static_cast<void>(lifetimes.cleanup(excluded)); },
+      "dynamic owner cleanup remains independently gated");
+  excluded = recipe;
+  excluded.recursiveCleanup = true;
+  rejects<BackendUnsupportedError>(
+      [&] { static_cast<void>(lifetimes.cleanup(excluded)); },
+      "unknown recursive cleanup cannot become a false observation witness");
+  expect(session.module().size() == functionsBeforeRejection,
+         "excluded recipes reject before creating cleanup helpers, including "
+         "cached replacements");
+  const auto &containerRecipe = recipeFor(container.id);
+  auto *containerCleanup = lifetimes.cleanup(containerRecipe);
+  llvm::Function *containerObservation = nullptr;
+  for (const auto &operation : containerCleanup->getEntryBlock())
+    if (const auto *call = llvm::dyn_cast<llvm::CallInst>(&operation);
+        call && call->getCalledFunction() &&
+        call->getCalledFunction()->getName().starts_with(
+            "__gti_native_cleanup_observation_"))
+      containerObservation = call->getCalledFunction();
+  expect(
+      containerObservation && !containerRecipe.destructor,
+      "a parent without its own destructor still observes exact live children");
+  const auto trivial = std::find_if(
+      containerRecipe.aggregate.begin(), containerRecipe.aggregate.end(),
+      [&](const auto &child) {
+        return child.classInstance == named(session.program(), "Trivial").id;
+      });
+  expect(trivial == containerRecipe.aggregate.end() &&
+             !named(session.program(), "Trivial").requiresActiveCleanup,
+         "the sealed recipe omits a live trivial polymorphic child rather than "
+         "inventing its liveness");
+  for (const auto &function : session.module())
+    if (function.getName().starts_with("__gti_native_cleanup_observation_"))
+      for (const auto &block : function)
+        for (const auto &operation : block) {
+          expect(!llvm::isa<llvm::StoreInst>(operation),
+                 "observation helpers never change liveness or object state");
+          if (const auto *load = llvm::dyn_cast<llvm::LoadInst>(&operation))
+            expect(load->getType()->isIntegerTy(8),
+                   "observation reads only source-destructor active bytes, "
+                   "never dispatch pointers");
+        }
+  bool guardedDrop = false, failureDrain = false;
+  for (const auto &function : session.module())
+    for (const auto &block : function)
+      for (const auto &operation : block)
+        if (const auto *call = llvm::dyn_cast<llvm::CallInst>(&operation);
+            call && call->getCalledFunction() &&
+            call->getCalledFunction()->getName().starts_with(
+                "__gti_native_cleanup_") &&
+            !call->getCalledFunction()->getName().starts_with(
+                "__gti_native_cleanup_observation_")) {
+          if (block.getName().starts_with("drop") &&
+              !block.getName().starts_with("drop.done")) {
+            const auto *predecessor = block.getSinglePredecessor();
+            const auto *branch =
+                predecessor ? predecessor->getTerminator() : nullptr;
+            expect(branch && branch->getNumSuccessors() == 2 &&
+                       branch->getSuccessor(0) == &block,
+                   "outer obligations guard completed-object/subobject entry "
+                   "before header access");
+            guardedDrop = true;
+          }
+          if (block.getName().starts_with("next") ||
+              block.getName() == "dispatch.ready")
+            failureDrain = true;
+        }
+  expect(guardedDrop && failureDrain,
+         "static cleanup retains obligation guards and child draining after "
+         "source cleanup");
+
+  // Constant-state IR probes check the exact generated witness truth table.
+  // This is not native execution evidence and does not publish an artifact.
+  std::vector<std::pair<std::string, bool>> probes;
+  const auto probe = [&](const MirDropType &selected, llvm::Function *predicate,
+                         std::string name, int armed, bool expected) {
+    if (!predicate)
+      return;
+    auto *function = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getInt1Ty(session.context()),
+                                false),
+        llvm::GlobalValue::ExternalLinkage, name, session.module());
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", function));
+    auto *address =
+        ir.CreateAlloca(session.layouts().get(selected.type).storage);
+    ir.CreateStore(llvm::Constant::getNullValue(
+                       session.layouts().get(selected.type).storage),
+                   address);
+    std::vector<llvm::Value *> flags;
+    const auto collect = [&](const auto &self, const MirDropType &current,
+                             llvm::Value *where) -> void {
+      if (current.destructor && !current.fixedArray)
+        flags.push_back(ir.CreateStructGEP(
+            session.layouts().get(current.type).storage, where,
+            *session.layouts().activeIndex(current.type)));
+      if (current.fixedArray) {
+        expect(current.type.arrayLength <= 2,
+               "constant-state fixture has bounded array probes");
+        for (std::size_t i = 0; i < current.type.arrayLength; ++i)
+          self(self, current.aggregate.front(),
+               ir.CreateGEP(session.layouts().get(current.type).storage, where,
+                            {ir.getInt64(0), ir.getInt64(i)}));
+      } else {
+        for (const auto &child : current.aggregate) {
+          const auto index = child.uniqueOwnerField
+                                 ? session.layouts().fieldIndex(
+                                       current.type, child.uniqueOwnerField)
+                                 : session.layouts().baseIndex(
+                                       current.type, *child.uniqueOwnerBase);
+          self(self, child,
+               ir.CreateStructGEP(session.layouts().get(current.type).storage,
+                                  where, index));
+        }
+      }
+    };
+    collect(collect, selected, address);
+    if (armed >= 0)
+      ir.CreateStore(ir.getInt8(1), flags.at(static_cast<std::size_t>(armed)));
+    ir.CreateRet(ir.CreateCall(predicate, {address}));
+    probes.emplace_back(std::move(name), expected);
+  };
+  probe(recipe, observation, "cleanup.probe.own.only", 0, true);
+  probe(recipe, observation, "cleanup.probe.child.only", 1, true);
+  probe(recipe, observation, "cleanup.probe.moved.shell", -1, false);
+  probe(containerRecipe, containerObservation, "cleanup.probe.array.child", 0,
+        true);
+  probe(containerRecipe, containerObservation, "cleanup.probe.trivial.only", -1,
+        false);
+  session.verify();
+  llvm::LoopAnalysisManager loops;
+  llvm::FunctionAnalysisManager functions;
+  llvm::CGSCCAnalysisManager cgscc;
+  llvm::ModuleAnalysisManager modules;
+  llvm::PassBuilder builder;
+  builder.registerModuleAnalyses(modules);
+  builder.registerCGSCCAnalyses(cgscc);
+  builder.registerFunctionAnalyses(functions);
+  builder.registerLoopAnalyses(loops);
+  builder.crossRegisterProxies(loops, functions, cgscc, modules);
+  auto pipeline =
+      builder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
+  pipeline.run(session.module(), modules);
+  session.verify();
+  for (const auto &[name, expected] : probes) {
+    const auto *function = session.module().getFunction(name);
+    const auto *ret = function && function->size() == 1
+                          ? llvm::dyn_cast<llvm::ReturnInst>(
+                                function->getEntryBlock().getTerminator())
+                          : nullptr;
+    const auto *constant =
+        ret ? llvm::dyn_cast<llvm::ConstantInt>(ret->getReturnValue())
+            : nullptr;
+    expect(
+        constant && constant->isOne() == expected,
+        "generated cleanup observation folds to the exact state truth table: " +
+            name);
+  }
+}
+
 void testProvedDirectReceiver() {
   const auto frontend =
       Frontend().analyze("llvm-dispatch-proved-direct.gti", std::string(R"(
@@ -1027,6 +1325,7 @@ int main() { return 0; }
   testThunks(session);
   testPureGates();
   testBodyCallHook();
+  testStaticLifecycle();
   testProvedDirectReceiver();
   return failures ? 1 : 0;
 }

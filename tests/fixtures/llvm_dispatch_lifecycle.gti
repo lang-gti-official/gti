@@ -1,0 +1,55 @@
+class Token {
+  int divisor = 1;
+public:
+  Token(int value) : divisor(value) {}
+  ~Token() { int checked = 12 / this.divisor; }
+};
+
+class Base {
+public:
+  Base(int divisor) {
+    int checked = 12 / (divisor + 1);
+    int observed = this.phase();
+  }
+  virtual int phase() { return 1; }
+  ~Base() { int observed = this.phase(); }
+};
+
+interface Side { int side(); };
+interface OtherSide { int other_side(); };
+
+class Derived : public Side, public OtherSide, public Base {
+  Token token = Token(1);
+  int quotient = 0;
+public:
+  Derived(int divisor) : Base(divisor), token(Token(divisor)), quotient(12 / divisor) {
+    int observed = this.phase();
+  }
+  int phase() override { return 2; }
+  int side() override { return 6; }
+  int other_side() override { return 7; }
+  ~Derived() { int observed = this.phase(); }
+};
+
+class Trivial {
+public:
+  Trivial() {}
+  virtual int phase() { return 4; }
+};
+
+class Container {
+  Trivial trivial = Trivial();
+  Token guard = Token(1);
+  Token guards[2] = {Token(1), Token(2)};
+public:
+  Container() : trivial(Trivial()), guard(Token(1)) {}
+  virtual int phase() { return 5; }
+};
+
+int evaluate(int divisor) {
+  Derived value{divisor};
+  Container holder{};
+  return value.phase();
+}
+
+int main() { return evaluate(2) - 2; }
