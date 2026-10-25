@@ -1676,6 +1676,9 @@ add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
 target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
 add_test(NAME llvm_target_layout_abi COMMAND gti_llvm_session_tests)
+add_test(NAME llvm_payload_unique_owner
+  COMMAND gti_llvm_session_tests --payload-unique-owner "${PROJECT_SOURCE_DIR}")
+set_tests_properties(llvm_payload_unique_owner PROPERTIES TIMEOUT 120)
 
 add_executable(gti_llvm_hosted_contract_tests llvm_hosted_contract_tests.cpp)
 target_include_directories(gti_llvm_hosted_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
@@ -1699,6 +1702,16 @@ target_link_libraries(gti_llvm_clang_coexistence_smoke PRIVATE gti_llvm_backend 
 add_test(NAME llvm_clang_coexistence COMMAND gti_llvm_clang_coexistence_smoke)
 set_tests_properties(llvm_clang_coexistence PROPERTIES TIMEOUT 30)
 
+add_executable(gti_llvm_memory_contract_tests llvm_memory_contract_tests.cpp)
+target_include_directories(gti_llvm_memory_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_memory_contract_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_memory_contracts COMMAND gti_llvm_memory_contract_tests "${PROJECT_SOURCE_DIR}")
+add_executable(gti_llvm_memory_mechanism_tests llvm_memory_mechanism_tests.cpp)
+target_include_directories(gti_llvm_memory_mechanism_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_memory_mechanism_tests PRIVATE gti_llvm_backend gti_driver)
+add_test(NAME llvm_memory_mechanisms COMMAND gti_llvm_memory_mechanism_tests)
+set_tests_properties(llvm_memory_mechanisms PROPERTIES TIMEOUT 120)
+
 if(Python3_Interpreter_FOUND)
   add_test(NAME llvm_scalar_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_scalar_execution_test.py"
@@ -1716,6 +1729,26 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_placement_execution_test.py"
                    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
   set_tests_properties(llvm_placement_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_payload_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_payload_execution_test.py"
+                   $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_payload_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_callable_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_callable_execution_test.py"
+                   "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_callable_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_callable_owned_composition
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_callable_owned_composition_test.py"
+                   "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_callable_owned_composition PROPERTIES TIMEOUT 300)
+  add_test(NAME llvm_callable_null_owner_rollback
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_callable_null_owner_rollback_test.py"
+                   "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_callable_null_owner_rollback PROPERTIES TIMEOUT 300)
+  add_test(NAME llvm_memory_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_memory_execution_test.py"
+                   $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_memory_execution PROPERTIES TIMEOUT 1200)
   add_test(NAME array_publication_lsp
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/array_publication_lsp_test.py"
                    "$<TARGET_FILE:gti_lsp>")

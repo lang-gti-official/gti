@@ -1,0 +1,9 @@
+#include <std/functional>
+
+std::function_ref<int()> invalid_view() {
+  int owner = 3;
+  auto callable = [&owner]() -> int { return owner; };
+  return std::function_ref<int()>(callable);
+}
+
+int main() { return 0; }

@@ -24,6 +24,27 @@ def main() -> None:
         result = subprocess.run(command, capture_output=True, text=True, timeout=120)
         assert result.returncode == 0, result.stderr
 
+        probe = temporary / "owner.cpp"
+        probe.write_text('''#include "coverage.h"
+int main() {
+  unsigned payloads = 0;
+  for (const auto& entry : lang::llvmCoverageLedger()) {
+    if (entry.state == lang::LlvmCoverageState::Implemented && entry.milestone == 7) {
+      if (entry.positiveTest != "llvm_payload_execution") return 1;
+      ++payloads;
+    }
+  }
+  return payloads ? 0 : 2;
+}
+''')
+        executable = temporary / "owner"
+        linked = [cxx, "-std=c++20", "-O2", "-I", str(temporary),
+                  "-I", str(root / "include"), str(temporary / "coverage.cpp"),
+                  str(probe), "-o", str(executable)]
+        result = subprocess.run(linked, capture_output=True, text=True, timeout=120)
+        assert result.returncode == 0, result.stderr
+        subprocess.run([str(executable)], check=True, timeout=15)
+
         (include / "mir.h").write_text(header.replace(
             "enum class MirTerminatorKind {", "enum class MirTerminatorKind { LlvmUnassignedRegression,", 1))
         result = subprocess.run(command, capture_output=True, text=True, timeout=120)

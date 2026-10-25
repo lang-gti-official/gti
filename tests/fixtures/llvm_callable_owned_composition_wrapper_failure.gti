@@ -1,0 +1,65 @@
+#include <std/memory>
+#include <std/panic>
+
+mut int cleanup_trace = 0;
+mut int payload_drops = 0;
+
+class Payload {
+public:
+  Payload() {}
+  ~Payload() {
+    payload_drops++;
+    cleanup_trace = cleanup_trace * 10 + 7;
+  }
+};
+
+class Marker {
+  int identity;
+public:
+  Marker(int identity) : identity(identity) {}
+  Marker(Marker& other) = delete;
+  Marker(Marker&& other) = default;
+  ~Marker() { cleanup_trace = cleanup_trace * 10 + this.identity; }
+};
+
+class Observe {
+public:
+  Observe() {}
+  ~Observe() {
+    if (cleanup_trace != 271 || payload_drops != 1)
+      std::panic("owned callable wrapper rollback drift");
+  }
+};
+
+class Later {
+public:
+  Later(int value) {}
+};
+
+int fail_later() {
+  std::panic("owned callable later initializer failed");
+  return 0;
+}
+
+class Stored<F> {
+  F callable;
+  Later later;
+public:
+  Stored(F callable)
+      : callable(std::move(callable)), later(Later(fail_later())) {}
+};
+
+Stored<F> retain<F>(F callable) {
+  return Stored<F>(std::move(callable));
+}
+
+int main() {
+  Observe observe{};
+  auto owner = std::make_shared<Payload>();
+  Marker first{1};
+  Marker second{2};
+  auto stored = retain(
+      [first = std::move(first), owner = std::move(owner),
+       second = std::move(second)]() -> int { return 0; });
+  return 0;
+}

@@ -1,0 +1,22 @@
+enum class Signal { idle, ready };
+enum Message { signal(Signal value) };
+
+Signal& read(Message& message) {
+  switch (message) {
+  case Message::signal(auto& value): return value;
+  }
+}
+
+mut Signal& edit(mut Message& message) {
+  switch (message) {
+  case Message::signal(mut auto& value): return value;
+  }
+}
+
+int main() {
+  mut Message message = Message::signal(Signal::idle);
+  if (read(message) != Signal::idle) { return 1; }
+  edit(message) = Signal::ready;
+  if (read(message) != Signal::ready) { return 2; }
+  return 0;
+}

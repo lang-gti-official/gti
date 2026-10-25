@@ -1,0 +1,21 @@
+#include <std/memory>
+
+int main() {
+  mut std::detail::process_lease lease{};
+  unsafe {
+    auto allocated = lease.allocate(std::layout(uint64_t(257), uint64_t(256)));
+    if (!allocated) { return 1; }
+    auto region = allocated.value();
+    if (region.address == nullptr || region.bytes != uint64_t(257) ||
+        region.alignment != uint64_t(256)) { return 2; }
+    lease.attach(region);
+    lease.release();
+    auto rejected = lease.allocate(std::layout(uint64_t(16), uint64_t(3)));
+    if (rejected || rejected.error() != std::alloc_errc::invalid_alignment) { return 3; }
+    auto zero = lease.allocate(std::layout(uint64_t(0), uint64_t(256)));
+    if (!zero || zero.value().address != nullptr) { return 4; }
+    lease.attach(zero.value());
+    lease.release();
+  }
+  return 0;
+}

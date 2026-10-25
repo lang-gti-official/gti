@@ -97,13 +97,13 @@ void Failures::originate(llvm::IRBuilder<> &ir, llvm::Value *channel,
     throw std::logic_error("LLVM failure has no authorized source outcome");
   llvm::Value *origin = artifact_;
   llvm::Value *siteValue = ir.getInt32(site);
-  if (instruction.intrinsic == IntrinsicKind::Panic) {
+  if (instruction.tracksCaller) {
     siteValue = instruction.forwardsCallerLocation
                     ? callerSite
                     : ir.getInt32(instruction.callerLocationSite);
     origin = instruction.forwardsCallerLocation ? callerArtifact : artifact_;
     if (!siteValue || !origin)
-      throw std::logic_error("LLVM panic lost caller attribution");
+      throw std::logic_error("LLVM tracked failure lost caller attribution");
   }
   value = ir.CreateInsertValue(value, siteValue, 3);
   auto *identityType = type->getElementType(5);
