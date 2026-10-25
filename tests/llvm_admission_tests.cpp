@@ -2,6 +2,7 @@
 #include "gti/llvm_admission.h"
 #include "gti/llvm_backend.h"
 #include "gti/lowered_program_builder.h"
+#include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
 
 #include "../src/compiler/llvm/coverage.h"
@@ -163,6 +164,171 @@ bool has(const lang::LlvmAdmissionPlan &plan, std::string_view family,
                        return use.entry->family == family &&
                               use.entry->name == name;
                      });
+}
+
+void testIntegralEnumReferences() {
+  using namespace lang;
+  constexpr std::string_view source = R"(
+enum class E { first, second };
+E& read(E& value) { return value; }
+mut E& edit(mut E& value) { return value; }
+int main() {
+  mut E value = E::first;
+  edit(value) = E::second;
+  return read(value) == E::second ? 0 : 1;
+}
+)";
+  const auto plan = planLlvmAdmission(lower(source));
+  expect(plan.admitted(), "sealed integral enum references are represented");
+  unsigned borrows = 0;
+  for (const auto &use : plan.requirements())
+    if (use.required && use.entry->family == "MirInstructionKind" &&
+        use.entry->name == "Borrow") {
+      ++borrows;
+      expect(use.implementedShape &&
+                 use.implementedShape->name == "PassiveReference",
+             "enum borrows retain the selected-address witness");
+    }
+  expect(borrows != 0, "integral enum fixture exercises actual MIR borrows");
+
+  const auto payload = planLlvmAdmission(lower(R"(
+enum class E { first, second };
+enum Message { item(E value) };
+E& read(Message& message) {
+  switch (message) { case Message::item(auto& value): return value; }
+}
+int main() { Message message = Message::item(E::first); return read(message) == E::first ? 0 : 1; }
+)"));
+  unsigned enumFields = 0;
+  for (const auto &use : payload.requirements()) {
+    if (!use.required || use.entry->family != "MirInstructionKind" ||
+        use.entry->name != "Borrow" || !use.body ||
+        use.body->kind != MirBodyKind::Function)
+      continue;
+    const auto *owner =
+        payload.program().mir().findFunctionInstance(use.body->owner);
+    const auto *block = owner ? owner->body.findBlock(use.block) : nullptr;
+    if (!block)
+      continue;
+    for (const auto &stage : block->instructions) {
+      if (stage.id != use.instruction)
+        continue;
+      if (payload.program().mir().findIntegralEnum(stage.info.type)) {
+        ++enumFields;
+        expect(use.implementedShape &&
+                   use.implementedShape->name == "PassiveReference",
+               "integral enum payload fields have the same address witness");
+      }
+      if (payload.program().mir().findPayloadEnum(stage.info.type))
+        expect(!use.implementedShape ||
+                   use.implementedShape->name != "PassiveReference",
+               "payload enum itself cannot borrow the scalar enum witness");
+    }
+  }
+  expect(enumFields != 0, "payload regression reaches integral enum borrowing");
+  // This asserts only the borrow's witness. O07 payload storage/execution is
+  // still independently required by the complete combined execution fixture.
+
+  // The enum's identity must be represented in the sealed integral inventory.
+  // Test copies are corrupted before sealing, never accepted mutable inputs.
+  const auto frontend =
+      Frontend().analyze("enum-reference.gti", std::string(source));
+  for (const bool missing : {false, true}) {
+    auto mir = frontend.mir;
+    auto &enums =
+        const_cast<std::vector<MirIntegralEnum> &>(mir.integralEnums());
+    expect(enums.size() == 1, "enum identity control has exactly one record");
+    if (enums.empty())
+      continue;
+    if (missing)
+      enums.clear();
+    else
+      enums.front().underlyingType = SemanticType::Unknown;
+    auto build = LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, frontend.hir, mir, mir, {},
+        TargetInfo::host(), true);
+    bool rejected = !build.valid();
+    if (build.valid()) {
+      std::vector<LoweredProgramIssue> issues;
+      auto verified = verifiedLoweredProgram(std::move(*build.program), issues);
+      rejected = !verified;
+      if (verified)
+        rejected = !planLlvmAdmission(*verified).admitted();
+    }
+    expect(
+        rejected,
+        "missing or malformed integral enum metadata cannot grant admission");
+  }
+
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  FrontendOptions options;
+  options.requireEntryPoint = true;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto rawFrontend = Frontend(options).analyze(
+      root / "tests/fixtures/llvm_enum_raw_borrow.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  expect(rawFrontend.canGenerateCode(),
+         "raw enum control is valid source, not a semantic rejection");
+  auto rawMir = rawFrontend.mir;
+  unsigned marked = 0;
+  // Current source staging does not mark restored-loan relays as raw reads.
+  // Exercise the latent raw classifier with a conservative effect annotation
+  // on an owned MIR copy, then require the complete program to verify and seal.
+  // No type, permission, origin, producer or escape fact is changed.
+  for (auto &owner : const_cast<std::vector<MirFunctionInstance> &>(
+           rawMir.functionInstances()))
+    for (auto &block : owner.body.blocks)
+      for (auto &stage : block.instructions)
+        if (stage.kind == MirInstructionKind::Borrow &&
+            stage.operands.size() == 1 &&
+            stage.operands[0].kind == MirOperandKind::Loan &&
+            rawMir.findIntegralEnum(stage.info.type)) {
+          stage.rawMemoryAccess = true;
+          ++marked;
+        }
+  expect(marked != 0, "raw control retains an exact enum Borrow/Loan relay");
+  const auto summaries = deriveMirProgramEffectSummaries(rawMir);
+  for (std::size_t index = 0; index < summaries.functions.size(); ++index)
+    const_cast<MirFunctionInstance &>(rawMir.functionInstances()[index])
+        .effectSummary = summaries.functions[index];
+  expect(verifyMirProgram(rawMir).valid(),
+         "conservative relay effect does not change verified loan authority");
+  auto rawBuild = LoweredProgramBuilder().build(
+      rawFrontend.program, rawFrontend.semantics, rawFrontend.hir, rawMir,
+      rawMir, {}, TargetInfo::host(), true);
+  if (!rawBuild.valid())
+    throw std::runtime_error(rawBuild.issues.front().detail);
+  std::vector<LoweredProgramIssue> issues;
+  auto rawVerified =
+      verifiedLoweredProgram(std::move(*rawBuild.program), issues);
+  if (!rawVerified)
+    throw std::runtime_error(issues.front().detail);
+  const auto raw = planLlvmAdmission(*rawVerified);
+  expect(!raw.admitted(),
+         "selected enum references do not grant raw enum access");
+  unsigned rawLoans = 0;
+  for (const auto &use : raw.requirements()) {
+    if (!use.required || use.entry->family != "Shape" ||
+        use.entry->name != "RawMemory" || !use.body ||
+        use.body->kind != MirBodyKind::Function)
+      continue;
+    const auto *owner =
+        raw.program().mir().findFunctionInstance(use.body->owner);
+    const auto *block = owner ? owner->body.findBlock(use.block) : nullptr;
+    if (!block)
+      continue;
+    for (const auto &stage : block->instructions)
+      if (stage.id == use.instruction &&
+          stage.kind == MirInstructionKind::Borrow &&
+          stage.operands.size() == 1 &&
+          stage.operands[0].kind == MirOperandKind::Loan) {
+        ++rawLoans;
+        expect(!use.implementedShape,
+               "raw enum Borrow/Loan keeps its independently pending witness");
+      }
+  }
+  expect(rawLoans != 0, "raw enum control exercises Borrow/Loan admission");
 }
 
 void testLedger() {
@@ -591,6 +757,7 @@ int main() {
     testLedger();
     testSnapshotAndWholeProgram();
     testShapeWitnesses();
+    testIntegralEnumReferences();
     testRawFieldWitnesses();
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';

@@ -1,0 +1,10 @@
+#include <std/memory>
+
+enum class E { first, second };
+
+int main() {
+  mut E value = E::first;
+  mut std::erased_object& erased = std::erase_mut(value);
+  unsafe { std::restore_mut<E>(erased) = E::second; }
+  return 0;
+}

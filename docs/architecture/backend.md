@@ -4527,6 +4527,13 @@ references and constrained fixed-array range operations. Array bounds compare
 the evaluated index before address selection or access. Constant global arrays
 consume sealed recursive constants; dynamic initialization keeps MIR order.
 
+Read-only and mutable references to integral enums, including reference returns,
+use the exact enum identity in the sealed integral inventory and its underlying
+storage layout. This selected-address rule does not broaden enum-array or raw
+memory admission. An integral-enum payload field uses the same reference rule,
+but its enclosing payload storage remains independently gated by O-LLVM-07;
+combined payload-field execution evidence is still required.
+
 Counted byte views retain embedded NUL, UTF-8 bytes and their byte count. Text
 literals, storage, PHIs and ABI values share the session's one text-view type.
 Size/empty/index operations and byte equality require no heap allocation;
