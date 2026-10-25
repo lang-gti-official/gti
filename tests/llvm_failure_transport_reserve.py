@@ -37,13 +37,13 @@ def main():
         expected_suite = holders["suite"]
         if len(expected_suite) != 1 or expected_suite[0]["pid"] != os.getppid():
             raise SystemExit("managed parent does not own the sole suite reservation")
-    if holders["build"] or holders["suite"] != expected_suite:
-        raise SystemExit("host has live reservations; leave them undisturbed and retry when idle")
     deadline = time.monotonic() + args.wait_seconds
-    while os.getloadavg()[0] > max(1, (os.cpu_count() or 1) * 0.25):
+    while (holders["build"] or holders["suite"] != expected_suite or
+           os.getloadavg()[0] > max(1, (os.cpu_count() or 1) * 0.25)):
         if time.monotonic() >= deadline:
-            raise SystemExit("host load is not quiet; no measurement started")
+            raise SystemExit("host is reserved or not quiet; no measurement started")
         time.sleep(1)
+        holders = window.status()
     # Recheck reservations after any quiet-down wait, before claiming capacity.
     holders = window.status()
     if holders["build"] or holders["suite"] != expected_suite:
