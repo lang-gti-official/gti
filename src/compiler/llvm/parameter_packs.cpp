@@ -137,6 +137,7 @@ planConcreteParameters(std::span<const SemanticType> parameters,
   for (std::size_t element = 0; element < packRoot->type.arguments.size();
        ++element) {
     bool used = false;
+    bool complete = false;
     std::optional<PlaceKey> exactIdentity;
     PlaceKey expectedIdentity = *packRoot->key;
     expectedIdentity.projections.push_back(
@@ -150,14 +151,21 @@ planConcreteParameters(std::span<const SemanticType> parameters,
       used = true;
       if (place.projections.size() != 1)
         continue;
-      if (place.type != packRoot->type.arguments[element] || !place.key ||
-          *place.key != expectedIdentity)
+      if (place.type != packRoot->type.arguments[element])
         return std::nullopt;
-      if (exactIdentity && *exactIdentity != *place.key)
-        return std::nullopt;
-      exactIdentity = place.key;
+      complete = true;
+      // The sealed MIR binding, constant element index and verified type
+      // identify this physical lane. A PlaceKey adds ownership/provenance
+      // evidence when present, but not every complete PackElement view needs
+      // one; never invent it, and require any supplied key to agree exactly.
+      if (place.key) {
+        if (*place.key != expectedIdentity ||
+            (exactIdentity && *exactIdentity != *place.key))
+          return std::nullopt;
+        exactIdentity = place.key;
+      }
     }
-    if (used && !exactIdentity)
+    if (used && !complete)
       return std::nullopt;
     result.lanes.push_back({.binding = packRoot->binding,
                             .type = packRoot->type.arguments[element],

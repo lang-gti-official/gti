@@ -970,6 +970,33 @@ int main() { Pair value = create<Pair>(20, 22); return value.sum() == 42 ? 0 : 1
         }
       }
       if (selected) {
+        auto invalid = function.body;
+        const auto root =
+            std::find_if(invalid.places.begin(), invalid.places.end(),
+                         [](const auto &place) {
+                           return place.type.kind == SemanticType::TypePack &&
+                                  place.projections.empty();
+                         });
+        const auto element =
+            std::find_if(invalid.places.begin(), invalid.places.end(),
+                         [](const auto &place) {
+                           return place.projections.size() == 1 &&
+                                  place.projections[0].kind ==
+                                      MirProjectionKind::PackElement;
+                         });
+        if (root != invalid.places.end() && root->key &&
+            element != invalid.places.end()) {
+          element->key = root->key;
+          element->key->projections.push_back(
+              {.kind = PlaceProjectionKind::ConstantIndex,
+               .index = root->type.arguments.size()});
+          expect(!planConcreteParameters(function.parameterTypes,
+                                         function.parameterBindings, invalid),
+                 "a supplied conflicting projected key cannot be ignored");
+        } else {
+          expect(false,
+                 "alias fixture retains its projected-key negative control");
+        }
         auto alias = *selected;
         alias.id = function.body.places.size() + 1;
         function.body.places.push_back(std::move(alias));
