@@ -174,12 +174,26 @@ void testLedger() {
            "each entry states its admission boundary");
     pending += entry.state == LlvmCoverageState::Pending;
     nonexecuting += entry.state == LlvmCoverageState::VerifiedNonExecuting;
-    if (entry.state == LlvmCoverageState::Implemented)
-      expect(entry.positiveTest ==
-                 (entry.milestone == 6   ? "llvm_class_execution"
-                  : entry.milestone == 5 ? "llvm_place_execution"
-                                         : "llvm_scalar_execution"),
-             "implemented families name real execution evidence");
+    if (entry.state == LlvmCoverageState::Implemented) {
+      const bool hasEvidence = !entry.positiveTest.empty() &&
+                               !entry.positiveAssertion.empty() &&
+                               entry.positiveTest != "llvm_admission";
+      const bool hasGap = !entry.positiveEvidenceGap.empty();
+      expect(hasEvidence != hasGap,
+             "implemented rows name execution evidence or one explicit gap");
+    } else if (entry.state == LlvmCoverageState::Pending) {
+      expect(entry.positiveTest.empty() && entry.positiveAssertion.empty() &&
+                 entry.positiveEvidenceGap.empty(),
+             "pending rows cannot masquerade as accepted execution");
+    } else {
+      expect(entry.positiveTest == "llvm_admission" &&
+                 entry.positiveAssertion == "ledger.nonexecuting" &&
+                 entry.positiveEvidenceGap.empty() &&
+                 entry.nonExecuting != LlvmNonExecutingRule::None,
+             "nonexecuting rows retain structural evidence");
+    }
+    expect(!entry.negativeTest.empty() && !entry.negativeAssertion.empty(),
+           "each row names its negative drift control");
   }
   expect(pending > 250 && nonexecuting > 20,
          "the full input vocabulary is inventoried");

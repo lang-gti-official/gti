@@ -10135,6 +10135,7 @@ remains pending:
 | Gate | Evidence |
 | --- | --- |
 | `llvm_admission` | Every typed ledger row has a milestone/predicate; unknown values and sentinels reject; snapshot/target/policy identity survives; sealed entry/dependency reachability separates dormant metadata from required execution, with conservative all-body fallbacks; scalar, array, borrow, cleanup, native and TLS shapes are inventoried; pending generation carries source provenance and emits no artifact. |
+| `llvm_coverage_evidence` | Every executable implementation claim names a registered execution test and a `gti.llvm.execution-evidence/v1` manifest profile derived from that test's runnable case dictionary. Stable source IDs carry repository/inline origin plus the SHA-256 of the exact UTF-8 source. A test-only admission probe verifies that the profile's real GTI sources reach the exact ledger row; unknown fields, stale hashes, dangling sources, stale tests/profiles, synthetic pending passes and unavailable gates fail mutation controls. Reports bind source commit/state, build configuration, platform, compiler and LLVM identity while retaining distinct `passed`, `failed`, `unrun` and `unavailable` observations. Row linkage is not substituted for successful execution, cleanup/failure evidence or a second platform run. Explicit implemented-evidence gaps remain promotion blockers. |
 | `llvm_coverage_exhaustiveness` | A real host compilation accepts the ledger, then rejects an added terminator member without a count sentinel and an added MIR instruction field. It does not parse C++ enums with a second language parser. |
 | `llvm_backend_dependency_controls` | New helper discovery, configured target ownership (including included build files), source-only literal checks, transitive frontend/optimizer/C++ dependencies, hidden sources and public LLVM exposure are tested with mutations. |
 | `backend_execution_protocol` | Backend selection and mode arguments, native versus retained-C++ artifact contracts, build rejection/missing artifacts, and exit/stdout/stderr preservation. Real execution evidence comes from the corpus, not its mock protocol controls. |
@@ -10147,6 +10148,21 @@ remains pending:
 | `llvm_scalar_execution` | Real GTI scalar/control-flow/generic/recursive programs, local/PHI staging, ordered scalar globals, IEEE special values, conversions and wrapping/saturation at native O0/O3 against C++ O3. Checked failures and plain panic compare exact exit/stdout/stderr, including original source attribution. Unsupported polymorphic objects, arrays and TLS reject without replacing an existing output. Includes the shipped `examples/llvm/scalar-control-flow.gti`. Required on macOS arm64 and Linux x86_64. |
 | `llvm_place_execution` | Passive arrays/snapshots/bool storage, staged indexing, primitive/pointer-slot references and checked results, conditional selected returns, raw/null/nested/void addresses, pointer arithmetic and differences, ordinary unsafe calls, identity-bound reference erasure and owner-backed counted/C-string views. C++20/23 O3 and LLVM O0/O1/O2/O3 compare exact execution/failure output. Unsafe, expired, overlapping and read-only accesses remain source errors; unsupported C-string proofs preserve existing outputs. Includes `examples/llvm/places-and-text.gti`; required on macOS arm64 and Linux x86_64. |
 | `llvm_class_execution` | Ordinary/default/overloaded/designated and generic class construction, exact field/method access, staged copies, move-only arguments/returns, nested cleanup, replacement and class arrays. Passive global/static objects and lazy namespace/member TLS compare C++20/23 O3 with LLVM O0-O3, including exact constructor-rollback, recursion and shutdown failures. Dynamic function-local TLS compound operations and checked narrowing/shift errors have native-only controls for a recorded existing C++ vocabulary limitation. Includes `examples/llvm/classes-and-lifetimes.gti`; required on macOS arm64 and Linux x86_64. `llvm_target_layout_abi` additionally observes completed-field rollback after a real checked GTI call returns failure, verifies TLS C layout, and compiles/links a C17 registration oracle. |
+
+The first executable-evidence reconciliation retained thirteen honest gaps:
+`MirOperation.None`, `MirOperation.Comma`, `MirOperation.Positive`,
+`MirProgramDataInitializationKind.ImplicitZero`,
+`MirHostedStartupOperationKind.EndFailureCleanup`,
+`MirHostedStartupOperationKind.TerminateCleanupFailure`,
+`IntrinsicKind.NumericTypeParameterConversion`,
+`IntrinsicKind.NumericAliasConversion`,
+`IntrinsicKind.DefaultTypeParameterConstruction`,
+`IntrinsicKind.IntegerAddOverflows`,
+`IntrinsicKind.IntegerSubtractOverflows`,
+`IntrinsicKind.IntegerMultiplyOverflows` and
+`IntrinsicKind.ExactTypeParameterConstruction`. Their implementation states
+were not changed merely to make the audit pass; each needs a real runnable
+profile and observed target execution before complete-coverage promotion.
 
 The class gate also checks named moved arguments whose later argument fails,
 including reverse prepared-parameter cleanup, constructor calls that never

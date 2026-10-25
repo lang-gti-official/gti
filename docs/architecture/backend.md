@@ -4730,10 +4730,30 @@ The compiled switches reject new unassigned enum members, including enums with
 no count sentinel. `input_fields.def` checks the decomposition of the central
 input records, so new fields require coverage/admission review too. Literal and
 declaration/generated payload variants have corresponding compile-time guards.
-Each ledger entry names inventory-positive and drift-negative test gates;
-these are coverage evidence, not execution evidence for pending lowering. When
-an entry becomes implemented its owner must add real positive/negative execution
-tests for its admitted shapes and update its predicate and test references.
+An executable implementation claim is written at its ledger row as
+`LLVM_COVERAGE_IMPLEMENTED(test, profile)`. Bare `Implemented` is not a valid
+claim and there is no milestone-wide scalar fallback. Pending rows carry no
+execution acceptance. Verified nonexecuting rows instead name the structural
+ledger assertion which verifies their rule. An already implemented row with no
+matching executable fixture uses `LLVM_COVERAGE_IMPLEMENTED_GAP(reason)`; that
+preserves the implementation classification but blocks promotion rather than
+manufacturing evidence.
+
+`llvm_coverage_evidence` reconciles those claims with the configured CTest
+inventory and JSON evidence manifests derived from the execution tests' actual
+runnable case dictionaries. Manifest schema
+`gti.llvm.execution-evidence/v1` binds a test to named profiles, each profile to
+stable source IDs, and each source ID to its repository/inline origin and the
+SHA-256 of the exact UTF-8 text. Unknown fields, stale hashes and dangling
+source IDs reject. A test-only admission probe lowers each named source and
+requires its plan to contain the exact row, including structural
+implementation witnesses. This establishes that the test source reaches the
+claimed coverage vocabulary. It does not establish that an unrun test passed,
+that cleanup and failure behavior were correct, or that another platform ran
+the case. The report therefore records exact source state, build configuration,
+host/compiler/LLVM identity and separate `passed`, `failed`, `unrun` or
+`unavailable` observation states. Raw ledger reports start unrun; dirty source
+is explicitly non-exact.
 
 The inventory records types and nested arguments, access and ownership modes,
 exact instructions and their failure/cleanup/publication shapes, generated

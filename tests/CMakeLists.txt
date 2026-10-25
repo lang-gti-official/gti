@@ -1672,6 +1672,22 @@ add_executable("gti_llvm_admission_tests"
 target_link_libraries("gti_llvm_admission_tests" PRIVATE gti_llvm_backend)
 add_test(NAME llvm_admission COMMAND gti_llvm_admission_tests)
 
+add_executable("gti_llvm_coverage_evidence"
+               "${PROJECT_SOURCE_DIR}/tests/llvm_coverage_evidence.cpp")
+target_link_libraries("gti_llvm_coverage_evidence" PRIVATE gti_llvm_backend)
+target_include_directories("gti_llvm_coverage_evidence"
+                           PRIVATE "${CMAKE_BINARY_DIR}/generated")
+add_dependencies("gti_llvm_coverage_evidence" gti_build_identity_refresh)
+target_compile_definitions(
+  "gti_llvm_coverage_evidence"
+  PRIVATE
+    GTI_COVERAGE_BUILD_CONFIG="$<CONFIG>"
+    GTI_COVERAGE_SYSTEM_NAME="${CMAKE_SYSTEM_NAME}"
+    GTI_COVERAGE_SYSTEM_PROCESSOR="${CMAKE_SYSTEM_PROCESSOR}"
+    GTI_COVERAGE_COMPILER="${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}"
+    GTI_COVERAGE_LLVM_VERSION="${GTI_LLVM_VERSION}"
+)
+
 add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
 target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
@@ -1699,6 +1715,15 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_class_execution_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(llvm_class_execution PROPERTIES TIMEOUT 1200)
+  add_test(
+    NAME llvm_coverage_evidence
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_coverage_evidence_test.py"
+      "$<TARGET_FILE:gti_llvm_coverage_evidence>" "${CMAKE_CTEST_COMMAND}"
+      "${CMAKE_BINARY_DIR}" "${PROJECT_SOURCE_DIR}"
+  )
+  set_tests_properties(llvm_coverage_evidence PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_placement_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_placement_execution_test.py"
                    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")

@@ -2,12 +2,14 @@
 """Execute real lowered GTI at native O0/O3 against the production oracle."""
 
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from llvm_evidence_manifest import build_manifest
 
 
 SCALARS = r'''
@@ -133,19 +135,16 @@ int main() { require(false); return 0; }
     return cases
 
 
-def main() -> None:
-    gti = Path(sys.argv[1]).resolve()
-    root = Path(sys.argv[2]).resolve()
-    env = os.environ.copy()
-    successes = {'scalars': SCALARS, 'widths': widths(),
-                 'shipped-example': (root / 'examples/llvm/scalar-control-flow.gti').read_text(),
-                 'globals': '''
+def successes(root: Path) -> dict[str, str]:
+    return {'scalars': SCALARS, 'widths': widths(),
+            'shipped-example': (root / 'examples/llvm/scalar-control-flow.gti').read_text(),
+            'globals': '''
 int initialize() { return 3; }
 mut int value = initialize();
 bool enabled = true;
 int main() { value += 1; if (!enabled) { return 1; } return value - 4; }
 ''',
-                 'dormant-owner': '''
+            'dormant-owner': '''
 class Unused { public: Unused() {} ~Unused() {} };
 int unused() { Unused value{}; return 1; }
 int main() { return 0; }
@@ -160,9 +159,57 @@ int main() {
   return 0;
 }
 '''}
+
+
+def rejections() -> dict[str, str]:
+    return {
+        'polymorphic-owner': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }',
+        'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; return data[0].read(); }',
+        'polymorphic-tls': 'class Owner { public: virtual int read() { return 0; } }; thread_local Owner value{}; int main() { return value.read(); }',
+    }
+
+
+def evidence_cases(root: Path) -> dict[str, str]:
+    return {**successes(root),
+            **{name: source for name, (source, _) in failures().items()}}
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    cases = evidence_cases(root)
+    panic = ('panic', 'empty-panic', 'truncated-panic', 'assertion')
+    profiles = {
+        'scalars': ('scalars',),
+        'widths': ('widths',),
+        'globals': ('globals',),
+        'numeric-intrinsics': ('numeric-intrinsics',),
+        'defined-failures': tuple(failures()),
+        'panic-failures': panic,
+    }
+    assert all(case in cases for profile in profiles.values() for case in profile)
+    return profiles
+
+
+def evidence_manifest(root: Path) -> dict:
+    return build_manifest(
+        'llvm_scalar_execution', evidence_cases(root), evidence_profiles(root),
+        {'shipped-example': 'examples/llvm/scalar-control-flow.gti'})
+
+
+def list_evidence(root: Path) -> None:
+    print(json.dumps(evidence_manifest(root), sort_keys=True))
+
+
+def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == '--list-evidence':
+        list_evidence(Path(sys.argv[2]).resolve())
+        return
+    gti = Path(sys.argv[1]).resolve()
+    root = Path(sys.argv[2]).resolve()
+    env = os.environ.copy()
+    success_cases = successes(root)
     with tempfile.TemporaryDirectory(prefix='gti-llvm-scalars-') as temporary:
         work = Path(temporary)
-        for name, source_text in successes.items():
+        for name, source_text in success_cases.items():
             source = work / f'{name}.gti'
             source.write_text(source_text)
             results = []
@@ -185,9 +232,7 @@ int main() {
                 results.append(result.observable)
             if not results[0] == results[1] == results[2]:
                 raise AssertionError(f'{name}: source/failure attribution drift: {results}')
-        for name, text in {'polymorphic-owner': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }',
-                           'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; return data[0].read(); }',
-                           'polymorphic-tls': 'class Owner { public: virtual int read() { return 0; } }; thread_local Owner value{}; int main() { return value.read(); }'}.items():
+        for name, text in rejections().items():
             source = work / f'reject-{name}.gti'
             source.write_text(text)
             output = work / f'reject-{name}'
