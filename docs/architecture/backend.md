@@ -4349,6 +4349,21 @@ the currently admitted execution profiles described below.
 
 ### LLVM Target, Layout And Execution ABI
 
+The native scalar-atomic core represents the identity-bound private atomic
+storage capability as one naturally aligned integer lane for `bool` and the
+eight fixed-width integer domains. Boolean storage is an explicit canonical
+byte, distinct from the body's boolean value. Exclusive construction initializes
+that lane before publication; verified load, store, exchange and strong
+compare-exchange operations preserve their exact system-scope memory orders.
+Compare-exchange publishes the observed value on both success and failure.
+Admission checks the actual function's target lowering and rejects unsupported
+width/alignment combinations before producing an artifact. Object-symbol checks
+exclude unintended `libatomic` calls, but do not establish a lock-free or
+performance guarantee. Checked arithmetic fetch operations remain source-defined
+CAS loops: overflow must fail before modifying shared storage. Their complete
+native execution, wait/notify, mutexes and managed-worker integration remain
+pending O-LLVM-13 work; the scalar-core profile is not whole-milestone acceptance.
+
 O-LLVM-03 provides the private machinery shared by all native lowering profiles.
 `Session` owns the exact
 `VerifiedLoweredProgram`, context, native target machine, module, unique layout
