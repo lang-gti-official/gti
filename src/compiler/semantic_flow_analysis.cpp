@@ -13760,7 +13760,9 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
   }
   // Initial creation/publication of a fresh result does not move an existing
   // object. Assignment separately requires its real assignment operation.
-  if (semanticModel.isFreshClassResult(*expression))
+  if (semanticModel.isFreshClassResult(*expression) ||
+      (target.kind == SemanticType::Array &&
+       exprAs<ArrayInitializer>(expression.get()) != nullptr))
     return true;
   const SemanticTypeTraits traits = typeTraits(target);
   return info->category == ValueCategory::Value ? traits.movable

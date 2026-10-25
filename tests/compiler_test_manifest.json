@@ -286,6 +286,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testFreshArrayOwnership",
+      "suite": "declarations"
+    },
+    {
       "name": "testFixedArrayDynamicWriteFailureEdge",
       "suite": "declarations"
     },

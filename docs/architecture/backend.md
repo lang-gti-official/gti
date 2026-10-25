@@ -4594,7 +4594,7 @@ refer to that storage, so failure of a later argument and successful transfer
 to the callee observe the same object. Merely activating the obligation without
 populating its destination is invalid, including for moves from named locals.
 Ordinary, direct/braced/designated construction, generated copy/move transport,
-fresh immovable returns, returned movable values, replacement cleanup and fixed arrays of movable class
+fresh immovable returns, returned movable values, replacement cleanup and fresh fixed arrays of immovable class
 objects use the same operations; no native representation destructor runs GTI
 cleanup. In-place scalar assignments use the existing promoted arithmetic and
 checked conversion implementation before publishing the updated value.
@@ -4639,12 +4639,29 @@ the C layout and callback signature directly, with no C++ cleanup-entry API,
 exception transport, hidden allocation or native TLS destructor. A C17 oracle
 and target-layout assertions check this boundary independently.
 
-Remaining O-LLVM-06 boundaries are explicit: reference-field initialization
-without an exact entry Stored loan needs an address-publication schedule.
-GTI semantics still rejects initializing a fixed array whose elements cannot
-move, even from fresh element expressions; this backend slice does not relax
-that source rule. Native array-element placement is independently tested with
-movable elements that record their construction address. Immovable by-value
+Stored reference fields consume either their entry capability or the address
+published by their non-entry MIR Borrow. The latter executes at its actual
+initializer stage, including after a reference-return call's success edge.
+`Places::selected` preserves the evaluated referent address even when the
+protected borrow origin is an enclosing object. Field publication stores that
+address, not a scalar load and not the enclosing origin's address. The backend
+does not change permission, escape or loan endpoints.
+
+Exact brace arrays now initialize fresh immovable elements without requiring
+movement. Both backends preserve final addresses and MIR's per-element cleanup.
+The C++ consumer uses external `mir_lifetime_slot` views into the final array;
+the existing byte storage starts implicit-lifetime array/aggregate shells,
+while constructors start each class element's lifetime. Publication releases
+the element views without destruction or relocation and activates the aggregate
+obligation. TLS initializer arrays use their exact ABI result storage, including
+nested-element lifetime views. Cleanup-free aggregates without element lifetime
+records retain the existing pure-construction/staged-value protocols; exact
+constructor prvalues in that pure path need no move capability.
+For array fields, the existing empty-state proof permits retiring
+each disarmed native shell immediately before that element's construction.
+No source effects are hoisted and no automatic native destructor owns rollback.
+Internal lifetime slots retain their original storage size; only external views
+carry an address and engagement state. Immovable by-value
 arguments, named-local returns and conditional-value merges also keep their
 existing semantic rejection. Bases/dispatch, union/payload storage and private ownership
 capabilities retain their later milestones. Function-local TLS with compound
@@ -4656,10 +4673,12 @@ passive arrays/classes emit no state-clear walk.
 
 `llvm_placement_execution` checks deleted-copy/deleted-move objects, fresh return
 chains, branch-selected returns, constructor/default field publication, TLS,
-class-array copies/movement and retained semantic rejections at O0-O3. The
-unchanged C++ comparator relocates nested/default fields and array elements in
-address-sensitive probes, and rejects the class-array argument/copy/move
-fixture in its representation vocabulary. These cases have explicit native-only
+class-array copies/movement and retained semantic rejections at O0-O3. Fresh
+direct/nested/default/field arrays compare C++20/C++23 with native execution.
+The C++ comparator still relocates nested/default scalar fields in
+address-sensitive probes, and rejects the class-array argument/copy/move and
+side-effecting reference-initializer fixtures in its representation vocabulary.
+These cases have explicit native-only
 oracles, not claimed C++ parity; supported comparators still run C++20/C++23.
 `llvm_target_layout_abi` observes exact post-failure cleanup traces after real
 checked field, array and prepared-return calls, not just terminal exit codes.

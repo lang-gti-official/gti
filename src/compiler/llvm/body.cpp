@@ -97,6 +97,19 @@ private:
   const MirBlock *current = nullptr;
   const MirInstruction *stage = nullptr;
 
+  void publishStoredField(const MirLoan &loan, llvm::Value *address) {
+    if (loan.kind != MirLoanKind::Stored || !loan.storedField)
+      return;
+    if (input.kind != MirBodyKind::Constructor || !owner)
+      throw std::logic_error(
+          "LLVM stored field publication lost its constructor");
+    ir.CreateStore(
+        address,
+        ir.CreateStructGEP(
+            session.layouts().get(owner->type).storage, thisAddress,
+            session.layouts().fieldIndex(owner->type, loan.storedField)));
+  }
+
   [[nodiscard]] llvm::Value *destination(MirValueId value) {
     if (const auto *target = placement.target(value)) {
       if (target->place)
@@ -682,6 +695,7 @@ private:
     case MirInstructionKind::Borrow:
       result = memory.selected(instruction.operands.at(0));
       memory.publish(*instruction.loan, result);
+      publishStoredField(*input.findLoan(*instruction.loan), result);
       break;
     case MirInstructionKind::Lifecycle:
     case MirInstructionKind::EndBorrow:
@@ -882,11 +896,7 @@ private:
           auto *address = memory.address(source.id);
           if (source.type.kind == SemanticType::Reference)
             address = load(address, source.type);
-          ir.CreateStore(
-              address,
-              ir.CreateStructGEP(
-                  session.layouts().get(owner->type).storage, thisAddress,
-                  session.layouts().fieldIndex(owner->type, loan.storedField)));
+          publishStoredField(loan, address);
         }
     for (const auto &obligation : input.dropObligations) {
       live.at(obligation.id) = ir.CreateAlloca(ir.getInt1Ty());

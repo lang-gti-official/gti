@@ -665,8 +665,31 @@ public:
   }
 };
 int array_rollback(bool fail) {
-  Element values[3] = {Element(1, false), Element(2, false), Element(3, fail)};
+  Field values[3] = {Field(1, false), Field(2, false), Field(3, fail)};
   return 0;
+}
+int nested_array_rollback(bool fail) {
+  Field values[2][2] = {{Field(1, false), Field(2, false)},
+                        {Field(3, fail), Field(4, false)}};
+  return 0;
+}
+mut int& select_reference(mut int& value, bool fail) {
+  if (fail) { [[discard]] divide(0); }
+  return value;
+}
+class Referenced {
+  Field first;
+  mut int& selected;
+  Field last;
+public:
+  Referenced(mut int& value, bool fail) : first(Field(1, false)),
+      selected(select_reference(value, fail)), last(Field(2, false)) {}
+  void update() mut { this.selected = 42; }
+};
+int reference_rollback(bool fail) {
+  mut int value = 0;
+  { mut Referenced result = Referenced(value, fail); result.update(); }
+  return value == 42 ? 0 : 1;
 }
 void consume_element(Element element, int other) {}
 int argument_rollback(bool fail) {
@@ -700,6 +723,11 @@ int main() {
   events = 0;
   [[discard]] array_rollback(false);
   if (events != 321) { return 4; }
+  events = 0;
+  [[discard]] nested_array_rollback(false);
+  if (events != 4321) { return 8; }
+  events = 0;
+  if (reference_rollback(false) != 0 || events != 21) { return 9; }
   events = 0;
   [[discard]] argument_rollback(false);
   if (events != 1) { return 5; }
@@ -777,12 +805,15 @@ int main() {
       if (!declaration ||
           (declaration->qualifiedName != "rollback" &&
            declaration->qualifiedName != "array_rollback" &&
+           declaration->qualifiedName != "nested_array_rollback" &&
+           declaration->qualifiedName != "reference_rollback" &&
            declaration->qualifiedName != "return_rollback" &&
            declaration->qualifiedName != "argument_rollback" &&
            declaration->qualifiedName != "array_argument_rollback"))
         continue;
       const bool returned = declaration->qualifiedName == "return_rollback";
-      const bool argument = declaration->qualifiedName == "argument_rollback";
+      const bool argument = declaration->qualifiedName == "argument_rollback" ||
+                            declaration->qualifiedName == "reference_rollback";
       ir.CreateStore(ir.getInt32(0), events);
       const auto abi =
           session.abi().gti(target.returnType, target.parameterTypes,
@@ -815,7 +846,7 @@ int main() {
                                       DefinedFailureCode::DivisionByZero))))));
       ++probes;
     }
-    expect(probes == 5,
+    expect(probes == 7,
            "field, array, prepared-argument and return rollback probes found");
     ir.CreateRet(ir.CreateSelect(correct, ir.getInt32(0), ir.getInt32(1)));
     expect(!ir.GetInsertBlock()->empty() &&
