@@ -10102,6 +10102,19 @@ ownership or entry-signature inference.
 
 ### Native LLVM Admission Gates
 
+Under [the backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25),
+LLVM owns new backend development; C++ is bug-fix-only through v1.0 and serves
+as a comparator for its existing supported behavior. Retain valid differential
+and C++ regression cases, but do not implement missing C++ features merely to
+satisfy a new LLVM test. Record unsupported/incorrect comparator shapes and use
+independent GTI semantic/MIR expectations plus native execution, rejection,
+cleanup/failure and applicable target/sanitizer/cost evidence. A harness that
+assumes C++ can execute every new case must separate its supported comparator
+matrix from required native acceptance, not mark unsupported comparisons as
+passing skips. Existing known failures remain visible and attributed. The
+frozen LLVM baseline, reconciled-main coverage and production-promotion gates
+are unchanged; C++ feature parity is not an additional gate.
+
 `llvm_placement_execution` extends the class profile with fresh-result final
 addresses: immovable return chains and fields/defaults/TLS, fresh immovable
 direct/nested/default/field/TLS arrays (including passive and low-alignment

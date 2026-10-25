@@ -4,8 +4,9 @@ Status: Accepted
 
 ## Context
 
-GTI's production compiler lowers the complete language through the C++ backend,
-but the language no longer derives its meaning from C++. ADR 016 completed the
+When this foundation was introduced, GTI's production compiler lowered the
+language through the C++ backend, but its meaning was already independent of
+C++. ADR 016 completed the
 prerequisite for another backend: every executable backend receives one sealed,
 verified `LoweredProgram` after MIR optimization and cannot consult AST,
 semantics, HIR, source MIR, optimizer-private state, or generated C++.
@@ -25,7 +26,8 @@ verified optimized MIR -> LoweredProgram
                                       -> LlvmBackend -> native object
 ```
 
-`CppBackend` remains the production default. `LlvmBackend` is an installed,
+`CppBackend` remains the shipped default during the transition, not the primary
+development backend under the policy below. `LlvmBackend` is an installed,
 selectable backend which verifies the same `LoweredProgram` and checks native
 admission before initializing the host LLVM target. O-LLVM-04/05/06 admit the
 documented scalar, places/text and ordinary class/lifecycle profiles; other valid programs report the classified
@@ -92,6 +94,41 @@ target ABI classification in addition to record offsets. Host/runtime operations
 need explicit ABI bindings; generated C++ templates and C++ exception transport
 are not a native backend contract. These boundaries must be settled centrally,
 not independently rediscovered by each language-family emitter.
+
+## Backend Development Policy (2026-10-25)
+
+The owner explicitly deprecates C++ **as the primary backend**. LLVM is the
+primary development and intended production backend. The project does not have
+the development budget to implement both in parallel, so until v1.0:
+
+- New backend capabilities, feature work and optimization target LLVM. There
+  is no C++ feature-parity or catch-up requirement for new language work.
+- C++ receives bug fixes only, preserving existing supported behavior and its
+  usefulness as a comparison oracle. This includes repairs needed when shared
+  compiler interfaces change, not new feature development disguised as repair.
+- Existing correct comparator cases and regression evidence remain valuable.
+  C++ does not define GTI semantics and is not an oracle for a shape it cannot
+  correctly represent. Such gaps need explicit records and independent
+  semantic/MIR-based expectations, native execution, cleanup/failure and target
+  evidence. Neither copying a comparator bug nor suppressing a known regression
+  establishes correctness.
+
+After v1.0 the owner may explicitly reconsider bringing C++ up to LLVM's
+supported surface. This is neither backend removal nor a promise of parity,
+and reaching v1.0 does not automatically resume C++ feature development.
+
+Development priority and the shipped default are separate. This policy changes
+neither backend selection nor diagnostics: `cpp` remains the current default
+until O-LLVM-16's coverage, safety, runtime-cost and installed-toolchain gates
+pass. LLVM still rejects unsupported required operations before publication;
+there is no hidden C++ fallback. A later default switch is an implemented,
+validated delivery change, not something this policy declares complete.
+
+The LLVM campaign must cover its frozen language baseline and reconcile new
+main features even when they have no C++ implementation. Keep backend support
+explicit in tests and documentation. C++ parity is not an extra promotion gate,
+and its absence does not waive any LLVM execution, rejection, cleanup,
+sanitizer, ABI/platform or performance obligation.
 
 ## Shared Implementation Contracts (2026-10-25)
 
@@ -195,9 +232,10 @@ first executable milestone.
 - Self-contained toolchains grow by the exact native LLVM static component
   closure for their host architecture. That cost is isolated to the backend
   target and release package rather than broadening `gti_compiler`.
-- Merely selecting LLVM never changes GTI semantics. The C++ backend remains
-  the complete production backend; LLVM currently emits the documented admitted
-  profiles rather than the whole language.
+- Merely selecting LLVM never changes GTI semantics. C++ remains the
+  transitional shipped default, with a bug-fix-only support policy rather than
+  a promise of complete future language coverage. LLVM currently emits the
+  documented admitted profiles rather than the whole language.
 - Boundary tests reject frontend and C++ representation dependencies, forged
   lowered programs are rejected before LLVM initialization, and CLI tests pin
   both default-C++ behavior and the explicit foundation limitation.
