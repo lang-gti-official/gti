@@ -296,6 +296,8 @@ def successes(root: Path) -> dict[str, str]:
         root / 'tests/fixtures/llvm_enum_references.gti').read_text()
     cases['enum-payload-borrow'] = (
         root / 'tests/fixtures/llvm_enum_payload_borrow.gti').read_text()
+    cases['enum-raw-borrow'] = (
+        root / 'tests/fixtures/llvm_enum_raw_borrow.gti').read_text()
     return cases
 
 
@@ -333,7 +335,6 @@ def rejection_cases() -> dict[str, str]:
 def native_rejection_cases(root: Path) -> dict[str, str]:
     return {
         'array-comparison': 'int main() { int left[2] = {1, 2}; int right[2] = {1, 2}; return left == right ? 0 : 1; }',
-        'enum-raw-borrow': (root / 'tests/fixtures/llvm_enum_raw_borrow.gti').read_text(),
         'dynamic-c-string': '#include <std/string_view>\nvoid consume(c_string text) {} void relay(std::string_view text) { consume(text); } int main() { relay("hello"); return 0; }',
         'nul-c-string': 'void consume(c_string text) {} int main() { consume("a\\0b"); return 0; }',
     }
@@ -355,7 +356,8 @@ def evidence_manifest(root: Path) -> dict:
         'llvm_place_execution', evidence_cases(root), evidence_profiles(root),
         {'shipped-example': 'examples/llvm/places-and-text.gti',
          'enum-references': 'tests/fixtures/llvm_enum_references.gti',
-         'enum-payload-borrow': 'tests/fixtures/llvm_enum_payload_borrow.gti'})
+         'enum-payload-borrow': 'tests/fixtures/llvm_enum_payload_borrow.gti',
+         'enum-raw-borrow': 'tests/fixtures/llvm_enum_raw_borrow.gti'})
 
 
 def list_evidence(root: Path) -> None:

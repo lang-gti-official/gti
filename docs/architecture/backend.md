@@ -4577,7 +4577,12 @@ evaluated MIR operands. Integer-plus-pointer preserves source evaluation order.
 Checked address assertions retain verified witness loans while returning the
 selected physical pointer, never the witness's address. Checked erasure uses
 the exact `ErasedObject` capability declaration identity; ordinary classes with
-similar names gain no representation support. Its opaque referent has no
+similar names gain no representation support. O-LLVM-09's represented-erasure
+generalization includes cleanup-free integral enums: mutable restoration writes
+the original enum place, read-only restoration preserves its access, and an
+unrelated enum value remains untouched. This supersedes the earlier native
+rejection of that shape; it does not admit a forged erased capability or relax
+the source escape, overlap, or read-only rules. The opaque referent has no
 by-value object representation. Restoration/return publication retains exact
 source, producer, type and access facts. Ordinary unsafe GTI functions remain
 calls to their inventoried source bodies, not intrinsic substitutions.

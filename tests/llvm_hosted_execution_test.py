@@ -10,6 +10,47 @@ import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from llvm_evidence_manifest import build_manifest
+
+
+HOSTED_CASES = {
+    "success": ("llvm_hosted_success.gti", None),
+    "startup-failure": ("llvm_hosted_startup_failure.gti",
+                        "hosted startup failure"),
+    "entry-failure": ("llvm_hosted_entry_failure.gti",
+                      "hosted entry failure"),
+    "source-location": ("stdlib_surface_source_location.gti", None),
+    "unsafe-reference-load": ("llvm_hosted_unsafe_reference_load.gti", None),
+    "unsafe-reference-return": ("llvm_hosted_unsafe_reference_return.gti", None),
+    "class-owner-reference": ("llvm_hosted_class_owner_reference.gti", None),
+}
+
+
+def evidence_cases(root: Path) -> dict[str, str]:
+    fixtures = root / "tests/fixtures"
+    return {
+        name: (fixtures / filename).read_text(encoding="utf-8")
+        for name, (filename, _) in HOSTED_CASES.items()
+    }
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    del root
+    return {"source-location": ("source-location",)}
+
+
+def evidence_manifest(root: Path) -> dict:
+    origins = {
+        name: f"tests/fixtures/{filename}"
+        for name, (filename, _) in HOSTED_CASES.items()
+    }
+    return build_manifest(
+        "llvm_hosted_execution", evidence_cases(root), evidence_profiles(root),
+        origins)
+
+
+def list_evidence(root: Path) -> None:
+    print(json.dumps(evidence_manifest(root), sort_keys=True))
 
 
 def source_literals(gti, root, scratch, endpoints, env):
@@ -67,19 +108,13 @@ def arguments(gti, root, scratch, endpoints, env):
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
+        list_evidence(Path(sys.argv[2]).resolve())
+        return
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selection = sys.argv[3] if len(sys.argv) > 3 else "all"
     if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments"}:
         raise ValueError(f"unknown hosted case: {selection}")
-    cases = (
-        ("llvm_hosted_success.gti", None),
-        ("llvm_hosted_startup_failure.gti", "hosted startup failure"),
-        ("llvm_hosted_entry_failure.gti", "hosted entry failure"),
-        ("stdlib_surface_source_location.gti", None),
-        ("llvm_hosted_unsafe_reference_load.gti", None),
-        ("llvm_hosted_unsafe_reference_return.gti", None),
-        ("llvm_hosted_class_owner_reference.gti", None),
-    )
     endpoints = (
         Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
         Endpoint("llvm", "O0"), Endpoint("llvm", "O3"),
@@ -89,12 +124,12 @@ def main():
         scratch = Path(temporary)
         if selection in {"all", "source-literals"}:
             source_literals(gti, root, scratch, endpoints, env)
-        for filename, failure in cases:
+        for name, (filename, failure) in HOSTED_CASES.items():
             if selection in {"status", "source-literals", "arguments"}:
                 continue
-            if selection == "startup" and filename == "stdlib_surface_source_location.gti":
+            if selection == "startup" and name == "source-location":
                 continue
-            if selection == "source-location" and filename != "stdlib_surface_source_location.gti":
+            if selection == "source-location" and name != "source-location":
                 continue
             observations = []
             for index, endpoint in enumerate(endpoints):
