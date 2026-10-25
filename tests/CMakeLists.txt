@@ -1707,6 +1707,10 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_payload_execution_test.py"
                    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
   set_tests_properties(llvm_payload_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_callable_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_callable_execution_test.py"
+                   "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_callable_execution PROPERTIES TIMEOUT 1200)
   add_test(NAME array_publication_lsp
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/array_publication_lsp_test.py"
                    "$<TARGET_FILE:gti_lsp>")

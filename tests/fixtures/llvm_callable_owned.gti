@@ -1,0 +1,22 @@
+mut int destroyed = 0;
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() { destroyed = destroyed * 10 + this.identity; }
+  int read() { return this.identity; }
+};
+
+int main() {
+  {
+    Token first{1};
+    Token second{2};
+    auto stored = [first = std::move(first), second = std::move(second)]()
+        -> int { return first.read() * 10 + second.read(); };
+    if (std::move(stored)() != 12) return 1;
+  }
+  return destroyed == 21 ? 0 : 2;
+}

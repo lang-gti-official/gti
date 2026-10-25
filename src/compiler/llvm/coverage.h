@@ -70,6 +70,9 @@ enum class Shape {
   NativeThreadStorage,
   InPlaceScalarMutation,
   StoredFieldPublication,
+  UnstagedConstructorFieldPublication,
+  NativeCallableStorage,
+  CallableMetadata,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

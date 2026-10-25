@@ -1,4 +1,5 @@
 #include "layout.h"
+#include "closure_environment.h"
 #include "placement.h"
 
 #include <algorithm>
@@ -19,6 +20,13 @@ Layouts::Layouts(Session &session) : session(session) {
                               "gti.type.v1.c" + std::to_string(instance.id))});
     classes[instance.declaration].push_back(instance.id);
   }
+  for (const auto &instance : session.program().mir().lambdaInstances())
+    lambdas.emplace(
+        instance.id,
+        LambdaRecord{&instance,
+                     llvm::StructType::create(
+                         session.context(),
+                         "gti.lambda.v1.l" + std::to_string(instance.id))});
 }
 
 llvm::PointerType *Layouts::pointer() const {
@@ -84,6 +92,12 @@ TypeLayout Layouts::get(const SemanticType &type) {
   case SemanticType::CString:
   case SemanticType::NativeFunction:
     return describe(pointer());
+  case SemanticType::FunctionItem:
+    // Its exact declaration/instance identity remains in MIR. The physical
+    // value is only a state-free materialization for ordinary value flow.
+    return describe(llvm::Type::getInt8Ty(context));
+  case SemanticType::Lambda:
+    return closure(type);
   case SemanticType::StringView:
     return describe(textView_, true);
   case SemanticType::Array: {
@@ -193,6 +207,20 @@ TypeLayout Layouts::record(const SemanticType &type) {
   if (entry.building)
     throw std::logic_error("recursive by-value LLVM record layout");
   const auto &instance = *entry.instance;
+  if (instance.compilerCapability ==
+      CompilerCapabilityTypeKind::FunctionPointer) {
+    entry.building = true;
+    try {
+      entry.storage->setBody({pointer()});
+      auto result = describe(entry.storage, true, pointer());
+      entry.layout = result;
+      entry.building = false;
+      return result;
+    } catch (...) {
+      entry.building = false;
+      throw;
+    }
+  }
   if (instance.cOpaqueHandle || instance.polymorphic ||
       instance.compilerCapability != CompilerCapabilityTypeKind::None)
     throw BackendUnsupportedError(
@@ -286,6 +314,56 @@ TypeLayout Layouts::record(const SemanticType &type) {
     entry.building = false;
     throw;
   }
+}
+
+TypeLayout Layouts::closure(const SemanticType &type) {
+  const auto environment =
+      closureEnvironmentLayout(session.program().mir(), type);
+  if (!environment)
+    throw BackendUnsupportedError(
+        "LLVM closure layout requires one compatible concrete environment");
+  LambdaRecord *selected = nullptr;
+  for (auto &[id, candidate] : lambdas) {
+    (void)id;
+    if (candidate.instance->type == type && !selected)
+      selected = &candidate;
+  }
+  if (!selected)
+    throw BackendUnsupportedError(
+        "LLVM closure layout requires an exact concrete lambda instance");
+  if (selected->layout)
+    return *selected->layout;
+  if (selected->building)
+    throw std::logic_error("recursive by-value LLVM closure layout");
+  selected->building = true;
+  try {
+    std::vector<llvm::Type *> fields;
+    fields.reserve(environment->captureTypes.size());
+    for (const auto &capture : environment->captureTypes)
+      fields.push_back(get(capture).storage);
+    if (fields.empty())
+      fields.push_back(llvm::Type::getInt8Ty(session.context()));
+    selected->storage->setBody(fields);
+    auto result = describe(selected->storage, true, pointer());
+    selected->layout = result;
+    selected->building = false;
+    return result;
+  } catch (...) {
+    selected->building = false;
+    throw;
+  }
+}
+
+unsigned Layouts::captureIndex(const SemanticType &type,
+                               std::size_t capture) const {
+  const auto environment =
+      closureEnvironmentLayout(session.program().mir(), type);
+  if (!environment)
+    throw BackendUnsupportedError(
+        "LLVM closure projection requires one compatible environment");
+  if (capture == 0 || capture > environment->captureTypes.size())
+    throw std::logic_error("LLVM closure capture index is out of range");
+  return static_cast<unsigned>(capture - 1);
 }
 
 const MirClassInstance &Layouts::instance(const SemanticType &type) const {

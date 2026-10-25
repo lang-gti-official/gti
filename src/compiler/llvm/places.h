@@ -4,6 +4,8 @@
 #include "scalar.h"
 
 #include <map>
+#include <optional>
+#include <span>
 #include <tuple>
 
 namespace lang::native_llvm {
@@ -15,6 +17,7 @@ class Places final {
 public:
   Places(Session &session, llvm::IRBuilder<> &ir, const MirBody &body,
          std::vector<llvm::Value *> &values, Scalars::Guard guard,
+         const MirLambdaInstance *lambda = nullptr,
          std::span<const ConcretePackParameter> packs = {});
   void allocate(const std::map<SymbolId, llvm::GlobalVariable *> &globals);
   [[nodiscard]] llvm::Value *address(MirPlaceId id);
@@ -52,6 +55,7 @@ private:
   const MirBody &body;
   std::vector<llvm::Value *> &values;
   Scalars::Guard guard;
+  const MirLambdaInstance *lambda;
   std::map<Key, Root> roots;
   std::map<HirBindingId, SemanticType> packParameters;
   std::map<std::pair<HirBindingId, std::size_t>, Root> packElements;
@@ -61,9 +65,9 @@ private:
   llvm::Value *receiverAddress = nullptr;
   SemanticType receiverType = SemanticType::Unknown;
   [[nodiscard]] static Key key(const MirPlace &place);
-  [[nodiscard]] Root root(const MirPlace &place);
   [[nodiscard]] std::optional<std::size_t>
   packElement(const MirPlace &place) const;
+  [[nodiscard]] Root root(const MirPlace &place);
   [[nodiscard]] llvm::Value *slot(llvm::Type *type);
 };
 

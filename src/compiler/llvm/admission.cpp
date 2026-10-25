@@ -1,5 +1,8 @@
 #include "gti/llvm_admission.h"
 
+#include "../mir_verification_queries.h"
+#include "closure_environment.h"
+#include "constructor_field_publication.h"
 #include "coverage.h"
 #include "parameter_packs.h"
 #include "reachability.h"
@@ -192,6 +195,23 @@ public:
           selected == SemanticType::CString ||
           selected == SemanticType::NullPtr)
         return true;
+      if (selected.kind == SemanticType::FunctionItem)
+        return selected.hasFunctionItemShape();
+      if (selected.kind == SemanticType::FunctionSignature)
+        return true;
+      if (selected.kind == SemanticType::Lambda) {
+        const auto environment =
+            native_llvm::closureEnvironmentLayout(program, selected);
+        if (!environment ||
+            environment->captureTypes.size() !=
+                environment->captureModes.size() ||
+            environment->captureTypes.size() !=
+                environment->captureRequiresActiveCleanup.size())
+          return false;
+        return std::all_of(
+            environment->captureTypes.begin(), environment->captureTypes.end(),
+            [&](const auto &capture) { return self(self, capture); });
+      }
       if (selected.kind == SemanticType::Reference ||
           selected.kind == SemanticType::RawPointer)
         return selected.arguments.size() == 1 &&
@@ -229,11 +249,16 @@ public:
             return false;
           owner = &candidate;
         }
-      if (!owner ||
-          owner->compilerCapability != CompilerCapabilityTypeKind::None ||
-          owner->polymorphic || owner->abstract || owner->cOpaqueHandle ||
-          !owner->bases.empty() || !owner->structuralBases.empty() ||
-          !visiting.insert(owner->id).second)
+      if (!owner)
+        return false;
+      if (owner->compilerCapability ==
+          CompilerCapabilityTypeKind::FunctionPointer)
+        return mir_detail::functionPointerSignature(program, selected) !=
+               nullptr;
+      if (owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+          owner->polymorphic || owner->abstract ||
+          owner->cOpaqueHandle || !owner->bases.empty() ||
+          !owner->structuralBases.empty() || !visiting.insert(owner->id).second)
         return false;
       bool valid = true;
       for (const auto &field : owner->declaredFields)
@@ -250,17 +275,28 @@ public:
             leaf->kind == SemanticType::RawPointer) &&
            leaf->arguments.size() == 1)
       leaf = &leaf->arguments[0];
-    if (leaf->kind == SemanticType::Class && nativeValue(type))
-      return std::any_of(program.classInstances().begin(),
-                         program.classInstances().end(),
-                         [&](const auto &owner) {
-                           return owner.type == *leaf && owner.unionLayout;
-                         })
-                 ? Shape::NativeUnionStorage
-                 : Shape::NativeClassStorage;
     if (leaf->kind == SemanticType::Enum && program.findPayloadEnum(*leaf) &&
         nativeValue(type))
       return Shape::NativePayloadStorage;
+    if ((leaf->kind == SemanticType::FunctionItem ||
+         leaf->kind == SemanticType::Lambda ||
+         leaf->kind == SemanticType::FunctionSignature) &&
+        nativeValue(type))
+      return leaf->kind == SemanticType::FunctionSignature
+                 ? Shape::CallableMetadata
+                 : Shape::NativeCallableStorage;
+    if (leaf->kind == SemanticType::Class && nativeValue(type)) {
+      const auto owner = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const auto &candidate) { return candidate.type == *leaf; });
+      if (owner != program.classInstances().end() &&
+          owner->compilerCapability ==
+              CompilerCapabilityTypeKind::FunctionPointer)
+        return Shape::NativeCallableStorage;
+      return owner != program.classInstances().end() && owner->unionLayout
+                 ? Shape::NativeUnionStorage
+                 : Shape::NativeClassStorage;
+    }
     return {};
   }
   const MirClassInstance *bodyClass() const {
@@ -287,6 +323,9 @@ public:
       if (const auto *storage = program.findThreadLocalStorage(body->owner))
         if (nativeValue(storage->type))
           return Shape::NativeThreadStorage;
+    if (body && body->kind == MirBodyKind::Lambda)
+      if (const auto *lambda = program.findLambda(body->owner))
+        return classShape(lambda->type);
     const auto *owner = bodyClass();
     return owner ? classShape(owner->type) : std::nullopt;
   }
@@ -331,11 +370,27 @@ public:
            (type.kind == SemanticType::Reference &&
             type.arguments.size() == 1 && opaqueReferent(type.arguments[0]));
   }
+  bool representedErasureObject(const SemanticType &type) const {
+    if (!nativeValue(type))
+      return false;
+    if (mir_detail::completeObjectType(program, type))
+      return true;
+    if (type.kind != SemanticType::Lambda && type.kind != SemanticType::Class)
+      return false;
+    return classShape(type) == Shape::NativeCallableStorage;
+  }
+  bool representedErasureReference(const SemanticType &type) const {
+    const auto *referent = &type;
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+      referent = &type.arguments[0];
+    return representedErasureObject(*referent);
+  }
   bool erasedReference(const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Call || !stage.loan ||
         stage.functionTarget || stage.operands.size() != 1 ||
         stage.parameterTypes.size() != 1 ||
         stage.parameterTypes[0].kind != SemanticType::Reference ||
+        stage.parameterTypes[0].arguments.size() != 1 ||
         stage.info.category != ValueCategory::Place)
       return false;
     const bool erase = stage.intrinsic == IntrinsicKind::EraseReference ||
@@ -343,16 +398,16 @@ public:
     const bool restore = stage.intrinsic == IntrinsicKind::RestoreReference ||
                          stage.intrinsic == IntrinsicKind::RestoreReferenceMut;
     return (erase && opaqueReferent(stage.info.type) &&
-            passiveReferenceType(stage.parameterTypes[0])) ||
+            representedErasureReference(stage.parameterTypes[0])) ||
            (restore && opaqueReferent(stage.parameterTypes[0].arguments[0]) &&
-            passiveReferenceType(stage.info.type));
+            representedErasureReference(stage.info.type));
   }
   bool restoredLoanTransport(const MirBody &body,
                              const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Borrow || !stage.loan ||
         stage.operands.size() != 1 ||
         stage.operands[0].kind != MirOperandKind::Loan ||
-        !passiveReference(stage.info.type))
+        !representedErasureReference(stage.info.type))
       return false;
     const auto *target = body.findLoan(*stage.loan);
     const auto *source = body.findLoan(stage.operands[0].loan);
@@ -363,14 +418,42 @@ public:
            target->source == source->source &&
            target->producedBy == source->producedBy)))
       return false;
+    const MirInstruction *producer = nullptr;
     for (const auto &block : body.blocks)
-      for (const auto &producer : block.instructions)
-        if (!producer.tombstone && producer.loan == stage.operands[0].loan &&
-            producer.restoresReferenceResult && erasedReference(producer) &&
-            producer.info.type == stage.info.type &&
-            producer.info.access == stage.info.access)
-          return true;
-    return false;
+      for (const auto &candidate : block.instructions)
+        if (!candidate.tombstone &&
+            candidate.kind == MirInstructionKind::Call &&
+            candidate.loan == source->id) {
+          if (producer)
+            return false;
+          producer = &candidate;
+        }
+    const auto *authority = mir_detail::restoredBorrowAuthority(body, *target);
+    if ((target->storedDependency || source->storedDependency) &&
+        authority != producer)
+      return false;
+    return producer && producer->kind == MirInstructionKind::Call &&
+           producer->info.type == stage.info.type &&
+           producer->info.access == stage.info.access &&
+           mir_detail::verifiedReferenceRestoreCall(program, body, *producer);
+  }
+
+  std::optional<Shape>
+  unstagedPublicationShape(const MirBody &mir,
+                           const MirInstruction &stage) const {
+    if (!body || body->kind != MirBodyKind::Constructor)
+      return {};
+    const auto plan = native_llvm::unstagedConstructorFieldPublication(
+        program, mir, body->owner, stage);
+    if (!plan.matched())
+      return {};
+    if (!plan.exact || plan.type != stage.info.type)
+      return std::nullopt;
+    if (isPassiveScalarValueType(plan.type))
+      return Shape::SuccessResultPublication;
+    const auto storage = classShape(plan.type);
+    return storage && *storage != Shape::CallableMetadata ? storage
+                                                          : std::nullopt;
   }
 
   template <class T> void add(T value, std::optional<Shape> implemented = {}) {
@@ -403,6 +486,12 @@ public:
       }
     } else if (body->kind == MirBodyKind::Constructor) {
       const auto *owner = program.findConstructorInstance(body->owner);
+      if (owner && &owner->body == currentBody) {
+        bindings = &owner->parameterBindings;
+        parameters = &owner->parameterTypes;
+      }
+    } else if (body->kind == MirBodyKind::Lambda) {
+      const auto *owner = program.findLambda(body->owner);
       if (owner && &owner->body == currentBody) {
         bindings = &owner->parameterBindings;
         parameters = &owner->parameterTypes;
@@ -473,10 +562,16 @@ public:
         add(Shape::TypeArguments);
       for (const SemanticType &argument : type.arguments)
         pending.push_back(&argument);
+      const auto enclosing = [&](const SemanticType &argument) {
+        if (argument.kind == SemanticType::TypePack && argument.concretePack)
+          this->type(argument, true);
+        else
+          pending.push_back(&argument);
+      };
       for (const SemanticType &argument : type.lambdaEnclosingClassTypes)
-        pending.push_back(&argument);
+        enclosing(argument);
       for (const SemanticType &argument : type.lambdaEnclosingFunctionTypes)
-        pending.push_back(&argument);
+        enclosing(argument);
     }
   }
 
@@ -703,6 +798,11 @@ public:
           add(Shape::Tombstone);
           continue;
         }
+        if (body && body->kind == MirBodyKind::Constructor &&
+            mirRecordPublishedConstructorInitializer(program, mir, body->owner,
+                                                     stage))
+          add(Shape::UnstagedConstructorFieldPublication,
+              unstagedPublicationShape(mir, stage));
         std::optional<Shape> storageShape;
         if (stage.kind == MirInstructionKind::EnsureThreadLocal)
           if (const auto *storage =
@@ -792,6 +892,9 @@ public:
               : textIndex        ? std::optional(Shape::CountedText)
               : referenceAddress ? std::optional(Shape::PassiveReference)
               : arrayAddress     ? std::optional(Shape::CheckedArrayProjection)
+              : stage.operation == MirOperation::Closure ||
+                      stage.operation == MirOperation::FunctionItem
+                  ? classShape(stage.info.type)
               : stage.operation == MirOperation::AddressOf && addressPlace
                   ? placeClassShape(*addressPlace)
                   : std::nullopt);
@@ -803,8 +906,19 @@ public:
               stage.operands.empty() &&
               (stage.intrinsic == IntrinsicKind::StringViewSize ||
                stage.intrinsic == IntrinsicKind::StringViewEmpty);
+          std::optional<Shape> callableIntrinsic;
+          if (stage.intrinsic == IntrinsicKind::FunctionPointerFromItem)
+            callableIntrinsic = classShape(stage.info.type);
+          else if (stage.intrinsic == IntrinsicKind::FunctionPointerInvoke &&
+                   !stage.parameterTypes.empty()) {
+            const auto &receiver = stage.parameterTypes.front();
+            if (receiver.kind == SemanticType::Reference &&
+                receiver.arguments.size() == 1)
+              callableIntrinsic = classShape(receiver.arguments.front());
+          }
           add(stage.intrinsic,
-              erasedReference(stage) ? std::optional(Shape::ErasedReference)
+              callableIntrinsic        ? callableIntrinsic
+              : erasedReference(stage) ? std::optional(Shape::ErasedReference)
               : passiveTextViewAddress(stage) || passiveCStringAddress(stage)
                   ? std::optional(Shape::CountedText)
               : passiveRawReference(stage)
@@ -919,8 +1033,10 @@ public:
                         return {};
                       }()
               : ordinaryUnsafe ? std::optional(Shape::OrdinaryUnsafeInvocation)
-              : stage.unsafeOperation ==
-                          UnsafeOperationKind::ErasedReferenceRestore &&
+              : (stage.unsafeOperation ==
+                     UnsafeOperationKind::ErasedReferenceRestore ||
+                 stage.unsafeOperation ==
+                     UnsafeOperationKind::DeclaredUnsafeCall) &&
                       (erasedReference(stage) ||
                        restoredLoanTransport(mir, stage))
                   ? std::optional(Shape::ErasedReference)
@@ -1109,7 +1225,8 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     inventory.traits(instance.traits, instance.type);
     inventory.add(instance.kind);
     if (instance.compilerCapability != CompilerCapabilityTypeKind::None)
-      inventory.add(instance.compilerCapability);
+      inventory.add(instance.compilerCapability,
+                    inventory.classShape(instance.type));
     if (!instance.declaredFields.empty())
       inventory.add(Shape::ClassFields, inventory.classShape(instance.type));
     for (const auto &field : instance.declaredFields)

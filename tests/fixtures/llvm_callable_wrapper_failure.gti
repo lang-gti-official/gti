@@ -1,0 +1,53 @@
+#include <std/panic>
+
+mut int destroyed = 0;
+
+class Capture {
+  int identity;
+public:
+  Capture(int identity) : identity(identity) {}
+  Capture(Capture& other) = delete;
+  Capture(Capture&& other) = default;
+  ~Capture() { destroyed = destroyed * 10 + this.identity; }
+  int read() { return this.identity; }
+};
+
+class Later {
+public:
+  Later(int value) {}
+};
+
+class Observe {
+public:
+  Observe() {}
+  ~Observe() {
+    if (destroyed != 7)
+      std::panic("callable field rollback did not clean the capture");
+  }
+};
+
+int fail() {
+  std::panic("later callable wrapper initializer failed");
+  return 0;
+}
+
+class Wrapper<F> {
+  F callable;
+  Later later;
+public:
+  Wrapper(F callable)
+      : callable(std::move(callable)), later(Later(fail())) {}
+};
+
+Wrapper<F> make_wrapper<F>(F callable) {
+  return Wrapper<F>(std::move(callable));
+}
+
+int main() {
+  Observe observe{};
+  Capture capture{7};
+  auto wrapper = make_wrapper([capture = std::move(capture)]() -> int {
+    return capture.read();
+  });
+  return 0;
+}

@@ -1,0 +1,10 @@
+uint64_t next(uint64_t value) { return value + uint64_t(1); }
+
+int main() {
+  mut uint64_t total = uint64_t(0);
+  for (mut uint64_t index = uint64_t(0); index < uint64_t(400000000);
+       index++) {
+    total += next(index);
+  }
+  return total == uint64_t(80000000200000000) ? 0 : 1;
+}

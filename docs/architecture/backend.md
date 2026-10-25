@@ -4758,6 +4758,114 @@ uses ordinary enums, not the legacy `OptionalStorage` capability. The live
 `PolymorphicStorage` family requires concrete polymorphic object layout from
 O-LLVM-10; heap-owned compositions also require O-LLVM-08. Neither dependency is
 silently granted by the existence of a payload layout.
+### LLVM Function Values And Closure Environments
+
+O-LLVM-09 lowers exact function items, invocation-pointer capabilities and
+concrete lambda instances from verified MIR. `callables.cpp` resolves only
+sealed body identities and signatures. A function item is physically stateless;
+a function-pointer capability stores a typed internal adapter address; a lambda
+stores its captures in target-layout order. None of these paths recognizes a
+public callable-wrapper name or falls back to generated C++.
+
+Lambda bodies use the private GTI ABI planned by `Abi`. A capturing lambda has
+its environment as the planned receiver; a captureless lambda has no mandatory
+environment channel. Direct calls retain their exact ABI. Invocation pointers
+use a checked adapter built from the same `FunctionAbi`, so failure-free targets
+can participate without a function-type cast and failure-capable targets retain
+the original failure record. This is the implemented status-based C04 baseline,
+not a decision that freezes the campaign's open failure-transport evaluation.
+Native C callback adapters remain the separate O-LLVM-11 boundary.
+
+Capture construction consumes the MIR-owned capture types, order and copy/move/
+borrow modes. Borrowed captures store only the selected referent address and do
+not acquire cleanup. Owned captures use the ordinary typed storage, move-state
+and reverse cleanup machinery. Returned closures, stored closure fields,
+prepared consuming receivers and later-argument or later-field failure therefore
+share the same final-destination publication and rollback rules as ordinary
+classes. An ordinary closure environment stays in its caller-owned object
+storage; the backend does not allocate merely to form or invoke it. Ownership
+capabilities whose storage policy itself requires allocation still compose with
+O-LLVM-08, and polymorphic callable wrappers still compose with O-LLVM-10.
+
+Several instantiated lambda bodies may have the same fully concrete lambda type,
+for example when a default field initializer is retained both as its own body
+and through generated construction. They may share one physical environment
+layout only when every instance agrees on ordered capture storage types, capture
+modes and active-cleanup state. This representation check never selects a body:
+formation and invocation retain their exact `lambdaTarget`, while cleanup
+resolves the exact `MirDropType::lambdaInstance` before checking its capture
+selectors and nested recipes. Body-local bindings, effects, borrow contracts and
+source identity are therefore not canonicalized with storage.
+
+Checked erased-reference transport is admitted from the verifier's exact
+referent type, access, origin and loan facts. The LLVM backend accepts any
+already-represented complete object, plus concrete closure and invocation-
+pointer storage, and carries only the selected address through erase/restore.
+It does not recognize `std::function_ref` or any other public wrapper name;
+wrapper construction and invocation compose from their ordinary source bodies.
+An unrelated source helper can relay that address only when the central MIR
+verifier proves its finite exact call chain reaches the trusted restore
+intrinsic with the same opaque witness, referent type, complete field path,
+access and argument origin. A complete scalar referent legitimately has an
+empty field path; a summary flag, tombstoned producer, changed origin/access or
+cyclic helper chain without the intrinsic endpoint is not authority.
+Abstract, opaque, symbolic and unsupported capability storage remains rejected
+even when a similarly spelled source wrapper exists.
+
+An unstaged constructor-field record is also a distinct pending admission
+requirement. One shared plan proves the exact constructor owner, field, SSA
+result and unique record producer before the body may use the field as that
+producer's final destination. A staged `Initialize` sibling suppresses this
+route. The requirement is witnessed only by an independently admitted scalar
+transport or concrete storage shape, so adding an owner representation does not
+silently claim constructor publication for it.
+
+A constructor `Stored` loan is not itself a representation decision. The
+shared publication plan resolves the exact declared field and initializer. A
+reference field publishes its selected referent address once; a class or lambda
+field carrying nested borrowed state is provenance-only because its complete
+by-value object was already published by the verified move/copy stage. Native
+emission skips both a second field write and runtime loan-slot materialization
+for that provenance-only handoff. Missing, ambiguous or type-inconsistent
+field facts fail closed rather than treating every Stored loan as a pointer.
+
+Concrete trailing parameter packs have no runtime pack object. One exact
+concrete-parameter plan serves admission, body lowering and place storage. It
+accepts the verified MIR forms currently emitted: the source trailing
+`TypePack`, or expanded parameter types retaining one trailing source-level
+pack binding. A per-lane binding vector with zero-valued continuations has no
+sealed producer and is rejected. An empty pack has no physical lane, but its
+trailing source binding remains in the owner's verified binding vector; a
+body-local available pack root is not a substitute for that identity. Repeated
+MIR views with the same place key and type coalesce into one logical pack or
+element root and never consume another ABI lane. Conflicting keys, types or
+formal identities fail closed. The body maps each used projected `PackElement`
+to its typed ABI lane. Concrete packs embedded in a lambda's enclosing
+substitution identity are inventory metadata rather than executable storage.
+Symbolic, nested, non-trailing and mismatched mappings remain unsupported.
+
+`llvm_callable_execution` compares direct/indirect calls, read/mutable/once
+invocation, returned/stored and nested generic closures, borrowed-carrier field
+storage, checked erased source wrappers, failure propagation and cleanup with
+the production backend where that backend has a matching representation.
+Native-only wrapper controls exercise final-field placement and rollback after
+a later initializer. Borrow rejection remains a frontend result.
+The optimized owned-closure probe also audits the linked executable for GTI
+allocation-provider symbols; performance and code-size observations are bounded
+workload evidence, not a general speedup claim.
+
+The 2026-10-25 macOS arm64 checkpoint uses 400-million-iteration workloads so
+each measured run exceeds 0.09 seconds. Five-sample medians for C++23/O3 versus
+LLVM/O3 were 100.606/100.519 ms for direct calls, 102.091/101.377 ms for a
+borrowed-capture closure, 94.638/649.676 ms for an invocation pointer, and
+99.422/654.378 ms for the mixed closure/pointer path. Direct and closure paths
+are within about 1%; the roughly sevenfold pointer overhead is stable and
+material.
+The pointer executables were 107,048/122,344 bytes; direct executables were
+106,744/105,688 bytes and closure executables 106,744/105,640 bytes. The
+separate owned-closure executable was 105,768 bytes and retained no GTI
+allocation-provider symbol. This isolates a remaining indirect-adapter/inlining
+cost; it is not final O-LLVM-09 performance acceptance.
 
 ### LLVM Coverage And Admission
 

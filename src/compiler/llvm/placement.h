@@ -11,6 +11,7 @@ namespace lang::native_llvm {
                                        const SemanticType &type) {
   return type.kind == SemanticType::Class ||
          (type.kind == SemanticType::Enum && program.findPayloadEnum(type)) ||
+         type.kind == SemanticType::Lambda ||
          (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
           addressValue(program, type.arguments[0]));
 }

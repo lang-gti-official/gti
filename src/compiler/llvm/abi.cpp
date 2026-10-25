@@ -80,9 +80,9 @@ Abi::Abi(Session &session, Layouts &layouts)
 }
 
 FunctionAbi Abi::gti(const SemanticType &result,
-                     std::span<const SemanticType> sourceParameters,
-                     bool mayFail, bool receiver, bool tracksCaller) {
-  const auto parameters = flattenConcreteParameters(sourceParameters);
+                     std::span<const SemanticType> parameters, bool mayFail,
+                     bool receiver, bool tracksCaller) {
+  const auto concreteParameters = flattenConcreteParameters(parameters);
   const auto output = layouts.get(result);
   FunctionAbi plan;
   std::vector<llvm::Type *> types;
@@ -106,8 +106,8 @@ FunctionAbi Abi::gti(const SemanticType &result,
     append(llvm::Type::getInt32Ty(session.context()), AbiChannel::CallerSite);
     append(layouts.pointer(), AbiChannel::CallerArtifact);
   }
-  for (std::size_t index = 0; index < parameters.size(); ++index) {
-    const auto input = layouts.get(parameters[index]);
+  for (std::size_t index = 0; index < concreteParameters.size(); ++index) {
+    const auto input = layouts.get(concreteParameters[index]);
     if (input.value->isVoidTy())
       throw std::logic_error("void GTI ABI parameter");
     append(input.addressOnly ? layouts.pointer() : input.value,

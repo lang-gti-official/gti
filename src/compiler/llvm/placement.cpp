@@ -59,7 +59,8 @@ bool Placement::fresh(MirValueId value) const {
          (stage.kind == MirInstructionKind::Compute &&
           (stage.operation == MirOperation::Aggregate ||
            stage.operation == MirOperation::PayloadConstruct ||
-           stage.operation == MirOperation::EnumConstant));
+           stage.operation == MirOperation::EnumConstant ||
+           stage.operation == MirOperation::Closure));
 }
 
 void Placement::bind(MirValueId value, Target target) {

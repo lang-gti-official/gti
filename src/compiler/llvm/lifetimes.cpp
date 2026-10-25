@@ -1,5 +1,6 @@
 #include "lifetimes.h"
 #include "payloads.h"
+#include "closure_environment.h"
 
 namespace lang::native_llvm {
 
@@ -61,6 +62,29 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
           ir.CreateStructGEP(storage, address,
                              session.layouts().fieldIndex(type, field.symbol)),
           field.type);
+  } else if (type.kind == SemanticType::Lambda) {
+    const auto environment =
+        closureEnvironmentLayout(session.program().mir(), type);
+    if (!environment ||
+        environment->captureTypes.size() != environment->captureModes.size() ||
+        environment->captureTypes.size() !=
+            environment->captureRequiresActiveCleanup.size())
+      throw BackendUnsupportedError(
+          "LLVM lambda move state requires one compatible environment");
+    for (std::size_t index = 0; index < environment->captureTypes.size();
+         ++index) {
+      if (isBorrowingCapture(environment->captureModes[index])) {
+        if (environment->captureRequiresActiveCleanup[index])
+          throw std::logic_error(
+              "borrowed LLVM capture acquired owned cleanup state");
+        continue;
+      }
+      if (needsMoveState(environment->captureTypes[index]))
+        moved(
+            ir,
+            ir.CreateStructGEP(storage, address, static_cast<unsigned>(index)),
+            environment->captureTypes[index]);
+    }
   }
   ir.CreateRetVoid();
   return function;
@@ -70,6 +94,32 @@ bool Lifetimes::needsMoveState(const SemanticType &type) const {
     return needsMoveState(type.arguments.at(0));
   if (type.kind == SemanticType::Enum)
     return session.program().mir().findPayloadEnum(type) != nullptr;
+  if (type.kind == SemanticType::Lambda) {
+    const auto environment =
+        closureEnvironmentLayout(session.program().mir(), type);
+    if (!environment ||
+        environment->captureTypes.size() != environment->captureModes.size() ||
+        environment->captureTypes.size() !=
+            environment->captureRequiresActiveCleanup.size())
+      throw BackendUnsupportedError(
+          "LLVM lambda move state requires one compatible environment");
+    for (std::size_t index = 0; index < environment->captureTypes.size();
+         ++index) {
+      if (isBorrowingCapture(environment->captureModes[index])) {
+        if (environment->captureRequiresActiveCleanup[index])
+          throw std::logic_error(
+              "borrowed LLVM capture acquired owned cleanup state");
+        continue;
+      }
+      const bool nested = needsMoveState(environment->captureTypes[index]);
+      if (nested != environment->captureRequiresActiveCleanup[index])
+        throw std::logic_error(
+            "LLVM capture move state disagrees with its sealed cleanup fact");
+      if (nested)
+        return true;
+    }
+    return false;
+  }
   if (type.kind != SemanticType::Class)
     return false;
   const auto &owner = session.layouts().instance(type);
@@ -102,7 +152,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
     if (previous == recipe)
       return function;
   if (recipe.polymorphicCleanup || recipe.recursiveCleanup ||
-      recipe.uniquePointeeClass || recipe.lambdaInstance)
+      recipe.uniquePointeeClass)
     throw BackendUnsupportedError(
         "LLVM cleanup requires its later ownership/dispatch milestone");
   auto *pointer = session.layouts().pointer();
@@ -207,7 +257,41 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
       ir.CreateCondBr(ir.CreateICmpNE(index, ir.getInt64(0)), loop, done);
       ir.SetInsertPoint(done);
     }
+  } else if (recipe.lambdaInstance) {
+    const auto *owner = closureCleanupInstance(session.program().mir(), recipe);
+    if (owner == nullptr ||
+        owner->captureTypes.size() != owner->captureModes.size() ||
+        owner->captureTypes.size() !=
+            owner->captureRequiresActiveCleanup.size())
+      throw std::logic_error(
+          "LLVM closure cleanup lost its sealed lambda identity");
+
+    std::vector<std::size_t> expected;
+    for (std::size_t index = owner->captureTypes.size(); index != 0; --index)
+      if (owner->captureRequiresActiveCleanup[index - 1])
+        expected.push_back(index - 1);
+    if (recipe.requiresActiveCleanup != !expected.empty() ||
+        recipe.aggregate.size() != expected.size())
+      throw std::logic_error(
+          "LLVM closure cleanup lost its sealed active-capture schedule");
+
+    for (std::size_t step = 0; step < recipe.aggregate.size(); ++step) {
+      const auto &selected = recipe.aggregate[step];
+      if (!selected.captureIndex || *selected.captureIndex != expected[step] ||
+          selected.type != owner->captureTypes[expected[step]] ||
+          isBorrowingCapture(owner->captureModes[expected[step]]) ||
+          selected.uniqueOwnerField != 0 || selected.uniqueOwnerBase ||
+          selected.payloadVariant || selected.payloadField)
+        throw std::logic_error(
+            "LLVM closure cleanup lost an exact owned capture projection");
+      child(selected,
+            ir.CreateStructGEP(session.layouts().get(recipe.type).storage,
+                               address, static_cast<unsigned>(expected[step])));
+    }
   } else {
+    if (recipe.type.kind == SemanticType::Lambda)
+      throw std::logic_error(
+          "LLVM closure cleanup has no concrete lambda identity");
     if (recipe.destructor) {
       const auto *target =
           session.program().mir().findDestructorInstance(*recipe.destructor);

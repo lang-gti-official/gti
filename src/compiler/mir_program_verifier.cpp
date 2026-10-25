@@ -105,7 +105,7 @@ restorationProducer(const MirBody &body, MirLoanId loan,
     return nullptr;
   for (const auto &block : body.blocks)
     for (const auto &instruction : block.instructions) {
-      if (instruction.loan != loan)
+      if (instruction.tombstone || instruction.loan != loan)
         continue;
       if (instruction.kind == MirInstructionKind::Call)
         return instruction.restoresReferenceResult ? &instruction : nullptr;
@@ -178,7 +178,7 @@ verifiedRestoreSummary(const MirProgram &program,
 [[nodiscard]] bool verifiedRestoreCall(const MirProgram &program,
                                        const MirBody &body,
                                        const MirInstruction &instruction) {
-  if (!instruction.restoresReferenceResult ||
+  if (instruction.tombstone || !instruction.restoresReferenceResult ||
       instruction.kind != MirInstructionKind::Call || !instruction.loan ||
       instruction.borrowOrigin != BorrowOriginKind::Argument ||
       instruction.borrowArgument >= instruction.parameterTypes.size() ||
@@ -8922,6 +8922,13 @@ private:
 }
 
 } // namespace
+
+bool mir_detail::verifiedReferenceRestoreCall(
+    const MirProgram &program, const MirBody &body,
+    const MirInstruction &instruction) {
+  return verifiedRestoreCall(program, body, instruction);
+}
+
 namespace {
 [[nodiscard]] bool hasCanonicalBodylessDefinition(
     const MirBody &body, MirBodyKind kind, const SemanticType &returnType,
@@ -17155,6 +17162,60 @@ verifyMirProgramContracts(const MirProgram &program) {
       }
     }
     if (parameters != nullptr) {
+      std::unordered_set<HirBindingId> concretePackBindings;
+      for (const MirPlace &place : body.places) {
+        if (place.root != MirPlaceRootKind::Binding ||
+            !place.projections.empty() ||
+            place.type.kind != SemanticType::TypePack)
+          continue;
+        const bool exactFormal =
+            place.binding != 0 && place.type.concretePack &&
+            place.initiallyAvailable && place.key &&
+            std::count(parameters->begin(), parameters->end(), place.binding) ==
+                1;
+        if (!exactFormal) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .message = "concrete pack root has no exact source formal"});
+          continue;
+        }
+        concretePackBindings.insert(place.binding);
+      }
+      if (concretePackBindings.size() > 1) {
+        result.errors.push_back(
+            {.bodyKind = body.kind,
+             .owner = owner,
+             .message =
+                 "source body has more than one concrete parameter pack"});
+      }
+      for (const HirBindingId binding : concretePackBindings) {
+        if (parameters->empty() || parameters->back() != binding) {
+          result.errors.push_back({.bodyKind = body.kind,
+                                   .owner = owner,
+                                   .message = "concrete parameter pack is not "
+                                              "the trailing source formal"});
+          continue;
+        }
+        const MirPlace *identity = nullptr;
+        for (const MirPlace &place : body.places) {
+          if (place.root != MirPlaceRootKind::Binding ||
+              place.binding != binding || !place.projections.empty())
+            continue;
+          if (identity == nullptr) {
+            identity = &place;
+            continue;
+          }
+          if (place.type != identity->type ||
+              place.symbol != identity->symbol || place.key != identity->key ||
+              place.initiallyAvailable != identity->initiallyAvailable)
+            result.errors.push_back(
+                {.bodyKind = body.kind,
+                 .owner = owner,
+                 .message = "concrete pack aliases disagree on their exact "
+                            "formal identity"});
+        }
+      }
       // Native formal transport consumes these resolved copy/move facts. A
       // binding cannot independently grant copying, forbid an available move,
       // or claim movability contrary to its concrete MIR type. Reference and
