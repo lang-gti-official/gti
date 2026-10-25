@@ -22,13 +22,13 @@ GTI has two independent executable-backend implementations behind the existing
 ```text
                                       -> CppBackend -> C++ source
 verified optimized MIR -> LoweredProgram
-                                      -> LlvmBackend -> native object (future)
+                                      -> LlvmBackend -> native object
 ```
 
 `CppBackend` remains the production default. `LlvmBackend` is an installed,
 selectable backend which verifies the same `LoweredProgram` and checks native
-admission before initializing the host LLVM target. O-LLVM-04 now admits the
-documented scalar profile; other valid programs report the classified
+admission before initializing the host LLVM target. O-LLVM-04/05/06 admit the
+documented scalar, places/text and ordinary class/lifecycle profiles; other valid programs report the classified
 `GTI-B0003` limitation. It does not manufacture a program merely to prove that
 LLVM can emit one.
 
@@ -54,12 +54,12 @@ The following boundaries are mandatory:
 - Native target and assembly-printer initialization belongs to
   `LlvmBackend`, is idempotent, and occurs only after the lowered contract and
   host-target restriction pass. It is not frontend or driver global state.
-- `BackendArtifactKind::Object` is the backend-neutral future handoff for
+- `BackendArtifactKind::Object` is the backend-neutral handoff for
   LLVM-produced relocatable object bytes. The driver owns atomic publication,
   native linking, runtime/native inputs, diagnostics, caches, and final output.
   `NativeLinkRequest` links that object without C++ source-language,
-  preprocessing, or code-generation flags. This foundation emits no object,
-  but the driver handoff is complete and independently unit tested.
+  preprocessing, or code-generation flags. Admitted native programs use this
+  handoff; infrastructure and real-program execution gates test it separately.
 - `CompilationRequest` owns executable-backend selection. `cpp` remains the
   default; direct CLI compilation exposes `--backend cpp|llvm`. Explicit C++
   representation options are rejected with `llvm` rather than being silently
@@ -104,8 +104,10 @@ declarations and signatures and verifies/emits objects for infrastructure
 oracles. O-LLVM-04 adds direct scalar/control-flow execution and defined-failure
 channels. Selecting `--backend llvm` emits a native object for its admitted host
 profile; unsupported required operations fail with `GTI-B0003` without replacing
-an existing output artifact. Ownership/lifecycle, general references and library
-conformance remain later campaign milestones.
+an existing output artifact. O-LLVM-05/06 add selected references, fixed arrays,
+counted text, concrete non-polymorphic classes, deterministic cleanup and TLS.
+Private ownership capabilities, payloads, polymorphism, general native calls,
+worker/callback execution and full library conformance retain later milestones.
 
 O-LLVM-02/03 implement coverage/admission, module ownership, bounded symbol/ABI
 mapping, target-machine construction, LLVM verification and object machinery. O-LLVM-04
@@ -125,8 +127,8 @@ first executable milestone.
   closure for their host architecture. That cost is isolated to the backend
   target and release package rather than broadening `gti_compiler`.
 - Merely selecting LLVM never changes GTI semantics. The C++ backend remains
-  the complete production backend; LLVM currently emits the admitted scalar
-  profile rather than the whole language.
+  the complete production backend; LLVM currently emits the documented admitted
+  profiles rather than the whole language.
 - Boundary tests reject frontend and C++ representation dependencies, forged
   lowered programs are rejected before LLVM initialization, and CLI tests pin
   both default-C++ behavior and the explicit foundation limitation.
