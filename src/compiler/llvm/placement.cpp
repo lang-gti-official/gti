@@ -12,8 +12,9 @@ Placement::Placement(const MirBody &body) {
     for (const auto &stage : block.instructions) {
       if (stage.tombstone)
         continue;
-      if (stage.kind == MirInstructionKind::Initialize && stage.destination &&
-          stage.operands.size() == 1 &&
+      if ((stage.kind == MirInstructionKind::Initialize ||
+           stage.kind == MirInstructionKind::CallInput) &&
+          stage.destination && stage.operands.size() == 1 &&
           stage.operands[0].kind == MirOperandKind::Value) {
         const auto *place = body.findPlace(*stage.destination);
         if (place && addressValue(place->type) &&

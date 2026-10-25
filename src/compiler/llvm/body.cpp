@@ -600,7 +600,7 @@ private:
         // a later argument can fail before ownership reaches the callee.
         if (result != destination)
           store(result, destination, place.type);
-        if (place.type.kind == SemanticType::Class)
+        if (addressValue(place.type))
           result = destination;
       }
       break;

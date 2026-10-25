@@ -668,6 +668,22 @@ int array_rollback(bool fail) {
   Element values[3] = {Element(1, false), Element(2, false), Element(3, fail)};
   return 0;
 }
+void consume_element(Element element, int other) {}
+int argument_rollback(bool fail) {
+  consume_element(Element(1, false), divide(fail ? 0 : 1));
+  return 0;
+}
+class Cargo {
+  int id;
+public:
+  Cargo(int id) : id(id) {}
+  ~Cargo() { events = events * 10 + this.id; }
+};
+void consume_array(Cargo values[2], int other) {}
+int array_argument_rollback(bool fail) {
+  consume_array({Cargo(1), Cargo(2)}, divide(fail ? 0 : 1));
+  return 0;
+}
 class Exit {
   bool fail;
 public:
@@ -678,10 +694,21 @@ Field return_rollback(bool fail) { Exit guard{fail}; return Field(5, false); }
 int main() {
   { Ticket ticket{7}; if (ticket.read() != 7) { return 1; } }
   if (events != 12) { return 2; }
+  events = 0;
   [[discard]] rollback(false);
+  if (events != 4321) { return 3; }
+  events = 0;
   [[discard]] array_rollback(false);
+  if (events != 321) { return 4; }
+  events = 0;
+  [[discard]] argument_rollback(false);
+  if (events != 1) { return 5; }
+  events = 0;
+  [[discard]] array_argument_rollback(false);
+  if (events != 21) { return 6; }
+  events = 0;
   { Field result = return_rollback(false); }
-  return 0;
+  return events == 45 ? 0 : 7;
 }
 )");
   if (!frontend.canGenerateCode()) {
@@ -747,11 +774,15 @@ int main() {
     for (const auto &target : program->program().mir().functionInstances()) {
       const auto *declaration =
           program->program().findFunctionDeclaration(target.declaration);
-      if (!declaration || (declaration->qualifiedName != "rollback" &&
-                           declaration->qualifiedName != "array_rollback" &&
-                           declaration->qualifiedName != "return_rollback"))
+      if (!declaration ||
+          (declaration->qualifiedName != "rollback" &&
+           declaration->qualifiedName != "array_rollback" &&
+           declaration->qualifiedName != "return_rollback" &&
+           declaration->qualifiedName != "argument_rollback" &&
+           declaration->qualifiedName != "array_argument_rollback"))
         continue;
       const bool returned = declaration->qualifiedName == "return_rollback";
+      const bool argument = declaration->qualifiedName == "argument_rollback";
       ir.CreateStore(ir.getInt32(0), events);
       const auto abi =
           session.abi().gti(target.returnType, target.parameterTypes,
@@ -776,14 +807,16 @@ int main() {
               ir.CreateNot(status),
               ir.CreateAnd(
                   ir.CreateICmpEQ(ir.CreateLoad(ir.getInt32Ty(), events),
-                                  ir.getInt32(returned ? 45 : 21)),
+                                  ir.getInt32(returned   ? 45
+                                              : argument ? 1
+                                                         : 21)),
                   ir.CreateICmpEQ(code,
                                   ir.getInt16(static_cast<unsigned>(
                                       DefinedFailureCode::DivisionByZero))))));
       ++probes;
     }
-    expect(probes == 3,
-           "field, array and prepared-return rollback probes found");
+    expect(probes == 5,
+           "field, array, prepared-argument and return rollback probes found");
     ir.CreateRet(ir.CreateSelect(correct, ir.getInt32(0), ir.getInt32(1)));
     expect(!ir.GetInsertBlock()->empty() &&
                ir.GetInsertBlock()->back().isTerminator(),

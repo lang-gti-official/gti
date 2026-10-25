@@ -4566,7 +4566,7 @@ loans publish reference-field addresses rather than copying referent contents.
 `body.cpp` emits selected constructors, direct methods, field/static initializer
 bodies and explicit lifecycle transitions. `placement.cpp` plans a single
 physical destination for each fresh construction/call result, following exact
-MIR Initialize, Return, argument-value staging and aggregate-element edges.
+MIR Initialize, Return, prepared-argument publication and aggregate-element edges.
 Caller result destinations propagate through nested fresh returns; class fields
 and fixed-array elements are constructed at their final address. This is not
 optional named-return elision: a Copy/Move operand remains an explicit transfer,
@@ -4603,6 +4603,11 @@ recipes may have no active element recipe and produce no element-cleanup walk.
 Targetless generated default construction is admitted for exact fieldless,
 baseless objects with no required initializer schedule; it arms their own
 destructor state without inventing a constructor call.
+Prepared class/array arguments use the same physical storage as their sealed
+parameter-drop obligation. Fresh objects construct there before publication;
+explicit copies/moves publish their snapshot before arming cleanup. A later
+argument failure therefore destroys that exact object, not an uninitialized or
+relocated stand-in.
 
 Passive namespace/static class objects consume complete typed object constants
 or the existing ordered initialization plan. Owning process globals remain a
