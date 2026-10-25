@@ -4424,6 +4424,18 @@ constructor, physical destination and current shared ABI; a failed base never
 installs derived state. MIR retains all base/subobject rollback publication and
 ordering. Unstaged polymorphic source constructors remain unsupported.
 
+An exact generated ordinary default with no source schedule can initialize
+fresh metadata-only class/struct storage directly: no declared fields or
+state-bearing bases, only verified interface subobjects, and no foreign layout,
+union or compiler capability. The body emitter checks the exact construction
+result or selected targetless base initializer and its physical `This` base
+destination. It initializes the empty storage, installs all exact class tables,
+then arms its existing own-destructor state at publication. An empty base still
+precedes the original derived activation anchor and field-failure rollback;
+the whole derived destructor is not armed early. This path has no source
+callbacks and is never used for assignment or generated copy/move destinations.
+It does not eliminate interface headers or relax observable pure-phase gates.
+
 The body emitter represents a source-sealed declaration-only instance-field
 initializer row as storage only, with no value store, cleanup arming or reference
 address publication. Source/HIR coherence proves the resolved initializer is
@@ -4450,8 +4462,8 @@ first/secondary-failure handling and aggregate draining are unchanged.
 
 Polymorphic replacement cleanup remains explicitly rejected: its invocation
 context must establish the receiver-state policy without inferring destruction
-from reuse of a drop recipe. Dynamic owning cleanup, generated-empty
-construction, transfer/assignment-state preservation and observable pure phases
+from reuse of a drop recipe. Dynamic owning cleanup,
+transfer/assignment-state preservation and observable pure phases
 remain separate obligations. These private prerequisites do not yet admit
 production LLVM virtual dispatch or establish native execution coverage.
 

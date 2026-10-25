@@ -19,6 +19,9 @@ public:
               const SemanticType &type, bool value);
   void moved(llvm::IRBuilder<> &ir, llvm::Value *address,
              const SemanticType &type);
+  void generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
+                      const MirBody &body, const MirInstruction &instruction,
+                      const MirConstructorInstance *constructor = nullptr);
   [[nodiscard]] llvm::Function *cleanup(const MirDropType &recipe,
                                         bool replacement = false);
 

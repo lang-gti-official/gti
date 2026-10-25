@@ -669,14 +669,17 @@ private:
       break;
     }
     case MirInstructionKind::InitializeBase: {
-      if (!constructor || !instruction.destination ||
-          !instruction.constructorTarget)
+      if (!constructor || !instruction.destination)
         throw BackendUnsupportedError(
             "LLVM base initialization requires its exact selected constructor "
             "and destination");
       auto *target = memory.address(*instruction.destination);
-      lifetimes.active(ir, target, instruction.info.type, false);
-      static_cast<void>(call(instruction, target));
+      if (instruction.constructorTarget) {
+        lifetimes.active(ir, target, instruction.info.type, false);
+        static_cast<void>(call(instruction, target));
+      } else {
+        lifetimes.generatedEmpty(ir, target, input, instruction, constructor);
+      }
       // call() leaves IR on the existing normal continuation. A failed base
       // retains its own phase and cannot install any derived dispatch state.
       if (constructor->dispatchState &&
@@ -687,27 +690,18 @@ private:
     }
     case MirInstructionKind::Construct: {
       auto *target = destination(*instruction.result);
-      lifetimes.active(ir, target, instruction.info.type, false);
       if (instruction.constructorTarget) {
+        lifetimes.active(ir, target, instruction.info.type, false);
         result = call(instruction, target);
       } else if (instruction.constructorKind == ConstructorKind::Ordinary &&
                  instruction.operands.empty() &&
                  instruction.info.type.kind == SemanticType::Class) {
-        const auto &object = session.layouts().instance(instruction.info.type);
-        if (object.defaultConstructor != SpecialMemberStatus::Generated ||
-            object.generatedDefaultRequiresSchedule ||
-            !object.declaredFields.empty() || !object.bases.empty())
-          throw BackendUnsupportedError(
-              "LLVM targetless default construction requires an exact empty "
-              "generated object");
-        ir.CreateStore(llvm::Constant::getNullValue(
-                           session.layouts().get(object.type).storage),
-                       target);
-        lifetimes.active(ir, target, object.type, true);
+        lifetimes.generatedEmpty(ir, target, input, instruction);
         result = target;
       } else if (instruction.info.type.kind == SemanticType::Class &&
                  instruction.operands.size() == 1 &&
                  instruction.constructorKind != ConstructorKind::Ordinary) {
+        lifetimes.active(ir, target, instruction.info.type, false);
         auto *source = operand(instruction.operands[0]);
         store(source, target, instruction.info.type);
         if (instruction.constructorKind == ConstructorKind::Move)

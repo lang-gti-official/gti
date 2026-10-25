@@ -1,6 +1,7 @@
 #include "lifetimes.h"
 
 #include <algorithm>
+#include <set>
 
 namespace lang::native_llvm {
 
@@ -162,6 +163,142 @@ void Lifetimes::active(llvm::IRBuilder<> &ir, llvm::Value *address,
     ir.CreateStore(ir.getInt8(value),
                    ir.CreateStructGEP(session.layouts().get(type).storage,
                                       address, *index));
+}
+
+void Lifetimes::generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
+                               const MirBody &body,
+                               const MirInstruction &instruction,
+                               const MirConstructorInstance *constructor) {
+  const bool construct = instruction.kind == MirInstructionKind::Construct;
+  const bool base = instruction.kind == MirInstructionKind::InitializeBase;
+  if (!address || !address->getType()->isPointerTy() || (!construct && !base) ||
+      instruction.tombstone || instruction.constructorTarget ||
+      instruction.constructorKind != ConstructorKind::Ordinary ||
+      !instruction.operands.empty() || !instruction.parameterTypes.empty() ||
+      !instruction.definedFailure.empty() || instruction.functionTarget ||
+      instruction.bodyTarget || instruction.receiver ||
+      instruction.objectAllocation != 0 || instruction.rawMemoryAccess ||
+      instruction.objectLayoutType ||
+      instruction.intrinsic != IntrinsicKind::None ||
+      instruction.info.type.kind != SemanticType::Class ||
+      (construct && (!instruction.result || instruction.destination ||
+                     instruction.constructorInitializer != 0 || constructor)) ||
+      (base && instruction.result))
+    throw std::invalid_argument("LLVM generated-empty initialization requires "
+                                "an exact fresh default operation");
+  const bool present = std::any_of(
+      body.blocks.begin(), body.blocks.end(), [&](const auto &block) {
+        return std::any_of(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &row) { return &row == &instruction; });
+      });
+  if (!present)
+    throw std::invalid_argument(
+        "LLVM generated-empty operation belongs to another body");
+  if (construct) {
+    const auto *result = body.findValue(*instruction.result);
+    if (!result || result->id != *instruction.result ||
+        result->definition != instruction.id ||
+        result->info.type != instruction.info.type)
+      throw std::invalid_argument(
+          "LLVM generated-empty construction lost its exact result type");
+  }
+  const auto &object = session.layouts().instance(instruction.info.type);
+  if ((object.kind != ClassKind::Class && object.kind != ClassKind::Struct) ||
+      object.defaultConstructor != SpecialMemberStatus::Generated ||
+      object.generatedDefaultRequiresSchedule ||
+      !object.declaredFields.empty() || !object.fields.empty() ||
+      !object.fieldDropOrder.empty() ||
+      std::any_of(object.structuralBases.begin(), object.structuralBases.end(),
+                  [](const auto &selected) { return !selected.interface; }) ||
+      object.cAbiRecord || object.cAbiLayout || object.cOpaqueHandle ||
+      object.unionLayout ||
+      object.compilerCapability != CompilerCapabilityTypeKind::None ||
+      std::any_of(object.bases.begin(), object.bases.end(),
+                  [](const auto &selected) { return !selected.interface; }))
+    throw BackendUnsupportedError(
+        "LLVM generated-empty initialization requires metadata-only ordinary "
+        "storage and no source schedule");
+  // An interface flag alone is not a layout witness. Bind every permitted
+  // row, including inherited interface rows, to its exact sealed concrete
+  // instance and unique physical subobject before writing any storage.
+  std::vector<HirBaseInstance> interfaces = object.bases;
+  interfaces.insert(interfaces.end(), object.structuralBases.begin(),
+                    object.structuralBases.end());
+  std::set<HirClassInstanceId> checked;
+  while (!interfaces.empty()) {
+    const auto row = interfaces.back();
+    interfaces.pop_back();
+    const auto *selected =
+        session.program().mir().findClassInstance(row.instance);
+    if (!row.interface || !selected || selected->type != row.type ||
+        selected->kind != ClassKind::Interface ||
+        selected->defaultConstructor != SpecialMemberStatus::Generated ||
+        selected->generatedDefaultRequiresSchedule ||
+        !selected->declaredFields.empty() || !selected->fields.empty() ||
+        !selected->fieldDropOrder.empty() || selected->destructor ||
+        selected->requiresActiveDropState || selected->requiresActiveCleanup ||
+        selected->cAbiRecord || selected->cAbiLayout ||
+        selected->cOpaqueHandle || selected->unionLayout ||
+        selected->compilerCapability != CompilerCapabilityTypeKind::None)
+      throw BackendUnsupportedError(
+          "LLVM generated-empty initialization lost a metadata-only interface "
+          "subobject");
+    static_cast<void>(session.layouts().get(row.type));
+    static_cast<void>(session.layouts().baseSubobject(object.type, row.type));
+    if (!checked.insert(row.instance).second)
+      continue;
+    interfaces.insert(interfaces.end(), selected->bases.begin(),
+                      selected->bases.end());
+    interfaces.insert(interfaces.end(), selected->structuralBases.begin(),
+                      selected->structuralBases.end());
+  }
+  const auto storage = session.layouts().get(object.type).storage;
+  if (base) {
+    if (!constructor || &body != &constructor->body ||
+        session.program().mir().findConstructorInstance(constructor->id) !=
+            constructor ||
+        constructor->definitionKind != MirDefinitionKind::Source ||
+        instruction.constructorInitializer == 0 ||
+        instruction.constructorInitializer > constructor->initializers.size() ||
+        !instruction.destination)
+      throw std::invalid_argument(
+          "LLVM generated-empty base lost its exact constructor stage");
+    const auto &selected =
+        constructor->initializers[instruction.constructorInitializer - 1];
+    const auto *destination = body.findPlace(*instruction.destination);
+    const auto *parent =
+        session.program().mir().findClassInstance(constructor->owner);
+    if (selected.kind != ConstructorInitializerTargetKind::Base ||
+        selected.base != object.id || selected.targetType != object.type ||
+        !selected.generatedDefault || selected.constructorTarget ||
+        !selected.arguments.empty() || selected.explicitArgumentCount != 0 ||
+        selected.storesReference || selected.ownedParameter || !destination ||
+        destination->root != MirPlaceRootKind::This ||
+        destination->type != object.type ||
+        destination->projections !=
+            std::vector<MirPlaceProjection>{
+                {.kind = MirProjectionKind::Base, .selection = object.id}} ||
+        !parent ||
+        std::none_of(parent->bases.begin(), parent->bases.end(),
+                     [&](const auto &row) {
+                       return !row.interface && row.instance == object.id &&
+                              row.type == object.type;
+                     }))
+      throw std::invalid_argument(
+          "LLVM generated-empty base lost its selected type or destination");
+  }
+  // The verified no-schedule operation has no source callbacks. Only empty
+  // interface subobjects and private metadata exist here, never language
+  // fields or existing assignment storage. Preflight every table before any
+  // store; observable pure phases retain their separate rejection.
+  if (object.polymorphic)
+    for (const auto &view : dispatch.views(object.id))
+      static_cast<void>(dispatch.table(object.id, view.viewClass));
+  ir.CreateStore(llvm::Constant::getNullValue(storage), address);
+  if (object.polymorphic)
+    dispatch.install(ir, address, object.id);
+  active(ir, address, object.type, true);
 }
 
 llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {

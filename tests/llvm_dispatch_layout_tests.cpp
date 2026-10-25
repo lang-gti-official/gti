@@ -7,6 +7,7 @@
 #include "gti/mir_editor.h"
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -948,6 +949,364 @@ void testStaticLifecycle() {
   }
 }
 
+void testGeneratedEmpty() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend = Frontend().analyze(
+      root / "tests/fixtures/llvm_dispatch_generated_empty.gti");
+  expect(frontend.canGenerateCode(), "generated-empty source verifies");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!input)
+    throw std::runtime_error("generated-empty source seal failed");
+  Session session(*input, {});
+  const auto admission = planLlvmAdmission(*input);
+  expect(!admission.admitted(),
+         "generated-empty private IR does not widen polymorphic admission");
+  // Inspect the unchanged rejected plan privately, never publish native O10
+  // artifacts or claim execution coverage from these representation probes.
+  lowerScalarProgram(session, admission);
+  Dispatch dispatch(session);
+  Failures failureChannel(session);
+  const auto nativeBody = [&](MirBodyAddress address) {
+    auto *function = session.module().getFunction(
+        "__gti_native_v1_body_" +
+        std::to_string(static_cast<unsigned>(address.kind)) + "_" +
+        std::to_string(address.owner));
+    if (!function)
+      throw std::runtime_error("generated-empty test lost its native body");
+    return function;
+  };
+  Lifetimes lifetimes(session, failureChannel, dispatch, nativeBody);
+  const auto &solo = named(session.program(), "Solo");
+  const auto &impl = named(session.program(), "Impl");
+  const auto &leaf = named(session.program(), "Leaf");
+  const auto &functions = session.program().mir().functionInstances();
+  const auto evaluate = std::find_if(
+      functions.begin(), functions.end(), [&](const auto &function) {
+        const auto *declaration =
+            session.program().findFunctionDeclaration(function.declaration);
+        return declaration && declaration->qualifiedName == "evaluate";
+      });
+  if (evaluate == functions.end())
+    throw std::runtime_error("generated-empty test lost its source consumer");
+  auto *native = session.abi().declareFunction(evaluate->id);
+  const auto pointerRoot = [](const llvm::Value *address) {
+    while (const auto *projection = llvm::dyn_cast<llvm::GEPOperator>(address))
+      address = projection->getPointerOperand();
+    return address;
+  };
+  const auto storedTable = [](const llvm::StoreInst &store) {
+    return llvm::dyn_cast<llvm::GlobalVariable>(
+        store.getValueOperand()->stripPointerCasts());
+  };
+  const auto emittedTable = [&](HirClassInstanceId active,
+                                HirClassInstanceId viewClass) {
+    const auto &views = dispatch.views(active);
+    const auto view =
+        std::find_if(views.begin(), views.end(), [&](const auto &row) {
+          return row.viewClass == viewClass;
+        });
+    if (view == views.end())
+      throw std::runtime_error("generated-empty test lost a selected view");
+    const auto *table = session.module().getNamedGlobal(
+        "__gti_dispatch_table_" + std::to_string(active) + "_" +
+        std::to_string(view->profileOwner));
+    if (!table)
+      throw std::runtime_error("generated-empty test lost an emitted table");
+    return table;
+  };
+  for (const auto *owner : {&solo, &impl}) {
+    std::set<const llvm::GlobalVariable *> expected;
+    for (const auto &view : dispatch.views(owner->id))
+      expected.insert(emittedTable(owner->id, view.viewClass));
+    const llvm::StoreInst *zero = nullptr, *armed = nullptr;
+    std::set<const llvm::GlobalVariable *> installed;
+    for (const auto &block : *native)
+      for (const auto &operation : block)
+        if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&operation)) {
+          const auto *constant =
+              llvm::dyn_cast<llvm::Constant>(store->getValueOperand());
+          if (constant && constant->isNullValue() &&
+              constant->getType() == session.layouts().get(owner->type).storage)
+            zero = store;
+          if (!zero || pointerRoot(store->getPointerOperand()) !=
+                           pointerRoot(zero->getPointerOperand()))
+            continue;
+          if (const auto *table = storedTable(*store);
+              expected.contains(table)) {
+            expect(store->getParent() == zero->getParent() &&
+                       zero->comesBefore(store),
+                   "fresh empty storage is initialized before its tables");
+            installed.insert(table);
+          }
+          if (const auto index = session.layouts().activeIndex(owner->type);
+              index && constant && constant->getType()->isIntegerTy(8) &&
+              llvm::cast<llvm::ConstantInt>(constant)->isOne()) {
+            armed = store;
+            expect(installed == expected,
+                   "all exact empty-object tables precede own cleanup arming");
+          }
+        }
+    expect(zero && installed == expected &&
+               (armed != nullptr) ==
+                   session.layouts().activeIndex(owner->type).has_value(),
+           "fresh root and multiple-interface empty construction publish exact "
+           "metadata without a fabricated constructor body");
+    if (owner == &impl)
+      expect(expected.size() == 3,
+             "this slice preserves all three existing physical interface "
+             "headers, without unreviewed pointer reuse");
+  }
+  const auto &constructors = session.program().mir().constructorInstances();
+  const auto selected =
+      std::find_if(constructors.begin(), constructors.end(),
+                   [&](const auto &row) { return row.owner == leaf.id; });
+  if (selected == constructors.end())
+    throw std::runtime_error(
+        "generated-empty test lost its derived constructor");
+  auto *constructor = nativeBody({MirBodyKind::Constructor, selected->id});
+  const auto abi =
+      session.abi().gti(SemanticType::Void, selected->parameterTypes,
+                        selected->mayRaiseDefinedFailure, true);
+  const auto receiver = std::find_if(
+      abi.parameters.begin(), abi.parameters.end(), [](const auto &channel) {
+        return channel.channel == AbiChannel::Receiver;
+      });
+  auto *thisAddress = constructor->getArg(receiver - abi.parameters.begin());
+  const auto ownOffset =
+      session.dataLayout()
+          .getStructLayout(llvm::cast<llvm::StructType>(
+              session.layouts().get(leaf.type).storage))
+          ->getElementOffset(*session.layouts().activeIndex(leaf.type));
+  const llvm::StoreInst *baseTable = nullptr, *derivedTable = nullptr;
+  const llvm::StoreInst *baseZero = nullptr, *baseArm = nullptr;
+  const llvm::StoreInst *rollbackPublication = nullptr;
+  const auto baseOffset =
+      session.layouts().baseSubobject(leaf.type, solo.type).offset;
+  const auto baseOwnOffset =
+      session.dataLayout()
+          .getStructLayout(llvm::cast<llvm::StructType>(
+              session.layouts().get(solo.type).storage))
+          ->getElementOffset(*session.layouts().activeIndex(solo.type));
+  const auto &soloLocation = dispatch.views(solo.id).front().location;
+  const auto baseTableOffset =
+      baseOffset + soloLocation.owner.offset +
+      session.dataLayout()
+          .getStructLayout(llvm::cast<llvm::StructType>(
+              session.layouts().get(soloLocation.owner.type).storage))
+          ->getElementOffset(soloLocation.index);
+  bool normalArm = false;
+  for (const auto &block : *constructor)
+    for (const auto &operation : block)
+      if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&operation)) {
+        if (storedTable(*store) == emittedTable(solo.id, solo.id))
+          baseTable = store;
+        if (storedTable(*store) == emittedTable(leaf.id, leaf.id))
+          derivedTable = store;
+        const auto *constant =
+            llvm::dyn_cast<llvm::Constant>(store->getValueOperand());
+        if (constant && constant->isNullValue() &&
+            constant->getType() == session.layouts().get(solo.type).storage)
+          baseZero = store;
+        const auto *value =
+            llvm::dyn_cast<llvm::ConstantInt>(store->getValueOperand());
+        if (value && value->isOne() && value->getType()->isIntegerTy(1) &&
+            llvm::isa<llvm::AllocaInst>(store->getPointerOperand()))
+          rollbackPublication = store;
+        if (value && value->isOne() && value->getType()->isIntegerTy(8) &&
+            pointerRoot(store->getPointerOperand()) == thisAddress &&
+            offsetFrom(session, store->getPointerOperand(), thisAddress) ==
+                baseOffset + baseOwnOffset)
+          baseArm = store;
+        if (value && value->getType()->isIntegerTy(8) && value->isOne() &&
+            pointerRoot(store->getPointerOperand()) == thisAddress &&
+            offsetFrom(session, store->getPointerOperand(), thisAddress) ==
+                ownOffset) {
+          const auto *returned =
+              llvm::dyn_cast<llvm::ReturnInst>(block.getTerminator());
+          const auto *success = returned ? llvm::dyn_cast<llvm::ConstantInt>(
+                                               returned->getReturnValue())
+                                         : nullptr;
+          expect(success && success->isOne(),
+                 "the derived own destructor is armed only at normal return");
+          normalArm = true;
+        }
+      }
+  expect(baseTable && derivedTable &&
+             baseTable->getParent() == derivedTable->getParent() &&
+             baseTable->comesBefore(derivedTable) && normalArm,
+         "exact empty base publication precedes the existing derived-state "
+         "anchor and fallible field initialization");
+  expect(baseOffset != 0 && baseZero && baseArm && baseTable && derivedTable &&
+             rollbackPublication &&
+             baseZero->getParent() == baseTable->getParent() &&
+             baseArm->getParent() == baseTable->getParent() &&
+             derivedTable->getParent() == baseTable->getParent() &&
+             rollbackPublication->getParent() == baseTable->getParent() &&
+             offsetFrom(session, baseZero->getPointerOperand(), thisAddress) ==
+                 baseOffset &&
+             offsetFrom(session, baseTable->getPointerOperand(), thisAddress) ==
+                 baseTableOffset &&
+             baseZero->comesBefore(baseTable) &&
+             baseTable->comesBefore(baseArm) &&
+             baseArm->comesBefore(derivedTable) &&
+             derivedTable->comesBefore(rollbackPublication),
+         "only the exact nonzero-offset empty base is zeroed, table-installed "
+         "and armed before derived activation and rollback publication");
+  bool rollback = false, failureEdge = false;
+  for (const auto &obligation : selected->body.dropObligations)
+    if (obligation.kind == MirDropObligationKind::ConstructionRollback) {
+      expect(obligation.dropType.classInstance == solo.id &&
+                 !obligation.initiallyActive,
+             "partial construction has only the exact unpublished base "
+             "rollback obligation, never a whole derived destructor");
+      rollback = true;
+    }
+  for (const auto &block : selected->body.blocks)
+    failureEdge |= block.terminator.kind == MirTerminatorKind::PropagateFailure;
+  expect(rollback && failureEdge,
+         "fallible field initialization retains base rollback and failure");
+  llvm::DominatorTree dominance(*constructor);
+  bool routedRollback = false;
+  for (const auto &block : selected->body.blocks) {
+    const auto &term = block.terminator;
+    const auto operation = std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [&](const auto &row) { return row.id == term.invokeInstruction; });
+    if (term.kind != MirTerminatorKind::Invoke ||
+        operation == block.instructions.end() ||
+        operation->kind != MirInstructionKind::Compute)
+      continue;
+    llvm::BasicBlock *failure = nullptr;
+    for (auto &nativeBlock : *constructor)
+      if (nativeBlock.getName() == "bb" + std::to_string(term.elseTarget))
+        failure = &nativeBlock;
+    if (!failure)
+      throw std::runtime_error(
+          "generated-empty test lost field-failure routing");
+    const auto *branch = failure->getTerminator();
+    const auto *guard =
+        branch && branch->getNumSuccessors() == 2
+            ? llvm::dyn_cast<llvm::LoadInst>(branch->getOperand(0))
+            : nullptr;
+    expect(guard && rollbackPublication &&
+               guard->getPointerOperand() ==
+                   rollbackPublication->getPointerOperand(),
+           "the field-failure edge tests the exact published base obligation");
+    for (const auto &nativeBlock : *constructor)
+      for (const auto &nativeOperation : nativeBlock)
+        if (const auto *call = llvm::dyn_cast<llvm::CallInst>(&nativeOperation);
+            call && call->getCalledFunction() &&
+            call->getCalledFunction()->getName().starts_with(
+                "__gti_native_cleanup_") &&
+            !call->getCalledFunction()->getName().starts_with(
+                "__gti_native_cleanup_observation_")) {
+          expect(dominance.dominates(failure, &nativeBlock) &&
+                     offsetFrom(session, call->getArgOperand(0), thisAddress) ==
+                         baseOffset,
+                 "partial field failure reaches cleanup of exactly the "
+                 "published Solo base, not the complete Leaf");
+          routedRollback = true;
+        }
+  }
+  expect(routedRollback,
+         "generated-empty base rollback is present on the field-failure route");
+  for (const auto *owner : {&solo, &leaf}) {
+    auto *destructor =
+        nativeBody({MirBodyKind::Destructor, *owner->destructor});
+    bool indirect = false;
+    for (const auto &block : *destructor)
+      for (const auto &operation : block)
+        if (const auto *call = llvm::dyn_cast<llvm::CallInst>(&operation))
+          indirect |= !call->getCalledFunction();
+    expect(indirect,
+           "actual source destructor virtual observations remain indirect");
+  }
+  const MirInstruction *fresh = nullptr;
+  for (const auto &block : evaluate->body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.kind == MirInstructionKind::Construct &&
+          instruction.info.type == solo.type)
+        fresh = &instruction;
+  if (!fresh)
+    throw std::runtime_error("generated-empty test lost its fresh operation");
+  auto *probe = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
+      llvm::GlobalValue::InternalLinkage, "generated.empty.rejection.probe",
+      session.module());
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", probe));
+  auto *storage = ir.CreateAlloca(session.layouts().get(solo.type).storage);
+  for (int mutation = 0; mutation != 12; ++mutation) {
+    auto body = evaluate->body;
+    MirInstruction *operation = nullptr;
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == fresh->id)
+          operation = &instruction;
+    if (mutation == 0)
+      operation->kind = MirInstructionKind::Assign;
+    if (mutation == 1)
+      operation->constructorKind = ConstructorKind::Copy;
+    if (mutation == 2)
+      operation->constructorKind = ConstructorKind::Move;
+    if (mutation >= 3 && mutation <= 7) {
+      operation->info.type =
+          named(session.program(),
+                std::array{"SourceDefault", "Scheduled", "Stateful", "Foreign",
+                           "Leaf"}[mutation - 3])
+              .type;
+      body.values.at(*operation->result - 1).info.type = operation->info.type;
+    }
+    if (mutation == 8)
+      operation->constructorInitializer = 1;
+    if (mutation == 9)
+      body.values.at(*operation->result - 1).info.type = impl.type;
+    if (mutation == 10)
+      operation->kind = MirInstructionKind::InitializeBase;
+    if (mutation == 11) {
+      operation->info.type = SemanticType::UniqueOwner;
+      body.values.at(*operation->result - 1).info.type = operation->info.type;
+    }
+    const auto size = ir.GetInsertBlock()->size();
+    rejects<std::exception>(
+        [&] { lifetimes.generatedEmpty(ir, storage, body, *operation); },
+        "wrong purpose, selected source/scheduled/stateful/foreign/fieldful "
+        "type or result/stage identity cannot acquire empty initialization");
+    expect(ir.GetInsertBlock()->size() == size,
+           "rejected empty initialization never mutates the supplied storage");
+  }
+  rejects<std::invalid_argument>(
+      [&] { lifetimes.generatedEmpty(ir, storage, MirBody{}, *fresh); },
+      "a foreign body cannot borrow a valid empty operation identity");
+  for (const auto &block : selected->body.blocks)
+    for (const auto &operation : block.instructions)
+      if (operation.kind == MirInstructionKind::InitializeBase) {
+        const auto size = ir.GetInsertBlock()->size();
+        rejects<std::invalid_argument>(
+            [&] {
+              lifetimes.generatedEmpty(ir, storage, selected->body, operation);
+            },
+            "an exact base instruction cannot initialize without its source "
+            "constructor stage");
+        auto foreignConstructor = *selected;
+        rejects<std::invalid_argument>(
+            [&] {
+              lifetimes.generatedEmpty(ir, storage, selected->body, operation,
+                                       &foreignConstructor);
+            },
+            "a copied constructor record cannot acquire exact base-stage "
+            "authority");
+        expect(ir.GetInsertBlock()->size() == size,
+               "base-stage identity rejection precedes storage writes");
+      }
+  ir.CreateRetVoid();
+  session.verify();
+}
+
 void testDeclarationInitializers() {
   const auto frontend =
       Frontend().analyze("llvm-declaration-placeholders.gti", R"(
@@ -1500,6 +1859,7 @@ int main() { return 0; }
   testPureGates();
   testBodyCallHook();
   testStaticLifecycle();
+  testGeneratedEmpty();
   testDeclarationInitializers();
   testProvedDirectReceiver();
   return failures ? 1 : 0;
