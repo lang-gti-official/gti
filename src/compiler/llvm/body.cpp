@@ -182,8 +182,16 @@ private:
 
   [[nodiscard]] llvm::Value *destination(MirValueId value) {
     if (stage && stage->result && *stage->result == value)
-      if (const auto *initializer = recordPublication(*stage))
-        return publicationAddress(*initializer);
+      if (const auto publication = recordPublication(*stage);
+          publication.matched()) {
+        if (publication.transport ==
+            UnstagedConstructorFieldPublicationTransport::ExactValue)
+          return publicationAddress(*publication.initializer);
+        if (publication.transport ==
+            UnstagedConstructorFieldPublicationTransport::NullUniqueOwner)
+          throw std::logic_error(
+              "LLVM null owner publication requested source placement");
+      }
     if (const auto *target = placement.target(value)) {
       if (target->place)
         return memory.address(target->place);
@@ -211,20 +219,20 @@ private:
              const SemanticType &type) {
     memory.store(value, address, type);
   }
-  [[nodiscard]] const MirConstructorInitializer *
+  [[nodiscard]] UnstagedConstructorFieldPublicationPlan
   recordPublication(const MirInstruction &instruction) const {
     if (address.kind != MirBodyKind::Constructor || !owner)
-      return nullptr;
+      return {};
     const auto &program = session.program().mir();
     const auto plan = unstagedConstructorFieldPublication(
         program, input, address.owner, instruction);
     if (!plan.matched())
-      return nullptr;
+      return {};
     if (!plan.exact)
       throw BackendUnsupportedError(
           "LLVM constructor record publication has inconsistent sealed "
           "field facts");
-    return plan.initializer;
+    return plan;
   }
   [[nodiscard]] llvm::Value *
   publicationAddress(const MirConstructorInitializer &initializer) {
@@ -682,9 +690,10 @@ private:
     stage = &instruction;
     if (instruction.tombstone)
       return;
-    const auto *published = recordPublication(instruction);
+    const auto published = recordPublication(instruction);
     llvm::Value *publishedAddress =
-        published ? publicationAddress(*published) : nullptr;
+        published.matched() ? publicationAddress(*published.initializer)
+                            : nullptr;
     llvm::Value *result = nullptr;
     switch (instruction.kind) {
     case MirInstructionKind::Compute: {
@@ -978,8 +987,28 @@ private:
     }
     if (instruction.result && result)
       values.at(*instruction.result) = result;
-    if (published && result)
-      store(result, publishedAddress, published->targetType);
+    if (published.matched()) {
+      if (!result)
+        throw std::logic_error(
+            "LLVM constructor publication lost its source result");
+      if (published.transport ==
+          UnstagedConstructorFieldPublicationTransport::ExactValue) {
+        store(result, publishedAddress, published.targetType);
+      } else if (published.transport ==
+                 UnstagedConstructorFieldPublicationTransport::
+                     NullUniqueOwner) {
+        auto *storage = llvm::dyn_cast<llvm::PointerType>(
+            session.layouts().get(published.targetType).storage);
+        if (!storage)
+          throw std::logic_error(
+              "LLVM null owner publication lost its pointer storage");
+        store(llvm::ConstantPointerNull::get(storage), publishedAddress,
+              published.targetType);
+      } else {
+        throw std::logic_error(
+            "LLVM constructor publication lost its exact transport");
+      }
+    }
     lifecycle(instruction.lifecycle);
   }
 

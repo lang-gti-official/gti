@@ -1,0 +1,46 @@
+#include <std/memory>
+#include <std/panic>
+
+extern "C" {
+  void null_owner_provider_begin();
+  void null_owner_provider_end();
+  uint64_t null_owner_provider_allocations();
+  uint64_t null_owner_provider_releases();
+}
+
+class ObserveProvider {
+public:
+  ObserveProvider() {}
+  ~ObserveProvider() {
+    null_owner_provider_end();
+    if (null_owner_provider_allocations() != uint64_t(0) ||
+        null_owner_provider_releases() != uint64_t(0))
+      std::panic("null owner provider rollback drift");
+  }
+};
+
+class Later {
+public:
+  Later(int value) {}
+};
+
+int fail_later() {
+  std::panic("null owner later initializer failed");
+  return 0;
+}
+
+class NullOwnerThenFailure {
+  std::unique_ptr<int> owner;
+  Later later;
+
+public:
+  NullOwnerThenFailure()
+      : owner(nullptr), later(Later(fail_later())) {}
+};
+
+int main() {
+  ObserveProvider observe{};
+  null_owner_provider_begin();
+  NullOwnerThenFailure value{};
+  return 0;
+}

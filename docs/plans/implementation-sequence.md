@@ -11441,6 +11441,20 @@ functional composition prerequisite. It does not satisfy combined-candidate
 Linux, performance, C04 failure-transport or O-LLVM-11 callback acceptance and
 is not by itself a milestone-exit claim.
 
+**Null-owner publication correction (component checkpoint):** the shared
+unstaged constructor publication plan now distinguishes its existing exact-
+value transport from one exact source-null-to-native-unique-owner transport.
+The latter requires a source `Compute/Literal` null with no effects or hidden
+authority, a complete typed pointee and O-LLVM-08's exact
+`NativeUniqueOwnership` admission shape. The O-LLVM-09 component deliberately
+retains backend rejection without that shape. Its focused planner controls
+reject nonnull, wrong-source, incomplete-pointee, duplicate-producer and staged
+forms. `llvm_callable_null_owner_rollback_test.py` supplies a production C++23
+oracle and a test memory provider that counts both allocation and release calls
+across a later-initializer failure; combined native O0--O3 must preserve the
+original failure while observing zero allocations and zero releases. The
+combined execution remains an integration gate rather than component evidence.
+
 - **Unlock:** higher-order algorithms, capturing callbacks and source-defined
   function wrappers, including owned/borrowed and read/mut/once forms.
 - **Deliver:** concrete function items/signatures, function pointers, closure

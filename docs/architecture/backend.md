@@ -4757,6 +4757,17 @@ route. The requirement is witnessed only by an independently admitted scalar
 transport or concrete storage shape, so adding an owner representation does not
 silently claim constructor publication for it.
 
+That shared plan has two explicit transports. `ExactValue` retains the original
+same-type scalar/class/callable route. `NullUniqueOwner` accepts only a real
+source `nullptr` literal with `NullPtr` value type and no operands, call/effect,
+borrow, ownership, lifecycle, unsafe or target metadata, targeting exactly one
+complete `UniqueOwner<T>` field. Admission additionally requires the target's
+implemented `NativeUniqueOwnership` shape; the callable component therefore
+fails closed without O-LLVM-08. Native emission keeps the source null SSA value
+but writes a target-typed null pointer directly to the owner field exactly once.
+It never treats the source `NullPtr` as owner placement storage, invents drop
+state or recognizes the source-defined `std::unique_ptr` name.
+
 A constructor `Stored` loan is not itself a representation decision. The
 shared publication plan resolves the exact declared field and initializer. A
 reference field publishes its selected referent address once; a class or lambda

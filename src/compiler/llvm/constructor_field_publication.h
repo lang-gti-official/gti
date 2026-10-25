@@ -9,10 +9,19 @@ namespace lang::native_llvm {
 // proves that the record has one exact SSA producer and one exact destination
 // field. Admission decides whether the producer's concrete storage transport
 // is implemented, while body emission consumes the same exact plan.
+enum class UnstagedConstructorFieldPublicationTransport {
+  None,
+  ExactValue,
+  NullUniqueOwner,
+};
+
 struct UnstagedConstructorFieldPublicationPlan final {
   const MirConstructorInitializer *initializer = nullptr;
   MirValueId value = 0;
-  SemanticType type = SemanticType::Unknown;
+  SemanticType sourceType = SemanticType::Unknown;
+  SemanticType targetType = SemanticType::Unknown;
+  UnstagedConstructorFieldPublicationTransport transport =
+      UnstagedConstructorFieldPublicationTransport::None;
   bool exact = false;
 
   [[nodiscard]] bool matched() const { return initializer != nullptr; }
