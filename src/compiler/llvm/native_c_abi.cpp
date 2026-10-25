@@ -133,8 +133,38 @@ bool nativeCDeclarationContract(const MirProgram &program,
                      });
 }
 
+bool nativeCScalarImportContract(const MirProgram &program,
+                                 const TargetInfo &target,
+                                 const MirFunctionInstance &function) {
+  const auto scalar = [](const SemanticType &type) {
+    switch (type.kind) {
+    case SemanticType::Void:
+    case SemanticType::Bool:
+    case SemanticType::Int8:
+    case SemanticType::UInt8:
+    case SemanticType::Int16:
+    case SemanticType::UInt16:
+    case SemanticType::Int32:
+    case SemanticType::UInt32:
+    case SemanticType::Int64:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Double:
+    case SemanticType::CString:
+    case SemanticType::RawPointer:
+      return true;
+    default:
+      return false;
+    }
+  };
+  return nativeCDeclarationContract(program, target, function) &&
+         scalar(function.returnType) &&
+         std::all_of(function.parameterTypes.begin(),
+                     function.parameterTypes.end(), scalar);
+}
+
 bool nativeCDirectCallContract(const MirProgram &program,
-                               const TargetInfo &target,
+                               const TargetInfo &target, const MirBody &body,
                                const MirInstruction &instruction) {
   const auto *function =
       instruction.functionTarget
@@ -158,16 +188,42 @@ bool nativeCDirectCallContract(const MirProgram &program,
       instruction.info.type != function->returnType ||
       instruction.operands.size() != function->parameterTypes.size())
     return false;
-  for (std::size_t index = 0; index < instruction.operands.size(); ++index)
-    if (instruction.operands[index].type != function->parameterTypes[index])
+  bool selected = false;
+  for (const auto &block : body.blocks)
+    for (const auto &candidate : block.instructions)
+      if (candidate.id == instruction.id)
+        selected = candidate.kind == MirInstructionKind::Call &&
+                   candidate.callSite == instruction.callSite &&
+                   candidate.functionTarget == instruction.functionTarget;
+  if (!selected)
+    return false;
+  for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
+    const auto &operand = instruction.operands[index];
+    const auto *value = operand.kind == MirOperandKind::Value
+                            ? body.findValue(operand.value)
+                            : nullptr;
+    const auto &type = function->parameterTypes[index];
+    if (!value || operand.type != type || value->info.type != type)
       return false;
+    bool staged = false;
+    for (const auto &block : body.blocks)
+      for (const auto &input : block.instructions)
+        if (input.id == value->definition)
+          staged = input.kind == MirInstructionKind::CallInput &&
+                   input.callSite == instruction.callSite &&
+                   input.callInputRole == MirCallInputRole::Argument &&
+                   input.callInputIndex == index && input.info.type == type;
+    if (!staged)
+      return false;
+  }
   return true;
 }
 
 bool nativeCIndirectCallContract(const MirProgram &program,
                                  const TargetInfo &target, const MirBody &body,
                                  const MirInstruction &instruction) {
-  return isMirNativeIndirectCall(program, body, instruction) &&
+  return !instruction.tombstone &&
+         isMirNativeIndirectCall(program, body, instruction) &&
          nativeCValueContract(program, target, *instruction.nativeCalleeType,
                               NativeCValueRole::Argument);
 }
@@ -564,6 +620,23 @@ planNativeCFunction(Session &session, const SemanticType &result,
   return plan;
 }
 
+void verifyNativeCImport(const llvm::Function &function,
+                         const FunctionAbi &plan) {
+  if (function.getFunctionType() != plan.type || !function.isDeclaration() ||
+      !function.hasExternalLinkage() || function.getAddressSpace() != 0 ||
+      function.getCallingConv() != llvm::CallingConv::C)
+    throw std::logic_error("conflicting LLVM native C import: " +
+                           function.getName().str());
+  // Derive attributes from the same implementation used by calls and new
+  // declarations, so extension and memory-transport rules cannot diverge.
+  const std::unique_ptr<llvm::Function> expected(llvm::Function::Create(
+      plan.type, llvm::GlobalValue::ExternalLinkage, ""));
+  plan.applyTo(*expected);
+  if (function.getAttributes() != expected->getAttributes())
+    throw std::logic_error("conflicting LLVM native C import attributes: " +
+                           function.getName().str());
+}
+
 llvm::Value *emitNativeCCall(Session &session, llvm::IRBuilder<> &ir,
                              const NativeCFunctionAbi &plan,
                              llvm::Value *callee,
@@ -622,11 +695,12 @@ llvm::Value *emitNativeCCall(Session &session, llvm::IRBuilder<> &ir,
 }
 
 llvm::Value *emitNativeCDirectCall(Session &session, llvm::IRBuilder<> &ir,
+                                   const MirBody &body,
                                    const MirInstruction &instruction,
                                    std::span<llvm::Value *const> arguments,
                                    llvm::Value *resultDestination) {
   if (!nativeCDirectCallContract(session.program().mir(),
-                                 session.program().target(), instruction))
+                                 session.program().target(), body, instruction))
     throw BackendUnsupportedError("native C call requires its exact sealed "
                                   "declaration and staged signature");
   const auto &target = *session.program().mir().findFunctionInstance(
@@ -635,6 +709,27 @@ llvm::Value *emitNativeCDirectCall(Session &session, llvm::IRBuilder<> &ir,
       planNativeCFunction(session, target.returnType, target.parameterTypes);
   return emitNativeCCall(session, ir, plan,
                          session.abi().declareFunction(target.id), arguments,
+                         resultDestination);
+}
+
+llvm::Value *emitNativeCIndirectCall(Session &session, llvm::IRBuilder<> &ir,
+                                     const MirBody &body,
+                                     const MirInstruction &instruction,
+                                     llvm::Value *callee,
+                                     std::span<llvm::Value *const> arguments,
+                                     llvm::Value *resultDestination) {
+  if (!nativeCIndirectCallContract(session.program().mir(),
+                                   session.program().target(), body,
+                                   instruction))
+    throw BackendUnsupportedError(
+        "native C indirect call requires its exact staged native signature");
+  if (!callee || callee->getType() != session.layouts().pointer())
+    throw std::logic_error("native C indirect callee is not a native address");
+  const auto &signature = *instruction.nativeCalleeType;
+  const auto plan =
+      planNativeCFunction(session, *signature.nativeFunctionReturnType(),
+                          signature.nativeFunctionParameterTypes());
+  return emitNativeCCall(session, ir, plan, callee, arguments,
                          resultDestination);
 }
 

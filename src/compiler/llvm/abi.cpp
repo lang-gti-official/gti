@@ -155,6 +155,8 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
     auto *previous = llvm::dyn_cast<llvm::Function>(existing);
     if (!previous || previous->getFunctionType() != plan.type)
       throw std::logic_error("conflicting LLVM symbol declaration: " + name);
+    if (native)
+      verifyNativeCImport(*previous, plan);
     return previous;
   }
   auto *output = llvm::Function::Create(

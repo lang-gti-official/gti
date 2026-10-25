@@ -95,6 +95,66 @@ struct Probe {
   bool vectorTail = false;
 };
 
+void checkImportContract(const FunctionAbi &plan) {
+  const std::unique_ptr<llvm::Function> function(llvm::Function::Create(
+      plan.type, llvm::Function::ExternalLinkage, "native_import_contract"));
+  plan.applyTo(*function);
+  verifyNativeCImport(*function, plan);
+  const auto attributes = function->getAttributes();
+  function->setCallingConv(llvm::CallingConv::Fast);
+  rejects<std::logic_error>([&] { verifyNativeCImport(*function, plan); });
+  function->setCallingConv(llvm::CallingConv::C);
+  function->setLinkage(llvm::Function::InternalLinkage);
+  rejects<std::logic_error>([&] { verifyNativeCImport(*function, plan); });
+  function->setLinkage(llvm::Function::ExternalLinkage);
+  auto *entry = llvm::BasicBlock::Create(plan.type->getContext(), "entry",
+                                         function.get());
+  rejects<std::logic_error>([&] { verifyNativeCImport(*function, plan); });
+  entry->eraseFromParent();
+  function->addFnAttr(llvm::Attribute::NoUnwind);
+  rejects<std::logic_error>([&] { verifyNativeCImport(*function, plan); });
+  function->setAttributes(attributes);
+  if (plan.resultExtension != AbiExtension::None) {
+    function->removeRetAttr(plan.resultExtension == AbiExtension::Signed
+                                ? llvm::Attribute::SExt
+                                : llvm::Attribute::ZExt);
+    rejects<std::logic_error>([&] { verifyNativeCImport(*function, plan); });
+    function->setAttributes(attributes);
+  }
+  for (unsigned index = 0; index < plan.parameters.size(); ++index)
+    if (plan.parameters[index].extension != AbiExtension::None) {
+      function->removeParamAttr(index, plan.parameters[index].extension ==
+                                               AbiExtension::Signed
+                                           ? llvm::Attribute::SExt
+                                           : llvm::Attribute::ZExt);
+      rejects<std::logic_error>([&] { verifyNativeCImport(*function, plan); });
+      function->setAttributes(attributes);
+    }
+  for (const auto &memory : plan.nativeMemory) {
+    function->removeParamAttr(memory.index, llvm::Attribute::Alignment);
+    rejects<std::logic_error>([&] { verifyNativeCImport(*function, plan); });
+    function->setAttributes(attributes);
+    if (memory.result || memory.byValue) {
+      function->removeParamAttr(memory.index, memory.result
+                                                  ? llvm::Attribute::StructRet
+                                                  : llvm::Attribute::ByVal);
+      rejects<std::logic_error>([&] { verifyNativeCImport(*function, plan); });
+      function->setAttributes(attributes);
+      const auto wrongStorage =
+          memory.result ? llvm::Attribute::getWithStructRetType(
+                              plan.type->getContext(),
+                              llvm::Type::getInt8Ty(plan.type->getContext()))
+                        : llvm::Attribute::getWithByValType(
+                              plan.type->getContext(),
+                              llvm::Type::getInt8Ty(plan.type->getContext()));
+      function->addParamAttr(memory.index, wrongStorage);
+      rejects<std::logic_error>([&] { verifyNativeCImport(*function, plan); });
+      function->setAttributes(attributes);
+    }
+  }
+  verifyNativeCImport(*function, plan);
+}
+
 void emitProbe(Session &session, const Probe &probe) {
   const auto &instance = record(session, probe.recordName);
   const auto prefix = probe.integerPrefix + probe.vectorPrefix;
@@ -125,6 +185,7 @@ void emitProbe(Session &session, const Probe &probe) {
     sourceTypes.push_back(SemanticType::Double);
   const auto nativePlan =
       planNativeCFunction(session, instance.type, sourceTypes);
+  checkImportContract(nativePlan.signature);
   auto *signature = nativePlan.signature.type;
   auto *callee =
       llvm::Function::Create(signature, llvm::Function::ExternalLinkage,
@@ -390,11 +451,27 @@ void emitCallbackProbes(Session &session, bool concurrent) {
 void emitContractProbes(Session &session) {
   const auto &program = session.program().mir();
   const auto &target = session.program().target();
+  const std::vector<SemanticType> narrow{
+      SemanticType::Int8, SemanticType::UInt8, SemanticType::Int16,
+      SemanticType::UInt16};
+  checkImportContract(session.abi().nativeC(SemanticType::Int8, narrow));
+  checkImportContract(session.abi().nativeC(SemanticType::UInt8, narrow));
   unsigned direct = 0, indirect = 0;
   for (const auto &function : program.functionInstances()) {
     if (function.linkage == LanguageLinkage::C) {
       require(nativeCDeclarationContract(program, target, function),
               "ordinary unrelated C declarations need structural contracts");
+      auto *imported = session.abi().declareFunction(function.id);
+      const auto plan =
+          session.abi().nativeC(function.returnType, function.parameterTypes);
+      checkImportContract(plan);
+      require(session.abi().declareFunction(function.id) == imported,
+              "exact native import must reuse its canonical declaration");
+      imported->setCallingConv(llvm::CallingConv::Fast);
+      rejects<std::logic_error>([&] {
+        static_cast<void>(session.abi().declareFunction(function.id));
+      });
+      imported->setCallingConv(llvm::CallingConv::C);
       for (unsigned mutation = 0; mutation < 5; ++mutation) {
         auto invalid = function;
         if (mutation == 0)
@@ -415,6 +492,11 @@ void emitContractProbes(Session &session) {
         session.program().findFunctionDeclaration(function.declaration);
     if (!declaration || declaration->qualifiedName != "main")
       continue;
+    const MirInstruction *indirectCall = nullptr;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.nativeCalleeType)
+          indirectCall = &instruction;
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions) {
         if (instruction.nativeCalleeType) {
@@ -422,6 +504,22 @@ void emitContractProbes(Session &session) {
                                               instruction),
                   "verified native pointer call requires its exact native "
                   "signature");
+          for (unsigned mutation = 0; mutation < 5; ++mutation) {
+            auto invalid = instruction;
+            if (mutation == 0)
+              invalid.callSite += 1000;
+            if (mutation == 1)
+              invalid.functionTarget = 1;
+            if (mutation == 2)
+              invalid.receiver.reset();
+            if (mutation == 3)
+              invalid.parameterTypes.push_back(SemanticType::Int32);
+            if (mutation == 4)
+              invalid.tombstone = true;
+            require(!nativeCIndirectCallContract(program, target, function.body,
+                                                 invalid),
+                    "mutated native indirect call must reject");
+          }
           ++indirect;
         }
         const auto *callee =
@@ -430,7 +528,8 @@ void emitContractProbes(Session &session) {
                 : nullptr;
         if (!callee || callee->linkage != LanguageLinkage::C)
           continue;
-        if (!nativeCDirectCallContract(program, target, instruction))
+        if (!nativeCDirectCallContract(program, target, function.body,
+                                       instruction))
           std::cerr << "native contract mismatch: " << callee->externalSymbol
                     << " kind=" << unsigned(instruction.kind)
                     << " unsafe=" << unsigned(instruction.unsafeOperation)
@@ -445,10 +544,11 @@ void emitContractProbes(Session &session) {
                     << " expected=" << callee->parameterTypes.size()
                     << " operands=" << instruction.operands.size() << '\n';
         require(
-            nativeCDirectCallContract(program, target, instruction),
+            nativeCDirectCallContract(program, target, function.body,
+                                      instruction),
             "real staged direct C call did not establish its exact witness");
         ++direct;
-        for (unsigned mutation = 0; mutation < 10; ++mutation) {
+        for (unsigned mutation = 0; mutation < 12; ++mutation) {
           auto invalid = instruction;
           if (mutation == 0)
             invalid.callSite = 0;
@@ -470,7 +570,12 @@ void emitContractProbes(Session &session) {
             invalid.parameterTypes.push_back(SemanticType::Int32);
           if (mutation == 9)
             invalid.functionTarget = 0;
-          require(!nativeCDirectCallContract(program, target, invalid),
+          if (mutation == 10)
+            invalid.callSite += 1000;
+          if (mutation == 11)
+            invalid.id = 0;
+          require(!nativeCDirectCallContract(program, target, function.body,
+                                             invalid),
                   "malformed staged C call cannot acquire native admission");
         }
         const auto native = planNativeCFunction(session, callee->returnType,
@@ -488,6 +593,9 @@ void emitContractProbes(Session &session) {
           name = "bridge_callback";
         require(!name.empty(), "unexpected contract fixture target");
         const bool callback = name == "bridge_callback";
+        require(
+            nativeCScalarImportContract(program, target, *callee) == !callback,
+            "scalar import admission cannot imply returned-function support");
         auto *type =
             callback ? llvm::FunctionType::get(
                            llvm::Type::getInt32Ty(session.context()),
@@ -501,17 +609,25 @@ void emitContractProbes(Session &session) {
         if (!callback)
           for (auto &argument : bridge->args())
             arguments.push_back(&argument);
-        auto *result =
-            emitNativeCDirectCall(session, ir, instruction, arguments);
+        auto *result = emitNativeCDirectCall(session, ir, function.body,
+                                             instruction, arguments);
         if (callback) {
-          const auto &signature = callee->returnType;
-          const auto plan = planNativeCFunction(
-              session, *signature.nativeFunctionReturnType(),
-              signature.nativeFunctionParameterTypes());
+          require(indirectCall != nullptr,
+                  "missing exact staged native pointer call");
           const std::vector<llvm::Value *> inputs{bridge->getArg(0)};
-          result = emitNativeCCall(session, ir, plan, result, inputs);
+          result = emitNativeCIndirectCall(session, ir, function.body,
+                                           *indirectCall, result, inputs);
         }
         ir.CreateRet(result);
+        unsigned calls = 0;
+        for (const auto &block : *bridge)
+          for (const auto &operation : block) {
+            require(!llvm::isa<llvm::AllocaInst>(operation),
+                    "scalar native transport cannot introduce stack storage");
+            calls += llvm::isa<llvm::CallBase>(operation);
+          }
+        require(calls == (callback ? 2u : 1u),
+                "native scalar transport adds no runtime adapter call");
       }
   }
   require(direct == 3 && indirect == 1,
@@ -530,7 +646,7 @@ void emitSourcePreflight(Session &session,
                 : nullptr;
         if (target && target->linkage == LanguageLinkage::C)
           require(nativeCDirectCallContract(program, session.program().target(),
-                                            instruction),
+                                            function.body, instruction),
                   "source preflight needs every real C call's exact witness");
       }
   }
@@ -550,7 +666,7 @@ void emitSourcePreflight(Session &session,
     if (declarationRequirement && use.body &&
         use.body->kind == MirBodyKind::Function)
       if (const auto *function = program.findFunctionInstance(use.body->owner))
-        witnessed = nativeCDeclarationContract(
+        witnessed = nativeCScalarImportContract(
             program, session.program().target(), *function);
     if (entry.family == "UnsafeOperationKind" &&
         entry.name == "ForeignPointerCall" && use.body)
@@ -559,7 +675,7 @@ void emitSourcePreflight(Session &session,
           for (const auto &instruction : block->instructions)
             if (instruction.id == use.instruction)
               witnessed = nativeCDirectCallContract(
-                  program, session.program().target(), instruction);
+                  program, session.program().target(), *body, instruction);
     if (!witnessed)
       throw std::runtime_error("source preflight still requires " +
                                entry.key());
@@ -601,16 +717,19 @@ void emitStorageProbes(Session &session) {
       llvm::BasicBlock::Create(session.context(), "entry", roundtrip));
   ir.CreateStore(roundtrip->getArg(0), storage("native_counter"));
   const MirInstruction *bump = nullptr;
+  const MirBody *bumpBody = nullptr;
   for (const auto &owner : program.functionInstances())
     for (const auto &block : owner.body.blocks)
       for (const auto &instruction : block.instructions)
         if (instruction.functionTarget)
           if (const auto *callee =
                   program.findFunctionInstance(*instruction.functionTarget);
-              callee && callee->externalSymbol == "native_bump")
+              callee && callee->externalSymbol == "native_bump") {
             bump = &instruction;
-  require(bump != nullptr, "missing real staged foreign-effect call");
-  static_cast<void>(emitNativeCDirectCall(session, ir, *bump, {}));
+            bumpBody = &owner.body;
+          }
+  require(bump && bumpBody, "missing real staged foreign-effect call");
+  static_cast<void>(emitNativeCDirectCall(session, ir, *bumpBody, *bump, {}));
   ir.CreateRet(ir.CreateLoad(i32, storage("native_counter")));
 
   auto *apply = function("llvm_storage_apply", i32, {i32});

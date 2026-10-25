@@ -14,6 +14,7 @@ def main():
     parser.add_argument("emitter", type=Path)
     parser.add_argument("--cc", default="clang")
     parser.add_argument("--compiler", type=Path)
+    parser.add_argument("--profile", choices=("scalar", "all"), default="all")
     parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--cxx", default="c++")
     parser.add_argument("--runtime", type=Path)
@@ -29,6 +30,7 @@ def main():
         ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip(),
         "platform": platform.platform(), "cc": args.cc,
         "production_execution": args.compiler is not None,
+        "production_profile": args.profile if args.compiler else None,
         "real_source_preflight": args.preflight, "steps": []}
 
     def run(command, name, expected=0):
@@ -87,7 +89,8 @@ def main():
                  fixture / f"{source}.c", "-o", obj], f"host-{source}-O{c_level}")
             objects.append(obj)
         for level in range(4):
-            for source in (("scalar_calls", "service_math", "native_failure") if args.preflight
+            for source in (("scalar_calls", "service_math", "native_failure")
+                           if args.preflight or args.profile == "scalar"
                            else ("contracts", "service_math", "native_failure")):
                 executable = output / f"source-{source}-llvm{level}-c{c_level}"
                 tag = executable.name
@@ -110,7 +113,8 @@ def main():
                       "native_failure.gti" not in result.stderr):
                     raise RuntimeError(f"native failure cleanup/attribution mismatch: {tag}")
                 executions += 1
-    scope = "real GTI-body preflight, public admission unchanged" if args.preflight else "production GTI/C"
+    scope = ("real GTI-body preflight, public admission unchanged" if args.preflight
+             else f"production GTI/C ({args.profile} profile)")
     print(f"PASS: 16 declaration/storage helper executions plus {executions} {scope} getter/service/cleanup executions; {output}")
 
 

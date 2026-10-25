@@ -65,6 +65,11 @@ struct NativeCFunctionAbi {
 planNativeCFunction(Session &session, const SemanticType &result,
                     std::span<const SemanticType> parameters);
 
+// Reusing a symbol must preserve the complete planned import contract, not
+// merely its LLVM function type. No stronger foreign effects are inferred.
+void verifyNativeCImport(const llvm::Function &function,
+                         const FunctionAbi &plan);
+
 // Arguments are already staged MIR body values, not reconstructed source
 // expressions. Aggregate results are written to their final destination.
 [[nodiscard]] llvm::Value *
@@ -75,9 +80,16 @@ emitNativeCCall(Session &session, llvm::IRBuilder<> &ir,
 
 [[nodiscard]] llvm::Value *
 emitNativeCDirectCall(Session &session, llvm::IRBuilder<> &ir,
-                      const MirInstruction &instruction,
+                      const MirBody &body, const MirInstruction &instruction,
                       std::span<llvm::Value *const> arguments,
                       llvm::Value *resultDestination = nullptr);
+
+[[nodiscard]] llvm::Value *
+emitNativeCIndirectCall(Session &session, llvm::IRBuilder<> &ir,
+                        const MirBody &body, const MirInstruction &instruction,
+                        llvm::Value *callee,
+                        std::span<llvm::Value *const> arguments,
+                        llvm::Value *resultDestination = nullptr);
 
 // Entry adapters use the same plan as imports. Record values become private
 // body storage; neither an incoming byval pointer nor a coercion is a GTI

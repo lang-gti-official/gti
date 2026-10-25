@@ -16,8 +16,14 @@ enum class NativeCValueRole { Argument, Result, Storage };
 [[nodiscard]] bool
 nativeCDeclarationContract(const MirProgram &program, const TargetInfo &target,
                            const MirFunctionInstance &function);
+// First public integration profile: no record/coercion, counted-text pair,
+// returned native signature or callback composition is implied by this gate.
+[[nodiscard]] bool
+nativeCScalarImportContract(const MirProgram &program, const TargetInfo &target,
+                            const MirFunctionInstance &function);
 [[nodiscard]] bool nativeCDirectCallContract(const MirProgram &program,
                                              const TargetInfo &target,
+                                             const MirBody &body,
                                              const MirInstruction &instruction);
 [[nodiscard]] bool
 nativeCIndirectCallContract(const MirProgram &program, const TargetInfo &target,
