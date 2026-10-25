@@ -1,5 +1,6 @@
 #include "layout.h"
 #include "closure_environment.h"
+#include "memory_types.h"
 #include "placement.h"
 
 #include <algorithm>
@@ -31,6 +32,21 @@ Layouts::Layouts(Session &session) : session(session) {
 
 llvm::PointerType *Layouts::pointer() const {
   return llvm::PointerType::get(session.context(), 0);
+}
+
+const SharedOwnerLayout &Layouts::sharedOwner() {
+  if (!sharedOwner_) {
+    auto *handle =
+        llvm::StructType::create(session.context(), {pointer(), pointer()},
+                                 "__gti_native_shared_handle_v1");
+    auto *block = llvm::StructType::create(
+        session.context(),
+        {llvm::Type::getInt64Ty(session.context()), pointer()},
+        "__gti_native_shared_block_v1");
+    sharedOwner_ =
+        SharedOwnerLayout{describe(handle, true, pointer()), describe(block)};
+  }
+  return *sharedOwner_;
 }
 
 TypeLayout Layouts::describe(llvm::Type *storage, bool addressOnly,
@@ -91,6 +107,7 @@ TypeLayout Layouts::get(const SemanticType &type) {
   case SemanticType::NullPtr:
   case SemanticType::CString:
   case SemanticType::NativeFunction:
+  case SemanticType::UniqueOwner:
     return describe(pointer());
   case SemanticType::FunctionItem:
     // Its exact declaration/instance identity remains in MIR. The physical
@@ -221,14 +238,23 @@ TypeLayout Layouts::record(const SemanticType &type) {
       throw;
     }
   }
+  if (sharedOwnerRepresentation(session.program().mir(), instance)) {
+    entry.layout = sharedOwner().handle;
+    return *entry.layout;
+  }
+  const bool vacant =
+      uninitializedStorageRepresentation(session.program().mir(), instance);
   if (instance.cOpaqueHandle || instance.polymorphic ||
-      instance.compilerCapability != CompilerCapabilityTypeKind::None)
+      (instance.compilerCapability != CompilerCapabilityTypeKind::None &&
+       !vacant))
     throw BackendUnsupportedError(
         "LLVM record representation requires its later "
         "lifecycle/capability/dispatch milestone");
   entry.building = true;
   try {
     std::vector<llvm::Type *> fields;
+    if (vacant)
+      fields.push_back(get(instance.type.arguments[0]).storage);
     for (const auto &base : instance.bases)
       fields.push_back(get(base.type).storage);
     for (const auto &field : instance.declaredFields)

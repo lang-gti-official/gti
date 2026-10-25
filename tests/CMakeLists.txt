@@ -1686,6 +1686,16 @@ target_link_libraries(gti_llvm_clang_coexistence_smoke PRIVATE gti_llvm_backend 
 add_test(NAME llvm_clang_coexistence COMMAND gti_llvm_clang_coexistence_smoke)
 set_tests_properties(llvm_clang_coexistence PROPERTIES TIMEOUT 30)
 
+add_executable(gti_llvm_memory_contract_tests llvm_memory_contract_tests.cpp)
+target_include_directories(gti_llvm_memory_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_memory_contract_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_memory_contracts COMMAND gti_llvm_memory_contract_tests "${PROJECT_SOURCE_DIR}")
+add_executable(gti_llvm_memory_mechanism_tests llvm_memory_mechanism_tests.cpp)
+target_include_directories(gti_llvm_memory_mechanism_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_memory_mechanism_tests PRIVATE gti_llvm_backend gti_driver)
+add_test(NAME llvm_memory_mechanisms COMMAND gti_llvm_memory_mechanism_tests)
+set_tests_properties(llvm_memory_mechanisms PROPERTIES TIMEOUT 120)
+
 if(Python3_Interpreter_FOUND)
   add_test(NAME llvm_scalar_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_scalar_execution_test.py"
@@ -1711,6 +1721,10 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_callable_execution_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(llvm_callable_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_memory_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_memory_execution_test.py"
+                   $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_memory_execution PROPERTIES TIMEOUT 1200)
   add_test(NAME array_publication_lsp
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/array_publication_lsp_test.py"
                    "$<TARGET_FILE:gti_lsp>")

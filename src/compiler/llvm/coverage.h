@@ -73,6 +73,12 @@ enum class Shape {
   UnstagedConstructorFieldPublication,
   NativeCallableStorage,
   CallableMetadata,
+  NativeMemoryOperation,
+  NativeProcessMemory,
+  NativeUniqueOwnership,
+  NativeSharedOwnership,
+  NativeClassRawAccess,
+  NativeObjectAddress,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

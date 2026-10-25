@@ -16606,7 +16606,7 @@ mirFieldProjectionType(const MirProgram &program, const SemanticType &receiver,
 
 [[nodiscard]] std::optional<SemanticType>
 projectedMirType(const MirProgram &program, SemanticType current,
-                 const std::vector<MirPlaceProjection> &projections) {
+                 std::span<const MirPlaceProjection> projections) {
   for (const MirPlaceProjection &projection : projections) {
     switch (projection.kind) {
     case MirProjectionKind::Base: {
@@ -20907,6 +20907,43 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     }
     for (const MirPlace &place : body->places) {
       check(place.type);
+      if (place.root != MirPlaceRootKind::Value)
+        continue;
+      bool raw = false;
+      bool rawField = false;
+      for (const auto &projection : place.projections) {
+        raw |= projection.kind == MirProjectionKind::RawDereference ||
+               projection.kind == MirProjectionKind::RawIndex;
+        rawField |= raw && projection.kind == MirProjectionKind::Field;
+      }
+      if (!rawField)
+        continue;
+      const auto *root = body->findValue(place.value);
+      std::optional<SemanticType> projected =
+          root ? std::optional(root->info.type) : std::nullopt;
+      bool lambdaCapture = false;
+      for (const auto &projection : place.projections) {
+        if (!projected)
+          break;
+        // This check owns raw class/array/base/reference field paths. Lambda
+        // capture selectors have a separate exact environment identity proof;
+        // do not choose the first same-shaped instance as a new authority.
+        if (projected->kind == SemanticType::Lambda &&
+            projection.kind == MirProjectionKind::Field) {
+          lambdaCapture = true;
+          break;
+        }
+        projected = projectedMirType(
+            program, std::move(*projected),
+            std::span<const MirPlaceProjection>(&projection, 1));
+      }
+      if (!lambdaCapture && (!projected || *projected != place.type))
+        result.errors.push_back(
+            {.bodyKind = address.kind,
+             .owner = address.owner,
+             .instruction = root ? root->definition : 0,
+             .message = "place " + std::to_string(place.id) +
+                        " does not match its exact raw field projection type"});
     }
     for (const MirBlock &block : body->blocks) {
       for (const auto &parameter : block.parameters) {

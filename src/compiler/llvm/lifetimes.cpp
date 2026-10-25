@@ -1,6 +1,7 @@
 #include "lifetimes.h"
-#include "payloads.h"
 #include "closure_environment.h"
+#include "memory.h"
+#include "payloads.h"
 
 namespace lang::native_llvm {
 
@@ -30,8 +31,11 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
   moves.emplace(storage, function);
   llvm::IRBuilder<> ir(
       llvm::BasicBlock::Create(session.context(), "entry", function));
-  auto *address = function->getArg(0);
-  if (type.kind == SemanticType::Array && type.arrayLength) {
+  llvm::Value *address = function->getArg(0);
+  if (type.kind == SemanticType::UniqueOwner) {
+    ir.CreateStore(llvm::ConstantPointerNull::get(session.layouts().pointer()),
+                   address);
+  } else if (type.kind == SemanticType::Array && type.arrayLength) {
     auto *entry = ir.GetInsertBlock();
     auto *loop =
         llvm::BasicBlock::Create(session.context(), "elements", function);
@@ -49,6 +53,11 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
     ir.SetInsertPoint(done);
   } else if (type.kind == SemanticType::Class) {
     const auto &owner = session.layouts().instance(type);
+    if (sharedOwnerRepresentation(session.program().mir(), owner)) {
+      ir.CreateStore(llvm::Constant::getNullValue(storage), address);
+      ir.CreateRetVoid();
+      return function;
+    }
     active(ir, address, type, false);
     for (const auto &base : owner.bases)
       moved(
@@ -90,6 +99,8 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
   return function;
 }
 bool Lifetimes::needsMoveState(const SemanticType &type) const {
+  if (type.kind == SemanticType::UniqueOwner)
+    return true;
   if (type.kind == SemanticType::Array)
     return needsMoveState(type.arguments.at(0));
   if (type.kind == SemanticType::Enum)
@@ -123,6 +134,8 @@ bool Lifetimes::needsMoveState(const SemanticType &type) const {
   if (type.kind != SemanticType::Class)
     return false;
   const auto &owner = session.layouts().instance(type);
+  if (sharedOwnerRepresentation(session.program().mir(), owner))
+    return true;
   if (owner.requiresActiveDropState)
     return true;
   for (const auto &field : owner.declaredFields)
@@ -151,8 +164,16 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
   for (const auto &[previous, function] : cleanups)
     if (previous == recipe)
       return function;
-  if (recipe.polymorphicCleanup || recipe.recursiveCleanup ||
-      recipe.uniquePointeeClass)
+  if (recipe.recursiveCleanup) {
+    for (auto entry = buildingCleanups.rbegin();
+         entry != buildingCleanups.rend(); ++entry)
+      if (!entry->first.recursiveCleanup && entry->first.type == recipe.type &&
+          entry->first.classInstance == recipe.classInstance)
+        return entry->second;
+    throw std::logic_error(
+        "LLVM recursive cleanup lost its exact enclosing recipe");
+  }
+  if (recipe.polymorphicCleanup)
     throw BackendUnsupportedError(
         "LLVM cleanup requires its later ownership/dispatch milestone");
   auto *pointer = session.layouts().pointer();
@@ -164,14 +185,70 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
       "__gti_native_cleanup_" + std::to_string(cleanups.size()),
       session.module());
   cleanups.emplace_back(recipe, function);
+  buildingCleanups.emplace_back(recipe, function);
   llvm::IRBuilder<> ir(
       llvm::BasicBlock::Create(session.context(), "entry", function));
-  auto *address = function->getArg(0);
+  llvm::Value *address = function->getArg(0);
   auto *output = function->getArg(1);
   auto *duringFailure = function->getArg(2);
   auto *failed = ir.CreateAlloca(ir.getInt1Ty());
   auto *scratch = ir.CreateAlloca(session.abi().failureChannel());
   ir.CreateStore(ir.getFalse(), failed);
+  const bool unique = recipe.type.kind == SemanticType::UniqueOwner;
+  const bool shared =
+      recipe.type.kind == SemanticType::Class &&
+      sharedOwnerRepresentation(session.program().mir(),
+                                session.layouts().instance(recipe.type));
+  llvm::Value *sharedBlock = nullptr;
+  llvm::Value *sharedPointee = nullptr;
+  if (shared) {
+    if (!recipe.classInstance ||
+        *recipe.classInstance != session.layouts().instance(recipe.type).id ||
+        recipe.aggregate.size() != 1 ||
+        recipe.aggregate[0].type !=
+            SemanticType::uniqueOwnerOf(recipe.type.arguments[0]) ||
+        recipe.aggregate[0].uniqueOwnerField ||
+        recipe.aggregate[0].uniqueOwnerBase ||
+        recipe.aggregate[0].captureIndex || recipe.destructor ||
+        recipe.fixedArray)
+      throw std::logic_error(
+          "LLVM shared cleanup lost its exact unique pointee recipe");
+    Memory memory(session, ir, {}, {}, {});
+    const auto released = memory.releaseShared(address);
+    sharedBlock = released.block;
+    auto *last =
+        llvm::BasicBlock::Create(session.context(), "shared.last", function);
+    auto *done = llvm::BasicBlock::Create(session.context(), "shared.released",
+                                          function);
+    ir.CreateCondBr(released.last, last, done);
+    ir.SetInsertPoint(done);
+    ir.CreateRet(ir.getTrue());
+    ir.SetInsertPoint(last);
+    sharedPointee = ir.CreateAlloca(pointer);
+    ir.CreateStore(released.allocation, sharedPointee);
+  }
+  llvm::Value *allocation = nullptr;
+  if (unique) {
+    if (recipe.type.arguments.size() != 1 || recipe.fixedArray ||
+        (recipe.uniquePointeeClass &&
+         session.layouts().instance(recipe.type.arguments[0]).id !=
+             *recipe.uniquePointeeClass))
+      throw std::logic_error(
+          "LLVM unique cleanup lost its exact pointee recipe");
+    allocation = ir.CreateLoad(pointer, address);
+    ir.CreateStore(llvm::ConstantPointerNull::get(session.layouts().pointer()),
+                   address);
+    auto *live =
+        llvm::BasicBlock::Create(session.context(), "owner.live", function);
+    auto *empty =
+        llvm::BasicBlock::Create(session.context(), "owner.empty", function);
+    ir.CreateCondBr(ir.CreateIsNull(allocation), empty, live);
+    ir.SetInsertPoint(empty);
+    ir.CreateRet(ir.getTrue());
+    ir.SetInsertPoint(live);
+    address = allocation;
+  }
+  const auto &objectType = unique ? recipe.type.arguments[0] : recipe.type;
 
   // Save the first normal-cleanup failure, drain remaining children, and stop
   // immediately on a second failure. A caller already unwinding owns its first
@@ -208,8 +285,12 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
         {where, scratch,
          ir.CreateOr(duringFailure, ir.CreateLoad(ir.getInt1Ty(), failed))}));
   };
-  if (recipe.type.kind == SemanticType::Enum &&
-      session.program().mir().findPayloadEnum(recipe.type)) {
+  if (shared) {
+    child(recipe.aggregate[0], sharedPointee);
+    Memory memory(session, ir, {}, {}, {});
+    memory.releaseBytes(sharedBlock);
+  } else if (recipe.type.kind == SemanticType::Enum &&
+             session.program().mir().findPayloadEnum(recipe.type)) {
     const auto &layout = session.layouts().payload(recipe.type);
     auto *tagAddress = payloadTagAddress(ir, layout, address);
     auto *tag = ir.CreateLoad(ir.getInt32Ty(), tagAddress);
@@ -295,14 +376,14 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
     if (recipe.destructor) {
       const auto *target =
           session.program().mir().findDestructorInstance(*recipe.destructor);
-      if (!target || recipe.type.kind != SemanticType::Class)
+      if (!target || objectType.kind != SemanticType::Class)
         throw std::logic_error("LLVM cleanup lost its selected destructor");
-      const auto index = session.layouts().activeIndex(recipe.type);
+      const auto index = session.layouts().activeIndex(objectType);
       if (!index)
         throw std::logic_error(
             "LLVM source destructor has no active-state representation");
       auto *state = ir.CreateStructGEP(
-          session.layouts().get(recipe.type).storage, address, *index);
+          session.layouts().get(objectType).storage, address, *index);
       auto *run = llvm::BasicBlock::Create(session.context(), "body", function);
       auto *done =
           llvm::BasicBlock::Create(session.context(), "body.done", function);
@@ -326,6 +407,15 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
       ir.SetInsertPoint(done);
     }
     for (const auto &selected : recipe.aggregate) {
+      if (unique) {
+        if (recipe.aggregate.size() != 1 || selected.type != objectType ||
+            selected.uniqueOwnerField || selected.uniqueOwnerBase ||
+            selected.captureIndex || selected.payloadVariant)
+          throw std::logic_error(
+              "LLVM unique cleanup lost its unprojected pointee child");
+        child(selected, address);
+        continue;
+      }
       unsigned index;
       if (selected.uniqueOwnerField)
         index = session.layouts().fieldIndex(recipe.type,
@@ -341,7 +431,12 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
                                address, index));
     }
   }
+  if (unique) {
+    Memory memory(session, ir, {}, {}, {});
+    memory.releaseBytes(allocation);
+  }
   ir.CreateRet(ir.CreateNot(ir.CreateLoad(ir.getInt1Ty(), failed)));
+  buildingCleanups.pop_back();
   return function;
 }
 

@@ -30,6 +30,17 @@ struct PayloadLayout {
   static constexpr std::uint32_t inactive = UINT32_MAX;
 };
 
+// Private representation only. Allocation, atomics and typed cleanup share
+// these indices; this is not an exported or persistent ABI.
+struct SharedOwnerLayout {
+  TypeLayout handle;
+  TypeLayout block;
+  unsigned handleBlock = 0;
+  unsigned handleView = 1;
+  unsigned blockStrong = 0;
+  unsigned blockAllocation = 1;
+};
+
 // All layout queries, allocation sizes and ABI address-only choices share this
 // session-owned map. Opaque LLVM declarations are allocated before their
 // bodies.
@@ -38,6 +49,7 @@ public:
   [[nodiscard]] TypeLayout get(const SemanticType &type);
   [[nodiscard]] const PayloadLayout &payload(const SemanticType &type);
   [[nodiscard]] llvm::PointerType *pointer() const;
+  [[nodiscard]] const SharedOwnerLayout &sharedOwner();
   [[nodiscard]] const MirClassInstance &
   instance(const SemanticType &type) const;
   [[nodiscard]] unsigned fieldIndex(const SemanticType &type,
@@ -68,6 +80,7 @@ private:
   };
   Session &session;
   llvm::StructType *textView_ = nullptr;
+  std::optional<SharedOwnerLayout> sharedOwner_;
   std::map<HirClassInstanceId, Record> records;
   std::unordered_map<ClassId, std::vector<HirClassInstanceId>> classes;
   struct PayloadRecord {

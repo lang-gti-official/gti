@@ -1,0 +1,27 @@
+#include <std/memory>
+
+mut int live = 0;
+mut int trace = 0;
+class Node {
+public:
+  int id;
+  Node(int id) : id(id) { live++; }
+  ~Node() { live--; trace = trace * 10 + this.id; }
+};
+
+int main() {
+  {
+    mut auto first = std::make_unique<Node>(3);
+    mut auto second = std::make_unique<Node>(4);
+    if (!first || !second || live != 2 || first->id != 3) { return 1; }
+    first.swap(second);
+    if (first->id != 4 || second->id != 3) { return 2; }
+    second.reset();
+    if (second || trace != 3 || live != 1) { return 3; }
+    mut auto moved = std::move(first);
+    if (moved->id != 4) { return 4; }
+  }
+  if (live != 0 || trace != 34) { return 5; }
+  auto integer = std::make_unique<int>(91);
+  return *integer == 91 ? 0 : 6;
+}
