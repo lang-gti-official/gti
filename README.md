@@ -19,18 +19,26 @@ language with excellent safety and a standard library expressed in ordinary GTI
 over general language facilities and necessary compiler/runtime mechanisms.
 
 GTI is not a C++ wrapper. Its syntax is intentionally familiar, but its ownership,
-lifetime, failure, and execution semantics are its own. C++ generation is the
-reference compiler's current implementation strategy, not the language contract.
+lifetime, failure, and execution semantics are its own. Neither generated C++
+nor LLVM representation is the language contract.
+
+**Backend direction:** LLVM is the primary development backend. C++ is deprecated
+as the primary backend and receives bug fixes only through v1.0, retaining its
+existing supported behavior as a comparison oracle. C++ catch-up may be
+reconsidered after v1.0; it is not promised or automatic. Limited development
+capacity is focused on LLVM rather than maintaining feature parity in two
+backends. See [the backend policy](docs/decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25).
 
 The released compiler checks a complete GTI source graph, builds typed HIR and
-MIR, and seals a backend-neutral `LoweredProgram`. The production C++ backend
-then invokes a native C++ compiler. A separately selectable LLVM backend emits
-native scalar/control-flow programs; full-language support is still in progress:
+MIR, and seals a backend-neutral `LoweredProgram`. C++ remains the shipped default
+and invokes a native C++ compiler until LLVM passes its production-promotion
+gates. The selectable LLVM backend already emits admitted scalar, places/text
+and ordinary class/lifecycle programs; full-language support is still in progress:
 
 ```text
 source graph -> frontend -> checked AST -> typed HIR/MIR
              -> GTI optimization -> LoweredProgram -> C++ backend -> native compiler
-                                                 \-> LLVM backend -> native object (scalar profile)
+                                                 \-> LLVM backend -> native object (admitted profiles)
 ```
 
 > [!IMPORTANT]

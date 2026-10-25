@@ -10517,8 +10517,13 @@ admitted. Exact report identity and raw samples live in
 
 ### LLVM Production Backend Campaign
 
-**Direction (2026-10-24):** LLVM is the intended public production backend.
-C++ remains the working production default until O-LLVM-16 passes. This campaign
+**Direction (revised 2026-10-25):** LLVM is the primary development and intended
+public production backend. C++ is deprecated as the primary backend, with bug
+fixes only through v1.0 to preserve its existing supported comparison-oracle
+behavior. Do not spend campaign capacity on C++ feature parity; post-1.0
+catch-up requires a separate owner decision and is not promised. See the
+[policy rationale](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25).
+C++ remains the shipped default until O-LLVM-16 passes. This campaign
 implements the current language, not a new LLVM-specific subset or edition.
 The [architecture audit](../architecture/backend.md#llvm-readiness-audit-2026-10-24)
 and [ADR 031](../decisions/031-native-llvm-backend-foundation.md) explain the
@@ -10535,7 +10540,10 @@ macOS/Linux target combinations and cross builds need their own execution and
 ABI evidence; host support must not silently claim them.
 
 New language changes during this campaign must update the coverage ledger and
-enter an owned bucket. The frozen baseline cannot be reduced to make a release
+enter an owned LLVM bucket without requiring a C++ implementation. Use valid
+C++ comparators where available and independent native semantic/MIR oracles for
+documented gaps; neither a silent skip nor comparator parity alone is acceptance.
+The frozen baseline cannot be reduced to make a release
 gate pass, and the final release must also reconcile everything added on main.
 O-LLVM-01/02/03 are implemented. O-LLVM-04/05/06 now execute their documented
 scalar, places/text and ordinary class/TLS profiles; their remaining shape
@@ -11512,9 +11520,11 @@ or resolve them using source.
   general language coverage. Record remaining platform exclusions explicitly.
 - **Delivery:** update defaults, docs, toolchain fingerprints, project/cache
   migration, packaging and backend-selection tests in one reviewed release.
-  C++ stays an explicitly selectable reference during validation; no per-function
+  C++ stays an explicitly selectable, bug-fix-only reference for its supported
+  shapes during validation, not a parity gate for LLVM-only features; no per-function
   fallback, cross-backend private object ABI or generated-C++ dependency is
-  introduced. Retiring C++ is a separate decision after production evidence.
+  introduced. Removing C++ or resuming its feature development after v1.0
+  requires a separate owner decision; neither is automatic at promotion.
 
 #### LLVM Campaign Waves And Validation
 
