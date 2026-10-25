@@ -480,6 +480,8 @@ private:
   }
   [[nodiscard]] llvm::Value *call(const MirInstruction &instruction,
                                   llvm::Value *constructed = nullptr) {
+    if (const auto location = hostedSourceLiteral(instruction))
+      return scalars.literal(*location, instruction.info.type);
     if (instruction.intrinsic == IntrinsicKind::Panic ||
         instruction.intrinsic == IntrinsicKind::FailEmptyOwner ||
         instruction.intrinsic == IntrinsicKind::FailInactiveValue ||

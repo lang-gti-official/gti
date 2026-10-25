@@ -24,6 +24,7 @@ struct MirProgramTestAccess {
   static auto &hostedPlan(MirProgram &program) {
     return program.hostedStartupPlan_;
   }
+  static auto &functions(MirProgram &program) { return program.functions; }
 };
 } // namespace lang
 
@@ -47,6 +48,81 @@ constexpr std::array cases{
 void require(bool value, std::string_view message) {
   if (!value)
     throw std::runtime_error(std::string(message));
+}
+
+void sourceMetadataContract(const std::filesystem::path &repository) {
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      repository / "tests/fixtures/stdlib_surface_source_location.gti",
+      std::nullopt, {repository / "stdlib/prelude.gti"}, {},
+      {repository / "stdlib"});
+  require(frontend.canGenerateCode(),
+          "source metadata has verified source MIR");
+  std::array<bool, 4> seen{};
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto literal = hostedSourceLiteral(instruction);
+        if (!literal)
+          continue;
+        const auto &location = *instruction.sourceLocation;
+        require(location.file.ends_with("stdlib_surface_source_location.gti") &&
+                    location.function == "main" &&
+                    (location.line == 9 || location.line == 15) &&
+                    location.column == 0,
+                "caller metadata is not rediscovered from the library body");
+        if (instruction.intrinsic == IntrinsicKind::SourceFileName) {
+          seen[0] = true;
+          require(std::get<std::string>(*literal) == location.file,
+                  "file metadata retains exact counted bytes");
+        } else if (instruction.intrinsic == IntrinsicKind::SourceFunctionName) {
+          seen[1] = true;
+          require(std::get<std::string>(*literal) == location.function,
+                  "function metadata retains exact counted bytes");
+        } else if (instruction.intrinsic == IntrinsicKind::SourceLine) {
+          seen[2] = true;
+          require(std::get<std::uint64_t>(*literal) == location.line,
+                  "line metadata retains its uint32 value");
+        } else {
+          seen[3] = true;
+          require(std::get<std::uint64_t>(*literal) == location.column,
+                  "unavailable column remains zero");
+        }
+        const auto reject = [&](MirInstruction invalid) {
+          bool rejected = false;
+          try {
+            static_cast<void>(hostedSourceLiteral(invalid));
+          } catch (const std::logic_error &) {
+            rejected = true;
+          }
+          require(rejected, "malformed source metadata cannot reach lowering");
+        };
+        auto invalid = instruction;
+        invalid.sourceLocation.reset();
+        reject(invalid);
+        invalid = instruction;
+        invalid.info.type = SemanticType::Int64;
+        reject(invalid);
+        invalid = instruction;
+        invalid.kind = MirInstructionKind::Load;
+        reject(invalid);
+      }
+  require(
+      std::all_of(seen.begin(), seen.end(), [](bool value) { return value; }),
+      "all four source metadata capabilities have real producer evidence");
+  auto invalid = frontend.mir;
+  bool removed = false;
+  for (auto &function : MirProgramTestAccess::functions(invalid))
+    for (auto &block : function.body.blocks)
+      for (auto &instruction : block.instructions)
+        if (!removed && instruction.sourceLocation) {
+          instruction.sourceLocation.reset();
+          removed = true;
+        }
+  require(removed && !verifyMirProgram(invalid).valid(),
+          "missing source metadata is rejected by the owning MIR verifier");
 }
 
 void run(const std::filesystem::path &repository,
@@ -272,6 +348,7 @@ int main(int argc, char **argv) {
     }
   } cleanup{scratch};
   try {
+    sourceMetadataContract(std::filesystem::canonical(argv[1]));
     for (const auto &test : cases)
       for (auto optimization :
            {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive})
