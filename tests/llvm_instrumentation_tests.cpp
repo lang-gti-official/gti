@@ -58,8 +58,46 @@ void rejectsUnchanged(llvm::Module &module) {
     throw std::runtime_error("invalid instrumentation input was accepted or partially changed");
 }
 
+void rejectsThreadUnchanged(llvm::Module &module) {
+  const auto before = text(module);
+  llvm::ModuleAnalysisManager analyses;
+  bool rejected = false;
+  try {
+    instrumentThread(module, analyses);
+  } catch (const std::logic_error &) {
+    rejected = true;
+  }
+  if (!rejected || text(module) != before)
+    throw std::runtime_error("invalid thread instrumentation partially changed the module");
+}
+
+void atomicControls(llvm::Module &module) {
+  auto &context = module.getContext();
+  for (unsigned bits : {8, 16, 32, 64}) {
+    auto *integer = llvm::IntegerType::get(context, bits);
+    auto *function = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context),
+                                {llvm::PointerType::get(context, 0), integer}, false),
+        llvm::GlobalValue::ExternalLinkage, "atomic_control_" + std::to_string(bits), module);
+    llvm::IRBuilder<> ir(llvm::BasicBlock::Create(context, "entry", function));
+    auto *address = function->getArg(0);
+    auto *value = function->getArg(1);
+    auto *store = ir.CreateAlignedStore(value, address, llvm::Align(bits / 8));
+    store->setAtomic(llvm::AtomicOrdering::Release);
+    auto *load = ir.CreateAlignedLoad(integer, address, llvm::Align(bits / 8));
+    load->setAtomic(llvm::AtomicOrdering::Acquire);
+    ir.CreateAtomicRMW(llvm::AtomicRMWInst::Add, address, value, llvm::Align(bits / 8),
+                        llvm::AtomicOrdering::Monotonic);
+    ir.CreateAtomicCmpXchg(address, value, load, llvm::Align(bits / 8),
+                           llvm::AtomicOrdering::AcquireRelease,
+                           llvm::AtomicOrdering::Monotonic);
+    ir.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent);
+    ir.CreateRetVoid();
+  }
+}
+
 int main() {
-  for (const auto invalid : {-1, 4, 99}) {
+  for (const auto invalid : {-1, 5, 99}) {
     bool rejected = false;
     try {
       static_cast<void>(instrumentsAddress(static_cast<InstrumentationMode>(invalid)));
@@ -97,10 +135,30 @@ int main() {
         "__ubsan_handle_type_mismatch_v1_abort", *convention);
     handler->setCallingConv(llvm::CallingConv::Fast);
     rejectsUnchanged(*convention);
+    rejectsThreadUnchanged(*noLayout);
+    rejectsThreadUnchanged(*foreignSpace);
+    auto narrow = memory(context, triple);
+    narrow->setDataLayout("e-p:32:32");
+    rejectsThreadUnchanged(*narrow);
+    auto runtimeConflict = memory(context, triple);
+    llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context), false),
+        llvm::GlobalValue::ExternalLinkage, "__tsan_init", *runtimeConflict);
+    rejectsThreadUnchanged(*runtimeConflict);
+    for (auto attribute : {llvm::Attribute::SanitizeAddress,
+                           llvm::Attribute::SanitizeThread,
+                           llvm::Attribute::DisableSanitizerInstrumentation}) {
+      auto attributed = memory(context, triple);
+      attributed->getFunction("read_control")->addFnAttr(attribute);
+      rejectsThreadUnchanged(*attributed);
+    }
     for (auto mode : {InstrumentationMode::None, InstrumentationMode::Address,
                       InstrumentationMode::UndefinedMemory,
-                      InstrumentationMode::AddressAndUndefinedMemory}) {
+                      InstrumentationMode::AddressAndUndefinedMemory,
+                      InstrumentationMode::Thread}) {
       auto module = memory(context, triple);
+      if (instrumentsThread(mode))
+        atomicControls(*module);
       const auto before = text(*module);
       if (instrumentsUndefinedMemory(mode)) {
         if (instrumentUndefinedMemory(*module) != 2)
@@ -122,14 +180,27 @@ int main() {
       builder.crossRegisterProxies(loops, functions, cgscc, modules);
       if (instrumentsAddress(mode))
         instrumentAddress(*module, modules);
+      if (instrumentsThread(mode))
+        instrumentThread(*module, modules);
       if (llvm::verifyModule(*module, &llvm::errs()))
         throw std::runtime_error("instrumentation produced invalid LLVM IR");
       if (mode == InstrumentationMode::None && text(*module) != before)
         throw std::runtime_error("disabled diagnostic mode changed the module");
       if (bool(module->getFunction("__asan_init")) != instrumentsAddress(mode) ||
           bool(module->getFunction("__ubsan_handle_type_mismatch_v1_abort")) !=
-              instrumentsUndefinedMemory(mode))
+              instrumentsUndefinedMemory(mode) ||
+          bool(module->getFunction("__tsan_init")) != instrumentsThread(mode))
         throw std::runtime_error("diagnostic runtime dependency leaked across modes");
+      if (instrumentsThread(mode)) {
+        for (unsigned bits : {8, 16, 32, 64})
+          for (const char *operation : {"_load", "_store", "_fetch_add", "_compare_exchange_val"})
+            if (!module->getFunction("__tsan_atomic" + std::to_string(bits) + operation))
+              throw std::runtime_error("thread instrumentation missed an atomic operation");
+        if (!module->getFunction("__tsan_read4") || !module->getFunction("__tsan_write4") ||
+            !module->getFunction("__tsan_atomic_thread_fence"))
+          throw std::runtime_error("thread instrumentation missed memory or fence controls");
+        rejectsThreadUnchanged(*module);
+      }
       ++controls;
     }
   }

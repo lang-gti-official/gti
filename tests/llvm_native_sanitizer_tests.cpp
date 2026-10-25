@@ -15,12 +15,16 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 
 using namespace lang;
 using namespace lang::native_llvm;
 
 int main(int argc, char **argv) {
-  if (argc != 4)
+  if (argc != 4 && argc != 5)
+    return 2;
+  const bool threadControls = argc == 5 && std::string_view(argv[4]) == "thread-controls";
+  if (argc == 5 && !threadControls)
     return 2;
   const auto mode = static_cast<InstrumentationMode>(std::stoi(argv[2]));
   static_cast<void>(instrumentsAddress(mode));
@@ -115,6 +119,33 @@ unsafe void write(int* address, int offset, int value) { unsafe { address[offset
   }
   if (shims != 2)
     throw std::runtime_error("missing real GTI memory fixture identity");
+  // These atomic transport controls are explicit LLVM IR, not admitted GTI
+  // atomics. They test compiler-rt interoperability without claiming O13 proof.
+  if (threadControls) {
+    auto &context = session.context();
+    auto *pointer = llvm::PointerType::get(context, 0);
+    auto *wide = llvm::Type::getInt64Ty(context);
+    for (unsigned bits : {8, 16, 32, 64}) {
+      auto *integer = llvm::IntegerType::get(context, bits);
+      auto *store = llvm::Function::Create(
+          llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pointer, wide}, false),
+          llvm::GlobalValue::ExternalLinkage,
+          "gti_test_atomic_store" + std::to_string(bits), session.module());
+      llvm::IRBuilder<> ir(llvm::BasicBlock::Create(context, "entry", store));
+      auto *value = ir.CreateTruncOrBitCast(store->getArg(1), integer);
+      auto *write = ir.CreateAlignedStore(value, store->getArg(0), llvm::Align(bits / 8));
+      write->setAtomic(llvm::AtomicOrdering::Release);
+      ir.CreateRetVoid();
+      auto *load = llvm::Function::Create(
+          llvm::FunctionType::get(wide, {pointer}, false),
+          llvm::GlobalValue::ExternalLinkage,
+          "gti_test_atomic_load" + std::to_string(bits), session.module());
+      ir.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", load));
+      auto *read = ir.CreateAlignedLoad(integer, load->getArg(0), llvm::Align(bits / 8));
+      read->setAtomic(llvm::AtomicOrdering::Acquire);
+      ir.CreateRet(ir.CreateZExtOrBitCast(read, wide));
+    }
+  }
   std::size_t memoryChecks = 0;
   if (instrumentsUndefinedMemory(mode))
     memoryChecks = instrumentUndefinedMemory(session.module());
@@ -137,6 +168,8 @@ unsafe void write(int* address, int offset, int value) { unsafe { address[offset
   pipeline.run(session.module(), modules);
   if (instrumentsAddress(mode))
     instrumentAddress(session.module(), modules);
+  if (instrumentsThread(mode))
+    instrumentThread(session.module(), modules);
   session.verify();
   const std::filesystem::path path(argv[1]);
   std::error_code error;
