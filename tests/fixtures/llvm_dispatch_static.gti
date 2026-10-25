@@ -27,6 +27,7 @@ public:
 
 class Other : public Reader {
 public:
+  int root = 999;
   int read() override { return 19; }
 };
 

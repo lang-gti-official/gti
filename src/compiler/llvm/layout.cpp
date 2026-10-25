@@ -1,6 +1,7 @@
 #include "layout.h"
 #include "placement.h"
 
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 #include <unordered_set>
@@ -315,6 +316,77 @@ Layouts::basePath(const SemanticType &type,
     result.indices.push_back(index);
     result.type = selected->type;
   }
+  return result;
+}
+
+BaseSubobjectLayout Layouts::findSubobject(const SemanticType &source,
+                                           HirClassInstanceId target,
+                                           SymbolId field) {
+  const auto matches = [&](const MirClassInstance &owner) {
+    return field != 0           ? std::count_if(owner.declaredFields.begin(),
+                                                owner.declaredFields.end(),
+                                                [&](const auto &candidate) {
+                                        return candidate.symbol == field;
+                                                })
+           : owner.id == target ? 1
+                                : 0;
+  };
+  const auto &root = instance(source);
+  // The ordinary non-inherited record path needs no traversal containers.
+  if (root.bases.empty()) {
+    if (matches(root) != 1)
+      throw std::logic_error(
+          "LLVM physical subobject identity is missing or ambiguous");
+    return {.type = source};
+  }
+  std::unordered_set<HirClassInstanceId> seen;
+  std::vector<HirClassInstanceId> path;
+  std::optional<std::vector<HirClassInstanceId>> selected;
+  const auto visit = [&](const auto &self, const SemanticType &type) -> void {
+    const auto &owner = instance(type);
+    if (!seen.insert(owner.id).second)
+      throw std::logic_error("LLVM physical subobject identity is repeated");
+    const auto count = matches(owner);
+    if (count > 1 || (count == 1 && selected))
+      throw std::logic_error("LLVM physical subobject identity is ambiguous");
+    if (count == 1)
+      selected = path;
+    for (const auto &base : owner.bases) {
+      if (instance(base.type).id != base.instance)
+        throw std::logic_error("LLVM physical base identity is not sealed");
+      path.push_back(base.instance);
+      self(self, base.type);
+      path.pop_back();
+    }
+  };
+  visit(visit, source);
+  if (!selected)
+    throw std::logic_error("LLVM physical subobject identity is missing");
+  return basePath(source, *selected);
+}
+
+BaseSubobjectLayout Layouts::baseSubobject(const SemanticType &source,
+                                           const SemanticType &target) {
+  return findSubobject(source, instance(target).id, 0);
+}
+
+FieldSubobjectLayout Layouts::fieldSubobject(const SemanticType &source,
+                                             SymbolId field) {
+  if (field == 0)
+    throw std::logic_error("LLVM field projection has no sealed identity");
+  auto owner = findSubobject(source, 0, field);
+  const auto &instance = this->instance(owner.type);
+  const auto index = fieldIndex(owner.type, field);
+  const auto offset = get(owner.type).fieldOffsets.at(index);
+  constexpr auto limit =
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  if (offset > limit || owner.offset > limit - offset)
+    throw BackendUnsupportedError("LLVM field adjustment exceeds target range");
+  FieldSubobjectLayout result{
+      .owner = owner,
+      .index = index,
+      .type = instance.declaredFields.at(index - instance.bases.size()).type,
+      .offset = owner.offset + offset};
   return result;
 }
 

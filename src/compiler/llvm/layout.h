@@ -25,6 +25,13 @@ struct BaseSubobjectLayout {
   std::vector<unsigned> indices;
 };
 
+struct FieldSubobjectLayout {
+  BaseSubobjectLayout owner;
+  unsigned index = 0;
+  SemanticType type = SemanticType::Unknown;
+  std::uint64_t offset = 0;
+};
+
 // All layout queries, allocation sizes and ABI address-only choices share this
 // session-owned map. Opaque LLVM declarations are allocated before their
 // bodies.
@@ -44,6 +51,10 @@ public:
   dispatchIndex(const SemanticType &type) const;
   [[nodiscard]] BaseSubobjectLayout
   basePath(const SemanticType &type, std::span<const HirClassInstanceId> path);
+  [[nodiscard]] BaseSubobjectLayout baseSubobject(const SemanticType &source,
+                                                  const SemanticType &target);
+  [[nodiscard]] FieldSubobjectLayout fieldSubobject(const SemanticType &source,
+                                                    SymbolId field);
 
 private:
   friend class Session;
@@ -61,6 +72,9 @@ private:
   std::map<HirClassInstanceId, Record> records;
   std::unordered_map<ClassId, std::vector<HirClassInstanceId>> classes;
   [[nodiscard]] TypeLayout record(const SemanticType &type);
+  [[nodiscard]] BaseSubobjectLayout findSubobject(const SemanticType &source,
+                                                  HirClassInstanceId base,
+                                                  SymbolId field);
   [[nodiscard]] TypeLayout describe(llvm::Type *storage,
                                     bool addressOnly = false,
                                     llvm::Type *value = nullptr) const;

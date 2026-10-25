@@ -4384,6 +4384,16 @@ below; private ownership capabilities, inheritance/dispatch and payload-enum
 representations retain their later milestones. No public ordinary-class
 `sizeof` contract is invented.
 
+O-LLVM-10 prerequisite layout queries locate a unique physical base subobject
+by sealed concrete type identity, or a field's declaring subobject by its exact
+SymbolId. They preserve existing field/base indices and use the same target
+offsets; missing, repeated, ambiguous, foreign or out-of-range identities reject.
+The place layer follows those paths for inherited fields and MIR-authorized
+class-reference upcasts, evaluating the source address once and retaining
+readonly/mutable permission. An already-selected base view is not adjusted
+again, and no general downcast or source member/access/override lookup is
+introduced. These helpers do not yet admit production LLVM virtual dispatch.
+
 `Abi` centralizes signatures for definitions, calls and future adapters:
 
 | Private GTI ABI v1 shape | Transport |

@@ -56,6 +56,9 @@ private:
   SemanticType receiverType = SemanticType::Unknown;
   [[nodiscard]] static Key key(const MirPlace &place);
   [[nodiscard]] Root root(const MirPlace &place);
+  [[nodiscard]] llvm::Value *baseAddress(llvm::Value *address,
+                                         SemanticType source,
+                                         const BaseSubobjectLayout &path);
   [[nodiscard]] llvm::Value *slot(llvm::Type *type);
 };
 
