@@ -1,6 +1,7 @@
 #include "debug_info.h"
 #include "layout.h"
 
+#include <llvm/ADT/APSInt.h>
 #include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/IR/DIBuilder.h>
 #include <llvm/IR/DebugInfoMetadata.h>
@@ -149,12 +150,25 @@ public:
       for (const auto &enumeration : session.program().mir().integralEnums()) {
         if (enumeration.type != value)
           continue;
+        const auto *row = session.program().findEnumDeclarationRow(value);
         const auto *declaration = session.program().findEnumDeclaration(value);
-        if (!declaration)
+        const auto domain = constantIntegerDomain(enumeration.underlyingType);
+        if (!declaration || !row || !domain)
           throw std::logic_error("LLVM debug enum lost its declaration");
-        result =
-            builder.createTypedef(type(enumeration.underlyingType),
-                                  declaration->qualifiedName, nullptr, 0, unit);
+        std::vector<llvm::Metadata *> enumerators;
+        for (const auto &enumerator : declaration->enumerators) {
+          llvm::APInt bits(domain->width, enumerator.value.magnitude);
+          if (enumerator.value.negative)
+            bits = -bits;
+          enumerators.push_back(builder.createEnumerator(
+              enumerator.name, llvm::APSInt(bits, !domain->signedValue)));
+        }
+        const auto layout = session.layouts().get(value);
+        result = builder.createEnumerationType(
+            unit, declaration->qualifiedName, file(row->source),
+            row->source.line, layout.size * 8, layout.alignment * 8,
+            builder.getOrCreateArray(enumerators),
+            type(enumeration.underlyingType));
         break;
       }
     } else if (value == SemanticType::Float || value == SemanticType::Double) {
@@ -218,6 +232,9 @@ DebugInfo::DebugInfo(Session &session)
 DebugInfo::~DebugInfo() = default;
 
 void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
+  if (function.getParent() != &impl->session.module())
+    throw std::logic_error(
+        "LLVM debug function belongs to another emission session");
   const auto &program = impl->session.program();
   const auto *body = findMirBody(program.mir(), address);
   if (!body)
