@@ -591,6 +591,13 @@ def collect(directory: Path, root: Path, plan: dict, helper: Path, report: dict,
             audit.require(manifest["binding"] == binding and
                           manifest["selected_targets"] == selected_targets,
                           "resume compiler/source/target identity drifted")
+            events_path = child(directory, "events.json")
+            if not events_path.exists():
+                audit.require(not child(directory, "attempts").exists(),
+                              "attempt history is missing; refusing to invent it")
+                # Initialization may stop after the source-bound run manifest
+                # but before publishing the initially empty event history.
+                write_json(events_path, {"events": []})
             recover_interrupted(directory, manifest)
         else:
             manifest = {"schema": COLLECTION_SCHEMA, "run_id": uuid.uuid4().hex,

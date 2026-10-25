@@ -272,6 +272,21 @@ def main() -> None:
                           resume=True, scope="focused-controls", runner=not_run)
         audit.require(len(collector.event_history(sealed)) == 1,
                       "published receipt was replaced after an interrupted index update")
+        initialized = scratch / "initialized-before-events"
+        initialized.mkdir()
+        initialized_manifest = collector.read_json(sealed / "run.json")
+        initialized_manifest["run_id"] = "initialization-control"
+        initialized_manifest["host"]["run"] = str(initialized)
+        collector.write_json(initialized / "run.json", initialized_manifest)
+        collector.collect(initialized, root, one, helper, report, [single],
+                          resume=True, scope="focused-controls")
+        audit.require(len(collector.event_history(initialized)) == 1,
+                      "source-bound initialization could not resume")
+        lost_history = scratch / "lost-history"
+        shutil.copytree(initialized, lost_history)
+        (lost_history / "events.json").unlink()
+        rejects(lambda: collector.collect(lost_history, root, one, helper, report, [single],
+                                         resume=True, scope="focused-controls"), "history is missing")
 
         # Independent platform builds may reconcile; synthetic observations stay controls.
         shared_plan = miniature(canonical, [scalar])
