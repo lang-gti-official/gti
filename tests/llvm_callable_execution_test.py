@@ -112,38 +112,50 @@ def allocation_free_object(gti: Path, root: Path, work: Path, env: dict[str, str
 
 
 def cost_evidence(gti: Path, root: Path, work: Path, env: dict[str, str]):
-    source = root / "tests" / "fixtures" / "llvm_callable_cost.gti"
     observations = {}
-    for endpoint in (Endpoint("cpp", "O3", "c++23"), Endpoint("llvm", "O3")):
-        result = execute(
-            gti,
-            root,
-            work / f"cost-{endpoint.backend}",
-            source,
-            endpoint,
-            env,
-        )
-        if result.error or result.observable != (0, "", ""):
-            raise AssertionError(f"optimized callable cost fixture {endpoint}: {result}")
-        executable = work / f"cost-{endpoint.backend}" / "program"
-        samples = []
-        for _ in range(5):
-            start = time.perf_counter_ns()
-            ran = subprocess.run(
-                [str(executable)],
-                cwd=root,
-                env=env,
-                capture_output=True,
-                check=False,
-                timeout=15,
+    for family, fixture in {
+        "direct": "llvm_callable_cost_direct",
+        "closure": "llvm_callable_cost_closure",
+        "pointer": "llvm_callable_cost_pointer",
+        "mixed": "llvm_callable_cost",
+    }.items():
+        observations[family] = {}
+        for endpoint in (
+            Endpoint("cpp", "O3", "c++23"),
+            Endpoint("llvm", "O3"),
+        ):
+            source = root / "tests" / "fixtures" / f"{fixture}.gti"
+            result = execute(
+                gti,
+                root,
+                work / f"cost-{family}-{endpoint.backend}",
+                source,
+                endpoint,
+                env,
             )
-            samples.append(time.perf_counter_ns() - start)
-            if ran.returncode != 0 or ran.stdout or ran.stderr:
-                raise AssertionError(f"cost execution failed: {ran}")
-        observations[endpoint.backend] = (
-            statistics.median(samples),
-            executable.stat().st_size,
-        )
+            if result.error or result.observable != (0, "", ""):
+                raise AssertionError(
+                    f"optimized {family} callable cost fixture {endpoint}: {result}"
+                )
+            executable = work / f"cost-{family}-{endpoint.backend}" / "program"
+            samples = []
+            for _ in range(5):
+                start = time.perf_counter_ns()
+                ran = subprocess.run(
+                    [str(executable)],
+                    cwd=root,
+                    env=env,
+                    capture_output=True,
+                    check=False,
+                    timeout=15,
+                )
+                samples.append(time.perf_counter_ns() - start)
+                if ran.returncode != 0 or ran.stdout or ran.stderr:
+                    raise AssertionError(f"cost execution failed: {ran}")
+            observations[family][endpoint.backend] = (
+                statistics.median(samples),
+                executable.stat().st_size,
+            )
     return observations
 
 

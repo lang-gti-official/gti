@@ -4738,15 +4738,19 @@ The optimized owned-closure probe also audits the linked executable for GTI
 allocation-provider symbols; performance and code-size observations are bounded
 workload evidence, not a general speedup claim.
 
-The 2026-10-25 macOS arm64 checkpoint's 20-million-iteration mixed closure/
-function-pointer probe measured median whole-process execution at 7.064 ms for
-C++23/O3 and 34.689 ms for LLVM/O3 over five samples; a separate 20-run warmed
-measurement reported means of 5.6 and 34.5 ms. Executables were 107,048 and
-122,344 bytes. The separate owned-closure executable was 105,768 bytes and
-retained no GTI allocation-provider symbol. The roughly sixfold runtime and 14%
-size overhead are material for this bounded probe, so this is evidence of a
-remaining indirect-adapter/inlining cost, not final O-LLVM-09 performance
-acceptance.
+The 2026-10-25 macOS arm64 checkpoint uses 400-million-iteration workloads so
+each measured run exceeds 0.09 seconds. Five-sample medians for C++23/O3 versus
+LLVM/O3 were 102.547/93.911 ms for direct calls, 93.384/94.982 ms for a borrowed-
+capture closure, 92.769/646.446 ms for an invocation pointer, and 92.405/646.921
+ms for the mixed closure/pointer path. A preceding run put direct calls within
+1.3% and the closure path 10.9% slower, so quiet-host attribution remains
+pending for those small workloads. The roughly sevenfold pointer overhead is
+stable and material.
+The pointer executables were 107,048/122,344 bytes; direct and closure LLVM
+executables were slightly smaller than their 106,744-byte C++ comparators. The
+separate owned-closure executable was 105,768 bytes and retained no GTI
+allocation-provider symbol. This isolates a remaining indirect-adapter/inlining
+cost; it is not final O-LLVM-09 performance acceptance.
 
 ### LLVM Coverage And Admission
 
