@@ -9,6 +9,13 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+Fixed-array initialization checks ownership for every element separately.
+`GTI-S2003` identifies an unavailable copy or move at the written element,
+rather than reporting equal types as incompatible. Fresh exact construction
+does not require movement; ordinary type mismatches retain their existing
+message. The LSP publishes the same diagnostic and clears it on a valid edit.
+No automatic edit changes an element copy into a move.
+
 `GTI-S2124` reports invalid typed macro invocation/result shapes, missing
 normal-path result returns and deterministic expansion-budget exhaustion.
 Reference/tracked-borrowed and direct immovable outputs stop in semantics;

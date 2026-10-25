@@ -9498,6 +9498,42 @@ int main() {
          "explicit conversion syntax should format like a C++ functional cast");
 }
 
+void testFreshArrayOwnership() {
+  const std::string prefix = R"(
+class Pinned {
+public:
+  Pinned() {}
+  Pinned(int value) {}
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+};
+)";
+  auto valid = lang::Frontend().analyze("fresh-arrays.gti", prefix + R"(
+int main() {
+  Pinned values[2] = {Pinned(1), Pinned(2)};
+  Pinned nested[2][1] = {{Pinned(3)}, {Pinned(4)}};
+  Pinned empty[2] = {};
+  return 0;
+}
+)");
+  expect(valid.canGenerateCode(),
+         "fresh array initialization does not require element movement");
+  const auto *main = findTopLevelFunction(valid.program, "main");
+  const auto *variable = findDirectLocal(main, "values");
+  const auto *binding =
+      variable ? valid.semantics.findBinding(*variable) : nullptr;
+  expect(binding && !binding->traits.movable && !binding->traits.copyable,
+         "fresh publication does not manufacture copy or move capabilities");
+  const auto invalid =
+      lang::Frontend().analyze("copy-array-element.gti", prefix + R"(
+int main() { Pinned original{}; Pinned values[1] = {original}; return 0; }
+)");
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Cannot copy array element of non-copyable type"),
+         "each array element still requires its exact ownership operation");
+}
+
 void testFixedArrays() {
   const std::string source = R"(
 uint32_t video[64 * 32] = {};
@@ -12683,6 +12719,7 @@ constexpr NamedTest kTests[] = {
     {"testExactFunctionOverloadsAndConversions",
      testExactFunctionOverloadsAndConversions},
     {"testFixedArrays", testFixedArrays},
+    {"testFreshArrayOwnership", testFreshArrayOwnership},
     {"testFixedArrayDynamicWriteFailureEdge",
      testFixedArrayDynamicWriteFailureEdge},
     {"testFixedArrayChainedDynamicIndex", testFixedArrayChainedDynamicIndex},
