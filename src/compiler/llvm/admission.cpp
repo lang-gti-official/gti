@@ -795,6 +795,78 @@ public:
            mir_detail::verifiedReferenceRestoreCall(program, body, *producer);
   }
 
+  bool unsafeCallResultLoad(const MirBody &body, const MirBlock &block,
+                            const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::Load || !stage.result ||
+        stage.hirValue == 0 || stage.rawMemoryAccess ||
+        stage.unsafeOperation != UnsafeOperationKind::DeclaredUnsafeCall ||
+        stage.intrinsic != IntrinsicKind::None ||
+        stage.operation != MirOperation::None ||
+        stage.info.category != ValueCategory::Value ||
+        stage.info.access != AccessMode::ReadOnly ||
+        stage.operands.size() != 1 || stage.destination || stage.receiver ||
+        stage.loan || stage.functionTarget || stage.constructorTarget ||
+        stage.lambdaTarget || stage.bodyTarget || stage.nativeCalleeType ||
+        stage.nativeCallbackAdapter || stage.threadTaskAdapter ||
+        stage.callableInvocation || !stage.parameterTypes.empty() ||
+        !stage.lifecycle.empty() || !stage.definedFailure.empty() ||
+        !stage.localFailureSites.empty())
+      return false;
+    const auto &input = stage.operands.front();
+    if ((input.kind != MirOperandKind::Copy &&
+         input.kind != MirOperandKind::BorrowRead) ||
+        input.value || input.loan || input.type != stage.info.type)
+      return false;
+    const auto *place = body.findPlace(input.place);
+    const auto *loan = place ? body.findLoan(place->loan) : nullptr;
+    if (!place || place->root != MirPlaceRootKind::Loan ||
+        !place->projections.empty() || place->type != stage.info.type ||
+        !loan || loan->kind != MirLoanKind::CallResult || loan->entry ||
+        loan->escapes || loan->producedBy != stage.hirValue ||
+        loan->access != place->access)
+      return false;
+
+    // A source expression's caller permission is repeated on materialization.
+    // Only the exact earlier call's runtime loan supplies this address; the
+    // possible owner origins are not an alternative execution address.
+    const MirInstruction *producer = nullptr;
+    for (const auto &candidate : block.instructions) {
+      if (&candidate == &stage)
+        break;
+      if (candidate.tombstone)
+        continue;
+      if (candidate.kind == MirInstructionKind::EndBorrow &&
+          candidate.loan == loan->id)
+        return false;
+      if (candidate.kind != MirInstructionKind::Call ||
+          candidate.hirValue != stage.hirValue || candidate.loan != loan->id)
+        continue;
+      if (producer)
+        return false;
+      producer = &candidate;
+    }
+    const auto *target =
+        producer && producer->functionTarget
+            ? program.findFunctionInstance(*producer->functionTarget)
+            : nullptr;
+    return producer && target &&
+           producer->unsafeOperation ==
+               UnsafeOperationKind::DeclaredUnsafeCall &&
+           producer->intrinsic == IntrinsicKind::None &&
+           !producer->rawMemoryAccess && !producer->nativeCalleeType &&
+           !producer->lambdaTarget &&
+           producer->dispatch == CallDispatch::Static && producer->result &&
+           producer->info.category == ValueCategory::Place &&
+           producer->info.type == stage.info.type &&
+           producer->info.access == loan->access &&
+           target->definitionKind == MirDefinitionKind::Source &&
+           target->linkage == LanguageLinkage::Gti && target->requiresUnsafe &&
+           target->returnType.kind == SemanticType::Reference &&
+           target->returnType.arguments.size() == 1 &&
+           target->returnType.arguments.front() == stage.info.type &&
+           target->returnType.referenceAccess == loan->access;
+  }
+
   std::optional<Shape>
   unstagedPublicationShape(const MirBody &mir,
                            const MirInstruction &stage) const {
@@ -1443,7 +1515,8 @@ public:
               : typedMemory && stage.unsafeOperation ==
                                    UnsafeOperationKind::ObjectLifetime
                   ? std::optional(Shape::NativeMemoryOperation)
-              : ordinaryUnsafe ? std::optional(Shape::OrdinaryUnsafeInvocation)
+              : (ordinaryUnsafe || unsafeCallResultLoad(mir, mirBlock, stage))
+                  ? std::optional(Shape::OrdinaryUnsafeInvocation)
               : (stage.unsafeOperation ==
                      UnsafeOperationKind::ErasedReferenceRestore ||
                  stage.unsafeOperation ==

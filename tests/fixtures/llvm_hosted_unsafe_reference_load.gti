@@ -2,12 +2,21 @@ unsafe int& checked_identity(int& value) {
   return value;
 }
 
+mut int released = 0;
+
+struct Cleanup {
+  ~Cleanup() { released += 1; }
+};
+
 int main() {
   int value = 42;
-  unsafe {
-    if (checked_identity(value) != 42) {
-      return 1;
+  {
+    Cleanup guard{};
+    unsafe {
+      if (checked_identity(value) != 42) {
+        return 1;
+      }
     }
   }
-  return 0;
+  return released == 1 ? 0 : 2;
 }

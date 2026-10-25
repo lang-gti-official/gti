@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -49,16 +50,33 @@ namespace llvm_source_metadata {
           flush=True)
 
 
+def arguments(gti, root, scratch, endpoints, env):
+    source = root / "tests/fixtures/llvm_hosted_arguments.gti"
+    for index, endpoint in enumerate(endpoints):
+        case = scratch / f"arguments-{index}"
+        result = execute(gti, root, case, source, endpoint, env)
+        if result.error or result.observable != (0, "", ""):
+            raise AssertionError(f"hosted arguments {endpoint}: {result}")
+        ran = subprocess.run([str(case / "program"), "", "a,b\nc", "\u00e9"],
+                             cwd=root, env=env, text=True, capture_output=True,
+                             check=False, timeout=15)
+        if (ran.returncode, ran.stdout, ran.stderr) != (0, "", ""):
+            raise AssertionError(f"owned argument bytes {endpoint}: {ran}")
+    print("hosted arguments: empty, multiline and UTF-8 inputs passed all endpoints",
+          flush=True)
+
+
 def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selection = sys.argv[3] if len(sys.argv) > 3 else "all"
-    if selection not in {"all", "startup", "status", "source-location", "source-literals"}:
+    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments"}:
         raise ValueError(f"unknown hosted case: {selection}")
     cases = (
         ("llvm_hosted_success.gti", None),
         ("llvm_hosted_startup_failure.gti", "hosted startup failure"),
         ("llvm_hosted_entry_failure.gti", "hosted entry failure"),
         ("stdlib_surface_source_location.gti", None),
+        ("llvm_hosted_unsafe_reference_load.gti", None),
     )
     endpoints = (
         Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
@@ -70,7 +88,7 @@ def main():
         if selection in {"all", "source-literals"}:
             source_literals(gti, root, scratch, endpoints, env)
         for filename, failure in cases:
-            if selection in {"status", "source-literals"}:
+            if selection in {"status", "source-literals", "arguments"}:
                 continue
             if selection == "startup" and filename == "stdlib_surface_source_location.gti":
                 continue
@@ -111,6 +129,8 @@ def main():
                     raise AssertionError(f"portable exit {status} {endpoint}: {result}")
             print(f"portable exit {status}: preserved GTI function result and status {expected}",
                   flush=True)
+        if selection in {"all", "arguments"}:
+            arguments(gti, root, scratch, endpoints, env)
 
 
 if __name__ == "__main__":

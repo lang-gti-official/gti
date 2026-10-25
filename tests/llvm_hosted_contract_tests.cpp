@@ -14,6 +14,7 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -48,6 +49,129 @@ constexpr std::array cases{
 void require(bool value, std::string_view message) {
   if (!value)
     throw std::runtime_error(std::string(message));
+}
+
+void unsafeReferenceLoadContract(const std::filesystem::path &repository) {
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      repository / "tests/fixtures/llvm_hosted_unsafe_reference_load.gti",
+      std::nullopt, {repository / "stdlib/prelude.gti"}, {},
+      {repository / "stdlib"});
+  require(frontend.canGenerateCode(), "unrelated unsafe helper is valid GTI");
+  std::vector<LoweredProgramIssue> issues;
+  const auto program = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  require(program && planLlvmAdmission(*program).admitted(),
+          "checked unsafe result materialization has structural admission");
+  std::size_t owner = 0;
+  MirBlockId blockId = 0;
+  MirInstructionId loadId = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Load &&
+            instruction.unsafeOperation ==
+                UnsafeOperationKind::DeclaredUnsafeCall) {
+          require(owner == 0, "regression isolates exactly one result load");
+          owner = function.id;
+          blockId = block.id;
+          loadId = instruction.id;
+        }
+  require(owner != 0,
+          "real producer retains its unsafe materialization marker");
+  using Mutation =
+      std::function<void(MirProgram &, MirBlock &, MirInstruction &,
+                         MirInstruction &, MirPlace &, MirLoan &)>;
+  const std::array<Mutation, 16> mutations{
+      [](auto &, auto &, auto &, auto &, auto &place, auto &) {
+        place.loan = 0;
+      },
+      [](auto &, auto &, auto &load, auto &, auto &, auto &loan) {
+        load.operands.front().place = loan.source;
+      },
+      [](auto &, auto &, auto &, auto &, auto &, auto &loan) {
+        loan.kind = MirLoanKind::Local;
+      },
+      [](auto &, auto &, auto &, auto &, auto &, auto &loan) {
+        loan.entry = true;
+      },
+      [](auto &, auto &, auto &, auto &, auto &, auto &loan) {
+        ++loan.producedBy;
+      },
+      [](auto &, auto &, auto &load, auto &, auto &, auto &) {
+        load.hirValue = 0;
+      },
+      [](auto &, auto &, auto &load, auto &, auto &, auto &) {
+        load.rawMemoryAccess = true;
+      },
+      [](auto &, auto &, auto &, auto &, auto &place, auto &) {
+        place.projections.push_back(
+            {.kind = MirProjectionKind::RawDereference});
+      },
+      [](auto &, auto &, auto &load, auto &, auto &, auto &) {
+        load.info.type = SemanticType::Int64;
+      },
+      [](auto &, auto &, auto &, auto &, auto &place, auto &loan) {
+        place.access = loan.access = AccessMode::Mutable;
+      },
+      [](auto &mir, auto &, auto &, auto &call, auto &, auto &) {
+        MirProgramTestAccess::functions(mir)[*call.functionTarget - 1]
+            .requiresUnsafe = false;
+      },
+      [](auto &mir, auto &, auto &, auto &call, auto &, auto &) {
+        MirProgramTestAccess::functions(mir)[*call.functionTarget - 1].linkage =
+            LanguageLinkage::C;
+      },
+      [](auto &, auto &, auto &, auto &call, auto &, auto &) {
+        call.intrinsic = IntrinsicKind::SourceLine;
+      },
+      [](auto &, auto &, auto &, auto &call, auto &, auto &) {
+        call.dispatch = CallDispatch::Virtual;
+      },
+      [](auto &, auto &, auto &load, auto &call, auto &, auto &) {
+        std::swap(load, call);
+      },
+      [](auto &, auto &block, auto &load, auto &, auto &, auto &loan) {
+        const auto ended =
+            std::find_if(block.instructions.begin(), block.instructions.end(),
+                         [&](const auto &stage) {
+                           return stage.kind == MirInstructionKind::EndBorrow &&
+                                  stage.loan == loan.id;
+                         });
+        require(ended != block.instructions.end(),
+                "result loan has an endpoint");
+        std::swap(load, *ended);
+      },
+  };
+  for (std::size_t index = 0; index < mutations.size(); ++index) {
+    auto invalid = frontend.mir;
+    auto &body = MirProgramTestAccess::functions(invalid)[owner - 1].body;
+    auto &block = body.blocks[blockId - 1];
+    auto &load =
+        *std::find_if(block.instructions.begin(), block.instructions.end(),
+                      [&](const auto &stage) { return stage.id == loadId; });
+    auto &place = body.places[load.operands.front().place - 1];
+    auto &loan = body.loans[place.loan - 1];
+    auto &call =
+        *std::find_if(block.instructions.begin(), block.instructions.end(),
+                      [&](const auto &stage) {
+                        return stage.kind == MirInstructionKind::Call &&
+                               stage.loan == loan.id;
+                      });
+    mutations[index](invalid, block, load, call, place, loan);
+    auto built = LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, frontend.hir, invalid, invalid,
+        {}, TargetInfo::host(), true);
+    bool rejected = !built.valid();
+    if (built.valid()) {
+      auto verified = verifiedLoweredProgram(std::move(*built.program), issues);
+      rejected = !verified || !planLlvmAdmission(*verified).admitted();
+    }
+    require(rejected,
+            "forged unsafe call-result relationship cannot be admitted");
+  }
 }
 
 void sourceMetadataContract(const std::filesystem::path &repository) {
@@ -348,6 +472,7 @@ int main(int argc, char **argv) {
     }
   } cleanup{scratch};
   try {
+    unsafeReferenceLoadContract(std::filesystem::canonical(argv[1]));
     sourceMetadataContract(std::filesystem::canonical(argv[1]));
     for (const auto &test : cases)
       for (auto optimization :

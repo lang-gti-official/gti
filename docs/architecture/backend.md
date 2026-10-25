@@ -4512,6 +4512,24 @@ TLS. Private ownership capabilities, indirect/virtual dispatch, general native
 calls and native debug information remain explicit limitations. No mixed-backend
 fallback is used. C++ stays the default.
 
+Hosted returns preserve GTI's portable status policy: values from 0 through 255
+are returned unchanged and every other `int32_t` result becomes status 1. This
+normalization applies only to the sealed startup `ReturnEntry`, never to an
+ordinary GTI function return. The four source-location literal operations read
+their sealed caller metadata directly; text retains its UTF-8 byte extent and
+line/column retain their exact unsigned values. Isolated literal execution is
+not evidence that the owning public `source_location` wrapper is fully admitted.
+Its remaining class/reference dependencies are independently checked.
+
+An unsafe source call's repeated permission marker on a scalar materialization
+can be admitted only through the exact checked `CallResult` loan. The current
+witness requires an unprojected loan place and a unique earlier same-block
+source GTI call with matching HIR identity, result type, reference access and
+unsafe contract. The call and callee body remain independently admitted; raw,
+foreign and intrinsic operations do not inherit this witness. MIR loan-flow
+verification still establishes active access. Possible owner origins never
+substitute for the returned runtime address.
+
 ### LLVM Places And Counted Text
 
 `places.cpp` owns body-local storage, selected loan addresses and evaluated
