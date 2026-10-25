@@ -35,7 +35,7 @@ def main():
             cache[key.split(":", 1)[0]] = value
     assert cache["CMAKE_BUILD_TYPE"] in ("Release", "RelWithDebInfo", "MinSizeRel")
     environment = os.environ.copy()
-    for name in ("GTI_STDLIB", "GTI_STDLIB_ROOT", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY",
+    for name in ("GTI_STDLIB", "GTI_STDLIB_ROOT", "GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY",
                  "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "LIBRARY_PATH",
                  "SDKROOT", "DEVELOPER_DIR", "MACOSX_DEPLOYMENT_TARGET"):
         environment.pop(name, None)
