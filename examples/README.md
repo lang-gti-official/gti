@@ -1,6 +1,6 @@
 # GTI examples
 
-[`llvm/places-and-text.gti`](llvm/places-and-text.gti) exercises the in-progress
+[`llvm/places-and-text.gti`](llvm/places-and-text.gti) exercises the native
 O-LLVM-05 array/reference/text profile. It demonstrates constrained fixed-array
 ranges, selected mutable references, multidimensional storage, raw addresses,
 checked reference erasure and counted text.
@@ -12,7 +12,7 @@ arithmetic. Build with `gti examples/llvm/scalar-control-flow.gti --backend llvm
 -O3 -o scalar-control-flow`; it exits zero on success. The registered
 `llvm_scalar_execution` differential corpus checks it with C++ and native
 O0/O3. It is separate from the numbered full-language C++ census because LLVM
-currently admits only its documented scalar/text-value profile.
+currently admits only its documented scalar/place/text profile.
 
 [`076-scalar-atomics.gti`](076-scalar-atomics.gti) also demonstrates an explicit
 `[[thread_confined_callback]]` native event hook alongside managed workers.

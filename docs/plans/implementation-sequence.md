@@ -10806,13 +10806,14 @@ or resolve them using source.
 
 ### O-LLVM-05: Places, References, Arrays And Borrowed Text
 
-- **State:** implementation in progress on `codex/llvm-places`; not merged or
-  released. Passive arrays, primitive/array references, constrained fixed-array
-  ranges and counted text now have structural admission and macOS O0/O3
-  execution evidence. Raw/null/nested addresses, arithmetic/difference, exact
-  erased-reference transport, owner-backed views and conditional selected
-  reference results now execute as well. Final platform/performance verification
-  remains pending; this is not completion of the milestone.
+- **State:** the passive places/reference/array/address/text execution profile
+  is implemented for 0.477.0. It includes constrained fixed-array ranges, raw/
+  null/nested addresses, arithmetic/difference, exact erased-reference transport,
+  owner-backed views and conditional selected reference results. The registered
+  profile tests run LLVM O0/O1/O2/O3 against C++20/23 O3 on macOS arm64 and
+  Linux x86_64; integration and installed-consumer evidence is retained in PR337.
+  This is the core profile, not blanket support for every projected/class or
+  borrowed-carrier shape assigned to this milestone.
 - **Unlock:** array algorithms, reference-based helpers, scalar globals and
   text-view operations without hidden allocations.
 - **Deliver:** place roots and projections, loads/stores, indexing, raw pointer
@@ -10836,7 +10837,11 @@ or resolve them using source.
   because these shapes execute. Class/payload/field/base/pack composition must
   extend the same address owner as the corresponding later milestone lands.
   Integral-enum and other nonprimitive passive array/reference compositions
-  remain explicit admission extensions, not implicit support.
+  remain explicit admission extensions, not implicit support. Array value
+  comparison also remains pending an explicit element-comparison recipe; the
+  scalar equality ledger row cannot admit it by accident. All reject in
+  preflight before LLVM emission. Extend these bounded shapes through the same
+  component; do not add another place engine or nominal public-type exception.
 - **C-string prerequisite:** current frontend call matching admits arbitrary
   counted views beyond the documented complete-literal rule. Native admission
   requires exact NUL-free literal provenance (including immutable local aliases)

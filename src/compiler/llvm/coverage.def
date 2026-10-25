@@ -846,6 +846,7 @@ LLVM_COVERAGE_ENTRY(Library, 11, Pending, None, "all represented shapes remain p
 LLVM_COVERAGE_END()
 
 LLVM_COVERAGE_BEGIN(Shape)
+LLVM_COVERAGE_ENTRY(ArrayValueComparison, 5, Pending, None, "array equality requires a separately specified element comparison recipe; scalar equality support is not an array implementation")
 LLVM_COVERAGE_ENTRY(CStringLiteralInput, 5, Pending, None, "whole source literal with no embedded NUL, explicitly staged for an exact C-string parameter")
 LLVM_COVERAGE_ENTRY(ErasedReference, 5, Implemented, None, "exact identity-bound opaque referent used only by checked erasure/restoration; no object value, owning class, or runtime type construction")
 LLVM_COVERAGE_ENTRY(OrdinaryUnsafeInvocation, 5, Implemented, None, "exact source-defined GTI callee requiring caller permission; ordinary call emission and complete reachable body remain independently admitted")

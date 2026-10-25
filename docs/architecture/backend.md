@@ -4536,7 +4536,17 @@ does not copy the C++ backend's unchecked `.data()` conversion. Resolving that
 frontend/MIR contract discrepancy is a separate prerequisite for broader
 C-string argument admission, not authorization for an implicit conversion.
 
-Final cross-platform/performance acceptance is still pending. Class fields/lifecycles, owning storage,
+The registered profile and installed-consumer gates cover macOS arm64 and
+Linux x86_64. A self-checking 256-element/1,048,576-round update workload on
+macOS measures C++23/O3 at 85.19 ms and LLVM O3 at 77.27 ms (5 warmups,
+20 samples); executable sizes are 33,440/33,512 bytes, direct builds
+0.203/0.120 seconds, and peak compiler RSS 73.2/98.8 MB. The workload has no
+GTI heap-allocation operations; process-startup allocation was not measured.
+This is one bounded workload, not a general backend speedup claim.
+
+Integral-enum/nonprimitive array/reference composition and fixed-array value
+equality remain explicit preflight limitations. Scalar equality does not imply
+an array element comparison implementation. Class fields/lifecycles, owning storage,
 payloads and native calls remain their later milestones. Source restrictions
 are unchanged: explicit array-reference declarators and conditional lvalue
 initialization are not added by backend work. Constrained range references to

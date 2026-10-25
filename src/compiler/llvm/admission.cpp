@@ -473,6 +473,13 @@ public:
                   : std::nullopt);
         }
         if (stage.operation != MirOperation::None) {
+          if ((stage.operation == MirOperation::Equal ||
+               stage.operation == MirOperation::NotEqual) &&
+              std::any_of(stage.operands.begin(), stage.operands.end(),
+                          [](const auto &operand) {
+                            return operand.type.kind == SemanticType::Array;
+                          }))
+            add(Shape::ArrayValueComparison);
           const bool arrayAggregate =
               stage.operation == MirOperation::Aggregate &&
               stage.info.type.kind == SemanticType::Array &&

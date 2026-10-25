@@ -172,6 +172,14 @@ int main() { mut int values[2] = {1, 2}; return values[0] - 1; }
          "arrays retain both type and checked operation requirements");
   expect(arrays.admitted(), "passive arrays satisfy a structural refinement "
                             "without promoting the broad aggregate family");
+  const auto arrayEquality = lang::planLlvmAdmission(lower(R"(
+int main() { int left[2] = {1, 2}; int right[2] = {1, 2}; return left == right ? 0 : 1; }
+)"));
+  expect(!arrayEquality.admitted() && arrayEquality.firstUnsupported() &&
+             arrayEquality.firstUnsupported()->entry->key() ==
+                 "Shape.ArrayValueComparison",
+         "scalar equality admission cannot hide an unimplemented array "
+         "comparison");
   for (const auto &use : arrays.requirements())
     if (use.entry->family == "MirOperation" && use.entry->name == "Aggregate")
       expect(use.entry->state == lang::LlvmCoverageState::Pending &&

@@ -205,6 +205,10 @@ OWNER_ADDRESSES = r'''
   unsafe { return *address; }
 }
 bool present(c_string text) { return text != nullptr; }
+int inspect_owner_view(std::string_view text) {
+  if (text.size() != uint64_t(3) || text[2] != 'b') { return 1; }
+  return 0;
+}
 int main() {
   mut int value = 7;
   unsafe { claim(&value, value) += 2; }
@@ -217,6 +221,7 @@ int main() {
   char bytes[4] = {'a', '\0', 'b', '\0'};
   unsafe {
     auto text = std::assume_string_view(&bytes[0], uint64_t(3), bytes);
+    if (inspect_owner_view(text) != 0) { return 6; }
     if (text.size() != uint64_t(3) || text[2] != 'b' || text != "a\0b") { return 3; }
     c_string ctext = std::assume_c_string(&bytes[0], bytes);
     if (!present(ctext)) { return 4; }
@@ -309,6 +314,7 @@ def main() -> None:
     # contract. Do not reproduce the production backend's unchecked data()
     # conversion: native admission requires an exact NUL-free literal proof.
     native_rejections = {
+        'array-comparison': 'int main() { int left[2] = {1, 2}; int right[2] = {1, 2}; return left == right ? 0 : 1; }',
         'dynamic-c-string': '#include <std/string_view>\nvoid consume(c_string text) {} void relay(std::string_view text) { consume(text); } int main() { relay("hello"); return 0; }',
         'nul-c-string': 'void consume(c_string text) {} int main() { consume("a\\0b"); return 0; }',
     }
@@ -367,7 +373,9 @@ def main() -> None:
                 result = subprocess.run([str(gti), str(source), '--backend', 'llvm', mode, '-o', str(output)],
                                         env=env, capture_output=True, text=True, timeout=30)
                 if result.returncode != 65 or 'error[GTI-B0003]' not in result.stderr or output.read_bytes() != b'preserved output':
-                    raise AssertionError(f'{name}: native C-string proof gate did not fail closed: {result.stderr}')
+                    raise AssertionError(f'{name}: native proof gate did not fail closed: {result.stderr}')
+                if name == 'array-comparison' and 'Shape.ArrayValueComparison' not in result.stderr:
+                    raise AssertionError(f'{name}: scalar equality escaped preflight: {result.stderr}')
             print(f'{name}: native proof rejection preserves existing output', flush=True)
     print('LLVM places, selected references, passive arrays and counted text passed')
 

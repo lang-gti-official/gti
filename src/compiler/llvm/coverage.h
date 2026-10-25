@@ -62,6 +62,7 @@ enum class Shape {
   OrdinaryUnsafeInvocation,
   ErasedReference,
   CStringLiteralInput,
+  ArrayValueComparison,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \
