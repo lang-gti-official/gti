@@ -5,6 +5,7 @@
 #include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/mir_verifier.h"
 #include "gti/runtime_execution.h"
 #include "gti/runtime_failure.h"
 
@@ -21,6 +22,14 @@
 #include <iterator>
 #include <limits>
 #include <stdexcept>
+
+namespace lang {
+struct MirProgramTestAccess {
+  static std::vector<MirFunctionInstance> &functions(MirProgram &program) {
+    return program.functions;
+  }
+};
+} // namespace lang
 
 namespace {
 using namespace lang;
@@ -48,6 +57,7 @@ VerifiedLoweredProgram fixture() {
 struct Node { mut Node* next = nullptr; mut int32_t value = 0; };
 [[c_abi]] struct Packet { mut uint8_t tag; mut uint64_t value; };
 [[c_abi]] union Overlay { mut uint64_t bits; mut double value; };
+enum Data { empty, number(int value), pair(uint8_t tag, uint64_t value), node(Node value), flag(bool value) };
 int recurse(int value) {
   if (value == 0) { return 0; }
   return recurse(value - 1);
@@ -133,6 +143,22 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
           layout.size == 16 &&
               layout.fieldOffsets == std::vector<std::uint64_t>({0, 8}),
           "recursive pointer records are planned without recursive expansion");
+  }
+  expect(input.program().mir().payloadEnums().size() == 1,
+         "layout fixture retains its concrete payload definition");
+  for (const auto &payload : input.program().mir().payloadEnums()) {
+    const auto &layout = layouts.payload(payload.type);
+    expect(layout.type.addressOnly && layout.type.value->isPointerTy() &&
+               layout.type.size == 24 && layout.type.alignment == 8 &&
+               layout.type.fieldOffsets == std::vector<std::uint64_t>({0, 8}),
+           "payload storage shares one aligned overlap after its exact tag");
+    expect(layout.variants.size() == 5 &&
+               layout.variants[0]->getNumElements() == 0 &&
+               layout.variants[4]->getElementType(0)->isIntegerTy(8),
+           "unit alternatives and bool payload storage retain exact shapes");
+    expect(&layout == &layouts.payload(payload.type) &&
+               layouts.get(payload.type).storage == layout.storage,
+           "all payload layout consumers share a session-owned plan");
   }
   rejects<BackendUnsupportedError>(
       [&] {
@@ -355,8 +381,12 @@ void emitPlaceComponentProbe(Session &session) {
         ir.SetInsertPoint(success);
       });
   places.allocate({});
-  places.parameter(source->parameterBindings[0], function->getArg(0), false);
-  places.parameter(source->parameterBindings[1], function->getArg(1), false);
+  places.parameter({.binding = source->parameterBindings[0],
+                    .type = source->parameterTypes[0]},
+                   function->getArg(0), false);
+  places.parameter({.binding = source->parameterBindings[1],
+                    .type = source->parameterTypes[1]},
+                   function->getArg(1), false);
   auto *storageType =
       llvm::cast<llvm::ArrayType>(session.layouts().get(array->type).storage);
   auto *initial = llvm::ConstantArray::get(
@@ -609,8 +639,11 @@ int main(void) {
             .succeeded(),
         "NativeLinkRequest links LLVM objects without a source compilation "
         "step");
-    expect(driver::invokeProcess({executable.string()}).succeeded(),
-           "linked C consumer observes exact object bytes");
+    const auto executed = driver::invokeProcess({executable.string()});
+    expect(executed.succeeded(),
+           ("linked C consumer observes exact object bytes (exit " +
+            std::to_string(executed.exitCode) + ")")
+               .c_str());
   }
 }
 // Real source -> verified lowered bodies -> private native body component.
@@ -876,6 +909,122 @@ int main() {
   std::filesystem::remove_all(root);
 }
 
+void testConcretePackAliases() {
+  SemanticType empty;
+  empty.kind = SemanticType::TypePack;
+  empty.concretePack = true;
+  const std::vector<SemanticType> noParameters;
+  const std::vector<HirBindingId> noBindings;
+  const std::vector<HirBindingId> emptyBinding{7};
+  expect(concretePackPrefix(noParameters, emptyBinding, 7, empty) == 0,
+         "empty trailing pack retains its exact source formal binding");
+  expect(!concretePackPrefix(noParameters, noBindings, 7, empty),
+         "an unrelated absent binding cannot witness an empty formal pack");
+  auto pair = empty;
+  pair.arguments = {SemanticType::Int32, SemanticType::Int32};
+  const std::vector<HirBindingId> physicalContinuations{7, 0};
+  expect(!concretePackPrefix(pair.arguments, physicalContinuations, 7, pair),
+         "unproduced zero-continuation binding compatibility stays rejected");
+  const std::vector<SemanticType> nonTrailing{pair, SemanticType::Int32};
+  rejects<BackendUnsupportedError>(
+      [&] { static_cast<void>(flattenConcreteParameters(nonTrailing)); },
+      "non-trailing native packs remain rejected");
+  namespace fs = std::filesystem;
+  const auto root =
+      fs::temp_directory_path() /
+      ("gti-llvm-pack-aliases-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directories(root);
+  struct Cleanup {
+    fs::path root;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(root, ignored);
+    }
+  } cleanup{root};
+  for (const bool projected : {false, true}) {
+    auto frontend = Frontend().analyze("pack-aliases.gti", R"(
+struct Pair {
+  int left;
+  int right;
+  Pair(int left, int right) : left(left), right(right) {}
+  int sum() { return this.left + this.right; }
+};
+T create<T, Args...>(Args... args) { return T(args...); }
+int main() { Pair value = create<Pair>(20, 22); return value.sum() == 42 ? 0 : 1; }
+)");
+    expect(frontend.canGenerateCode(), "pack alias source fixture is valid");
+    bool duplicated = false;
+    for (auto &function : MirProgramTestAccess::functions(frontend.mir)) {
+      const MirPlace *selected = nullptr;
+      for (const auto &place : function.body.places) {
+        if (place.root != MirPlaceRootKind::Binding)
+          continue;
+        if ((!projected && place.projections.empty() &&
+             place.type.kind == SemanticType::TypePack) ||
+            (projected && place.projections.size() == 1 &&
+             place.projections[0].kind == MirProjectionKind::PackElement)) {
+          selected = &place;
+          break;
+        }
+      }
+      if (selected) {
+        auto alias = *selected;
+        alias.id = function.body.places.size() + 1;
+        function.body.places.push_back(std::move(alias));
+        duplicated = true;
+        break;
+      }
+    }
+    expect(duplicated, "fixture retains a concrete pack root/element");
+    const auto checked = verifyMirProgram(frontend.mir);
+    for (const auto &error : checked.errors)
+      std::cerr << error.message << '\n';
+    expect(checked.valid(), "compatible duplicate pack views are verified MIR");
+    if (!checked.valid())
+      continue;
+    std::vector<LoweredProgramIssue> issues;
+    const auto program = verifiedLoweredProgram(
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+    expect(program.has_value(), "duplicate views survive the sealed boundary");
+    if (!program)
+      continue;
+    std::cout << (projected ? "projected" : "root")
+              << " pack alias: MIR and sealed snapshot verified\n";
+    for (const auto level :
+         {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
+      try {
+        Session session(*program, {.optimization = level});
+        const auto admission = planLlvmAdmission(*program);
+        expect(admission.admitted(),
+               "concrete pack aliases have native admission");
+        lowerScalarProgram(session, admission);
+        const auto object = session.emitObject();
+        const auto path = root / "probe.o";
+        expect(driver::writeArtifact(path, object.contents) ==
+                   driver::ArtifactWriteStatus::Success,
+               "write concrete pack alias object");
+        driver::NativeInputs inputs;
+        inputs.finalLibraryFiles.push_back(
+            driver::discoverToolchainLayout(nullptr).runtimeLibrary);
+        const auto executable = root / "probe";
+        const auto linked =
+            driver::NativeToolchain().invoke(driver::NativeLinkRequest(
+                driver::discoverNativeCompiler(), path, executable, inputs));
+        expect(linked.succeeded(), "link concrete pack alias source program");
+        if (linked.succeeded())
+          expect(driver::invokeProcess({executable.string()}).succeeded(),
+                 "duplicate views preserve distinct incoming pack lanes");
+      } catch (const std::exception &error) {
+        std::cerr << (projected ? "projected" : "root")
+                  << " pack alias: " << error.what() << '\n';
+        expect(false, "verified aliases must not consume additional ABI lanes");
+      }
+    }
+  }
+}
+
 void testExecutionCAbi() {
   const auto root =
       std::filesystem::temp_directory_path() /
@@ -934,14 +1083,19 @@ int main(void) {
 }
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
   try {
+    if (argc == 2 && std::string_view(argv[1]) == "--pack-aliases") {
+      testConcretePackAliases();
+      return failures == 0 ? 0 : 1;
+    }
     const auto input = fixture();
     testLayoutAndAbi(input);
     testInvalidModule(input);
     testDiagnostics(input);
     testObjectHandoff(input);
     testClassBodyComponent();
+    testConcretePackAliases();
     testExecutionCAbi();
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';

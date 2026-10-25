@@ -1,6 +1,7 @@
 #include "gti/llvm_admission.h"
 
 #include "coverage.h"
+#include "parameter_packs.h"
 #include "reachability.h"
 #include "text.h"
 
@@ -182,6 +183,7 @@ public:
 
   bool nativeValue(const SemanticType &type) const {
     std::set<HirClassInstanceId> visiting;
+    std::set<const MirPayloadEnum *> payloads;
     const auto supported = [&](const auto &self,
                                const SemanticType &selected) -> bool {
       if (passiveReferenceType(selected) || passiveAddress(selected) ||
@@ -195,14 +197,29 @@ public:
         return selected.arguments.size() == 1 &&
                selected.arguments[0].kind != SemanticType::Unknown &&
                selected.arguments[0].kind != SemanticType::TypeParameter;
-      if (selected.kind == SemanticType::Enum)
+      if (selected.kind == SemanticType::Enum) {
+        if (const auto *payload = program.findPayloadEnum(selected)) {
+          if (!payloads.insert(payload).second)
+            return false;
+          bool valid = true;
+          for (const auto &variant : payload->variants)
+            for (const auto &field : variant.payloadTypes)
+              valid = valid && self(self, field);
+          payloads.erase(payload);
+          return valid;
+        }
         return std::any_of(
             program.integralEnums().begin(), program.integralEnums().end(),
             [&](const auto &entry) { return entry.type == selected; });
+      }
       if (selected.kind == SemanticType::Array)
         return selected.arguments.size() == 1 &&
                !selected.arrayLengthParameterId &&
                self(self, selected.arguments[0]);
+      if (selected.kind == SemanticType::TypePack && selected.concretePack)
+        return std::all_of(
+            selected.arguments.begin(), selected.arguments.end(),
+            [&](const auto &element) { return self(self, element); });
       if (selected.kind != SemanticType::Class)
         return false;
       const MirClassInstance *owner = nullptr;
@@ -214,9 +231,9 @@ public:
         }
       if (!owner ||
           owner->compilerCapability != CompilerCapabilityTypeKind::None ||
-          owner->polymorphic || owner->abstract || owner->unionLayout ||
-          owner->cOpaqueHandle || !owner->bases.empty() ||
-          !owner->structuralBases.empty() || !visiting.insert(owner->id).second)
+          owner->polymorphic || owner->abstract || owner->cOpaqueHandle ||
+          !owner->bases.empty() || !owner->structuralBases.empty() ||
+          !visiting.insert(owner->id).second)
         return false;
       bool valid = true;
       for (const auto &field : owner->declaredFields)
@@ -234,7 +251,16 @@ public:
            leaf->arguments.size() == 1)
       leaf = &leaf->arguments[0];
     if (leaf->kind == SemanticType::Class && nativeValue(type))
-      return Shape::NativeClassStorage;
+      return std::any_of(program.classInstances().begin(),
+                         program.classInstances().end(),
+                         [&](const auto &owner) {
+                           return owner.type == *leaf && owner.unionLayout;
+                         })
+                 ? Shape::NativeUnionStorage
+                 : Shape::NativeClassStorage;
+    if (leaf->kind == SemanticType::Enum && program.findPayloadEnum(*leaf) &&
+        nativeValue(type))
+      return Shape::NativePayloadStorage;
     return {};
   }
   const MirClassInstance *bodyClass() const {
@@ -271,6 +297,12 @@ public:
       return bodyClassShape();
     if (place.root == MirPlaceRootKind::Value && currentBody) {
       const auto *value = currentBody->findValue(place.value);
+      if (value && value->info.category == ValueCategory::Place)
+        for (const auto &block : currentBody->blocks)
+          for (const auto &stage : block.instructions)
+            if (!stage.tombstone && stage.result == place.value &&
+                stage.operation == MirOperation::PayloadExtract)
+              return classShape(mirInstructionEnumType(stage));
       return value ? classShape(value->info.type) : std::nullopt;
     }
     if (currentBody)
@@ -356,11 +388,62 @@ public:
     ++uses[found->second].occurrences;
   }
 
-  void type(const SemanticType &root) {
+  bool concretePackParameter(const MirPlace &place) const {
+    if (!body || !currentBody || place.root != MirPlaceRootKind::Binding ||
+        !place.projections.empty() ||
+        place.type.kind != SemanticType::TypePack || !place.type.concretePack)
+      return false;
+    const std::vector<HirBindingId> *bindings = nullptr;
+    const std::vector<SemanticType> *parameters = nullptr;
+    if (body->kind == MirBodyKind::Function) {
+      const auto *owner = program.findFunctionInstance(body->owner);
+      if (owner && &owner->body == currentBody) {
+        bindings = &owner->parameterBindings;
+        parameters = &owner->parameterTypes;
+      }
+    } else if (body->kind == MirBodyKind::Constructor) {
+      const auto *owner = program.findConstructorInstance(body->owner);
+      if (owner && &owner->body == currentBody) {
+        bindings = &owner->parameterBindings;
+        parameters = &owner->parameterTypes;
+      }
+    }
+    if (!bindings || !parameters)
+      return false;
+    const auto plan = native_llvm::planConcreteParameters(
+        *parameters, *bindings, *currentBody);
+    return plan && std::any_of(plan->packs.begin(), plan->packs.end(),
+                               [&](const auto &pack) {
+                                 return pack.binding == place.binding &&
+                                        pack.type == place.type;
+                               });
+  }
+
+  void type(const SemanticType &root, bool concretePackMetadata = false) {
+    if (concretePackMetadata) {
+      if (root.kind != SemanticType::TypePack || !root.concretePack)
+        throw std::logic_error(
+            "LLVM concrete-pack metadata lost its verified type");
+      const bool previous = executable;
+      executable = false;
+      add(root.kind);
+      executable = previous;
+      if (!root.arguments.empty())
+        add(Shape::TypeArguments);
+      for (const auto &argument : root.arguments)
+        type(argument);
+      return;
+    }
     std::vector<const SemanticType *> pending{&root};
     while (!pending.empty()) {
       const SemanticType &type = *pending.back();
       pending.pop_back();
+      if (program.findPayloadEnum(type))
+        add(Shape::PayloadEnum, classShape(type));
+      if (type.kind == SemanticType::Class)
+        for (const auto &owner : program.classInstances())
+          if (owner.type == type && owner.unionLayout)
+            add(Shape::NativeUnion, classShape(type));
       const bool passiveArray =
           type.kind == SemanticType::Array && passiveArrayElement(type);
       const bool arrayAddress = type.kind == SemanticType::RawPointer &&
@@ -446,7 +529,7 @@ public:
       if (drop.polymorphicCleanup)
         add(Shape::PolymorphicClass);
       if (drop.payloadVariant)
-        add(Shape::PayloadEnum);
+        add(Shape::PayloadEnum, shape);
       if (!drop.aggregate.empty())
         add(Shape::FieldDrop, shape);
       if (drop.requiresActiveCleanup)
@@ -532,7 +615,7 @@ public:
               ? std::optional(Shape::PassiveReference)
               : placeClassShape(place));
       add(place.access);
-      type(place.type);
+      type(place.type, concretePackParameter(place));
       traits(place.traits, place.type);
       for (const auto &projection : place.projections)
         add(projection.kind,
@@ -549,25 +632,52 @@ public:
     }
     for (const auto &loan : mir.loans) {
       const auto *origin = mir.findPlace(loan.source);
+      const auto nativeConditions = [&](const auto &conditions) {
+        return std::all_of(
+            conditions.begin(), conditions.end(), [&](const auto &condition) {
+              const auto *payload =
+                  program.findPayloadEnum(condition.enumeration);
+              return payload && condition.variant < payload->variants.size() &&
+                     nativeValue(condition.enumeration);
+            });
+      };
+      bool nativeBorrow = origin && nativeValue(origin->type) &&
+                          nativeConditions(loan.conditions);
+      for (const auto &dependency : loan.additionalDependencies) {
+        const auto *source = mir.findPlace(dependency.source);
+        nativeBorrow &= nativeConditions(dependency.conditions) &&
+                        (source ? nativeValue(source->type)
+                                : !dependency.source &&
+                                      !dependency.designatedFields.empty());
+      }
+      if (loan.referenceSelection) {
+        const auto *value = mir.findValue(loan.referenceSelection->value);
+        nativeBorrow &= value && nativeValue(value->info.type) &&
+                        nativeConditions(loan.referenceSelection->conditions);
+      }
+      const auto borrowShape = nativeBorrow
+                                   ? std::optional(Shape::NativeBorrowMetadata)
+                                   : std::nullopt;
       const bool selected = origin && passiveReference(origin->type) &&
                             !loan.referenceSelection && loan.conditions.empty();
-      add(loan.kind, selected ? std::optional(Shape::PassiveReference)
-                     : origin ? placeClassShape(*origin)
-                              : std::nullopt);
+      add(loan.kind, borrowShape ? borrowShape
+                     : selected  ? std::optional(Shape::PassiveReference)
+                     : origin    ? placeClassShape(*origin)
+                                 : std::nullopt);
       add(loan.access);
       if (loan.referenceSelection)
-        add(Shape::SelectedReferenceAddress);
+        add(Shape::SelectedReferenceAddress, borrowShape);
       if (loan.twoPhase)
         add(Shape::TwoPhaseBorrow,
             origin ? placeClassShape(*origin) : std::nullopt);
       if (!loan.additionalDependencies.empty())
-        add(Shape::MultipleBorrowOrigins);
+        add(Shape::MultipleBorrowOrigins, borrowShape);
       if (!loan.conditions.empty())
-        add(Shape::ConditionalBorrow);
+        add(Shape::ConditionalBorrow, borrowShape);
       for (const auto &dependency : loan.additionalDependencies) {
         add(dependency.access);
         if (!dependency.conditions.empty())
-          add(Shape::ConditionalBorrow);
+          add(Shape::ConditionalBorrow, borrowShape);
       }
     }
     for (const auto &drop : mir.dropObligations) {
@@ -669,7 +779,10 @@ public:
               stage.operands[0].type.kind == SemanticType::StringView &&
               stage.info.type == SemanticType::Char;
           add(stage.operation,
-              scalarMutation ? std::optional(Shape::InPlaceScalarMutation)
+              stage.operation == MirOperation::PayloadConstruct ||
+                      stage.operation == MirOperation::PayloadExtract
+                  ? classShape(mirInstructionEnumType(stage))
+              : scalarMutation ? std::optional(Shape::InPlaceScalarMutation)
               : primitiveRawIndex(stage) || primitivePointerArithmetic(stage)
                   ? std::optional(Shape::PrimitiveRawAccess)
               : arrayAggregate ? std::optional(Shape::PassiveArrayValue)
@@ -795,7 +908,17 @@ public:
               callee->requiresUnsafe &&
               stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall;
           add(stage.unsafeOperation,
-              ordinaryUnsafe ? std::optional(Shape::OrdinaryUnsafeInvocation)
+              stage.unsafeOperation == UnsafeOperationKind::UnionMember
+                  ? classShape(stage.info.type).has_value() ? classShape(stage.info.type)
+                    : [&]() -> std::optional<Shape> {
+                        if (stage.destination)
+                          return placeClassShape(*mir.findPlace(*stage.destination));
+                        for (const auto &operand : stage.operands)
+                          if (const auto *place = mir.findPlace(operand.place))
+                            if (auto shape = placeClassShape(*place)) return shape;
+                        return {};
+                      }()
+              : ordinaryUnsafe ? std::optional(Shape::OrdinaryUnsafeInvocation)
               : stage.unsafeOperation ==
                           UnsafeOperationKind::ErasedReferenceRestore &&
                       (erasedReference(stage) ||
@@ -821,11 +944,21 @@ public:
                   : std::nullopt);
         }
         if (stage.payloadExtractionKind)
-          add(*stage.payloadExtractionKind);
+          add(*stage.payloadExtractionKind,
+              classShape(mirInstructionEnumType(stage)));
         if (stage.callableBoundary)
           add(*stage.callableBoundary);
-        if (stage.callableInvocation)
-          add(*stage.callableInvocation);
+        if (stage.callableInvocation) {
+          const auto *target =
+              stage.functionTarget
+                  ? program.findFunctionInstance(*stage.functionTarget)
+                  : nullptr;
+          add(*stage.callableInvocation,
+              target && target->owner && !target->staticMember &&
+                      !stage.lambdaTarget
+                  ? classShape(program.findClassInstance(*target->owner)->type)
+                  : std::nullopt);
+        }
         if (stage.synchronization.kind != SynchronizationOperationKind::None) {
           add(stage.synchronization.kind);
           if (stage.synchronization.order)
@@ -988,7 +1121,7 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     if (instance.cAbiLayout)
       inventory.add(Shape::NativeRecord, inventory.classShape(instance.type));
     if (instance.unionLayout)
-      inventory.add(Shape::NativeUnion);
+      inventory.add(Shape::NativeUnion, inventory.classShape(instance.type));
     if (instance.cOpaqueHandle)
       inventory.add(Shape::OpaqueNativeHandle);
   }

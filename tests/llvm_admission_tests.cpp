@@ -94,7 +94,8 @@ void testPlacementPlan() {
                                           .value = 6,
                                           .type = object}};
   body.blocks.push_back(block);
-  const Placement placement(body);
+  const MirProgram program;
+  const Placement placement(program, body);
   expect(placement.target(1) && placement.target(1)->aggregate == 3 &&
              placement.target(1)->element == 0 && placement.target(3) &&
              placement.target(3)->place == 1,
@@ -111,7 +112,7 @@ void testPlacementPlan() {
        .destination = 3,
        .operands = {
            {.kind = MirOperandKind::Value, .value = 1, .type = object}}});
-  const Placement withReference(body);
+  const Placement withReference(program, body);
   expect(withReference.target(1) && withReference.target(1)->aggregate == 3,
          "referent publication cannot replace object storage with a reference "
          "slot");
@@ -123,7 +124,7 @@ void testPlacementPlan() {
            {.kind = MirOperandKind::Value, .value = 1, .type = object}}});
   bool rejected = false;
   try {
-    const Placement invalid(body);
+    const Placement invalid(program, body);
   } catch (const BackendUnsupportedError &) {
     rejected = true;
   }
@@ -176,7 +177,8 @@ void testLedger() {
     nonexecuting += entry.state == LlvmCoverageState::VerifiedNonExecuting;
     if (entry.state == LlvmCoverageState::Implemented)
       expect(entry.positiveTest ==
-                 (entry.milestone == 6   ? "llvm_class_execution"
+                 (entry.milestone == 7   ? "llvm_payload_execution"
+                  : entry.milestone == 6 ? "llvm_class_execution"
                   : entry.milestone == 5 ? "llvm_place_execution"
                                          : "llvm_scalar_execution"),
              "implemented families name real execution evidence");
@@ -265,6 +267,15 @@ int main() { Owned value{}; int data[1] = {1}; return data == data ? 0 : 1; }
 }
 
 void testShapeWitnesses() {
+  const auto directConsuming = lang::planLlvmAdmission(lower(R"(
+class Value { public: int read() && { return 42; } };
+int main() { return Value().read() - 42; }
+)"));
+  expect(
+      directConsuming.admitted() &&
+          directConsuming.closure() ==
+              lang::LlvmAdmissionClosure::SealedEntryDependencies,
+      "an exact consuming method retains its sealed direct dependency closure");
   const auto indirect = lang::planLlvmAdmission(lower(R"(
 int dormant(int value) { return value * 3; }
 int main() { auto function = [](int value) -> int { return value; }; return function(0); }

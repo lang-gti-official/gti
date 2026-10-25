@@ -1,4 +1,5 @@
 #include "abi.h"
+#include "parameter_packs.h"
 
 #include <llvm/IR/Attributes.h>
 #include <llvm/IR/InstrTypes.h>
@@ -79,8 +80,9 @@ Abi::Abi(Session &session, Layouts &layouts)
 }
 
 FunctionAbi Abi::gti(const SemanticType &result,
-                     std::span<const SemanticType> parameters, bool mayFail,
-                     bool receiver, bool tracksCaller) {
+                     std::span<const SemanticType> sourceParameters,
+                     bool mayFail, bool receiver, bool tracksCaller) {
+  const auto parameters = flattenConcreteParameters(sourceParameters);
   const auto output = layouts.get(result);
   FunctionAbi plan;
   std::vector<llvm::Type *> types;

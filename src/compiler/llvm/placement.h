@@ -7,10 +7,12 @@
 namespace lang::native_llvm {
 
 // Class-containing aggregates carry object identity, not LLVM SSA snapshots.
-[[nodiscard]] inline bool addressValue(const SemanticType &type) {
+[[nodiscard]] inline bool addressValue(const MirProgram &program,
+                                       const SemanticType &type) {
   return type.kind == SemanticType::Class ||
+         (type.kind == SemanticType::Enum && program.findPayloadEnum(type)) ||
          (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
-          addressValue(type.arguments[0]));
+          addressValue(program, type.arguments[0]));
 }
 
 // Fresh values have one physical destination. This plan follows only verified
@@ -22,10 +24,11 @@ public:
     MirPlaceId place = 0;
     MirValueId aggregate = 0;
     std::size_t element = 0;
+    std::optional<std::size_t> variant;
     bool returned = false;
     friend bool operator==(const Target &, const Target &) = default;
   };
-  explicit Placement(const MirBody &body);
+  Placement(const MirProgram &program, const MirBody &body);
   [[nodiscard]] const Target *target(MirValueId value) const;
   [[nodiscard]] bool fresh(MirValueId value) const;
 

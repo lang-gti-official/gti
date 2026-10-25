@@ -1,5 +1,6 @@
 #pragma once
 
+#include "parameter_packs.h"
 #include "scalar.h"
 
 #include <map>
@@ -13,12 +14,14 @@ namespace lang::native_llvm {
 class Places final {
 public:
   Places(Session &session, llvm::IRBuilder<> &ir, const MirBody &body,
-         std::vector<llvm::Value *> &values, Scalars::Guard guard);
+         std::vector<llvm::Value *> &values, Scalars::Guard guard,
+         std::span<const ConcretePackParameter> packs = {});
   void allocate(const std::map<SymbolId, llvm::GlobalVariable *> &globals);
   [[nodiscard]] llvm::Value *address(MirPlaceId id);
   [[nodiscard]] llvm::Value *loan(MirLoanId id);
   void publish(MirLoanId id, llvm::Value *address);
-  void parameter(HirBindingId binding, llvm::Value *argument, bool indirect);
+  void parameter(const ParameterLane &lane, llvm::Value *argument,
+                 bool indirect);
   void receiver(llvm::Value *address, const SemanticType &type);
   [[nodiscard]] llvm::Value *temporary(const SemanticType &type);
   [[nodiscard]] llvm::Value *load(llvm::Value *address,
@@ -41,8 +44,8 @@ public:
 private:
   using Key = std::tuple<MirPlaceRootKind, std::size_t, std::size_t>;
   struct Root {
-    llvm::Value *address;
-    SemanticType type;
+    llvm::Value *address = nullptr;
+    SemanticType type = SemanticType::Unknown;
   };
   Session &session;
   llvm::IRBuilder<> &ir;
@@ -50,12 +53,17 @@ private:
   std::vector<llvm::Value *> &values;
   Scalars::Guard guard;
   std::map<Key, Root> roots;
+  std::map<HirBindingId, SemanticType> packParameters;
+  std::map<std::pair<HirBindingId, std::size_t>, Root> packElements;
   std::vector<llvm::Value *> loans;
   std::vector<SemanticType> loanTypes;
+  std::vector<bool> selectedValues;
   llvm::Value *receiverAddress = nullptr;
   SemanticType receiverType = SemanticType::Unknown;
   [[nodiscard]] static Key key(const MirPlace &place);
   [[nodiscard]] Root root(const MirPlace &place);
+  [[nodiscard]] std::optional<std::size_t>
+  packElement(const MirPlace &place) const;
   [[nodiscard]] llvm::Value *slot(llvm::Type *type);
 };
 

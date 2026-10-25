@@ -4695,6 +4695,70 @@ The program contains no GTI heap-allocation operation; process-startup
 allocations were not measured. This bounded probe shows no material regression,
 not a general class-backend speedup claim.
 
+### LLVM Unions And Payloads
+
+The native payload plan belongs to `Layouts`, keyed by exact concrete sealed
+enum identity in one session. Safe sums use a 32-bit alternative index followed
+by aligned overlapping storage; every alternative has its exact field storage
+types, including byte-backed booleans. All consumers query that plan for tag and
+field addresses. The reserved `UINT32_MAX` encoding is representation-only
+inactive/moved state: the plan verifies that every source alternative index is
+strictly smaller. No niche optimization or source-visible empty case is inferred.
+
+Fresh payload arguments share destination publication with classes and arrays.
+The complete tag is written only after the operands have completed. Cleanup
+consumes the exact MIR alternative/field recipes, retires the active tag before
+running children, and preserves reverse cleanup and primary/secondary failure
+handling. Consuming extraction selects the original payload field rather than
+moving a whole enum before each extraction. Borrowed extractions retain the
+evaluated field address and upstream loan permissions. Native unions instead
+use the sealed overlapping layout with no hidden tag or active-member guarantee.
+
+Dependency groups and active-alternative conditions remain verifier-owned
+permissions. Their native witness requires concrete native source places and
+exact alternative identities; it does not select the first possible owner as
+the physical address. `MirReferenceSelection` uses its evaluated MIR value,
+and reference-binding payload extractions retain the field or stored referent
+address. A place-category `Load` is still a value, including a loaded raw
+pointer; source category alone never decides this physical distinction.
+
+Static payload constants preserve the same canonical offsets, extent and
+alignment. A packed initializer with explicit padding and typed field fragments
+represents the selected alternative, including pointer/text relocations. Arrays
+and containing classes preserve their canonical strides and field offsets;
+global storage receives explicit canonical alignment. This creates no startup
+evaluation or allocation and does not introduce another constexpr evaluator.
+Tracked inactive-state failures use sealed caller-location metadata just like
+panic, retaining source attribution through source-defined wrappers.
+
+Concrete variadic parameters remain flattened in the existing private ABI.
+Their MIR pack binding is metadata: each projected element aliases its own
+incoming argument cell, preserving final addresses without a tuple allocation
+or a second aggregate copy. `parameter_packs` is the single shared planner for
+ABI lanes, body entry, place storage and admission. It proves exact owner
+parameter types/bindings and coalesces compatible MIR views by their verified
+identity, never advancing an argument cursor once per view. Even an empty pack
+retains its source formal binding; the text dump's omission is not a different
+owner contract. Absent empty bindings and unproduced zero-continuation forms
+are rejected. TypePack descriptors erase only for exact function/constructor
+formals, while runtime pack SSA values stay forbidden. Symbolic, nested and
+non-trailing native packs remain unsupported. Direct consuming methods similarly use
+their exact selected source target and verified receiver transfer; this does
+not admit erased callables or introduce a separate invocation ABI.
+
+O-LLVM-07 remains under implementation. Its owning matrix covers nested and
+generic alternatives, static/global/thread-local storage, ordinary source
+optional/expected wrappers, stored references, source propagation, replacement,
+consuming cleanup, partial-input failure and sibling cleanup after a destructor
+fails. A C++ vocabulary gap for an owning conditional-result body is explicitly
+recorded; native execution checks its values and exact destructor trace rather
+than extending the deprecated comparator. Full platform/cost acceptance and
+slot-capability composition remain obligations. The current optional library
+uses ordinary enums, not the legacy `OptionalStorage` capability. The live
+`PolymorphicStorage` family requires concrete polymorphic object layout from
+O-LLVM-10; heap-owned compositions also require O-LLVM-08. Neither dependency is
+silently granted by the existence of a payload layout.
+
 ### LLVM Coverage And Admission
 
 `llvm_admission.h` exposes `llvmCoverageLedger()` and
