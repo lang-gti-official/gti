@@ -4714,6 +4714,13 @@ moving a whole enum before each extraction. Borrowed extractions retain the
 evaluated field address and upstream loan permissions. Native unions instead
 use the sealed overlapping layout with no hidden tag or active-member guarantee.
 
+Verified consuming patterns extract every active field exactly once, with no
+intervening user operation or failure, and transfer out the shell's cleanup
+obligation after the last extraction. The drained shell is never dropped or
+read again. A scalar owner's old payload bits therefore need no separate
+clearing merely to prevent a second parent drop; MIR transfers that cleanup
+authority. This is distinct from ordinary moves out of reusable owner storage.
+
 Dependency groups and active-alternative conditions remain verifier-owned
 permissions. Their native witness requires concrete native source places and
 exact alternative identities; it does not select the first possible owner as

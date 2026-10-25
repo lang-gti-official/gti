@@ -12,8 +12,10 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/DiagnosticPrinter.h>
+#include <llvm/IR/GlobalAlias.h>
 #include <llvm/IR/IRBuilder.h>
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -1064,7 +1066,8 @@ void testPayloadUniqueOwner(const std::filesystem::path &repository,
   // Only this source fixture may name the private scalar owner representation.
   source += R"(
 namespace payload_owner_probe {
-extern "C" { int32_t payload_owner_counts_v1(); }
+mut int32_t allocated = 0;
+mut int32_t released = 0;
 enum Packet { owned(gti_internal::unique_owner<int32_t> value) };
 gti_internal::unique_owner<int32_t> extract() {
   mut Packet source = Packet::owned(gti_internal::allocate_unique_owner<int32_t>(42));
@@ -1076,10 +1079,10 @@ int run() {
   {
     gti_internal::unique_owner<int32_t> selected = extract();
     // The source payload is already dead, while its extracted owner is live.
-    if (payload_owner_counts_v1() != 10) { return 1; }
+    if (allocated != 1 || released != 0) { return 1; }
     if (gti_internal::unique_owner_borrow(selected) != 42) { return 2; }
   }
-  return payload_owner_counts_v1() == 11 ? 0 : 3;
+  return allocated == 1 && released == 1 ? 0 : 3;
 }
 }
 )";
@@ -1108,6 +1111,25 @@ int run() {
   if (!program)
     return;
   const auto &mir = program->program().mir();
+  std::array<SymbolId, 2> counterSymbols{};
+  for (std::size_t index = 0; index < counterSymbols.size(); ++index) {
+    const auto name = index == 0 ? "payload_owner_probe::allocated"
+                                 : "payload_owner_probe::released";
+    unsigned matches = 0;
+    bool valid = false;
+    for (const auto &symbol : program->program().symbols()) {
+      if (symbol.qualifiedName != name)
+        continue;
+      ++matches;
+      counterSymbols[index] = symbol.id;
+      valid = symbol.kind == SymbolKind::GlobalVariable &&
+              symbol.type == SemanticType::Int32 && symbol.mutableBinding;
+    }
+    expect(matches == 1 && valid,
+           "each provider counter is one exact sealed mutable scalar global");
+    if (matches != 1 || !valid)
+      return;
+  }
   const auto owner = SemanticType::uniqueOwnerOf(SemanticType::Int32);
   bool exactField = false;
   for (const auto &payload : mir.payloadEnums())
@@ -1157,26 +1179,27 @@ int run() {
   expect(driver::writeArtifact(shim, R"(
 #define _POSIX_C_SOURCE 200112L
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 static void *active;
-static int32_t allocated, released;
+extern int32_t payload_owner_allocated_v1, payload_owner_released_v1;
 void *gti_rt_posix_memalign_v1(uint64_t bytes, uint64_t alignment, int32_t *status) {
-  if (allocated || !bytes || !alignment) abort();
+  if (payload_owner_allocated_v1 || !bytes || !alignment) abort();
   void *address = NULL;
   *status = posix_memalign(&address, (size_t)alignment, (size_t)bytes);
   if (*status || !address) abort();
   active = address;
-  ++allocated;
+  ++payload_owner_allocated_v1;
   return address;
 }
 void gti_rt_posix_free_v1(void *address) {
-  if (!address || address != active || released) abort();
+  if (!address || address != active || payload_owner_released_v1) {
+    fputs("payload provider: invalid or duplicate release\n", stderr);
+    abort();
+  }
   active = NULL;
-  ++released;
+  ++payload_owner_released_v1;
   free(address);
-}
-int32_t payload_owner_counts_v1(void) {
-  return allocated * 10 + released;
 }
 )") == driver::ArtifactWriteStatus::Success,
          "write versioned counting memory provider");
@@ -1201,6 +1224,23 @@ int32_t payload_owner_counts_v1(void) {
       return;
     }
     lowerScalarProgram(session, admission);
+    // Only the test shim sees these aliases. Production admission/exports are
+    // unchanged; verify and optimize this instrumented module normally.
+    for (std::size_t index = 0; index < counterSymbols.size(); ++index) {
+      auto *global = session.module().getGlobalVariable(
+          "__gti_native_v1_g" + std::to_string(counterSymbols[index]), true);
+      const bool valid = global && global->getValueType()->isIntegerTy(32) &&
+                         !global->isConstant() && !global->isThreadLocal();
+      expect(valid, "provider alias retains exact mutable global storage");
+      if (!valid)
+        return;
+      llvm::GlobalAlias::create(global->getValueType(),
+                                global->getAddressSpace(),
+                                llvm::GlobalValue::ExternalLinkage,
+                                index == 0 ? "payload_owner_allocated_v1"
+                                           : "payload_owner_released_v1",
+                                global, &session.module());
+    }
     const auto object = root / "probe.o";
     expect(driver::writeArtifact(object, session.emitObject().contents) ==
                driver::ArtifactWriteStatus::Success,
@@ -1216,8 +1256,10 @@ int32_t payload_owner_counts_v1(void) {
     expect(linked.succeeded(), "link real body with independent memory oracle");
     if (linked.succeeded()) {
       const auto run = driver::invokeProcess({executable.string()});
-      if (!run.succeeded())
-        std::cerr << run.output;
+      if (!run.succeeded()) {
+        std::cerr << "scalar-owner payload program exit " << run.exitCode
+                  << ": " << run.output;
+      }
       expect(run.succeeded(), "scalar payload move has exactly one allocation "
                               "and release, without early or double cleanup");
       if (run.succeeded())
