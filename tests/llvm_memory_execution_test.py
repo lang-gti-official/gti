@@ -21,6 +21,7 @@ CASES = {
     "empty-unique": "llvm_memory_empty_unique.gti",
     "unique": "llvm_memory_unique.gti",
     "empty-shared": "llvm_memory_empty_shared.gti",
+    "padded-range": "llvm_memory_padded_range.gti",
     "shared": "llvm_memory_shared.gti",
 }
 REJECT = {"vacant-move": "llvm_memory_reject_vacant_move.gti"}
