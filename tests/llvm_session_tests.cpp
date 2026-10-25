@@ -941,7 +941,7 @@ int main() {
         LlvmCodegenOptimization::Default,
         LlvmCodegenOptimization::Aggressive}) {
     Session session(*program, {.optimization = level});
-    const auto admission = planLlvmAdmission(*program);
+    const auto admission = planLlvmAdmission(*program, session.options());
     expect(admission.admitted(), "real class component has public admission");
     lowerScalarProgram(session, admission);
     auto *registration = llvm::StructType::getTypeByName(
