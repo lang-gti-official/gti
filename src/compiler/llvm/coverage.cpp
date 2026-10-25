@@ -50,7 +50,8 @@ static_assert(std::variant_size_v<LoweredGeneratedItemPayload> == 7,
         LlvmNonExecutingRule::Rule,                                            \
         Predicate,                                                             \
         LlvmCoverageState::State == LlvmCoverageState::Implemented             \
-            ? (Milestone == 6   ? "llvm_class_execution"                       \
+            ? (Milestone == 8   ? "llvm_memory_execution"                      \
+               : Milestone == 6 ? "llvm_class_execution"                       \
                : Milestone == 5 ? "llvm_place_execution"                       \
                                 : "llvm_scalar_execution")                     \
             : "llvm_admission"};                                               \

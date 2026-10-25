@@ -1,6 +1,7 @@
 #include "body.h"
 #include "failure.h"
 #include "lifetimes.h"
+#include "memory.h"
 #include "placement.h"
 #include "places.h"
 #include "runtime_abi.h"
@@ -64,6 +65,11 @@ public:
                [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
                  guard(condition, outcome);
                }),
+        objectMemory(
+            session, ir, lifetimes,
+            [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
+              guard(condition, outcome);
+            }),
         channels(body.failureRecords.size() + 1),
         blocks(body.blocks.size() + 1), live(body.dropObligations.size() + 1),
         placement(body) {
@@ -86,6 +92,7 @@ private:
   std::function<llvm::Function *(MirBodyAddress)> findFunction;
   std::vector<llvm::Value *> values;
   Places memory;
+  Memory objectMemory;
   std::vector<llvm::Value *> channels;
   std::vector<llvm::BasicBlock *> blocks;
   std::vector<llvm::Value *> live;
@@ -213,8 +220,10 @@ private:
     if (!authorized)
       return;
     const auto &term = current->terminator;
-    if (term.kind != MirTerminatorKind::Invoke ||
-        term.invokeInstruction != stage->id)
+    const bool terminalAllocation =
+        outcome.code == DefinedFailureCode::AllocationFailure;
+    if (!terminalAllocation && (term.kind != MirTerminatorKind::Invoke ||
+                                term.invokeInstruction != stage->id))
       throw std::logic_error("LLVM checked operation lost its Invoke");
     auto *failed =
         llvm::BasicBlock::Create(session.context(), "check.failed", &function);
@@ -222,9 +231,21 @@ private:
         llvm::BasicBlock::Create(session.context(), "check.success", &function);
     ir.CreateCondBr(condition, failed, normal);
     ir.SetInsertPoint(failed);
-    failures.originate(ir, channels.at(term.failureRecord), *stage, outcome,
-                       callerSite, callerArtifact);
-    jump(term.elseTarget, term.elseArguments);
+    if (terminalAllocation) {
+      llvm::IRBuilder<> entry(&function.getEntryBlock(),
+                              function.getEntryBlock().begin());
+      auto *channel = entry.CreateAlloca(session.abi().failureChannel());
+      failures.originate(ir, channel, *stage, outcome, callerSite,
+                         callerArtifact);
+      ir.CreateCall(
+          declareRuntimeService(session, RuntimeService::AbortAllocation),
+          {failures.record(ir, channel), failures.origin(ir, channel)});
+      ir.CreateUnreachable();
+    } else {
+      failures.originate(ir, channels.at(term.failureRecord), *stage, outcome,
+                         callerSite, callerArtifact);
+      jump(term.elseTarget, term.elseArguments);
+    }
     ir.SetInsertPoint(normal);
   }
   [[nodiscard]] llvm::Value *call(const MirInstruction &instruction,
@@ -239,6 +260,31 @@ private:
       return nullptr;
     }
     if (instruction.intrinsic != IntrinsicKind::None) {
+      if (Memory::handles(instruction.intrinsic)) {
+        std::vector<llvm::Value *> inputs;
+        for (const auto &value : instruction.operands)
+          inputs.push_back(operand(value));
+        const auto &term = current->terminator;
+        const bool checked = term.kind == MirTerminatorKind::Invoke &&
+                             term.invokeInstruction == instruction.id;
+        const auto emitted = objectMemory.emit(
+            instruction, inputs,
+            checked ? channels.at(term.failureRecord) : nullptr,
+            current->activeFailure != 0);
+        if (!emitted.handled)
+          throw std::logic_error("LLVM memory dispatch lost its operation");
+        if (emitted.status && checked) {
+          auto *normal = llvm::BasicBlock::Create(session.context(),
+                                                  "memory.success", &function);
+          auto *failed = llvm::BasicBlock::Create(session.context(),
+                                                  "memory.failed", &function);
+          ir.CreateCondBr(emitted.status, normal, failed);
+          ir.SetInsertPoint(failed);
+          jump(term.elseTarget, term.elseArguments);
+          ir.SetInsertPoint(normal);
+        }
+        return emitted.value;
+      }
       switch (instruction.intrinsic) {
       case IntrinsicKind::StringViewSize:
         return ir.CreateExtractValue(

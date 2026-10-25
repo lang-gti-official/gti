@@ -10,6 +10,26 @@ Memory::Memory(Session &session, llvm::IRBuilder<> &ir, Lifetimes &lifetimes,
                Scalars::Guard guard)
     : session(session), ir(ir), lifetimes(lifetimes), guard(std::move(guard)) {}
 
+bool Memory::handles(IntrinsicKind intrinsic) {
+  switch (intrinsic) {
+  case IntrinsicKind::ObjectSize:
+  case IntrinsicKind::ObjectAlignment:
+  case IntrinsicKind::ObjectDestroy:
+  case IntrinsicKind::ObjectRelocate:
+  case IntrinsicKind::ObjectRelocateRange:
+  case IntrinsicKind::StorageBoundsCheck:
+  case IntrinsicKind::RequireAllocation:
+  case IntrinsicKind::RequireVacantStorage:
+  case IntrinsicKind::RequireLiveStorage:
+  case IntrinsicKind::RequireRelocationCapacity:
+  case IntrinsicKind::RequireRelocationSource:
+  case IntrinsicKind::RequireRelocationDestination:
+    return true;
+  default:
+    return false;
+  }
+}
+
 void Memory::relocate(const MirInstruction &instruction,
                       std::span<llvm::Value *const> inputs) {
   if (!mir_detail::objectRelocate(session.program().mir(), instruction))
@@ -29,7 +49,8 @@ void Memory::relocate(const MirInstruction &instruction,
     ir.CreateCondBr(ir.CreateICmpEQ(inputs[2], ir.getInt64(0)), done, copy);
     ir.SetInsertPoint(copy);
   }
-  auto *bytes = range ? ir.CreateMul(inputs[2], ir.getInt64(layout.stride))
+  // sizeof(T), not an array layout's element stride: T itself may be an array.
+  auto *bytes = range ? ir.CreateMul(inputs[2], ir.getInt64(layout.size))
                       : ir.getInt64(layout.size);
   // Transfer eligibility and nonoverlap are GTI facts/unsafe obligations, not
   // inferred from LLVM pointer types or the coincidence of object sizes.
@@ -82,6 +103,14 @@ Memory::Result Memory::emit(const MirInstruction &instruction,
         ir.CreateCall(lifetimes.cleanup(*instruction.elementCleanup),
                       {inputs[0], failureChannel, ir.getInt1(duringFailure)})};
   }
+  case IntrinsicKind::StorageBoundsCheck:
+    if (inputs.size() != 2 || !inputs[0]->getType()->isIntegerTy(64) ||
+        !inputs[1]->getType()->isIntegerTy(64))
+      throw std::logic_error("LLVM storage bounds lost its index and extent");
+    guard(ir.CreateICmpUGE(inputs[0], inputs[1]),
+          {DefinedFailureCode::IndexOutOfBounds,
+           DefinedFailureDetail::PrivateStorage});
+    return {true};
   case IntrinsicKind::RequireAllocation:
   case IntrinsicKind::RequireVacantStorage:
   case IntrinsicKind::RequireLiveStorage:

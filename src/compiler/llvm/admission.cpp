@@ -1,5 +1,6 @@
 #include "gti/llvm_admission.h"
 
+#include "../mir_verification_queries.h"
 #include "coverage.h"
 #include "reachability.h"
 #include "text.h"
@@ -236,6 +237,45 @@ public:
     if (leaf->kind == SemanticType::Class && nativeValue(type))
       return Shape::NativeClassStorage;
     return {};
+  }
+  bool memoryOperation(const MirInstruction &stage) const {
+    if (stage.intrinsic == IntrinsicKind::ObjectSize ||
+        stage.intrinsic == IntrinsicKind::ObjectAlignment)
+      return mir_detail::objectLayoutQuery(program, stage) &&
+             nativeValue(*stage.objectLayoutType);
+    if (stage.intrinsic == IntrinsicKind::ObjectRelocate ||
+        stage.intrinsic == IntrinsicKind::ObjectRelocateRange)
+      return mir_detail::objectRelocate(program, stage) &&
+             nativeValue(stage.parameterTypes[0].arguments[0]);
+    if (stage.intrinsic == IntrinsicKind::ObjectDestroy)
+      return mir_detail::objectDestroy(program, stage) &&
+             nativeValue(stage.parameterTypes[0].arguments[0]);
+    if (stage.kind != MirInstructionKind::Call ||
+        stage.info.type != SemanticType::Void || stage.result ||
+        stage.receiver || stage.functionTarget || stage.constructorTarget ||
+        stage.bodyTarget || stage.loan)
+      return false;
+    if (stage.intrinsic == IntrinsicKind::StorageBoundsCheck)
+      return stage.parameterTypes ==
+                 std::vector<SemanticType>{SemanticType::UInt64,
+                                           SemanticType::UInt64} &&
+             stage.operands.size() == 2 &&
+             stage.operands[0].type == SemanticType::UInt64 &&
+             stage.operands[1].type == SemanticType::UInt64;
+    switch (stage.intrinsic) {
+    case IntrinsicKind::RequireAllocation:
+    case IntrinsicKind::RequireVacantStorage:
+    case IntrinsicKind::RequireLiveStorage:
+    case IntrinsicKind::RequireRelocationCapacity:
+    case IntrinsicKind::RequireRelocationSource:
+    case IntrinsicKind::RequireRelocationDestination:
+      return stage.parameterTypes ==
+                 std::vector<SemanticType>{SemanticType::Bool} &&
+             stage.operands.size() == 1 &&
+             stage.operands[0].type == SemanticType::Bool;
+    default:
+      return false;
+    }
   }
   const MirClassInstance *bodyClass() const {
     if (!body)
@@ -593,7 +633,10 @@ public:
           add(Shape::Tombstone);
           continue;
         }
-        std::optional<Shape> storageShape;
+        const bool typedMemory = memoryOperation(stage);
+        std::optional<Shape> storageShape =
+            typedMemory ? std::optional(Shape::NativeMemoryOperation)
+                        : std::nullopt;
         if (stage.kind == MirInstructionKind::EnsureThreadLocal)
           if (const auto *storage =
                   program.findThreadLocalStorage(stage.threadLocalStorage))
@@ -691,7 +734,8 @@ public:
               (stage.intrinsic == IntrinsicKind::StringViewSize ||
                stage.intrinsic == IntrinsicKind::StringViewEmpty);
           add(stage.intrinsic,
-              erasedReference(stage) ? std::optional(Shape::ErasedReference)
+              typedMemory ? std::optional(Shape::NativeMemoryOperation)
+              : erasedReference(stage) ? std::optional(Shape::ErasedReference)
               : passiveTextViewAddress(stage) || passiveCStringAddress(stage)
                   ? std::optional(Shape::CountedText)
               : passiveRawReference(stage)
@@ -795,7 +839,10 @@ public:
               callee->requiresUnsafe &&
               stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall;
           add(stage.unsafeOperation,
-              ordinaryUnsafe ? std::optional(Shape::OrdinaryUnsafeInvocation)
+              typedMemory && stage.unsafeOperation ==
+                                 UnsafeOperationKind::ObjectLifetime
+                  ? std::optional(Shape::NativeMemoryOperation)
+              : ordinaryUnsafe ? std::optional(Shape::OrdinaryUnsafeInvocation)
               : stage.unsafeOperation ==
                           UnsafeOperationKind::ErasedReferenceRestore &&
                       (erasedReference(stage) ||

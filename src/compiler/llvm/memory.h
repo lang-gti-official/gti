@@ -18,6 +18,7 @@ public:
 
   Memory(Session &session, llvm::IRBuilder<> &ir, Lifetimes &lifetimes,
          Scalars::Guard guard);
+  [[nodiscard]] static bool handles(IntrinsicKind intrinsic);
   [[nodiscard]] Result emit(const MirInstruction &instruction,
                             std::span<llvm::Value *const> inputs,
                             llvm::Value *failureChannel, bool duringFailure);
