@@ -1,5 +1,7 @@
 #include "constructor_field_publication.h"
 
+#include "../mir_verification_queries.h"
+
 #include <algorithm>
 
 namespace lang::native_llvm {
@@ -30,6 +32,36 @@ bool recordOnlyResult(const MirBody &body, MirValueId value) {
     }
   }
   return true;
+}
+
+UnstagedConstructorFieldPublicationTransport
+publicationTransport(const MirProgram &program,
+                     const MirInstruction &instruction,
+                     const SemanticType &targetType) {
+  if (instruction.info.type == targetType)
+    return UnstagedConstructorFieldPublicationTransport::ExactValue;
+
+  MirInstruction exactSourceNull;
+  exactSourceNull.id = instruction.id;
+  exactSourceNull.kind = MirInstructionKind::Compute;
+  exactSourceNull.hirValue = instruction.hirValue;
+  exactSourceNull.result = instruction.result;
+  exactSourceNull.operation = MirOperation::Literal;
+  exactSourceNull.literal = instruction.literal;
+  exactSourceNull.literalProvenance.kind = MirLiteralProvenanceKind::Source;
+  exactSourceNull.info = instruction.info;
+  const auto exactNullOwner =
+      targetType.kind == SemanticType::UniqueOwner &&
+      targetType.arguments.size() == 1 &&
+      mir_detail::completeObjectType(program, targetType.arguments.front()) &&
+      instruction.info.type == SemanticType::NullPtr &&
+      instruction.info.category == ValueCategory::Value &&
+      instruction.literal &&
+      std::holds_alternative<std::nullptr_t>(*instruction.literal) &&
+      instruction == exactSourceNull;
+  return exactNullOwner
+             ? UnstagedConstructorFieldPublicationTransport::NullUniqueOwner
+             : UnstagedConstructorFieldPublicationTransport::None;
 }
 
 } // namespace
@@ -65,12 +97,16 @@ UnstagedConstructorFieldPublicationPlan unstagedConstructorFieldPublication(
   if (initializer.kind != ConstructorInitializerTargetKind::Field ||
       initializer.field == 0 || initializer.storesReference ||
       initializer.arguments != std::vector<HirValueId>{instruction.hirValue} ||
-      initializer.targetType != instruction.info.type ||
       field == owner->declaredFields.end() ||
       std::count_if(owner->declaredFields.begin(), owner->declaredFields.end(),
                     [&](const MirClassFieldInfo &candidate) {
                       return candidate.symbol == initializer.field;
                     }) != 1)
+    return result;
+
+  const auto transport =
+      publicationTransport(program, instruction, initializer.targetType);
+  if (transport == UnstagedConstructorFieldPublicationTransport::None)
     return result;
 
   std::size_t publishers = 0;
@@ -82,7 +118,8 @@ UnstagedConstructorFieldPublicationPlan unstagedConstructorFieldPublication(
       const auto *candidateValue = body.findValue(*candidate.result);
       if (candidateValue && candidateValue->definition == candidate.id &&
           candidateValue->info.type == candidate.info.type &&
-          candidate.info.type == initializer.targetType &&
+          publicationTransport(program, candidate, initializer.targetType) !=
+              UnstagedConstructorFieldPublicationTransport::None &&
           mirRecordPublishedConstructorInitializer(
               program, body, constructorId, candidate) == result.initializer)
         ++publishers;
@@ -91,7 +128,9 @@ UnstagedConstructorFieldPublicationPlan unstagedConstructorFieldPublication(
     return result;
 
   result.value = *instruction.result;
-  result.type = instruction.info.type;
+  result.sourceType = instruction.info.type;
+  result.targetType = initializer.targetType;
+  result.transport = transport;
   result.exact = true;
   return result;
 }

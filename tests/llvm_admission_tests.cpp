@@ -676,6 +676,7 @@ int main() { Field value{}; return value.read() - 17; }
 
 void testUnstagedConstructorFieldPublicationPlan() {
   using namespace lang;
+  using native_llvm::UnstagedConstructorFieldPublicationTransport;
 
   const auto verified = lower(R"(
 class Holder<F> {
@@ -717,14 +718,17 @@ int main() {
         auto candidate = native_llvm::unstagedConstructorFieldPublication(
             mir, constructor.body, constructor.id, instruction);
         if (candidate.matched() &&
-            candidate.type.kind == SemanticType::Lambda) {
+            candidate.sourceType.kind == SemanticType::Lambda) {
           publicationConstructor = &constructor;
           publicationInstruction = &instruction;
           publication = candidate;
         }
       }
   expect(publicationConstructor && publicationInstruction &&
-             publication.exact && publication.value != 0,
+             publication.exact && publication.value != 0 &&
+             publication.sourceType == publication.targetType &&
+             publication.transport ==
+                 UnstagedConstructorFieldPublicationTransport::ExactValue,
          "the callable field initializer has one exact owner, field and "
          "result publication plan");
   if (!publicationConstructor || !publicationInstruction)
@@ -800,6 +804,209 @@ int main() {
     expect(ambiguous.matched() && !ambiguous.exact,
            "two record-only producers cannot claim one constructor field");
   }
+
+  const auto emptyOwner = lower(R"(
+#include <std/memory>
+int main() {
+  std::unique_ptr<int> owner = nullptr;
+  return owner == nullptr ? 0 : 1;
+}
+)",
+                                true);
+  const auto &ownerMir = emptyOwner.program().mir();
+  const MirConstructorInstance *ownerConstructor = nullptr;
+  const MirInstruction *ownerInstruction = nullptr;
+  native_llvm::UnstagedConstructorFieldPublicationPlan ownerPublication;
+  for (const auto &constructor : ownerMir.constructorInstances())
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        auto candidate = native_llvm::unstagedConstructorFieldPublication(
+            ownerMir, constructor.body, constructor.id, instruction);
+        if (candidate.matched() &&
+            candidate.transport ==
+                UnstagedConstructorFieldPublicationTransport::NullUniqueOwner) {
+          ownerConstructor = &constructor;
+          ownerInstruction = &instruction;
+          ownerPublication = candidate;
+        }
+      }
+  expect(ownerConstructor && ownerInstruction && ownerPublication.exact &&
+             ownerPublication.value != 0 &&
+             ownerPublication.sourceType == SemanticType::NullPtr &&
+             ownerPublication.targetType.kind == SemanticType::UniqueOwner &&
+             ownerPublication.targetType.arguments.size() == 1 &&
+             ownerPublication.targetType.arguments.front() ==
+                 SemanticType::Int32,
+         "a source null literal has one exact typed unique-owner field "
+         "publication transport");
+  if (!ownerConstructor || !ownerInstruction)
+    return;
+
+  const auto ownerAdmission = planLlvmAdmission(emptyOwner);
+  const auto ownerUse = std::find_if(
+      ownerAdmission.requirements().begin(),
+      ownerAdmission.requirements().end(), [&](const auto &use) {
+        return use.entry->family == "Shape" &&
+               use.entry->name == "UnstagedConstructorFieldPublication" &&
+               use.body && use.body->kind == MirBodyKind::Constructor &&
+               use.body->owner == ownerConstructor->id &&
+               use.instruction == ownerInstruction->id;
+      });
+  expect(ownerUse != ownerAdmission.requirements().end(),
+         "null-owner publication retains its exact admission witness");
+  if (ownerUse != ownerAdmission.requirements().end()) {
+    expect(!ownerUse->implementedShape ||
+               ownerUse->implementedShape->name == "NativeUniqueOwnership",
+           "null-owner publication accepts only the O-LLVM-08 native unique "
+           "ownership shape");
+    if (!ownerUse->implementedShape)
+      expect(!ownerAdmission.admitted(),
+             "the O-LLVM-09 component fails closed until O-LLVM-08 supplies "
+             "native unique ownership");
+  }
+
+  const auto ownerConstructorId = ownerConstructor->id;
+  const auto ownerInstructionId = ownerInstruction->id;
+  const auto ownerInitializerIndex = static_cast<std::size_t>(
+      ownerPublication.initializer - ownerConstructor->initializers.data());
+  const auto mutateOwnerConstructor =
+      [&](MirProgram &program) -> MirConstructorInstance & {
+    auto &constructors = const_cast<std::vector<MirConstructorInstance> &>(
+        program.constructorInstances());
+    const auto selected = std::find_if(
+        constructors.begin(), constructors.end(), [&](const auto &candidate) {
+          return candidate.id == ownerConstructorId;
+        });
+    return *selected;
+  };
+  const auto findOwnerInstruction = [&](MirBody &body) -> MirInstruction * {
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == ownerInstructionId)
+          return &instruction;
+    return nullptr;
+  };
+
+  MirProgram nonnullOwner = ownerMir;
+  auto &nonnullBody = mutateOwnerConstructor(nonnullOwner).body;
+  auto *nonnullInstruction = findOwnerInstruction(nonnullBody);
+  expect(nonnullInstruction != nullptr,
+         "nonnull mutation retains its publication instruction");
+  if (nonnullInstruction) {
+    nonnullInstruction->literal = std::uint64_t{1};
+    const auto rejected = native_llvm::unstagedConstructorFieldPublication(
+        nonnullOwner, nonnullBody, ownerConstructorId, *nonnullInstruction);
+    expect(rejected.matched() && !rejected.exact,
+           "a nonnull literal cannot acquire the null-owner transport");
+  }
+
+  MirProgram wrongSource = ownerMir;
+  auto &wrongSourceBody = mutateOwnerConstructor(wrongSource).body;
+  auto *wrongSourceInstruction = findOwnerInstruction(wrongSourceBody);
+  expect(wrongSourceInstruction != nullptr,
+         "wrong-source mutation retains its publication instruction");
+  if (wrongSourceInstruction) {
+    wrongSourceInstruction->info.type =
+        SemanticType::rawPointerTo(SemanticType::Int32, AccessMode::ReadOnly);
+    wrongSourceBody.values.at(*wrongSourceInstruction->result - 1).info.type =
+        wrongSourceInstruction->info.type;
+    const auto rejected = native_llvm::unstagedConstructorFieldPublication(
+        wrongSource, wrongSourceBody, ownerConstructorId,
+        *wrongSourceInstruction);
+    expect(rejected.matched() && !rejected.exact,
+           "a differently typed pointer cannot acquire the null-owner "
+           "transport");
+  }
+
+  MirProgram effectfulOwner = ownerMir;
+  auto &effectfulBody = mutateOwnerConstructor(effectfulOwner).body;
+  auto *effectfulInstruction = findOwnerInstruction(effectfulBody);
+  expect(effectfulInstruction != nullptr,
+         "effect mutation retains its publication instruction");
+  if (effectfulInstruction) {
+    effectfulInstruction->definedFailure.propagation =
+        FailurePropagationKind::DirectCall;
+    const auto rejected = native_llvm::unstagedConstructorFieldPublication(
+        effectfulOwner, effectfulBody, ownerConstructorId,
+        *effectfulInstruction);
+    expect(rejected.matched() && !rejected.exact,
+           "an effectful instruction cannot acquire the source-null owner "
+           "transport");
+  }
+
+  MirProgram unsupportedPointee = ownerMir;
+  auto &unsupportedConstructor = mutateOwnerConstructor(unsupportedPointee);
+  auto &unsupportedInitializer =
+      unsupportedConstructor.initializers.at(ownerInitializerIndex);
+  unsupportedInitializer.targetType =
+      SemanticType::uniqueOwnerOf(SemanticType::Unknown);
+  auto &ownerClasses = const_cast<std::vector<MirClassInstance> &>(
+      unsupportedPointee.classInstances());
+  const auto unsupportedClass = std::find_if(
+      ownerClasses.begin(), ownerClasses.end(), [&](const auto &candidate) {
+        return candidate.id == unsupportedConstructor.owner;
+      });
+  expect(unsupportedClass != ownerClasses.end(),
+         "unsupported-pointee mutation retains its owner class");
+  if (unsupportedClass != ownerClasses.end()) {
+    const auto field = std::find_if(
+        unsupportedClass->declaredFields.begin(),
+        unsupportedClass->declaredFields.end(), [&](const auto &candidate) {
+          return candidate.symbol == unsupportedInitializer.field;
+        });
+    expect(field != unsupportedClass->declaredFields.end(),
+           "unsupported-pointee mutation retains its owner field");
+    if (field != unsupportedClass->declaredFields.end())
+      field->type = unsupportedInitializer.targetType;
+  }
+  auto *unsupportedInstruction =
+      findOwnerInstruction(unsupportedConstructor.body);
+  if (unsupportedInstruction) {
+    const auto rejected = native_llvm::unstagedConstructorFieldPublication(
+        unsupportedPointee, unsupportedConstructor.body, ownerConstructorId,
+        *unsupportedInstruction);
+    expect(rejected.matched() && !rejected.exact,
+           "an incomplete unique pointee cannot acquire native owner "
+           "publication");
+  }
+
+  MirProgram duplicateOwner = ownerMir;
+  auto &duplicateOwnerBody = mutateOwnerConstructor(duplicateOwner).body;
+  auto *duplicateOriginal = findOwnerInstruction(duplicateOwnerBody);
+  if (duplicateOriginal) {
+    MirInstruction sibling = *duplicateOriginal;
+    sibling.id = duplicateOwnerBody.instructionCount() + 1;
+    sibling.result = duplicateOwnerBody.values.size() + 1;
+    MirValue value =
+        duplicateOwnerBody.values.at(*duplicateOriginal->result - 1);
+    value.id = *sibling.result;
+    value.definition = sibling.id;
+    duplicateOwnerBody.values.push_back(value);
+    duplicateOwnerBody.valueUses.emplace_back();
+    duplicateOwnerBody.blocks.front().instructions.push_back(sibling);
+    duplicateOriginal = findOwnerInstruction(duplicateOwnerBody);
+    const auto rejected = native_llvm::unstagedConstructorFieldPublication(
+        duplicateOwner, duplicateOwnerBody, ownerConstructorId,
+        *duplicateOriginal);
+    expect(rejected.matched() && !rejected.exact,
+           "duplicate null producers cannot claim one unique-owner field");
+  }
+
+  MirProgram stagedOwner = ownerMir;
+  auto &stagedOwnerBody = mutateOwnerConstructor(stagedOwner).body;
+  MirInstruction ownerStage;
+  ownerStage.id = stagedOwnerBody.instructionCount() + 1;
+  ownerStage.kind = MirInstructionKind::Initialize;
+  ownerStage.constructorInitializer = ownerInitializerIndex + 1;
+  stagedOwnerBody.blocks.front().instructions.push_back(ownerStage);
+  auto *stagedOwnerInstruction = findOwnerInstruction(stagedOwnerBody);
+  expect(stagedOwnerInstruction &&
+             !native_llvm::unstagedConstructorFieldPublication(
+                  stagedOwner, stagedOwnerBody, ownerConstructorId,
+                  *stagedOwnerInstruction)
+                  .matched(),
+         "an explicit null-owner Initialize stage excludes the record-only "
+         "publication hook");
 }
 
 void testStoredFieldPublicationPlan() {

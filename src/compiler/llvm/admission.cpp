@@ -804,13 +804,31 @@ public:
         program, mir, body->owner, stage);
     if (!plan.matched())
       return {};
-    if (!plan.exact || plan.type != stage.info.type)
+    if (!plan.exact || plan.sourceType != stage.info.type)
       return std::nullopt;
-    if (isPassiveScalarValueType(plan.type))
-      return Shape::SuccessResultPublication;
-    const auto storage = classShape(plan.type);
-    return storage && *storage != Shape::CallableMetadata ? storage
-                                                          : std::nullopt;
+    if (plan.transport ==
+        native_llvm::UnstagedConstructorFieldPublicationTransport::ExactValue) {
+      if (plan.targetType != plan.sourceType)
+        return std::nullopt;
+      if (isPassiveScalarValueType(plan.targetType))
+        return Shape::SuccessResultPublication;
+      const auto storage = classShape(plan.targetType);
+      return storage && *storage != Shape::CallableMetadata ? storage
+                                                            : std::nullopt;
+    }
+    if (plan.transport !=
+            native_llvm::UnstagedConstructorFieldPublicationTransport::
+                NullUniqueOwner ||
+        plan.sourceType != SemanticType::NullPtr ||
+        plan.targetType.kind != SemanticType::UniqueOwner ||
+        plan.targetType.arguments.size() != 1 ||
+        !mir_detail::completeObjectType(program,
+                                        plan.targetType.arguments.front()))
+      return std::nullopt;
+    const auto storage = classShape(plan.targetType);
+    if (storage && coverage(*storage).name == "NativeUniqueOwnership")
+      return storage;
+    return std::nullopt;
   }
 
   template <class T> void add(T value, std::optional<Shape> implemented = {}) {
