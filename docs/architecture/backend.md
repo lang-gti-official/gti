@@ -4975,15 +4975,20 @@ manifest registry. Their profiles are derived from the case dictionaries the
 CTest commands actually execute, including payload pack/access failures,
 public checked arithmetic, callable transfer/cleanup and the memory/lifetime
 matrix. A checked source profile is therefore not a hand-maintained alias for
-some other test. Explicit raw-pointer conversion reaches verified MIR as an
-effect-free `Compute/Convert`, not as an executable intrinsic call. Admission
-reuses the central `rawPointerConversion` verifier before attaching the
-`NativeObjectAddress` witness: both operands remain exact raw-pointer values,
-the conversion cannot add mutable access, concrete pointees must match unless
-one side is `void`, and each non-void pointee must have a supported native
-representation. Numeric conversions and malformed pointer conversions cannot
-borrow that witness. This corrects coverage classification for existing
-language behavior; it does not add a cast or widen the source conversion rule.
+some other test. Admission inventories each verified callable argument
+descriptor separately from the callable receiver's invocation boundary. The
+MIR verifier binds those descriptors to an exact target parameter, boundary
+and owned-transfer stage, so an owned carrier call cannot be inferred from an
+adjacent closure or forged by a backend caller. Explicit raw-pointer conversion
+reaches verified MIR as an effect-free `Compute/Convert`, not as an executable
+intrinsic call. Admission reuses the central `rawPointerConversion` verifier
+before attaching the `NativeObjectAddress` witness: both operands remain exact
+raw-pointer values, the conversion cannot add mutable access, concrete
+pointees must match unless one side is `void`, and each non-void pointee must
+have a supported native representation. Numeric conversions and malformed
+pointer conversions cannot borrow that witness. These are coverage
+classification corrections for existing language behavior; they do not add a
+callable form or cast, or widen either source rule.
 
 The inventory records types and nested arguments, access and ownership modes,
 exact instructions and their failure/cleanup/publication shapes, generated
