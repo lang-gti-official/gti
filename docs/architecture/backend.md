@@ -4424,6 +4424,17 @@ constructor, physical destination and current shared ABI; a failed base never
 installs derived state. MIR retains all base/subobject rollback publication and
 ordering. Unstaged polymorphic source constructors remain unsupported.
 
+The body emitter represents a source-sealed declaration-only instance-field
+initializer row as storage only, with no value store, cleanup arming or reference
+address publication. Source/HIR coherence proves the resolved initializer is
+absent; the shared MIR predicate checks exact body, field and instruction shape.
+Actual constructor writes, mixed declaration defaults/explicit overrides and
+reference loans retain their independent contracts. This does not admit empty
+local/global/static-field/constructor initialization or imply zero filling.
+Conservative ordinary-class inventory, polymorphic dispatch and library/export
+admission retain their separate gates; private complete-body lowering is not
+public native-dispatch acceptance.
+
 Static destruction recipes install their selected class state before observable
 source/child cleanup only when an existing source-destructor active byte in the
 exact recipe tree witnesses remaining observable work. The predicate is not

@@ -3,6 +3,8 @@
 #include "../src/compiler/llvm/lifetimes.h"
 #include "../src/compiler/llvm/places.h"
 #include "cpp_backend_test_support.h"
+#include "gti/llvm_backend.h"
+#include "gti/mir_editor.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -946,6 +948,172 @@ void testStaticLifecycle() {
   }
 }
 
+void testDeclarationInitializers() {
+  const auto frontend =
+      Frontend().analyze("llvm-declaration-placeholders.gti", R"(
+class Value {
+  int data;
+public:
+  Value(int input) : data(input) {}
+  int read() { return this.data; }
+};
+class View {
+  mut int& target;
+public:
+  View(mut int& source) : target(source) {}
+  int read() { return this.target; }
+};
+int inspect(int input) { Value value{input}; return value.read(); }
+)");
+  expect(frontend.canGenerateCode(), "ordinary declaration-only fields verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  std::vector<LoweredProgramIssue> issues;
+  const auto verified = verifiedLoweredProgram(lowered, issues);
+  if (!verified)
+    throw std::runtime_error("declaration-only source seal failed");
+  const auto conservative = planLlvmAdmission(*verified);
+  expect(conservative.closure() == LlvmAdmissionClosure::AllExecutableBodies &&
+             !conservative.admitted() &&
+             conservative.limitation().find("ClassKind.Class") !=
+                 std::string::npos,
+         "the existing conservative class-inventory admission gap remains "
+         "explicit");
+  // Actual library/embedding publication is pending O11/B-LIB-02. Rootless
+  // ordinary object generation also rejects the conservative ClassKind row;
+  // this correction must not bypass that separate admission obligation.
+  rejects<BackendUnsupportedError>(
+      [&] { static_cast<void>(LlvmBackend().generate(lowered)); },
+      "public conservative class emission still rejects before returning an "
+      "artifact");
+  Session session(*verified, {});
+  lowerScalarProgram(session, planLlvmAdmission(*verified));
+  const auto &value = named(session.program(), "Value");
+  const auto &view = named(session.program(), "View");
+  for (const auto *owner : {&value, &view}) {
+    bool placeholder = false;
+    for (const auto &block : owner->fieldInitializers.blocks)
+      for (const auto &instruction : block.instructions)
+        placeholder =
+            placeholder || isMirDeclarationOnlyFieldInitialization(
+                               *owner, owner->fieldInitializers, instruction);
+    expect(placeholder, "exact ordinary/reference field inventory retains its "
+                        "declaration-only identity");
+    auto *native = session.module().getFunction(
+        "__gti_native_v1_body_" +
+        std::to_string(static_cast<unsigned>(MirBodyKind::FieldInitializers)) +
+        "_" + std::to_string(owner->id));
+    expect(native && std::all_of(
+                         native->begin(), native->end(),
+                         [](const auto &block) {
+                           return std::none_of(
+                               block.begin(), block.end(),
+                               [](const auto &operation) {
+                                 return llvm::isa<llvm::StoreInst>(operation) ||
+                                        llvm::isa<llvm::LoadInst>(operation);
+                               });
+                         }),
+           "declaration-only field lowering performs no value/address store, "
+           "load or cleanup arming");
+  }
+  for (int mutation : {0, 1, 2, 3, 4}) {
+    auto changed = value;
+    auto &body = changed.fieldInitializers;
+    auto &instruction = body.blocks.front().instructions.front();
+    auto &place = body.places.at(*instruction.destination - 1);
+    if (mutation == 0)
+      ++place.binding;
+    if (mutation == 1) {
+      place.type = SemanticType::Bool;
+      instruction.info.type = place.type;
+    }
+    if (mutation == 2)
+      body.kind = MirBodyKind::StaticFieldInitializers;
+    if (mutation == 3)
+      instruction.constructorInitializer = 1;
+    if (mutation == 4)
+      ++place.symbol;
+    expect(!isMirDeclarationOnlyFieldInitialization(changed, body, instruction),
+           "wrong binding/type/body/stage/symbol cannot acquire "
+           "declaration-only lowering");
+    expect(
+        !isMirDeclarationOnlyFieldInitialization(view, body, instruction),
+        "a foreign owner's inventory cannot acquire the placeholder exemption");
+  }
+  session.verify();
+
+  const auto mixed =
+      Frontend().analyze("llvm-mixed-declaration-placeholders.gti", R"(
+class Mixed {
+  int data;
+  int defaulted = 7;
+  int overridden = 12;
+public:
+  Mixed(int input) : data(input), overridden(3) {}
+  virtual int read() { return this.data + this.defaulted + this.overridden; }
+};
+class InitializerOnly {
+  int data;
+public:
+  InitializerOnly(int input) : data(input) {}
+  virtual int read() { return this.data; }
+};
+int main() {
+  Mixed value{3};
+  InitializerOnly other{4};
+  return value.read() - 13 + other.read() - 4;
+}
+)");
+  expect(mixed.canGenerateCode(),
+         "polymorphic mixed default/explicit constructor verifies");
+  if (!mixed.canGenerateCode())
+    return;
+  const auto sealed = verifiedLoweredProgram(
+      gti_test::lowerProgram(mixed, mixed.mir, mixed.mir), issues);
+  if (!sealed)
+    throw std::runtime_error("mixed field source seal failed");
+  Session privateSession(*sealed, {});
+  const auto gated = planLlvmAdmission(*sealed);
+  expect(!gated.admitted(),
+         "initializer prerequisite does not relax polymorphic admission");
+  lowerScalarProgram(privateSession, gated);
+  privateSession.verify();
+  auto erased = mixed.mir;
+  bool removed = false;
+  auto &owner = const_cast<MirClassInstance &>(
+      *erased.findClassInstance(named(privateSession.program(), "Mixed").id));
+  for (auto &block : owner.fieldInitializers.blocks)
+    for (auto &instruction : block.instructions)
+      if (instruction.kind == MirInstructionKind::Initialize &&
+          !instruction.operands.empty()) {
+        instruction.operands.clear();
+        removed = true;
+        break;
+      }
+  expect(removed && rebuildMirValueUses(owner.fieldInitializers) &&
+             verifyMirProgram(erased).valid(),
+         "erasing a real scalar initializer can resemble an otherwise valid "
+         "core placeholder");
+  const auto forged =
+      LoweredProgramBuilder().build(mixed.program, mixed.semantics, mixed.hir,
+                                    erased, erased, {}, TargetInfo::host());
+  expect(!forged.valid(), "source coherence rejects erasing a real declaration "
+                          "initializer value/store");
+  const auto missing = Frontend().analyze("llvm-missing-required-field.gti", R"(
+class Missing { int data; public: Missing() {} };
+int main() { Missing value{}; return 0; }
+)");
+  expect(!missing.canGenerateCode() &&
+             std::any_of(missing.diagnostics.begin(), missing.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2000";
+                         }),
+         "actual missing required initialization remains a source error, never "
+         "implicit zeroing");
+}
+
 void testProvedDirectReceiver() {
   const auto frontend =
       Frontend().analyze("llvm-dispatch-proved-direct.gti", std::string(R"(
@@ -1326,6 +1494,7 @@ int main() { return 0; }
   testPureGates();
   testBodyCallHook();
   testStaticLifecycle();
+  testDeclarationInitializers();
   testProvedDirectReceiver();
   return failures ? 1 : 0;
 }

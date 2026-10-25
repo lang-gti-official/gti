@@ -277,6 +277,19 @@ empty one-block `Exit` shape, except `Module/0`: its verified implicit-zero or
 constant storage stages remain `DataOnly`, while any merged `Initializer` step
 makes the module row executable.
 
+Instance-field initializer inventory includes declaration-only `Initialize`
+rows for fields without a resolved declaration initializer. The source/HIR
+bridge binds each such row to the exact root variable statement, field binding,
+SymbolId and concrete type, and proves both field and statement initializer
+absence. The shared MIR shape predicate recognizes only this exact instance
+body/field identity with no value, operands, constructor stage, failure or
+lifecycle effect. It does not authorize erasing a real initializer. These rows
+declare storage, not an implicit value or reference loan: the constructor's
+separately selected `This`-field writes and their publication remain required.
+No corresponding exemption applies to locals, module/static fields or actual
+constructor stages. Conservative inventory retention need not imply execution
+of a declaration-only row and must not be weakened to avoid representing it.
+
 The private C++ whole-program planner subsequently consumes the sealed lowered
 inventory. Its representation snapshot owns an exact canonical `MirProgram`
 copy, so planning checks structural equality rather than treating the

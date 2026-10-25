@@ -11,6 +11,22 @@ from backend_execution import Endpoint, execute
 
 
 CASES = {
+    "initializer-list-and-defaults": r'''
+mut int events = 0;
+int mark(int value) { events = events * 10 + value; return value; }
+class Mixed {
+  int data;
+  int defaulted = mark(2);
+  int overridden = mark(9);
+public:
+  Mixed(int input) : data(mark(input)), overridden(mark(3)) {}
+  int total() { return this.data + this.defaulted + this.overridden; }
+};
+int main() {
+  Mixed value{1};
+  return value.total() == 6 && events == 123 ? 0 : 1;
+}
+''',
     "ordinary": r'''
 mut int events = 0;
 class Ticket {

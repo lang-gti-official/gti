@@ -15784,6 +15784,36 @@ bool mirDropFollowsDefiniteMove(const MirBody &body,
   return state == MirDefiniteMoveState::Moved;
 }
 
+bool isMirDeclarationOnlyFieldInitialization(
+    const MirClassInstance &owner, const MirBody &body,
+    const MirInstruction &instruction) {
+  if (&body != &owner.fieldInitializers ||
+      body.kind != MirBodyKind::FieldInitializers ||
+      instruction.kind != MirInstructionKind::Initialize ||
+      instruction.tombstone || !instruction.destination || instruction.result ||
+      instruction.hirStatement == 0 || instruction.hirValue != 0 ||
+      instruction.constructorInitializer != 0 ||
+      !instruction.operands.empty() || instruction.loan ||
+      !instruction.definedFailure.empty() || !instruction.lifecycle.empty() ||
+      instruction.ownership || instruction.preparedParameterDrop ||
+      instruction.successResultDrop || instruction.receiver ||
+      instruction.operation != MirOperation::None)
+    return false;
+  const auto *place = body.findPlace(*instruction.destination);
+  if (!place || place->root != MirPlaceRootKind::Binding ||
+      !place->projections.empty() || place->type != instruction.info.type ||
+      place->access != instruction.info.access ||
+      instruction.info.category != ValueCategory::Place)
+    return false;
+  return std::any_of(owner.declaredFields.begin(), owner.declaredFields.end(),
+                     [&](const auto &field) {
+                       return field.field == place->binding &&
+                              field.symbol == place->symbol &&
+                              field.type == place->type &&
+                              field.access == place->access;
+                     });
+}
+
 bool mirDropFollowsDefiniteMove(const MirBody &body, const MirBlock &block,
                                 MirDropObligationId obligation,
                                 MirInstructionId beforeInstruction) {

@@ -2095,6 +2095,15 @@ enumerateMirBodyAddresses(const MirProgram &program);
                                          MirBodyAddress address);
 [[nodiscard]] MirBody *findMirBody(MirProgram &program, MirBodyAddress address);
 
+// Shape of a declaration-only instance-field inventory row. Source/HIR-to-MIR
+// coherence independently proves that the exact field has no declaration
+// initializer. Consumers must use a verified source-sealed program; this does
+// not authorize omitting a required constructor write or publishing a loan.
+[[nodiscard]] bool
+isMirDeclarationOnlyFieldInitialization(const MirClassInstance &owner,
+                                        const MirBody &body,
+                                        const MirInstruction &instruction);
+
 // A constructor record can publish a field initializer that the body leaves
 // unstaged: no Initialize instruction carries that initializer, so the field
 // is written from the MIR value defined by the initializer's single HIR

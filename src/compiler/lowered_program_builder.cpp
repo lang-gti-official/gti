@@ -1122,6 +1122,48 @@ private:
           source.typeAliases[alias].type != lowered.typeAliases[alias].type)
         return reject("class alias identity or concrete type differs");
     }
+    // A field inventory contains declarations even when this class has no
+    // declaration-owned initializer for them. Establish that absence here,
+    // where HIR still owns the resolved initializer identity; backend shape
+    // recognition alone cannot distinguish it from an erased real value.
+    for (const auto &block : lowered.fieldInitializers.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.tombstone ||
+            instruction.kind != MirInstructionKind::Initialize ||
+            !instruction.operands.empty())
+          continue;
+        const auto *statement =
+            source.fieldInitializers.findStatement(instruction.hirStatement);
+        const auto *place =
+            instruction.destination
+                ? lowered.fieldInitializers.findPlace(*instruction.destination)
+                : nullptr;
+        const auto field = std::find_if(
+            source.fields.begin(), source.fields.end(),
+            [&](const auto &candidate) {
+              return statement &&
+                     statement->kind == HirStatementKind::Variable &&
+                     statement->binding == candidate.binding &&
+                     statement->source == candidate.declaration &&
+                     std::find(source.fieldInitializers.roots.begin(),
+                               source.fieldInitializers.roots.end(),
+                               statement->id) !=
+                         source.fieldInitializers.roots.end();
+            });
+        const bool placeholder = isMirDeclarationOnlyFieldInitialization(
+            lowered, lowered.fieldInitializers, instruction);
+        if (!placeholder && field == source.fields.end())
+          continue; // No new exemption for ordinary initializer-expression
+                    // locals.
+        if (!placeholder || field == source.fields.end() ||
+            field->initializer || statement->value || !place ||
+            place->binding != field->binding ||
+            place->symbol != field->info.symbol ||
+            place->type != field->info.type ||
+            place->access != field->info.access)
+          return reject(
+              "field declaration-only initialization differs from HIR");
+      }
   }
   for (std::size_t index = 0; index < hir.functionInstances().size(); ++index) {
     const HirFunctionInstance &source = hir.functionInstances()[index];

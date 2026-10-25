@@ -638,6 +638,9 @@ private:
     case MirInstructionKind::Assign: {
       const auto &place = *input.findPlace(*instruction.destination);
       if (instruction.operands.empty()) {
+        if (owner &&
+            isMirDeclarationOnlyFieldInitialization(*owner, input, instruction))
+          break; // Storage declaration only; the constructor owns its write.
         if (input.kind != MirBodyKind::Module ||
             !globals.contains(place.symbol))
           throw std::logic_error(
