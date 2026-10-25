@@ -114,6 +114,20 @@ llvm::Value *Places::arrayValue(llvm::Value *value) {
   ir.CreateStore(value, address);
   return address;
 }
+llvm::Value *Places::advance(llvm::Value *address, const SemanticType &pointee,
+                             llvm::Value *offset, bool signedOffset,
+                             bool subtract) {
+  offset = ir.CreateIntCast(offset, ir.getInt64Ty(), signedOffset);
+  if (subtract)
+    offset = ir.CreateNeg(offset);
+  return ir.CreateGEP(session.layouts().get(pointee).storage, address, offset);
+}
+llvm::Value *Places::difference(llvm::Value *left, llvm::Value *right,
+                                const SemanticType &pointee) {
+  auto *bytes = ir.CreateSub(ir.CreatePtrToInt(left, ir.getInt64Ty()),
+                             ir.CreatePtrToInt(right, ir.getInt64Ty()));
+  return ir.CreateSDiv(bytes, ir.getInt64(session.layouts().get(pointee).size));
+}
 llvm::Value *Places::index(llvm::Value *address, const SemanticType &type,
                            llvm::Value *offset, bool checked) {
   if (type.kind == SemanticType::Array) {
@@ -144,7 +158,10 @@ llvm::Value *Places::address(MirPlaceId id) {
     case MirProjectionKind::Dereference:
     case MirProjectionKind::RawDereference:
       address = load(address, type);
-      type = type.arguments.at(0);
+      {
+        auto element = type.arguments.at(0);
+        type = std::move(element);
+      }
       break;
     case MirProjectionKind::Index:
     case MirProjectionKind::RawIndex: {
@@ -167,8 +184,10 @@ llvm::Value *Places::address(MirPlaceId id) {
       } else {
         address = index(address, type, offset, true);
       }
-      type = type.kind == SemanticType::StringView ? SemanticType::Char
-                                                   : type.arguments.at(0);
+      auto element = type.kind == SemanticType::StringView
+                         ? SemanticType::Char
+                         : type.arguments.at(0);
+      type = std::move(element);
       break;
     }
     default:

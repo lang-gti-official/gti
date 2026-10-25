@@ -14,6 +14,8 @@ public:
   Scalars(Session &session, llvm::IRBuilder<> &ir, Guard guard);
   [[nodiscard]] llvm::Value *literal(const Literal &literal,
                                      const SemanticType &type);
+  [[nodiscard]] llvm::Constant *constant(const ConstantValue &value,
+                                         const SemanticType &type);
   [[nodiscard]] llvm::Value *convert(llvm::Value *value,
                                      const SemanticType &from,
                                      const SemanticType &to,

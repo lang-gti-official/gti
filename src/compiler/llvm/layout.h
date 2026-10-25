@@ -39,6 +39,7 @@ private:
     std::optional<TypeLayout> layout;
   };
   Session &session;
+  llvm::StructType *textView_ = nullptr;
   std::map<HirClassInstanceId, Record> records;
   std::unordered_map<ClassId, std::vector<HirClassInstanceId>> classes;
   [[nodiscard]] TypeLayout record(const SemanticType &type);

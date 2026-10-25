@@ -6,6 +6,9 @@
 namespace lang::native_llvm {
 
 Layouts::Layouts(Session &session) : session(session) {
+  textView_ = llvm::StructType::create(
+      session.context(), {pointer(), llvm::Type::getInt64Ty(session.context())},
+      "gti.c.text_view.v1");
   for (const auto &instance : session.program().mir().classInstances()) {
     records.emplace(
         instance.id,
@@ -80,9 +83,7 @@ TypeLayout Layouts::get(const SemanticType &type) {
   case SemanticType::NativeFunction:
     return describe(pointer());
   case SemanticType::StringView:
-    return describe(llvm::StructType::get(
-                        context, {pointer(), llvm::Type::getInt64Ty(context)}),
-                    true);
+    return describe(textView_, true);
   case SemanticType::Array: {
     if (type.arguments.size() != 1 || type.arrayLengthParameterId)
       throw BackendUnsupportedError(

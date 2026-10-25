@@ -16,6 +16,97 @@ namespace {
 using llvm_detail::coverage;
 using llvm_detail::Shape;
 
+// Representation eligibility, not source type checking: later storage families
+// cannot enter the passive-array implementation through an enum-wide claim.
+bool passiveArrayElement(const SemanticType &type) {
+  if (type.kind == SemanticType::Array)
+    return type.arguments.size() == 1 && !type.arrayLengthParameterId &&
+           passiveArrayElement(type.arguments.front());
+  return isPassiveScalarValueType(type) && type.kind != SemanticType::Void;
+}
+
+bool passiveAddress(const SemanticType &type) {
+  if (type.kind != SemanticType::RawPointer || type.arguments.size() != 1)
+    return false;
+  const auto &pointee = type.arguments.front();
+  return pointee.kind == SemanticType::Void || passiveArrayElement(pointee) ||
+         passiveAddress(pointee);
+}
+
+bool passiveReference(const SemanticType &type) {
+  return passiveArrayElement(type) || passiveAddress(type) ||
+         type.kind == SemanticType::StringView ||
+         (type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
+          (passiveArrayElement(type.arguments.front()) ||
+           passiveAddress(type.arguments.front()) ||
+           type.arguments.front().kind == SemanticType::StringView));
+}
+
+bool primitiveRawIndex(const MirInstruction &stage) {
+  return stage.operation == MirOperation::Index && stage.operands.size() == 2 &&
+         stage.operands[0].type.kind == SemanticType::RawPointer &&
+         passiveAddress(stage.operands[0].type) &&
+         stage.operands[0].type.arguments.front().kind != SemanticType::Void &&
+         stage.info.type == stage.operands[0].type.arguments.front() &&
+         constantIntegerDomain(stage.operands[1].type).has_value();
+}
+
+bool primitivePointerArithmetic(const MirInstruction &stage) {
+  if (stage.operands.size() != 2)
+    return false;
+  const auto &pointer = stage.operands[0].type;
+  if (!passiveAddress(pointer) ||
+      pointer.arguments.front().kind == SemanticType::Void)
+    return false;
+  return stage.operation == MirOperation::PointerDifference
+             ? stage.operands[1].type == pointer
+             : (stage.operation == MirOperation::PointerAdd ||
+                stage.operation == MirOperation::PointerSubtract) &&
+                   stage.info.type == pointer &&
+                   constantIntegerDomain(stage.operands[1].type).has_value();
+}
+
+bool primitiveRawAccess(const MirBody &body, const MirPlace &place) {
+  const auto *value = body.findValue(place.value);
+  return place.root == MirPlaceRootKind::Value && value &&
+         passiveAddress(value->info.type) &&
+         value->info.type.arguments.front().kind != SemanticType::Void &&
+         place.type == value->info.type.arguments.front() &&
+         place.projections.size() == 1 &&
+         (place.projections.front().kind == MirProjectionKind::RawIndex ||
+          place.projections.front().kind == MirProjectionKind::RawDereference);
+}
+
+bool arrayProjection(const MirBody &body, const MirPlace &place) {
+  const auto root = std::find_if(
+      body.places.begin(), body.places.end(), [&](const auto &candidate) {
+        return candidate.projections.empty() && candidate.root == place.root &&
+               candidate.binding == place.binding &&
+               candidate.symbol == place.symbol &&
+               candidate.temporary == place.temporary &&
+               candidate.value == place.value && candidate.loan == place.loan;
+      });
+  if (root == body.places.end())
+    return false;
+  auto type = root->type;
+  const auto &array =
+      type.kind == SemanticType::Reference && type.arguments.size() == 1
+          ? type.arguments.front()
+          : type;
+  if (array.kind != SemanticType::Array || !passiveArrayElement(array))
+    return false;
+  for (const auto &projection : place.projections) {
+    if (!((projection.kind == MirProjectionKind::Index &&
+           type.kind == SemanticType::Array) ||
+          (projection.kind == MirProjectionKind::Dereference &&
+           type.kind == SemanticType::Reference)))
+      return false;
+    auto element = type.arguments.front();
+    type = std::move(element);
+  }
+  return type == place.type;
+}
+
 // One representative witness and count per requirement/body/context. Repeated
 // scalar operations do not allocate a duplicate diagnostic record per use.
 class Inventory final {
@@ -28,16 +119,19 @@ public:
   MirInstructionId instruction = 0;
   bool required = true;
   bool executable = false;
+  const MirBody *currentBody = nullptr;
 
-  template <class T> void add(T value) {
+  template <class T> void add(T value, std::optional<Shape> implemented = {}) {
     const LlvmCoverageEntry &entry = coverage(value);
-    const auto key = std::tuple(entry.family, entry.name, body.has_value(),
-                                body ? body->kind : MirBodyKind::Module,
-                                body ? body->owner : 0, required, executable);
+    const auto *shape = implemented ? &coverage(*implemented) : nullptr;
+    const auto key =
+        std::tuple(entry.family, entry.name, body.has_value(),
+                   body ? body->kind : MirBodyKind::Module,
+                   body ? body->owner : 0, required, executable, shape);
     auto [found, inserted] = indices.try_emplace(key, uses.size());
     if (inserted) {
-      uses.push_back(
-          {&entry, body, source, block, instruction, 0, required, executable});
+      uses.push_back({&entry, body, source, block, instruction, 0, required,
+                      executable, shape});
     }
     ++uses[found->second].occurrences;
   }
@@ -47,13 +141,30 @@ public:
     while (!pending.empty()) {
       const SemanticType &type = *pending.back();
       pending.pop_back();
-      add(type.kind);
+      const bool passiveArray =
+          type.kind == SemanticType::Array && passiveArrayElement(type);
+      const bool arrayAddress = type.kind == SemanticType::RawPointer &&
+                                type.arguments.size() == 1 &&
+                                passiveArrayElement(type.arguments.front());
+      const bool reference =
+          type.kind == SemanticType::Reference && passiveReference(type);
+      const bool address = passiveAddress(type) ||
+                           type.kind == SemanticType::NullPtr ||
+                           type.kind == SemanticType::CString;
+      add(type.kind, address        ? std::optional(Shape::PassiveAddressValue)
+                     : passiveArray ? std::optional(Shape::PassiveArrayValue)
+                     : reference    ? std::optional(Shape::PassiveReference)
+                     : arrayAddress
+                         ? std::optional(Shape::CheckedArrayProjection)
+                         : std::nullopt);
       if (type.nativeCScalar != NativeCScalarKind::None) {
         add(type.nativeCScalar);
         add(Shape::NativeScalar);
       }
       if (type.kind == SemanticType::Array)
-        add(Shape::FixedArray);
+        add(Shape::FixedArray, passiveArray
+                                   ? std::optional(Shape::PassiveArrayValue)
+                                   : std::nullopt);
       if (!type.arguments.empty())
         add(Shape::TypeArguments);
       for (const SemanticType &argument : type.arguments)
@@ -82,7 +193,19 @@ public:
   }
 
   void operand(const MirOperand &operand) {
-    add(operand.kind);
+    const auto *place =
+        currentBody ? currentBody->findPlace(operand.place) : nullptr;
+    const bool selectedReference =
+        passiveReference(operand.type) &&
+        (operand.kind == MirOperandKind::Address ||
+         operand.kind == MirOperandKind::BorrowRead ||
+         operand.kind == MirOperandKind::BorrowWrite ||
+         operand.kind == MirOperandKind::Loan);
+    add(operand.kind, selectedReference ? std::optional(Shape::PassiveReference)
+                      : operand.kind == MirOperandKind::Address && place &&
+                              arrayProjection(*currentBody, *place)
+                          ? std::optional(Shape::CheckedArrayProjection)
+                          : std::nullopt);
     type(operand.type);
   }
 
@@ -116,6 +239,7 @@ public:
   }
 
   void inspect(const LoweredBody &row, const MirBody &mir, bool needed) {
+    currentBody = &mir;
     body = row.identity.address;
     source = row.identity.source;
     required = needed && row.role == LoweredBodyRole::SourceExecutable;
@@ -133,7 +257,11 @@ public:
         : mir.returnType.kind == SemanticType::Class ||
                 mir.returnType.kind == SemanticType::Lambda
             ? Shape::OwnedReturn
-            : Shape::DirectReturn);
+            : Shape::DirectReturn,
+        mir.returnType.kind == SemanticType::Reference &&
+                passiveReference(mir.returnType)
+            ? std::optional(Shape::PassiveReference)
+            : std::nullopt);
     if (mir.hasCallerLocation)
       add(Shape::CallerLocation);
     for (const auto &value : mir.values) {
@@ -141,17 +269,34 @@ public:
       traits(value.info.traits, value.info.type);
     }
     for (const auto &place : mir.places) {
-      add(place.root);
+      add(place.root,
+          primitiveRawAccess(mir, place)
+              ? std::optional(Shape::PrimitiveRawAccess)
+          : place.root == MirPlaceRootKind::Loan && passiveReference(place.type)
+              ? std::optional(Shape::PassiveReference)
+              : std::nullopt);
       add(place.access);
       type(place.type);
       traits(place.traits, place.type);
       for (const auto &projection : place.projections)
-        add(projection.kind);
+        add(projection.kind,
+            primitiveRawAccess(mir, place)
+                ? std::optional(Shape::PrimitiveRawAccess)
+            : arrayProjection(mir, place)
+                ? std::optional(Shape::CheckedArrayProjection)
+            : projection.kind == MirProjectionKind::Dereference &&
+                    passiveReference(place.type)
+                ? std::optional(Shape::PassiveReference)
+                : std::nullopt);
       if (place.foreignStorage)
         add(Shape::NativeCall);
     }
     for (const auto &loan : mir.loans) {
-      add(loan.kind);
+      const auto *origin = mir.findPlace(loan.source);
+      const bool selected = origin && passiveReference(origin->type) &&
+                            !loan.referenceSelection && loan.conditions.empty();
+      add(loan.kind,
+          selected ? std::optional(Shape::PassiveReference) : std::nullopt);
       add(loan.access);
       if (loan.referenceSelection)
         add(Shape::SelectedReferenceAddress);
@@ -190,15 +335,71 @@ public:
           add(Shape::Tombstone);
           continue;
         }
-        add(stage.kind);
+        add(stage.kind, stage.kind == MirInstructionKind::Borrow &&
+                                passiveReference(stage.info.type)
+                            ? std::optional(Shape::PassiveReference)
+                            : std::nullopt);
         if (stage.callInputRole) {
           add(*stage.callInputRole);
-          add(stage.callInputKind);
+          add(stage.callInputKind,
+              passiveReference(stage.info.type) &&
+                      (stage.callInputKind == HirCallInputKind::ReadBorrow ||
+                       stage.callInputKind == HirCallInputKind::MutableBorrow)
+                  ? std::optional(Shape::PassiveReference)
+                  : std::nullopt);
         }
-        if (stage.operation != MirOperation::None)
-          add(stage.operation);
-        if (stage.intrinsic != IntrinsicKind::None)
-          add(stage.intrinsic);
+        if (stage.operation != MirOperation::None) {
+          const bool arrayAggregate =
+              stage.operation == MirOperation::Aggregate &&
+              stage.info.type.kind == SemanticType::Array &&
+              passiveArrayElement(stage.info.type);
+          const auto *addressPlace =
+              stage.operands.size() == 1
+                  ? mir.findPlace(stage.operands[0].place)
+                  : nullptr;
+          const bool arrayAddress =
+              stage.operation == MirOperation::AddressOf && addressPlace &&
+              arrayProjection(mir, *addressPlace);
+          const bool referenceAddress =
+              stage.operation == MirOperation::AddressOf && addressPlace &&
+              passiveReference(addressPlace->type);
+          const bool textIndex =
+              stage.operation == MirOperation::Index &&
+              stage.operands.size() == 2 &&
+              stage.operands[0].type.kind == SemanticType::StringView &&
+              stage.info.type == SemanticType::Char;
+          add(stage.operation,
+              primitiveRawIndex(stage) || primitivePointerArithmetic(stage)
+                  ? std::optional(Shape::PrimitiveRawAccess)
+              : arrayAggregate   ? std::optional(Shape::PassiveArrayValue)
+              : textIndex        ? std::optional(Shape::CountedText)
+              : referenceAddress ? std::optional(Shape::PassiveReference)
+              : arrayAddress     ? std::optional(Shape::CheckedArrayProjection)
+                                 : std::nullopt);
+        }
+        if (stage.intrinsic != IntrinsicKind::None) {
+          const bool textQuery =
+              stage.receiver &&
+              stage.receiver->type.kind == SemanticType::StringView &&
+              stage.operands.empty() &&
+              (stage.intrinsic == IntrinsicKind::StringViewSize ||
+               stage.intrinsic == IntrinsicKind::StringViewEmpty);
+          add(stage.intrinsic,
+              stage.intrinsic == IntrinsicKind::RawPointerConversion &&
+                      stage.operands.size() == 1 &&
+                      passiveAddress(stage.info.type) &&
+                      passiveAddress(stage.operands[0].type)
+                  ? std::optional(Shape::PassiveAddressValue)
+              : textQuery ? std::optional(Shape::CountedText)
+              : stage.receiver &&
+                      stage.receiver->type.kind == SemanticType::Array &&
+                      passiveArrayElement(stage.receiver->type) &&
+                      stage.operands.empty() &&
+                      (stage.intrinsic == IntrinsicKind::ArraySize ||
+                       stage.intrinsic == IntrinsicKind::ArrayRangeBegin)
+                  ? std::optional(Shape::PassiveArrayValue)
+                  : std::nullopt);
+        }
         if (stage.receiver)
           operand(*stage.receiver);
         for (const auto &input : stage.operands)
@@ -239,10 +440,34 @@ public:
         if (stage.tracksCaller || stage.callerLocation ||
             stage.sourceLocation || stage.forwardsCallerLocation)
           add(Shape::CallerLocation);
+        bool rawAccess =
+            primitiveRawIndex(stage) ||
+            (stage.destination &&
+             primitiveRawAccess(mir, *mir.findPlace(*stage.destination)));
+        for (const auto &operand : stage.operands)
+          if (const auto *place = mir.findPlace(operand.place))
+            rawAccess |= primitiveRawAccess(mir, *place);
         if (stage.rawMemoryAccess)
-          add(Shape::RawMemory);
-        if (stage.unsafeOperation != UnsafeOperationKind::None)
-          add(stage.unsafeOperation);
+          add(Shape::RawMemory, rawAccess
+                                    ? std::optional(Shape::PrimitiveRawAccess)
+                                    : std::nullopt);
+        // Lifecycle marks repeat the source unsafe context but execute no
+        // memory operation. The typed access/arithmetic stages are inventoried
+        // independently; their pending shapes cannot be hidden by this marker.
+        if (stage.unsafeOperation != UnsafeOperationKind::None &&
+            stage.kind != MirInstructionKind::Lifecycle)
+          add(stage.unsafeOperation,
+              ((rawAccess &&
+                (stage.unsafeOperation == UnsafeOperationKind::RawIndex ||
+                 stage.unsafeOperation ==
+                     UnsafeOperationKind::RawDereference)) ||
+               ((primitivePointerArithmetic(stage) ||
+                 (stage.kind == MirInstructionKind::Assign &&
+                  passiveAddress(stage.info.type))) &&
+                stage.unsafeOperation ==
+                    UnsafeOperationKind::PointerArithmetic))
+                  ? std::optional(Shape::PrimitiveRawAccess)
+                  : std::nullopt);
         if (stage.payloadExtractionKind)
           add(*stage.payloadExtractionKind);
         if (stage.callableBoundary)
@@ -261,8 +486,18 @@ public:
           add(stage.definedFailure.propagation);
           for (const auto &origin : stage.definedFailure.localOrigins)
             for (const auto &outcome : origin.outcomes) {
-              add(outcome.code);
-              add(outcome.detail);
+              const bool arrayBound =
+                  outcome.code == DefinedFailureCode::IndexOutOfBounds &&
+                  outcome.detail == DefinedFailureDetail::FixedArray;
+              const bool textBound =
+                  outcome.code == DefinedFailureCode::IndexOutOfBounds &&
+                  outcome.detail == DefinedFailureDetail::StringView;
+              const auto shape =
+                  arrayBound  ? std::optional(Shape::CheckedArrayProjection)
+                  : textBound ? std::optional(Shape::CountedText)
+                              : std::nullopt;
+              add(outcome.code, shape);
+              add(outcome.detail, shape);
             }
         }
         for (const auto &event : stage.lifecycle)
@@ -300,7 +535,7 @@ public:
 
 private:
   using Key = std::tuple<std::string_view, std::string_view, bool, MirBodyKind,
-                         std::size_t, bool, bool>;
+                         std::size_t, bool, bool, const LlvmCoverageEntry *>;
   std::vector<LlvmCoverageUse> &uses;
   std::map<Key, std::size_t> indices;
 };
@@ -318,7 +553,9 @@ const LlvmCoverageUse *LlvmAdmissionPlan::firstUnsupported() const {
       continue;
     const auto &entry = *use.entry;
     const bool unsupported =
-        entry.state == LlvmCoverageState::Pending ||
+        (entry.state == LlvmCoverageState::Pending &&
+         (!use.implementedShape ||
+          use.implementedShape->state != LlvmCoverageState::Implemented)) ||
         (use.executable &&
          entry.nonExecuting == LlvmNonExecutingRule::MustBeAbsent);
     if (!unsupported)

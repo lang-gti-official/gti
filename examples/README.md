@@ -1,5 +1,10 @@
 # GTI examples
 
+[`llvm/places-and-text.gti`](llvm/places-and-text.gti) exercises the in-progress
+O-LLVM-05 array/reference/text profile. It demonstrates constrained fixed-array
+ranges, selected mutable references, multidimensional storage and counted text.
+The LLVM campaign plan records its current platform and completion status.
+
 [`llvm/scalar-control-flow.gti`](llvm/scalar-control-flow.gti) is a native LLVM
 backend example using concrete generics, recursion, loops and checked scalar
 arithmetic. Build with `gti examples/llvm/scalar-control-flow.gti --backend llvm

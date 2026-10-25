@@ -1,0 +1,51 @@
+#include <std/iterator>
+#include <std/string_view>
+
+int sum<Range>(Range& values) requires std::range_of<Range, int> {
+  mut int result = 0;
+  for (int& element : values) {
+    result += element;
+  }
+  return result;
+}
+
+void increment<Range>(mut Range& values) requires std::mutable_range_of<Range, int> {
+  for (mut int& element : values) {
+    element += 1;
+  }
+}
+
+mut int& checked_reference(mut int& value, int divisor) {
+  value = value / divisor;
+  return value;
+}
+
+std::string_view choose_text(bool first) {
+  return first ? "a\0bc" : "xy";
+}
+
+int main() {
+  mut int values[3] = {1, 2, 3};
+  increment(values);
+  if (sum(values) != 9) {
+    return 1;
+  }
+  checked_reference(values[1], 1) = 7;
+  mut int index = 0;
+  values[index++] += 3;
+  if (values[0] != 5 || index != 1 || values[1] != 7) {
+    return 2;
+  }
+
+  mut int grid[2][2] = {{1, 2}, {3, 4}};
+  grid[1][0] = values[0];
+  if (grid[1][0] != 5) {
+    return 3;
+  }
+
+  std::string_view selected = choose_text(true);
+  if (selected.size() != uint64_t(4) || selected[1] != '\0' || selected != "a\0bc") {
+    return 4;
+  }
+  return 0;
+}

@@ -3,6 +3,7 @@
 #include "places.h"
 #include "runtime_abi.h"
 #include "scalar.h"
+#include "text.h"
 
 #include <algorithm>
 #include <map>
@@ -184,6 +185,8 @@ private:
       case IntrinsicKind::RestoreReference:
       case IntrinsicKind::RestoreReferenceMut:
         return memory.selected(instruction.operands.at(0));
+      case IntrinsicKind::RawPointerConversion:
+        return operand(instruction.operands.at(0));
       case IntrinsicKind::TextViewFromAddress: {
         llvm::Value *view =
             llvm::Constant::getNullValue(session.abi().textView());
@@ -313,6 +316,15 @@ private:
     llvm::Value *result = nullptr;
     switch (instruction.kind) {
     case MirInstructionKind::Compute: {
+      if ((instruction.operation == MirOperation::Equal ||
+           instruction.operation == MirOperation::NotEqual) &&
+          instruction.operands.at(0).type.kind == SemanticType::StringView) {
+        result = equalText(session, ir, operand(instruction.operands[0]),
+                           operand(instruction.operands[1]));
+        if (instruction.operation == MirOperation::NotEqual)
+          result = ir.CreateNot(result);
+        break;
+      }
       if (instruction.operation == MirOperation::AddressOf) {
         result = memory.selected(instruction.operands.at(0));
         break;
@@ -324,21 +336,13 @@ private:
         auto *right = operand(instruction.operands.at(1));
         const auto &type = instruction.operands[0].type;
         if (instruction.operation == MirOperation::PointerDifference) {
-          auto *bytes = ir.CreateSub(ir.CreatePtrToInt(left, ir.getInt64Ty()),
-                                     ir.CreatePtrToInt(right, ir.getInt64Ty()));
-          result = ir.CreateSDiv(
-              bytes,
-              ir.getInt64(session.layouts().get(type.arguments.at(0)).size));
+          result = memory.difference(left, right, type.arguments.at(0));
         } else {
           const auto domain =
               constantIntegerDomain(instruction.operands[1].type);
-          auto *offset = ir.CreateIntCast(right, ir.getInt64Ty(),
-                                          domain && domain->signedValue);
-          if (instruction.operation == MirOperation::PointerSubtract)
-            offset = ir.CreateNeg(offset);
-          result =
-              ir.CreateGEP(session.layouts().get(type.arguments.at(0)).storage,
-                           left, offset);
+          result = memory.advance(
+              left, type.arguments.at(0), right, domain && domain->signedValue,
+              instruction.operation == MirOperation::PointerSubtract);
         }
         break;
       }
@@ -378,9 +382,13 @@ private:
         auto domain = constantIntegerDomain(offset.type);
         auto *index = ir.CreateIntCast(operand(offset), ir.getInt64Ty(),
                                        domain && domain->signedValue);
-        result = load(memory.index(memory.arrayValue(container), source.type,
-                                   index, true),
-                      instruction.info.type);
+        auto *address =
+            source.type.kind == SemanticType::RawPointer
+                ? memory.advance(container, source.type.arguments.at(0), index,
+                                 true, false)
+                : memory.index(memory.arrayValue(container), source.type, index,
+                               true);
+        result = load(address, instruction.info.type);
         break;
       }
       std::vector<llvm::Value *> inputs;
@@ -682,31 +690,13 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
   for (const auto &step :
        session.program().mir().programInitializationPlan().steps) {
     const auto &type = module->findPlace(step.storagePlace)->type;
-    if (!isPassiveScalarValueType(type) && type.kind != SemanticType::Enum)
+    if (!isPassiveScalarValueType(type) && type.kind != SemanticType::Enum &&
+        type.kind != SemanticType::Array)
       continue;
     auto *storage = session.layouts().get(type).storage;
     llvm::Constant *initial = llvm::Constant::getNullValue(storage);
-    if (step.dataConstant) {
-      const auto &value = *step.dataConstant;
-      if (const auto *integer = std::get_if<ConstantInteger>(&value))
-        initial = llvm::ConstantInt::get(
-            storage, integer->negative ? uint64_t(0) - integer->magnitude
-                                       : integer->magnitude);
-      else if (const auto *enumerator = std::get_if<ConstantEnum>(&value))
-        initial = llvm::ConstantInt::get(
-            storage, enumerator->value.negative
-                         ? uint64_t(0) - enumerator->value.magnitude
-                         : enumerator->value.magnitude);
-      else if (const auto *floating = std::get_if<BinaryFloat>(&value))
-        initial = llvm::cast<llvm::Constant>(scalars.literal(*floating, type));
-      else if (const auto *character = std::get_if<CharacterLiteral>(&value))
-        initial = llvm::ConstantInt::get(storage, character->value);
-      else if (const auto *boolean = std::get_if<bool>(&value))
-        initial = llvm::ConstantInt::get(storage, *boolean);
-      else
-        throw BackendUnsupportedError(
-            "LLVM static datum requires a scalar constant");
-    }
+    if (step.dataConstant)
+      initial = scalars.constant(*step.dataConstant, type);
     globals.emplace(step.symbol,
                     new llvm::GlobalVariable(
                         session.module(), storage, false,

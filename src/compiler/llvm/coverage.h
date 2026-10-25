@@ -53,6 +53,12 @@ enum class Shape {
   BorrowReturn,
   OwnedReturn,
   FailureReturn,
+  PassiveArrayValue,
+  CheckedArrayProjection,
+  PassiveReference,
+  CountedText,
+  PrimitiveRawAccess,
+  PassiveAddressValue,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

@@ -32,7 +32,7 @@ def main() -> int:
         run([sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)], 0)
         run([str(output)], 0)
         output.unlink()
-        source.write_text("int main() { int values[2] = {1, 2}; return values[0]; }\n", encoding="utf-8")
+        source.write_text("class Owner { public: Owner() {} ~Owner() {} }; int main() { Owner value{}; return 0; }\n", encoding="utf-8")
         unsupported = run(
             [sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)],
             65,
@@ -40,7 +40,7 @@ def main() -> int:
         if "error[GTI-B0003]" not in unsupported.stderr or (
             "executable LLVM lowering is not implemented yet"
             not in unsupported.stderr
-        ) or "O-LLVM-" not in unsupported.stderr or "MirOperation.Aggregate" not in unsupported.stderr:
+        ) or "O-LLVM-" not in unsupported.stderr or "MirInstructionKind.Construct" not in unsupported.stderr:
             raise AssertionError(
                 "LLVM selection did not preserve the structured limitation:\n"
                 + unsupported.stderr

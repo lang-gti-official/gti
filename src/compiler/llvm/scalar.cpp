@@ -41,6 +41,39 @@ MirOperation baseOperation(MirOperation operation) {
 Scalars::Scalars(Session &session, llvm::IRBuilder<> &ir, Guard guard)
     : session(session), ir(ir), guard(std::move(guard)) {}
 
+llvm::Constant *Scalars::constant(const ConstantValue &value,
+                                  const SemanticType &type) {
+  auto *storage = session.layouts().get(type).storage;
+  if (const auto *integer = std::get_if<ConstantInteger>(&value))
+    return llvm::ConstantInt::get(
+        storage, integer->negative ? uint64_t(0) - integer->magnitude
+                                   : integer->magnitude);
+  if (const auto *enumerator = std::get_if<ConstantEnum>(&value))
+    return llvm::ConstantInt::get(storage, enumerator->value.negative
+                                               ? uint64_t(0) -
+                                                     enumerator->value.magnitude
+                                               : enumerator->value.magnitude);
+  if (const auto *floating = std::get_if<BinaryFloat>(&value))
+    return llvm::cast<llvm::Constant>(literal(*floating, type));
+  if (const auto *character = std::get_if<CharacterLiteral>(&value))
+    return llvm::ConstantInt::get(storage, character->value);
+  if (const auto *boolean = std::get_if<bool>(&value))
+    return llvm::ConstantInt::get(storage, *boolean);
+  if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
+      aggregate && aggregate->value &&
+      aggregate->value->kind == ConstantAggregateKind::Array &&
+      type.kind == SemanticType::Array &&
+      aggregate->value->elements.size() == type.arrayLength) {
+    std::vector<llvm::Constant *> elements;
+    for (const auto &element : aggregate->value->elements)
+      elements.push_back(constant(element, type.arguments.at(0)));
+    return llvm::ConstantArray::get(llvm::cast<llvm::ArrayType>(storage),
+                                    elements);
+  }
+  throw BackendUnsupportedError("LLVM static datum requires an admitted scalar "
+                                "or passive array constant");
+}
+
 SemanticType Scalars::domain(const SemanticType &type) const {
   if (type.kind == SemanticType::Enum) {
     for (const auto &enumeration : session.program().mir().integralEnums())

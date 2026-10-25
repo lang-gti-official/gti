@@ -28,6 +28,12 @@ public:
                                    const SemanticType &type,
                                    llvm::Value *offset, bool checked);
   [[nodiscard]] llvm::Value *arrayValue(llvm::Value *value);
+  [[nodiscard]] llvm::Value *advance(llvm::Value *address,
+                                     const SemanticType &pointee,
+                                     llvm::Value *offset, bool signedOffset,
+                                     bool subtract);
+  [[nodiscard]] llvm::Value *difference(llvm::Value *left, llvm::Value *right,
+                                        const SemanticType &pointee);
 
 private:
   using Key = std::tuple<MirPlaceRootKind, std::size_t, std::size_t>;

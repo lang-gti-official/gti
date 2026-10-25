@@ -4494,6 +4494,34 @@ exists). Owned arguments, TLS storage, projected places, references, arrays,
 classes, owners, indirect/virtual/native calls and native debug information remain
 explicit limitations. No mixed-backend fallback is used. C++ stays the default.
 
+### LLVM Places And Counted Text
+
+`places.cpp` owns body-local storage, selected loan addresses and evaluated
+projections. Addresses are computed at their MIR stage, never hoisted or
+recomputed from possible owner origins. Reference results use the ABI planner's
+reference type, including pointer result destinations on checked-call success.
+Verified permission/availability operations erase; no runtime loan manager or
+LLVM alias attribute is inferred from source mutability.
+
+The current added profile admits passive fixed arrays of primitive values,
+their multidimensional projections, by-value snapshots, primitive/array
+references and constrained fixed-array range operations. Array bounds compare
+the evaluated index before address selection or access. Constant global arrays
+consume sealed recursive constants; dynamic initialization keeps MIR order.
+
+Counted byte views retain embedded NUL, UTF-8 bytes and their byte count. Text
+literals, storage, PHIs and ABI values share the session's one text-view type.
+Size/empty/index operations and byte equality require no heap allocation;
+equality checks counts and never touches data for an empty view. The text loop
+and array accesses add no `inbounds`, `noalias` or overflow promises.
+
+The in-progress O-LLVM-05 plan still owns raw-address admission and final
+cross-platform/performance acceptance. Class fields/lifecycles, owning storage,
+payloads and native calls remain their later milestones. Source restrictions
+are unchanged: explicit array-reference declarators and conditional lvalue
+initialization are not added by backend work. Constrained range references to
+fixed arrays are the implemented source entry point for whole-array borrowing.
+
 ### LLVM Coverage And Admission
 
 `llvm_admission.h` exposes `llvmCoverageLedger()` and
@@ -4512,6 +4540,15 @@ lowering and verified nonexecuting facts. Scalar execution entries name the
 runtime operation; a source-only query marked `MustBeAbsent` cannot silently
 be erased if it appears as executable input. Neither classification grants LLVM
 attributes or permits removing a runtime check.
+
+A pending vocabulary family can have a narrower implemented shape. Each use
+retains its original ledger row and an optional inventory-produced structural
+implementation witness. Concrete primitive arrays satisfy `PassiveArrayValue`,
+not the whole `Aggregate` family; class/owning arrays remain rejected. Distinct
+shapes have distinct inventory keys, so a supported occurrence cannot hide an
+unsupported occurrence of the same enum in the same body. `MustBeAbsent` rules
+are never overridden, and callers cannot supply witnesses. These facts live in
+the backend admission plan, not in `LoweredProgram`.
 
 The compiled switches reject new unassigned enum members, including enums with
 no count sentinel. `input_fields.def` checks the decomposition of the central

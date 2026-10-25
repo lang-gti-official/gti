@@ -186,7 +186,7 @@ int main() {
             if not results[0] == results[1] == results[2]:
                 raise AssertionError(f'{name}: source/failure attribution drift: {results}')
         for name, text in {'owner': 'class Owner { public: Owner() {} ~Owner() {} }; int main() { Owner value{}; return 0; }',
-                           'array': 'int main() { int data[2] = {1, 2}; return data[0]; }',
+                           'array-owner': 'class Owner { public: Owner() {} ~Owner() {} }; int main() { Owner data[2] = {Owner(), Owner()}; return 0; }',
                            'tls': 'thread_local mut int value = 3; int main() { return value; }'}.items():
             source = work / f'reject-{name}.gti'
             source.write_text(text)

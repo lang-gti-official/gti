@@ -1,4 +1,5 @@
 #include "../src/compiler/llvm/abi.h"
+#include "../src/compiler/llvm/places.h"
 #include "../src/compiler/llvm/runtime_abi.h"
 #include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
@@ -50,6 +51,15 @@ int recurse(int value) {
   return recurse(value - 1);
 }
 bool identity(bool value) { return value; }
+int place_components(mut int& input, int offset) {
+  mut int values[3] = {4, 5, 6};
+  mut int& selected = values[offset];
+  selected = input;
+  return values[1];
+}
+int raw_components(int* input, int offset) {
+  unsafe { return input[offset]; }
+}
 int main() {
   Node node{};
   uint64_t sizes = sizeof(Packet) + sizeof(Overlay);
@@ -81,6 +91,8 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
       layouts.get(SemanticType::referenceTo(SemanticType::Int32));
   expect(reference.value->isPointerTy() && reference.size == 8,
          "a reference transports the selected address");
+  expect(layouts.get(SemanticType::StringView).value == abi.textView(),
+         "text literals, storage, PHIs and ABI values share one physical type");
   const auto array =
       layouts.get(SemanticType::arrayOf(SemanticType::UInt16, 5));
   expect(array.addressOnly && array.size == 10 && array.stride == 2 &&
@@ -276,6 +288,141 @@ void testDiagnostics(const VerifiedLoweredProgram &input) {
       "module target-layout mutation cannot bypass the target contract");
 }
 
+// Exercise the private address component independently of program admission.
+// Its place/loan identities come from a verified real source body. This is a
+// component oracle, not an alternate executable GTI backend or coverage claim.
+void emitPlaceComponentProbe(Session &session) {
+  const auto &program = session.program().mir();
+  const MirFunctionInstance *source = nullptr;
+  for (const auto &candidate : program.functionInstances())
+    if (candidate.parameterTypes.size() == 2 &&
+        candidate.parameterTypes[0].kind == SemanticType::Reference &&
+        candidate.parameterTypes[1] == SemanticType::Int32)
+      source = &candidate;
+  if (!source)
+    throw std::logic_error("missing place-component source fixture");
+  const auto &body = *findMirBody(program, {MirBodyKind::Function, source->id});
+  const MirPlace *array = nullptr, *indexed = nullptr, *referent = nullptr;
+  for (const auto &place : body.places) {
+    if (place.type.kind == SemanticType::Array && place.projections.empty())
+      array = &place;
+    if (place.projections.size() == 1 &&
+        place.projections[0].kind == MirProjectionKind::Index &&
+        !place.projections[0].constantIndex)
+      indexed = &place;
+    if (place.binding == source->parameterBindings[0] &&
+        place.projections.size() == 1)
+      referent = &place;
+  }
+  if (!array || !indexed || !referent)
+    throw std::logic_error("place-component fixture lost selected addresses");
+  MirLoanId selected = 0;
+  for (const auto &loan : body.loans)
+    if (loan.kind == MirLoanKind::Local && !loan.entry)
+      selected = loan.id;
+  if (!selected)
+    throw std::logic_error("place-component fixture lost its local loan");
+  const auto pointer = SemanticType::rawPointerTo(SemanticType::Int32);
+  const std::vector<SemanticType> parameters{pointer, SemanticType::Int32};
+  const auto signature = session.abi().nativeC(SemanticType::Int32, parameters);
+  auto *function = llvm::Function::Create(
+      signature.type, llvm::GlobalValue::ExternalLinkage,
+      "gti_llvm_place_component_probe", session.module());
+  signature.applyTo(*function);
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", function));
+  std::vector<llvm::Value *> values(body.values.size() + 1);
+  values.at(indexed->projections[0].index) = function->getArg(1);
+  Places places(
+      session, ir, body, values,
+      [&](llvm::Value *failed, DefinedFailureOutcome outcome) {
+        expect(outcome ==
+                   DefinedFailureOutcome{DefinedFailureCode::IndexOutOfBounds,
+                                         DefinedFailureDetail::FixedArray},
+               "array component requests only the fixed-array bound failure");
+        auto *failure = llvm::BasicBlock::Create(session.context(),
+                                                 "bound.failed", function);
+        auto *success = llvm::BasicBlock::Create(session.context(),
+                                                 "bound.success", function);
+        ir.CreateCondBr(failed, failure, success);
+        ir.SetInsertPoint(failure);
+        ir.CreateRet(ir.getInt32(-77));
+        ir.SetInsertPoint(success);
+      });
+  places.allocate({});
+  places.parameter(source->parameterBindings[0], function->getArg(0), false);
+  places.parameter(source->parameterBindings[1], function->getArg(1), false);
+  auto *storageType =
+      llvm::cast<llvm::ArrayType>(session.layouts().get(array->type).storage);
+  auto *initial = llvm::ConstantArray::get(
+      storageType, {ir.getInt32(4), ir.getInt32(5), ir.getInt32(6)});
+  places.store(initial, places.address(array->id), array->type);
+  places.publish(selected, places.address(indexed->id));
+  auto *input = places.load(places.address(referent->id), SemanticType::Int32);
+  places.store(input, places.loan(selected), SemanticType::Int32);
+  // Mutating the index SSA mapping cannot reseat an already selected loan.
+  values.at(indexed->projections[0].index) = ir.getInt32(2);
+  auto *one = places.index(places.address(array->id), array->type,
+                           ir.getInt64(1), true);
+  ir.CreateRet(
+      ir.CreateAdd(places.load(places.loan(selected), SemanticType::Int32),
+                   places.load(one, SemanticType::Int32)));
+  session.requireDefinition(*function);
+}
+
+void emitRawAddressComponentProbe(Session &session) {
+  const auto &program = session.program().mir();
+  const MirFunctionInstance *source = nullptr;
+  for (const auto &candidate : program.functionInstances())
+    if (candidate.parameterTypes.size() == 2 &&
+        candidate.parameterTypes[0].kind == SemanticType::RawPointer &&
+        candidate.parameterTypes[1] == SemanticType::Int32)
+      source = &candidate;
+  if (!source)
+    throw std::logic_error("missing raw-address component source fixture");
+  const auto &body = *findMirBody(program, {MirBodyKind::Function, source->id});
+  const MirPlace *indexed = nullptr;
+  for (const auto &place : body.places)
+    if (place.root == MirPlaceRootKind::Value &&
+        place.projections.size() == 1 &&
+        place.projections[0].kind == MirProjectionKind::RawIndex)
+      indexed = &place;
+  if (!indexed)
+    throw std::logic_error("missing verified raw-index place");
+  const auto signature =
+      session.abi().nativeC(SemanticType::Int32, source->parameterTypes);
+  auto *function = llvm::Function::Create(
+      signature.type, llvm::GlobalValue::ExternalLinkage,
+      "gti_llvm_raw_address_component_probe", session.module());
+  signature.applyTo(*function);
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", function));
+  std::vector<llvm::Value *> values(body.values.size() + 1);
+  values.at(indexed->value) = function->getArg(0);
+  values.at(indexed->projections[0].index) = function->getArg(1);
+  Places places(
+      session, ir, body, values, [](llvm::Value *, DefinedFailureOutcome) {
+        throw std::logic_error(
+            "raw-address obligations must not become checked-array guards");
+      });
+  places.allocate({});
+  auto *address = places.address(indexed->id);
+  auto *advanced = places.advance(function->getArg(0), SemanticType::Int32,
+                                  function->getArg(1), true, false);
+  auto *restored = places.advance(advanced, SemanticType::Int32,
+                                  function->getArg(1), true, true);
+  auto *valid = ir.CreateAnd(ir.CreateICmpEQ(address, advanced),
+                             ir.CreateICmpEQ(restored, function->getArg(0)));
+  valid = ir.CreateAnd(
+      valid,
+      ir.CreateICmpEQ(
+          places.difference(advanced, function->getArg(0), SemanticType::Int32),
+          ir.CreateSExt(function->getArg(1), ir.getInt64Ty())));
+  auto *value = places.load(address, SemanticType::Int32);
+  ir.CreateRet(ir.CreateSelect(valid, value, ir.getInt32(-99)));
+  session.requireDefinition(*function);
+}
+
 void testObjectHandoff(const VerifiedLoweredProgram &input) {
   namespace fs = std::filesystem;
   const auto root =
@@ -300,6 +447,8 @@ extern uint16_t gti_llvm_echo_u16(uint16_t);
 extern bool gti_llvm_echo_bool(bool);
 extern double gti_llvm_echo_double(double);
 extern int8_t gti_llvm_call_c_i8(int8_t);
+extern int32_t gti_llvm_place_component_probe(int32_t*, int32_t);
+extern int32_t gti_llvm_raw_address_component_probe(int32_t*, int32_t);
 int8_t native_c_echo_i8(int8_t value) { return value; }
 int main(void) {
   const unsigned char expected[8] = {0, 128, 255, 13, 10, 0, 26, 127};
@@ -309,6 +458,15 @@ int main(void) {
   if (!gti_llvm_echo_bool(true) || gti_llvm_echo_bool(false)) return 4;
   if (gti_llvm_echo_double(-3.5) != -3.5) return 5;
   if (gti_llvm_call_c_i8(-127) != -127) return 6;
+  int32_t input = 9;
+  if (gti_llvm_place_component_probe(&input, 1) != 18 || input != 9) return 7;
+  if (gti_llvm_place_component_probe(&input, 0) != 14 || input != 9) return 8;
+  if (gti_llvm_place_component_probe(&input, -1) != -77 ||
+      gti_llvm_place_component_probe(&input, 3) != -77) return 9;
+  int32_t data[4] = {11, 22, 33, 44};
+  if (gti_llvm_raw_address_component_probe(data, 2) != 33 ||
+      gti_llvm_raw_address_component_probe(data + 1, -1) != 11 ||
+      gti_llvm_raw_address_component_probe(data + 1, 2) != 44) return 10;
   return 0;
 }
 )";
@@ -329,6 +487,8 @@ int main(void) {
         LlvmCodegenOptimization::Aggressive}) {
     Session session(input, {.optimization = level});
     auto &abi = session.abi();
+    emitPlaceComponentProbe(session);
+    emitRawAddressComponentProbe(session);
     // Native ABI oracle only: these identity bodies are not GTI instruction
     // lowering, a hosted entry, or evidence of any admitted language family.
     for (const auto &[name, type] :

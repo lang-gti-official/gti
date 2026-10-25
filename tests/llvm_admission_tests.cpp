@@ -68,7 +68,9 @@ void testLedger() {
     pending += entry.state == LlvmCoverageState::Pending;
     nonexecuting += entry.state == LlvmCoverageState::VerifiedNonExecuting;
     if (entry.state == LlvmCoverageState::Implemented)
-      expect(entry.positiveTest == "llvm_scalar_execution",
+      expect(entry.positiveTest == (entry.milestone == 5
+                                        ? "llvm_place_execution"
+                                        : "llvm_scalar_execution"),
              "implemented families name real execution evidence");
   }
   expect(pending > 250 && nonexecuting > 20,
@@ -107,7 +109,8 @@ void testLedger() {
 void testSnapshotAndWholeProgram() {
   auto verified = lower(R"(
 int dormant(int value) { return value * 3; }
-int main() { int values[2] = {0, 1}; return values[0]; }
+class Owned { public: Owned() {} ~Owned() {} };
+int main() { Owned value{}; return 0; }
 )");
   const auto *identity = &verified.program();
   const auto plan = lang::planLlvmAdmission(
@@ -132,14 +135,14 @@ int main() { int values[2] = {0, 1}; return values[0]; }
   expect(plan.requiredBodies().size() < static_cast<std::size_t>(expected),
          "dormant helpers remain inventoried without requiring execution");
   const auto *first = plan.firstUnsupported();
-  expect(first->source.source.ends_with("llvm-admission.gti") &&
+  expect(first && first->source.source.ends_with("llvm-admission.gti") &&
              first->source.end > first->source.start,
          "unsupported input carries original half-open source provenance");
   const auto repeated = lang::planLlvmAdmission(verified, plan.options());
   expect(repeated.limitation() == plan.limitation() &&
              repeated.requirements().size() == plan.requirements().size(),
          "inventory and first limitation are deterministic");
-  expect(plan.limitation().find("O-LLVM-") != std::string::npos &&
+  expect(plan.limitation().find("O-LLVM-") != std::string::npos && first &&
              plan.limitation().find(first->entry->key()) != std::string::npos,
          "the limitation identifies the exact requirement and its owner");
   lang::LlvmBackend backend(plan.options());
@@ -167,6 +170,14 @@ int main() { mut int values[2] = {1, 2}; return values[0] - 1; }
   expect(has(arrays, "Shape", "FixedArray") &&
              has(arrays, "MirProjectionKind", "Index"),
          "arrays retain both type and checked operation requirements");
+  expect(arrays.admitted(), "passive arrays satisfy a structural refinement "
+                            "without promoting the broad aggregate family");
+  for (const auto &use : arrays.requirements())
+    if (use.entry->family == "MirOperation" && use.entry->name == "Aggregate")
+      expect(use.entry->state == lang::LlvmCoverageState::Pending &&
+                 use.implementedShape &&
+                 use.implementedShape->name == "PassiveArrayValue",
+             "a passive-array proof does not claim class aggregate lowering");
   const auto references = lang::planLlvmAdmission(lower(R"(
 int& identity(int& value) { return value; }
 int main() { int value = 3; int& alias = identity(value); return alias - 3; }
@@ -182,6 +193,18 @@ int main() { Value value{}; return value.read() - 1; }
       has(lifecycle, "Shape", "UserDestructor") &&
           has(lifecycle, "MirInstructionKind", "Construct"),
       "class construction and selected cleanup are independently inventoried");
+  expect(!lifecycle.admitted(),
+         "passive-address refinements do not admit class lifecycles");
+  const auto classArray = lang::planLlvmAdmission(lower(R"(
+class Owner { public: Owner() {} ~Owner() {} };
+int main() { Owner values[2] = {Owner(), Owner()}; return 0; }
+)"));
+  expect(!classArray.admitted(),
+         "an array of owning class objects is not a passive-array shape");
+  for (const auto &use : classArray.requirements())
+    if (use.entry->family == "SemanticType::Kind" && use.entry->name == "Array")
+      expect(!use.implementedShape,
+             "class arrays have no primitive-array implementation witness");
   const auto native = lang::planLlvmAdmission(lower(R"(
 extern "C" { int foreign_call(int value); }
 int main() { return foreign_call(0); }
