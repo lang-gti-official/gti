@@ -1,0 +1,25 @@
+#include <std/memory>
+
+mut int trace = 0;
+class Ticket {
+public:
+  int id;
+  Ticket(int id) : id(id) { trace = trace * 10 + id; }
+  ~Ticket() { trace = trace * 10 + this.id; }
+};
+
+int main() {
+  mut std::uninitialized<Ticket> source{};
+  mut std::uninitialized<Ticket> destination{};
+  unsafe {
+    std::construct_at(source.data(), 3);
+    std::relocate_at(destination.data(), source.data());
+    if (trace != 3) { return 1; }
+    if ((*destination.data()).id != 3) { return 2; }
+    std::destroy_at(destination.data());
+    if (trace != 33) { return 3; }
+    std::construct_at(source.data(), 4);
+    std::destroy_at(source.data());
+  }
+  return trace == 3344 ? 0 : 4;
+}

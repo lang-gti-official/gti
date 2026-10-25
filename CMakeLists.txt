@@ -614,6 +614,7 @@ add_library(
   "src/compiler/llvm/places.cpp"
   "src/compiler/llvm/placement.cpp"
   "src/compiler/llvm/lifetimes.cpp"
+  "src/compiler/llvm/memory.cpp"
   "src/compiler/llvm/thread_locals.cpp"
   "src/compiler/llvm/text.cpp"
 )
