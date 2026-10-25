@@ -10144,9 +10144,10 @@ remains pending:
 | `runtime_execution_boundary`, `installed_runtime_execution_boundary` | The real C begin/drain hooks attach the runtime lifetime, preserve reverse registered cleanup and idempotent drain, and link from the installed runtime. |
 | `runtime_abi_inventory` | Clang parses every active runtime C declaration into a target-specific exact-signature/resource/failure/callback inventory retained in the build. Missing declarations and unclassified headers reject. C++ helper wrappers are not C services. |
 | `llvm_clang_coexistence`, `installed_llvm_clang_coexistence` | Both LLVM's private static backend closure and the real libclang C reader load, parse a header and shut down in the same build-tree/installed consumer. Linux ELF archive symbol isolation prevents registry interposition with libclang's shared LLVM. Tests have bounded deadlines. |
-| `llvm_scalar_execution` | Real GTI scalar/control-flow/generic/recursive programs, local/PHI staging, ordered scalar globals, IEEE special values, conversions and wrapping/saturation at native O0/O3 against C++ O3. Checked failures and plain panic compare exact exit/stdout/stderr, including original source attribution. Unsupported polymorphic objects, arrays and TLS reject without replacing an existing output. Includes the shipped `examples/llvm/scalar-control-flow.gti`. Required on macOS arm64 and Linux x86_64. |
+| `llvm_scalar_execution` | Real GTI scalar/control-flow/generic/recursive programs, local/PHI staging, ordered scalar globals, IEEE special values, conversions and wrapping/saturation at native O0/O3 against C++ O3. Checked failures and plain panic compare exact exit/stdout/stderr, including original source attribution. Unsupported polymorphic arrays and TLS reject without replacing an existing output. The former `polymorphic-owner` rejection is a fresh-local virtual call, not an owner; its verbatim positive moves to `llvm_dispatch_execution`. Includes the shipped `examples/llvm/scalar-control-flow.gti`. Required on macOS arm64 and Linux x86_64. |
 | `llvm_place_execution` | Passive arrays/snapshots/bool storage, staged indexing, primitive/pointer-slot references and checked results, conditional selected returns, raw/null/nested/void addresses, pointer arithmetic and differences, ordinary unsafe calls, identity-bound reference erasure and owner-backed counted/C-string views. C++20/23 O3 and LLVM O0/O1/O2/O3 compare exact execution/failure output. Unsafe, expired, overlapping and read-only accesses remain source errors; unsupported C-string proofs preserve existing outputs. Includes `examples/llvm/places-and-text.gti`; required on macOS arm64 and Linux x86_64. |
 | `llvm_class_execution` | Ordinary/default/overloaded/designated and generic class construction, exact field/method access, staged copies, move-only arguments/returns, nested cleanup, replacement and class arrays. Passive global/static objects and lazy namespace/member TLS compare C++20/23 O3 with LLVM O0-O3, including exact constructor-rollback, recursion and shutdown failures. Dynamic function-local TLS compound operations and checked narrowing/shift errors have native-only controls for a recorded existing C++ vocabulary limitation. Includes `examples/llvm/classes-and-lifetimes.gti`; required on macOS arm64 and Linux x86_64. `llvm_target_layout_abi` additionally observes completed-field rollback after a real checked GTI call returns failure, verifies TLS C layout, and compiles/links a C17 registration oracle. |
+| `llvm_dispatch_execution` | Public native O0/O3 fresh-local multilevel hierarchies, multiple interfaces, borrowed readonly/mutable receiver adjustments, scalar/bool/void calls, verified constructor states, virtual-call failure and partial-construction cleanup order. Explicit destructor IDs prove order, not virtual destructor phases. Supported C++20/23 O3 comparators remain required. Copy/move/value transport, nested/array/nonlocal storage, pure active states and destructor/helper virtual observations reject with existing-output preservation and no object. Includes the verbatim former scalar `polymorphic-owner` case and `examples/llvm/inheritance-and-dispatch.gti`; required on macOS arm64 and Linux x86_64. The loop fixture is correctness evidence only, not performance or allocation acceptance. |
 
 The class gate also checks named moved arguments whose later argument fails,
 including reverse prepared-parameter cleanup, constructor calls that never
@@ -10154,6 +10155,16 @@ start, and callee failures after transfer. Each observes the destructor's actual
 field value and exactly-once effect, not just a successful build or a failure
 exit code. C++20/23 O3 and native O0/O1/O2/O3 must agree on source-attributed
 failure output.
+
+The dispatch gate additionally checks nonzero interface/state-base reference
+publication, repeated readonly/mutable alias forwarding, and the original
+complete-object loan's unchanged address. Its nested mutable-reference-chain
+case records both existing C++ text-vocabulary failures explicitly and requires
+independent verified-source/MIR plus native execution; other supported cases
+retain both C++ comparators. Failure/rollback trace guards use checked arithmetic
+without unrelated standard-library imports. A controlled wrong expected trace
+must produce secondary `GTI-R0014` and fail the same exact original-failure
+assertion; it is a discriminating negative oracle, not a passing program.
 
 The existing example oracle now uses `backend_execution.py`. Default C++ runs
 retain both native standards, every marker/count/ownership check, and observable

@@ -1,0 +1,39 @@
+// A concrete local object implements several interfaces while retaining one
+// state-bearing base. Checked reference helpers borrow it without copying it.
+interface Reader { int read(); };
+interface Writer { void write(int value) mut; };
+interface Ready { bool ready(); };
+
+class Counter {
+  mut int value;
+public:
+  Counter(int value) : value(value) {}
+  virtual int read() { return this.value; }
+  int base_value() { return this.value; }
+  void set(int value) mut { this.value = value; }
+};
+
+class Adjusted : public Reader, public Counter {
+  int adjustment;
+public:
+  Adjusted(int value) : Counter(value), adjustment(3) {}
+  int read() override { return this.base_value() + this.adjustment; }
+};
+
+class Device : public Writer, public Adjusted, public Ready {
+public:
+  Device(int value) : Adjusted(value) {}
+  void write(int value) mut override { this.set(value); }
+  bool ready() override { return this.read() == 12; }
+};
+
+int inspect(Reader& value) { return value.read(); }
+void update(mut Writer& value, int next) { value.write(next); }
+bool is_ready(Ready& value) { return value.ready(); }
+
+int main() {
+  mut Device device{4};
+  if (inspect(device) != 7) { return 1; }
+  update(device, 9);
+  return inspect(device) == 12 && is_ready(device) ? 0 : 2;
+}

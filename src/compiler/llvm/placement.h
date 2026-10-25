@@ -13,6 +13,13 @@ namespace lang::native_llvm {
           addressValue(type.arguments[0]));
 }
 
+// Exclusion only: inline hierarchy state cannot use ordinary object-byte
+// transport. Indirections transport addresses, not their referents. Unknown,
+// missing or cyclic storage fails closed; false is never inferred from it.
+// This does not establish layout, borrowing, fresh placement or admission.
+[[nodiscard]] bool containsHierarchyStorage(const MirProgram &program,
+                                            const SemanticType &type);
+
 // Fresh values have one physical destination. This plan follows only verified
 // value transport; it never elides a MIR Copy/Move or aliases a named local to
 // the caller's return storage.

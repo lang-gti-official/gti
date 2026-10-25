@@ -14,6 +14,16 @@
 #include <string_view>
 #include <type_traits>
 
+namespace lang {
+struct MirProgramTestAccess {
+  static MirProgram storageInventory(std::vector<MirClassInstance> classes) {
+    MirProgram program;
+    program.classes = std::move(classes);
+    return program;
+  }
+};
+} // namespace lang
+
 namespace {
 
 int failures = 0;
@@ -152,6 +162,107 @@ lang::VerifiedLoweredProgram lower(std::string_view source) {
   return *verified;
 }
 
+void testHierarchyStorageExclusion() {
+  using namespace lang;
+  using native_llvm::containsHierarchyStorage;
+  const auto plain = SemanticType::classType(1);
+  const auto polymorphic = SemanticType::classType(2);
+  const auto repeated = SemanticType::classType(3);
+  const auto wrapper = SemanticType::classType(4);
+  const auto derived = SemanticType::classType(5);
+  std::vector<MirClassInstance> classes{
+      {.id = 1,
+       .type = plain,
+       .declaredFields = {{.type = SemanticType::Int32}}},
+      {.id = 2, .type = polymorphic, .polymorphic = true},
+      {.id = 3,
+       .type = repeated,
+       .declaredFields = {{.type = plain}, {.type = plain}}},
+      {.id = 4, .type = wrapper, .declaredFields = {{.type = polymorphic}}},
+      {.id = 5,
+       .type = derived,
+       .bases = {{.instance = 2, .type = polymorphic}}}};
+  // Query-only component fixtures never acquire a source seal or become
+  // executable backend input; malformed variants below must fail closed.
+  const auto program = MirProgramTestAccess::storageInventory(classes);
+  expect(!containsHierarchyStorage(program, plain) &&
+             !containsHierarchyStorage(program, repeated),
+         "repeated acyclic ordinary fields are not recursive hierarchy state");
+  expect(containsHierarchyStorage(program, polymorphic) &&
+             containsHierarchyStorage(program, wrapper) &&
+             containsHierarchyStorage(program, derived),
+         "hierarchy exclusion follows inline fields and exact state bases");
+  SemanticType array(SemanticType::Array, {wrapper});
+  array.arrayLength = 2;
+  expect(containsHierarchyStorage(program, array),
+         "hierarchy exclusion follows inline array elements");
+  expect(!containsHierarchyStorage(
+             program,
+             SemanticType::referenceTo(polymorphic, AccessMode::ReadOnly)) &&
+             !containsHierarchyStorage(program,
+                                       SemanticType::rawPointerTo(polymorphic)),
+         "borrowed and raw addresses do not copy their referent storage");
+  const auto rejects = [&](const MirProgram &input, const SemanticType &type) {
+    try {
+      static_cast<void>(containsHierarchyStorage(input, type));
+      return false;
+    } catch (const BackendUnsupportedError &) {
+      return true;
+    }
+  };
+  expect(rejects(program, SemanticType::Unknown) &&
+             rejects(program, SemanticType::typeParameter(1)) &&
+             rejects(program, SemanticType::classType(99)),
+         "unknown and missing storage never grant object-byte transport");
+  auto wrongBase = classes;
+  wrongBase.back().bases.front().type = plain;
+  expect(rejects(MirProgramTestAccess::storageInventory(wrongBase), derived),
+         "base identity and concrete type must agree even after finding state");
+  wrongBase.back().bases.front() = {.instance = 99, .type = polymorphic};
+  expect(rejects(MirProgramTestAccess::storageInventory(wrongBase), derived),
+         "missing base identities never grant object-byte transport");
+  wrongBase.back().bases.front() = {.instance = 5, .type = derived};
+  expect(rejects(MirProgramTestAccess::storageInventory(wrongBase), derived),
+         "recursive base storage fails closed");
+  classes[0].declaredFields.front().type = repeated;
+  const auto cyclic = MirProgramTestAccess::storageInventory(classes);
+  expect(rejects(cyclic, plain),
+         "recursive inline storage rejects without an unbounded walk");
+  classes[0].declaredFields.front().type = SemanticType::Unknown;
+  const auto unknown = MirProgramTestAccess::storageInventory(classes);
+  expect(rejects(unknown, repeated),
+         "unknown nested storage cannot be cached as an ordinary sibling");
+  const auto sealed = lower(R"(
+    struct Plain { int value = 1; };
+    class P { public: virtual int read() { return 1; } };
+    struct Pair { Plain left = Plain(); Plain right = Plain(); };
+    struct Wrapper { P value = P(); };
+    int main() { Pair pair{}; Wrapper wrapper{}; return 0; }
+  )");
+  bool foundPair = false, foundWrapper = false;
+  for (const auto &owner : sealed.program().mir().classInstances()) {
+    if (owner.declaredFields.size() == 2) {
+      foundPair = true;
+      expect(!containsHierarchyStorage(sealed.program().mir(), owner.type),
+             "source-sealed repeated ordinary subobjects remain outside "
+             "hierarchy-storage exclusion");
+    }
+    if (!owner.polymorphic && owner.declaredFields.size() == 1 &&
+        owner.declaredFields[0].type.kind == SemanticType::Class &&
+        containsHierarchyStorage(sealed.program().mir(), owner.type))
+      foundWrapper = true;
+  }
+  expect(foundPair && foundWrapper,
+         "source-sealed field inventory preserves nested hierarchy exclusion");
+  expect(!Frontend()
+              .analyze("inline-cycle.gti", R"(
+             struct Recursive { Recursive value; };
+             int main() { Recursive value{}; return 0; }
+           )")
+              .canGenerateCode(),
+         "cyclic inline source cannot acquire a verified executable seal");
+}
+
 bool has(const lang::LlvmAdmissionPlan &plan, std::string_view family,
          std::string_view name) {
   return std::any_of(plan.requirements().begin(), plan.requirements().end(),
@@ -177,7 +288,12 @@ void testLedger() {
     nonexecuting += entry.state == LlvmCoverageState::VerifiedNonExecuting;
     if (entry.state == LlvmCoverageState::Implemented)
       expect(entry.positiveTest ==
-                 (entry.milestone == 6   ? "llvm_class_execution"
+                 (entry.family == "Shape" &&
+                          (entry.name == "NativeStaticDispatchStorage" ||
+                           entry.name == "NativeBorrowedDispatchView" ||
+                           entry.name == "NativeVirtualInvocation")
+                      ? "llvm_dispatch_execution"
+                  : entry.milestone == 6 ? "llvm_class_execution"
                   : entry.milestone == 5 ? "llvm_place_execution"
                                          : "llvm_scalar_execution"),
              "implemented families name real execution evidence");
@@ -345,10 +461,11 @@ int main() { unsafe { return identity(0); } }
          "exact unsafe source calls keep ordinary body admission");
   const auto unsafeOwner = lang::planLlvmAdmission(lower(R"(
 class Owner { public: virtual int read() { return 0; } };
-unsafe int create() { Owner value{}; return 0; }
+unsafe int create() { Owner value{}; Owner copied = value; return 0; }
 int main() { unsafe { return create(); } }
 )"));
-  expect(!unsafeOwner.admitted(),
+  expect(!unsafeOwner.admitted() &&
+             has(unsafeOwner, "Shape", "PolymorphicTransfer"),
          "caller permission cannot admit an unsupported source callee body");
   const auto classArray = lang::planLlvmAdmission(lower(R"(
 class Owner { public: Owner() {} ~Owner() {} };
@@ -588,8 +705,24 @@ int inspect(Value& value) { return value.read(); }
   for (
       const auto source :
       {R"(interface Empty {}; void accept(Empty& value) {})",
-       R"(class Base {public: Base(){}}; class Derived:public Base {public: Derived():Base(){}}; void accept(Derived& value){})",
-       R"(class Poly {public: virtual int read(){return 1;}}; class Outer {public: Poly value;}; void accept(Outer& value){})",
+       R"(class Base {public: Base(){}}; class Derived:public Base {public: Derived():Base(){}}; void accept(Derived& value){})"}) {
+    const auto borrowed = planLlvmAdmission(lower(source));
+    expect(borrowed.admitted() &&
+               std::any_of(borrowed.requirements().begin(),
+                           borrowed.requirements().end(),
+                           [](const auto &use) {
+                             return use.required && use.implementedShape &&
+                                    (use.implementedShape->name ==
+                                         "NativeBorrowedDispatchView" ||
+                                     use.implementedShape->name ==
+                                         "NativeStaticDispatchStorage");
+                           }),
+           "exact interface and state-base metadata has bounded public "
+           "representation witnesses");
+  }
+  for (
+      const auto source :
+      {R"(class Poly {public: virtual int read(){return 1;}}; class Outer {public: Poly value;}; void accept(Outer& value){})",
        R"(enum class Choice { empty, held(int value) }; class Outer {public: Choice value=Choice::empty;}; void accept(Outer& value){})",
        R"(union Payload { int value; bool flag; }; void accept(Payload& value){})"}) {
     const auto excluded = planLlvmAdmission(lower(source));
@@ -601,7 +734,7 @@ int inspect(Value& value) { return value.read(); }
                                                             "ClassKind" &&
                                                         !use.implementedShape;
                                                }),
-           "interfaces, inherited, nested polymorphic and union classes retain "
+           "nested polymorphic, payload and union classes retain "
            "unproved class uses");
   }
   const auto nestedForeign = planLlvmAdmission(lower(R"(
@@ -691,15 +824,116 @@ void accept(Outer& value) {}
   }
 }
 
+void testDispatchPerUseWitnesses() {
+  using namespace lang;
+  const auto input = lower(R"(
+    class P {
+    public:
+      mut int value;
+      P() : value(1) {}
+      virtual int read() { return this.value; }
+    };
+    int main() {
+      mut P first{};
+      P second{};
+      first.value = 5;
+      P copied = P(first);
+      first = second;
+      return copied.read();
+    }
+  )");
+  const auto plan = planLlvmAdmission(input);
+  bool goodConstruct = false, badTransfer = false, badConstruct = false;
+  for (const auto &use : plan.requirements()) {
+    if (!use.required)
+      continue;
+    if (use.entry->key() == "MirInstructionKind.Construct") {
+      goodConstruct |=
+          use.implementedShape &&
+          use.implementedShape->name == "NativeStaticDispatchStorage";
+      badConstruct |= !use.implementedShape;
+    }
+    badTransfer |= use.entry->key() == "Shape.PolymorphicTransfer" &&
+                   !use.implementedShape && use.instruction != 0;
+  }
+  expect(!plan.admitted() && goodConstruct && badConstruct && badTransfer,
+         "fresh and copy constructions in one body retain separate witnesses "
+         "and explicit pending transfer requirements");
+  const auto mutations = lower(R"(
+    class P {
+    public:
+      mut int value;
+      P() : value(1) {}
+      virtual int read() { return this.value; }
+    };
+    int main() {
+      mut P first{}; P second{};
+      first.value = 5;
+      first = second;
+      return first.read();
+    }
+  )");
+  const auto mutationPlan = planLlvmAdmission(mutations);
+  bool scalarMutation = false, objectMutation = false, objectCopy = false;
+  for (const auto address : mutationPlan.requiredBodies()) {
+    const auto *body = findMirBody(mutations.program().mir(), address);
+    std::size_t transfers = 0;
+    for (const auto &use : mutationPlan.requirements())
+      if (use.required && use.body == address &&
+          use.entry->key() == "Shape.PolymorphicTransfer")
+        transfers += use.occurrences;
+    for (const auto &block : body->blocks)
+      for (const auto &stage : block.instructions) {
+        const bool rejected = std::any_of(
+            mutationPlan.requirements().begin(),
+            mutationPlan.requirements().end(), [&](const auto &use) {
+              return use.required && use.body == address &&
+                     use.block == block.id && use.instruction == stage.id &&
+                     use.entry->key() == "Shape.PolymorphicTransfer";
+            });
+        if (stage.kind == MirInstructionKind::Load &&
+            stage.info.type.kind == SemanticType::Class)
+          objectCopy |= rejected;
+        if (stage.kind != MirInstructionKind::Assign || !stage.destination)
+          continue;
+        const auto *place = body->findPlace(*stage.destination);
+        if (place->type == SemanticType::Int32)
+          scalarMutation |= !rejected;
+        if (place->type.kind == SemanticType::Class)
+          objectMutation |= transfers == 2;
+      }
+  }
+  expect(scalarMutation && objectCopy && objectMutation,
+         "scalar writes remain distinct from the coalesced source copy and "
+         "whole-object assignment exclusions in the same body");
+  const auto global = planLlvmAdmission(lower(R"(
+    class P { public: P() {} virtual int read() { return 1; } };
+    P value{};
+    int main() { return value.read(); }
+  )"));
+  expect(!global.admitted() &&
+             std::any_of(
+                 global.requirements().begin(), global.requirements().end(),
+                 [](const auto &use) {
+                   return use.required &&
+                          use.entry->key() == "Shape.PolymorphicTransfer" &&
+                          !use.implementedShape;
+                 }),
+         "nonlocal storage keeps an explicit transfer exclusion even when an "
+         "unsupported global receiver has the preferred diagnostic span");
+}
+
 } // namespace
 
 int main() {
   try {
     testLedger();
+    testHierarchyStorageExclusion();
     testSnapshotAndWholeProgram();
     testShapeWitnesses();
     testDispatchStateDependencies();
     testConservativeClassWitnesses();
+    testDispatchPerUseWitnesses();
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';
     ++failures;

@@ -11380,6 +11380,17 @@ or resolve them using source.
 
 ### O-LLVM-10: Inheritance, Interfaces And Polymorphism
 
+- **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
+  has a dedicated public native execution gate and runnable example. It is not
+  milestone completion: owning/transfer/replacement, pure active states, exact
+  optimized cost evidence and combined O14/O16 source/evidence identities remain
+  open. The loop fixture checks results, not retained dispatch or allocations.
+- **Lifecycle authority prerequisite:** existing cleanup order and typed
+  destructor ownership do not specify destructor-observed virtual active state.
+  `DestructorDispatchObservation` conservatively gates direct/transitive
+  observations pending an approved backend-neutral phase contract; no C++ trace
+  or private LLVM helper establishes that rule. Independent constructor-state,
+  borrowed dispatch and numeric cleanup-order cases proceed.
 - **Unlock:** existing abstract/interface hierarchies and polymorphic owners.
 - **Deliver:** base subobjects, base-constructor/rollback order, verified method
   targets, dispatch tables, receiver/base adjustments, upcasts and dynamic

@@ -73,6 +73,10 @@ llvm::Value *Places::load(llvm::Value *address, const SemanticType &type) {
 void Places::store(llvm::Value *value, llvm::Value *address,
                    const SemanticType &type) {
   if (addressValue(type)) {
+    if (containsHierarchyStorage(session.program().mir(), type))
+      throw BackendUnsupportedError(
+          "LLVM hierarchy storage requires its exact fresh destination, not "
+          "object-byte transport");
     if (value == address)
       return;
     const auto layout = session.layouts().get(type);

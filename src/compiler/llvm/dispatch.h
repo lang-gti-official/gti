@@ -51,11 +51,17 @@ class Dispatch final {
 public:
   Dispatch(Session &session, const LlvmAdmissionPlan &admission);
   Dispatch(Session &, const LlvmAdmissionPlan &&) = delete;
+  [[nodiscard]] bool boundTo(const Session &selected) const {
+    return &session == &selected;
+  }
   [[nodiscard]] const std::vector<DispatchViewPlan> &
   views(HirClassInstanceId activeClass);
   [[nodiscard]] VirtualRootAbi rootAbi(HirFunctionInstanceId root);
   [[nodiscard]] const std::vector<HirFunctionInstanceId> &
   slotProfile(HirClassInstanceId view);
+  // Validate the entire active state without declaring functions, demanding
+  // source definitions, or publishing adapters/tables into the module.
+  void preflightState(HirClassInstanceId activeClass);
   // Entry receivers are the physical dispatch-pointer owner, not the logical
   // source view. Public native polymorphism remains independently gated.
   [[nodiscard]] llvm::Function *adjustment(HirClassInstanceId activeClass,
@@ -80,6 +86,17 @@ private:
   friend struct DispatchStructuralTestAccess;
   explicit Dispatch(Session &session);
   void preflightSourceBodies(HirClassInstanceId activeClass) const;
+  struct AdjustmentPlan {
+    DispatchSlotPlan selected;
+    HirClassInstanceId physicalOwner = 0;
+    VirtualAdjustmentAbi abi;
+    TypeLayout result;
+    std::vector<unsigned> channels;
+    bool directResult = false;
+  };
+  [[nodiscard]] AdjustmentPlan planAdjustment(HirClassInstanceId activeClass,
+                                              HirClassInstanceId sourceView,
+                                              HirFunctionInstanceId root);
   Session &session;
   const LlvmAdmissionPlan *admission = nullptr;
   std::map<HirClassInstanceId, std::vector<DispatchViewPlan>> views_;

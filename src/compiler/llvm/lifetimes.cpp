@@ -10,7 +10,11 @@ Lifetimes::Lifetimes(Session &session, Failures &failures, Dispatch &dispatch,
     : session(session), failures(failures), dispatch(dispatch),
       findBody(std::move(findBody)) {}
 
-void Lifetimes::preflight(const MirDropType &recipe, bool replacement) const {
+void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
+                                 const MirDropType &recipe, bool replacement) {
+  if (!dispatch.boundTo(session))
+    throw std::invalid_argument(
+        "LLVM cleanup preflight uses a foreign dispatch session");
   std::vector<HirClassInstanceId> path;
   const auto visit = [&](const auto &self,
                          const MirDropType &selected) -> void {
@@ -29,6 +33,8 @@ void Lifetimes::preflight(const MirDropType &recipe, bool replacement) const {
       if (replacement && owner.polymorphic)
         throw BackendUnsupportedError("LLVM polymorphic replacement requires a "
                                       "verified cleanup dispatch context");
+      if (owner.polymorphic && selected.requiresActiveCleanup)
+        dispatch.preflightState(owner.id);
       path.push_back(owner.id);
     } else if (selected.requiresActiveCleanup &&
                selected.type.kind != SemanticType::Array) {
@@ -165,14 +171,24 @@ void Lifetimes::active(llvm::IRBuilder<> &ir, llvm::Value *address,
                                       address, *index));
 }
 
-void Lifetimes::generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
-                               const MirBody &body,
-                               const MirInstruction &instruction,
-                               const MirConstructorInstance *constructor) {
+const MirClassInstance &
+Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
+                                   const MirBody &body,
+                                   const MirInstruction &instruction,
+                                   const MirConstructorInstance *constructor) {
+  if (!dispatch.boundTo(session))
+    throw std::invalid_argument(
+        "LLVM generated-empty preflight uses a foreign dispatch session");
+  const auto addresses = enumerateMirBodyAddresses(session.program().mir());
+  if (std::none_of(addresses.begin(), addresses.end(), [&](const auto address) {
+        return findMirBody(session.program().mir(), address) == &body;
+      }))
+    throw std::invalid_argument(
+        "LLVM generated-empty preflight uses a foreign sealed body");
   const bool construct = instruction.kind == MirInstructionKind::Construct;
   const bool base = instruction.kind == MirInstructionKind::InitializeBase;
-  if (!address || !address->getType()->isPointerTy() || (!construct && !base) ||
-      instruction.tombstone || instruction.constructorTarget ||
+  if ((!construct && !base) || instruction.tombstone ||
+      instruction.constructorTarget ||
       instruction.constructorKind != ConstructorKind::Ordinary ||
       !instruction.operands.empty() || !instruction.parameterTypes.empty() ||
       !instruction.definedFailure.empty() || instruction.functionTarget ||
@@ -253,7 +269,7 @@ void Lifetimes::generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
     interfaces.insert(interfaces.end(), selected->structuralBases.begin(),
                       selected->structuralBases.end());
   }
-  const auto storage = session.layouts().get(object.type).storage;
+  static_cast<void>(session.layouts().get(object.type));
   if (base) {
     if (!constructor || &body != &constructor->body ||
         session.program().mir().findConstructorInstance(constructor->id) !=
@@ -288,6 +304,21 @@ void Lifetimes::generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
       throw std::invalid_argument(
           "LLVM generated-empty base lost its selected type or destination");
   }
+  if (object.polymorphic)
+    dispatch.preflightState(object.id);
+  return object;
+}
+
+void Lifetimes::generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
+                               const MirBody &body,
+                               const MirInstruction &instruction,
+                               const MirConstructorInstance *constructor) {
+  if (!address || !address->getType()->isPointerTy())
+    throw std::invalid_argument(
+        "LLVM generated-empty initialization requires pointer storage");
+  const auto &object = preflightGeneratedEmpty(session, dispatch, body,
+                                               instruction, constructor);
+  const auto storage = session.layouts().get(object.type).storage;
   // The verified no-schedule operation has no source callbacks. Only empty
   // interface subobjects and private metadata exist here, never language
   // fields or existing assignment storage. Preflight every table before any
@@ -375,7 +406,7 @@ void Lifetimes::moved(llvm::IRBuilder<> &ir, llvm::Value *address,
 
 llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
                                    bool replacement) {
-  preflight(recipe, replacement);
+  preflightCleanup(session, dispatch, recipe, replacement);
   for (const auto &[previous, function] : cleanups)
     if (previous == recipe)
       return function;

@@ -203,9 +203,10 @@ VirtualRootAbi Dispatch::rootAbi(HirFunctionInstanceId root) {
   return session.abi().virtualRoot(root, found->second);
 }
 
-llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
-                                     HirClassInstanceId sourceView,
-                                     HirFunctionInstanceId root) {
+Dispatch::AdjustmentPlan
+Dispatch::planAdjustment(HirClassInstanceId activeClass,
+                         HirClassInstanceId sourceView,
+                         HirFunctionInstanceId root) {
   preflightSourceBodies(activeClass);
   const auto &family = views(activeClass);
   const auto view =
@@ -229,6 +230,9 @@ llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
       session.program().mir().findFunctionInstance(selected->target);
   if (!target)
     throw std::logic_error("LLVM adjustment lost its sealed body");
+  if (target->definitionKind != MirDefinitionKind::Source)
+    throw BackendUnsupportedError(
+        "LLVM adjustment requires a sealed source implementation");
   const auto entry = rootAbi(root);
   const auto plans = session.abi().virtualAdjustment(entry, target->id);
   // A failing terminal body can return its exact failure status. An infallible
@@ -237,13 +241,6 @@ llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
   if (target->neverReturns && !plans.implementation.statusResult)
     throw BackendUnsupportedError("LLVM infallible terminal virtual target "
                                   "requires no-normal-exit lowering");
-  const auto physical =
-      session.layouts().instance(view->location.owner.type).id;
-  const AdjustmentKey key{activeClass, sourceView,
-                          physical,    root,
-                          target->id,  selected->receiverAdjustment};
-  if (const auto found = adjustments_.find(key); found != adjustments_.end())
-    return found->second;
   const auto channel = [&](AbiParameter parameter) -> unsigned {
     for (unsigned index = 0; index < plans.entry.parameters.size(); ++index) {
       const auto &source = plans.entry.parameters[index];
@@ -256,8 +253,9 @@ llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
     throw std::logic_error(
         "LLVM adjustment cannot map an implementation ABI channel");
   };
+  std::vector<unsigned> channels;
   for (const auto &parameter : plans.implementation.parameters)
-    (void)channel(parameter);
+    channels.push_back(channel(parameter));
   const auto output = session.layouts().get(target->returnType);
   const bool directResult =
       !plans.implementation.statusResult &&
@@ -267,6 +265,79 @@ llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
       (directResult && !plans.entry.resultDestination))
     throw std::logic_error(
         "LLVM adjustment has inconsistent root result channels");
+  if (directResult) {
+    auto *result = target->returnType == SemanticType::Bool
+                       ? llvm::Type::getInt8Ty(session.context())
+                       : plans.implementation.type->getReturnType();
+    if (result != output.storage)
+      throw std::logic_error(
+          "LLVM adjustment result disagrees with target storage");
+  }
+  return {.selected = *selected,
+          .physicalOwner =
+              session.layouts().instance(view->location.owner.type).id,
+          .abi = plans,
+          .result = output,
+          .channels = std::move(channels),
+          .directResult = directResult};
+}
+
+void Dispatch::preflightState(HirClassInstanceId activeClass) {
+  preflightSourceBodies(activeClass);
+  const auto &active = *session.program().mir().findClassInstance(activeClass);
+  const auto &family = views(activeClass);
+  for (const auto &view : family) {
+    const auto *owner =
+        session.program().mir().findClassInstance(view.viewClass);
+    const auto path = session.layouts().basePath(active.type, view.path);
+    const auto physical =
+        session.layouts().baseSubobject(active.type, view.location.owner.type);
+    if (!owner || view.activeClass != activeClass || path.type != owner->type ||
+        path.offset != view.offset || physical != view.location.owner)
+      throw std::logic_error(
+          "LLVM dispatch state lost its exact physical view path");
+    const auto *storage = llvm::dyn_cast<llvm::StructType>(
+        session.layouts().get(physical.type).storage);
+    if (!storage || view.location.index >= storage->getNumElements() ||
+        storage->getElementType(view.location.index) !=
+            session.layouts().pointer())
+      throw std::logic_error(
+          "LLVM dispatch state lost its physical table-pointer storage");
+    const auto profileOwner =
+        std::find_if(family.begin(), family.end(), [&](const auto &row) {
+          return row.viewClass == view.profileOwner;
+        });
+    const auto &profile = slotProfile(view.profileOwner);
+    if (profileOwner == family.end() ||
+        profileOwner->location != view.location ||
+        profile.size() != view.slots.size())
+      throw std::logic_error(
+          "LLVM dispatch state lost its shared physical slot profile");
+    for (std::size_t index = 0; index < profile.size(); ++index) {
+      if (profile[index] != view.slots[index].root)
+        throw std::logic_error(
+            "LLVM dispatch state lost its exact root slot order");
+      const auto planned =
+          planAdjustment(activeClass, view.profileOwner, profile[index]);
+      if (planned.selected != view.slots[index])
+        throw std::logic_error(
+            "LLVM dispatch state lost its exact shared slot implementation");
+    }
+  }
+}
+
+llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
+                                     HirClassInstanceId sourceView,
+                                     HirFunctionInstanceId root) {
+  const auto planned = planAdjustment(activeClass, sourceView, root);
+  const auto &plans = planned.abi;
+  const auto &selected = planned.selected;
+  const auto *target =
+      session.program().mir().findFunctionInstance(selected.target);
+  const AdjustmentKey key{activeClass, sourceView, planned.physicalOwner,
+                          root,        target->id, selected.receiverAdjustment};
+  if (const auto found = adjustments_.find(key); found != adjustments_.end())
+    return found->second;
   auto *callee = session.abi().declareFunction(target->id);
   auto *function = llvm::Function::Create(
       plans.entry.type, llvm::GlobalValue::InternalLinkage,
@@ -277,12 +348,14 @@ llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
   llvm::IRBuilder<> ir(
       llvm::BasicBlock::Create(session.context(), "entry", function));
   std::vector<llvm::Value *> arguments;
-  for (const auto &parameter : plans.implementation.parameters) {
-    llvm::Value *argument = function->getArg(channel(parameter));
+  for (std::size_t index = 0; index < plans.implementation.parameters.size();
+       ++index) {
+    const auto &parameter = plans.implementation.parameters[index];
+    llvm::Value *argument = function->getArg(planned.channels[index]);
     if (parameter.channel == AbiChannel::Receiver &&
-        selected->receiverAdjustment != 0)
+        selected.receiverAdjustment != 0)
       argument = ir.CreateGEP(ir.getInt8Ty(), argument,
-                              ir.getInt64(selected->receiverAdjustment));
+                              ir.getInt64(selected.receiverAdjustment));
     arguments.push_back(argument);
   }
   auto *status = ir.CreateCall(plans.implementation.type, callee, arguments);
@@ -292,16 +365,13 @@ llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
     // Failure records and partially initialized result bytes are not copied.
     ir.CreateRet(status);
   } else {
-    if (directResult) {
+    if (planned.directResult) {
       llvm::Value *result = status;
       if (target->returnType == SemanticType::Bool)
         result = ir.CreateZExt(result, ir.getInt8Ty());
-      if (result->getType() != output.storage)
-        throw std::logic_error(
-            "LLVM adjustment result disagrees with target storage");
       ir.CreateAlignedStore(result,
                             function->getArg(*plans.entry.resultDestination),
-                            llvm::Align(output.alignment));
+                            llvm::Align(planned.result.alignment));
     }
     ir.CreateRet(ir.getTrue());
   }
@@ -312,7 +382,7 @@ llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
 
 llvm::GlobalVariable *Dispatch::table(HirClassInstanceId activeClass,
                                       HirClassInstanceId sourceView) {
-  preflightSourceBodies(activeClass);
+  preflightState(activeClass);
   const auto &family = views(activeClass);
   const auto view =
       std::find_if(family.begin(), family.end(), [&](const auto &row) {
@@ -324,16 +394,6 @@ llvm::GlobalVariable *Dispatch::table(HirClassInstanceId activeClass,
                      view->location.index};
   if (const auto found = tables_.find(key); found != tables_.end())
     return found->second;
-  for (const auto &slot : view->slots) {
-    const auto *target =
-        session.program().mir().findFunctionInstance(slot.target);
-    if (slot.pure || !target ||
-        (target->neverReturns && !target->mayRaiseDefinedFailure))
-      throw BackendUnsupportedError(
-          "LLVM table publication requires admitted nonpure target outcomes");
-    // Preflight all plans before demanding any definition or publishing data.
-    (void)session.abi().virtualAdjustment(rootAbi(slot.root), slot.target);
-  }
   std::vector<llvm::Constant *> slots;
   for (const auto &slot : view->slots)
     slots.push_back(adjustment(activeClass, view->profileOwner, slot.root));

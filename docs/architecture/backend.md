@@ -4392,7 +4392,7 @@ The place layer follows those paths for inherited fields and MIR-authorized
 class-reference upcasts, evaluating the source address once and retaining
 readonly/mutable permission. An already-selected base view is not adjusted
 again, and no general downcast or source member/access/override lookup is
-introduced. These helpers do not yet admit production LLVM virtual dispatch.
+introduced. Public admission remains independently restricted as described below.
 
 The private dispatch planner reuses a polymorphic state-bearing base's physical
 pointer for its derived class views; interfaces retain distinct locations.
@@ -4428,7 +4428,8 @@ triggers remain unchanged. Production dispatch binds the actual immutable
 admission plan and checks the complete source-target demand before publishing
 tables or adjustment bodies; final unresolved-definition checking is not an
 admission substitute. Only the owning structural test can construct an unbound
-private inspection probe. This does not admit production polymorphic execution.
+private inspection probe. Representation and source demand alone do not admit
+an executable polymorphic operation.
 
 Source constructor bodies consume the verified constructor dispatch-state
 schedule: entry activation when there is no state-bearing base, or activation
@@ -4477,8 +4478,66 @@ Polymorphic replacement cleanup remains explicitly rejected: its invocation
 context must establish the receiver-state policy without inferring destruction
 from reuse of a drop recipe. Dynamic owning cleanup,
 transfer/assignment-state preservation and observable pure phases
-remain separate obligations. These private prerequisites do not yet admit
-production LLVM virtual dispatch or establish native execution coverage.
+remain separate obligations.
+
+The bounded public hierarchy profile uses exact per-operation admission proofs,
+not a class-wide enable bit. `NativeStaticDispatchStorage` describes ordinary
+hierarchies with passive scalar fields and fresh whole-local final destinations,
+selected base initialization and static cleanup. "Static" describes the
+representation, not permission for global or thread-local storage.
+`NativeBorrowedDispatchView` describes checked selected class/base/interface
+addresses with preserved access; `NativeVirtualInvocation` requires the exact
+sealed root, one evaluated receiver, physical adjustment and scalar-or-void
+signature through the existing shared ABI and MIR failure edge. Abstract
+interface metadata is not an executable pure active state.
+
+Admission first records excluded transfers and complete required-body demand,
+then independently preflights exact uses in an options/snapshot-bound temporary
+session without publishing functions, tables or IR. Successful and unsupported
+occurrences remain separate even within one body. Cleanup and generated-empty
+preflights are shared with emission, which retains its own validation.
+`PolymorphicTransfer` explicitly rejects class-value copies/moves, assignment,
+replacement, by-value arguments/returns, captures, containing wrappers/arrays,
+nonlocal destinations and ownership/callback/native/thread combinations.
+The shared inline-storage exclusion follows exact fields/state bases and array
+elements, stops at references/raw pointers, and fails closed on unknown or cyclic
+storage. It grants no layout or borrow authority. Body and memory-store guards
+also reject byte transport before identity or memcpy shortcuts; copying a
+checked borrowed address is not copying its object.
+
+`DestructorDispatchObservation` remains pending: cleanup order and a destructor
+owner do not establish a virtual active-class transition. Source cleanup and
+transitive helper observations through virtual calls or unresolved escapes
+reject until an approved backend-neutral lifecycle-dispatch contract exists.
+This is a missing prerequisite, not a permanent source-language prohibition.
+The native execution gate uses verified constructor states and explicit numeric
+destructor IDs to check cleanup order without asserting that missing rule.
+Pure active states, dynamic owners and replacement remain separately pending.
+Exact pure GTI requirements may supply ABI-only owner/root/signature metadata
+without an executable body. That per-use declaration witness does not excuse a
+demanded concrete definition or promote the declaration family. Nonpure targets
+and every reachable active state retain their independent preflight and demand.
+Reference initialization presents its selected address using the destination's
+exact class-reference type before storing it. The original complete-object loan
+is unchanged; loading and forwarding an already selected interface/base alias
+does not apply the offset again.
+`llvm_dispatch_execution` owns real public native O0/O3 execution, supported
+C++20/23 comparisons and artifact-preserving exclusions, including the shipped
+`examples/llvm/inheritance-and-dispatch.gti`. A nested mutable-reference chain
+has verified source/MIR and native execution evidence but both existing C++
+standards reject its complete text vocabulary. The gate records those failed
+comparators explicitly rather than counting them as execution passes; all
+supported alias/base/method cases retain both comparators. The self-contained
+failure-cleanup guard checks an exact digit trace and preserves only the original
+failure/code/source/exit. A deliberately wrong expected trace must produce a
+secondary failure and be rejected by the same positive assertion. Importing
+`std/panic` solely for that guard would pull unrelated pending library bodies
+into the unchanged conservative virtual-call closure, so it uses checked scalar
+arithmetic instead. Hosted/stdlib composition remains pending.
+Its representative loop fixture
+checks correctness only; it proves neither retained dynamic-call cost nor
+allocation counts. Both target ABIs and separate optimized cost acceptance
+remain obligations before O-LLVM-10 can complete.
 
 `Abi` centralizes signatures for definitions, calls and future adapters:
 
@@ -4806,7 +4865,9 @@ synchronization, native-runtime, declaration/generated-item and startup enum to
 a named O-LLVM milestone. Entries distinguish pending lowering, implemented
 lowering and verified nonexecuting facts. Scalar execution entries name the
 `llvm_scalar_execution` gate; implemented places/text shapes name
-`llvm_place_execution`; class/TLS shapes name `llvm_class_execution`.
+`llvm_place_execution`; class/TLS shapes name `llvm_class_execution`. Only the
+three exact bounded hierarchy witnesses name `llvm_dispatch_execution`; the
+global class-base, polymorphic and virtual-call vocabulary remains pending.
 A nonexecuting permission/provenance fact can be inventoried without a
 runtime operation; a source-only query marked `MustBeAbsent` cannot silently
 be erased if it appears as executable input. Neither classification grants LLVM
@@ -4863,7 +4924,8 @@ types. Passive data without a use is metadata; ordered executable initialization
 is never omitted. Unknown indirect/virtual/callback/task dispatch,
 declaration-backed generated dependencies, embedding exports and rootless
 libraries conservatively select `AllExecutableBodies` and retain all generated
-items. Those shapes reject until their families are admitted. This is a bounded
+items. Each required use still needs its own admitted shape; a supported virtual
+call does not hide unrelated unsupported bodies in that conservative closure. This is a bounded
 omission proof, not speculative whole-program devirtualization.
 
 Admission scans the full inventory before returning a result. The first

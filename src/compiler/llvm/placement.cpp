@@ -1,7 +1,109 @@
 #include "placement.h"
 #include "gti/backend.h"
 
+#include <algorithm>
+#include <set>
+
 namespace lang::native_llvm {
+
+bool containsHierarchyStorage(const MirProgram &program,
+                              const SemanticType &type) {
+  // Scoped to this exact program query. A completed sibling is not a cycle;
+  // only an identity still on the current inline-storage path is recursive.
+  std::set<HirClassInstanceId> visiting;
+  std::map<HirClassInstanceId, bool> completed;
+  const auto visit = [&](const auto &self,
+                         const SemanticType &selected) -> bool {
+    if (selected.kind == SemanticType::Reference ||
+        selected.kind == SemanticType::RawPointer) {
+      if (selected.arguments.size() != 1)
+        throw BackendUnsupportedError(
+            "LLVM hierarchy transport lost its indirection type");
+      return false;
+    }
+    if (selected.kind == SemanticType::Array) {
+      if (selected.arguments.size() != 1 || selected.arrayLengthParameterId)
+        throw BackendUnsupportedError(
+            "LLVM hierarchy transport requires a concrete array element");
+      return self(self, selected.arguments.front());
+    }
+    if (selected.kind != SemanticType::Class) {
+      switch (selected.kind) {
+      case SemanticType::Void:
+      case SemanticType::Int8:
+      case SemanticType::Int16:
+      case SemanticType::Int32:
+      case SemanticType::Int64:
+      case SemanticType::UInt8:
+      case SemanticType::UInt16:
+      case SemanticType::UInt32:
+      case SemanticType::UInt64:
+      case SemanticType::Float:
+      case SemanticType::Double:
+      case SemanticType::Bool:
+      case SemanticType::Char:
+      case SemanticType::StringView:
+      case SemanticType::CString:
+      case SemanticType::NullPtr:
+      case SemanticType::Function:
+      case SemanticType::FunctionItem:
+      case SemanticType::NativeFunction:
+      case SemanticType::FunctionSignature:
+        return false;
+      case SemanticType::Enum:
+        if (std::any_of(program.integralEnums().begin(),
+                        program.integralEnums().end(),
+                        [&](const auto &row) { return row.type == selected; }))
+          return false;
+        throw BackendUnsupportedError(
+            "LLVM hierarchy transport requires a sealed integral enum");
+      default:
+        throw BackendUnsupportedError(
+            "LLVM hierarchy transport has no concrete inline-storage proof");
+      }
+    }
+    const MirClassInstance *owner = nullptr;
+    for (const auto &row : program.classInstances())
+      if (row.type == selected) {
+        if (owner)
+          throw BackendUnsupportedError(
+              "LLVM hierarchy transport has an ambiguous class identity");
+        owner = &row;
+      }
+    if (!owner || program.findClassInstance(owner->id) != owner ||
+        owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+        owner->unionLayout || owner->cOpaqueHandle)
+      throw BackendUnsupportedError(
+          "LLVM hierarchy transport requires an exact ordinary class");
+    if (visiting.contains(owner->id))
+      throw BackendUnsupportedError(
+          "LLVM hierarchy transport has recursive inline class storage");
+    if (const auto found = completed.find(owner->id); found != completed.end())
+      return found->second;
+    visiting.insert(owner->id);
+    bool result = owner->polymorphic || owner->abstract ||
+                  owner->kind == ClassKind::Interface ||
+                  !owner->bases.empty() || !owner->structuralBases.empty();
+    for (const auto &field : owner->declaredFields)
+      result = self(self, field.type) || result;
+    const auto base = [&](const auto &row) {
+      const auto *target = program.findClassInstance(row.instance);
+      if (!target || target->type != row.type ||
+          row.interface != (target->kind == ClassKind::Interface))
+        throw BackendUnsupportedError(
+            "LLVM hierarchy transport lost an exact base identity");
+      result = self(self, row.type) || result;
+    };
+    for (const auto &row : owner->bases)
+      base(row);
+    for (const auto &row : owner->structuralBases)
+      base(row);
+    visiting.erase(owner->id);
+    completed.emplace(owner->id, result);
+    return result;
+  };
+  return visit(visit, type);
+}
 
 Placement::Placement(const MirBody &body) {
   for (const auto &block : body.blocks)

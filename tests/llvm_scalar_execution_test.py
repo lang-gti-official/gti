@@ -185,8 +185,9 @@ int main() {
                 results.append(result.observable)
             if not results[0] == results[1] == results[2]:
                 raise AssertionError(f'{name}: source/failure attribution drift: {results}')
-        for name, text in {'polymorphic-owner': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }',
-                           'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; return data[0].read(); }',
+        # The former "polymorphic-owner" is a fresh local virtual-call positive,
+        # preserved verbatim by llvm_dispatch_execution, not a heap owner.
+        for name, text in {'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; return data[0].read(); }',
                            'polymorphic-tls': 'class Owner { public: virtual int read() { return 0; } }; thread_local Owner value{}; int main() { return value.read(); }'}.items():
             source = work / f'reject-{name}.gti'
             source.write_text(text)
@@ -196,7 +197,7 @@ int main() {
                                     capture_output=True, text=True, timeout=60)
             if result.returncode != 65 or 'GTI-B0003' not in result.stderr or output.read_bytes() != b'existing artifact':
                 raise AssertionError(f'unsupported {name}: {result}')
-    print('LLVM scalar O0/O3 execution, C++ differential failures and unsupported-owner controls passed')
+    print('LLVM scalar O0/O3 execution, C++ differential failures and unsupported hierarchy-storage controls passed')
 
 
 if __name__ == '__main__':

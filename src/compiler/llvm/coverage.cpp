@@ -6,6 +6,15 @@
 
 namespace lang::llvm_detail {
 
+namespace {
+constexpr bool dispatchExecutionWitness(std::string_view family,
+                                        std::string_view name) {
+  return family == "Shape" && (name == "NativeStaticDispatchStorage" ||
+                               name == "NativeBorrowedDispatchView" ||
+                               name == "NativeVirtualInvocation");
+}
+} // namespace
+
 static_assert(
     std::is_same_v<Literal, std::variant<std::monostate, std::nullptr_t,
                                          std::uint64_t, BinaryFloat,
@@ -50,7 +59,9 @@ static_assert(std::variant_size_v<LoweredGeneratedItemPayload> == 7,
         LlvmNonExecutingRule::Rule,                                            \
         Predicate,                                                             \
         LlvmCoverageState::State == LlvmCoverageState::Implemented             \
-            ? (Milestone == 6   ? "llvm_class_execution"                       \
+            ? (dispatchExecutionWitness(family, #Name)                         \
+                   ? "llvm_dispatch_execution"                                 \
+               : Milestone == 6 ? "llvm_class_execution"                       \
                : Milestone == 5 ? "llvm_place_execution"                       \
                                 : "llvm_scalar_execution")                     \
             : "llvm_admission"};                                               \

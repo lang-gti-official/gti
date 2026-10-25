@@ -68,7 +68,8 @@ public:
                }),
         channels(body.failureRecords.size() + 1),
         blocks(body.blocks.size() + 1), live(body.dropObligations.size() + 1),
-        placement(body) {
+        placement(body),
+        parameterBindings(parameters.begin(), parameters.end()) {
     emit(parameters);
   }
 
@@ -95,6 +96,7 @@ private:
   std::vector<llvm::Value *> live;
   llvm::Value *thisAddress = nullptr;
   Placement placement;
+  std::set<HirBindingId> parameterBindings;
   std::map<MirValueId, llvm::Value *> temporaries;
   llvm::Value *returnDestination = nullptr, *failureDestination = nullptr;
   llvm::Value *callerSite = nullptr, *callerArtifact = nullptr;
@@ -115,19 +117,64 @@ private:
   }
 
   [[nodiscard]] llvm::Value *destination(MirValueId value) {
+    const auto &valueType = input.findValue(value)->info.type;
+    const bool hierarchy =
+        addressValue(valueType) &&
+        containsHierarchyStorage(session.program().mir(), valueType);
     if (const auto *target = placement.target(value)) {
-      if (target->place)
+      if (target->place) {
+        if (hierarchy) {
+          const auto *place = input.findPlace(target->place);
+          const bool localBody = input.kind == MirBodyKind::Function ||
+                                 input.kind == MirBodyKind::Constructor ||
+                                 input.kind == MirBodyKind::Destructor;
+          const bool publication = std::any_of(
+              input.blocks.begin(), input.blocks.end(), [&](const auto &block) {
+                return std::any_of(
+                    block.instructions.begin(), block.instructions.end(),
+                    [&](const auto &instruction) {
+                      return !instruction.tombstone &&
+                             instruction.kind ==
+                                 MirInstructionKind::Initialize &&
+                             instruction.destination == target->place &&
+                             instruction.operands.size() == 1 &&
+                             instruction.operands[0].kind ==
+                                 MirOperandKind::Value &&
+                             instruction.operands[0].value == value;
+                    });
+              });
+          if (!place || !localBody || valueType.kind != SemanticType::Class ||
+              place->root != MirPlaceRootKind::Binding || !place->binding ||
+              parameterBindings.contains(place->binding) ||
+              !place->projections.empty() || place->foreignStorage ||
+              place->capture || place->type != valueType || !publication ||
+              !stage || stage->kind != MirInstructionKind::Construct ||
+              stage->constructorKind != ConstructorKind::Ordinary ||
+              stage->result != value)
+            throw BackendUnsupportedError("LLVM hierarchy construction lost "
+                                          "its exact fresh local publication");
+        }
         return memory.address(target->place);
+      }
       if (target->returned) {
+        if (hierarchy)
+          throw BackendUnsupportedError(
+              "LLVM hierarchy return storage is not admitted");
         if (!returnDestination)
           throw std::logic_error("LLVM object return lost its ABI destination");
         return returnDestination;
       }
+      if (hierarchy)
+        throw BackendUnsupportedError(
+            "LLVM nested hierarchy destination is not admitted");
       const auto &type = input.findValue(target->aggregate)->info.type;
       return ir.CreateGEP(session.layouts().get(type).storage,
                           destination(target->aggregate),
                           {ir.getInt64(0), ir.getInt64(target->element)});
     }
+    if (hierarchy)
+      throw BackendUnsupportedError(
+          "LLVM hierarchy construction requires its final local destination");
     auto [entry, inserted] = temporaries.try_emplace(value, nullptr);
     if (inserted)
       entry->second = memory.temporary(input.findValue(value)->info.type);
@@ -143,6 +190,12 @@ private:
     memory.store(value, address, type);
   }
   [[nodiscard]] llvm::Value *operand(const MirOperand &operand) {
+    if ((operand.kind == MirOperandKind::Copy ||
+         operand.kind == MirOperandKind::Move) &&
+        addressValue(operand.type) &&
+        containsHierarchyStorage(session.program().mir(), operand.type))
+      throw BackendUnsupportedError(
+          "LLVM hierarchy object copy/move transport is not admitted");
     if (operand.literal)
       return scalars.literal(*operand.literal, operand.type);
     if (operand.kind == MirOperandKind::Address ||
@@ -647,7 +700,18 @@ private:
               "LLVM data initialization lost its sealed global");
         break;
       }
-      result = operand(instruction.operands.at(0));
+      if (instruction.kind == MirInstructionKind::Initialize &&
+          place.type.kind == SemanticType::Reference &&
+          place.type.arguments.at(0).kind == SemanticType::Class) {
+        // The loan still protects its original object. Only this reference
+        // slot publishes the selected destination view; later uses load an
+        // already-adjusted address and must not repeat this conversion.
+        auto presentation = instruction.operands.at(0);
+        presentation.type = place.type;
+        result = memory.selected(presentation);
+      } else {
+        result = operand(instruction.operands.at(0));
+      }
       if (instruction.kind == MirInstructionKind::Assign &&
           instruction.operation >= MirOperation::AddAssign &&
           instruction.operation <= MirOperation::ShiftRightAssign) {

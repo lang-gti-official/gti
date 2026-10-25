@@ -14,6 +14,7 @@
 #include <set>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Operator.h>
@@ -26,6 +27,9 @@ namespace lang::native_llvm {
 struct DispatchStructuralTestAccess {
   static Dispatch inspect(Session &session) { return Dispatch(session); }
 };
+static_assert(
+    !std::is_constructible_v<Dispatch, Session &, LlvmAdmissionPlan &&>,
+    "dispatch cannot borrow a temporary admission plan");
 } // namespace lang::native_llvm
 
 namespace {
@@ -47,6 +51,17 @@ void rejects(Action action, std::string_view message) {
     rejected = true;
   }
   expect(rejected, message);
+}
+
+std::array<std::size_t, 4> modulePublication(Session &session) {
+  std::array<std::size_t, 4> result{session.module().size(),
+                                    session.module().global_size(), 0, 0};
+  for (const auto &function : session.module()) {
+    result[2] += function.size();
+    for (const auto &block : function)
+      result[3] += block.size();
+  }
+  return result;
 }
 
 const MirClassInstance &named(const LoweredProgram &program,
@@ -231,6 +246,14 @@ void testThunks(Session &session) {
     if (!active.polymorphic || active.abstract ||
         active.kind == ClassKind::Interface)
       continue;
+    const auto coldFunctions = session.module().size();
+    const auto coldGlobals = session.module().global_size();
+    dispatch.preflightState(active.id);
+    dispatch.preflightState(active.id);
+    expect(session.module().size() == coldFunctions &&
+               session.module().global_size() == coldGlobals,
+           "repeated cold state preflight plans every result contract without "
+           "publishing functions or tables");
     std::map<std::pair<std::vector<unsigned>, unsigned>, llvm::GlobalVariable *>
         physical;
     for (const auto &view : dispatch.views(active.id)) {
@@ -384,6 +407,14 @@ void testThunks(Session &session) {
     ir.CreateRetVoid();
     expect(!llvm::verifyFunction(*installer),
            "isolated state installation forms valid LLVM IR");
+    const auto warmFunctions = session.module().size();
+    const auto warmGlobals = session.module().global_size();
+    dispatch.preflightState(active.id);
+    dispatch.preflightState(active.id);
+    expect(session.module().size() == warmFunctions &&
+               session.module().global_size() == warmGlobals,
+           "repeated warm state preflight reuses representation caches without "
+           "publishing further functions or tables");
   }
   std::cout << "thunk-contracts: failure=" << failing << " direct=" << direct
             << " indirect=" << indirect << " bool=" << boolean
@@ -426,6 +457,16 @@ int main() { Closed value{}; return value.read() - 1; }
          "the abstract active-state plan preserves its pure fact");
   const auto functions = session.module().size();
   const auto globals = session.module().global_size();
+  for (int attempt = 0; attempt != 2; ++attempt) {
+    rejects<BackendUnsupportedError>(
+        [&] { dispatch.preflightState(open.id); },
+        "pure active-state preflight rejects without inventing an outcome");
+    dispatch.preflightState(closed.id);
+  }
+  expect(session.module().size() == functions &&
+             session.module().global_size() == globals,
+         "repeated pure rejection and nonpure preflight publish no functions "
+         "or tables");
   rejects<BackendUnsupportedError>(
       [&] { static_cast<void>(dispatch.table(open.id, open.id)); },
       "pure-bearing table publication stays explicitly gated without a failure "
@@ -441,6 +482,17 @@ int main() { Closed value{}; return value.read() - 1; }
          "unsupported pure tables publish no partial functions or data");
   expect(dispatch.table(closed.id, closed.id) != nullptr,
          "the same pure root has a valid nonpure concrete dispatch table");
+  const auto warmFunctions = session.module().size();
+  const auto warmGlobals = session.module().global_size();
+  for (int attempt = 0; attempt != 2; ++attempt) {
+    dispatch.preflightState(closed.id);
+    rejects<BackendUnsupportedError>(
+        [&] { dispatch.preflightState(open.id); },
+        "warm representation caches do not admit a pure active state");
+  }
+  expect(session.module().size() == warmFunctions &&
+             session.module().global_size() == warmGlobals,
+         "repeated warm positive and negative preflight publish no artifacts");
 }
 
 void testCallPlans(Session &session) {
@@ -593,8 +645,8 @@ int via(Reader& value) { return value.read(); }
         "reference-only body component failed its source seal");
   Session session(*input, {});
   const auto admission = planLlvmAdmission(*input);
-  expect(!admission.admitted(),
-         "private body inspection does not widen public virtual admission");
+  expect(admission.admitted(),
+         "borrowed scalar virtual calls receive exact per-use admission");
   // Inspect internal IR only for this reference-only module. No plan is
   // mutated, no production backend entry point or object publication is used.
   lowerScalarProgram(session, admission);
@@ -664,8 +716,104 @@ int via(Reader& value) { return value.read(); }
 
 void testStaticLifecycle() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
-  const auto frontend =
+  const auto nested =
       Frontend().analyze(root / "tests/fixtures/llvm_dispatch_lifecycle.gti");
+  expect(nested.canGenerateCode(), "nested lifecycle source verifies");
+  if (!nested.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> nestedIssues;
+  const auto nestedInput = verifiedLoweredProgram(
+      gti_test::lowerProgram(nested, nested.mir, nested.mir), nestedIssues);
+  if (!nestedInput)
+    throw std::runtime_error("nested lifecycle source seal failed");
+  const auto nestedAdmission = planLlvmAdmission(*nestedInput);
+  expect(!nestedAdmission.admitted() &&
+             std::any_of(nestedAdmission.requirements().begin(),
+                         nestedAdmission.requirements().end(),
+                         [](const auto &use) {
+                           return use.required &&
+                                  use.entry->family == "Shape" &&
+                                  use.entry->name == "PolymorphicTransfer" &&
+                                  !use.implementedShape;
+                         }),
+         "nested polymorphic field construction retains its explicit pending "
+         "transfer requirement");
+  const auto &nestedContainer = named(nestedInput->program(), "Container");
+  const auto &nestedTrivial = named(nestedInput->program(), "Trivial");
+  bool nestedRecipe = false;
+  for (const auto &function : nestedInput->program().mir().functionInstances())
+    for (const auto &obligation : function.body.dropObligations)
+      if (obligation.dropType.classInstance == nestedContainer.id) {
+        nestedRecipe = true;
+        expect(!nestedTrivial.requiresActiveCleanup &&
+                   std::none_of(obligation.dropType.aggregate.begin(),
+                                obligation.dropType.aggregate.end(),
+                                [&](const auto &child) {
+                                  return child.classInstance ==
+                                         nestedTrivial.id;
+                                }),
+               "the original sealed recipe omits its live trivial polymorphic "
+               "child rather than inventing liveness");
+      }
+  expect(nestedRecipe, "the original nested lifecycle cleanup remains covered");
+  Session rejectedSession(*nestedInput, {});
+  rejects<BackendUnsupportedError>(
+      [&] { lowerScalarProgram(rejectedSession, nestedAdmission); },
+      "private whole-program lowering also rejects nested polymorphic fields");
+
+  // Keep the constructor/base/failure-body inspection at whole local final
+  // destinations. The original nested-field fixture above remains rejected;
+  // its independent trivial-child cleanup contract is still checked there.
+  const auto frontend = Frontend().analyze("llvm-static-lifecycle-body.gti", R"(
+class Token {
+  int divisor = 1;
+public:
+  Token(int value) : divisor(value) {}
+  ~Token() { int checked = 12 / this.divisor; }
+};
+class Base {
+public:
+  Base(int divisor) {
+    int checked = 12 / (divisor + 1);
+    int observed = this.phase();
+  }
+  virtual int phase() { return 1; }
+  ~Base() { int observed = this.phase(); }
+};
+interface Side { int side(); };
+interface OtherSide { int other_side(); };
+class Derived : public Side, public OtherSide, public Base {
+  Token token = Token(1);
+  int quotient = 0;
+public:
+  Derived(int divisor) : Base(divisor), token(Token(divisor)), quotient(12 / divisor) {
+    int observed = this.phase();
+  }
+  int phase() override { return 2; }
+  int side() override { return 6; }
+  int other_side() override { return 7; }
+  ~Derived() { int observed = this.phase(); }
+};
+class Trivial {
+public:
+  Trivial() {}
+  virtual int phase() { return 4; }
+};
+class Container {
+  Token guard = Token(1);
+  Token guards[2] = {Token(1), Token(2)};
+public:
+  Container() : guard(Token(1)) {}
+  virtual int phase() { return 5; }
+};
+int evaluate(int divisor) {
+  Derived value{divisor};
+  Container holder{};
+  Trivial trivial{};
+  return value.phase();
+}
+int main() { return evaluate(2) - 2; }
+)");
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -681,6 +829,92 @@ void testStaticLifecycle() {
   const auto admission = planLlvmAdmission(*input);
   expect(!admission.admitted(),
          "static lifecycle IR does not widen public admission");
+  {
+    // No Failures instance or emitting Lifetimes object exists in this scope.
+    // Use actual plan-bound dispatch in otherwise cold sessions.
+    Dispatch checkedDispatch(session, admission);
+    const auto &derived = named(session.program(), "Derived");
+    const MirDropType *recipe = nullptr;
+    for (const auto &function : session.program().mir().functionInstances())
+      for (const auto &obligation : function.body.dropObligations)
+        if (obligation.dropType.classInstance == derived.id)
+          recipe = &obligation.dropType;
+    if (!recipe || recipe->aggregate.size() < 2 ||
+        recipe->aggregate.back().type.kind != SemanticType::Class)
+      throw std::runtime_error(
+          "cleanup preflight test lost its ordered child recipes");
+    const auto otherInput = verifiedLoweredProgram(
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+    if (!otherInput)
+      throw std::runtime_error("cleanup preflight test lost its second seal");
+    const auto otherPlan = planLlvmAdmission(*otherInput);
+    Session otherSession(*otherInput, {});
+    Dispatch otherDispatch(otherSession, otherPlan);
+    const LlvmBackendOptions otherOptions{
+        .optimization = LlvmCodegenOptimization::Aggressive};
+    const auto optionsPlan = planLlvmAdmission(*input, otherOptions);
+    Session optionsSession(*input, otherOptions);
+    Dispatch optionsDispatch(optionsSession, optionsPlan);
+    auto *probe = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                                false),
+        llvm::GlobalValue::InternalLinkage, "cleanup.preflight.probe",
+        session.module());
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", probe));
+    auto *state = ir.CreateAlloca(ir.getInt8Ty());
+    auto *marker = ir.CreateStore(ir.getInt8(73), state);
+    const auto unchanged = [&](const auto &action) {
+      const auto publication = modulePublication(session);
+      const auto otherPublication = modulePublication(otherSession);
+      const auto optionsPublication = modulePublication(optionsSession);
+      const auto *block = ir.GetInsertBlock();
+      const auto point = ir.GetInsertPoint();
+      action();
+      expect(modulePublication(session) == publication &&
+                 modulePublication(otherSession) == otherPublication &&
+                 modulePublication(optionsSession) == optionsPublication &&
+                 ir.GetInsertBlock() == block && ir.GetInsertPoint() == point &&
+                 marker->getPointerOperand() == state &&
+                 marker->getValueOperand() == ir.getInt8(73),
+             "cleanup preflight changes no functions, globals, blocks, IR "
+             "insertion or stored state in any session");
+    };
+    unchanged([&] {
+      Lifetimes::preflightCleanup(session, checkedDispatch, *recipe);
+      Lifetimes::preflightCleanup(session, checkedDispatch, *recipe);
+    });
+    auto lateBadChild = *recipe;
+    lateBadChild.aggregate.back().classInstance =
+        std::numeric_limits<HirClassInstanceId>::max();
+    unchanged([&] {
+      rejects<std::logic_error>(
+          [&] {
+            Lifetimes::preflightCleanup(session, checkedDispatch, lateBadChild);
+          },
+          "a late child identity failure cannot publish an earlier cleanup "
+          "helper or active-class table");
+      rejects<BackendUnsupportedError>(
+          [&] {
+            Lifetimes::preflightCleanup(session, checkedDispatch, *recipe,
+                                        true);
+          },
+          "non-emitting preflight retains polymorphic replacement rejection");
+    });
+    unchanged([&] {
+      rejects<std::invalid_argument>(
+          [&] { Lifetimes::preflightCleanup(session, otherDispatch, *recipe); },
+          "equal numeric IDs from another sealed program cannot bind cleanup "
+          "preflight");
+      rejects<std::invalid_argument>(
+          [&] {
+            Lifetimes::preflightCleanup(session, optionsDispatch, *recipe);
+          },
+          "a dispatch planner from another options session cannot validate "
+          "cleanup preflight");
+    });
+    ir.CreateRetVoid();
+  }
   // Private component inspection only: no object/executable publication and no
   // native O10 coverage claim. The original rejected admission is unchanged.
   lowerScalarProgram(session, admission);
@@ -819,15 +1053,6 @@ void testStaticLifecycle() {
   expect(
       containerObservation && !containerRecipe.destructor,
       "a parent without its own destructor still observes exact live children");
-  const auto trivial = std::find_if(
-      containerRecipe.aggregate.begin(), containerRecipe.aggregate.end(),
-      [&](const auto &child) {
-        return child.classInstance == named(session.program(), "Trivial").id;
-      });
-  expect(trivial == containerRecipe.aggregate.end() &&
-             !named(session.program(), "Trivial").requiresActiveCleanup,
-         "the sealed recipe omits a live trivial polymorphic child rather than "
-         "inventing its liveness");
   for (const auto &function : session.module())
     if (function.getName().starts_with("__gti_native_cleanup_observation_"))
       for (const auto &block : function)
@@ -973,16 +1198,30 @@ int main() { Active value{}; return 0; }
   if (!input)
     throw std::runtime_error("no-call dispatch demand source seal failed");
   const auto admission = planLlvmAdmission(*input);
-  expect(!admission.admitted() &&
+  expect(admission.admitted() &&
              admission.closure() ==
                  LlvmAdmissionClosure::SealedEntryDependencies,
-         "checked dispatch dependencies do not widen public admission or force "
-         "all unreachable bodies");
+         "checked no-call construction admits its exact state without forcing "
+         "unreachable bodies: " +
+             admission.limitation());
   Session session(*input, {});
   Dispatch dispatch(session, admission);
+  const auto &active = named(session.program(), "Active");
   const auto &dormant = named(session.program(), "Dormant");
   const auto functions = session.module().size();
   const auto globals = session.module().global_size();
+  for (int attempt = 0; attempt != 2; ++attempt) {
+    dispatch.preflightState(active.id);
+    rejects<BackendUnsupportedError>(
+        [&] { dispatch.preflightState(dormant.id); },
+        "state preflight requires every selected source body in the actual "
+        "admission plan");
+  }
+  rejects<std::logic_error>(
+      [&] {
+        dispatch.preflightState(std::numeric_limits<HirClassInstanceId>::max());
+      },
+      "an unsealed active-state identity cannot enter preflight");
   rejects<BackendUnsupportedError>(
       [&] { static_cast<void>(dispatch.table(dormant.id, dormant.id)); },
       "a real plan excluding a dormant implementation rejects the complete "
@@ -999,6 +1238,10 @@ int main() { Active value{}; return 0; }
   rejects<std::invalid_argument>(
       [&] { Dispatch mismatched(session, wrongOptions); },
       "a different options identity cannot bind checked dispatch publication");
+  const auto wrongDebugOptions = planLlvmAdmission(*input, {.debugInfo = true});
+  rejects<std::invalid_argument>(
+      [&] { Dispatch mismatched(session, wrongDebugOptions); },
+      "debug options cannot be normalized when binding dispatch preflight");
   const auto otherInput = verifiedLoweredProgram(
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
   if (!otherInput)
@@ -1014,12 +1257,213 @@ int main() { Active value{}; return 0; }
   // Private complete-body inspection with the actual unchanged plan. There
   // are no source virtual calls to trigger the historical all-body fallback.
   lowerScalarProgram(session, admission);
-  const auto &active = named(session.program(), "Active");
   auto *implementation =
       session.abi().declareFunction(active.virtualDispatch.front().target);
   expect(!implementation->empty(),
          "no-call construction defines its checked source table target through "
          "the normal body worklist, not emit-on-demand");
+  session.verify();
+}
+
+void testReferencePublication() {
+  const auto frontend = Frontend().analyze("llvm-reference-publication.gti", R"(
+interface Front { int front(); };
+interface Reader { int read(int extra); };
+class Root {
+  int value;
+public:
+  Root(int input) : value(input) {}
+  virtual int phase() { return 1; }
+  int base_value() { return this.value; }
+};
+class Middle : public Reader, public Root {
+  int bias;
+public:
+  Middle(int input) : Root(input), bias(3) {}
+  int read(int extra) override {
+    return this.base_value() + this.bias + extra;
+  }
+};
+class Leaf : public Front, public Middle {
+  int tag;
+public:
+  Leaf(int input) : Middle(input), tag(9) {}
+  int front() override { return this.tag; }
+};
+int via_reader(Reader& value, int extra) { return value.read(extra); }
+int via_root(Root& value) { return value.base_value(); }
+int main() {
+  Leaf value{7};
+  Reader& view = value;
+  Reader& again = view;
+  Root& state = value;
+  return via_reader(view, 1) + via_reader(again, 2) + via_root(state) - 30;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "source interface/base aliases verify without ownership transport");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!input)
+    throw std::runtime_error("reference publication source seal failed");
+  const auto admission = planLlvmAdmission(*input);
+  expect(admission.admitted(),
+         "exact interface/base alias publication is admitted: " +
+             admission.limitation());
+  if (!admission.admitted())
+    return;
+  Session session(*input, {});
+  const auto &leaf = named(session.program(), "Leaf");
+  const auto &reader = named(session.program(), "Reader");
+  const auto &root = named(session.program(), "Root");
+  const auto readerPath =
+      session.layouts().baseSubobject(leaf.type, reader.type);
+  const auto rootPath = session.layouts().baseSubobject(leaf.type, root.type);
+  expect(readerPath.offset != 0 && rootPath.offset != 0 &&
+             readerPath.offset != rootPath.offset,
+         "alias fixture distinguishes nonzero interface and state-base paths");
+  const auto sourceFunction = [&](std::string_view name) {
+    for (const auto &function : session.program().mir().functionInstances()) {
+      const auto *declaration =
+          session.program().findFunctionDeclaration(function.declaration);
+      if (declaration && declaration->qualifiedName == name)
+        return &function;
+    }
+    throw std::runtime_error("reference publication lost its source function");
+  };
+  const auto &main = *sourceFunction("main");
+  std::size_t leafBorrows = 0, selectedBorrows = 0,
+              interfaceInitializations = 0, baseInitializations = 0,
+              selectedInitializations = 0;
+  for (const auto &block : main.body.blocks)
+    for (const auto &stage : block.instructions) {
+      if (stage.tombstone)
+        continue;
+      if (stage.kind == MirInstructionKind::Borrow && stage.loan &&
+          stage.info.type == leaf.type)
+        ++leafBorrows;
+      if (stage.kind == MirInstructionKind::Borrow && stage.loan &&
+          stage.info.type == reader.type)
+        ++selectedBorrows;
+      if (stage.kind != MirInstructionKind::Initialize || !stage.destination ||
+          stage.operands.size() != 1)
+        continue;
+      const auto &place = *main.body.findPlace(*stage.destination);
+      if (place.type.kind != SemanticType::Reference)
+        continue;
+      const auto &operand = stage.operands.front();
+      if (operand.kind != MirOperandKind::Loan || !operand.place ||
+          !operand.loan)
+        continue;
+      interfaceInitializations += place.type.arguments.front() == reader.type &&
+                                  operand.type == leaf.type;
+      baseInitializations += place.type.arguments.front() == root.type &&
+                             operand.type == leaf.type;
+      selectedInitializations += place.type.arguments.front() == reader.type &&
+                                 operand.type == reader.type;
+    }
+  expect(leafBorrows != 0 && interfaceInitializations == 1 &&
+             baseInitializations == 1 && selectedInitializations == 1,
+         "real MIR retains source-typed provenance separately from each alias "
+         "destination presentation");
+  lowerScalarProgram(session, admission);
+  auto *lowered = session.abi().declareFunction(main.id);
+  llvm::AllocaInst *complete = nullptr;
+  std::vector<const llvm::StoreInst *> stores;
+  for (auto &block : *lowered)
+    for (auto &operation : block) {
+      if (auto *allocation = llvm::dyn_cast<llvm::AllocaInst>(&operation);
+          allocation && allocation->getAllocatedType() ==
+                            session.layouts().get(leaf.type).storage) {
+        expect(!complete, "alias fixture has one complete Leaf allocation");
+        complete = allocation;
+      }
+      if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&operation))
+        stores.push_back(store);
+    }
+  expect(complete != nullptr, "full Body lowering retains fresh Leaf storage");
+  if (!complete)
+    return;
+  std::set<const llvm::Value *> readerSlots, rootSlots;
+  std::size_t completePublications = 0;
+  for (const auto *store : stores) {
+    const auto *destination =
+        llvm::dyn_cast<llvm::AllocaInst>(store->getPointerOperand());
+    const auto *value = store->getValueOperand();
+    if (!destination || !destination->getAllocatedType()->isPointerTy())
+      continue;
+    if (value == complete) {
+      ++completePublications;
+      continue;
+    }
+    const auto *base = value;
+    while (const auto *projection = llvm::dyn_cast<llvm::GEPOperator>(base))
+      base = projection->getPointerOperand();
+    if (base != complete)
+      continue;
+    const auto offset = offsetFrom(session, value, complete);
+    if (offset == readerPath.offset)
+      readerSlots.insert(destination);
+    if (offset == rootPath.offset)
+      rootSlots.insert(destination);
+  }
+  expect(completePublications == leafBorrows,
+         "original Leaf loans publish the complete address at offset zero");
+  expect(readerSlots.size() == 1 && rootSlots.size() == 1,
+         "reference initialization stores each computed physical target view, "
+         "not its complete-object loan address");
+  std::size_t selectedCopies = 0;
+  for (const auto *store : stores)
+    if (const auto *loaded =
+            llvm::dyn_cast<llvm::LoadInst>(store->getValueOperand());
+        loaded && readerSlots.contains(loaded->getPointerOperand())) {
+      const auto *destination =
+          llvm::dyn_cast<llvm::AllocaInst>(store->getPointerOperand());
+      if (destination && destination->getAllocatedType()->isPointerTy()) {
+        readerSlots.insert(destination);
+        ++selectedCopies;
+      }
+    }
+  expect(selectedCopies == selectedBorrows + selectedInitializations &&
+             readerSlots.size() == 1 + selectedCopies,
+         "an already-selected Reader alias is copied from its slot without "
+         "another base adjustment");
+  std::size_t readerCalls = 0, rootCalls = 0;
+  for (const std::string_view name : {"via_reader", "via_root"}) {
+    const auto &target = *sourceFunction(name);
+    const auto signature = session.abi().gti(
+        target.returnType, target.parameterTypes, target.mayRaiseDefinedFailure,
+        false, target.tracksCaller);
+    const auto argument =
+        std::find_if(signature.parameters.begin(), signature.parameters.end(),
+                     [](const auto &parameter) {
+                       return parameter.channel == AbiChannel::Argument &&
+                              parameter.sourceIndex == 0;
+                     });
+    if (argument == signature.parameters.end())
+      throw std::runtime_error("alias call lost its reference ABI argument");
+    for (const auto &block : *lowered)
+      for (const auto &operation : block)
+        if (const auto *call = llvm::dyn_cast<llvm::CallInst>(&operation);
+            call && call->getCalledFunction() ==
+                        session.abi().declareFunction(target.id)) {
+          const auto *loaded = llvm::dyn_cast<llvm::LoadInst>(
+              call->getArgOperand(argument - signature.parameters.begin()));
+          const bool readerCall = name == "via_reader";
+          expect(loaded && (readerCall ? readerSlots : rootSlots)
+                               .contains(loaded->getPointerOperand()),
+                 "downstream alias call loads its selected physical view "
+                 "without a second upcast");
+          readerCalls += readerCall;
+          rootCalls += !readerCall;
+        }
+  }
+  expect(
+      readerCalls == 2 && rootCalls == 1,
+      "actual full Body IR checks both interface aliases and the state base");
   session.verify();
 }
 
@@ -1039,6 +1483,159 @@ void testGeneratedEmpty() {
   const auto admission = planLlvmAdmission(*input);
   expect(!admission.admitted(),
          "generated-empty private IR does not widen polymorphic admission");
+  {
+    // These calls need neither Failures nor an emitting Lifetimes instance.
+    Dispatch checkedDispatch(session, admission);
+    const auto &solo = named(session.program(), "Solo");
+    const auto &impl = named(session.program(), "Impl");
+    const auto &leaf = named(session.program(), "Leaf");
+    const MirBody *consumer = nullptr;
+    const MirInstruction *fresh = nullptr, *interfaces = nullptr;
+    for (const auto &function : session.program().mir().functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::Construct &&
+              instruction.constructorKind == ConstructorKind::Ordinary &&
+              !instruction.constructorTarget) {
+            if (instruction.info.type == solo.type) {
+              consumer = &function.body;
+              fresh = &instruction;
+            }
+            if (instruction.info.type == impl.type)
+              interfaces = &instruction;
+          }
+    const MirConstructorInstance *constructor = nullptr;
+    const MirInstruction *base = nullptr;
+    for (const auto &candidate : session.program().mir().constructorInstances())
+      if (candidate.owner == leaf.id)
+        for (const auto &block : candidate.body.blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.kind == MirInstructionKind::InitializeBase &&
+                instruction.info.type == solo.type &&
+                !instruction.constructorTarget) {
+              constructor = &candidate;
+              base = &instruction;
+            }
+    if (!consumer || !fresh || !interfaces || !constructor || !base)
+      throw std::runtime_error(
+          "generated-empty preflight test lost its exact operations");
+    const auto otherInput = verifiedLoweredProgram(
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+    if (!otherInput)
+      throw std::runtime_error("empty preflight test lost its second seal");
+    const auto otherPlan = planLlvmAdmission(*otherInput);
+    Session otherSession(*otherInput, {});
+    Dispatch otherDispatch(otherSession, otherPlan);
+    const LlvmBackendOptions otherOptions{
+        .optimization = LlvmCodegenOptimization::Aggressive};
+    const auto optionsPlan = planLlvmAdmission(*input, otherOptions);
+    Session optionsSession(*input, otherOptions);
+    Dispatch optionsDispatch(optionsSession, optionsPlan);
+    auto *probe = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                                false),
+        llvm::GlobalValue::InternalLinkage, "empty.preflight.probe",
+        session.module());
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", probe));
+    auto *state = ir.CreateAlloca(ir.getInt8Ty());
+    auto *marker = ir.CreateStore(ir.getInt8(91), state);
+    const auto unchanged = [&](const auto &action) {
+      const auto publication = modulePublication(session);
+      const auto otherPublication = modulePublication(otherSession);
+      const auto optionsPublication = modulePublication(optionsSession);
+      const auto *block = ir.GetInsertBlock();
+      const auto point = ir.GetInsertPoint();
+      action();
+      expect(modulePublication(session) == publication &&
+                 modulePublication(otherSession) == otherPublication &&
+                 modulePublication(optionsSession) == optionsPublication &&
+                 ir.GetInsertBlock() == block && ir.GetInsertPoint() == point &&
+                 marker->getPointerOperand() == state &&
+                 marker->getValueOperand() == ir.getInt8(91),
+             "empty preflight changes no functions, globals, blocks, IR "
+             "insertion or stored state in any session");
+    };
+    unchanged([&] {
+      for (int attempt = 0; attempt != 2; ++attempt) {
+        expect(&Lifetimes::preflightGeneratedEmpty(
+                   session, checkedDispatch, *consumer, *fresh) == &solo &&
+                   &Lifetimes::preflightGeneratedEmpty(session, checkedDispatch,
+                                                       *consumer,
+                                                       *interfaces) == &impl &&
+                   &Lifetimes::preflightGeneratedEmpty(session, checkedDispatch,
+                                                       constructor->body, *base,
+                                                       constructor) == &solo,
+               "non-emitting empty preflight retains exact local, interface "
+               "and selected-base identities");
+      }
+    });
+    auto badBody = *consumer;
+    const MirInstruction *badInstruction = nullptr;
+    for (const auto &block : badBody.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.id == fresh->id)
+          badInstruction = &instruction;
+    if (!badInstruction)
+      throw std::runtime_error(
+          "empty preflight test lost its copied operation");
+    badBody.values.at(*fresh->result - 1).definition =
+        std::numeric_limits<MirInstructionId>::max();
+    auto scheduledBody = *consumer;
+    MirInstruction *scheduledInstruction = nullptr;
+    for (auto &block : scheduledBody.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == fresh->id)
+          scheduledInstruction = &instruction;
+    if (!scheduledInstruction)
+      throw std::runtime_error(
+          "empty preflight test lost its scheduled control");
+    scheduledInstruction->info.type =
+        named(session.program(), "Scheduled").type;
+    scheduledBody.values.at(*fresh->result - 1).info.type =
+        scheduledInstruction->info.type;
+    auto copiedConstructor = *constructor;
+    unchanged([&] {
+      rejects<std::invalid_argument>(
+          [&] {
+            static_cast<void>(Lifetimes::preflightGeneratedEmpty(
+                session, checkedDispatch, badBody, *badInstruction));
+          },
+          "a copied body with a bad result identity cannot acquire sealed "
+          "empty-operation authority");
+      rejects<std::invalid_argument>(
+          [&] {
+            static_cast<void>(Lifetimes::preflightGeneratedEmpty(
+                session, checkedDispatch, scheduledBody,
+                *scheduledInstruction));
+          },
+          "a copied body cannot replace the source schedule with empty "
+          "initialization metadata");
+      rejects<std::invalid_argument>(
+          [&] {
+            static_cast<void>(Lifetimes::preflightGeneratedEmpty(
+                session, checkedDispatch, constructor->body, *base,
+                &copiedConstructor));
+          },
+          "a copied constructor record cannot publish selected-base state");
+    });
+    unchanged([&] {
+      rejects<std::invalid_argument>(
+          [&] {
+            static_cast<void>(Lifetimes::preflightGeneratedEmpty(
+                session, otherDispatch, *consumer, *fresh));
+          },
+          "another sealed program with equal numeric IDs cannot validate "
+          "empty preflight");
+      rejects<std::invalid_argument>(
+          [&] {
+            static_cast<void>(Lifetimes::preflightGeneratedEmpty(
+                session, optionsDispatch, *consumer, *fresh));
+          },
+          "another options session cannot validate empty preflight");
+    });
+    ir.CreateRetVoid();
+  }
   // Inspect the unchanged rejected plan privately, never publish native O10
   // artifacts or claim execution coverage from these representation probes.
   lowerScalarProgram(session, admission);
@@ -1515,8 +2112,10 @@ int main() {
     throw std::runtime_error("mixed field source seal failed");
   Session privateSession(*sealed, {});
   const auto gated = planLlvmAdmission(*sealed);
-  expect(!gated.admitted(),
-         "initializer prerequisite does not relax polymorphic admission");
+  expect(gated.admitted(),
+         "mixed scalar field initialization receives exact per-use dispatch "
+         "admission: " +
+             gated.limitation());
   lowerScalarProgram(privateSession, gated);
   privateSession.verify();
   auto erased = mixed.mir;
@@ -1934,6 +2533,7 @@ int main() { return 0; }
   testBodyCallHook();
   testStaticLifecycle();
   testDispatchAdmissionBinding();
+  testReferencePublication();
   testGeneratedEmpty();
   testDeclarationInitializers();
   testProvedDirectReceiver();

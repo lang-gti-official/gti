@@ -67,6 +67,12 @@ enum class Shape {
   NativeThreadStorage,
   InPlaceScalarMutation,
   StoredFieldPublication,
+  NativeStaticDispatchStorage,
+  NativeBorrowedDispatchView,
+  NativeVirtualInvocation,
+  PolymorphicTransfer,
+  PureDispatchState,
+  DestructorDispatchObservation,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \
