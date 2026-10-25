@@ -20,6 +20,7 @@ std::string metadata(const std::string &path) {
   const auto frontend = Frontend().analyze(path, R"(
 struct Node { mut Node* next = nullptr; mut int value = 7; };
 enum class Mode : int64_t { Minus = -1, Plus = 7 };
+extern "C" { int foreign(int input); }
 int inspect(Node& owner, int input) {
   mut int local = input;
   Mode mode = Mode::Minus;
@@ -64,6 +65,14 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
   }
   if (!rejected || wrong->getSubprogram())
     throw std::runtime_error("debug metadata accepted an unrelated LLVM function");
+  bool declaration = false;
+  for (const auto &candidate : input->program().mir().functionInstances())
+    if (candidate.definitionKind == MirDefinitionKind::Declaration) {
+      debug.begin({MirBodyKind::Function, candidate.id}, *wrong);
+      declaration = true;
+    }
+  if (!declaration || wrong->getSubprogram())
+    throw std::runtime_error("non-source declaration acquired a debug scope");
   const auto attributes = function->getAttributes();
   debug.begin(address, *function);
   if (attributes != function->getAttributes())
