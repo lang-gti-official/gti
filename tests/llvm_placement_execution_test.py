@@ -81,6 +81,24 @@ int main() {
   return transferred[0].value == 9 && transferred[1].value == 4 ? 0 : 2;
 }
 ''',
+    "default-arrays": r'''
+class Element {
+  mut Element* original = nullptr;
+  int id;
+public:
+  Element() : id(constructed + 1) { constructed++; this.original = &this; }
+  ~Element() {
+    if (this.original != &this) { std::panic("relocated default array element"); }
+    destroyed = destroyed * 10 + this.id;
+  }
+  bool stable() { return this.original == &this; }
+};
+int main() {
+  { Element values[2][2] = {};
+    if (constructed != 4 || !values[0][0].stable() || !values[1][1].stable()) { return 1; } }
+  return destroyed == 4321 ? 0 : 2;
+}
+''',
     "field-defaults": r'''
 struct Record {
   Pinned first = relay(1);
@@ -120,7 +138,7 @@ REJECT = {
 # The unchanged transitional backend physically relocates these immovable
 # subobjects. Do not use that behavior as the native semantic oracle.
 COMPARATOR_GAPS = {"nested-fields", "nested-arrays", "field-defaults",
-                   "array-copy-and-move"}
+                   "array-copy-and-move", "default-arrays"}
 
 # The source language still requires movable fixed-array elements. This case
 # proves that fresh elements nevertheless observe their final array address;

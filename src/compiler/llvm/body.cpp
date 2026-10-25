@@ -525,8 +525,12 @@ private:
             // Fresh elements already occupy this slot. Do not even load them
             // into an SSA aggregate: their constructor observed this address.
             if (source.kind == MirOperandKind::Value &&
-                placement.fresh(source.value))
-              continue;
+                placement.target(source.value)) {
+              const auto &target = *placement.target(source.value);
+              if (target.aggregate == *instruction.result &&
+                  target.element == index)
+                continue;
+            }
             auto *slot =
                 ir.CreateGEP(session.layouts().get(type).storage, result,
                              {ir.getInt64(0), ir.getInt64(index)});
@@ -609,8 +613,11 @@ private:
       }
       if (instruction.kind == MirInstructionKind::Initialize &&
           instruction.operands[0].kind == MirOperandKind::Value &&
-          placement.fresh(instruction.operands[0].value))
-        break;
+          placement.target(instruction.operands[0].value)) {
+        const auto &target = *placement.target(instruction.operands[0].value);
+        if (target.place == place.id)
+          break;
+      }
       if (place.type.kind != SemanticType::Reference)
         result = scalars.convert(result, instruction.operands[0].type,
                                  place.type, false);
@@ -770,7 +777,8 @@ private:
       auto *value = term.value ? operand(*term.value) : nullptr;
       if (returnDestination && value &&
           !(term.value->kind == MirOperandKind::Value &&
-            placement.fresh(term.value->value)))
+            placement.target(term.value->value) &&
+            placement.target(term.value->value)->returned))
         store(value, returnDestination, input.returnType);
       if (abi.statusResult)
         ir.CreateRet(ir.getTrue());

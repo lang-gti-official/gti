@@ -36,6 +36,12 @@ void testPlacementPlan() {
   array.arguments = {object};
   array.arrayLength = 1;
   MirBody body;
+  body.returnType = object;
+  body.places = {
+      {.id = 1, .type = array},
+      {.id = 2, .type = object},
+      {.id = 3,
+       .type = SemanticType::referenceTo(object, AccessMode::ReadOnly)}};
   MirBlock block;
   block.id = 1;
   block.instructions = {
@@ -60,14 +66,14 @@ void testPlacementPlan() {
        .info = {.type = array}},
       {.id = 4,
        .kind = MirInstructionKind::Initialize,
-       .destination = 7,
+       .destination = 1,
        .operands = {{.kind = MirOperandKind::Value,
                      .value = 3,
                      .type = array}}},
       {.id = 5,
        .kind = MirInstructionKind::Load,
        .result = 5,
-       .operands = {{.kind = MirOperandKind::Copy, .place = 7, .type = array}},
+       .operands = {{.kind = MirOperandKind::Copy, .place = 1, .type = array}},
        .info = {.type = array}},
       {.id = 6,
        .kind = MirInstructionKind::Call,
@@ -91,7 +97,7 @@ void testPlacementPlan() {
   const Placement placement(body);
   expect(placement.target(1) && placement.target(1)->aggregate == 3 &&
              placement.target(1)->element == 0 && placement.target(3) &&
-             placement.target(3)->place == 7,
+             placement.target(3)->place == 1,
          "fresh argument staging preserves exact aggregate destination paths");
   expect(placement.target(6) && placement.target(6)->returned,
          "fresh returns use the caller's result destination");
@@ -100,9 +106,19 @@ void testPlacementPlan() {
   expect(!placement.fresh(8) && !placement.fresh(9),
          "intrinsic transfers and borrowed call results are not fresh objects");
   body.blocks[0].instructions.push_back(
+      {.id = 10,
+       .kind = MirInstructionKind::Initialize,
+       .destination = 3,
+       .operands = {
+           {.kind = MirOperandKind::Value, .value = 1, .type = object}}});
+  const Placement withReference(body);
+  expect(withReference.target(1) && withReference.target(1)->aggregate == 3,
+         "referent publication cannot replace object storage with a reference "
+         "slot");
+  body.blocks[0].instructions.push_back(
       {.id = 7,
        .kind = MirInstructionKind::Initialize,
-       .destination = 8,
+       .destination = 2,
        .operands = {
            {.kind = MirOperandKind::Value, .value = 1, .type = object}}});
   bool rejected = false;

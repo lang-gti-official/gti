@@ -14,8 +14,12 @@ Placement::Placement(const MirBody &body) {
         continue;
       if (stage.kind == MirInstructionKind::Initialize && stage.destination &&
           stage.operands.size() == 1 &&
-          stage.operands[0].kind == MirOperandKind::Value)
-        bind(stage.operands[0].value, {.place = *stage.destination});
+          stage.operands[0].kind == MirOperandKind::Value) {
+        const auto *place = body.findPlace(*stage.destination);
+        if (place && addressValue(place->type) &&
+            place->type == stage.operands[0].type)
+          bind(stage.operands[0].value, {.place = *stage.destination});
+      }
       if (stage.operation == MirOperation::Aggregate && stage.result &&
           addressValue(stage.info.type))
         for (std::size_t index = 0; index < stage.operands.size(); ++index)
@@ -25,7 +29,8 @@ Placement::Placement(const MirBody &body) {
     }
     const auto &term = block.terminator;
     if (term.kind == MirTerminatorKind::Return && term.value &&
-        term.value->kind == MirOperandKind::Value)
+        term.value->kind == MirOperandKind::Value &&
+        body.returnType == term.value->type)
       bind(term.value->value, {.returned = true});
   }
 }
@@ -61,6 +66,10 @@ void Placement::bind(MirValueId value, Target target) {
 }
 
 const Placement::Target *Placement::target(MirValueId value) const {
+  if (const auto found = producers.find(value);
+      found != producers.end() &&
+      found->second->kind == MirInstructionKind::CallInput && fresh(value))
+    return target(found->second->operands[0].value);
   const auto found = targets.find(value);
   return found == targets.end() ? nullptr : &found->second;
 }
