@@ -314,8 +314,10 @@ struct Reading {
   int read() { return this.value; }
 };
 T create<T, Args...>(Args... args) { return T(args...); }
-int add(int left, int right) { return left + right; }
-int prefixed<Args...>(int prefix, Args... args) { return prefix + add(args...); }
+int prefixed<Args...>(int prefix, Args... args) {
+  Pair pair = create<Pair>(args...);
+  return prefix + pair.sum();
+}
 int main() {
   Pair pair = create<Pair>(20, 22);
   Unit empty = create<Unit>();
