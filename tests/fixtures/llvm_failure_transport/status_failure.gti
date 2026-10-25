@@ -1,0 +1,13 @@
+#include <std/io>
+class Ticket {
+  int id;
+public:
+  Ticket(int id) : id(id) {}
+  ~Ticket() { std::println(this.id); }
+};
+int leaf(int value) {
+  Ticket local{1};
+  return value + 1;
+}
+int outer(int value) { Ticket local{2}; return leaf(value); }
+int main() { return outer(2147483647); }
