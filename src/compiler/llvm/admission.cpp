@@ -795,6 +795,20 @@ public:
            mir_detail::verifiedReferenceRestoreCall(program, body, *producer);
   }
 
+  bool nativeOwnerRawReference(const MirBody &body,
+                               const MirInstruction &stage) const {
+    if (!mir_detail::rawBorrowResultLoan(body, stage) ||
+        !passiveAddress(stage.operands[0].type) ||
+        !passiveReferenceType(stage.info.type))
+      return false;
+    const auto &witness = stage.parameterTypes[1];
+    return witness.kind == SemanticType::Reference &&
+           witness.arguments.size() == 1 &&
+           witness.arguments.front().kind == SemanticType::Class &&
+           nativeValue(witness.arguments.front()) &&
+           classShape(witness.arguments.front()) == Shape::NativeClassStorage;
+  }
+
   bool unsafeCallResultProducer(const MirBody &body, const MirBlock &block,
                                 const MirInstruction &stage,
                                 const MirLoan &loan) const {
@@ -1310,6 +1324,8 @@ public:
           add(Shape::UnstagedConstructorFieldPublication,
               unstagedPublicationShape(mir, stage));
         const bool typedMemory = memoryOperation(stage);
+        const bool rawReference =
+            passiveRawReference(stage) || nativeOwnerRawReference(mir, stage);
         const auto [extendedRaw, validRaw] = nativeRawStage(mir, stage);
         const bool rawClassStage = extendedRaw && validRaw;
         const bool classArithmetic = nativePointerArithmetic(stage) && validRaw;
@@ -1438,8 +1454,7 @@ public:
               : erasedReference(stage) ? std::optional(Shape::ErasedReference)
               : passiveTextViewAddress(stage) || passiveCStringAddress(stage)
                   ? std::optional(Shape::CountedText)
-              : passiveRawReference(stage)
-                  ? std::optional(Shape::PassiveReference)
+              : rawReference ? std::optional(Shape::PassiveReference)
               : stage.intrinsic == IntrinsicKind::RawPointerConversion &&
                       stage.operands.size() == 1 &&
                       passiveAddress(stage.info.type) &&
@@ -1499,7 +1514,7 @@ public:
             stage.sourceLocation || stage.forwardsCallerLocation)
           add(Shape::CallerLocation);
         bool rawAccess =
-            passiveRawReference(stage) || primitiveRawIndex(stage) ||
+            rawReference || primitiveRawIndex(stage) ||
             (stage.kind == MirInstructionKind::Borrow &&
              stage.operands.size() == 1 &&
              stage.operands[0].kind == MirOperandKind::Loan &&
@@ -1587,7 +1602,7 @@ public:
                    passiveCStringAddress(stage))) ||
                  (stage.unsafeOperation ==
                       UnsafeOperationKind::DeclaredUnsafeCall &&
-                  passiveRawReference(stage)) ||
+                  rawReference) ||
                  (rawAccess &&
                   (stage.unsafeOperation == UnsafeOperationKind::RawIndex ||
                    stage.unsafeOperation ==

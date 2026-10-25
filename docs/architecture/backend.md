@@ -4517,9 +4517,10 @@ are returned unchanged and every other `int32_t` result becomes status 1. This
 normalization applies only to the sealed startup `ReturnEntry`, never to an
 ordinary GTI function return. The four source-location literal operations read
 their sealed caller metadata directly; text retains its UTF-8 byte extent and
-line/column retain their exact unsigned values. Isolated literal execution is
-not evidence that the owning public `source_location` wrapper is fully admitted.
-Its remaining class/reference dependencies are independently checked.
+line/column retain their exact unsigned values. The source-defined owning
+`source_location` wrapper composes these operations with independently admitted
+string storage and checked references; its runtime case is tested separately
+from isolated literals. Neither case establishes full hosted-library closure.
 
 An unsafe source call's repeated permission marker on a scalar materialization
 can be admitted only through the exact checked `CallResult` loan. The current
@@ -4533,6 +4534,14 @@ The same producer proof admits a direct same-block `CallResult`-to-`Return`
 loan transfer when its complete dependencies, access, type and HIR identity
 are unchanged and the return terminator consumes that exact escaping loan.
 It does not authorize constructing a reference from a possible owner address.
+
+Raw primitive references may use an ordinary, independently admitted native
+class reference as their lifetime witness. The centralized
+`rawBorrowResultLoan` verifier query supplies the exact parent, origin and access
+contract. The evaluated raw pointer supplies the physical address, even when
+the witness owns a different address. This does not prove pointer membership,
+extend the supported pointee layouts, or add runtime checks or alias promises;
+the unsafe caller retains its alignment, initialization and lifetime obligations.
 
 ### LLVM Places And Counted Text
 

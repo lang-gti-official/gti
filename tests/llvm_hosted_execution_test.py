@@ -78,6 +78,7 @@ def main():
         ("stdlib_surface_source_location.gti", None),
         ("llvm_hosted_unsafe_reference_load.gti", None),
         ("llvm_hosted_unsafe_reference_return.gti", None),
+        ("llvm_hosted_class_owner_reference.gti", None),
     )
     endpoints = (
         Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),

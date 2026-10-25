@@ -1,6 +1,7 @@
 #include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/hosted.h"
 #include "../src/compiler/llvm/runtime_abi.h"
+#include "../src/compiler/mir_verification_queries.h"
 #include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
@@ -290,6 +291,134 @@ void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
     }
     require(rejected, "forged unsafe return relationship cannot be admitted");
   }
+}
+
+void classOwnerRawReferenceContract(const std::filesystem::path &repository) {
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto analyze = [&](const std::filesystem::path &path,
+                           std::optional<std::string> source = {}) {
+    return Frontend(options).analyze(path, std::move(source),
+                                     {repository / "stdlib/prelude.gti"}, {},
+                                     {repository / "stdlib"});
+  };
+  const auto frontend = analyze(
+      repository / "tests/fixtures/llvm_hosted_class_owner_reference.gti");
+  require(frontend.canGenerateCode(), "owning class witness is valid GTI");
+  std::vector<LoweredProgramIssue> issues;
+  const auto program = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  require(program && planLlvmAdmission(*program).admitted(),
+          "native owner witness retains the ordinary class admission boundary");
+  std::array<bool, 2> seen{};
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.intrinsic != IntrinsicKind::RawBorrow &&
+            stage.intrinsic != IntrinsicKind::RawBorrowMut)
+          continue;
+        const auto *loan =
+            mir_detail::rawBorrowResultLoan(function.body, stage);
+        require(loan != nullptr,
+                "raw reference has the centralized loan proof");
+        const auto &formal = stage.parameterTypes[1];
+        require(formal.kind == SemanticType::Reference &&
+                    formal.arguments.size() == 1 &&
+                    formal.arguments.front().kind == SemanticType::Class,
+                "raw reference is tied to an ordinary class witness");
+        seen[stage.intrinsic == IntrinsicKind::RawBorrowMut] = true;
+        for (unsigned mutation = 0; mutation != 5; ++mutation) {
+          auto invalidBody = function.body;
+          auto invalid = stage;
+          auto &invalidLoan = invalidBody.loans[loan->id - 1];
+          switch (mutation) {
+          case 0:
+            invalidLoan.parent = 0;
+            break;
+          case 1:
+            invalidLoan.source = 0;
+            break;
+          case 2:
+            invalidLoan.access = loan->access == AccessMode::Mutable
+                                     ? AccessMode::ReadOnly
+                                     : AccessMode::Mutable;
+            break;
+          case 3:
+            invalid.parameterTypes[1].referenceAccess =
+                formal.referenceAccess == AccessMode::Mutable
+                    ? AccessMode::ReadOnly
+                    : AccessMode::Mutable;
+            break;
+          case 4:
+            invalid.operands[0].value = 0;
+            break;
+          }
+          require(!mir_detail::rawBorrowResultLoan(invalidBody, invalid),
+                  "forged parent/source/access/formal/address loses its proof");
+        }
+      }
+  require(seen[0] && seen[1], "both class-witness access modes are exercised");
+
+  const std::string owner = R"(
+#include <std/memory>
+struct Owner {
+  mut int value;
+  std::unique_ptr<int> token;
+  Owner() : value(7), token(std::make_unique<int>(5)) {}
+};
+)";
+  const std::array badBodies{
+      R"(int& escape() {
+           mut Owner owner{};
+           unsafe { return std::assume_ref(&owner.value, owner); }
+         }
+         int main() { return 0; })",
+      R"(void consume(Owner value) {}
+         int main() {
+           mut Owner owner{};
+           int& read = unsafe { std::assume_ref(&owner.value, owner) };
+           consume(std::move(owner));
+           return read;
+         })",
+      R"(int main() {
+           mut Owner owner{};
+           mut int& first = unsafe { std::assume_mut(&owner.value, owner) };
+           mut int& second = unsafe { std::assume_mut(&owner.value, owner) };
+           first = 1;
+           second = 2;
+           return 0;
+         })",
+  };
+  for (const auto body : badBodies) {
+    const auto invalid = analyze("invalid-owner-loan.gti", owner + body);
+    require(
+        !invalid.canGenerateCode() &&
+            std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.phase == DiagnosticPhase::Semantics;
+                        }),
+        "owner death, movement and overlapping mutation remain rejected");
+  }
+  const auto unsupported = analyze("unsupported-owner-layout.gti", R"(
+#include <std/memory>
+struct Owner {
+  int value = 7;
+  virtual int observe() { return this.value; }
+  ~Owner() {}
+};
+int main() {
+  mut Owner owner{};
+  int& read = unsafe { std::assume_ref(&owner.value, owner) };
+  return read == 7 ? 0 : 1;
+}
+)");
+  require(unsupported.canGenerateCode(), "unsupported layout is valid source");
+  const auto pending = verifiedLoweredProgram(
+      gti_test::lowerProgram(unsupported, unsupported.mir, unsupported.mir),
+      issues);
+  require(pending && !planLlvmAdmission(*pending).admitted(),
+          "primitive pointee does not admit an unsupported owner layout");
 }
 
 void sourceMetadataContract(const std::filesystem::path &repository) {
@@ -592,6 +721,7 @@ int main(int argc, char **argv) {
   try {
     unsafeReferenceLoadContract(std::filesystem::canonical(argv[1]));
     unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]));
+    classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]));
     sourceMetadataContract(std::filesystem::canonical(argv[1]));
     for (const auto &test : cases)
       for (auto optimization :
