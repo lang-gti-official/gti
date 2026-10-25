@@ -21,6 +21,7 @@ struct AbiParameter {
   std::size_t sourceIndex = 0;
   bool indirect = false;
   AbiExtension extension = AbiExtension::None;
+  friend bool operator==(const AbiParameter &, const AbiParameter &) = default;
 };
 struct FunctionAbi {
   llvm::FunctionType *type = nullptr;
@@ -31,6 +32,22 @@ struct FunctionAbi {
   std::optional<unsigned> failureDestination;
   void applyTo(llvm::Function &function) const;
   void applyTo(llvm::CallBase &call) const;
+  friend bool operator==(const FunctionAbi &, const FunctionAbi &) = default;
+};
+
+struct VirtualRootAbi {
+  HirFunctionInstanceId root = 0;
+  std::vector<HirFunctionInstanceId> implementations;
+  FunctionAbi call;
+  bool mayFail = false;
+  bool tracksCaller = false;
+  friend bool operator==(const VirtualRootAbi &,
+                         const VirtualRootAbi &) = default;
+};
+
+struct VirtualAdjustmentAbi {
+  FunctionAbi entry;
+  FunctionAbi implementation;
 };
 
 // One planner is used for definitions, calls and adapters. No foreign aggregate
@@ -43,6 +60,12 @@ public:
                                 bool tracksCaller = false);
   [[nodiscard]] FunctionAbi nativeC(const SemanticType &result,
                                     std::span<const SemanticType> parameters);
+  [[nodiscard]] VirtualRootAbi
+  virtualRoot(HirFunctionInstanceId root,
+              std::span<const HirFunctionInstanceId> implementations);
+  [[nodiscard]] VirtualAdjustmentAbi
+  virtualAdjustment(const VirtualRootAbi &root,
+                    HirFunctionInstanceId implementation);
   [[nodiscard]] llvm::StructType *failureRecord() const {
     return failureRecord_;
   }
@@ -77,6 +100,7 @@ private:
   llvm::StructType *failureSite_;
   llvm::StructType *failureOutcome_;
   llvm::StructType *failureEmergency_;
+  std::map<HirFunctionInstanceId, VirtualRootAbi> virtualRoots_;
 };
 
 } // namespace lang::native_llvm

@@ -1519,6 +1519,16 @@ struct MirConstructorInitializer {
                          const MirConstructorInitializer &) = default;
 };
 
+struct MirConstructorDispatchState {
+  HirClassInstanceId activeClass = 0;
+  // Activation follows successful execution of this exact InitializeBase.
+  // Zero selects entry only when there is no state-bearing base.
+  MirInstructionId afterBaseInitialization = 0;
+
+  friend bool operator==(const MirConstructorDispatchState &,
+                         const MirConstructorDispatchState &) = default;
+};
+
 struct MirConstructorInstance {
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
@@ -1542,6 +1552,9 @@ struct MirConstructorInstance {
   bool mayRaiseDefinedFailure = true;
   MirEffectSummary effectSummary;
   std::vector<MirConstructorInitializer> initializers;
+  // Absent for a construction family whose base staging is not represented
+  // yet. This remains valid core MIR; native admission must reject that shape.
+  std::optional<MirConstructorDispatchState> dispatchState;
   MirBody body;
 
   friend bool operator==(const MirConstructorInstance &,

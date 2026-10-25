@@ -37,7 +37,9 @@ def main() -> None:
         (include / "mir.h").unlink()
         for name, record in (("semantic_model.h", "ClassVirtualDispatch"),
                              ("hir.h", "HirVirtualDispatch"),
-                             ("lowered_program.h", "LoweredClassInstance")):
+                             ("lowered_program.h", "LoweredClassInstance"),
+                             ("mir.h", "MirConstructorDispatchState"),
+                             ("lowered_program.h", "LoweredConstructorInstance")):
             original = (root / "include/gti" / name).read_text()
             marker = f"struct {record} {{"
             assert marker in original, f"missing census record: {record}"

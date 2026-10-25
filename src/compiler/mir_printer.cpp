@@ -808,6 +808,12 @@ public:
       output << " may-raise-defined-failure="
              << instance.mayRaiseDefinedFailure;
       effectSummary(instance.effectSummary);
+      output << " dispatch-state=";
+      if (instance.dispatchState)
+        output << instance.dispatchState->activeClass << ':'
+               << instance.dispatchState->afterBaseInitialization;
+      else
+        output << "unrepresented";
       output << " initializers=[";
       for (std::size_t index = 0; index < instance.initializers.size();
            ++index) {

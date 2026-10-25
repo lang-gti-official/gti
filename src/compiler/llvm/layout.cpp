@@ -3,6 +3,7 @@
 
 #include <limits>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace lang::native_llvm {
 
@@ -140,7 +141,7 @@ TypeLayout Layouts::record(const SemanticType &type) {
   if (entry.building)
     throw std::logic_error("recursive by-value LLVM record layout");
   const auto &instance = *entry.instance;
-  if (instance.cOpaqueHandle || instance.polymorphic ||
+  if (instance.cOpaqueHandle ||
       instance.compilerCapability != CompilerCapabilityTypeKind::None)
     throw BackendUnsupportedError(
         "LLVM record representation requires its later "
@@ -154,6 +155,8 @@ TypeLayout Layouts::record(const SemanticType &type) {
       fields.push_back(get(field.type).storage);
     if (instance.requiresActiveDropState)
       fields.push_back(llvm::Type::getInt8Ty(session.context()));
+    if (instance.polymorphic)
+      fields.push_back(pointer());
     if (instance.unionLayout) {
       const auto &expected = *instance.unionLayout;
       llvm::Type *anchor = llvm::Type::getInt8Ty(session.context());
@@ -270,6 +273,49 @@ std::optional<unsigned> Layouts::activeIndex(const SemanticType &type) const {
     return {};
   return static_cast<unsigned>(owner.bases.size() +
                                owner.declaredFields.size());
+}
+
+std::optional<unsigned> Layouts::dispatchIndex(const SemanticType &type) const {
+  const auto &owner = instance(type);
+  if (!owner.polymorphic)
+    return {};
+  return static_cast<unsigned>(owner.bases.size() +
+                               owner.declaredFields.size() +
+                               (owner.requiresActiveDropState ? 1 : 0));
+}
+
+BaseSubobjectLayout
+Layouts::basePath(const SemanticType &type,
+                  std::span<const HirClassInstanceId> path) {
+  BaseSubobjectLayout result{.type = type};
+  std::unordered_set<HirClassInstanceId> seen{instance(type).id};
+  for (const auto id : path) {
+    const auto &owner = instance(result.type);
+    const HirBaseInstance *selected = nullptr;
+    unsigned index = 0;
+    for (unsigned candidate = 0; candidate < owner.bases.size(); ++candidate)
+      if (owner.bases[candidate].instance == id) {
+        if (selected)
+          throw std::logic_error(
+              "LLVM base path has ambiguous direct identity");
+        selected = &owner.bases[candidate];
+        index = candidate;
+      }
+    if (!selected || !seen.insert(id).second ||
+        instance(selected->type).id != id)
+      throw std::logic_error("LLVM base path lost its sealed direct identity");
+    const auto parent = get(result.type);
+    const auto offset = parent.fieldOffsets.at(index);
+    constexpr auto limit =
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    if (offset > limit || result.offset > limit - offset)
+      throw BackendUnsupportedError(
+          "LLVM base adjustment exceeds target range");
+    result.offset += offset;
+    result.indices.push_back(index);
+    result.type = selected->type;
+  }
+  return result;
 }
 
 } // namespace lang::native_llvm

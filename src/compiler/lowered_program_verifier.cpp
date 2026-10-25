@@ -1367,6 +1367,7 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         instance.typeArguments != mir.typeArguments ||
         instance.valueArguments != mir.valueArguments || instance.owner == 0 ||
         instance.parameterTypes != mir.parameterTypes ||
+        instance.dispatchState != mir.dispatchState ||
         mir.constexprConstructor !=
             (declaration != nullptr && declaration->constexprConstructor) ||
         mir.requiresUnsafe !=

@@ -1071,6 +1071,12 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
     values.compileTimeValues(instance.valueArguments);
     output << " parameters=";
     values.semanticTypes(instance.parameterTypes);
+    output << " dispatch-state=";
+    if (instance.dispatchState)
+      output << instance.dispatchState->activeClass << ':'
+             << instance.dispatchState->afterBaseInitialization;
+    else
+      output << "unrepresented";
     output << " instantiation=";
     if (instance.instantiationSource) {
       values.sourceSpan(*instance.instantiationSource);

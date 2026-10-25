@@ -5,6 +5,7 @@ class Root {
 public:
   mut int root;
   Root(int value) : root(value) {}
+  ~Root() {}
   int base_value() { return this.root; }
   virtual int read() { return this.root; }
 };

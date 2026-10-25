@@ -340,6 +340,12 @@ final target coherence and paths independently. Abstract classes may retain pure
 targets. Lowered declaration and instance records seal and serialize the same
 selection. These are backend-neutral facts; this metadata alone does not admit
 LLVM virtual execution or prescribe a table layout or physical call ABI.
+Represented polymorphic constructor stages may also carry an exact active-class
+plan anchored after successful `InitializeBase`, or at entry when no state-bearing
+base exists. Verification checks the selected instruction and success dominance;
+optimization preserves that identity. Absence remains valid core MIR for existing
+base-call families whose staging is incomplete, and requires a native admission
+gate rather than an invented entry transition.
 Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains
@@ -3471,6 +3477,21 @@ the exact formal, source place, load and unsuspended entry loan; an early loan
 endpoint cannot be hidden behind the loaded SSA value. The base itself still
 cannot retain borrowed state. This permits forwarding a dynamic text view into
 an owning base constructor without mistaking it for a borrowed base object.
+An exact incoming scalar reference can also forward its address into the
+selected base reference formal, with the same referent and compatible access.
+Its `CallInput` names the constructor-initializer ordinal and has no ordinary
+HIR call-site identity; it appears at its source-argument position and
+`InitializeBase` is its sole argument consumer. Other arguments in this bounded
+reference family must be inert literals or direct incoming passive scalar
+formals. Effectful, failing, terminal, or owning later arguments remain valid
+source but need the fuller ordered prepared-input protocol before native staging.
+No terminal-abandonment relaxation is implied. The
+source seal binds the runtime dereference place to the exact HIR formal, not
+another same-typed parameter. A mutable formal retains its existing entry
+`Parameter` loan and permission; no replacement loan or endpoint is invented.
+The complete argument family is checked before publishing any such input, so
+a later unsupported owning argument cannot leave partial staging or a false
+constructor-state anchor. These MIR facts do not extend C++ backend admission.
 Interprocedural effect analysis follows
 the selected base constructor, so its allocation, memory, and other effects
 remain visible in the derived constructor's summary and to the optimizer.

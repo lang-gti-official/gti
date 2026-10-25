@@ -535,6 +535,7 @@ struct LoweredConstructorInstance {
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
+  std::optional<MirConstructorDispatchState> dispatchState;
   std::optional<SourceSpan> instantiationSource;
   SourceSpan source;
 

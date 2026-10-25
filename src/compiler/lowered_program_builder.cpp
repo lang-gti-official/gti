@@ -1205,6 +1205,89 @@ private:
       return reject("constructor instance " + std::to_string(index + 1) +
                     " differs");
     }
+    if (source.initializers.size() != lowered.initializers.size())
+      return reject("constructor initializer inventory differs from HIR");
+    for (std::size_t stage = 0; stage < source.initializers.size(); ++stage) {
+      const auto &input = source.initializers[stage];
+      const auto &output = lowered.initializers[stage];
+      if (input.kind != output.kind || input.targetType != output.targetType ||
+          input.field != output.field || input.base != output.base ||
+          input.constructorTarget != output.constructorTarget ||
+          input.arguments != output.arguments ||
+          input.explicitArgumentCount != output.explicitArgumentCount ||
+          input.storesReference != output.storesReference ||
+          input.borrowAccess != output.borrowAccess ||
+          input.generatedDefault != output.generatedDefault ||
+          input.ownedParameter != output.ownedParameter)
+        return reject("constructor initializer selection differs from HIR");
+    }
+    // A direct forwarded reference names the semantic HIR formal, not merely
+    // another same-typed binding. MIR checks its access/path/lifetime; this
+    // source bridge independently binds that path to the selected argument.
+    for (const auto &block : lowered.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::InitializeBase ||
+            instruction.constructorInitializer == 0 ||
+            instruction.constructorInitializer > source.initializers.size())
+          continue;
+        const auto &initializer =
+            source.initializers[instruction.constructorInitializer - 1];
+        const bool referenceFamily =
+            std::any_of(instruction.parameterTypes.begin(),
+                        instruction.parameterTypes.end(), [](const auto &type) {
+                          return type.kind == SemanticType::Reference;
+                        });
+        if (!referenceFamily)
+          continue;
+        for (std::size_t argument = 0; argument < instruction.operands.size();
+             ++argument) {
+          const auto &operand = instruction.operands[argument];
+          const bool isReference = operand.type.kind == SemanticType::Reference;
+          const auto *prepared = operand.kind == MirOperandKind::Value
+                                     ? lowered.body.findValue(operand.value)
+                                     : nullptr;
+          const auto *inputBlock =
+              prepared ? lowered.body.findBlock(prepared->definitionBlock)
+                       : nullptr;
+          const MirInstruction *input = nullptr;
+          if (inputBlock)
+            for (const auto &candidate : inputBlock->instructions)
+              if (candidate.id == prepared->definition)
+                input = &candidate;
+          const auto *reference =
+              input &&
+                      input->kind == (isReference
+                                          ? MirInstructionKind::CallInput
+                                          : MirInstructionKind::Load) &&
+                      input->operands.size() == 1
+                  ? &input->operands.front()
+                  : nullptr;
+          const auto *place =
+              reference ? lowered.body.findPlace(reference->place) : nullptr;
+          const auto *value =
+              argument < initializer.arguments.size()
+                  ? source.body.findValue(initializer.arguments[argument])
+                  : nullptr;
+          if (!isReference && value && value->kind == HirValueKind::Literal) {
+            if (!input || input->literal != value->literal)
+              return reject("base reference-family literal differs from HIR");
+            continue;
+          }
+          const auto binding = std::find_if(
+              source.body.bindings.begin(), source.body.bindings.end(),
+              [&](const auto &candidate) {
+                return place && candidate.id == place->binding;
+              });
+          if (!value || value->kind != HirValueKind::Variable ||
+              binding == source.body.bindings.end() ||
+              binding->info.symbol != value->symbol ||
+              std::find(source.parameterBindings.begin(),
+                        source.parameterBindings.end(),
+                        binding->id) == source.parameterBindings.end())
+            return reject(
+                "base reference input differs from its exact HIR formal");
+        }
+      }
   }
   for (std::size_t index = 0; index < hir.destructorInstances().size();
        ++index) {
@@ -1474,6 +1557,8 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   }
   lowered.constructorInstances_.reserve(hir.constructorInstances().size());
   for (const HirConstructorInstance &instance : hir.constructorInstances()) {
+    const auto *sourceConstructor =
+        sourceMir.findConstructorInstance(instance.id);
     lowered.constructorInstances_.push_back(
         {.id = instance.id,
          .sourceUnit = instance.sourceUnit,
@@ -1482,6 +1567,8 @@ LoweredProgramBuild LoweredProgramBuilder::build(
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
          .parameterTypes = instance.parameterTypes,
+         .dispatchState = sourceConstructor ? sourceConstructor->dispatchState
+                                            : std::nullopt,
          .instantiationSource = instance.instantiationSite,
          .source = instance.source == nullptr
                        ? SourceSpan{}

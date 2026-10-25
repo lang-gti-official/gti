@@ -606,6 +606,7 @@ add_library(
   "src/compiler/llvm/session.cpp"
   "src/compiler/llvm/layout.cpp"
   "src/compiler/llvm/abi.cpp"
+  "src/compiler/llvm/dispatch.cpp"
   "src/compiler/llvm/runtime_abi.cpp"
   "src/compiler/llvm/reachability.cpp"
   "src/compiler/llvm/failure.cpp"

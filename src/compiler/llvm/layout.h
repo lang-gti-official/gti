@@ -19,6 +19,12 @@ struct TypeLayout {
   std::vector<std::uint64_t> fieldOffsets;
 };
 
+struct BaseSubobjectLayout {
+  SemanticType type = SemanticType::Unknown;
+  std::uint64_t offset = 0;
+  std::vector<unsigned> indices;
+};
+
 // All layout queries, allocation sizes and ABI address-only choices share this
 // session-owned map. Opaque LLVM declarations are allocated before their
 // bodies.
@@ -34,6 +40,10 @@ public:
                                    HirClassInstanceId base) const;
   [[nodiscard]] std::optional<unsigned>
   activeIndex(const SemanticType &type) const;
+  [[nodiscard]] std::optional<unsigned>
+  dispatchIndex(const SemanticType &type) const;
+  [[nodiscard]] BaseSubobjectLayout
+  basePath(const SemanticType &type, std::span<const HirClassInstanceId> path);
 
 private:
   friend class Session;

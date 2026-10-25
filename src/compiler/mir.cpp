@@ -48,6 +48,7 @@ stagedPayloadConstruction(const MirInstruction &instruction) {
 [[nodiscard]] bool orderedInvocation(const MirInstruction &instruction) {
   return instruction.kind == MirInstructionKind::Call ||
          instruction.kind == MirInstructionKind::Construct ||
+         instruction.kind == MirInstructionKind::InitializeBase ||
          stagedPayloadConstruction(instruction);
 }
 } // namespace
@@ -10353,6 +10354,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
          (!instruction.functionTarget && !instruction.constructorTarget)))
       return false;
     const bool callInput = instruction.kind == MirInstructionKind::CallInput;
+    const bool baseCallInput =
+        callInput && body.kind == MirBodyKind::Constructor &&
+        instruction.constructorInitializer != 0 && instruction.callSite == 0 &&
+        instruction.callInputRole == MirCallInputRole::Argument;
     const bool targetlessBorrowProbe =
         instruction.kind == MirInstructionKind::Call &&
         instruction.parameterTypes.empty() && instruction.lifecycle.empty() &&
@@ -10409,7 +10414,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         (instruction.constructorInitializer != 0 &&
          (body.kind != MirBodyKind::Constructor ||
           (instruction.kind != MirInstructionKind::Initialize &&
-           instruction.kind != MirInstructionKind::InitializeBase))) ||
+           instruction.kind != MirInstructionKind::InitializeBase &&
+           !baseCallInput))) ||
         (instruction.synchronization.kind !=
              SynchronizationOperationKind::None &&
          instruction.kind != MirInstructionKind::Call) ||
@@ -10419,7 +10425,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
          instruction.kind != MirInstructionKind::InitializeBase &&
          !instruction.parameterTypes.empty()) ||
         (callInput != instruction.callInputRole.has_value()) ||
-        (callInput && instruction.callSite == 0) ||
+        (callInput && instruction.callSite == 0 && !baseCallInput) ||
         (!callInput && instruction.defaultArgument) ||
         (instruction.defaultArgument &&
          instruction.callInputRole != MirCallInputRole::Argument) ||
@@ -11578,7 +11584,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  [](const MirOperand &operand, const SemanticType &type) {
                    return operand.type == type &&
                           (operand.kind == MirOperandKind::Value ||
-                           operand.kind == MirOperandKind::Constant);
+                           operand.kind == MirOperandKind::Constant ||
+                           (type.kind == SemanticType::Reference &&
+                            type.arguments.size() == 1 &&
+                            ((operand.kind == MirOperandKind::BorrowRead &&
+                              type.referenceAccess == AccessMode::ReadOnly) ||
+                             (operand.kind == MirOperandKind::BorrowWrite &&
+                              type.referenceAccess == AccessMode::Mutable))));
                  }) &&
              !instruction.loan && !instruction.functionTarget &&
              !instruction.bodyTarget && !instruction.lambdaTarget &&
@@ -14760,6 +14772,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const bool callLike =
           invocation != nullptr && orderedInvocation(*invocation);
       if (!callLike || invocation->callSite != instruction.callSite ||
+          (invocation->kind == MirInstructionKind::InitializeBase &&
+           (receiverUse || instruction.constructorInitializer !=
+                               invocation->constructorInitializer)) ||
           ((invocation->kind == MirInstructionKind::Construct ||
             stagedPayloadConstruction(*invocation)) &&
            receiverUse) ||
