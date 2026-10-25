@@ -3622,7 +3622,7 @@ public:
           });
       if (failure) {
         writeIndent();
-        output << "template <typename, bool> friend class "
+        output << "template <typename, bool, bool> friend class "
                   "::gti_internal::backend::mir_lifetime_slot;\n";
         writeIndent();
         output

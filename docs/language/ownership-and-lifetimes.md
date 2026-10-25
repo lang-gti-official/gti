@@ -2285,7 +2285,16 @@ int values[4] = {1, 2, 3, 4};
 
 They are ordinary bounded values, not owning pointers or allocation handles.
 They never decay to pointers, and their copy, move, and destruction traits
-follow the element type. The same structural rule applies when the array is a
+follow the element type. Initial publication from exact brace elements does
+not itself copy or move the array. Each element must independently support its
+written operation: fresh construction can initialize an element with deleted
+copy/move constructors, while an existing lvalue requires copying and explicit
+movement requires movement. The same rule applies recursively to nested braces
+and `{}` default initialization. Constructors observe the final element address;
+failure destroys only completed elements in reverse order. This does not give
+the array copy/move capabilities its elements lack. A fixed-array declaration
+still requires an initializer; it is never uninitialized inline object storage.
+The same structural rule applies when the array is a
 class field, including move-only and interface-implementing concrete element
 types: the containing class inherits the array's copy, move, and cleanup
 traits, and each constructed element owns one corresponding drop.

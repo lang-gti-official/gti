@@ -128,12 +128,21 @@ int main() {
         "class array aggregates never invent default-constructed scalar SSA "
         "arrays");
     const std::regex placement(
-        R"(::new \(static_cast<void \*>\(std::addressof\(__gti_mir_p_[0-9]+\)\)\) std::array<::__gti_program::[a-z_]+, [0-9]+>\{std::move\(__gti_mir_p_[0-9]+\.get\(\)\))");
-    expect(
-        std::distance(std::sregex_iterator(cpp.begin(), cpp.end(), placement),
-                      std::sregex_iterator()) == 5,
-        "each class array constructs its final field from exact owned element "
-        "slots");
+        R"(false, true> __gti_mir_p_[0-9]+\(std::addressof\(\(__gti_mir_p_[0-9]+\)\[[0-9]+\]\)\))");
+    const auto fieldElements = [&] {
+      std::size_t count = 0;
+      for (const auto &owner : frontend.mir.classInstances())
+        if (owner.declaredFields.size() == 6)
+          for (const auto &field : owner.declaredFields)
+            if (field.type.arguments.front().kind == lang::SemanticType::Class)
+              count += field.type.arrayLength;
+      return count;
+    }();
+    expect(static_cast<std::size_t>(std::distance(
+               std::sregex_iterator(cpp.begin(), cpp.end(), placement),
+               std::sregex_iterator())) == fieldElements,
+           "each fresh class element aliases its final field address rather "
+           "than moving from independent staging");
     for (const std::string_view name :
          {"passive_polymorphic_item", "counted_polymorphic_item",
           "field_array_owner"})
