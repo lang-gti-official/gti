@@ -1,11 +1,16 @@
 #include "gti/frontend.h"
 #include "gti/llvm_admission.h"
+#include "gti/llvm_backend.h"
 #include "gti/lowered_program_builder.h"
+#include "gti/mir_verifier.h"
 
 #include "../src/compiler/llvm/coverage.h"
 #include "../src/compiler/llvm/placement.h"
 
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -176,7 +181,8 @@ void testLedger() {
     nonexecuting += entry.state == LlvmCoverageState::VerifiedNonExecuting;
     if (entry.state == LlvmCoverageState::Implemented)
       expect(entry.positiveTest ==
-                 (entry.milestone == 6   ? "llvm_class_execution"
+                 (entry.milestone == 8   ? "llvm_memory_execution"
+                  : entry.milestone == 6 ? "llvm_class_execution"
                   : entry.milestone == 5 ? "llvm_place_execution"
                                          : "llvm_scalar_execution"),
              "implemented families name real execution evidence");
@@ -389,6 +395,152 @@ int main() { Pinned value{}; return 0; }
                             "placement rather than byte transport");
 }
 
+void testRawFieldWitnesses() {
+  const std::string source = R"(
+class Slot { public: mut int value = 0; int read() { return this.value; } };
+int main() {
+  mut Slot object{};
+  unsafe { Slot* pointer = &object; pointer->value = 7; return pointer->value - 7; }
+}
+)";
+  const auto plan = lang::planLlvmAdmission(lower(source));
+  bool witnessed = false;
+  for (const auto &use : plan.requirements())
+    if (use.required && use.entry->family == "UnsafeOperationKind" &&
+        use.entry->name == "RawMember") {
+      witnessed = true;
+      expect(use.implementedShape &&
+                 use.implementedShape->name == "NativeClassRawAccess",
+             "raw field loads/stores require the complete typed field witness");
+    }
+  expect(plan.admitted() && witnessed,
+         "ordinary mutable raw field access is admitted");
+  const auto method = lang::planLlvmAdmission(lower(R"(
+class Slot { public: int value = 7; int read() { return this.value; } };
+int main() { Slot object{}; unsafe { const Slot* pointer = &object; return pointer->read(); } }
+)"));
+  bool methodRejected = false;
+  for (const auto &use : method.requirements())
+    methodRejected |= use.required &&
+                      use.entry->family == "UnsafeOperationKind" &&
+                      use.entry->name == "RawMember" && !use.implementedShape;
+  expect(methodRejected,
+         "a supported raw field path does not authorize member invocation");
+  const auto unsupported = lang::planLlvmAdmission(lower(R"(
+class Dynamic { public: int value = 7; virtual int read() { return this.value; } };
+int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return pointer->value; } }
+)"));
+  bool unsupportedRejected = false;
+  for (const auto &use : unsupported.requirements())
+    unsupportedRejected |=
+        use.required && use.entry->family == "UnsafeOperationKind" &&
+        use.entry->name == "RawMember" && !use.implementedShape;
+  expect(unsupportedRejected,
+         "unknown dynamic owner layout cannot borrow the field witness");
+  for (const auto &invalid :
+       {"class Slot { public: mut int value = 0; }; int main() { Slot "
+        "object{}; unsafe { const Slot* pointer = &object; pointer->value = 1; "
+        "} return 0; }",
+        "class Slot { public: int value = 0; }; int main() { Slot object{}; "
+        "unsafe { const Slot* pointer = &object; return pointer->missing; } }"})
+    expect(
+        !lang::Frontend()
+             .analyze("invalid-raw-field.gti", invalid)
+             .canGenerateCode(),
+        "read-only writes and nonexistent fields reject at the semantic owner");
+  const auto frontend = lang::Frontend().analyze("raw-field.gti", source);
+  const auto output =
+      std::filesystem::temp_directory_path() /
+      ("gti-malformed-field-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  struct RemoveOutput {
+    std::filesystem::path path;
+    ~RemoveOutput() {
+      std::error_code ignored;
+      std::filesystem::remove(path, ignored);
+    }
+  } removeOutput{output};
+  for (unsigned mutation = 0; mutation < 3; ++mutation) {
+    {
+      std::ofstream sentinel(output);
+      sentinel << "preserved";
+    }
+    auto mir = frontend.mir;
+    bool changed = false;
+    std::string location;
+    for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+             mir.functionInstances()))
+      for (auto &place : function.body.places)
+        if (!changed &&
+            std::any_of(place.projections.begin(), place.projections.end(),
+                        [](const auto &projection) {
+                          return projection.kind ==
+                                 lang::MirProjectionKind::RawDereference;
+                        }))
+          for (auto &projection : place.projections)
+            if (!changed && projection.kind == lang::MirProjectionKind::Field) {
+              location = "Function/" + std::to_string(function.id) +
+                         " place=" + std::to_string(place.id) +
+                         " raw-root=" + std::to_string(place.value) +
+                         " field=" + std::to_string(projection.field);
+              if (mutation == 0)
+                projection.field = 0;
+              if (mutation == 1)
+                place.type = lang::SemanticType::Int64;
+              if (mutation == 2)
+                place.value = 0;
+              changed = true;
+            }
+    bool rejected = !lang::verifyMirProgram(mir).valid();
+    std::string rejectedBy = "MIR verifier";
+    if (!rejected) {
+      auto build = lang::LoweredProgramBuilder().build(
+          frontend.program, frontend.semantics, frontend.hir, mir, mir, {},
+          lang::TargetInfo::host(), true);
+      rejected = !build.valid();
+      rejectedBy = "LoweredProgramBuilder";
+      if (!build.valid() && !build.issues.empty())
+        rejectedBy += "/" + build.issues[0].detail.substr(0, 300);
+      if (build.valid()) {
+        std::vector<lang::LoweredProgramIssue> issues;
+        auto verified =
+            lang::verifiedLoweredProgram(std::move(*build.program), issues);
+        rejected = !verified;
+        rejectedBy = "lowered verifier";
+        if (verified) {
+          const auto admission = lang::planLlvmAdmission(*verified);
+          rejected = !admission.admitted();
+          rejectedBy = "native admission";
+          if (const auto *unsupported = admission.firstUnsupported())
+            rejectedBy += "/" + unsupported->entry->key();
+          bool generated = false;
+          try {
+            const auto artifact =
+                lang::LlvmBackend().generate(verified->program());
+            std::ofstream published(output, std::ios::binary);
+            published << artifact.contents;
+            generated = true;
+          } catch (const lang::BackendUnsupportedError &) {
+          }
+          expect(!generated,
+                 "malformed projected type cannot produce native object bytes");
+        }
+      }
+    }
+    if (mutation == 1)
+      std::cout << "raw field type control: " << location
+                << " int32_t->int64_t; rejected by " << rejectedBy << '\n';
+    std::ifstream sentinel(output);
+    std::string contents{std::istreambuf_iterator<char>(sentinel), {}};
+    expect(contents == "preserved",
+           "malformed field preflight preserves the existing artifact");
+    expect(changed && rejected, "malformed raw field must fail no later than "
+                                "native artifact preflight: " +
+                                    std::to_string(mutation));
+  }
+}
+
 } // namespace
 
 int main() {
@@ -396,6 +548,7 @@ int main() {
     testLedger();
     testSnapshotAndWholeProgram();
     testShapeWitnesses();
+    testRawFieldWitnesses();
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';
     ++failures;

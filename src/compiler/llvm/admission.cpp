@@ -542,6 +542,31 @@ public:
            constantIntegerDomain(stage.operands[reversed ? 0 : 1].type)
                .has_value();
   }
+  bool nativeRawFieldStage(const MirBody &mir,
+                           const MirInstruction &stage) const {
+    if ((stage.kind != MirInstructionKind::Load &&
+         stage.kind != MirInstructionKind::Assign) ||
+        stage.receiver || stage.functionTarget || stage.constructorTarget ||
+        stage.bodyTarget || stage.lambdaTarget || stage.nativeCalleeType)
+      return false;
+    const auto field = [&](MirPlaceId id) {
+      const auto *place = mir.findPlace(id);
+      if (!place || !nativeRawPlace(mir, *place))
+        return false;
+      bool dereferenced = false;
+      for (const auto &projection : place->projections) {
+        dereferenced |= projection.kind == MirProjectionKind::RawDereference;
+        if (dereferenced && projection.kind == MirProjectionKind::Field)
+          return true;
+      }
+      return false;
+    };
+    if (stage.destination && field(*stage.destination))
+      return true;
+    return std::any_of(
+        stage.operands.begin(), stage.operands.end(),
+        [&](const auto &operand) { return field(operand.place); });
+  }
   bool nativeAddressConversion(const MirInstruction &stage) const {
     if (stage.intrinsic != IntrinsicKind::RawPointerConversion ||
         stage.kind != MirInstructionKind::Call || stage.operands.size() != 1 ||
@@ -1141,7 +1166,11 @@ public:
               callee->requiresUnsafe &&
               stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall;
           add(stage.unsafeOperation,
-              (rawClassStage || classArithmetic) &&
+              rawClassStage &&
+                      stage.unsafeOperation == UnsafeOperationKind::RawMember &&
+                      nativeRawFieldStage(mir, stage)
+                  ? std::optional(Shape::NativeClassRawAccess)
+              : (rawClassStage || classArithmetic) &&
                       (stage.unsafeOperation ==
                            UnsafeOperationKind::RawDereference ||
                        stage.unsafeOperation == UnsafeOperationKind::RawIndex ||
