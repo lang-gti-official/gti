@@ -64,9 +64,26 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
   ir.CreateRetVoid();
   return function;
 }
+bool Lifetimes::needsMoveState(const SemanticType &type) const {
+  if (type.kind == SemanticType::Array)
+    return needsMoveState(type.arguments.at(0));
+  if (type.kind != SemanticType::Class)
+    return false;
+  const auto &owner = session.layouts().instance(type);
+  if (owner.requiresActiveDropState)
+    return true;
+  for (const auto &field : owner.declaredFields)
+    if (needsMoveState(field.type))
+      return true;
+  for (const auto &base : owner.bases)
+    if (needsMoveState(base.type))
+      return true;
+  return false;
+}
+
 void Lifetimes::moved(llvm::IRBuilder<> &ir, llvm::Value *address,
                       const SemanticType &type) {
-  if (type.kind == SemanticType::Class || type.kind == SemanticType::Array)
+  if (needsMoveState(type))
     ir.CreateCall(moveHelper(type), {address});
 }
 

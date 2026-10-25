@@ -231,6 +231,26 @@ int main() { return late.read() - 1; }
 }
 
 NATIVE_ONLY = {
+    # The C++ vocabulary also rejects this array-field transfer. Native
+    # execution must nevertheless retire each moved source element's state.
+    "move-array-field": r'''
+mut int destroyed = 0;
+class Item {
+  int id;
+public:
+  Item(int id) : id(id) {}
+  ~Item() { destroyed = destroyed * 10 + this.id; }
+};
+struct Envelope { mut Item items[2] = {Item(1), Item(2)}; };
+struct Grid { mut Item items[2][2] = {{Item(1), Item(2)}, {Item(3), Item(4)}}; };
+int main() {
+  { mut Envelope envelope{}; { Item moved[2] = std::move(envelope.items); } }
+  if (destroyed != 21) { return 1; }
+  destroyed = 0;
+  { mut Grid grid{}; { Item moved[2][2] = std::move(grid.items); } }
+  return destroyed == 4321 ? 0 : 2;
+}
+''',
     # Existing C++ vocabulary rejects mutation after a dynamic local TLS
     # initializer. This is retained as an explicit comparator limitation.
     "function-local-tls": r'''

@@ -4607,8 +4607,11 @@ initialization without an exact entry Stored loan needs an address-publication
 schedule. Both remain preflight limitations, not silent byte relocation or
 uninitialized storage. Bases/dispatch, union/payload storage and private ownership
 capabilities retain their later milestones. Function-local TLS with compound
-assignment is tested natively; the C++ comparator currently rejects that
-specific in-place assignment vocabulary. This task does not relax its gate.
+assignment and moving owner-bearing array fields out of a containing class are
+tested natively; the C++ comparator currently rejects those specific
+representation shapes. This task does not relax its gates. Recursive source
+move-state clearing covers class arrays as well as class subobjects, while
+passive arrays/classes emit no state-clear walk.
 
 A self-checking eight-million-step class-field/method workload on macOS arm64
 measured C++23/O3 at 15.60 ms and LLVM O3 at 14.36 ms (five warmups, twenty

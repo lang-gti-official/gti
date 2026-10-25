@@ -10870,8 +10870,11 @@ or resolve them using source.
   Stored-loan witness explicitly reject until then.
 - **Comparator finding:** dynamic function-local TLS compound assignment is an
   existing C++ representation-vocabulary limitation; native-only cases cover
-  its correct arithmetic, checked narrowing and shift failures. Keep that
-  discrepancy visible rather than weakening the C++ gate or claiming parity.
+  its correct arithmetic, checked narrowing and shift failures. Moving owning
+  array fields out of a containing record is another C++ vocabulary limitation;
+  native single/multidimensional probes verify transferred element drop state.
+  Keep these discrepancies visible rather than weakening the C++ gates or
+  claiming parity.
 - **Unlock:** user records/classes, constructors, field methods and deterministic
   cleanup, including concrete generic classes and static/global objects.
 - **Deliver:** field layouts/projections and initializers; selected ordinary and

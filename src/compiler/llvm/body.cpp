@@ -128,6 +128,9 @@ private:
           lifetimes.moved(ir, source, operand.type);
         return target;
       }
+      if (operand.kind == MirOperandKind::Move &&
+          operand.type.kind == SemanticType::Array)
+        lifetimes.moved(ir, source, operand.type);
       return value;
     }
     throw BackendUnsupportedError(
