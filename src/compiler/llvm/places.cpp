@@ -175,20 +175,6 @@ void Places::parameter(const ParameterLane &lane, llvm::Value *argument,
           "LLVM ABI lane disagrees with its concrete parameter pack");
     if (!lane.materialized)
       return;
-    const MirPlace *projected = nullptr;
-    for (const auto &place : body.places) {
-      if (place.root != MirPlaceRootKind::Binding ||
-          place.binding != lane.binding || place.projections.size() != 1 ||
-          packElement(place) != lane.packElement || place.type != lane.type)
-        continue;
-      if (projected)
-        throw std::logic_error(
-            "LLVM concrete pack has duplicate element roots");
-      projected = &place;
-    }
-    if (!projected)
-      throw std::logic_error(
-          "LLVM concrete pack lost its projected element root");
     Root root{nullptr, lane.type};
     if (addressValue(lane.type) && indirect) {
       root.address = argument;

@@ -11395,6 +11395,15 @@ inlining and devirtualization prerequisite to O-LLVM-15; O-LLVM-09 retains the
 verified signature/effect contract and does not select an infallible ABI from
 the current target.
 
+The callable checkpoint's concrete trailing-pack support now uses one shared
+native parameter plan for admission, body lowering and storage. Compatible
+same-key MIR aliases coalesce without consuming extra lanes, while divergent
+identities fail closed. Empty packs remain supported only through the verified
+trailing source binding already preserved by function, constructor and lambda
+owners; the former body-root-only fallback was not an owner proof and has been
+removed. Focused sealed-owner mutations and native O0/O3 duplicate-view
+execution cover this prerequisite for reuse by O-LLVM-07.
+
 **Named O-LLVM-08/O-LLVM-09 integration prerequisite:**
 `llvm_callable_owned_composition_test.py` is the callable-owned composition
 proof and is intentionally not part of the passing O-LLVM-09 component gate.

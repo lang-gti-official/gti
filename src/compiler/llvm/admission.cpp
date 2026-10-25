@@ -472,35 +472,13 @@ public:
     }
     if (!bindings || !parameters)
       return false;
-    const auto prefix = native_llvm::concretePackPrefix(
-        *parameters, *bindings, place.binding, place.type);
-    if (!prefix)
-      return false;
-    const auto flattened = native_llvm::flattenConcreteParameters(*parameters);
-    if (flattened.size() != *prefix + place.type.arguments.size() ||
-        !std::equal(place.type.arguments.begin(), place.type.arguments.end(),
-                    flattened.begin() + *prefix))
-      return false;
-    for (std::size_t element = 0; element < place.type.arguments.size();
-         ++element) {
-      std::size_t roots = 0;
-      std::size_t uses = 0;
-      for (const auto &candidate : currentBody->places)
-        if (candidate.root == MirPlaceRootKind::Binding &&
-            candidate.binding == place.binding &&
-            !candidate.projections.empty() &&
-            candidate.projections.front().kind ==
-                MirProjectionKind::PackElement &&
-            candidate.projections.front().constantIndex == element) {
-          ++uses;
-          if (candidate.projections.size() == 1 &&
-              candidate.type == place.type.arguments[element])
-            ++roots;
-        }
-      if (uses != 0 && roots != 1)
-        return false;
-    }
-    return true;
+    const auto plan = native_llvm::planConcreteParameters(
+        *parameters, *bindings, *currentBody);
+    return plan && std::any_of(plan->packs.begin(), plan->packs.end(),
+                               [&](const auto &pack) {
+                                 return pack.binding == place.binding &&
+                                        pack.type == place.type;
+                               });
   }
 
   void type(const SemanticType &root, bool concretePackMetadata = false) {

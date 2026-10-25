@@ -1,5 +1,6 @@
 #pragma once
 
+#include "parameter_packs.h"
 #include "scalar.h"
 
 #include <map>
@@ -8,18 +9,6 @@
 #include <tuple>
 
 namespace lang::native_llvm {
-
-struct ParameterLane final {
-  HirBindingId binding = 0;
-  SemanticType type = SemanticType::Unknown;
-  std::optional<std::size_t> packElement;
-  bool materialized = true;
-};
-
-struct ConcretePackParameter final {
-  HirBindingId binding = 0;
-  SemanticType type = SemanticType::Unknown;
-};
 
 // Physical addresses are separate from the owner places protected by loans.
 // All queries execute at the MIR stage that selects/uses the address; dynamic

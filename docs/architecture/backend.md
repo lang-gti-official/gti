@@ -4767,14 +4767,19 @@ for that provenance-only handoff. Missing, ambiguous or type-inconsistent
 field facts fail closed rather than treating every Stored loan as a pointer.
 
 Concrete trailing parameter packs have no runtime pack object. One exact
-`concretePackPrefix` plan accepts the verified MIR forms currently emitted:
-the source trailing `TypePack`, expanded lanes with one binding plus zero-valued
-continuations, or expanded parameter types retaining one source-level pack
-binding (including an empty zero-lane pack). The body maps each projected
-`PackElement` to its typed ABI lane. Concrete packs embedded in a lambda's
-enclosing substitution identity are inventory metadata rather than executable
-storage. Symbolic, nested, non-trailing, mismatched and ambiguous mappings fail
-closed.
+concrete-parameter plan serves admission, body lowering and place storage. It
+accepts the verified MIR forms currently emitted: the source trailing
+`TypePack`, expanded lanes with one binding plus zero-valued continuations, or
+expanded parameter types retaining one source-level pack binding. An empty
+pack has no physical lane, but its trailing source binding remains in the
+owner's verified binding vector; a body-local available pack root is not a
+substitute for that identity. Repeated MIR views with the same place key and
+type coalesce into one logical pack or element root and never consume another
+ABI lane. Conflicting keys, types or formal identities fail closed. The body
+maps each used projected `PackElement` to its typed ABI lane. Concrete packs
+embedded in a lambda's enclosing substitution identity are inventory metadata
+rather than executable storage. Symbolic, nested, non-trailing and mismatched
+mappings remain unsupported.
 
 `llvm_callable_execution` compares direct/indirect calls, read/mutable/once
 invocation, returned/stored and nested generic closures, borrowed-carrier field

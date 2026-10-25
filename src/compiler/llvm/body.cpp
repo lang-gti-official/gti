@@ -19,13 +19,9 @@
 namespace lang::native_llvm {
 namespace {
 
-struct BodyParameterPlan final {
-  std::vector<ParameterLane> lanes;
-  std::vector<ConcretePackParameter> packs;
-};
-
-BodyParameterPlan parameterPlan(const MirProgram &program,
-                                MirBodyAddress address, const MirBody &body) {
+ConcreteParameterPlan parameterPlan(const MirProgram &program,
+                                    MirBodyAddress address,
+                                    const MirBody &body) {
   const std::vector<HirBindingId> *bindings = nullptr;
   const std::vector<SemanticType> *types = nullptr;
   if (address.kind == MirBodyKind::Function) {
@@ -55,72 +51,11 @@ BodyParameterPlan parameterPlan(const MirProgram &program,
   if (!bindings || !types)
     throw std::logic_error("LLVM body lost its exact parameter facts");
 
-  const auto flattened = flattenConcreteParameters(*types);
-  const MirPlace *packRoot = nullptr;
-  for (const auto &place : body.places) {
-    if (place.root != MirPlaceRootKind::Binding || !place.projections.empty() ||
-        place.type.kind != SemanticType::TypePack)
-      continue;
-    if (!place.type.concretePack)
-      throw BackendUnsupportedError(
-          "LLVM TypePack place is not an exact concrete parameter");
-    if (packRoot &&
-        (packRoot->binding != place.binding || packRoot->type != place.type))
-      throw BackendUnsupportedError(
-          "LLVM supports one trailing concrete parameter pack per body");
-    packRoot = &place;
-  }
-
-  BodyParameterPlan result;
-  if (!packRoot) {
-    if (bindings->size() != flattened.size())
-      throw std::logic_error(
-          "LLVM parameter bindings disagree with their concrete ABI lanes");
-    for (std::size_t index = 0; index < bindings->size(); ++index)
-      result.lanes.push_back(
-          {.binding = (*bindings)[index], .type = flattened[index]});
-    return result;
-  }
-
-  const auto prefixPlan =
-      concretePackPrefix(*types, *bindings, packRoot->binding, packRoot->type);
-  if (!prefixPlan)
+  auto result = planConcreteParameters(*types, *bindings, body);
+  if (!result)
     throw BackendUnsupportedError(
-        "LLVM concrete parameter pack lost its exact trailing ABI mapping");
-  const std::size_t prefix = *prefixPlan;
-  if (flattened.size() != prefix + packRoot->type.arguments.size() ||
-      !std::equal(packRoot->type.arguments.begin(),
-                  packRoot->type.arguments.end(), flattened.begin() + prefix))
-    throw std::logic_error(
-        "LLVM concrete pack elements disagree with instantiated parameters");
-  for (std::size_t index = 0; index < prefix; ++index)
-    result.lanes.push_back(
-        {.binding = (*bindings)[index], .type = flattened[index]});
-  result.packs.push_back(
-      {.binding = packRoot->binding, .type = packRoot->type});
-  for (std::size_t element = 0; element < packRoot->type.arguments.size();
-       ++element) {
-    std::size_t roots = 0;
-    std::size_t uses = 0;
-    for (const auto &place : body.places)
-      if (place.root == MirPlaceRootKind::Binding &&
-          place.binding == packRoot->binding && !place.projections.empty() &&
-          place.projections.front().kind == MirProjectionKind::PackElement &&
-          place.projections.front().constantIndex == element) {
-        ++uses;
-        if (place.projections.size() == 1 &&
-            place.type == packRoot->type.arguments[element])
-          ++roots;
-      }
-    if (uses != 0 && roots != 1)
-      throw std::logic_error(
-          "LLVM concrete pack element lost its unique projected root");
-    result.lanes.push_back({.binding = packRoot->binding,
-                            .type = packRoot->type.arguments[element],
-                            .packElement = element,
-                            .materialized = uses != 0});
-  }
-  return result;
+        "LLVM concrete parameters lost their exact verified ABI mapping");
+  return std::move(*result);
 }
 
 class Bodies final {

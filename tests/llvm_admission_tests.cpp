@@ -1,6 +1,7 @@
 #include "gti/frontend.h"
 #include "gti/llvm_admission.h"
 #include "gti/lowered_program_builder.h"
+#include "gti/mir_verifier.h"
 
 #include "../src/compiler/llvm/closure_environment.h"
 #include "../src/compiler/llvm/constructor_field_publication.h"
@@ -77,6 +78,59 @@ void testConcreteParameterPackPlan() {
          "pack mapping rejects nested concrete packs");
   expect(!prefix({SemanticType::Int32}, {1, 0}, 3, empty),
          "empty pack mapping rejects an inconsistent zero-lane binding");
+  expect(!prefix({SemanticType::Int32}, {1}, 3, empty),
+         "empty packs require their exact trailing source binding");
+}
+
+void testConcreteParameterAliases() {
+  using namespace lang;
+  SemanticType pack = SemanticType::Unknown;
+  pack.kind = SemanticType::TypePack;
+  pack.concretePack = true;
+  pack.arguments = {SemanticType::Bool, SemanticType::Double};
+  const PlaceKey packKey{.domain = {.snapshot = 1, .body = 2}, .root = 30};
+  PlaceKey elementKey = packKey;
+  elementKey.projections.push_back(
+      {.kind = PlaceProjectionKind::ConstantIndex, .index = 0});
+  const MirPlace root{.id = 1,
+                      .root = MirPlaceRootKind::Binding,
+                      .binding = 3,
+                      .symbol = 30,
+                      .type = pack,
+                      .key = packKey,
+                      .initiallyAvailable = true};
+  const MirPlace element{
+      .id = 2,
+      .root = MirPlaceRootKind::Binding,
+      .binding = 3,
+      .symbol = 30,
+      .projections = {{.kind = MirProjectionKind::PackElement,
+                       .constantIndex = 0}},
+      .type = SemanticType::Bool,
+      .key = elementKey,
+      .initiallyAvailable = true};
+  MirBody aliases;
+  aliases.places = {root, root, element, element};
+  aliases.places[1].id = 3;
+  aliases.places[3].id = 4;
+  const std::vector<SemanticType> parameters{
+      SemanticType::Int32, SemanticType::Bool, SemanticType::Double};
+  const std::vector<HirBindingId> bindings{1, 3};
+  const auto plan =
+      native_llvm::planConcreteParameters(parameters, bindings, aliases);
+  expect(plan && plan->packs.size() == 1 && plan->lanes.size() == 3 &&
+             plan->lanes[1].packElement == 0 && plan->lanes[1].materialized &&
+             plan->lanes[2].packElement == 1 && !plan->lanes[2].materialized,
+         "same-key pack aliases coalesce into one physical lane");
+
+  MirBody divergent = aliases;
+  divergent.places.back().key->projections.front().index = 1;
+  expect(!native_llvm::planConcreteParameters(parameters, bindings, divergent),
+         "different-key projected aliases fail closed");
+  divergent = aliases;
+  divergent.places[1].key->root = 31;
+  expect(!native_llvm::planConcreteParameters(parameters, bindings, divergent),
+         "different-key pack roots fail closed");
 }
 
 void testPlacementPlan() {
@@ -213,6 +267,169 @@ lang::VerifiedLoweredProgram lower(std::string_view source,
   if (!verified)
     throw std::runtime_error(issues.front().detail);
   return *verified;
+}
+
+void testVerifiedConcretePackOwners() {
+  using namespace lang;
+  const auto verified = lower(R"(
+enum class Tag { value };
+void receive<Args...>(int prefix, Args... args) {}
+struct Box {
+  Box<Args...>(Tag tag, Args... args) {}
+};
+int invoke<Args...>(Args... args) {
+  auto callback = [](int prefix, Args... forwarded) -> int { return prefix; };
+  return callback(7, args...);
+}
+int main() {
+  receive(0);
+  receive(0, 1, true);
+  Box value{Tag::value};
+  Box full{Tag::value, 1, true};
+  return invoke() + invoke(1, true) - 14;
+}
+)");
+  const auto &mir = verified.program().mir();
+  const auto exactEmptyPack = [](const auto &owner) {
+    if (owner.parameterBindings.size() != owner.parameterTypes.size() + 1)
+      return false;
+    const HirBindingId binding = owner.parameterBindings.back();
+    const auto root = std::find_if(
+        owner.body.places.begin(), owner.body.places.end(),
+        [&](const MirPlace &place) {
+          return place.root == MirPlaceRootKind::Binding &&
+                 place.binding == binding && place.projections.empty() &&
+                 place.type.kind == SemanticType::TypePack &&
+                 place.type.concretePack && place.type.arguments.empty() &&
+                 place.initiallyAvailable;
+        });
+    if (root == owner.body.places.end())
+      return false;
+    const auto plan = native_llvm::planConcreteParameters(
+        owner.parameterTypes, owner.parameterBindings, owner.body);
+    return plan && plan->packs.size() == 1 &&
+           plan->packs.front().binding == binding &&
+           plan->lanes.size() == owner.parameterTypes.size();
+  };
+  const auto function = std::find_if(
+      mir.functionInstances().begin(), mir.functionInstances().end(),
+      [&](const auto &owner) {
+        return !owner.parameterTypes.empty() && exactEmptyPack(owner);
+      });
+  const auto constructor =
+      std::find_if(mir.constructorInstances().begin(),
+                   mir.constructorInstances().end(), exactEmptyPack);
+  const auto lambda = std::find_if(mir.lambdaInstances().begin(),
+                                   mir.lambdaInstances().end(), exactEmptyPack);
+  expect(function != mir.functionInstances().end(),
+         "verified functions retain the source identity of an empty pack");
+  expect(constructor != mir.constructorInstances().end(),
+         "verified constructors retain the source identity of an empty pack");
+  expect(lambda != mir.lambdaInstances().end(),
+         "verified lambdas retain the source identity of an empty pack");
+
+  const auto exactTwoElementPack = [](const auto &owner) {
+    if (owner.parameterTypes.size() != 3 || owner.parameterBindings.size() != 2)
+      return false;
+    const HirBindingId binding = owner.parameterBindings.back();
+    const auto root = std::find_if(
+        owner.body.places.begin(), owner.body.places.end(),
+        [&](const MirPlace &place) {
+          return place.root == MirPlaceRootKind::Binding &&
+                 place.binding == binding && place.projections.empty() &&
+                 place.type.kind == SemanticType::TypePack &&
+                 place.type.concretePack && place.type.arguments.size() == 2;
+        });
+    const auto plan = native_llvm::planConcreteParameters(
+        owner.parameterTypes, owner.parameterBindings, owner.body);
+    return root != owner.body.places.end() && plan && plan->lanes.size() == 3 &&
+           plan->packs.size() == 1 && plan->lanes[1].packElement == 0 &&
+           plan->lanes[2].packElement == 1;
+  };
+  expect(std::any_of(mir.functionInstances().begin(),
+                     mir.functionInstances().end(), exactTwoElementPack),
+         "verified functions retain fixed-prefix heterogeneous pack lanes");
+  expect(std::any_of(mir.constructorInstances().begin(),
+                     mir.constructorInstances().end(), exactTwoElementPack),
+         "verified constructors retain fixed-prefix heterogeneous pack lanes");
+  expect(std::any_of(mir.lambdaInstances().begin(), mir.lambdaInstances().end(),
+                     exactTwoElementPack),
+         "verified lambdas retain fixed-prefix heterogeneous pack lanes");
+
+  enum class Mutation { Missing, Wrong, Foreign, Extra, Conflicting };
+  const auto rejectsMutation = [&](MirBodyKind kind, std::size_t owner,
+                                   Mutation mutation) {
+    MirProgram malformed = mir;
+    std::vector<HirBindingId> *bindings = nullptr;
+    MirBody *body = nullptr;
+    if (kind == MirBodyKind::Function)
+      if (auto &instance = const_cast<MirFunctionInstance &>(
+              *malformed.findFunctionInstance(owner));
+          true) {
+        bindings = &instance.parameterBindings;
+        body = &instance.body;
+      }
+    if (kind == MirBodyKind::Constructor)
+      if (auto &instance = const_cast<MirConstructorInstance &>(
+              *malformed.findConstructorInstance(owner));
+          true) {
+        bindings = &instance.parameterBindings;
+        body = &instance.body;
+      }
+    if (kind == MirBodyKind::Lambda)
+      if (auto &instance =
+              const_cast<MirLambdaInstance &>(*malformed.findLambda(owner));
+          true) {
+        bindings = &instance.parameterBindings;
+        body = &instance.body;
+      }
+    if (!bindings || !body || bindings->empty())
+      return false;
+    if (mutation == Mutation::Missing)
+      bindings->pop_back();
+    else if (mutation == Mutation::Wrong)
+      bindings->back() = bindings->front();
+    else if (mutation == Mutation::Foreign)
+      bindings->back() = 999999;
+    else if (mutation == Mutation::Extra)
+      bindings->push_back(bindings->back());
+    else {
+      const auto root = std::find_if(
+          body->places.begin(), body->places.end(), [&](const MirPlace &place) {
+            return place.root == MirPlaceRootKind::Binding &&
+                   place.binding == bindings->back() &&
+                   place.projections.empty() &&
+                   place.type.kind == SemanticType::TypePack;
+          });
+      if (root == body->places.end() || !root->key)
+        return false;
+      MirPlace alias = *root;
+      alias.id = std::max_element(body->places.begin(), body->places.end(),
+                                  [](const auto &left, const auto &right) {
+                                    return left.id < right.id;
+                                  })
+                     ->id +
+                 1;
+      ++alias.key->root;
+      body->places.push_back(std::move(alias));
+    }
+    return !verifyMirProgram(malformed).valid();
+  };
+  const auto checkMutations = [&](MirBodyKind kind, std::size_t owner,
+                                  std::string_view name) {
+    for (const auto mutation :
+         {Mutation::Missing, Mutation::Wrong, Mutation::Foreign,
+          Mutation::Extra, Mutation::Conflicting})
+      expect(rejectsMutation(kind, owner, mutation),
+             std::string(name) +
+                 " empty packs reject malformed formal/root identity");
+  };
+  if (function != mir.functionInstances().end())
+    checkMutations(MirBodyKind::Function, function->id, "function");
+  if (constructor != mir.constructorInstances().end())
+    checkMutations(MirBodyKind::Constructor, constructor->id, "constructor");
+  if (lambda != mir.lambdaInstances().end())
+    checkMutations(MirBodyKind::Lambda, lambda->id, "lambda");
 }
 
 void testVerifiedRestorationRelay() {
@@ -931,6 +1148,8 @@ int main() { Pinned value{}; return 0; }
 int main() {
   try {
     testConcreteParameterPackPlan();
+    testConcreteParameterAliases();
+    testVerifiedConcretePackOwners();
     testClosureEnvironmentPlan();
     testVerifiedRestorationRelay();
     testUnstagedConstructorFieldPublicationPlan();
