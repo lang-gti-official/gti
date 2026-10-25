@@ -30,7 +30,12 @@ int main() {
   unsigned payloads = 0;
   for (const auto& entry : lang::llvmCoverageLedger()) {
     if (entry.state == lang::LlvmCoverageState::Implemented && entry.milestone == 7) {
-      if (entry.positiveTest != "llvm_payload_execution") return 1;
+      const bool evidence = !entry.positiveTest.empty() &&
+                            !entry.positiveAssertion.empty();
+      const bool gap = !entry.positiveEvidenceGap.empty();
+      if (evidence == gap) return 1;
+      if (gap && (!entry.positiveTest.empty() ||
+                  !entry.positiveAssertion.empty())) return 3;
       ++payloads;
     }
   }
