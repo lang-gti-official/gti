@@ -25,10 +25,13 @@ void policy(bool library, bool embedding) {
   std::string source = R"(
 int private_helper(int value) { return value; }
 int addressed(int value) { return value; }
-extern "C" { int foreign(int value); }
+int callback(int value) { return value; }
+using Unary = (int) -> int;
+extern "C" { int foreign(int value); void install(Unary value); }
 )";
   if (!library)
-    source += "int main() { return private_helper(0) + addressed(0) + "
+    source += "int main() { unsafe { install(callback); } return "
+              "private_helper(0) + addressed(0) + "
               "foreign(0); }\n";
   const auto frontend =
       Frontend(frontendOptions).analyze("visibility.gti", source);
@@ -47,7 +50,8 @@ extern "C" { int foreign(int value); }
   if (!input)
     throw std::runtime_error("unverified visibility source");
   if (bool(input->program().mir().hostedStartupPlan()) == library ||
-      (embedding && !input->program().embeddingPlan()))
+      (embedding && !input->program().embeddingPlan()) ||
+      (!library && input->program().mir().nativeCallbackAdapters().empty()))
     throw std::runtime_error("fixture lost sealed entry/export mode");
   Session session(*input, {.optimization = LlvmCodegenOptimization::None});
   std::map<std::string, llvm::Function *> functions;
@@ -93,6 +97,7 @@ extern "C" { int foreign(int value); }
   if (artifact.contents.empty() ||
       functions.at("private_helper")->hasInternalLinkage() == library ||
       !functions.at("addressed")->hasExternalLinkage() ||
+      !functions.at("callback")->hasExternalLinkage() ||
       !functions.at("foreign")->hasExternalLinkage() ||
       (!library && !functions.at("main")->hasExternalLinkage()) ||
       !unknown->hasExternalLinkage())
