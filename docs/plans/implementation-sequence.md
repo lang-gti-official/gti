@@ -11120,10 +11120,21 @@ or resolve them using source.
   passive/dynamic TLS with the C registration boundary. `llvm_class_execution`
   supplies success, rollback and exact-failure differential evidence. This is
   not admission of private allocation capabilities or all class shapes.
-- **Remaining 06-A:** end-to-end immovable destination placement, including
-  return and array-element construction. Prerequisite: carry each final object
-  destination through native aggregate/result transport without relocation.
-  Accept only when address-identity and deleted-move controls execute at O0-O3.
+- **06-A native placement (2026-10-25):** implemented for current supported
+  source forms. Exact fresh-result destinations propagate through native
+  construction, return chains, fields and class-containing arrays without SSA
+  relocation. Deleted-copy/deleted-move objects execute in supported direct,
+  returned, field/default and TLS forms; movable array-element address identity
+  is preserved. `llvm_placement_execution` and the checked ABI rollback oracle
+  supply O0-O3 execution/rejection evidence.
+- **Remaining 06-A2 source prerequisite:** fixed-array fresh initialization
+  currently requires movable elements in semantic ownership assignability.
+  Generalize initial publication separately from copying/moving existing arrays,
+  preserve exact element ownership checks and MIR rollback, and provide both
+  backend consumers before admitting deleted-move arrays. The native transport
+  path is ready; removing the frontend check alone is not completion. Acceptance:
+  direct/nested/default immovable arrays retain final addresses, reject lvalue
+  copies and explicit moves, and drop only completed elements on failure.
 - **Remaining 06-B:** non-entry stored-reference field publication. Prerequisite:
   consume an exact evaluated loan address at its initializer publication stage,
   rather than treating the loaded referent as a value field. Accept when
@@ -11137,6 +11148,11 @@ or resolve them using source.
   native single/multidimensional probes verify transferred element drop state.
   Keep these discrepancies visible rather than weakening the C++ gates or
   claiming parity.
+- **06-A comparator findings:** C++ currently relocates address-sensitive
+  nested/default class fields and class-array elements, and rejects the new
+  class-array argument/copy/move probe in its representation vocabulary. Keep
+  the native independent oracles and the discrepancies explicit; repair C++
+  final-destination publication before using it as the 06-A2 comparator.
 - **Unlock:** user records/classes, constructors, field methods and deterministic
   cleanup, including concrete generic classes and static/global objects.
 - **Deliver:** field layouts/projections and initializers; selected ordinary and

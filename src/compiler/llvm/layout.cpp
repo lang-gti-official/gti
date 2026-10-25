@@ -1,4 +1,5 @@
 #include "layout.h"
+#include "placement.h"
 
 #include <limits>
 #include <stdexcept>
@@ -97,7 +98,8 @@ TypeLayout Layouts::get(const SemanticType &type) {
       throw BackendUnsupportedError(
           "LLVM array extent exceeds the target object-size limit");
     auto result =
-        describe(llvm::ArrayType::get(element.storage, type.arrayLength), true);
+        describe(llvm::ArrayType::get(element.storage, type.arrayLength), true,
+                 addressValue(type) ? pointer() : nullptr);
     result.stride = element.size;
     return result;
   }

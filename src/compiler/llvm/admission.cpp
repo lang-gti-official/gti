@@ -214,7 +214,6 @@ public:
         }
       if (!owner ||
           owner->compilerCapability != CompilerCapabilityTypeKind::None ||
-          (!owner->traits.copyable && !owner->traits.movable) ||
           owner->polymorphic || owner->abstract || owner->unionLayout ||
           owner->cOpaqueHandle || !owner->bases.empty() ||
           !owner->structuralBases.empty() || !visiting.insert(owner->id).second)

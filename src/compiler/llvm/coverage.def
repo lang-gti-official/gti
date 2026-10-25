@@ -846,7 +846,7 @@ LLVM_COVERAGE_ENTRY(Library, 11, Pending, None, "all represented shapes remain p
 LLVM_COVERAGE_END()
 
 LLVM_COVERAGE_BEGIN(Shape)
-LLVM_COVERAGE_ENTRY(NativeClassStorage, 6, Implemented, None, "exact nonpolymorphic ordinary class storage and verified lifecycle schedules; no unions, private ownership capabilities or dynamic dispatch")
+LLVM_COVERAGE_ENTRY(NativeClassStorage, 6, Implemented, None, "exact nonpolymorphic ordinary class storage, final-address fresh publication and verified lifecycle schedules; no unions, private ownership capabilities or dynamic dispatch")
 LLVM_COVERAGE_ENTRY(NativeThreadStorage, 6, Implemented, None, "exact admitted native TLS storage, checked lazy initialization and C runtime registration")
 LLVM_COVERAGE_ENTRY(InPlaceScalarMutation, 6, Implemented, None, "exact evaluated scalar destination and RHS, promoted arithmetic and checked narrowing before publication")
 LLVM_COVERAGE_ENTRY(StoredFieldPublication, 6, Pending, None, "reference field initialization without an exact entry Stored-loan publication requires a separate address-publication schedule")

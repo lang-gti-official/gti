@@ -1,4 +1,5 @@
 #include "places.h"
+#include "placement.h"
 
 #include <algorithm>
 
@@ -63,7 +64,7 @@ void Places::allocate(
         loanTypes.at(*instruction.loan) = instruction.info.type;
 }
 llvm::Value *Places::load(llvm::Value *address, const SemanticType &type) {
-  if (type.kind == SemanticType::Class)
+  if (addressValue(type))
     return address;
   auto *value = ir.CreateLoad(session.layouts().get(type).storage, address);
   return type == SemanticType::Bool ? ir.CreateTrunc(value, ir.getInt1Ty())
@@ -71,7 +72,9 @@ llvm::Value *Places::load(llvm::Value *address, const SemanticType &type) {
 }
 void Places::store(llvm::Value *value, llvm::Value *address,
                    const SemanticType &type) {
-  if (type.kind == SemanticType::Class) {
+  if (addressValue(type)) {
+    if (value == address)
+      return;
     const auto layout = session.layouts().get(type);
     ir.CreateMemCpy(address, llvm::MaybeAlign(layout.alignment), value,
                     llvm::MaybeAlign(layout.alignment), layout.size);
@@ -114,7 +117,7 @@ void Places::parameter(HirBindingId binding, llvm::Value *argument,
         !place.projections.empty())
       continue;
     auto &target = roots.at(key(place));
-    if (place.type.kind == SemanticType::Class && indirect)
+    if (addressValue(place.type) && indirect)
       target.address = argument;
     else
       store(indirect ? load(argument, place.type) : argument, target.address,
@@ -138,11 +141,13 @@ Places::Root Places::root(const MirPlace &place) {
     auto *value = values.at(place.value);
     if (!value)
       throw std::logic_error("LLVM place root has no dominating value");
-    return {type.kind == SemanticType::Class ? value : arrayValue(value), type};
+    return {arrayValue(value, type), type};
   }
   throw BackendUnsupportedError("LLVM place root has no admitted storage");
 }
-llvm::Value *Places::arrayValue(llvm::Value *value) {
+llvm::Value *Places::arrayValue(llvm::Value *value, const SemanticType &type) {
+  if (addressValue(type))
+    return value;
   auto *address = slot(value->getType());
   ir.CreateStore(value, address);
   return address;

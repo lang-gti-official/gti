@@ -4560,7 +4560,7 @@ fixed arrays are the implemented source entry point for whole-array borrowing.
 ### LLVM Classes, Lifecycles And Storage
 
 The O-LLVM-06 execution profile admits exact concrete, non-polymorphic,
-copyable or movable classes, including concrete generic classes. `layout.cpp`
+classes, including immovable and concrete generic classes. `layout.cpp`
 owns target-native field offsets and an additional active-state byte only when
 the sealed class requires source-destructor state. Class values travel as
 addresses through the private GTI ABI, not native C aggregate registers.
@@ -4568,8 +4568,17 @@ addresses through the private GTI ABI, not native C aggregate registers.
 loans publish reference-field addresses rather than copying referent contents.
 
 `body.cpp` emits selected constructors, direct methods, field/static initializer
-bodies and explicit lifecycle transitions. Fresh construction/call results with
-one initializing destination use that destination directly. Copy operands
+bodies and explicit lifecycle transitions. `placement.cpp` plans a single
+physical destination for each fresh construction/call result, following exact
+MIR Initialize, Return, prepared-argument publication and aggregate-element edges.
+Caller result destinations propagate through nested fresh returns; class fields
+and fixed-array elements are constructed at their final address. This is not
+optional named-return elision: a Copy/Move operand remains an explicit transfer,
+and no named local is aliased to the caller's destination. Conflicting fresh
+destinations fail closed. Class-containing arrays carry addresses, not LLVM SSA
+aggregate snapshots. Their projections use the same typed address engine as
+classes; a raw-pointer value must still be materialized as pointer storage when
+its MIR place selects that value rather than its pointee. Copy operands
 snapshot their values at the MIR stage, before a later argument can mutate the
 source. Already-staged class parameters retain their prepared storage address.
 Every `CallInput` with a destination publishes into that exact MIR place before
@@ -4578,7 +4587,7 @@ refer to that storage, so failure of a later argument and successful transfer
 to the callee observe the same object. Merely activating the obligation without
 populating its destination is invalid, including for moves from named locals.
 Ordinary, direct/braced/designated construction, generated copy/move transport,
-returned movable values, replacement cleanup and fixed arrays of movable class
+fresh immovable returns, returned movable values, replacement cleanup and fixed arrays of movable class
 objects use the same operations; no native representation destructor runs GTI
 cleanup. In-place scalar assignments use the existing promoted arithmetic and
 checked conversion implementation before publishing the updated value.
@@ -4591,6 +4600,18 @@ subobjects; another failure terminates through the existing emergency protocol.
 During unwinding the first new failure returns to the owning MIR failure edge.
 Partial-construction rollback executes only the completed obligations; cleanup
 recipes also add their selected destructors to native reachability.
+The prepared ReturnResult obligation retains cleanup authority over a completed
+caller-destination object until remaining local cleanup succeeds. Failure drops
+that object before propagating, without relocating it. Passive fixed-array drop
+recipes may have no active element recipe and produce no element-cleanup walk.
+Targetless generated default construction is admitted for exact fieldless,
+baseless objects with no required initializer schedule; it arms their own
+destructor state without inventing a constructor call.
+Prepared class/array arguments use the same physical storage as their sealed
+parameter-drop obligation. Fresh objects construct there before publication;
+explicit copies/moves publish their snapshot before arming cleanup. A later
+argument failure therefore destroys that exact object, not an uninitialized or
+relocated stand-in.
 
 Passive namespace/static class objects consume complete typed object constants
 or the existing ordered initialization plan. Owning process globals remain a
@@ -4611,17 +4632,30 @@ the C layout and callback signature directly, with no C++ cleanup-entry API,
 exception transport, hidden allocation or native TLS destructor. A C17 oracle
 and target-layout assertions check this boundary independently.
 
-Remaining O-LLVM-06 boundaries are explicit: immovable object publication needs
-end-to-end destination placement (including array elements), and reference-field
-initialization without an exact entry Stored loan needs an address-publication
-schedule. Both remain preflight limitations, not silent byte relocation or
-uninitialized storage. Bases/dispatch, union/payload storage and private ownership
+Remaining O-LLVM-06 boundaries are explicit: reference-field initialization
+without an exact entry Stored loan needs an address-publication schedule.
+GTI semantics still rejects initializing a fixed array whose elements cannot
+move, even from fresh element expressions; this backend slice does not relax
+that source rule. Native array-element placement is independently tested with
+movable elements that record their construction address. Immovable by-value
+arguments, named-local returns and conditional-value merges also keep their
+existing semantic rejection. Bases/dispatch, union/payload storage and private ownership
 capabilities retain their later milestones. Function-local TLS with compound
 assignment and moving owner-bearing array fields out of a containing class are
 tested natively; the C++ comparator currently rejects those specific
 representation shapes. This task does not relax its gates. Recursive source
 move-state clearing covers class arrays as well as class subobjects, while
 passive arrays/classes emit no state-clear walk.
+
+`llvm_placement_execution` checks deleted-copy/deleted-move objects, fresh return
+chains, branch-selected returns, constructor/default field publication, TLS,
+class-array copies/movement and retained semantic rejections at O0-O3. The
+unchanged C++ comparator relocates nested/default fields and array elements in
+address-sensitive probes, and rejects the class-array argument/copy/move
+fixture in its representation vocabulary. These cases have explicit native-only
+oracles, not claimed C++ parity; supported comparators still run C++20/C++23.
+`llvm_target_layout_abi` observes exact post-failure cleanup traces after real
+checked field, array and prepared-return calls, not just terminal exit codes.
 
 A self-checking eight-million-step class-field/method workload on macOS arm64
 measured C++23/O3 at 15.60 ms and LLVM O3 at 14.36 ms (five warmups, twenty
