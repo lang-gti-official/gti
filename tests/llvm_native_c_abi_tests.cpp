@@ -36,8 +36,8 @@ void rejects(Action action) {
 }
 
 VerifiedLoweredProgram fixture(const std::filesystem::path &source,
-                                bool concurrent = false,
-                                bool standardLibraryEnabled = false) {
+                               bool concurrent = false,
+                               bool standardLibraryEnabled = false) {
   std::ifstream stream(source);
   require(stream.good(), "missing GTI fixture");
   const std::string text{std::istreambuf_iterator<char>(stream), {}};
@@ -49,10 +49,11 @@ VerifiedLoweredProgram fixture(const std::filesystem::path &source,
   const auto standardLibrary =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto frontend =
-      standardLibraryEnabled ? Frontend(options).analyze(source.string(), text,
-                                             {standardLibrary / "prelude.gti"},
-                                             {}, {standardLibrary})
-                 : Frontend(options).analyze(source.string(), text);
+      standardLibraryEnabled
+          ? Frontend(options).analyze(source.string(), text,
+                                      {standardLibrary / "prelude.gti"}, {},
+                                      {standardLibrary})
+          : Frontend(options).analyze(source.string(), text);
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
