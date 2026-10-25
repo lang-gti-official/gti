@@ -1,4 +1,5 @@
 #include "body.h"
+#include "dispatch.h"
 #include "failure.h"
 #include "lifetimes.h"
 #include "placement.h"
@@ -19,7 +20,7 @@ namespace {
 class Bodies final {
 public:
   explicit Bodies(Session &session)
-      : session(session), failures(session),
+      : session(session), failures(session), dispatch(session),
         lifetimes(session, failures,
                   [&](MirBodyAddress address) { return function(address); }),
         threadLocals(
@@ -31,6 +32,7 @@ public:
 private:
   Session &session;
   Failures failures;
+  Dispatch dispatch;
   Lifetimes lifetimes;
   ThreadLocals threadLocals;
   std::map<SymbolId, llvm::GlobalVariable *> globals;
@@ -43,17 +45,17 @@ private:
 
 class Body final {
 public:
-  Body(Session &session, Failures &failures, Lifetimes &lifetimes,
-       ThreadLocals &threadLocals, llvm::Function &function,
-       const MirBody &body, FunctionAbi abi,
+  Body(Session &session, Failures &failures, Dispatch &dispatch,
+       Lifetimes &lifetimes, ThreadLocals &threadLocals,
+       llvm::Function &function, const MirBody &body, FunctionAbi abi,
        std::span<const HirBindingId> parameters,
        const std::map<SymbolId, llvm::GlobalVariable *> &globals,
        std::function<llvm::Function *(MirBodyAddress)> findFunction,
        std::function<FunctionAbi(MirBodyAddress)> bodyAbi,
        const MirClassInstance *owner)
-      : session(session), failures(failures), function(function), input(body),
-        abi(std::move(abi)), globals(globals), ir(session.context()),
-        lifetimes(lifetimes), threadLocals(threadLocals),
+      : session(session), failures(failures), dispatch(dispatch),
+        function(function), input(body), abi(std::move(abi)), globals(globals),
+        ir(session.context()), lifetimes(lifetimes), threadLocals(threadLocals),
         bodyAbi(std::move(bodyAbi)), owner(owner),
         scalars(session, ir,
                 [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
@@ -73,6 +75,7 @@ public:
 private:
   Session &session;
   Failures &failures;
+  Dispatch &dispatch;
   llvm::Function &function;
   const MirBody &input;
   FunctionAbi abi;
@@ -309,8 +312,16 @@ private:
       throw BackendUnsupportedError(
           "LLVM scalar call requires an exact direct target");
     FunctionAbi signature;
-    llvm::Function *callee = nullptr;
-    if (target) {
+    llvm::Value *callee = nullptr;
+    llvm::Value *receiver = nullptr;
+    if (target && instruction.dispatch == CallDispatch::Virtual) {
+      const auto plan = dispatch.planCall(instruction);
+      const auto selected = dispatch.loadCall(
+          ir, instruction, plan, memory.selected(*instruction.receiver));
+      signature = plan.abi.call;
+      callee = selected.callee;
+      receiver = selected.receiver;
+    } else if (target) {
       signature =
           target->linkage == LanguageLinkage::C
               ? session.abi().nativeC(target->returnType,
@@ -320,6 +331,9 @@ private:
                                   target->owner && !target->staticMember,
                                   target->tracksCaller);
       callee = session.abi().declareFunction(target->id);
+      if (target->owner && !target->staticMember && instruction.receiver)
+        receiver = dispatch.directReceiver(
+            ir, instruction, memory.selected(*instruction.receiver));
     } else {
       const auto address =
           constructor ? MirBodyAddress{MirBodyKind::Constructor, *constructor}
@@ -372,16 +386,17 @@ private:
         break;
       }
       case AbiChannel::Receiver:
-        arguments.push_back(constructed ? constructed
-                            : instruction.receiver
-                                ? memory.selected(*instruction.receiver)
-                                : thisAddress);
+        arguments.push_back(
+            constructed ? constructed
+            : instruction.receiver
+                ? receiver ? receiver : memory.selected(*instruction.receiver)
+                : thisAddress);
         if (!arguments.back())
           throw std::logic_error("LLVM call lost its sealed receiver");
         break;
       }
     }
-    auto *result = ir.CreateCall(callee, arguments);
+    auto *result = ir.CreateCall(signature.type, callee, arguments);
     signature.applyTo(*result);
     if (signature.statusResult) {
       auto *normal = llvm::BasicBlock::Create(session.context(), "call.success",
@@ -1032,8 +1047,8 @@ void Bodies::body(MirBodyAddress address) {
                      .findConstructorInstance(address.owner)
                      ->parameterBindings;
   Body emission(
-      session, failures, lifetimes, threadLocals, *function(address), input,
-      plan, parameters, globals,
+      session, failures, dispatch, lifetimes, threadLocals, *function(address),
+      input, plan, parameters, globals,
       [&](MirBodyAddress target) { return function(target); },
       [&](MirBodyAddress target) { return signature(target); }, owner(address));
 }

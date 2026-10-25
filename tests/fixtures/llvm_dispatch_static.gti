@@ -68,6 +68,15 @@ class Labeled : public TextLabel {
 public:
   std::string_view label() override { return "gti"; }
 };
+interface TypedRead<T> { T get(); };
+interface TypedEcho<T> { T echo(T value); };
+class Mix<A, B> : public TypedRead<A>, public TypedEcho<B> {
+  A value;
+public:
+  Mix(A input) : value(input) {}
+  A get() override { return this.value; }
+  B echo(B input) override { return input; }
+};
 
 int via_reader(Reader& value) { return value.read(); }
 int via_root(Root& value) { return value.read(); }
@@ -81,6 +90,7 @@ int main() {
   Snapshot snapshot = maker.make();
   TrueValue truth{};
   Labeled labeled{};
+  Mix<int, bool> mixed{8};
   if (via_reader(leaf) != 10 || via_reader(other) != 19) { return 1; }
   if (via_root(leaf) != 10 || leaf.read() != 10) { return 2; }
   via_writer(leaf, 23);
@@ -89,5 +99,6 @@ int main() {
   if (via_reader(front) != 5 || front.extra() != 43 || front.written() != 9) { return 4; }
   if (snapshot.value != 3 || !truth.yes()) { return 5; }
   if (labeled.label().size() != 3) { return 6; }
+  if (mixed.get() != 8 || !mixed.echo(true)) { return 7; }
   return 0;
 }

@@ -4406,8 +4406,19 @@ Infallible direct results use target-aligned storage (including boolean `i8`);
 address-only results reuse the destination. This is the current central
 planner's provisional transport, not resolution of C04. Pure-bearing tables
 and infallible terminal targets remain explicitly gated; no failure meaning,
-null callee, trap or unreachable continuation is invented. These table/thunk
-helpers remain isolated from production body/lifetime wiring and admission.
+null callee, trap or unreachable continuation is invented.
+
+The body call path consumes the named function instance's sealed root-family
+rows and the receiver's exact concrete root identities. It loads the stable
+slot through its physical pointer owner and uses the central root ABI, including
+the original MIR Invoke failure edge and success-only result publication.
+Direct member calls project an exact base path; inverse receiver presentation
+is limited to the shared verified exact-receiver proof and readonly access.
+No source overload/override selection or general downcast is reconstructed.
+Private tests inspect this wiring independently of public admission. Lifecycle
+installation and transfer-state preservation remain pending, so these helpers
+do not yet admit production LLVM virtual dispatch or establish native execution
+coverage.
 
 `Abi` centralizes signatures for definitions, calls and future adapters:
 

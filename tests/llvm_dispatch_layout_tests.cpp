@@ -1,3 +1,4 @@
+#include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/dispatch.h"
 #include "../src/compiler/llvm/places.h"
 #include "cpp_backend_test_support.h"
@@ -428,6 +429,341 @@ int main() { Closed value{}; return value.read() - 1; }
          "the same pure root has a valid nonpure concrete dispatch table");
 }
 
+void testCallPlans(Session &session) {
+  Dispatch dispatch(session);
+  std::size_t calls = 0;
+  const MirInstruction *readerCall = nullptr;
+  const auto &reader = named(session.program(), "Reader");
+  const auto &writer = named(session.program(), "Writer");
+  for (const auto address :
+       enumerateMirBodyAddresses(session.program().mir())) {
+    const auto *body = findMirBody(session.program().mir(), address);
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Call ||
+            instruction.dispatch != CallDispatch::Virtual)
+          continue;
+        const auto plan = dispatch.planCall(instruction);
+        const auto &source =
+            *session.program().mir().findClassInstance(plan.sourceClass);
+        const auto &root =
+            *session.program().mir().findFunctionInstance(plan.root);
+        expect(
+            plan.sourceClass ==
+                    session.layouts().instance(instruction.receiver->type).id &&
+                root.owner == plan.rootOwner &&
+                dispatch.slotProfile(plan.rootOwner).at(plan.slot) == plan.root,
+            "call planning consumes the exact sealed source/root identities "
+            "and stable slot");
+        auto *probe = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                                    {session.layouts().pointer()}, false),
+            llvm::GlobalValue::InternalLinkage, "dispatch.call.probe",
+            session.module());
+        llvm::IRBuilder<> ir(
+            llvm::BasicBlock::Create(session.context(), "entry", probe));
+        const auto loaded =
+            dispatch.loadCall(ir, instruction, plan, probe->getArg(0));
+        expect(llvm::isa<llvm::LoadInst>(loaded.callee) &&
+                   offsetFrom(session, loaded.receiver, probe->getArg(0)) ==
+                       plan.location.owner.offset,
+               "one evaluated source receiver projects once to the physical "
+               "pointer owner");
+        for (int mutation : {0, 1, 2}) {
+          auto changed = plan;
+          if (mutation == 0)
+            ++changed.slot;
+          else if (mutation == 1)
+            ++changed.location.owner.offset;
+          else
+            changed.abi.call.parameters.clear();
+          rejects<std::invalid_argument>(
+              [&] {
+                static_cast<void>(dispatch.loadCall(ir, instruction, changed,
+                                                    probe->getArg(0)));
+              },
+              "a forged slot/path/channel plan cannot change native call "
+              "emission");
+        }
+        if (source.id == reader.id)
+          readerCall = &instruction;
+        ir.CreateRetVoid();
+        expect(!llvm::verifyFunction(*probe),
+               "virtual address selection forms valid typed IR");
+        ++calls;
+      }
+  }
+  expect(calls != 0 && readerCall,
+         "call probes include an unknown interface receiver");
+  if (!readerCall)
+    return;
+  auto missing = *readerCall;
+  missing.receiver->type = writer.type;
+  rejects<BackendUnsupportedError>(
+      [&] { static_cast<void>(dispatch.planCall(missing)); },
+      "an unrelated view cannot supply a selected virtual root");
+  auto mismatch = *readerCall;
+  mismatch.info.type = SemanticType::Bool;
+  rejects<std::invalid_argument>(
+      [&] { static_cast<void>(dispatch.planCall(mismatch)); },
+      "a mismatched call result cannot alter the root contract");
+  mismatch = *readerCall;
+  mismatch.definedFailure.propagation = FailurePropagationKind::None;
+  rejects<std::invalid_argument>(
+      [&] { static_cast<void>(dispatch.planCall(mismatch)); },
+      "a virtual invocation cannot drop its original failure propagation");
+
+  const auto &middle = named(session.program(), "Middle");
+  const auto root = reader.virtualDispatch.front().root;
+  const auto target =
+      std::find_if(middle.virtualDispatch.begin(), middle.virtualDispatch.end(),
+                   [&](const auto &row) { return row.root == root; });
+  if (target == middle.virtualDispatch.end())
+    throw std::runtime_error("test lost its concrete interface implementation");
+  auto direct = *readerCall;
+  direct.dispatch = CallDispatch::Static;
+  direct.functionTarget = target->target;
+  direct.dispatchOwner = middle.type;
+  expect(
+      isMirExactReceiverPresentation(session.program().mir(), direct,
+                                     reader.type),
+      "physical inverse test uses only the exact MIR presentation predicate");
+  auto *probe = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                              {session.layouts().pointer()}, false),
+      llvm::GlobalValue::InternalLinkage, "dispatch.exact.presentation.probe",
+      session.module());
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", probe));
+  // This checks only physical emission under that predicate, not a new
+  // optimizer proof or acceptance of this edited instruction as source MIR.
+  const auto *adjusted = llvm::dyn_cast<llvm::GEPOperator>(
+      dispatch.directReceiver(ir, direct, probe->getArg(0)));
+  const auto *delta =
+      adjusted ? llvm::dyn_cast<llvm::ConstantInt>(adjusted->getOperand(1))
+               : nullptr;
+  expect(delta && delta->getSExtValue() ==
+                      -static_cast<std::int64_t>(
+                          session.layouts()
+                              .baseSubobject(middle.type, reader.type)
+                              .offset),
+         "exact interface presentation reverses only its proven nonzero owner "
+         "path");
+  direct.dispatchOwner = SemanticType::Unknown;
+  rejects<std::logic_error>(
+      [&] {
+        static_cast<void>(
+            dispatch.directReceiver(ir, direct, probe->getArg(0)));
+      },
+      "without the exact presentation predicate no generic downcast exists");
+  ir.CreateRetVoid();
+  expect(!llvm::verifyFunction(*probe),
+         "exact receiver presentation forms valid typed IR");
+}
+
+void testBodyCallHook() {
+  const auto frontend =
+      Frontend().analyze("llvm-dispatch-reference-body.gti", std::string(R"(
+class Reader { public: virtual int read() { return 1; } };
+int via(Reader& value) { return value.read(); }
+)"));
+  expect(frontend.canGenerateCode(),
+         "reference-only call component is valid source");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!input)
+    throw std::runtime_error(
+        "reference-only body component failed its source seal");
+  Session session(*input, {});
+  const auto admission = planLlvmAdmission(*input);
+  expect(!admission.admitted(),
+         "private body inspection does not widen public virtual admission");
+  // Inspect internal IR only for this reference-only module. No plan is
+  // mutated, no production backend entry point or object publication is used.
+  lowerScalarProgram(session, admission);
+  bool found = false;
+  for (const auto &function : session.program().mir().functionInstances()) {
+    const auto *declaration =
+        session.program().findFunctionDeclaration(function.declaration);
+    if (!declaration || declaration->qualifiedName != "via")
+      continue;
+    auto *lowered = session.abi().declareFunction(function.id);
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.dispatch != CallDispatch::Virtual)
+          continue;
+        Dispatch dispatch(session);
+        const auto plan = dispatch.planCall(instruction);
+        for (const auto &native : *lowered)
+          for (const auto &operation : native)
+            if (const auto *call = llvm::dyn_cast<llvm::CallInst>(&operation);
+                call && !call->getCalledFunction()) {
+              found = true;
+              expect(call->getFunctionType() == plan.abi.call.type,
+                     "Body.call uses the exact root type rather than the named "
+                     "body's signature");
+              const auto *named = session.program().mir().findFunctionInstance(
+                  *instruction.functionTarget);
+              expect(!named->mayRaiseDefinedFailure &&
+                         session.abi()
+                                 .declareFunction(named->id)
+                                 ->getFunctionType() != call->getFunctionType(),
+                     "an infallible named root body does not erase the virtual "
+                     "failure interface");
+              auto *attributes = llvm::Function::Create(
+                  plan.abi.call.type, llvm::GlobalValue::ExternalLinkage,
+                  "dispatch.call.attributes", session.module());
+              plan.abi.call.applyTo(*attributes);
+              expect(call->getAttributes() == attributes->getAttributes(),
+                     "indirect call attributes come from the same root ABI "
+                     "planner");
+              attributes->eraseFromParent();
+              const auto *branch = native.getTerminator();
+              expect(branch && branch->getNumSuccessors() == 2 &&
+                         branch->getOperand(0) == call,
+                     "virtual status branches through the existing call "
+                     "success/failure machinery");
+              if (!branch || branch->getNumSuccessors() != 2)
+                continue;
+              const auto *failure = branch->getSuccessor(1)->getTerminator();
+              expect(failure && failure->getNumSuccessors() == 1 &&
+                         failure->getSuccessor(0)->getName() ==
+                             "bb" + std::to_string(block.terminator.elseTarget),
+                     "the original MIR Invoke failure target is preserved");
+              const auto *result =
+                  call->getArgOperand(*plan.abi.call.resultDestination);
+              for (const auto &use : result->uses())
+                if (const auto *load =
+                        llvm::dyn_cast<llvm::LoadInst>(use.getUser()))
+                  expect(load->getParent() == branch->getSuccessor(0),
+                         "the virtual result is loaded only in the success "
+                         "continuation");
+            }
+      }
+  }
+  expect(found, "the isolated Body component contains its typed indirect call");
+  session.verify();
+}
+
+void testProvedDirectReceiver() {
+  const auto frontend =
+      Frontend().analyze("llvm-dispatch-proved-direct.gti", std::string(R"(
+interface Operation { int run(int value); };
+class Increment : public Operation {
+  int bias = 1;
+public:
+  Increment() {}
+  int run(int value) override { return value + this.bias; }
+};
+class Decrement : public Operation {
+public:
+  Decrement() {}
+  int run(int value) override { return value - 1; }
+};
+int invoke(Operation& selected, int value) { return selected.run(value); }
+int apply(int value) {
+  Increment concrete{};
+  return invoke(concrete, value);
+}
+int main() { return apply(40) - 41; }
+)"));
+  expect(frontend.canGenerateCode(), "exact receiver source remains valid");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto optimized =
+      OptimizationPipeline().run({.hir = frontend.hir,
+                                  .mir = frontend.mir,
+                                  .level = OptimizationLevel::O2,
+                                  .target = TargetInfo::host()});
+  expect(optimized.valid(), "real exact-receiver optimization verifies");
+  if (!optimized.valid())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, optimized.sourceMir, optimized.mir,
+                             TargetInfo::host(),
+                             optimized.report.transformations),
+      issues);
+  if (!input)
+    throw std::runtime_error(
+        "optimized receiver presentation failed source coherence");
+  Session session(*input, {});
+  Dispatch dispatch(session);
+  bool found = false;
+  for (const auto address : enumerateMirBodyAddresses(session.program().mir()))
+    for (const auto &block :
+         findMirBody(session.program().mir(), address)->blocks)
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.receiver || instruction.tombstone ||
+            !isMirExactReceiverPresentation(session.program().mir(),
+                                            instruction,
+                                            instruction.receiver->type))
+          continue;
+        found = true;
+        const auto *target = session.program().mir().findFunctionInstance(
+            *instruction.functionTarget);
+        const auto &owner =
+            *session.program().mir().findClassInstance(*target->owner);
+        const auto path = session.layouts().baseSubobject(
+            owner.type, instruction.receiver->type);
+        auto *probe = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                                    {session.layouts().pointer()}, false),
+            llvm::GlobalValue::InternalLinkage, "dispatch.proved.direct.probe",
+            session.module());
+        llvm::IRBuilder<> ir(
+            llvm::BasicBlock::Create(session.context(), "entry", probe));
+        auto *receiver =
+            dispatch.directReceiver(ir, instruction, probe->getArg(0));
+        expect(path.offset == 0 && receiver == probe->getArg(0),
+               "verified direct interface presentation does not double-adjust "
+               "the selected view");
+        const auto abi = session.abi().gti(
+            target->returnType, target->parameterTypes,
+            target->mayRaiseDefinedFailure, true, target->tracksCaller);
+        expect(session.abi().declareFunction(target->id)->getFunctionType() ==
+                   abi.type,
+               "devirtualized bodies retain their exact implementation ABI");
+        ir.CreateRetVoid();
+        expect(!llvm::verifyFunction(*probe),
+               "source-proved direct presentation forms valid IR");
+      }
+  expect(found, "real optimized MIR supplies an exact interface presentation");
+  const auto conflicting =
+      Frontend().analyze("llvm-dispatch-conflicting-roots.gti", std::string(R"(
+interface First { int read(); };
+interface Second { bool read(); };
+class Bad : public First, public Second {
+public: int read() override { return 1; }
+};
+int main() { Bad value{}; return 0; }
+)"));
+  expect(!conflicting.canGenerateCode(),
+         "conflicting required root contracts reject under source authority "
+         "before LLVM");
+  const auto repeated =
+      Frontend().analyze("llvm-dispatch-repeated-generic.gti", std::string(R"(
+interface Transform<T> { T apply(T value); };
+class Both : public Transform<int>, public Transform<float> {
+public:
+  int apply(int value) override { return value; }
+  float apply(float value) override { return value; }
+};
+int main() { return 0; }
+)"));
+  expect(!repeated.canGenerateCode() &&
+             std::any_of(repeated.diagnostics.begin(),
+                         repeated.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2040";
+                         }),
+         "different arguments do not silently enable repeated nominal "
+         "interface bases");
+}
+
 void test(Session &session, const VerifiedLoweredProgram &input) {
   const auto &program = session.program();
   const auto &root = named(program, "Root");
@@ -687,7 +1023,10 @@ int main() { return 0; }
   Session session(*input, {});
   test(session, *input);
   testPlaces(session);
+  testCallPlans(session);
   testThunks(session);
   testPureGates();
+  testBodyCallHook();
+  testProvedDirectReceiver();
   return failures ? 1 : 0;
 }

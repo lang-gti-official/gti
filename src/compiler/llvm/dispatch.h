@@ -28,6 +28,22 @@ struct DispatchViewPlan {
   std::vector<DispatchSlotPlan> slots;
 };
 
+struct VirtualCallPlan {
+  HirFunctionInstanceId root = 0;
+  HirClassInstanceId sourceClass = 0;
+  HirClassInstanceId rootOwner = 0;
+  DispatchLocation location;
+  std::size_t slot = 0;
+  VirtualRootAbi abi;
+  friend bool operator==(const VirtualCallPlan &,
+                         const VirtualCallPlan &) = default;
+};
+
+struct LoadedVirtualCall {
+  llvm::Value *callee = nullptr;
+  llvm::Value *receiver = nullptr;
+};
+
 // Native representation of already-selected virtual targets. This planner
 // never resolves names, signatures or final overrides. All state is scoped
 // to the immutable input and LLVM context of one emission session.
@@ -48,6 +64,14 @@ public:
                                             HirClassInstanceId sourceView);
   void install(llvm::IRBuilder<> &ir, llvm::Value *completeObject,
                HirClassInstanceId activeClass);
+  [[nodiscard]] VirtualCallPlan planCall(const MirInstruction &instruction);
+  [[nodiscard]] LoadedVirtualCall loadCall(llvm::IRBuilder<> &ir,
+                                           const MirInstruction &instruction,
+                                           const VirtualCallPlan &plan,
+                                           llvm::Value *evaluatedReceiver);
+  [[nodiscard]] llvm::Value *directReceiver(llvm::IRBuilder<> &ir,
+                                            const MirInstruction &instruction,
+                                            llvm::Value *evaluatedReceiver);
 
 private:
   Session &session;

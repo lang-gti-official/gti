@@ -7,6 +7,58 @@
 
 namespace lang::native_llvm {
 
+namespace {
+SemanticType receiverType(const MirInstruction &instruction) {
+  if (!instruction.receiver)
+    throw std::invalid_argument(
+        "LLVM member invocation has no sealed receiver");
+  auto type = instruction.receiver->type;
+  if (instruction.unsafeOperation == UnsafeOperationKind::RawMember &&
+      type.kind == SemanticType::RawPointer && type.arguments.size() == 1) {
+    auto pointee = type.arguments.front();
+    type = std::move(pointee);
+  }
+  if (type.kind != SemanticType::Class)
+    throw BackendUnsupportedError(
+        "LLVM member receiver requires its exact concrete class type");
+  return type;
+}
+
+bool sameCallContract(const MirFunctionInstance &left,
+                      const MirFunctionInstance &right) {
+  return left.returnType == right.returnType &&
+         left.parameterTypes == right.parameterTypes &&
+         left.receiverMutability == right.receiverMutability &&
+         left.overloadedOperator == right.overloadedOperator &&
+         left.requiresUnsafe == right.requiresUnsafe &&
+         left.tracksCaller == right.tracksCaller &&
+         left.neverReturns == right.neverReturns &&
+         left.linkage == right.linkage &&
+         left.returnBorrowOrigin == right.returnBorrowOrigin &&
+         left.returnBorrowParameter == right.returnBorrowParameter &&
+         left.returnBorrowAccess == right.returnBorrowAccess &&
+         left.returnBorrowParameters == right.returnBorrowParameters &&
+         left.returnBorrowFields == right.returnBorrowFields &&
+         left.completeReturnBorrow == right.completeReturnBorrow &&
+         left.returnBorrowPlace == right.returnBorrowPlace &&
+         left.restoresReferenceResult == right.restoresReferenceResult &&
+         left.restoredBorrowFields == right.restoredBorrowFields;
+}
+
+llvm::Value *projectBase(Session &session, llvm::IRBuilder<> &ir,
+                         llvm::Value *receiver, SemanticType source,
+                         const BaseSubobjectLayout &path) {
+  for (const auto index : path.indices) {
+    receiver = ir.CreateStructGEP(session.layouts().get(source).storage,
+                                  receiver, index);
+    source = session.layouts().instance(source).bases.at(index).type;
+  }
+  if (source != path.type)
+    throw std::logic_error("LLVM receiver projection lost its physical owner");
+  return receiver;
+}
+} // namespace
+
 Dispatch::Dispatch(Session &session) : session(session) {
   for (const auto &owner : session.program().mir().classInstances())
     for (const auto &selection : owner.virtualDispatch) {
@@ -305,6 +357,143 @@ void Dispatch::install(llvm::IRBuilder<> &ir, llvm::Value *completeObject,
                                  location.index);
     ir.CreateStore(table, address);
   }
+}
+
+VirtualCallPlan Dispatch::planCall(const MirInstruction &instruction) {
+  const auto &program = session.program().mir();
+  const auto *selected =
+      instruction.functionTarget
+          ? program.findFunctionInstance(*instruction.functionTarget)
+          : nullptr;
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.dispatch != CallDispatch::Virtual || !selected ||
+      !selected->virtualMethod || selected->staticMember || !selected->owner ||
+      instruction.tracksCaller != selected->tracksCaller ||
+      selected->requiresUnsafe != (instruction.unsafeOperation ==
+                                   UnsafeOperationKind::DeclaredUnsafeCall) ||
+      instruction.parameterTypes != selected->parameterTypes ||
+      instruction.info.type != selected->returnType ||
+      instruction.definedFailure.propagation !=
+          FailurePropagationKind::VirtualCall)
+    throw std::invalid_argument(
+        "LLVM virtual invocation lacks its exact sealed call contract");
+  const auto &source = session.layouts().instance(receiverType(instruction));
+  const auto *selectedOwner = program.findClassInstance(*selected->owner);
+  if (!selectedOwner)
+    throw std::logic_error("LLVM named virtual member has no sealed owner");
+  std::vector<HirFunctionInstanceId> roots;
+  const MirFunctionInstance *contract = nullptr;
+  std::optional<VirtualRootAbi> common;
+  for (const auto &namedRoot : selectedOwner->virtualDispatch) {
+    if (namedRoot.target != selected->id)
+      continue;
+    const auto sourceRoot = std::find_if(
+        source.virtualDispatch.begin(), source.virtualDispatch.end(),
+        [&](const auto &row) { return row.root == namedRoot.root; });
+    if (sourceRoot == source.virtualDispatch.end())
+      throw BackendUnsupportedError(
+          "LLVM named virtual family is absent from the sealed receiver view");
+    const auto &row = *sourceRoot;
+    const auto *root = program.findFunctionInstance(row.root);
+    if (!root || namedRoot.targetOwner != selectedOwner->id ||
+        std::find(selected->virtualRoots.begin(), selected->virtualRoots.end(),
+                  root->declaration) == selected->virtualRoots.end())
+      throw std::logic_error(
+          "LLVM named member lost its concrete sealed root family");
+    const auto abi = rootAbi(root->id);
+    if (root->returnType != selected->returnType ||
+        root->parameterTypes != selected->parameterTypes ||
+        root->receiverMutability != selected->receiverMutability ||
+        root->overloadedOperator != selected->overloadedOperator ||
+        (contract &&
+         (!sameCallContract(*contract, *root) || common->call != abi.call)))
+      throw BackendUnsupportedError("LLVM virtual roots do not retain one "
+                                    "equivalent sealed call contract");
+    if (!contract) {
+      contract = root;
+      common = abi;
+    }
+    // Consume the verified root path; the backend does not select a source
+    // member or resolve ambiguity/accessibility from this physical query.
+    const auto path = session.layouts().basePath(source.type, row.rootPath);
+    if (!root->owner ||
+        session.layouts().instance(path.type).id != *root->owner)
+      throw std::logic_error("LLVM virtual root lost its sealed owner path");
+    roots.push_back(root->id);
+  }
+  if (roots.empty())
+    throw BackendUnsupportedError(
+        "LLVM virtual call has no root in its sealed receiver view");
+  std::sort(roots.begin(), roots.end());
+  const auto root = roots.front();
+  const auto &function = *program.findFunctionInstance(root);
+  const auto &owner = *program.findClassInstance(*function.owner);
+  auto location = session.layouts().dispatchLocation(owner.type);
+  if (!location)
+    throw std::logic_error(
+        "LLVM virtual root has no physical dispatch pointer");
+  location->owner =
+      session.layouts().baseSubobject(source.type, location->owner.type);
+  const auto &profile = slotProfile(owner.id);
+  const auto slot = std::find(profile.begin(), profile.end(), root);
+  if (slot == profile.end())
+    throw std::logic_error("LLVM virtual root has no stable slot");
+  return {.root = root,
+          .sourceClass = source.id,
+          .rootOwner = owner.id,
+          .location = *location,
+          .slot = static_cast<std::size_t>(slot - profile.begin()),
+          .abi = rootAbi(root)};
+}
+
+LoadedVirtualCall Dispatch::loadCall(llvm::IRBuilder<> &ir,
+                                     const MirInstruction &instruction,
+                                     const VirtualCallPlan &plan,
+                                     llvm::Value *evaluatedReceiver) {
+  if (!evaluatedReceiver || plan != planCall(instruction))
+    throw std::invalid_argument(
+        "LLVM virtual call plan is foreign or inconsistent");
+  const auto &source =
+      *session.program().mir().findClassInstance(plan.sourceClass);
+  auto *receiver = projectBase(session, ir, evaluatedReceiver, source.type,
+                               plan.location.owner);
+  auto *field = ir.CreateStructGEP(
+      session.layouts().get(plan.location.owner.type).storage, receiver,
+      plan.location.index);
+  auto *table = ir.CreateLoad(session.layouts().pointer(), field);
+  auto *slot =
+      ir.CreateGEP(session.layouts().pointer(), table, ir.getInt64(plan.slot));
+  return {ir.CreateLoad(session.layouts().pointer(), slot), receiver};
+}
+
+llvm::Value *Dispatch::directReceiver(llvm::IRBuilder<> &ir,
+                                      const MirInstruction &instruction,
+                                      llvm::Value *evaluatedReceiver) {
+  const auto &program = session.program().mir();
+  const auto *target =
+      instruction.functionTarget
+          ? program.findFunctionInstance(*instruction.functionTarget)
+          : nullptr;
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.dispatch != CallDispatch::Static || !target ||
+      !target->owner || target->staticMember || !evaluatedReceiver)
+    throw std::invalid_argument(
+        "LLVM direct member has no sealed receiver presentation");
+  const auto source = receiverType(instruction);
+  const auto &owner = *program.findClassInstance(*target->owner);
+  if (isMirExactReceiverPresentation(program, instruction, source)) {
+    if (target->receiverMutability != ReceiverMutability::ReadOnly)
+      throw std::invalid_argument(
+          "LLVM exact interface presentation requires readonly access");
+    const auto inverse = session.layouts().baseSubobject(owner.type, source);
+    return inverse.offset == 0
+               ? evaluatedReceiver
+               : ir.CreateGEP(
+                     ir.getInt8Ty(), evaluatedReceiver,
+                     ir.getInt64(-static_cast<std::int64_t>(inverse.offset)));
+  }
+  return projectBase(session, ir, evaluatedReceiver, source,
+                     session.layouts().baseSubobject(source, owner.type));
 }
 
 } // namespace lang::native_llvm
