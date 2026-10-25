@@ -4535,12 +4535,15 @@ loan transfer when its complete dependencies, access, type and HIR identity
 are unchanged and the return terminator consumes that exact escaping loan.
 It does not authorize constructing a reference from a possible owner address.
 
-Raw primitive references may use an ordinary, independently admitted native
-class reference as their lifetime witness. The centralized
+Raw references to primitive or ordinary, independently represented native
+class objects may use passive or ordinary native class lifetime witnesses.
+One structural predicate covers both roles; their types and addresses remain
+independent. Polymorphic, abstract, inherited, opaque, incomplete, union and
+foreign-record class shapes do not enter through this extension. The centralized
 `rawBorrowResultLoan` verifier query supplies the exact parent, origin and access
 contract. The evaluated raw pointer supplies the physical address, even when
 the witness owns a different address. This does not prove pointer membership,
-extend the supported pointee layouts, or add runtime checks or alias promises;
+admit other pointee layouts, or add runtime checks or alias promises;
 the unsafe caller retains its alignment, initialization and lifetime obligations.
 
 ### LLVM Places And Counted Text

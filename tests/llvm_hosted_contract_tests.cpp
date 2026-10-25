@@ -293,7 +293,8 @@ void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
   }
 }
 
-void classOwnerRawReferenceContract(const std::filesystem::path &repository) {
+void classOwnerRawReferenceContract(const std::filesystem::path &repository,
+                                    std::string_view fixture) {
   FrontendOptions options;
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = true;
@@ -303,8 +304,7 @@ void classOwnerRawReferenceContract(const std::filesystem::path &repository) {
                                      {repository / "stdlib/prelude.gti"}, {},
                                      {repository / "stdlib"});
   };
-  const auto frontend = analyze(
-      repository / "tests/fixtures/llvm_hosted_class_owner_reference.gti");
+  const auto frontend = analyze(repository / "tests/fixtures" / fixture);
   require(frontend.canGenerateCode(), "owning class witness is valid GTI");
   std::vector<LoweredProgramIssue> issues;
   const auto program = verifiedLoweredProgram(
@@ -328,7 +328,7 @@ void classOwnerRawReferenceContract(const std::filesystem::path &repository) {
                     formal.arguments.front().kind == SemanticType::Class,
                 "raw reference is tied to an ordinary class witness");
         seen[stage.intrinsic == IntrinsicKind::RawBorrowMut] = true;
-        for (unsigned mutation = 0; mutation != 5; ++mutation) {
+        for (unsigned mutation = 0; mutation != 9; ++mutation) {
           auto invalidBody = function.body;
           auto invalid = stage;
           auto &invalidLoan = invalidBody.loans[loan->id - 1];
@@ -352,6 +352,24 @@ void classOwnerRawReferenceContract(const std::filesystem::path &repository) {
             break;
           case 4:
             invalid.operands[0].value = 0;
+            break;
+          case 5:
+            invalid.info.type = stage.info.type.kind == SemanticType::Class
+                                    ? SemanticType::Int32
+                                    : SemanticType::Char;
+            break;
+          case 6:
+            invalid.operands[0].type = SemanticType::rawPointerTo(
+                SemanticType::Void, stage.operands[0].type.pointerAccess);
+            break;
+          case 7:
+            invalid.borrowAccess = loan->access == AccessMode::Mutable
+                                       ? AccessMode::ReadOnly
+                                       : AccessMode::Mutable;
+            break;
+          case 8:
+            invalid.parameterTypes[0] =
+                SemanticType::rawPointerTo(SemanticType::Char);
             break;
           }
           require(!mir_detail::rawBorrowResultLoan(invalidBody, invalid),
@@ -419,6 +437,30 @@ int main() {
       issues);
   require(pending && !planLlvmAdmission(*pending).admitted(),
           "primitive pointee does not admit an unsupported owner layout");
+  const auto unsupportedReferent =
+      analyze("unsupported-referent-layout.gti", R"(
+#include <std/memory>
+struct Referent {
+  int value = 7;
+  virtual int observe() { return this.value; }
+  ~Referent() {}
+};
+struct Owner { int marker = 11; };
+int main() {
+  Referent referent{};
+  Owner owner{};
+  Referent& read = unsafe { std::assume_ref(&referent, owner) };
+  return read.value == 7 ? 0 : 1;
+}
+)");
+  require(unsupportedReferent.canGenerateCode(),
+          "unsupported referent layout is valid source");
+  const auto pendingReferent = verifiedLoweredProgram(
+      gti_test::lowerProgram(unsupportedReferent, unsupportedReferent.mir,
+                             unsupportedReferent.mir),
+      issues);
+  require(pendingReferent && !planLlvmAdmission(*pendingReferent).admitted(),
+          "ordinary witness does not admit an unsupported referent layout");
 }
 
 void sourceMetadataContract(const std::filesystem::path &repository) {
@@ -721,7 +763,10 @@ int main(int argc, char **argv) {
   try {
     unsafeReferenceLoadContract(std::filesystem::canonical(argv[1]));
     unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]));
-    classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]));
+    classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]),
+                                   "llvm_hosted_class_owner_reference.gti");
+    classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]),
+                                   "llvm_hosted_class_pointee_reference.gti");
     sourceMetadataContract(std::filesystem::canonical(argv[1]));
     for (const auto &test : cases)
       for (auto optimization :

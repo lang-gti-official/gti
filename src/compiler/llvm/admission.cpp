@@ -92,25 +92,6 @@ bool primitiveRawIndex(const MirInstruction &stage) {
          constantIntegerDomain(stage.operands[1].type).has_value();
 }
 
-// The verifier establishes the witness's lifetime/access. Representation
-// transports the independently evaluated pointer, not that witness's address.
-bool passiveRawReference(const MirInstruction &stage) {
-  const bool assertion = stage.intrinsic == IntrinsicKind::RawBorrow ||
-                         stage.intrinsic == IntrinsicKind::RawBorrowMut;
-  if (!assertion || stage.kind != MirInstructionKind::Call ||
-      stage.functionTarget || stage.operands.size() != 2 ||
-      stage.parameterTypes.size() != 2 || !stage.loan ||
-      stage.borrowOrigin != BorrowOriginKind::Argument ||
-      stage.borrowArgument != 1 ||
-      stage.info.category != ValueCategory::Place ||
-      !passiveAddress(stage.operands[0].type) ||
-      stage.parameterTypes[1].kind != SemanticType::Reference)
-    return false;
-  return stage.info.type == stage.operands[0].type.arguments.front() &&
-         passiveReferenceType(stage.info.type) &&
-         passiveReferenceType(stage.operands[1].type);
-}
-
 bool primitivePointerArithmetic(const MirInstruction &stage) {
   if (stage.operands.size() != 2)
     return false;
@@ -795,18 +776,39 @@ public:
            mir_detail::verifiedReferenceRestoreCall(program, body, *producer);
   }
 
-  bool nativeOwnerRawReference(const MirBody &body,
+  bool ordinaryRawReferenceObject(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class)
+      return false;
+    const MirClassInstance *owner = nullptr;
+    for (const auto &candidate : program.classInstances())
+      if (candidate.type == type) {
+        if (owner)
+          return false;
+        owner = &candidate;
+      }
+    return owner &&
+           (owner->kind == ClassKind::Class ||
+            owner->kind == ClassKind::Struct) &&
+           owner->compilerCapability == CompilerCapabilityTypeKind::None &&
+           !owner->polymorphic && !owner->abstract && !owner->cOpaqueHandle &&
+           !owner->cAbiRecord && !owner->cAbiLayout && !owner->unionLayout &&
+           owner->bases.empty() && owner->structuralBases.empty() &&
+           nativeValue(type) && classShape(type) == Shape::NativeClassStorage;
+  }
+
+  bool representedRawReference(const MirBody &body,
                                const MirInstruction &stage) const {
-    if (!mir_detail::rawBorrowResultLoan(body, stage) ||
-        !passiveAddress(stage.operands[0].type) ||
-        !passiveReferenceType(stage.info.type))
+    if (!mir_detail::rawBorrowResultLoan(body, stage))
+      return false;
+    const auto &pointer = stage.operands[0].type;
+    if (!(passiveAddress(pointer) && passiveReferenceType(stage.info.type)) &&
+        !ordinaryRawReferenceObject(pointer.arguments.front()))
       return false;
     const auto &witness = stage.parameterTypes[1];
-    return witness.kind == SemanticType::Reference &&
-           witness.arguments.size() == 1 &&
-           witness.arguments.front().kind == SemanticType::Class &&
-           nativeValue(witness.arguments.front()) &&
-           classShape(witness.arguments.front()) == Shape::NativeClassStorage;
+    // The verifier owns origin/access; the witness need not share the raw
+    // pointer's type or address. Neither branch materializes or copies it.
+    return passiveReferenceType(witness) ||
+           ordinaryRawReferenceObject(witness.arguments.front());
   }
 
   bool unsafeCallResultProducer(const MirBody &body, const MirBlock &block,
@@ -1324,8 +1326,7 @@ public:
           add(Shape::UnstagedConstructorFieldPublication,
               unstagedPublicationShape(mir, stage));
         const bool typedMemory = memoryOperation(stage);
-        const bool rawReference =
-            passiveRawReference(stage) || nativeOwnerRawReference(mir, stage);
+        const bool rawReference = representedRawReference(mir, stage);
         const auto [extendedRaw, validRaw] = nativeRawStage(mir, stage);
         const bool rawClassStage = extendedRaw && validRaw;
         const bool classArithmetic = nativePointerArithmetic(stage) && validRaw;
