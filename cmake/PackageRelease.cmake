@@ -144,8 +144,10 @@ else()
 endif()
 set(GTI_ARCHIVE_PATH "${GTI_OUTPUT_DIR}/${GTI_ARCHIVE_NAME}")
 
+# Do not materialize macOS metadata as new AppleDouble files on extraction:
+# those files would change the installed runtime-header tree's cache identity.
 execute_process(
-  COMMAND "${CMAKE_COMMAND}" -E tar czf "${GTI_ARCHIVE_PATH}" .
+  COMMAND "${CMAKE_COMMAND}" -E tar czf "${GTI_ARCHIVE_PATH}" --format=gnutar .
   WORKING_DIRECTORY "${GTI_STAGE_DIR}"
   RESULT_VARIABLE archive_result
   OUTPUT_VARIABLE archive_output

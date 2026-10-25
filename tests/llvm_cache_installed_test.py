@@ -42,11 +42,15 @@ def main():
                  "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "LIBRARY_PATH",
                  "SDKROOT", "DEVELOPER_DIR", "MACOSX_DEPLOYMENT_TARGET"):
         environment.pop(name, None)
+    bundled = cache.get("GTI_BUNDLE_LLVM") == "ON"
     with tempfile.TemporaryDirectory(prefix="gti-llvm-installed-") as temporary:
         root = Path(temporary).resolve()
         stage = root / "original-stage"
         run(["cmake", "--install", build, "--prefix", stage,
              "--component", "gti_toolchain"], root, environment)
+        if bundled and sys.platform == "darwin":
+            os.setxattr(stage / "include/gti/runtime.h",
+                        "org.gti.llvm-cache-metadata", b"archive-identity-probe")
         pure = root / "pure-project"
         pure.mkdir()
         (pure / "gti.toml").write_text(
@@ -57,7 +61,6 @@ def main():
         (pure / "main.gti").write_text("int main() { return 0; }\n", encoding="utf-8")
         cold = run([stage / "bin/gti", "build", "--verbose"], pure, environment)
         assert "gti: cache miss " in cold.stderr, cold.stderr
-        bundled = cache.get("GTI_BUNDLE_LLVM") == "ON"
         if bundled:
             archive_platform = {("darwin", "arm64"): "darwin-arm64",
                                 ("linux", "x86_64"): "linux-x86_64"}[
@@ -72,6 +75,9 @@ def main():
             checksum = Path(f"{archive}.sha256").read_text().split()[0]
             with archive.open("rb") as packet:
                 assert hashlib.file_digest(packet, "sha256").hexdigest() == checksum
+            with tarfile.open(archive, "r:gz") as packet:
+                assert not any(Path(member.name).name.startswith("._")
+                               for member in packet.getmembers()), "AppleDouble metadata in release archive"
         else:
             archive = root / "gti-toolchain.tar.gz"
             with tarfile.open(archive, "w:gz") as output:

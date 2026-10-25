@@ -314,6 +314,11 @@ available. Stable macOS publication is manual and is not a completed automated
 platform check. Nightly asset pruning intentionally removes archives outside
 its current Linux build rather than retaining misleading old macOS binaries.
 
+Release archives explicitly use GNU tar format so macOS extended attributes do
+not become AppleDouble companion files after extraction. This preserves the
+installed runtime-header tree's content identity for relocated native cache
+entries; the cache still hashes every real file in that tree.
+
 Stable versions describe user-visible toolchain behavior. Internal compiler or
 runtime work, tests, and documentation alone retain `VERSION` and reach users
 through nightly. `scripts/check_release_version.py` conservatively identifies
