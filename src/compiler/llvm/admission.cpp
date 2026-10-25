@@ -974,7 +974,16 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     inventory.source = row == nullptr ? SourceSpan{} : row->source;
     inventory.type(instance.type);
     inventory.traits(instance.traits, instance.type);
-    inventory.add(instance.kind);
+    // This use describes ordinary storage, not the whole ClassKind family.
+    // Every field, capability, body and cleanup remains independently gated.
+    const bool ordinary =
+        (instance.kind == ClassKind::Class ||
+         instance.kind == ClassKind::Struct) &&
+        !instance.cAbiLayout && !instance.cOpaqueHandle &&
+        !instance.unionLayout &&
+        instance.compilerCapability == CompilerCapabilityTypeKind::None;
+    inventory.add(instance.kind, ordinary ? inventory.classShape(instance.type)
+                                          : std::nullopt);
     if (instance.compilerCapability != CompilerCapabilityTypeKind::None)
       inventory.add(instance.compilerCapability);
     if (!instance.declaredFields.empty())

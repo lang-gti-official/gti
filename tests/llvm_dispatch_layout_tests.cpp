@@ -976,18 +976,24 @@ int inspect(int input) { Value value{input}; return value.read(); }
     throw std::runtime_error("declaration-only source seal failed");
   const auto conservative = planLlvmAdmission(*verified);
   expect(conservative.closure() == LlvmAdmissionClosure::AllExecutableBodies &&
-             !conservative.admitted() &&
-             conservative.limitation().find("ClassKind.Class") !=
-                 std::string::npos,
-         "the existing conservative class-inventory admission gap remains "
-         "explicit");
-  // Actual library/embedding publication is pending O11/B-LIB-02. Rootless
-  // ordinary object generation also rejects the conservative ClassKind row;
-  // this correction must not bypass that separate admission obligation.
-  rejects<BackendUnsupportedError>(
-      [&] { static_cast<void>(LlvmBackend().generate(lowered)); },
-      "public conservative class emission still rejects before returning an "
-      "artifact");
+             conservative.admitted(),
+         "ordinary conservative class inventory consumes its exact storage "
+         "witness");
+  expect(
+      std::any_of(conservative.requirements().begin(),
+                  conservative.requirements().end(),
+                  [](const auto &use) {
+                    return use.required && use.entry->family == "ClassKind" &&
+                           use.entry->name == "Class" &&
+                           use.entry->state == LlvmCoverageState::Pending &&
+                           use.implementedShape &&
+                           use.implementedShape->name == "NativeClassStorage";
+                  }),
+      "the class-use witness does not promote the global pending family row");
+  const auto object = LlvmBackend().generate(lowered);
+  expect(object.kind == BackendArtifactKind::Object &&
+             object.contents.size() > 100,
+         "the real public object API lowers retained declaration inventory");
   Session session(*verified, {});
   lowerScalarProgram(session, planLlvmAdmission(*verified));
   const auto &value = named(session.program(), "Value");

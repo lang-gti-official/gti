@@ -4431,7 +4431,7 @@ absent; the shared MIR predicate checks exact body, field and instruction shape.
 Actual constructor writes, mixed declaration defaults/explicit overrides and
 reference loans retain their independent contracts. This does not admit empty
 local/global/static-field/constructor initialization or imply zero filling.
-Conservative ordinary-class inventory, polymorphic dispatch and library/export
+Unsupported conservative inventory uses, polymorphic dispatch and library/export
 admission retain their separate gates; private complete-body lowering is not
 public native-dispatch acceptance.
 
@@ -4796,6 +4796,19 @@ shapes have distinct inventory keys, so a supported occurrence cannot hide an
 unsupported occurrence of the same enum in the same body. `MustBeAbsent` rules
 are never overridden, and callers cannot supply witnesses. These facts live in
 the backend admission plan, not in `LoweredProgram`.
+
+The conservative class-inventory use may consume `NativeClassStorage` only for
+ordinary `Class`/`Struct` instances passing the existing recursive concrete
+storage proof, with native-record, opaque, union and private-capability layouts
+explicitly excluded. This does not promote the global class-kind ledger row.
+Every required field type, trait, body, cleanup, call and generated dependency
+is still inventoried independently; representable storage does not certify an
+unsupported method. Rootless ordinary object generation can therefore retain
+and lower complete declaration inventory without admitting library/export
+program kinds or polymorphic storage. A focused object consumer validates one
+infallible signed-32-bit GTI/C scalar ABI equivalence through the shared planner
+before linking actual public-backend objects at O0/O3. It is not a stable C
+export or general library ABI promise.
 
 The compiled switches reject new unassigned enum members, including enums with
 no count sentinel. `input_fields.def` checks the decomposition of the central

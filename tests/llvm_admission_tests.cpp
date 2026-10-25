@@ -6,6 +6,7 @@
 #include "../src/compiler/llvm/placement.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -389,6 +390,190 @@ int main() { Pinned value{}; return 0; }
                             "placement rather than byte transport");
 }
 
+void testConservativeClassWitnesses() {
+  using namespace lang;
+  const auto classesProved = [](const LlvmAdmissionPlan &plan) {
+    bool found = false;
+    for (const auto &use : plan.requirements())
+      if (use.required && use.entry->family == "ClassKind" &&
+          use.entry->name == "Class") {
+        found = true;
+        if (!use.implementedShape ||
+            use.implementedShape->name != "NativeClassStorage" ||
+            use.entry->state != LlvmCoverageState::Pending)
+          return false;
+      }
+    return found;
+  };
+  const auto ordinary = planLlvmAdmission(lower(R"(
+class Value { int data; public: Value(int input):data(input){} int read(){return this.data;} };
+int inspect(int input) { Value value{input}; return value.read(); }
+)"));
+  expect(ordinary.admitted() && classesProved(ordinary) &&
+             ordinary.closure() == LlvmAdmissionClosure::AllExecutableBodies,
+         "ordinary rootless inventory uses a per-use class proof without "
+         "omission or family promotion");
+  expect(std::any_of(ordinary.requiredBodies().begin(),
+                     ordinary.requiredBodies().end(),
+                     [](auto address) {
+                       return address.kind == MirBodyKind::FieldInitializers;
+                     }),
+         "conservative class admission retains field declaration bodies");
+  const auto body = planLlvmAdmission(lower(R"(
+class Value {
+  int data = 1;
+public:
+  int unsupported() { auto call = [](int value)->int{return value;}; return call(this.data); }
+};
+int inspect(Value& value) { return value.unsupported(); }
+)"));
+  expect(!body.admitted() && classesProved(body) && body.firstUnsupported() &&
+             body.firstUnsupported()->entry->family != "ClassKind" &&
+             std::any_of(body.requirements().begin(), body.requirements().end(),
+                         [](const auto &use) {
+                           return use.required && use.body &&
+                                  use.body->kind == MirBodyKind::Function &&
+                                  use.entry->state ==
+                                      LlvmCoverageState::Pending &&
+                                  !use.implementedShape;
+                         }),
+         "representable class storage cannot hide a required unsupported "
+         "method body");
+  const auto cleanup = planLlvmAdmission(lower(R"(
+int unsupported(int input) { auto call=[](int value)->int{return value;}; return call(input); }
+class Value {
+public:
+  Value() {}
+  ~Value() { int observed = unsupported(1); }
+};
+void inspect() { Value value{}; }
+)"));
+  expect(!cleanup.admitted() && classesProved(cleanup) &&
+             std::any_of(cleanup.requiredBodies().begin(),
+                         cleanup.requiredBodies().end(),
+                         [](auto address) {
+                           return address.kind == MirBodyKind::Destructor;
+                         }) &&
+             cleanup.firstUnsupported() &&
+             cleanup.firstUnsupported()->entry->family != "ClassKind",
+         "source cleanup and its unsupported call dependency stay required "
+         "after class storage is proved");
+  const auto itemCall = planLlvmAdmission(lower(R"(
+int identity(int value) { return value; }
+class Value { public: int read(){auto callback=identity; return callback(1);} };
+int inspect(Value& value) { return value.read(); }
+)"));
+  expect(!itemCall.admitted() && classesProved(itemCall) &&
+             itemCall.firstUnsupported() &&
+             itemCall.firstUnsupported()->entry->family != "ClassKind",
+         "required function-item creation/call capabilities cannot hide behind "
+         "class storage");
+  for (
+      const auto source :
+      {R"(interface Empty {}; void accept(Empty& value) {})",
+       R"(class Base {public: Base(){}}; class Derived:public Base {public: Derived():Base(){}}; void accept(Derived& value){})",
+       R"(class Poly {public: virtual int read(){return 1;}}; class Outer {public: Poly value;}; void accept(Outer& value){})",
+       R"(enum class Choice { empty, held(int value) }; class Outer {public: Choice value=Choice::empty;}; void accept(Outer& value){})",
+       R"(union Payload { int value; bool flag; }; void accept(Payload& value){})"}) {
+    const auto excluded = planLlvmAdmission(lower(source));
+    expect(!excluded.admitted() && std::any_of(excluded.requirements().begin(),
+                                               excluded.requirements().end(),
+                                               [](const auto &use) {
+                                                 return use.required &&
+                                                        use.entry->family ==
+                                                            "ClassKind" &&
+                                                        !use.implementedShape;
+                                               }),
+           "interfaces, inherited, nested polymorphic and union classes retain "
+           "unproved class uses");
+  }
+  const auto nestedForeign = planLlvmAdmission(lower(R"(
+[[c_abi]] struct Record { int value; };
+class Outer { public: Record value; Outer(Record input) : value(input) {} };
+void accept(Outer& value) {}
+)"));
+  expect(!nestedForeign.admitted() &&
+             std::any_of(nestedForeign.requirements().begin(),
+                         nestedForeign.requirements().end(),
+                         [](const auto &use) {
+                           return use.required &&
+                                  use.entry->key() == "ClassKind.Struct" &&
+                                  !use.implementedShape;
+                         }),
+         "an ordinary containing class cannot bypass nested foreign-layout "
+         "inventory");
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto owned =
+      Frontend().analyze(root / "llvm-owned-field-control.gti", R"(
+#include <std/memory>
+class Outer {
+  std::unique_ptr<int> owner = std::unique_ptr<int>(nullptr);
+public:
+  Outer() : owner(std::unique_ptr<int>(nullptr)) {}
+};
+void accept(Outer& value) {}
+)",
+                         {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  expect(owned.canGenerateCode(),
+         "ownership-field exclusion uses valid source-defined policy");
+  if (owned.canGenerateCode()) {
+    const auto built = LoweredProgramBuilder().build(
+        owned.program, owned.semantics, owned.hir, owned.mir, owned.mir, {},
+        TargetInfo::host(), true);
+    std::vector<LoweredProgramIssue> issues;
+    const auto verified = built.valid()
+                              ? verifiedLoweredProgram(*built.program, issues)
+                              : std::nullopt;
+    expect(verified.has_value(),
+           "ownership-field control retains its exact source seal");
+    if (verified) {
+      const auto ownerPlan = planLlvmAdmission(*verified);
+      expect(!ownerPlan.admitted() &&
+                 std::any_of(ownerPlan.requirements().begin(),
+                             ownerPlan.requirements().end(),
+                             [](const auto &use) {
+                               return use.required &&
+                                      use.entry->key() ==
+                                          "SemanticType::Kind.UniqueOwner";
+                             }),
+             "recursive ordinary storage proof cannot admit a private owning "
+             "field");
+    }
+  }
+  ProgramRequest request{.kind = ProgramKind::Library};
+  request.exports.push_back({.function = "inspect", .symbol = "gti_inspect"});
+  const auto frontend =
+      Frontend({.program = std::move(request)})
+          .analyze("llvm-conservative-library.gti",
+                   "int inspect(int value) { return value; }");
+  expect(frontend.canGenerateCode(),
+         "library negative control has valid semantic export facts");
+  if (frontend.canGenerateCode()) {
+    const auto built = LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+        frontend.mir, {}, TargetInfo::host(), true);
+    std::vector<LoweredProgramIssue> issues;
+    const auto verified = built.valid()
+                              ? verifiedLoweredProgram(*built.program, issues)
+                              : std::nullopt;
+    expect(verified.has_value(),
+           "library negative retains its exact source seal");
+    if (verified) {
+      const auto library = planLlvmAdmission(*verified);
+      expect(!library.admitted() && has(library, "ProgramKind", "Library") &&
+                 has(library, "Shape", "EmbeddingExports"),
+             "rootless ordinary object storage does not admit library/export "
+             "program kinds");
+      try {
+        static_cast<void>(LlvmBackend().generate(*built.program));
+        expect(false, "pending library/export plans cannot return a public "
+                      "object artifact");
+      } catch (const BackendUnsupportedError &) {
+      }
+    }
+  }
+}
+
 } // namespace
 
 int main() {
@@ -396,6 +581,7 @@ int main() {
     testLedger();
     testSnapshotAndWholeProgram();
     testShapeWitnesses();
+    testConservativeClassWitnesses();
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';
     ++failures;
