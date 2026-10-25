@@ -1,4 +1,5 @@
 #include "../src/compiler/llvm/abi.h"
+#include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/places.h"
 #include "../src/compiler/llvm/runtime_abi.h"
 #include "cpp_backend_test_support.h"
@@ -611,6 +612,74 @@ int main(void) {
            "linked C consumer observes exact object bytes");
   }
 }
+// Real source -> verified lowered bodies -> private native body component.
+// Admission is tested separately; this does not grant a public coverage row.
+void testClassBodyComponent() {
+  const auto frontend = Frontend().analyze("llvm-class-component.gti", R"(
+mut int events = 0;
+class Ticket {
+public:
+  mut int value = 1;
+  Ticket(int input) : value(input) { events = events * 10 + 1; }
+  ~Ticket() { events = events * 10 + 2; }
+  int read() { return this.value; }
+};
+int main() {
+  { Ticket ticket{7}; if (ticket.read() != 7) { return 1; } }
+  if (events != 12) { return 2; }
+  return 0;
+}
+)");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("invalid native class component fixture");
+  std::vector<LoweredProgramIssue> issues;
+  const auto program = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!program)
+    throw std::runtime_error("unverified native class component fixture");
+  const auto root =
+      std::filesystem::temp_directory_path() /
+      ("gti-llvm-class-component-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(root);
+  const auto layout = driver::discoverToolchainLayout(nullptr);
+  driver::NativeToolchain toolchain;
+  for (const auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Less,
+        LlvmCodegenOptimization::Default,
+        LlvmCodegenOptimization::Aggressive}) {
+    Session session(*program, {.optimization = level});
+    const auto admission = planLlvmAdmission(*program);
+    lowerScalarProgram(session, admission);
+    for (const auto &function : session.module())
+      if (function.isDeclaration() &&
+          function.getName().starts_with("__gti_native"))
+        std::cerr << "missing component body: " << function.getName().str()
+                  << '\n';
+    const auto object = session.emitObject();
+    const auto path = root / "probe.o";
+    expect(driver::writeArtifact(path, object.contents) ==
+               driver::ArtifactWriteStatus::Success,
+           "write class component object");
+    driver::NativeInputs inputs;
+    inputs.finalLibraryFiles.push_back(layout.runtimeLibrary);
+    const auto executable = root / "probe";
+    const auto linked = toolchain.invoke(driver::NativeLinkRequest(
+        driver::discoverNativeCompiler(), path, executable, inputs));
+    if (!linked.succeeded())
+      std::cerr << linked.output;
+    expect(linked.succeeded(), "link class component with the C runtime ABI");
+    if (linked.succeeded()) {
+      const auto run = driver::invokeProcess({executable.string()});
+      if (!run.succeeded())
+        std::cerr << run.output;
+      expect(run.succeeded(),
+             "real source constructor/receiver/destructor execute at O0-O3");
+    }
+  }
+  std::filesystem::remove_all(root);
+}
 } // namespace
 
 int main() {
@@ -620,6 +689,7 @@ int main() {
     testInvalidModule(input);
     testDiagnostics(input);
     testObjectHandoff(input);
+    testClassBodyComponent();
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';
     return 1;

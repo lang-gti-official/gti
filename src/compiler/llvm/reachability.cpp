@@ -24,6 +24,19 @@ Reachability reachableProgram(const LoweredProgram &program) {
     if (!result.contains(identity))
       result.generated.push_back(identity);
   };
+  const auto cleanup = [&](const MirDropType &root) {
+    std::vector<const MirDropType *> pending{&root};
+    while (!pending.empty()) {
+      const auto &recipe = *pending.back();
+      pending.pop_back();
+      if (recipe.destructor)
+        body({MirBodyKind::Destructor, *recipe.destructor});
+      if (recipe.polymorphicCleanup)
+        result.conservative = true;
+      for (const auto &child : recipe.aggregate)
+        pending.push_back(&child);
+    }
+  };
   body({MirBodyKind::Module, 0});
   if (mir.hostedStartupPlan())
     body({MirBodyKind::HostedStartup, mir.hostedStartupPlan()->entry});
@@ -48,6 +61,8 @@ Reachability reachableProgram(const LoweredProgram &program) {
         throw std::logic_error("LLVM dependency has no sealed body");
       for (auto identity : row->requiredGeneratedItems)
         generated(identity);
+      for (const auto &obligation : input->dropObligations)
+        cleanup(obligation.dropType);
       for (const auto &block : input->blocks)
         for (const auto &instruction : block.instructions) {
           if (instruction.tombstone)
@@ -66,6 +81,10 @@ Reachability reachableProgram(const LoweredProgram &program) {
                   *instruction.functionPointerLambdaTarget});
           if (instruction.bodyTarget)
             body(*instruction.bodyTarget);
+          if (instruction.elementCleanup)
+            cleanup(*instruction.elementCleanup);
+          if (instruction.replacementCleanup)
+            cleanup(*instruction.replacementCleanup);
           if (instruction.dispatch == CallDispatch::Virtual ||
               instruction.nativeCalleeType || instruction.callableInvocation ||
               instruction.nativeCallbackAdapter ||
