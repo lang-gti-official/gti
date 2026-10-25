@@ -2,6 +2,7 @@
 #include "callables.h"
 #include "constructor_field_publication.h"
 #include "failure.h"
+#include "hosted.h"
 #include "lifetimes.h"
 #include "memory.h"
 #include "parameter_packs.h"
@@ -479,6 +480,8 @@ private:
   }
   [[nodiscard]] llvm::Value *call(const MirInstruction &instruction,
                                   llvm::Value *constructed = nullptr) {
+    if (const auto location = hostedSourceLiteral(instruction))
+      return scalars.literal(*location, instruction.info.type);
     if (instruction.intrinsic == IntrinsicKind::Panic ||
         instruction.intrinsic == IntrinsicKind::FailEmptyOwner ||
         instruction.intrinsic == IntrinsicKind::FailInactiveValue ||
@@ -1303,6 +1306,15 @@ private:
       if (input.kind == MirBodyKind::Constructor && owner)
         lifetimes.active(ir, thisAddress, owner->type, true);
       auto *value = term.value ? operand(*term.value) : nullptr;
+      if (input.kind == MirBodyKind::HostedStartup) {
+        const auto &plan = session.program().mir().hostedStartupPlan();
+        const auto *operation =
+            plan ? plan->findOperation(term.hostedStartupOperation) : nullptr;
+        if (!operation || operation->block != block.id)
+          throw std::logic_error(
+              "LLVM hosted return lost its sealed startup operation");
+        value = hostedReturnStatus(ir, *operation, value);
+      }
       if (returnDestination && value &&
           !(term.value->kind == MirOperandKind::Value &&
             placement.target(term.value->value) &&

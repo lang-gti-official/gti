@@ -1,0 +1,28 @@
+unsafe int& checked_identity(int& value) {
+  return value;
+}
+
+[[borrowed_from(value)]]
+unsafe int& forwarded_identity(int& value, int& other) {
+  unsafe { return checked_identity(value); }
+}
+
+mut int released = 0;
+
+struct Cleanup {
+  ~Cleanup() { released += 1; }
+};
+
+int main() {
+  int value = 42;
+  int other = 84;
+  {
+    Cleanup guard{};
+    unsafe {
+      if (forwarded_identity(value, other) != 42) {
+        return 1;
+      }
+    }
+  }
+  return released == 1 ? 0 : 2;
+}
