@@ -121,13 +121,22 @@ int main() {
 ''',
     "static-storage": r'''
 struct Plain { int value = 7; };
+mut int initialized = 0;
+Plain make_plain() { initialized += 1; return Plain(); }
 Plain global{};
+Plain dynamic_global = make_plain();
 class Counter {
 public:
   static mut int value = 3;
   static Plain plain{};
+  static Plain dynamic = make_plain();
 };
-int main() { Counter::value += 4; return global.value == 7 && Counter::plain.value == 7 && Counter::value == 7 ? 0 : 1; }
+int main() {
+  Counter::value += 4;
+  return global.value == 7 && dynamic_global.value == 7 &&
+         Counter::plain.value == 7 && Counter::dynamic.value == 7 &&
+         Counter::value == 7 && initialized == 2 ? 0 : 1;
+}
 ''',
     "tls-passive-dynamic": r'''
 mut int initialized = 0;
