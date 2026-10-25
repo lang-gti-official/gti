@@ -23,14 +23,15 @@ using namespace lang::native_llvm;
 
 // Test-only composition of an explicitly supplied production pre-O3 packet.
 // Never a backend admission path or a replacement execution engine. The shared
-// ABI hook is modeled with exact source registration, not symbol allowlists.
+// Source definitions go through the production ABI hook, not symbol allowlists.
 int replay(int argc, char **argv) {
   if (argc != 6)
     return 2;
   const std::filesystem::path source(argv[1]), library(argv[2]), packet(argv[3]), output(argv[4]);
-  const bool visibility = std::string(argv[5]) == "rooted";
-  if (!visibility && std::string(argv[5]) != "baseline")
+  if (std::string(argv[5]) != "rooted") {
+    std::cerr << "baseline requires an explicitly retained pre-hook emitter\n";
     return 2;
+  }
   FrontendOptions options;
   options.requireEntryPoint = true;
   options.requireFunctionDefinitions = true;
@@ -122,8 +123,6 @@ int replay(int argc, char **argv) {
       throw std::runtime_error("packet source identity differs from the verified producer");
     entry |= input->program().mir().hostedStartupPlan() &&
              input->program().mir().hostedStartupPlan()->entry == function.id;
-    if (visibility)
-      session.requireSourceDefinition(function.id, *body);
     symbols.emplace_back(function.id, body->getName().str());
     ++registered;
   }

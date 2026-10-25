@@ -195,13 +195,15 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
     auto *previous = llvm::dyn_cast<llvm::Function>(existing);
     if (!previous || previous->getFunctionType() != plan.type)
       throw std::logic_error("conflicting LLVM symbol declaration: " + name);
+    if (function->definitionKind == MirDefinitionKind::Source)
+      session.requireSourceDefinition(id, *previous);
     return previous;
   }
   auto *output = llvm::Function::Create(
       plan.type, llvm::GlobalValue::ExternalLinkage, name, session.module());
   plan.applyTo(*output);
   if (function->definitionKind == MirDefinitionKind::Source)
-    session.requireDefinition(*output);
+    session.requireSourceDefinition(id, *output);
   // Provenance survives independently of debug-info generation. This does not
   // manufacture DWARF or change function semantics.
   if (const auto *source = session.program().findFunctionInstance(id)) {

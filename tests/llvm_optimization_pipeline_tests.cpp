@@ -52,12 +52,6 @@ int main() {
       throw std::runtime_error(admission.limitation());
     Session session(*input, options);
     lowerScalarProgram(session, admission);
-    for (const auto &address : admission.requiredBodies())
-      if (address.kind == MirBodyKind::Function) {
-        auto *function = session.abi().declareFunction(address.owner);
-        // Models the coordinated ABI hook using genuinely lowered GTI bodies.
-        session.requireSourceDefinition(address.owner, *function);
-      }
     llvm::Function *promote = nullptr, *checked = nullptr, *strict = nullptr;
     std::string privateName, entryName;
     for (const auto &function : input->program().mir().functionInstances()) {

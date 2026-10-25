@@ -32,6 +32,9 @@ def digest(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--emitter", required=True, type=Path)
+    parser.add_argument("--baseline-emitter", type=Path,
+                        help="explicit retained pre-hook emitter built from checkpoint55602c87")
+    parser.add_argument("--baseline-emitter-sha256")
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--stdlib", required=True, type=Path)
     parser.add_argument("--packet", required=True, type=Path)
@@ -55,6 +58,9 @@ def main():
     assert not args.measure or args.slot, "a coordinated slot is required"
     assert args.samples >= 3 and args.repetitions >= 3
     assert bool(args.cpp) == bool(args.cpp_sha256)
+    assert bool(args.baseline_emitter) == bool(args.baseline_emitter_sha256)
+    if args.baseline_emitter:
+        assert digest(args.baseline_emitter) == args.baseline_emitter_sha256
     if args.cpp:
         assert digest(args.cpp) == args.cpp_sha256
     output.mkdir(parents=True)
@@ -62,9 +68,11 @@ def main():
         "status": "running", "schema": 1, "commands": [], "timing": {},
         "source_sha256": SOURCE_SHA, "packet_sha256": PACKET_SHA,
         "emitter_sha256": digest(args.emitter), "runtime_sha256": digest(args.runtime),
+        "baseline_emitter_sha256": args.baseline_emitter_sha256,
         "iterations_per_process": 400000000, "checksum": 80000000200000000,
         "slot": args.slot, "limits": [
-            "test-only source registration; central ABI hook not activated",
+            "packet replay uses the production ABI hook, but is not a composed production compiler",
+            "optional baseline emitter is explicitly pinned to the retained pre-hook producer",
             "packet identity/ABI binding is not instruction-by-instruction MIR replay",
             "composed optimized production compiler and failure/cleanup gates still required",
             "external O09 packet is a dependency, not an in-tree permanent fixture",
@@ -99,9 +107,10 @@ def main():
         manifest["clang_version"] = run([args.clang, "--version"]).stdout.strip()
         manifest["host"] = run(["uname", "-a"]).stdout.strip()
         endpoints = {}
-        for mode in ("baseline", "rooted"):
+        for mode in (("baseline", "rooted") if args.baseline_emitter else ("rooted",)):
             obj, binary = output / f"{mode}.o", output / mode
-            run([args.emitter, args.source, args.stdlib, args.packet, obj, mode])
+            emitter = args.baseline_emitter if mode == "baseline" else args.emitter
+            run([emitter, args.source, args.stdlib, args.packet, obj, mode])
             run([args.clang, obj, args.runtime, "-pthread", "-o", binary])
             run([binary], execution=True)
             report = json.loads(Path(str(obj) + ".json").read_text())
@@ -110,9 +119,10 @@ def main():
             manifest[mode] = {"report": report, "object_sha256": digest(obj),
                               "binary_sha256": digest(binary), "binary_bytes": binary.stat().st_size}
             endpoints[mode] = binary
-        before = {x["symbol"]: x["after"] for x in manifest["baseline"]["report"]["source_definitions"]}
         after = {x["symbol"]: x["after"] for x in manifest["rooted"]["report"]["source_definitions"]}
-        assert before.keys() == after.keys() and set(before.values()) == {"external"}
+        if args.baseline_emitter:
+            before = {x["symbol"]: x["after"] for x in manifest["baseline"]["report"]["source_definitions"]}
+            assert before.keys() == after.keys() and set(before.values()) == {"external"}
         assert "removed" in after.values() and "external" in after.values()
         if args.cpp:
             run([args.cpp], execution=True)
