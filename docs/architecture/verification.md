@@ -10158,6 +10158,23 @@ diagnostic/timeout controls exercise existing branches without changing the
 manifest. The representative real owning check uses the existing implicit
 backend and is reported separately from LLVM admission/execution evidence.
 
+`llvm_canonical_host_controls` exercises the separate canonical-repository,
+actual-host admission contract through the normal public driver pipeline.
+Real selected scalar, memory address-conversion and callable-pointer sources
+run at MIR `O0` and `O3`, retaining admitted-only or unsupported outcomes rather
+than forcing a fixture to pass admission. Relative includes and the mandatory
+prelude are bound from loaded source bytes. Missing entry/prelude, missing
+definitions/entry point, invalid profile/level, changed source/build/resource,
+purpose/closure and profile/capability mutations are controlled independently.
+Missing execution-only runtime resources do not block no-link admission.
+An existing concurrent-source fixture is rejected with `GTI-S2084` under the
+canonical single-threaded profile despite available thread capability; the
+normal LLVM-selected CLI reproduces that diagnostic and preserves its output
+sentinel. Retained raw output, distinct receipts, resumed/interrupt attempts and
+legacy-mode rejection prevent cross-mode evidence reuse. These focused checks
+do not run the corpus, emit native code, execute selected programs or reconcile
+the historical baseline; all broader readiness gates remain open.
+
 The combined O-LLVM-07/08 scalar-owner probe,
 `gti_llvm_session_tests --payload-unique-owner <source-root>`, retains normal
 source lowering, verified scalar-owner payload extraction and both drops. Its

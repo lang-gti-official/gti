@@ -30,6 +30,10 @@ MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 MAX_METADATA_BYTES = 128 * 1024 * 1024
 OPTIMIZED = {"Release", "RelWithDebInfo", "MinSizeRel"}
 ROLES = {"positive-admission", "expected-rejection-control", "unclassified"}
+HOST_MODE = "canonical-repository-actual-host/v1"
+HOST_ARTIFACT_SCHEMA = "gti.llvm.canonical-host-admission/v1"
+HOST_RUN_SCHEMA = "gti.llvm.canonical-host-collection/v1"
+HOST_RECEIPT_SCHEMA = "gti.llvm.canonical-host-receipt/v1"
 
 
 def now() -> str:
@@ -670,9 +674,324 @@ def collect(directory: Path, root: Path, plan: dict, helper: Path, report: dict,
         return summarize([directory], plan)
 
 
+def canonical_host_target(helper: Path, profile: str) -> dict:
+    result = audit.run([str(helper), "--canonical-host-target", profile])
+    audit.require(result.returncode == 0, "canonical target discovery failed")
+    target = json.loads(result.stdout)
+    audit.require(target["execution_profile"] == profile and
+                  type(target["threads"]) is bool,
+                  "canonical target discovery profile/capability mismatch")
+    return target
+
+
+def host_command(helper: Path, root: Path, source: Path,
+                 target: dict, level: str) -> list[str]:
+    return [str(helper), "--observe-canonical-host", str(root), str(source),
+            target["execution_profile"], level]
+
+
+def validate_host_artifact(value: dict, report: dict, binding: dict,
+                           source: Path, source_hash: str,
+                           target: dict, level: str) -> str:
+    """Validate the new request, never reinterpret a historical probe receipt."""
+    audit.require(value.get("schema") == HOST_ARTIFACT_SCHEMA and
+                  value.get("mode") == HOST_MODE,
+                  "not a canonical-host admission artifact")
+    audit.require(value["compiler"] == {key: report["source"][key]
+                                       for key in ("commit", "state")} and
+                  value["build"] == report["build"], "canonical observer build/source differs")
+    request = value["request"]
+    audit.require(request == {
+        "entry": str(source), "purpose": "executable-admission-only", "optimization": level,
+        "backend": "llvm", "cpp_standard": "c++23", "runtime_profile": "hosted",
+        "entry_required": True, "definition_closure_required": True, "debug_info": False,
+        "configuration_flags": [], "declared_configuration_flags": [], "target": target,
+    }, "canonical request entry/purpose/closure/profile/capability/optimization differs")
+    audit.require(value["standard_library"] == binding["standard_library"],
+                  "canonical standard-library policy/path differs")
+    audit.require(value["code_emission"] == value["execution"] == "unrun" and
+                  value["native_inputs_linked"] is False and
+                  value["execution_resources"]["consumed"] is False and
+                  value["execution_resources"]["execution"] == "unrun",
+                  "admission observer invented emission/link/execution")
+    status = value["status"]
+    audit.require(status in {"observed", "unresolved-setup", "frontend-failure",
+                             "mir-failure", "observer-failure"}, "unknown observer phase")
+    snapshots = value["resource_snapshots"]
+    audit.require(isinstance(snapshots, list) and len(snapshots) == 10,
+                  "missing canonical resource snapshots")
+    expected_paths = [str(source), binding["standard_library"]["prelude"], binding["helper"],
+                      value["execution_resources"]["runtime_library"]]
+    expected_paths += [str(Path(value["execution_resources"]["runtime_include"]) / "gti" / name)
+                       for name in ("runtime.hpp", "runtime.h", "c_abi.h", "runtime_failure.h",
+                                    "runtime_thread.h", "runtime_thread.hpp")]
+    audit.require([item["path"] for item in snapshots] == expected_paths,
+                  "canonical resource identity/order differs")
+    for item in snapshots:
+        for field in ("before_sha256", "after_sha256"):
+            digest = item[field]
+            audit.require(digest is None or (isinstance(digest, str) and len(digest) == 64 and
+                          all(char in "0123456789abcdef" for char in digest)),
+                          "malformed resource digest")
+    if status == "unresolved-setup":
+        audit.require(value["uses"] is None and
+                      (value["driver_identity_matches"] is not True or
+                       value["required_inputs_stable"] is not True or
+                       any(item["before_sha256"] is None for item in snapshots[:3])),
+                      "unresolved setup invented an admission plan or hid a completed request")
+        return "unresolved-setup"
+    audit.require(value["driver_identity_matches"] is True and value["required_inputs_stable"] is True and
+                  all(item["before_sha256"] == item["after_sha256"] for item in snapshots[:3]),
+                  "canonical resources/build changed during observation")
+    audit.require(value["resources_stable"] == all(item["before_sha256"] == item["after_sha256"]
+                  for item in snapshots) and value["execution_resources"]["identity_stable"] ==
+                  all(item["before_sha256"] == item["after_sha256"] for item in snapshots[3:]),
+                  "canonical resource stability report disagrees with snapshots")
+    audit.require([item["before_sha256"] for item in snapshots[:3]] ==
+                  [source_hash, binding["prelude_sha256"], binding["helper_sha256"]],
+                  "canonical required input digest differs")
+    for item in snapshots[:3]:
+        path = Path(item["path"])
+        actual = audit.file_digest(path) if path.is_file() else None
+        audit.require(actual == item["after_sha256"], "canonical resource changed since observation")
+    loaded = value["loaded_sources"]
+    audit.require(isinstance(loaded, list) and len({item["path"] for item in loaded}) == len(loaded),
+                  "canonical source snapshot duplicates or is malformed")
+    for item in loaded:
+        path = Path(item["path"])
+        audit.require(path.is_file() and path.stat().st_size == item["bytes"] and
+                      audit.file_digest(path) == item["sha256"],
+                      "canonical loaded-source snapshot differs from retained source")
+    if status != "observed":
+        audit.require(value["uses"] is None, "failed pipeline invented an admission plan")
+        return "failed"
+    by_path = {item["path"]: item for item in loaded}
+    audit.require(str(source) in by_path and binding["standard_library"]["prelude"] in by_path and
+                  by_path[str(source)]["sha256"] == source_hash and
+                  by_path[binding["standard_library"]["prelude"]]["sha256"] == binding["prelude_sha256"],
+                  "required entry/default-prelude snapshot is absent or changed")
+    uses = value["uses"]
+    errors = audit.validate_use_artifact(uses, report)
+    audit.require(not errors, f"invalid canonical required-use plan: {errors}")
+    audit.require(uses["target"] == target and uses["closure"] == "sealed-entry-dependencies",
+                  "canonical admission target/profile/capability or closure differs")
+    return "admitted-only" if uses["admitted"] else "unsupported"
+
+
+def host_binding(plan: dict, report: dict, helper: Path, root: Path,
+                 members: list[str], profiles: list[str], levels: list[str], scope: str) -> dict:
+    base = make_binding(plan, report, helper, scope=scope)
+    audit.require(members and len(set(members)) == len(members) and
+                  set(members) <= set(plan["members"]), "canonical collection needs explicit unique members")
+    audit.require(profiles and len(set(profiles)) == len(profiles) and
+                  set(profiles) <= {"single-threaded", "concurrent"}, "invalid canonical profiles")
+    audit.require(levels and len(set(levels)) == len(levels) and
+                  set(levels) <= {"O0", "O3"}, "invalid canonical optimization levels")
+    stdlib = root / "stdlib"
+    return {**base, "mode": HOST_MODE, "helper": str(helper),
+            "members": members, "levels": levels,
+            "targets": {profile: canonical_host_target(helper, profile) for profile in profiles},
+            "standard_library": {"policy": "explicit-checked-out-repository",
+                                 "root": str(stdlib), "prelude": str(stdlib / "prelude.gti")},
+            "prelude_sha256": audit.file_digest(stdlib / "prelude.gti")}
+
+
+def host_source(root: Path, work: Path, member: dict) -> Path:
+    if "inline" in member["source"]:
+        return work / "source.gti"
+    return audit.repository_path(root, member["source"]["path"], "canonical member source")
+
+
+def host_outcome(work: Path, observation: dict, manifest: dict,
+                 member: dict, profile: str, level: str) -> tuple[str, dict | None, list[str]]:
+    if observation["status"] == "interrupted":
+        return "interrupted", None, []
+    if observation["status"] != "completed" or observation["returncode"] != 0:
+        return "failed", None, ["canonical observer process failed"]
+    try:
+        value = json.loads((work / "stdout").read_bytes())
+        status = validate_host_artifact(value, manifest["ledger"], manifest["binding"],
+                                       host_source(Path(manifest["root"]), work, member),
+                                       member["source"]["sha256"],
+                                       manifest["binding"]["targets"][profile], level)
+        return status, value, []
+    except (KeyError, TypeError, ValueError, AssertionError, OSError) as error:
+        return "failed", None, [f"invalid canonical observation: {error}"]
+
+
+def validate_host_attempt(directory: Path, manifest: dict, attempt: str, finish: dict) -> dict:
+    work = child(directory, f"attempts/{attempt}")
+    receipt_path = work / "receipt.json"
+    receipt = read_json(receipt_path)
+    binding = manifest["binding"]
+    audit.require(audit.file_digest(receipt_path) == finish["receipt_sha256"] and
+                  receipt["schema"] == HOST_RECEIPT_SCHEMA and receipt["binding"] == binding and
+                  receipt["run_id"] == manifest["run_id"] and receipt["attempt"] == attempt and
+                  receipt["execution"] == "unrun" and receipt["historical_context_replayed"] is False,
+                  "canonical receipt identity differs (legacy receipts cannot be reused)")
+    key, profile, level = receipt["member"], receipt["profile"], receipt["level"]
+    audit.require(key in binding["members"] and profile in binding["targets"] and
+                  level in binding["levels"], "undeclared canonical receipt selection")
+    member = manifest["plan"]["members"][key]
+    audit.require(receipt["member_sha256"] == audit.digest(member), "canonical provider/source drifted")
+    audit.require(receipt["historical_loading"] == "unresolved-not-replayed" and
+                  receipt["native_inputs"] == host_native_inputs(member),
+                  "canonical observation reinterpreted historical/native input obligations")
+    if receipt["status"] == "interrupted" and receipt["observation"] is None:
+        audit.require(receipt["artifact_sha256"] is None, "interrupted attempt invented artifact")
+        return receipt
+    observation = receipt["observation"]
+    audit.require(observation["command"] == host_command(
+        Path(binding["helper"]), Path(manifest["root"]), host_source(Path(manifest["root"]), work, member),
+        binding["targets"][profile], level), "canonical command/request changed")
+    sizes = []
+    for stream in ("stdout", "stderr"):
+        path = child(directory, f"attempts/{attempt}/{stream}")
+        audit.require(path.is_file() and path.stat().st_size <= MAX_OUTPUT_BYTES and
+                      audit.file_digest(path) == receipt[f"{stream}_sha256"],
+                      "canonical raw stream missing or changed")
+        sizes.append(path.stat().st_size)
+    audit.require(type(observation["output_limit_bytes"]) is int and
+                  0 < observation["output_limit_bytes"] <= MAX_OUTPUT_BYTES and
+                  sum(sizes) <= observation["output_limit_bytes"], "canonical stream bounds changed")
+    status, artifact, errors = host_outcome(work, observation, manifest, member, profile, level)
+    audit.require(receipt["status"] == status and receipt["errors"] == errors and
+                  receipt["artifact_sha256"] == (audit.digest(artifact) if artifact else None),
+                  "canonical receipt disagrees with actual raw pipeline outcome")
+    if artifact:
+        audit.require(read_json(work / "observer.json") == artifact,
+                      "canonical retained artifact differs from raw output")
+    return receipt
+
+
+def host_native_inputs(member: dict) -> dict:
+    metadata = member["contract"].get("metadata", {})
+    return {"declared": metadata.get("native_sources") if isinstance(metadata, dict) else None,
+            "resolution": "unresolved-not-linked"}
+
+
+def summarize_host(directory: Path, plan: dict, helper: Path) -> dict:
+    manifest = read_json(child(directory, "host-run.json"))
+    audit.require(manifest["schema"] == HOST_RUN_SCHEMA and manifest["binding"]["mode"] == HOST_MODE and
+                  portable_plan(manifest["plan"]) == portable_plan(plan) and
+                  manifest["binding"]["plan_sha256"] == audit.digest(portable_plan(plan)),
+                  "canonical source/provider/mode contract drifted")
+    binding, report = manifest["binding"], manifest["ledger"]
+    audit.require(binding["source"] == report["source"] and binding["build"] == report["build"] and
+                  binding["build"]["configuration"] in OPTIMIZED and
+                  binding["baseline_sha256"] == plan["baseline_sha256"] and
+                  binding["provider_revision"] == plan["provider_revision"] and
+                  binding["scope"] in {"canonical", "focused-controls"} and
+                  (binding["scope"] != "canonical" or binding["source"]["exact"]),
+                  "canonical compiler/build/provider identity drifted")
+    # Only invoke the caller-selected helper, never an executable selected by
+    # an untrusted saved receipt. Its exact bytes/build must match the run.
+    audit.require(str(helper) == binding["helper"] and helper.is_file() and
+                  audit.file_digest(helper) == binding["helper_sha256"] and
+                  audit.ledger(helper) == report,
+                  "canonical helper binary/build is no longer available at its bound identity")
+    audit.require(all(canonical_host_target(helper, profile) == target
+                      for profile, target in binding["targets"].items()),
+                  "canonical effective profile/capability tuple differs from its actual producer")
+    outcomes = {}
+    for attempt, events in event_history(directory).items():
+        start = events["start"]
+        key = (start["member"], start["profile"], start["level"])
+        audit.require(key[0] in manifest["binding"]["members"] and
+                      key[1] in manifest["binding"]["targets"] and key[2] in manifest["binding"]["levels"],
+                      "undeclared canonical attempt")
+        if events["finish"]:
+            receipt = validate_host_attempt(directory, manifest, attempt, events["finish"])
+            audit.require((receipt["member"], receipt["profile"], receipt["level"]) == key,
+                          "canonical receipt changed its original selection")
+            outcomes[key] = receipt["status"]
+        else:
+            outcomes[key] = "interrupted"
+    return {"schema": HOST_RUN_SCHEMA, "binding": manifest["binding"],
+            "observations": [{"member": key[0], "profile": key[1], "level": key[2], "status": value}
+                             for key, value in sorted(outcomes.items())],
+            "historical_context_replayed": False, "baseline_reconciliation": "required",
+            "baseline_structural_ready": False, "execution_boundary_evidence_ready": False,
+            "general_language_ready": False, "platform_performance_integration_ready": False,
+            "campaign_promotion_ready": False}
+
+
+def collect_host(directory: Path, root: Path, plan: dict, helper: Path, report: dict,
+                 members: list[str], profiles: list[str], levels: list[str], *, resume: bool,
+                 timeout: float = 120, scope: str = "canonical", runner=run_probe) -> dict:
+    binding = host_binding(plan, report, helper, root, members, profiles, levels, scope)
+    with locked_run(directory, root, resume=resume) as directory:
+        if resume:
+            manifest = read_json(child(directory, "host-run.json"))
+            audit.require(manifest["binding"] == binding and manifest["root"] == str(root) and
+                          manifest["ledger"] == report, "canonical resume build/source/resource/request drifted")
+            if not child(directory, "events.json").exists():
+                audit.require(not child(directory, "attempts").exists(), "canonical history is missing")
+                write_json(directory / "events.json", {"events": []})
+        else:
+            manifest = {"schema": HOST_RUN_SCHEMA, "run_id": uuid.uuid4().hex,
+                        "created": now(), "binding": binding, "ledger": report,
+                        "root": str(root), "plan": plan}
+            write_json(directory / "host-run.json", manifest)
+            write_json(directory / "events.json", {"events": []})
+        # A stopped attempt stays in the append-only history; only a new
+        # attempt may retry it. Never invent output for an unfinished process.
+        for attempt, events in event_history(directory).items():
+            if events["finish"] is None:
+                start = events["start"]
+                seal_attempt(directory, attempt, {
+                    "schema": HOST_RECEIPT_SCHEMA, "run_id": manifest["run_id"], "attempt": attempt,
+                    "binding": binding, "member": start["member"], "profile": start["profile"],
+                    "level": start["level"], "member_sha256": audit.digest(plan["members"][start["member"]]),
+                    "execution": "unrun", "historical_context_replayed": False,
+                    "historical_loading": "unresolved-not-replayed",
+                    "native_inputs": host_native_inputs(plan["members"][start["member"]]),
+                    "status": "interrupted", "observation": None, "artifact_sha256": None, "errors": []})
+        done = {(row["member"], row["profile"], row["level"]): row["status"]
+                for row in summarize_host(directory, plan, helper)["observations"]}
+        for key in members:
+            member = plan["members"][key]
+            for profile, target in binding["targets"].items():
+                for level in levels:
+                    if done.get((key, profile, level)) in {"admitted-only", "unsupported", "unresolved-setup"}:
+                        continue
+                    attempt = uuid.uuid4().hex
+                    work = child(directory, f"attempts/{attempt}")
+                    work.mkdir(parents=True, exist_ok=False)
+                    append_event(directory, {"event": "started", "attempt": attempt, "member": key,
+                                             "profile": profile, "level": level, "at": now()})
+                    source = host_source(root, work, member)
+                    if "inline" in member["source"]:
+                        with source.open("x", encoding="utf-8") as output:
+                            output.write(member["source"]["inline"])
+                    audit.require(audit.file_digest(source) == member["source"]["sha256"],
+                                  "canonical entry changed before observation")
+                    observation = runner(host_command(helper, root, source, target, level), root, work,
+                                         timeout=timeout)
+                    status, artifact, errors = host_outcome(work, observation, manifest, member, profile, level)
+                    if artifact:
+                        write_json(work / "observer.json", artifact)
+                    seal_attempt(directory, attempt, {
+                        "schema": HOST_RECEIPT_SCHEMA, "run_id": manifest["run_id"], "attempt": attempt,
+                        "binding": binding, "member": key, "profile": profile, "level": level,
+                        "member_sha256": audit.digest(member), "execution": "unrun",
+                        "historical_context_replayed": False, "status": status, "observation": observation,
+                        "historical_loading": "unresolved-not-replayed",
+                        "native_inputs": host_native_inputs(member),
+                        "artifact_sha256": audit.digest(artifact) if artifact else None, "errors": errors,
+                        "stdout_sha256": audit.file_digest(work / "stdout"),
+                        "stderr_sha256": audit.file_digest(work / "stderr")})
+                    if status == "interrupted":
+                        return summarize_host(directory, plan, helper)
+        audit.require(audit.file_digest(helper) == binding["helper_sha256"] and
+                      audit.repository_source(root) == binding["source"],
+                      "canonical helper/source changed during collection")
+        return summarize_host(directory, plan, helper)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("plan", "collect", "reconcile"))
+    parser.add_argument("operation", choices=("plan", "collect", "reconcile", "observe-host", "reconcile-host"))
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--helper", type=Path, required=True)
@@ -682,6 +1001,9 @@ def main() -> None:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--run", type=Path, action="append", default=[])
     parser.add_argument("--target", action="append", default=[])
+    parser.add_argument("--member", action="append", default=[])
+    parser.add_argument("--profile", choices=("single-threaded", "concurrent"), action="append", default=[])
+    parser.add_argument("--level", choices=("O0", "O3"), action="append", default=[])
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--timeout", type=float, default=120)
     args = parser.parse_args()
@@ -690,6 +1012,11 @@ def main() -> None:
                     args.build.resolve(), args.registry.resolve())
     if args.operation == "plan":
         result = plan
+    elif args.operation == "reconcile-host":
+        audit.require(len(args.run) == 1, "canonical host inspection needs one explicit run")
+        result = summarize_host(args.run[0].resolve(), plan, args.helper.resolve())
+        audit.require(result["binding"]["source"] == audit.repository_source(root),
+                      "canonical observation source differs from current repository")
     elif args.operation == "reconcile":
         audit.require(args.run, "reconciliation needs collection runs")
         result = summarize([path.resolve() for path in args.run], plan)
@@ -697,13 +1024,18 @@ def main() -> None:
         audit.require(all(run["binding"]["source"] == live for run in result["runs"]),
                       "collection source differs from current repository")
     else:
-        audit.require(args.output is not None and args.target,
-                      "collection needs an output directory and explicit target selection")
+        audit.require(args.output is not None, "collection needs an output directory")
         report = audit.ledger(args.helper.resolve())
         audit.require(not audit.repository_source_errors(report, audit.repository_source(root)),
                       "helper source differs from current repository")
-        result = collect(args.output, root, plan, args.helper.resolve(), report,
-                         args.target, resume=args.resume, timeout=args.timeout)
+        if args.operation == "observe-host":
+            result = collect_host(args.output, root, plan, args.helper.resolve(), report,
+                                  args.member, args.profile, args.level,
+                                  resume=args.resume, timeout=args.timeout)
+        else:
+            audit.require(args.target, "legacy collection needs explicit target selection")
+            result = collect(args.output, root, plan, args.helper.resolve(), report,
+                             args.target, resume=args.resume, timeout=args.timeout)
         audit.require(discover(root, args.baseline.resolve(), args.ctest,
                                args.build.resolve(), args.registry.resolve()) == plan,
                       "provider metadata changed during collection")

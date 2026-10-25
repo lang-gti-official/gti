@@ -5168,6 +5168,46 @@ campaign signoff as unrun. The focused `llvm_readiness_collection_controls`
 uses real scalar/callable/rejection probes and explicitly scoped miniature
 recovery controls, never a full-provider or platform execution claim.
 
+The separate opt-in `observe-host` collector operation selects explicit member
+IDs, execution profiles and `O0`/`O3` levels. Its
+`canonical-repository-actual-host/v1` contract deliberately observes the selected
+source with the checked-out repository standard library; it does not replay an
+inherited historical harness environment or custom hosted-library transform.
+The test helper's `--observe-canonical-host` uses public toolchain discovery,
+`AnalysisConfiguration(TargetInfo::host(), profile, RuntimeProfile::Hosted)` and
+an immutable LLVM-selected `CompilationRequest` requiring executable entry and
+definition closure. Public `compileWithBackend` owns loading, semantics,
+optimization and verified lowering. A test-only inspection backend re-verifies
+the detached program and serializes the existing admission plan/selection into
+an in-memory JSON artifact. Observer success is not LLVM emission or execution;
+valid unsupported programs remain unmet admission obligations. Frontend, MIR
+and observer failures remain distinct from unresolved setup and admitted-only
+observations. The preceding `--probe`/`--probe-uses` paths are unchanged.
+
+Canonical observations hash the actual loaded `SourceManager` bytes, including
+entry, default prelude and resolved includes. Required input, helper binary and
+additional resolved runtime resources have before/after snapshots. Missing
+entry/prelude or changed required inputs prevents a valid observation; missing
+runtime archive/header identities are recorded honestly as execution
+obligations and do not block this no-link stage. Native inputs remain declared,
+unresolved and unlinked; no native compiler, linker or program is invoked by
+the observer. `O0`/`O3` select the normal MIR optimization pipeline, not evidence
+of native code generation at either level.
+
+These artifacts/collections/receipts use distinct
+`gti.llvm.canonical-host-admission/v1`, `gti.llvm.canonical-host-collection/v1`
+and `gti.llvm.canonical-host-receipt/v1` schemas. They cannot satisfy the pinned
+historical baseline without explicit reconciliation. In particular, supported
+hosted targets have `runtimeCapabilities.threads=true` in both execution
+profiles, produced by `AnalysisConfiguration`; the historical manual helper's
+single-threaded tuple has `threads=false`. Availability is not permission:
+`SemanticVisitor::Impl::validateConcurrentSurfaceAvailability` requires both
+the concurrent profile and thread capability, otherwise `GTI-S2084` rejects.
+No baseline rewrite or equivalence between these effective configurations is
+implied. `reconcile-host` validates one retained run; cross-platform campaign
+reconciliation, original harness loading, native execution, cleanup and all
+promotion/performance gates remain unresolved.
+
 The remaining architecture obligations have explicit owners:
 
 | Obligation | Producer / representation owner | Verification and next gate |

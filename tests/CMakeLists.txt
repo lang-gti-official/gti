@@ -1674,7 +1674,8 @@ add_test(NAME llvm_admission COMMAND gti_llvm_admission_tests)
 
 add_executable("gti_llvm_coverage_evidence"
                "${PROJECT_SOURCE_DIR}/tests/llvm_coverage_evidence.cpp")
-target_link_libraries("gti_llvm_coverage_evidence" PRIVATE gti_llvm_backend)
+target_link_libraries("gti_llvm_coverage_evidence" PRIVATE gti_llvm_backend gti_driver)
+target_include_directories("gti_llvm_coverage_evidence" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_include_directories("gti_llvm_coverage_evidence"
                            PRIVATE "${CMAKE_BINARY_DIR}/generated")
 add_dependencies("gti_llvm_coverage_evidence" gti_build_identity_refresh)
@@ -1807,6 +1808,14 @@ if(Python3_Interpreter_FOUND)
       "${CMAKE_CTEST_COMMAND}"
   )
   set_tests_properties(llvm_readiness_collection_controls PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME llvm_canonical_host_controls
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_canonical_host_test.py"
+            "$<TARGET_FILE:gti_llvm_coverage_evidence>" "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}" "${GTI_LLVM_EVIDENCE_REGISTRY}"
+            "${PROJECT_SOURCE_DIR}/tests/llvm_readiness_baseline.json" "${CMAKE_CTEST_COMMAND}"
+  )
+  set_tests_properties(llvm_canonical_host_controls PROPERTIES TIMEOUT 240)
   add_test(
     NAME llvm_case_context_controls
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_case_context_test.py"
