@@ -1796,6 +1796,17 @@ if(Python3_Interpreter_FOUND)
       "${PROJECT_SOURCE_DIR}/tests/llvm_readiness_baseline.json"
   )
   set_tests_properties(llvm_coverage_evidence PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME llvm_readiness_collection_controls
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_readiness_collect_test.py"
+      "$<TARGET_FILE:gti_llvm_coverage_evidence>" "${PROJECT_SOURCE_DIR}"
+      "${CMAKE_BINARY_DIR}" "${GTI_LLVM_EVIDENCE_REGISTRY}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_readiness_baseline.json"
+      "${CMAKE_CTEST_COMMAND}"
+  )
+  set_tests_properties(llvm_readiness_collection_controls PROPERTIES TIMEOUT 180)
   add_test(NAME llvm_placement_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_placement_execution_test.py"
                    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")

@@ -5114,6 +5114,32 @@ converted into a count of missing features. The additive
 for consumers of the unversioned report while adding the distinct baseline and
 campaign results.
 
+`tests/llvm_readiness_collect.py` provides opt-in `plan`, `collect` and
+cross-host `reconcile` operations. Collection reuses the census, registered
+producer APIs and validated stdlib surface manifest, preserving declared case
+context. Missing role, loading context or target/profile applicability remains
+unresolved; filenames and fixture registration do not establish a positive
+standalone program. The current census and execution-manifest vocabulary lack
+reusable case-context metadata. Stdlib cases retain their declared context,
+but missing target applicability still prevents a complete collection claim.
+An explicit frontend-rejection control can satisfy only its declared control;
+it never establishes executable support.
+
+Collection artifacts use `gti.llvm.readiness-collection/v1` and
+`gti.llvm.readiness-member-receipt/v1`. Receipts bind actual bounded helper
+output and required-use artifacts to the source, provider/baseline revision,
+compiler binary/build and target/profile. Validation rechecks the actual
+artifact and admission selection before trusting a receipt's status or digest.
+Independent optimized platform builds may reconcile for the same source and
+provider revision; reuse within a target requires the exact binary/build.
+Attempts form append-only history: interrupted work is distinguishable from
+failure, and retries retain the original logs and outcomes. Output directories
+must be specific paths outside the source tree; collection never deletes them.
+Structural observations always retain execution, cleanup, performance and
+campaign signoff as unrun. The focused `llvm_readiness_collection_controls`
+uses real scalar/callable/rejection probes and explicitly scoped miniature
+recovery controls, never a full-provider or platform execution claim.
+
 The remaining architecture obligations have explicit owners:
 
 | Obligation | Producer / representation owner | Verification and next gate |
