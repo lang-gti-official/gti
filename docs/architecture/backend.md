@@ -4529,6 +4529,10 @@ unsafe contract. The call and callee body remain independently admitted; raw,
 foreign and intrinsic operations do not inherit this witness. MIR loan-flow
 verification still establishes active access. Possible owner origins never
 substitute for the returned runtime address.
+The same producer proof admits a direct same-block `CallResult`-to-`Return`
+loan transfer when its complete dependencies, access, type and HIR identity
+are unchanged and the return terminator consumes that exact escaping loan.
+It does not authorize constructing a reference from a possible owner address.
 
 ### LLVM Places And Counted Text
 

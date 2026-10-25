@@ -174,6 +174,124 @@ void unsafeReferenceLoadContract(const std::filesystem::path &repository) {
   }
 }
 
+void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      repository / "tests/fixtures/llvm_hosted_unsafe_reference_return.gti",
+      std::nullopt, {repository / "stdlib/prelude.gti"}, {},
+      {repository / "stdlib"});
+  require(frontend.canGenerateCode(), "unsafe reference relay is valid GTI");
+  std::vector<LoweredProgramIssue> issues;
+  const auto program = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  require(program && planLlvmAdmission(*program).admitted(),
+          "unsafe reference relay preserves its exact checked runtime loan");
+  std::size_t owner = 0;
+  MirBlockId blockId = 0;
+  MirInstructionId transferId = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions)
+        if (stage.kind == MirInstructionKind::Borrow &&
+            stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall) {
+          require(owner == 0, "relay isolates one repeated unsafe marker");
+          owner = function.id;
+          blockId = block.id;
+          transferId = stage.id;
+        }
+  require(owner != 0, "relay has a genuine checked return transfer");
+  using Mutation = std::function<void(MirBody &, MirBlock &, MirInstruction &,
+                                      MirInstruction &, MirLoan &, MirLoan &)>;
+  const std::array<Mutation, 17> mutations{
+      [](auto &, auto &, auto &, auto &, auto &, auto &to) { to.source = 0; },
+      [](auto &, auto &, auto &, auto &, auto &from, auto &to) {
+        to.additionalDependencies.push_back(
+            {.source = from.source, .access = AccessMode::Mutable});
+      },
+      [](auto &, auto &, auto &, auto &, auto &, auto &to) {
+        to.escapes = false;
+      },
+      [](auto &, auto &, auto &, auto &, auto &from, auto &to) {
+        to.parent = from.id;
+      },
+      [](auto &, auto &, auto &, auto &, auto &, auto &to) {
+        to.access = AccessMode::Mutable;
+      },
+      [](auto &, auto &, auto &, auto &, auto &, auto &to) {
+        to.producedBy = 0;
+      },
+      [](auto &, auto &, auto &, auto &, auto &, auto &to) {
+        to.designatedFields = {1};
+      },
+      [](auto &, auto &, auto &stage, auto &, auto &from, auto &) {
+        stage.operands.front().place = from.source;
+      },
+      [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
+        stage.operands.front().loan = 0;
+      },
+      [](auto &, auto &block, auto &, auto &, auto &from, auto &) {
+        block.terminator.returnLoan = from.id;
+      },
+      [](auto &, auto &block, auto &, auto &, auto &from, auto &) {
+        block.terminator.value->loan = from.id;
+      },
+      [](auto &, auto &, auto &, auto &call, auto &, auto &) {
+        call.functionTarget.reset();
+      },
+      [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
+        stage.rawMemoryAccess = true;
+      },
+      [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
+        stage.info.type = SemanticType::Char;
+      },
+      [](auto &, auto &, auto &, auto &call, auto &, auto &) {
+        ++call.hirValue;
+      },
+      [](auto &, auto &, auto &stage, auto &call, auto &, auto &) {
+        std::swap(stage, call);
+      },
+      [](auto &, auto &block, auto &stage, auto &, auto &from, auto &) {
+        const auto ended = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &candidate) {
+              return candidate.kind == MirInstructionKind::EndBorrow &&
+                     candidate.loan == from.id;
+            });
+        require(ended != block.instructions.end(),
+                "relay has a source endpoint");
+        std::swap(stage, *ended);
+      },
+  };
+  for (const auto &mutate : mutations) {
+    auto invalid = frontend.mir;
+    auto &body = MirProgramTestAccess::functions(invalid)[owner - 1].body;
+    auto &block = body.blocks[blockId - 1];
+    auto &transfer = *std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [&](const auto &stage) { return stage.id == transferId; });
+    auto &from = body.loans[transfer.operands.front().loan - 1];
+    auto &to = body.loans[*transfer.loan - 1];
+    auto &call =
+        *std::find_if(block.instructions.begin(), block.instructions.end(),
+                      [&](const auto &stage) {
+                        return stage.kind == MirInstructionKind::Call &&
+                               stage.loan == from.id;
+                      });
+    mutate(body, block, transfer, call, from, to);
+    auto built = LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, frontend.hir, invalid, invalid,
+        {}, TargetInfo::host(), true);
+    bool rejected = !built.valid();
+    if (built.valid()) {
+      auto verified = verifiedLoweredProgram(std::move(*built.program), issues);
+      rejected = !verified || !planLlvmAdmission(*verified).admitted();
+    }
+    require(rejected, "forged unsafe return relationship cannot be admitted");
+  }
+}
+
 void sourceMetadataContract(const std::filesystem::path &repository) {
   FrontendOptions options;
   options.lowerReachableOnly = true;
@@ -473,6 +591,7 @@ int main(int argc, char **argv) {
   } cleanup{scratch};
   try {
     unsafeReferenceLoadContract(std::filesystem::canonical(argv[1]));
+    unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]));
     sourceMetadataContract(std::filesystem::canonical(argv[1]));
     for (const auto &test : cases)
       for (auto optimization :
