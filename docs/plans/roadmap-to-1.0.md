@@ -54,10 +54,14 @@ The readiness claim requires:
 7. reproducible execution-cost evidence, not merely successful compilation; and
 8. an explicit compatibility, omission and support contract.
 
-LLVM is now the intended public production backend under
-[ADR 031](../decisions/031-native-llvm-backend-foundation.md#production-direction-2026-10-24).
+LLVM is the primary development and intended public production backend under
+[ADR 031](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25).
 Completing that transition is an explicit delivery goal, not a requirement to
-prove a C++ backend regression first. C++ remains the production default until
+prove a C++ backend regression first. C++ is deprecated as the primary backend:
+only bug fixes preserve its supported comparison-oracle behavior through v1.0;
+new features need not be implemented twice. Catch-up after v1.0 is a possible
+future owner decision, not automatic or part of 1.0 acceptance. C++ remains the
+shipped default until
 the [LLVM campaign](implementation-sequence.md#llvm-production-backend-campaign)
 passes full current-language conformance on macOS and Linux. Self-hosting,
 separate compilation and a stable ABI for ordinary GTI objects remain separate
