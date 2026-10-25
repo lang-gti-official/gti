@@ -826,7 +826,7 @@ public:
                                         plan.targetType.arguments.front()))
       return std::nullopt;
     const auto storage = classShape(plan.targetType);
-    if (storage && coverage(*storage).name == "NativeUniqueOwnership")
+    if (storage && *storage == Shape::NativeUniqueOwnership)
       return storage;
     return std::nullopt;
   }
