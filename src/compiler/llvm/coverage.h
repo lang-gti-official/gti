@@ -65,6 +65,7 @@ enum class Shape {
   ArrayValueComparison,
   NativeClassStorage,
   NativePayloadStorage,
+  NativeUnionStorage,
   NativeBorrowMetadata,
   ConcreteParameterPack,
   NativeThreadStorage,

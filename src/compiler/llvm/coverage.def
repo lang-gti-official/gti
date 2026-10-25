@@ -846,7 +846,7 @@ LLVM_COVERAGE_ENTRY(Library, 11, Pending, None, "all represented shapes remain p
 LLVM_COVERAGE_END()
 
 LLVM_COVERAGE_BEGIN(Shape)
-LLVM_COVERAGE_ENTRY(NativeClassStorage, 6, Implemented, None, "exact nonpolymorphic ordinary record/union storage, final-address fresh publication and verified lifecycle schedules; no private ownership capabilities or dynamic dispatch")
+LLVM_COVERAGE_ENTRY(NativeClassStorage, 6, Implemented, None, "exact nonpolymorphic ordinary class storage, final-address fresh publication and verified lifecycle schedules; no unions, private ownership capabilities or dynamic dispatch")
 LLVM_COVERAGE_ENTRY(NativeThreadStorage, 6, Implemented, None, "exact admitted native TLS storage, checked lazy initialization and C runtime registration")
 LLVM_COVERAGE_ENTRY(InPlaceScalarMutation, 6, Implemented, None, "exact evaluated scalar destination and RHS, promoted arithmetic and checked narrowing before publication")
 LLVM_COVERAGE_ENTRY(StoredFieldPublication, 6, Pending, None, "reference field initialization requires an exact entry Stored loan or evaluated Borrow publication stage")
@@ -882,6 +882,7 @@ LLVM_COVERAGE_ENTRY(NativeUnion, 7, Pending, None, "sealed overlapping native st
 LLVM_COVERAGE_ENTRY(OpaqueNativeHandle, 11, Pending, None, "foreign incomplete object identity")
 LLVM_COVERAGE_ENTRY(PayloadEnum, 7, Pending, None, "tagged concrete enum payload storage and active cleanup")
 LLVM_COVERAGE_ENTRY(NativePayloadStorage, 7, Implemented, None, "exact concrete native payload layout, publication and active cleanup; fields require native storage witnesses")
+LLVM_COVERAGE_ENTRY(NativeUnionStorage, 7, Implemented, None, "exact overlapping native union storage; members retain lexical unsafe obligations and require native field witnesses")
 LLVM_COVERAGE_ENTRY(NativeBorrowMetadata, 7, Implemented, None, "verified dependency groups over native places; permissions erase while MIR-selected addresses remain executable")
 LLVM_COVERAGE_ENTRY(ConcreteParameterPack, 7, Implemented, None, "concrete parameter-only pack binds flattened ABI arguments; no runtime pack SSA value")
 LLVM_COVERAGE_ENTRY(NativeCall, 11, Pending, None, "foreign call uses its declared native signature")

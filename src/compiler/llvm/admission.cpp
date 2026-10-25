@@ -263,7 +263,13 @@ public:
            leaf->arguments.size() == 1)
       leaf = &leaf->arguments[0];
     if (leaf->kind == SemanticType::Class && nativeValue(type))
-      return Shape::NativeClassStorage;
+      return std::any_of(program.classInstances().begin(),
+                         program.classInstances().end(),
+                         [&](const auto &owner) {
+                           return owner.type == *leaf && owner.unionLayout;
+                         })
+                 ? Shape::NativeUnionStorage
+                 : Shape::NativeClassStorage;
     if (leaf->kind == SemanticType::Enum && program.findPayloadEnum(*leaf) &&
         nativeValue(type))
       return Shape::NativePayloadStorage;
