@@ -11540,15 +11540,17 @@ do not restart or duplicate that completed PR.
 | Faraday / LLVM-Cache | O-LLVM-14: project selection, native artifacts/cache, linking, packages and relocated installed toolchains. Continue PR 345. | Own driver integration and backend identity query; the specific `session.*` transfer exposes the existing unchanged target-machine factory rather than duplicating policy. Own the cache-test registration. Coordinate debug companion artifacts with O-LLVM-15. |
 | Dalton / LLVM-Optimization | O-LLVM-15: optimization pipelines, debugging, SIMD and representative runtime cost. Finish C04 evaluation in PR 347; keep production O-LLVM-15 changes in a separate task/PR. | Own pipeline/debug helpers and corresponding `session.cpp` hooks, excluding the identity factory transfer. Coordinate target/debug options with O-LLVM-14. No production failure-transport switch is authorized by comparison evidence alone. |
 | External handoff, agent not yet identified | O-LLVM-07: unions, payloads and conditional publication. | Reserved for the owner's additional agent, not launched by this coordinator. Own family helpers/tests; coordinate shared layout/body/lifetime registration. Compose owning payloads with O-LLVM-08 before admitting them. |
-| External handoff, agent not yet identified | O-LLVM-08: allocation, object lifetimes and ownership. | Reserved for a second external agent, not launched here. Own memory helpers, required byte-provider adapters and tests; coordinate shared runtime/ABI/lifetime contracts. Primitive allocation can proceed independently of O-LLVM-07. |
+| External LLVM-Memory owner | O-LLVM-08: allocation, object lifetimes and ownership, accepted on `codex/llvm08-memory` from `881d8534b`. | Own `memory.*` helpers, required memory byte-provider adapters, dedicated tests and their CMake registration; coordinate shared runtime/ABI/lifetime contracts. Primitive allocation can proceed independently of O-LLVM-07. |
+| External handoff, agent not yet identified | O-LLVM-09: function values, lambdas and callable adapters. | Own callable/environment helpers and tests after confirming the actual scope. Scalar/borrowed captures can proceed; owned environments compose with O-LLVM-08, C callbacks with O-LLVM-11, and failure adapters with the central C04 ABI authority. |
 
-Record the external agents' branches and actual file scopes when they accept;
-these handoffs do not claim that either agent has started. Five milestone owners
-are a practical current allocation, not an architectural concurrency maximum.
-Delay additional callable/dispatch/thread owners until their failure/ownership
-prerequisites and shared-file ownership are concrete enough to avoid duplicate
-implementations. Independent work inside those families remains possible when
-specifically assigned.
+Record external branches and actual file scopes when accepted; an offered
+handoff is not a running agent. The memory owner has accepted and the owner has
+requested an additional callable handoff, making six potential milestone lanes.
+This is not an architectural concurrency maximum. C04 does not block all
+callable implementation; it gates committing independent failure signatures.
+Additional dispatch/thread owners need sufficiently concrete shared-file and
+failure/ownership boundaries to avoid duplicate implementations. Independent
+work inside those families remains possible when specifically assigned.
 
 The coordinator retains common plan/backend/verification summaries, VERSION,
 untransferred shared dispatch/admission/lifecycle sections and integration.
