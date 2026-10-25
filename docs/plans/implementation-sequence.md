@@ -11358,6 +11358,9 @@ or resolve them using source.
   earlier body-local cursor/root inference; no separate permanent pack mapper,
   lambda/capture lowering or new owner schema is introduced. Empty trailing
   bindings already exist in MIR even when the text printer omits them.
+  Follow-up `6b10d4851c04eeffb4c9dacda84b211d3d23d326` keeps optional ownership
+  keys separate from physical lane identity; a user-defined scalar factory and
+  wrong-key controls accompany source optional emplacement.
 - **Unlock:** source-defined optional/expected, payload enums, matching and
   propagation in arbitrary user types.
 - **Deliver:** native union overlapping storage and tag/payload layouts for

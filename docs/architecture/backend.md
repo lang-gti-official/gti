@@ -4747,7 +4747,11 @@ parameter types/bindings and coalesces compatible MIR views by their verified
 identity, never advancing an argument cursor once per view. Even an empty pack
 retains its source formal binding; the text dump's omission is not a different
 owner contract. Absent empty bindings and unproduced zero-continuation forms
-are rejected. TypePack descriptors erase only for exact function/constructor
+are rejected. Complete scalar pack views need not carry an ownership PlaceKey:
+exact formal binding, constant index and verified element type identify their
+physical lane. Any supplied key must agree; missing keys are never fabricated
+and this mapping grants no loan or access permission. TypePack descriptors erase
+only for exact function/constructor
 formals, while runtime pack SSA values stay forbidden. Symbolic, nested and
 non-trailing native packs remain unsupported. Direct consuming methods similarly use
 their exact selected source target and verified receiver transfer; this does

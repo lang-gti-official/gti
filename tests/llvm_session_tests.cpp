@@ -970,6 +970,33 @@ int main() { Pair value = create<Pair>(20, 22); return value.sum() == 42 ? 0 : 1
         }
       }
       if (selected) {
+        auto invalid = function.body;
+        const auto root =
+            std::find_if(invalid.places.begin(), invalid.places.end(),
+                         [](const auto &place) {
+                           return place.type.kind == SemanticType::TypePack &&
+                                  place.projections.empty();
+                         });
+        const auto element =
+            std::find_if(invalid.places.begin(), invalid.places.end(),
+                         [](const auto &place) {
+                           return place.projections.size() == 1 &&
+                                  place.projections[0].kind ==
+                                      MirProjectionKind::PackElement;
+                         });
+        if (root != invalid.places.end() && root->key &&
+            element != invalid.places.end()) {
+          element->key = root->key;
+          element->key->projections.push_back(
+              {.kind = PlaceProjectionKind::ConstantIndex,
+               .index = root->type.arguments.size()});
+          expect(!planConcreteParameters(function.parameterTypes,
+                                         function.parameterBindings, invalid),
+                 "a supplied conflicting projected key cannot be ignored");
+        } else {
+          expect(false,
+                 "alias fixture retains its projected-key negative control");
+        }
         auto alias = *selected;
         alias.id = function.body.places.size() + 1;
         function.body.places.push_back(std::move(alias));
@@ -1021,6 +1048,180 @@ int main() { Pair value = create<Pair>(20, 22); return value.sum() == 42 ? 0 : 1
                   << " pack alias: " << error.what() << '\n';
         expect(false, "verified aliases must not consume additional ABI lanes");
       }
+    }
+  }
+}
+
+void testPayloadUniqueOwner(const std::filesystem::path &repository,
+                            bool sourceOnly) {
+  namespace fs = std::filesystem;
+  const auto library = fs::canonical(repository / "stdlib/std/memory.gti");
+  std::ifstream input(library);
+  std::string source(std::istreambuf_iterator<char>{input}, {});
+  expect(input.good() || input.eof(),
+         "read actual trusted memory declarations");
+  // Overlay a real trusted unit, keeping its capability declarations intact.
+  // Only this source fixture may name the private scalar owner representation.
+  source += R"(
+namespace payload_owner_probe {
+extern "C" { int32_t payload_owner_counts_v1(); }
+enum Packet { owned(gti_internal::unique_owner<int32_t> value) };
+gti_internal::unique_owner<int32_t> extract() {
+  mut Packet source = Packet::owned(gti_internal::allocate_unique_owner<int32_t>(42));
+  switch (std::move(source)) {
+  case Packet::owned(value): return std::move(value);
+  }
+}
+int run() {
+  {
+    gti_internal::unique_owner<int32_t> selected = extract();
+    // The source payload is already dead, while its extracted owner is live.
+    if (payload_owner_counts_v1() != 10) { return 1; }
+    if (gti_internal::unique_owner_borrow(selected) != 42) { return 2; }
+  }
+  return payload_owner_counts_v1() == 11 ? 0 : 3;
+}
+}
+)";
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  auto frontend = Frontend(options).analyze(
+      repository / "tests/payload-owner-entry.gti",
+      "#include <std/memory>\n"
+      "int main() { return payload_owner_probe::run(); }\n",
+      {repository / "stdlib/prelude.gti"}, {{library.string(), source}},
+      {repository / "stdlib"});
+  for (const auto &diagnostic : frontend.diagnostics)
+    if (!frontend.canGenerateCode())
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "trusted scalar-owner payload fixture produces authoritative MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto checked = verifyMirProgram(frontend.mir);
+  expect(checked.valid(), "scalar-owner payload MIR verifies without mutation");
+  std::vector<LoweredProgramIssue> issues;
+  const auto program = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  expect(program.has_value(), "scalar-owner payload crosses sealed boundary");
+  if (!program)
+    return;
+  const auto &mir = program->program().mir();
+  const auto owner = SemanticType::uniqueOwnerOf(SemanticType::Int32);
+  bool exactField = false;
+  for (const auto &payload : mir.payloadEnums())
+    for (const auto &variant : payload.variants)
+      exactField |= variant.payloadTypes == std::vector<SemanticType>{owner};
+  bool move = false;
+  bool payloadDrop = false;
+  bool ownerDrop = false;
+  for (const auto &function : mir.functionInstances()) {
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        move |= instruction.operation == MirOperation::PayloadExtract &&
+                instruction.info.type == owner &&
+                instruction.payloadExtractionKind ==
+                    PayloadExtractionKind::MoveValue;
+        if (instruction.kind == MirInstructionKind::Drop &&
+            instruction.destination) {
+          const auto *place = function.body.findPlace(*instruction.destination);
+          ownerDrop |= place && place->type == owner;
+          payloadDrop |= place && mir.findPayloadEnum(place->type);
+        }
+      }
+  }
+  expect(exactField && move && payloadDrop && ownerDrop,
+         "sealed body retains scalar UniqueOwner MoveValue and both drops");
+  if (!exactField || !move || !payloadDrop || !ownerDrop)
+    return;
+  std::cout << "scalar UniqueOwner payload: verified source, MoveValue and "
+               "both drops\n";
+  if (sourceOnly)
+    return;
+
+  const auto root =
+      fs::temp_directory_path() /
+      ("gti-llvm-payload-owner-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directories(root);
+  struct Cleanup {
+    fs::path root;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(root, ignored);
+    }
+  } cleanup{root};
+  const auto shim = root / "provider.c";
+  expect(driver::writeArtifact(shim, R"(
+#define _POSIX_C_SOURCE 200112L
+#include <stdint.h>
+#include <stdlib.h>
+static void *active;
+static int32_t allocated, released;
+void *gti_rt_posix_memalign_v1(uint64_t bytes, uint64_t alignment, int32_t *status) {
+  if (allocated || !bytes || !alignment) abort();
+  void *address = NULL;
+  *status = posix_memalign(&address, (size_t)alignment, (size_t)bytes);
+  if (*status || !address) abort();
+  active = address;
+  ++allocated;
+  return address;
+}
+void gti_rt_posix_free_v1(void *address) {
+  if (!address || address != active || released) abort();
+  active = NULL;
+  ++released;
+  free(address);
+}
+int32_t payload_owner_counts_v1(void) {
+  return allocated * 10 + released;
+}
+)") == driver::ArtifactWriteStatus::Success,
+         "write versioned counting memory provider");
+  driver::NativeToolchain toolchain;
+  const auto shimObject = root / "provider.o";
+  const auto compiled = toolchain.invoke(driver::NativeCCompileRequest(
+      driver::discoverCCompiler(), shim, shimObject, driver::CStandard::C17,
+      OptimizationLevel::O2, {}, {}));
+  if (!compiled.succeeded())
+    std::cerr << compiled.output;
+  expect(compiled.succeeded(), "compile exact v1 count/double-free oracle");
+  if (!compiled.succeeded())
+    return;
+  for (const auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
+    Session session(*program, {.optimization = level});
+    const auto admission = planLlvmAdmission(*program);
+    expect(admission.admitted(),
+           "combined O7/O8 scalar-owner payload admission");
+    if (!admission.admitted())
+      return;
+    lowerScalarProgram(session, admission);
+    const auto object = root / "probe.o";
+    expect(driver::writeArtifact(object, session.emitObject().contents) ==
+               driver::ArtifactWriteStatus::Success,
+           "write real scalar-owner payload body object");
+    driver::NativeInputs inputs;
+    inputs.finalLibraryFiles = {
+        shimObject, driver::discoverToolchainLayout(nullptr).runtimeLibrary};
+    const auto executable = root / "probe";
+    const auto linked = toolchain.invoke(driver::NativeLinkRequest(
+        driver::discoverNativeCompiler(), object, executable, inputs));
+    if (!linked.succeeded())
+      std::cerr << linked.output;
+    expect(linked.succeeded(), "link real body with independent memory oracle");
+    if (linked.succeeded()) {
+      const auto run = driver::invokeProcess({executable.string()});
+      if (!run.succeeded())
+        std::cerr << run.output;
+      expect(run.succeeded(), "scalar payload move has exactly one allocation "
+                              "and release, without early or double cleanup");
+      if (run.succeeded())
+        std::cout << "scalar UniqueOwner payload: "
+                  << (level == LlvmCodegenOptimization::None ? "O0" : "O3")
+                  << " allocation/release 1/1, no early/double cleanup\n";
     }
   }
 }
@@ -1085,6 +1286,11 @@ int main(void) {
 
 int main(int argc, char **argv) {
   try {
+    if (argc >= 3 && std::string_view(argv[1]) == "--payload-unique-owner") {
+      testPayloadUniqueOwner(argv[2], argc == 4 && std::string_view(argv[3]) ==
+                                                       "--source-only");
+      return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--pack-aliases") {
       testConcretePackAliases();
       return failures == 0 ? 0 : 1;
