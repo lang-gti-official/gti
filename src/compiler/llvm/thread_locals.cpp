@@ -9,10 +9,11 @@ ThreadLocals::ThreadLocals(Session &session, Failures &failures,
     : session(session), failures(failures), lifetimes(lifetimes),
       findBody(std::move(findBody)), bodyAbi(std::move(bodyAbi)) {
   auto *pointer = session.layouts().pointer();
-  registrationType = llvm::StructType::create(
-      session.context(), {pointer, pointer, pointer, pointer,
-                          llvm::Type::getInt8Ty(session.context())},
-      "gti_thread_local_cleanup_entry_v1");
+  registrationType =
+      llvm::StructType::create(session.context(),
+                               {pointer, pointer, pointer, pointer,
+                                llvm::Type::getInt8Ty(session.context())},
+                               "gti_thread_local_cleanup_entry_v1");
 }
 
 void ThreadLocals::allocate(
@@ -23,10 +24,11 @@ void ThreadLocals::allocate(
   });
   for (const auto &storage : session.program().mir().threadLocalStorage()) {
     const auto datum = [&](llvm::Type *type, llvm::Constant *initial,
-                            const char *suffix) {
+                           const char *suffix) {
       return new llvm::GlobalVariable(
           session.module(), type, false, llvm::GlobalValue::InternalLinkage,
-          initial, "__gti_native_tls_" + std::to_string(storage.symbol) + suffix,
+          initial,
+          "__gti_native_tls_" + std::to_string(storage.symbol) + suffix,
           nullptr, llvm::GlobalVariable::GeneralDynamicTLSModel);
     };
     auto *type = session.layouts().get(storage.type).storage;
@@ -42,9 +44,9 @@ void ThreadLocals::allocate(
     slot.storage = datum(type, initial, "_value");
     if (!storage.dataInitializer) {
       slot.state = datum(ir.getInt8Ty(), ir.getInt8(0), "_state");
-      slot.registration = datum(
-          registrationType, llvm::Constant::getNullValue(registrationType),
-          "_registration");
+      slot.registration = datum(registrationType,
+                                llvm::Constant::getNullValue(registrationType),
+                                "_registration");
     }
     globals.emplace(storage.symbol, slot.storage);
     slots.emplace(storage.symbol, slot);
@@ -52,7 +54,7 @@ void ThreadLocals::allocate(
 }
 
 llvm::Function *ThreadLocals::cleanup(const MirThreadLocalStorage &storage,
-                                     Slot &slot) {
+                                      Slot &slot) {
   if (slot.cleanup)
     return slot.cleanup;
   auto *pointer = session.layouts().pointer();
@@ -75,8 +77,7 @@ llvm::Function *ThreadLocals::cleanup(const MirThreadLocalStorage &storage,
   auto *channel = ir.CreateAlloca(session.abi().failureChannel());
   auto *status = ir.CreateCall(
       lifetimes.cleanup(storage.cleanup),
-      {function->getArg(0), channel,
-       ir.CreateIsNotNull(function->getArg(2))});
+      {function->getArg(0), channel, ir.CreateIsNotNull(function->getArg(2))});
   auto *success =
       llvm::BasicBlock::Create(session.context(), "success", function);
   auto *failed =
@@ -95,8 +96,7 @@ llvm::Function *ThreadLocals::cleanup(const MirThreadLocalStorage &storage,
 void ThreadLocals::ensure(llvm::IRBuilder<> &ir, SymbolId symbol,
                           llvm::Value *failure, Scalars::Guard guard,
                           std::function<void()> propagate) {
-  const auto &storage =
-      *session.program().mir().findThreadLocalStorage(symbol);
+  const auto &storage = *session.program().mir().findThreadLocalStorage(symbol);
   if (storage.dataInitializer)
     return;
   auto &slot = slots.at(symbol);
@@ -109,17 +109,18 @@ void ThreadLocals::ensure(llvm::IRBuilder<> &ir, SymbolId symbol,
   ir.CreateCondBr(ir.CreateICmpEQ(state, ir.getInt8(2)), done, slow);
   ir.SetInsertPoint(slow);
   const auto check = [&](llvm::Value *condition, DefinedFailureDetail detail) {
-    guard(condition, {DefinedFailureCode::HostedRuntimeContractFailure, detail});
+    guard(condition,
+          {DefinedFailureCode::HostedRuntimeContractFailure, detail});
   };
   check(ir.CreateICmpEQ(state, ir.getInt8(1)),
         DefinedFailureDetail::RecursiveThreadLocalInitialization);
-  check(ir.CreateICmpNE(
-            ir.CreateCall(declareRuntimeService(
-                session, RuntimeService::ThreadLocalsClosing)), ir.getInt32(0)),
+  check(ir.CreateICmpNE(ir.CreateCall(declareRuntimeService(
+                            session, RuntimeService::ThreadLocalsClosing)),
+                        ir.getInt32(0)),
         DefinedFailureDetail::ThreadLocalInitializationDuringShutdown);
-  check(ir.CreateICmpEQ(
-            ir.CreateCall(declareRuntimeService(
-                session, RuntimeService::ThreadLocalsAttached)), ir.getInt32(0)),
+  check(ir.CreateICmpEQ(ir.CreateCall(declareRuntimeService(
+                            session, RuntimeService::ThreadLocalsAttached)),
+                        ir.getInt32(0)),
         DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime);
   ir.CreateStore(ir.getInt8(1), slot.state);
   const MirBodyAddress address{MirBodyKind::ThreadLocalInitializer, symbol};
@@ -132,8 +133,8 @@ void ThreadLocals::ensure(llvm::IRBuilder<> &ir, SymbolId symbol,
   auto *result = ir.CreateCall(findBody(address), arguments);
   abi.applyTo(*result);
   if (abi.statusResult) {
-    auto *success =
-        llvm::BasicBlock::Create(session.context(), "tls.initialized", function);
+    auto *success = llvm::BasicBlock::Create(session.context(),
+                                             "tls.initialized", function);
     auto *failed =
         llvm::BasicBlock::Create(session.context(), "tls.failed", function);
     ir.CreateCondBr(result, success, failed);

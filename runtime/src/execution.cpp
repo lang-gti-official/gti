@@ -19,7 +19,7 @@ extern "C" uint32_t gti_rt_thread_locals_closing_v1(void) {
   return gti_runtime_detail::thread_local_cleanup_active();
 }
 
-extern "C" void gti_rt_thread_locals_register_v1(
-    gti_thread_local_cleanup_entry_v1 *entry) {
+extern "C" void
+gti_rt_thread_locals_register_v1(gti_thread_local_cleanup_entry_v1 *entry) {
   gti_runtime_detail::register_thread_local_cleanup(entry);
 }

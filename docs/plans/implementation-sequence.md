@@ -397,7 +397,7 @@ workflow determine task scope and integration.
 
 | Outcome / owner | Current readiness | Prerequisite and first useful slice |
 | --- | --- | --- |
-| Native LLVM production backend (`O-LLVM-05` onward) | target/ABI infrastructure and bounded scalar execution implemented | Follow the [LLVM campaign](#llvm-production-backend-campaign). The native scalar profile uses sealed roots, direct dependency closure and defined-failure channels. References/arrays and the later ownership/runtime families remain next. LLVM becomes the default only after complete macOS/Linux language, library, native-interop and performance acceptance. |
+| Native LLVM production backend (`O-LLVM-06` onward) | target/ABI, scalar/place/text and bounded ordinary-class/TLS execution profiles implemented | Follow the [LLVM campaign](#llvm-production-backend-campaign). Sealed roots, direct dependency closure and defined-failure channels remain authoritative. Remaining class-publication shapes and later payload/ownership/callable/dispatch/native-runtime families retain explicit gates. LLVM becomes the default only after complete macOS/Linux language, library, native-interop and performance acceptance. |
 | Reflection clients | ready after delivered phases 1–3 | Phase 3 is integrated in 0.400.0: structural construction, callable/source metadata, receiver/owner fixes and expansion-budget tests. The accepted next client is `std::experimental::json`; validate decoding, rollback, diagnostics and performance before the planned `std::json` deprecation. Metaobject invocation/runtime reflection remain separate goals in the [reflection plan](reflection.md). |
 | `L-UP-10` -> `L-UP-11` | acceptance closure, then adoption; may be co-validated | The retained borrowed-pack reproducer passes current O0/O3 probes. Complete the relevant constructor/cleanup composition matrix while adopting final-node emplacement; do not presume another compiler fix. |
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
@@ -10851,6 +10851,27 @@ or resolve them using source.
 
 ### O-LLVM-06: Classes, Lifecycles And Program Storage
 
+- **Status (2026-10-25):** the concrete non-polymorphic copyable/movable class
+  profile is implemented: selected constructors/methods, designated construction,
+  generated movement/copy snapshots, stored entry references, replacement,
+  returned owners, movable class arrays, passive namespace/static objects, and
+  passive/dynamic TLS with the C registration boundary. `llvm_class_execution`
+  supplies success, rollback and exact-failure differential evidence. This is
+  not admission of private allocation capabilities or all class shapes.
+- **Remaining 06-A:** end-to-end immovable destination placement, including
+  return and array-element construction. Prerequisite: carry each final object
+  destination through native aggregate/result transport without relocation.
+  Accept only when address-identity and deleted-move controls execute at O0-O3.
+- **Remaining 06-B:** non-entry stored-reference field publication. Prerequisite:
+  consume an exact evaluated loan address at its initializer publication stage,
+  rather than treating the loaded referent as a value field. Accept when
+  side-effecting reference-return initializer probes preserve address/evaluation
+  order and the existing lifetime rejections. Shapes without the current entry
+  Stored-loan witness explicitly reject until then.
+- **Comparator finding:** dynamic function-local TLS compound assignment is an
+  existing C++ representation-vocabulary limitation; native-only cases cover
+  its correct arithmetic, checked narrowing and shift failures. Keep that
+  discrepancy visible rather than weakening the C++ gate or claiming parity.
 - **Unlock:** user records/classes, constructors, field methods and deterministic
   cleanup, including concrete generic classes and static/global objects.
 - **Deliver:** field layouts/projections and initializers; selected ordinary and

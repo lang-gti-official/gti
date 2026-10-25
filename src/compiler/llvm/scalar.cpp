@@ -468,4 +468,20 @@ llvm::Value *Scalars::compute(const MirInstruction &instruction,
   return arithmetic(operation, inputs, types, instruction.info.type);
 }
 
+llvm::Value *Scalars::mutate(const MirInstruction &instruction,
+                             const SemanticType &target,
+                             std::span<llvm::Value *const> inputs) {
+  if (instruction.operands.size() != 1 || inputs.size() != 2)
+    throw std::logic_error("LLVM compound assignment lost its evaluated input");
+  const auto operation = baseOperation(instruction.operation);
+  const auto &right = instruction.operands.front().type;
+  const auto computation = operation == MirOperation::ShiftLeft ||
+                                   operation == MirOperation::ShiftRight
+                               ? promoted(domain(target))
+                               : common(target, right);
+  const std::array types{target, right};
+  auto *value = arithmetic(operation, inputs, types, computation);
+  return convert(value, computation, target);
+}
+
 } // namespace lang::native_llvm

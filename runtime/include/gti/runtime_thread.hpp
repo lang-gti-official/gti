@@ -1,7 +1,7 @@
 #pragma once
 
-#include "gti/runtime_thread.h"
 #include "gti/runtime_execution.h"
+#include "gti/runtime_thread.h"
 
 #include <exception>
 #include <utility>

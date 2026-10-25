@@ -68,11 +68,10 @@ void testLedger() {
     pending += entry.state == LlvmCoverageState::Pending;
     nonexecuting += entry.state == LlvmCoverageState::VerifiedNonExecuting;
     if (entry.state == LlvmCoverageState::Implemented)
-      expect(entry.positiveTest == (entry.milestone == 6
-                                        ? "llvm_class_execution"
-                                    : entry.milestone == 5
-                                        ? "llvm_place_execution"
-                                        : "llvm_scalar_execution"),
+      expect(entry.positiveTest ==
+                 (entry.milestone == 6   ? "llvm_class_execution"
+                  : entry.milestone == 5 ? "llvm_place_execution"
+                                         : "llvm_scalar_execution"),
              "implemented families name real execution evidence");
   }
   expect(pending > 250 && nonexecuting > 20,
@@ -206,7 +205,8 @@ int main() { Value value{}; return value.read() - 1; }
   expect(lifecycle.admitted(),
          "exact native class witnesses admit selected lifecycle execution");
   expect(std::any_of(lifecycle.requiredBodies().begin(),
-                     lifecycle.requiredBodies().end(), [](auto body) {
+                     lifecycle.requiredBodies().end(),
+                     [](auto body) {
                        return body.kind == lang::MirBodyKind::Destructor;
                      }),
          "cleanup recipes retain their exact selected destructor body");
@@ -250,6 +250,17 @@ int main() { visits += 1; return visits - 1; }
          "new thread-local storage and lifetime operations cannot drift behind "
          "coverage");
   expect(tls.admitted(), "passive TLS is explicitly admitted");
+  const auto pinned = lang::planLlvmAdmission(lower(R"(
+class Pinned {
+public:
+  Pinned() {}
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+};
+int main() { Pinned value{}; return 0; }
+)"));
+  expect(!pinned.admitted(), "immovable storage needs end-to-end destination "
+                             "placement, not byte transport");
 }
 
 } // namespace

@@ -16,7 +16,8 @@ typedef struct gti_thread_local_cleanup_entry_v1 {
   void *storage GTI_TLS_DEFAULT(NULL);
   bool (*cleanup)(void *, gti_failure_record_v2 *,
                   const gti_failure_record_v2 *,
-                  const gti_failure_artifact_descriptor_v1 *) GTI_TLS_DEFAULT(NULL);
+                  const gti_failure_artifact_descriptor_v1 *)
+      GTI_TLS_DEFAULT(NULL);
   const gti_failure_artifact_descriptor_v1 *artifact GTI_TLS_DEFAULT(NULL);
   bool registered GTI_TLS_DEFAULT(false);
 } gti_thread_local_cleanup_entry_v1;

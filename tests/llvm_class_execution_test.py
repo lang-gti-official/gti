@@ -133,10 +133,11 @@ int main() { Counter::value += 4; return global.value == 7 && Counter::plain.val
 mut int initialized = 0;
 int initialize() { initialized += 1; return 4; }
 thread_local mut int passive = 3;
+thread_local bool enabled = true;
 thread_local mut int dynamic = initialize();
 class State { public: static thread_local mut int count = initialize(); };
 int main() {
-  if (initialized != 0 || passive != 3 || dynamic != 4 || dynamic != 4) { return 1; }
+  if (initialized != 0 || !enabled || passive != 3 || dynamic != 4 || dynamic != 4) { return 1; }
   if (State::count != 4 || State::count != 4) { return 2; }
   return initialized == 2 ? 0 : 3;
 }
@@ -229,11 +230,46 @@ int main() { return late.read() - 1; }
 ''', "GTI-R0013", "thread_local_initialization_during_shutdown"),
 }
 
+NATIVE_ONLY = {
+    # Existing C++ vocabulary rejects mutation after a dynamic local TLS
+    # initializer. This is retained as an explicit comparator limitation.
+    "function-local-tls": r'''
+mut int initialized = 0;
+int initialize() { initialized += 1; return 4; }
+int local() { thread_local mut int count = initialize(); count += 1; return count; }
+int main() { return local() == 5 && local() == 6 && initialized == 1 ? 0 : 1; }
+''',
+    "tls-compound-operators": r'''
+int initialize() { return 4; }
+int local() {
+  thread_local mut int value = initialize();
+  value += 3; value *= 2; value -= 1; value /= 3; value %= 4;
+  value |= 8; value &= 15; value ^= 2; value <<= 1; value >>= 1;
+  return value;
+}
+int main() { return local() == 10 ? 0 : 1; }
+''',
+}
+
+NATIVE_FAILURES = {
+    "tls-compound-narrow": (r'''
+int8_t initialize() { return int8_t(127); }
+int local() { thread_local mut int8_t value = initialize(); value += 1; return 0; }
+int main() { return local(); }
+''', "GTI-R0006"),
+    "tls-compound-shift": (r'''
+int initialize() { return 4; }
+int local(int count) { thread_local mut int value = initialize(); value <<= count; return value; }
+int main() { return local(32); }
+''', "GTI-R0005"),
+}
+
 
 def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
+    CASES["shipped-example"] = (root / "examples/llvm/classes-and-lifetimes.gti").read_text(encoding="utf-8")
     selected = sys.argv[3] if len(sys.argv) > 3 else None
-    if selected and selected not in CASES and selected not in FAILURES:
+    if selected and selected not in CASES and selected not in FAILURES and selected not in NATIVE_ONLY and selected not in NATIVE_FAILURES:
         raise ValueError(f"unknown class execution case: {selected}")
     env = os.environ.copy()
     env["NO_COLOR"] = "1"
@@ -269,6 +305,26 @@ def main():
             if len(set(observables)) != 1:
                 raise AssertionError(f"failure attribution drift in {name}: {observables}")
             print(f"{name}: exact C++20/23 and LLVM O0-O3 failure passed", flush=True)
+        for name, text in NATIVE_ONLY.items():
+            if selected and name != selected:
+                continue
+            source = work / f"{name}.gti"
+            source.write_text(text, encoding="utf-8")
+            for endpoint in endpoints[2:]:
+                result = execute(gti, root, work / f"{name}-{endpoint.optimization}", source, endpoint, env)
+                if result.error or result.observable != (0, "", ""):
+                    raise AssertionError(f"{name} {endpoint}: {result}")
+            print(f"{name}: LLVM O0-O3 passed (C++ comparator has a recorded vocabulary limitation)", flush=True)
+        for name, (text, code) in NATIVE_FAILURES.items():
+            if selected and name != selected:
+                continue
+            source = work / f"{name}.gti"
+            source.write_text(text, encoding="utf-8")
+            for endpoint in endpoints[2:]:
+                result = execute(gti, root, work / f"{name}-{endpoint.optimization}", source, endpoint, env)
+                if result.error or result.returncode != 70 or code not in result.stderr:
+                    raise AssertionError(f"{name} {endpoint}: {result}")
+            print(f"{name}: LLVM O0-O3 checked failure passed", flush=True)
 
 
 if __name__ == "__main__":

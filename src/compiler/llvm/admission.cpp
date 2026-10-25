@@ -214,6 +214,7 @@ public:
         }
       if (!owner ||
           owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+          (!owner->traits.copyable && !owner->traits.movable) ||
           owner->polymorphic || owner->abstract || owner->unionLayout ||
           owner->cOpaqueHandle || !owner->bases.empty() ||
           !owner->structuralBases.empty() || !visiting.insert(owner->id).second)
@@ -479,6 +480,17 @@ public:
     add(row.role);
     add(row.identity.definition);
     add(mir.kind, bodyClassShape());
+    if (mir.kind == MirBodyKind::Constructor) {
+      const auto *constructor = program.findConstructorInstance(body->owner);
+      for (const auto &initializer : constructor->initializers)
+        if (initializer.storesReference &&
+            std::none_of(
+                mir.loans.begin(), mir.loans.end(), [&](const auto &loan) {
+                  return loan.entry && loan.kind == MirLoanKind::Stored &&
+                         loan.storedField == initializer.field;
+                }))
+          add(Shape::StoredFieldPublication);
+    }
     if (row.role != LoweredBodyRole::SourceExecutable)
       return;
     executable = true;
@@ -532,8 +544,8 @@ public:
       if (loan.referenceSelection)
         add(Shape::SelectedReferenceAddress);
       if (loan.twoPhase)
-        add(Shape::TwoPhaseBorrow, origin ? placeClassShape(*origin)
-                                          : std::nullopt);
+        add(Shape::TwoPhaseBorrow,
+            origin ? placeClassShape(*origin) : std::nullopt);
       if (!loan.additionalDependencies.empty())
         add(Shape::MultipleBorrowOrigins);
       if (!loan.conditions.empty())
@@ -606,6 +618,16 @@ public:
                   : classShape(stage.info.type));
         }
         if (stage.operation != MirOperation::None) {
+          const auto *mutationPlace =
+              stage.destination ? mir.findPlace(*stage.destination) : nullptr;
+          const bool scalarMutation =
+              (stage.kind == MirInstructionKind::Compute ||
+               stage.kind == MirInstructionKind::Assign) &&
+              mutationPlace && isPassiveScalarValueType(mutationPlace->type) &&
+              stage.operands.size() == 1 &&
+              isPassiveScalarValueType(stage.operands.front().type) &&
+              stage.operation >= MirOperation::AddAssign &&
+              stage.operation <= MirOperation::ShiftRightAssign;
           if ((stage.operation == MirOperation::Equal ||
                stage.operation == MirOperation::NotEqual) &&
               std::any_of(stage.operands.begin(), stage.operands.end(),
@@ -633,18 +655,19 @@ public:
               stage.operands[0].type.kind == SemanticType::StringView &&
               stage.info.type == SemanticType::Char;
           add(stage.operation,
-              primitiveRawIndex(stage) || primitivePointerArithmetic(stage)
+              scalarMutation ? std::optional(Shape::InPlaceScalarMutation)
+              : primitiveRawIndex(stage) || primitivePointerArithmetic(stage)
                   ? std::optional(Shape::PrimitiveRawAccess)
-          : arrayAggregate   ? std::optional(Shape::PassiveArrayValue)
-          : stage.operation == MirOperation::Aggregate &&
-                    stage.info.type.kind == SemanticType::Array
-              ? classShape(stage.info.type)
+              : arrayAggregate ? std::optional(Shape::PassiveArrayValue)
+              : stage.operation == MirOperation::Aggregate &&
+                      stage.info.type.kind == SemanticType::Array
+                  ? classShape(stage.info.type)
               : textIndex        ? std::optional(Shape::CountedText)
               : referenceAddress ? std::optional(Shape::PassiveReference)
               : arrayAddress     ? std::optional(Shape::CheckedArrayProjection)
               : stage.operation == MirOperation::AddressOf && addressPlace
                   ? placeClassShape(*addressPlace)
-                                 : std::nullopt);
+                  : std::nullopt);
         }
         if (stage.intrinsic != IntrinsicKind::None) {
           const bool textQuery =

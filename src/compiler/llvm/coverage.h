@@ -65,6 +65,8 @@ enum class Shape {
   ArrayValueComparison,
   NativeClassStorage,
   NativeThreadStorage,
+  InPlaceScalarMutation,
+  StoredFieldPublication,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

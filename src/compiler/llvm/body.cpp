@@ -21,9 +21,10 @@ public:
       : session(session), failures(session),
         lifetimes(session, failures,
                   [&](MirBodyAddress address) { return function(address); }),
-        threadLocals(session, failures, lifetimes,
-                     [&](MirBodyAddress address) { return function(address); },
-                     [&](MirBodyAddress address) { return signature(address); }) {}
+        threadLocals(
+            session, failures, lifetimes,
+            [&](MirBodyAddress address) { return function(address); },
+            [&](MirBodyAddress address) { return signature(address); }) {}
   void lower(const LlvmAdmissionPlan &admission);
 
 private:
@@ -42,8 +43,8 @@ private:
 class Body final {
 public:
   Body(Session &session, Failures &failures, Lifetimes &lifetimes,
-       ThreadLocals &threadLocals,
-       llvm::Function &function, const MirBody &body, FunctionAbi abi,
+       ThreadLocals &threadLocals, llvm::Function &function,
+       const MirBody &body, FunctionAbi abi,
        std::span<const HirBindingId> parameters,
        const std::map<SymbolId, llvm::GlobalVariable *> &globals,
        std::function<llvm::Function *(MirBodyAddress)> findFunction,
@@ -427,6 +428,17 @@ private:
     llvm::Value *result = nullptr;
     switch (instruction.kind) {
     case MirInstructionKind::Compute: {
+      if (instruction.destination && instruction.operands.size() == 1 &&
+          instruction.operation >= MirOperation::AddAssign &&
+          instruction.operation <= MirOperation::ShiftRightAssign) {
+        const auto &place = *input.findPlace(*instruction.destination);
+        auto *address = memory.address(place.id);
+        const std::array inputs{load(address, place.type),
+                                operand(instruction.operands.front())};
+        result = scalars.mutate(instruction, place.type, inputs);
+        store(result, address, place.type);
+        break;
+      }
       if ((instruction.operation == MirOperation::Equal ||
            instruction.operation == MirOperation::NotEqual) &&
           instruction.operands.at(0).type.kind == SemanticType::StringView) {
@@ -545,6 +557,13 @@ private:
         break;
       }
       result = operand(instruction.operands.at(0));
+      if (instruction.kind == MirInstructionKind::Assign &&
+          instruction.operation >= MirOperation::AddAssign &&
+          instruction.operation <= MirOperation::ShiftRightAssign) {
+        const std::array inputs{load(memory.address(place.id), place.type),
+                                result};
+        result = scalars.mutate(instruction, place.type, inputs);
+      }
       if (place.type.kind != SemanticType::Reference)
         result = scalars.convert(result, instruction.operands[0].type,
                                  place.type, false);
@@ -802,7 +821,8 @@ private:
     // initializes the physical reference field.
     if (input.kind == MirBodyKind::Constructor && owner)
       for (const auto &loan : input.loans)
-        if (loan.entry && loan.kind == MirLoanKind::Stored && loan.storedField) {
+        if (loan.entry && loan.kind == MirLoanKind::Stored &&
+            loan.storedField) {
           const auto &source = *input.findPlace(loan.source);
           auto *address = memory.address(source.id);
           if (source.type.kind == SemanticType::Reference)
@@ -947,8 +967,9 @@ void Bodies::body(MirBodyAddress address) {
                      .findConstructorInstance(address.owner)
                      ->parameterBindings;
   Body emission(
-      session, failures, lifetimes, threadLocals, *function(address), input, plan, parameters,
-      globals, [&](MirBodyAddress target) { return function(target); },
+      session, failures, lifetimes, threadLocals, *function(address), input,
+      plan, parameters, globals,
+      [&](MirBodyAddress target) { return function(target); },
       [&](MirBodyAddress target) { return signature(target); }, owner(address));
 }
 void Bodies::lower(const LlvmAdmissionPlan &admission) {
