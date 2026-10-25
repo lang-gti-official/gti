@@ -1,4 +1,5 @@
 #include "../src/compiler/llvm/abi.h"
+#include "../src/compiler/llvm/failure.h"
 #include "../src/compiler/llvm/native_c_abi.h"
 #include "cpp_backend_test_support.h"
 
@@ -34,11 +35,24 @@ void rejects(Action action) {
   throw std::runtime_error("expected explicit classifier rejection");
 }
 
-VerifiedLoweredProgram fixture(const std::filesystem::path &source) {
+VerifiedLoweredProgram fixture(const std::filesystem::path &source,
+                                bool concurrent = false,
+                                bool standardLibraryEnabled = false) {
   std::ifstream stream(source);
   require(stream.good(), "missing GTI fixture");
   const std::string text{std::istreambuf_iterator<char>(stream), {}};
-  const auto frontend = Frontend().analyze(source.string(), text);
+  FrontendOptions options;
+  if (concurrent) {
+    options.target.executionProfile = ExecutionProfile::Concurrent;
+    options.target.runtimeCapabilities.threads = true;
+  }
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      standardLibraryEnabled ? Frontend(options).analyze(source.string(), text,
+                                             {standardLibrary / "prelude.gti"},
+                                             {}, {standardLibrary})
+                 : Frontend(options).analyze(source.string(), text);
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -46,7 +60,9 @@ VerifiedLoweredProgram fixture(const std::filesystem::path &source) {
   }
   std::vector<LoweredProgramIssue> issues;
   auto verified = verifiedLoweredProgram(
-      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir,
+                             options.target),
+      issues);
   require(verified.has_value(), "unverified GTI record fixture");
   return *verified;
 }
@@ -65,43 +81,6 @@ llvm::Value *offset(llvm::IRBuilder<> &builder, llvm::Value *pointer,
                     std::uint64_t bytes) {
   return builder.CreateGEP(builder.getInt8Ty(), pointer,
                            builder.getInt64(bytes));
-}
-
-// Coercions may be wider than the object (e.g. Darwin's i64 for a 3-byte
-// record). Use zeroed, correctly sized scratch and copy only actual bytes.
-llvm::Value *pack(Session &session, llvm::IRBuilder<> &builder,
-                  llvm::Value *storage, llvm::Type *carrier, std::uint64_t at,
-                  std::uint64_t size) {
-  const auto carrierSize =
-      session.dataLayout().getTypeAllocSize(carrier).getFixedValue();
-  auto *scratch = builder.CreateAlloca(carrier);
-  builder.CreateStore(llvm::Constant::getNullValue(carrier), scratch);
-  builder.CreateMemCpy(scratch, llvm::MaybeAlign(1),
-                       offset(builder, storage, at), llvm::MaybeAlign(1),
-                       std::min(carrierSize, size - at));
-  return builder.CreateLoad(carrier, scratch);
-}
-
-void unpack(Session &session, llvm::IRBuilder<> &builder, llvm::Value *storage,
-            llvm::Value *value, std::uint64_t at, std::uint64_t size) {
-  const auto carrierSize =
-      session.dataLayout().getTypeAllocSize(value->getType()).getFixedValue();
-  auto *scratch = builder.CreateAlloca(value->getType());
-  builder.CreateStore(value, scratch);
-  builder.CreateMemCpy(offset(builder, storage, at), llvm::MaybeAlign(1),
-                       scratch, llvm::MaybeAlign(1),
-                       std::min(carrierSize, size - at));
-}
-
-void applyByval(Session &session, const NativeCRecordAbi &plan,
-                llvm::Function &function, unsigned index) {
-  if (!plan.argument.byValue)
-    return;
-  function.addParamAttr(index, llvm::Attribute::getWithByValType(
-                                   session.context(), plan.storage.storage));
-  function.addParamAttr(
-      index, llvm::Attribute::getWithAlignment(
-                 session.context(), llvm::Align(plan.argument.stackAlignment)));
 }
 
 struct Probe {
@@ -132,49 +111,31 @@ void emitProbe(Session &session, const Probe &probe) {
   require(session.abi().nativeC(instance.type, sourceArguments).type != nullptr,
           "one native planner supplies concrete import/export signatures");
 
-  std::vector<llvm::Type *> parameters;
-  for (unsigned i = 0; i < probe.integerPrefix; ++i)
-    parameters.push_back(llvm::Type::getInt64Ty(session.context()));
-  for (unsigned i = 0; i < probe.vectorPrefix; ++i)
-    parameters.push_back(llvm::Type::getDoubleTy(session.context()));
-  if (plan.argument.expand) {
-    for (const auto &piece : plan.argument.pieces)
-      parameters.push_back(piece.type);
-  } else {
-    parameters.push_back(plan.argument.coercion);
-  }
+  std::vector<SemanticType> sourceTypes(probe.integerPrefix,
+                                        SemanticType::UInt64);
+  sourceTypes.insert(sourceTypes.end(), probe.vectorPrefix,
+                     SemanticType::Double);
+  sourceTypes.push_back(instance.type);
   if (probe.integerTail)
-    parameters.push_back(llvm::Type::getInt64Ty(session.context()));
+    sourceTypes.push_back(SemanticType::UInt64);
   if (probe.vectorTail)
-    parameters.push_back(llvm::Type::getDoubleTy(session.context()));
-  auto *signature =
-      llvm::FunctionType::get(plan.result.coercion, parameters, false);
+    sourceTypes.push_back(SemanticType::Double);
+  const auto nativePlan =
+      planNativeCFunction(session, instance.type, sourceTypes);
+  auto *signature = nativePlan.signature.type;
   auto *callee =
       llvm::Function::Create(signature, llvm::Function::ExternalLinkage,
                              "c_" + probe.symbol, session.module());
   auto *function =
       llvm::Function::Create(signature, llvm::Function::ExternalLinkage,
                              "llvm_" + probe.symbol, session.module());
-  applyByval(session, plan, *function, prefix);
-  applyByval(session, plan, *callee, prefix);
+  nativePlan.signature.applyTo(*function);
+  nativePlan.signature.applyTo(*callee);
   llvm::IRBuilder<> builder(
       llvm::BasicBlock::Create(session.context(), "entry", function));
-  auto *local = builder.CreateAlloca(plan.storage.storage);
-  builder.CreateStore(llvm::Constant::getNullValue(plan.storage.storage),
-                      local);
-  if (plan.argument.byValue) {
-    builder.CreateMemCpy(local, llvm::MaybeAlign(plan.storage.alignment),
-                         function->getArg(prefix),
-                         llvm::MaybeAlign(plan.argument.stackAlignment),
-                         plan.storage.size);
-  } else if (plan.argument.expand) {
-    for (unsigned i = 0; i < plan.argument.pieces.size(); ++i)
-      unpack(session, builder, local, function->getArg(prefix + i),
-             plan.argument.pieces[i].offset, plan.storage.size);
-  } else {
-    unpack(session, builder, local, function->getArg(prefix), 0,
-           plan.storage.size);
-  }
+  const auto incoming =
+      decodeNativeCArguments(session, builder, nativePlan, *function);
+  auto *local = incoming.at(prefix);
   const auto &fields = instance.cAbiLayout->fields;
   for (unsigned index = 0; index < fields.size(); ++index) {
     const auto &field = fields[index];
@@ -194,13 +155,12 @@ void emitProbe(Session &session, const Probe &probe) {
                         : static_cast<llvm::Value *>(builder.getInt64(0));
         for (unsigned i = 0; i < prefix; ++i)
           increment = probe.vectorPrefix
-                          ? builder.CreateFAdd(increment, function->getArg(i))
-                          : builder.CreateAdd(increment, function->getArg(i));
+                          ? builder.CreateFAdd(increment, incoming.at(i))
+                          : builder.CreateAdd(increment, incoming.at(i));
         if (probe.symbol == "gpr")
-          increment = builder.CreateAdd(
-              increment, function->getArg(parameters.size() - 1));
+          increment = builder.CreateAdd(increment, incoming.back());
       } else if (probe.symbol != "gpr") {
-        increment = function->getArg(parameters.size() - 1);
+        increment = incoming.back();
         if (probe.integerTail)
           increment = builder.CreateUIToFP(increment, fieldType);
       }
@@ -215,22 +175,7 @@ void emitProbe(Session &session, const Probe &probe) {
           value, builder.CreateIntCast(increment, fieldType, false));
     builder.CreateStore(changed, address);
   }
-  const auto resultValue = [&](llvm::Value *storage) {
-    if (!sysv || plan.result.pieces.size() == 1)
-      return pack(session, builder, storage, plan.result.coercion, 0,
-                  plan.storage.size);
-    llvm::Value *value = llvm::PoisonValue::get(plan.result.coercion);
-    for (unsigned i = 0; i < plan.result.pieces.size(); ++i) {
-      const auto &piece = plan.result.pieces[i];
-      value =
-          builder.CreateInsertValue(value,
-                                    pack(session, builder, storage, piece.type,
-                                         piece.offset, plan.storage.size),
-                                    i);
-    }
-    return value;
-  };
-  builder.CreateRet(resultValue(local));
+  emitNativeCReturn(session, builder, nativePlan, *function, local);
 
   auto *pointer = session.layouts().pointer();
   auto *bridgeType =
@@ -241,27 +186,17 @@ void emitProbe(Session &session, const Probe &probe) {
   builder.SetInsertPoint(
       llvm::BasicBlock::Create(session.context(), "entry", bridge));
   std::vector<llvm::Value *> arguments;
-  std::vector<SemanticType> sourceTypes;
   for (unsigned i = 0; i < probe.integerPrefix; ++i)
     arguments.push_back(builder.getInt64(i + 1));
-  sourceTypes.insert(sourceTypes.end(), probe.integerPrefix,
-                     SemanticType::UInt64);
   for (unsigned i = 0; i < probe.vectorPrefix; ++i)
     arguments.push_back(llvm::ConstantFP::get(builder.getDoubleTy(), i + 1));
-  sourceTypes.insert(sourceTypes.end(), probe.vectorPrefix,
-                     SemanticType::Double);
   arguments.push_back(bridge->getArg(0));
-  sourceTypes.push_back(instance.type);
   if (probe.integerTail) {
     arguments.push_back(builder.getInt64(17));
-    sourceTypes.push_back(SemanticType::UInt64);
   }
   if (probe.vectorTail) {
     arguments.push_back(llvm::ConstantFP::get(builder.getDoubleTy(), 17.25));
-    sourceTypes.push_back(SemanticType::Double);
   }
-  const auto nativePlan =
-      planNativeCFunction(session, instance.type, sourceTypes);
   require(nativePlan.signature.type == callee->getFunctionType(),
           "function-level budgets agree with the independent record oracle");
   static_cast<void>(emitNativeCCall(session, builder, nativePlan, callee,
@@ -286,6 +221,42 @@ void emitProbe(Session &session, const Probe &probe) {
         builder.CreateICmpEQ(layout->getArg(0), builder.getInt32(i)),
         builder.getInt64(facts[i]), answer);
   builder.CreateRet(answer);
+}
+
+void emitByteProbe(Session &session, const std::string &name) {
+  const auto &instance = record(session, name);
+  const std::vector<SemanticType> types{instance.type};
+  const auto plan = planNativeCFunction(session, instance.type, types);
+  auto *function = llvm::Function::Create(
+      plan.signature.type, llvm::Function::ExternalLinkage,
+      "llvm_bytes_" + name, session.module());
+  auto *callee = llvm::Function::Create(plan.signature.type,
+                                        llvm::Function::ExternalLinkage,
+                                        "c_bytes_" + name, session.module());
+  plan.signature.applyTo(*function);
+  plan.signature.applyTo(*callee);
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", function));
+  auto *value = decodeNativeCArguments(session, ir, plan, *function).front();
+  // The independent C oracle changes object bytes too. These selected records
+  // have no padding, pointers or invalid scalar bit patterns after the XOR.
+  for (std::uint64_t index = 0; index < plan.result.storage.size; ++index) {
+    auto *byte = offset(ir, value, index);
+    ir.CreateStore(
+        ir.CreateXor(ir.CreateLoad(ir.getInt8Ty(), byte), ir.getInt8(1)), byte);
+  }
+  emitNativeCReturn(session, ir, plan, *function, value);
+  auto *pointer = session.layouts().pointer();
+  auto *bridge = llvm::Function::Create(
+      llvm::FunctionType::get(ir.getVoidTy(), {pointer, pointer}, false),
+      llvm::Function::ExternalLinkage, "import_bytes_" + name,
+      session.module());
+  ir.SetInsertPoint(
+      llvm::BasicBlock::Create(session.context(), "entry", bridge));
+  const std::vector<llvm::Value *> arguments{bridge->getArg(0)};
+  static_cast<void>(
+      emitNativeCCall(session, ir, plan, callee, arguments, bridge->getArg(1)));
+  ir.CreateRetVoid();
 }
 
 void negativeChecks(Session &session) {
@@ -329,27 +300,123 @@ void negativeChecks(Session &session) {
   llvm::ReturnInst::Create(session.context(), block);
 }
 
+// This is an isolated boundary/transport oracle, not GTI body coverage. Exact
+// sealed callback targets get deliberately tiny private-ABI test bodies here.
+void emitCallbackProbes(Session &session, bool concurrent) {
+  Failures failures(session);
+  emitNativeCCallbacks(session, failures);
+  require(session.program().mir().nativeCallbackAdapters().size() ==
+              (concurrent ? 3 : 7),
+          "callback fixture must seal all exact adapters");
+  for (const auto &adapter : session.program().mir().nativeCallbackAdapters()) {
+    const auto &target =
+        *session.program().mir().findFunctionInstance(adapter.target);
+    const auto *declaration =
+        session.program().findFunctionDeclaration(target.declaration);
+    require(declaration != nullptr, "missing callback declaration");
+    auto *function = session.abi().declareFunction(target.id);
+    const auto abi = session.abi().gti(target.returnType, target.parameterTypes,
+                                       target.mayRaiseDefinedFailure);
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", function));
+    llvm::Value *result = nullptr, *failure = nullptr, *input = nullptr;
+    for (unsigned index = 0; index < abi.parameters.size(); ++index) {
+      const auto &parameter = abi.parameters[index];
+      if (parameter.channel == AbiChannel::ResultDestination)
+        result = function->getArg(index);
+      else if (parameter.channel == AbiChannel::FailureDestination)
+        failure = function->getArg(index);
+      else if (parameter.channel == AbiChannel::Argument)
+        input = function->getArg(index);
+    }
+    if (declaration->qualifiedName == "callback_exception") {
+      const auto service = session.module().getOrInsertFunction(
+          "native_throw",
+          llvm::FunctionType::get(ir.getInt32Ty(), {ir.getInt32Ty()}, false));
+      input = ir.CreateCall(service, {input});
+    }
+    if (declaration->qualifiedName == "callback_worker")
+      input = ir.getInt32(31);
+    if (declaration->qualifiedName == "callback_view")
+      input =
+          ir.CreateLoad(ir.getInt64Ty(),
+                        ir.CreateStructGEP(session.abi().textView(), input, 1));
+    const bool fails = declaration->qualifiedName == "callback_failure";
+    if (fails) {
+      require(failure != nullptr,
+              "failure callback needs unchanged GTI channel");
+      const auto *body = findMirBody(session.program().mir(),
+                                     {MirBodyKind::Function, target.id});
+      const MirInstruction *origin = nullptr;
+      DefinedFailureOutcome outcome;
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          for (const auto &site : instruction.definedFailure.localOrigins)
+            for (const auto &candidate : site.outcomes)
+              if (candidate.code == DefinedFailureCode::DivisionByZero) {
+                origin = &instruction;
+                outcome = candidate;
+              }
+      require(origin != nullptr, "missing verified division failure site");
+      failures.originate(ir, failure, *origin, outcome);
+    } else if (result) {
+      const auto layout = session.layouts().get(target.returnType);
+      if (layout.addressOnly)
+        ir.CreateMemCpy(result, llvm::MaybeAlign(layout.alignment), input,
+                        llvm::MaybeAlign(layout.alignment), layout.size);
+      else
+        ir.CreateStore(input, result);
+    }
+    if (abi.statusResult)
+      ir.CreateRet(ir.getInt1(!fails));
+    else if (abi.resultDestination || target.returnType == SemanticType::Void)
+      ir.CreateRetVoid();
+    else
+      ir.CreateRet(input);
+
+    auto *getter = llvm::Function::Create(
+        llvm::FunctionType::get(session.layouts().pointer(), false),
+        llvm::Function::ExternalLinkage, "get_" + declaration->qualifiedName,
+        session.module());
+    ir.SetInsertPoint(
+        llvm::BasicBlock::Create(session.context(), "entry", getter));
+    ir.CreateRet(nativeCCallbackAddress(session, ir, adapter.id));
+  }
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
   try {
-    require(argc == 5, "usage: test records.gti output.o output.ll O[0-3]");
-    const auto input = fixture(argv[1]);
+    const bool concurrent =
+        argc == 6 && std::string(argv[5]) == "--thread-callbacks";
+    require(argc == 5 || (argc == 6 && (std::string(argv[5]) == "--callbacks" ||
+                                        concurrent)),
+            "usage: test fixture.gti output.o output.ll O[0-3] "
+            "[--callbacks|--thread-callbacks]");
+    const auto input = fixture(argv[1], concurrent, argc == 6);
     const auto level = std::stoi(argv[4]);
     require(level >= 0 && level <= 3, "invalid optimization level");
     const LlvmCodegenOptimization levels[] = {
         LlvmCodegenOptimization::None, LlvmCodegenOptimization::Less,
         LlvmCodegenOptimization::Default, LlvmCodegenOptimization::Aggressive};
     Session session(input, {.optimization = levels[level]});
-    negativeChecks(session);
-    for (const auto *name :
-         {"Byte", "Tiny", "Shorts", "Words", "TripleWords", "Tail", "Pair",
-          "Pointer", "Float1", "Float2", "Float3", "Float4", "Double1",
-          "Double2", "IntDouble", "DoubleInt", "FloatInt", "FloatDouble"})
-      emitProbe(session, {name, name});
-    emitProbe(session, {"Pair", "gpr", 5, 0, true, false});
-    emitProbe(session, {"IntDouble", "mixed", 6, 0, false, true});
-    emitProbe(session, {"Double2", "sse", 0, 8, true, false});
+    if (argc == 6) {
+      emitCallbackProbes(session, concurrent);
+    } else {
+      negativeChecks(session);
+      for (const auto *name :
+           {"Byte", "Tiny", "Shorts", "Words", "TripleWords", "Tail", "Pair",
+            "Pointer", "Float1", "Float2", "Float3", "Float4", "Double1",
+            "Double2", "IntDouble", "DoubleInt", "FloatInt", "FloatDouble"})
+        emitProbe(session, {name, name});
+      emitProbe(session, {"Pair", "gpr", 5, 0, true, false});
+      emitProbe(session, {"IntDouble", "mixed", 6, 0, false, true});
+      emitProbe(session, {"Double2", "sse", 0, 8, true, false});
+      for (const auto *name : {"Nested", "ArrayField", "Large", "Boolean",
+                               "UnionRecord", "DoubleArray", "HfaUnion"})
+        emitByteProbe(session, name);
+    }
     session.verify();
     std::error_code error;
     llvm::raw_fd_ostream ir(argv[3], error);
@@ -360,11 +427,14 @@ int main(int argc, char **argv) {
     std::ofstream output(argv[2], std::ios::binary);
     output.write(object.contents.data(), object.contents.size());
     require(output.good(), "cannot write object output");
-    std::cout << "classifier/oracle object O" << level
-              << ": 18 records, 3 pressure signatures, explicit rejections; "
-              << object.contents.size() << " bytes; LLVM "
-              << LLVM_VERSION_STRING << "; "
-              << llvm::Triple(session.module().getTargetTriple()).str() << '\n';
+    std::cout
+        << "classifier/oracle object O" << level
+        << (argc == 6
+                ? ": isolated callback boundary test bodies; "
+                : ": 25 records, 3 pressure signatures, explicit rejections; ")
+        << object.contents.size() << " bytes; LLVM " << LLVM_VERSION_STRING
+        << "; " << llvm::Triple(session.module().getTargetTriple()).str()
+        << '\n';
     return 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

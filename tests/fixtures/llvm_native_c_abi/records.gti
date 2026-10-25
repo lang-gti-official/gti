@@ -22,6 +22,8 @@
 [[c_abi]] struct Large { mut uint64_t a; mut uint64_t b; mut uint64_t c; };
 [[c_abi]] struct Boolean { mut bool a; };
 [[c_abi]] union UnionRecord { mut uint64_t a; mut double b; };
+[[c_abi]] struct DoubleArray { mut double values[4]; };
+[[c_abi]] union HfaUnion { mut float values[4]; mut float single; };
 struct Ordinary { mut int32_t a; };
 
 int main() {
@@ -32,5 +34,5 @@ int main() {
     + sizeof(Float2) + sizeof(Float3) + sizeof(Float4) + sizeof(Double1)
     + sizeof(Double2) + sizeof(IntDouble) + sizeof(DoubleInt) + sizeof(FloatInt)
     + sizeof(FloatDouble) + sizeof(Nested) + sizeof(ArrayField) + sizeof(Large)
-    + sizeof(Boolean) + sizeof(UnionRecord));
+    + sizeof(Boolean) + sizeof(UnionRecord) + sizeof(DoubleArray) + sizeof(HfaUnion));
 }

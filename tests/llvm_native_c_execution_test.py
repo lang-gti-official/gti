@@ -51,12 +51,8 @@ def main():
     run([args.cc, "-std=c17", "-Wall", "-Wextra", "-Werror", "-O2",
          "-I", output, "-I", repo / "runtime/include", "-c",
          fixture / "header_oracle.c", "-o", output / "header-oracle.o"], "header-c17")
-    if args.analysis_only:
-        print(f"ANALYSIS ONLY: verified MIR and native C header; no LLVM execution claimed; {output}")
-        return
-
     executions = 0
-    for c_level in (0, 3):
+    for c_level in (() if args.analysis_only else (0, 3)):
         obj = output / f"native-c-O{c_level}.o"
         run([args.cc, "-std=c17", "-Wall", "-Wextra", "-Werror", f"-O{c_level}",
              "-I", repo / "runtime/include", "-c", fixture / "native_calls.c", "-o", obj],
@@ -103,7 +99,11 @@ def main():
                      name, expected=65)
         if "GTI-S" not in result.stderr or target.read_bytes() != b"preserve-existing-native-artifact\n":
             raise RuntimeError(f"negative admission/publication mismatch: {name}")
-    print(f"PASS: {executions} real GTI/C executions, header and {len(invalid)} rejection controls; {output}")
+    if args.analysis_only:
+        print(f"ANALYSIS ONLY: verified MIR, C17 header and {len(invalid)} rejection controls; "
+              f"no LLVM execution claimed; {output}")
+    else:
+        print(f"PASS: {executions} real GTI/C executions, header and {len(invalid)} rejection controls; {output}")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,8 @@
 
 namespace lang::native_llvm {
 
+class Failures;
+
 // Remaining System V registers, after preceding arguments and any hidden sret.
 // Darwin allocation is left to LLVM's AArch64 calling-convention lowering.
 struct NativeCRegisterBudget {
@@ -71,7 +73,24 @@ emitNativeCCall(Session &session, llvm::IRBuilder<> &ir,
                 std::span<llvm::Value *const> arguments,
                 llvm::Value *resultDestination = nullptr);
 
+// Entry adapters use the same plan as imports. Record values become private
+// body storage; neither an incoming byval pointer nor a coercion is a GTI
+// value.
+[[nodiscard]] std::vector<llvm::Value *>
+decodeNativeCArguments(Session &session, llvm::IRBuilder<> &ir,
+                       const NativeCFunctionAbi &plan,
+                       llvm::Function &function);
+void emitNativeCReturn(Session &session, llvm::IRBuilder<> &ir,
+                       const NativeCFunctionAbi &plan, llvm::Function &function,
+                       llvm::Value *value);
+
 void declareNativeCStorage(Session &session,
                            std::map<SymbolId, llvm::GlobalVariable *> &globals);
+
+// Consume sealed, capture-free callback rows, never GTI callable storage.
+void emitNativeCCallbacks(Session &session, Failures &failures);
+[[nodiscard]] llvm::Value *
+nativeCCallbackAddress(Session &session, llvm::IRBuilder<> &ir,
+                       MirNativeCallbackAdapterId identity);
 
 } // namespace lang::native_llvm

@@ -1,7 +1,9 @@
 #define _DEFAULT_SOURCE 1
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -50,6 +52,60 @@ RECORD(DoubleInt, double a; int64_t b;, TWO)
 RECORD(FloatInt, float a; int32_t b;, TWO)
 RECORD(FloatDouble, float a; double b;, TWO)
 
+typedef struct Nested {
+  Pair a;
+} Nested;
+typedef struct ArrayField {
+  uint32_t a[2];
+} ArrayField;
+typedef struct Large {
+  uint64_t a, b, c;
+} Large;
+typedef struct Boolean {
+  bool a;
+} Boolean;
+typedef union UnionRecord {
+  uint64_t a;
+  double b;
+} UnionRecord;
+typedef struct DoubleArray {
+  double values[4];
+} DoubleArray;
+typedef union HfaUnion {
+  float values[4];
+  float single;
+} HfaUnion;
+#define BYTE_ORACLE(Name, Size)                                                \
+  _Static_assert(sizeof(Name) == Size, "byte oracle requires no padding");     \
+  Name c_bytes_##Name(Name value) {                                            \
+    unsigned char bytes[sizeof(Name)];                                         \
+    memcpy(bytes, &value, sizeof(value));                                      \
+    for (size_t i = 0; i < sizeof(value); ++i)                                 \
+      bytes[i] ^= 1;                                                           \
+    memcpy(&value, bytes, sizeof(value));                                      \
+    return value;                                                              \
+  }                                                                            \
+  extern Name llvm_bytes_##Name(Name);                                         \
+  extern void import_bytes_##Name(const Name *, Name *);                       \
+  static int check_bytes_##Name(void) {                                        \
+    Name input = {0};                                                          \
+    Name expected = c_bytes_##Name(input);                                     \
+    Name actual = llvm_bytes_##Name(input);                                    \
+    if (memcmp(&expected, &actual, sizeof(actual)))                            \
+      return __LINE__;                                                         \
+    import_bytes_##Name(&input, &actual);                                      \
+    if (memcmp(&expected, &actual, sizeof(actual)))                            \
+      return __LINE__;                                                         \
+    return 0;                                                                  \
+  }
+BYTE_ORACLE(Nested, 16)
+BYTE_ORACLE(ArrayField, 8)
+BYTE_ORACLE(Large, 24)
+BYTE_ORACLE(Boolean, 1)
+BYTE_ORACLE(UnionRecord, 8)
+BYTE_ORACLE(DoubleArray, 32)
+BYTE_ORACLE(HfaUnion, 16)
+
 // Exhaust one register class, or leave only one GPR for a two-GPR record.
 #define GPRS uint64_t p0, uint64_t p1, uint64_t p2, uint64_t p3, uint64_t p4
 #define GPSUM (p0 + p1 + p2 + p3 + p4)
@@ -94,6 +150,10 @@ extern void import_sse(const Double2 *, Double2 *);
   } while (0)
 
 int main(void) {
+  if (check_bytes_Nested() || check_bytes_ArrayField() || check_bytes_Large() ||
+      check_bytes_Boolean() || check_bytes_UnionRecord() ||
+      check_bytes_DoubleArray() || check_bytes_HfaUnion())
+    return __LINE__;
   uint8_t bytes[8] = {0};
   CHECK(Byte, 254);
   CHECK(Tiny, 1, 127, 254);
@@ -181,7 +241,7 @@ int main(void) {
     return __LINE__;
   if (munmap(pages, (size_t)page * 2))
     return __LINE__;
-  puts("native C ABI: 18 records, 3 register-pressure signatures, both "
+  puts("native C ABI: 25 records, 3 register-pressure signatures, both "
        "directions");
   return 0;
 }

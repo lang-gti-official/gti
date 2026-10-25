@@ -49,7 +49,7 @@ def main():
                  f"-O{c_level}", root / "oracle.c", obj, "-o", executable],
                 f"link-native{level}-c{c_level}")
             observed = run([executable], f"run-native{level}-c{c_level}")
-            if observed != ("native C ABI: 18 records, 3 register-pressure "
+            if observed != ("native C ABI: 25 records, 3 register-pressure "
                             "signatures, both directions\n"):
                 raise RuntimeError(f"unexpected oracle output: {observed!r}")
             executions += 1
