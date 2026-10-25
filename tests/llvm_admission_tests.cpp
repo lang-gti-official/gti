@@ -302,6 +302,24 @@ int main() { int value = 3; int& alias = identity(value); return alias - 3; }
   expect(has(references, "Shape", "BorrowReturn") &&
              has(references, "MirLoanKind", "Return"),
          "reference results retain address and loan requirements");
+  const auto stored = lang::planLlvmAdmission(lower(R"(
+mut int visits = 0;
+mut int& selected(mut int& input) { visits += 1; return input; }
+class View {
+  mut int& value;
+public:
+  View(mut int& input) : value(selected(input)) {}
+  void write() mut { this.value = 42; }
+};
+int main() {
+  mut int value = 1;
+  { mut View view{value}; view.write(); }
+  return value - 42;
+}
+)"));
+  expect(stored.admitted() && has(stored, "MirLoanKind", "Stored"),
+         "evaluated stored-reference addresses are admitted through the sealed "
+         "loan stage");
   const auto lifecycle = lang::planLlvmAdmission(lower(R"(
 class Value { public: Value() {} ~Value() {} int read() { return 1; } };
 int main() { Value value{}; return value.read() - 1; }

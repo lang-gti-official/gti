@@ -1545,10 +1545,13 @@ inline void mir_missing_drop_v1() noexcept {
 // normal C++ local or std::optional, this guard deliberately refuses to clean
 // up an engaged value from its destructor: every successful construction must
 // reach an explicit verified-MIR Drop instruction.
-template <typename T, bool DestroyRepresentationAtScopeExit = false>
+template <typename T, bool DestroyRepresentationAtScopeExit = false,
+          bool ExternalStorage = false>
 class mir_lifetime_slot {
 public:
-  mir_lifetime_slot() = default;
+  mir_lifetime_slot() requires (!ExternalStorage) = default;
+  explicit mir_lifetime_slot(T *address) requires ExternalStorage
+      : storage_(address) {}
   mir_lifetime_slot(const mir_lifetime_slot &) = delete;
   mir_lifetime_slot &operator=(const mir_lifetime_slot &) = delete;
 
@@ -1619,6 +1622,13 @@ public:
       storage_error("verified MIR lifetime slot marked constructed twice");
     }
     engaged_ = true;
+  }
+
+  // Publication hands this exact object to an enclosing aggregate. Its
+  // lifetime continues at the same address under the aggregate's MIR drop.
+  void release() {
+    if (!engaged_) storage_error("verified MIR slot released while empty");
+    engaged_ = false;
   }
 
   void destroy() {
@@ -1823,10 +1833,12 @@ private:
   }
 
   [[nodiscard]] T *slot() {
-    return reinterpret_cast<T *>(storage_);
+    if constexpr (ExternalStorage) return storage_;
+    else return reinterpret_cast<T *>(storage_);
   }
 
-  alignas(T) std::byte storage_[sizeof(T)];
+  alignas(ExternalStorage ? alignof(T *) : alignof(T))
+      std::conditional_t<ExternalStorage, T *, std::byte[sizeof(T)]> storage_;
   bool engaged_ = false;
 };
 
