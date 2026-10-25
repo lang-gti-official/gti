@@ -4545,6 +4545,10 @@ contract. The evaluated raw pointer supplies the physical address, even when
 the witness owns a different address. This does not prove pointer membership,
 admit other pointee layouts, or add runtime checks or alias promises;
 the unsafe caller retains its alignment, initialization and lifetime obligations.
+Raw assertions and unsafe source calls share exact earlier-live-producer and
+direct-return transfer checks, but retain separate authority checks. Replacing
+one permission family with the other cannot authorize a checked loan transfer;
+the former broad passive-loan exemption is subsumed by those producer proofs.
 
 ### LLVM Places And Counted Text
 

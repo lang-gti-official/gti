@@ -205,7 +205,7 @@ void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
   require(owner != 0, "relay has a genuine checked return transfer");
   using Mutation = std::function<void(MirBody &, MirBlock &, MirInstruction &,
                                       MirInstruction &, MirLoan &, MirLoan &)>;
-  const std::array<Mutation, 17> mutations{
+  const std::array<Mutation, 18> mutations{
       [](auto &, auto &, auto &, auto &, auto &, auto &to) { to.source = 0; },
       [](auto &, auto &, auto &, auto &, auto &from, auto &to) {
         to.additionalDependencies.push_back(
@@ -243,6 +243,9 @@ void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
       },
       [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
         stage.rawMemoryAccess = true;
+      },
+      [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
+        stage.unsafeOperation = UnsafeOperationKind::RawDereference;
       },
       [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
         stage.info.type = SemanticType::Char;
@@ -375,6 +378,95 @@ void classOwnerRawReferenceContract(const std::filesystem::path &repository,
           require(!mir_detail::rawBorrowResultLoan(invalidBody, invalid),
                   "forged parent/source/access/formal/address loses its proof");
         }
+        const auto transfer = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &candidate) {
+              return candidate.kind == MirInstructionKind::Borrow &&
+                     candidate.operands.size() == 1 &&
+                     candidate.operands.front().kind == MirOperandKind::Loan &&
+                     candidate.operands.front().loan == loan->id;
+            });
+        require(transfer != block.instructions.end(),
+                "raw assertion has a real checked return publication");
+        for (unsigned mutation = 0; mutation != 12; ++mutation) {
+          auto invalidMir = frontend.mir;
+          auto &invalidBody =
+              MirProgramTestAccess::functions(invalidMir)[function.id - 1].body;
+          auto &invalidBlock = invalidBody.blocks[block.id - 1];
+          auto &producer = *std::find_if(
+              invalidBlock.instructions.begin(),
+              invalidBlock.instructions.end(),
+              [&](const auto &candidate) { return candidate.id == stage.id; });
+          auto &publication = *std::find_if(
+              invalidBlock.instructions.begin(),
+              invalidBlock.instructions.end(), [&](const auto &candidate) {
+                return candidate.id == transfer->id;
+              });
+          auto &returned = invalidBody.loans[*publication.loan - 1];
+          switch (mutation) {
+          case 0:
+            publication.unsafeOperation =
+                UnsafeOperationKind::DeclaredUnsafeCall;
+            break;
+          case 1:
+            producer.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeCall;
+            break;
+          case 2:
+            producer.intrinsic = IntrinsicKind::RestoreReference;
+            break;
+          case 3:
+            publication.operands.front().loan = 0;
+            break;
+          case 4: {
+            const auto ended = std::find_if(
+                invalidBlock.instructions.begin(),
+                invalidBlock.instructions.end(), [&](const auto &candidate) {
+                  return candidate.kind == MirInstructionKind::EndBorrow &&
+                         candidate.loan == loan->id;
+                });
+            require(ended != invalidBlock.instructions.end(),
+                    "raw return source has an explicit endpoint");
+            std::swap(publication, *ended);
+            break;
+          }
+          case 5:
+            std::swap(producer, publication);
+            break;
+          case 6:
+            returned.source = 0;
+            break;
+          case 7:
+            returned.access = loan->access == AccessMode::Mutable
+                                  ? AccessMode::ReadOnly
+                                  : AccessMode::Mutable;
+            break;
+          case 8:
+            returned.additionalDependencies.push_back(
+                {.source = loan->source, .access = loan->access});
+            break;
+          case 9:
+            invalidBlock.terminator.returnLoan = loan->id;
+            break;
+          case 10:
+            ++producer.hirValue;
+            break;
+          case 11:
+            producer.loan = returned.id;
+            break;
+          }
+          auto built = LoweredProgramBuilder().build(
+              frontend.program, frontend.semantics, frontend.hir, invalidMir,
+              invalidMir, {}, TargetInfo::host(), true);
+          bool rejected = !built.valid();
+          if (built.valid()) {
+            auto verified =
+                verifiedLoweredProgram(std::move(*built.program), issues);
+            rejected = !verified || !planLlvmAdmission(*verified).admitted();
+          }
+          require(
+              rejected,
+              "raw/source authority substitution or forged return is rejected");
+        }
       }
   require(seen[0] && seen[1], "both class-witness access modes are exercised");
 
@@ -417,6 +509,51 @@ struct Owner {
                           return diagnostic.phase == DiagnosticPhase::Semantics;
                         }),
         "owner death, movement and overlapping mutation remain rejected");
+  }
+  const std::string nestedOwner = R"(
+#include <std/memory>
+struct Referent {
+  mut int value = 7;
+  std::unique_ptr<int> token;
+  Referent() : token(std::make_unique<int>(5)) {}
+};
+struct Owner {
+  mut Referent item;
+  Owner() : item(Referent()) {}
+};
+)";
+  const std::array badClassBodies{
+      R"(Referent& escape() {
+           mut Owner owner{};
+           unsafe { return std::assume_ref(&owner.item, owner); }
+         }
+         int main() { return 0; })",
+      R"(void consume(Owner value) {}
+         int main() {
+           mut Owner owner{};
+           Referent& read = unsafe { std::assume_ref(&owner.item, owner) };
+           consume(std::move(owner));
+           return read.value;
+         })",
+      R"(int main() {
+           mut Owner owner{};
+           mut Referent& first = unsafe { std::assume_mut(&owner.item, owner) };
+           mut Referent& second = unsafe { std::assume_mut(&owner.item, owner) };
+           first.value = 1;
+           second.value = 2;
+           return 0;
+         })",
+  };
+  for (const auto body : badClassBodies) {
+    const auto invalid =
+        analyze("invalid-class-referent-loan.gti", nestedOwner + body);
+    require(
+        !invalid.canGenerateCode() &&
+            std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.phase == DiagnosticPhase::Semantics;
+                        }),
+        "class referent cannot outlive, move or overlap its owner loan");
   }
   const auto unsupported = analyze("unsupported-owner-layout.gti", R"(
 #include <std/memory>
