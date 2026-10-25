@@ -72,6 +72,16 @@ void testPlacementPlan() {
       {.id = 6,
        .kind = MirInstructionKind::Call,
        .result = 6,
+       .info = {.type = object}},
+      {.id = 8,
+       .kind = MirInstructionKind::Call,
+       .result = 8,
+       .intrinsic = IntrinsicKind::Move,
+       .info = {.type = object}},
+      {.id = 9,
+       .kind = MirInstructionKind::Call,
+       .result = 9,
+       .loan = 1,
        .info = {.type = object}}};
   block.terminator = {.kind = MirTerminatorKind::Return,
                       .value = MirOperand{.kind = MirOperandKind::Value,
@@ -87,6 +97,8 @@ void testPlacementPlan() {
          "fresh returns use the caller's result destination");
   expect(!placement.fresh(5) && !placement.target(5),
          "explicit array copies never become fresh destination aliases");
+  expect(!placement.fresh(8) && !placement.fresh(9),
+         "intrinsic transfers and borrowed call results are not fresh objects");
   body.blocks[0].instructions.push_back(
       {.id = 7,
        .kind = MirInstructionKind::Initialize,

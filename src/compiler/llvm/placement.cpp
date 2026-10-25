@@ -40,7 +40,8 @@ bool Placement::fresh(MirValueId value) const {
       stage.operands[0].kind == MirOperandKind::Value)
     return fresh(stage.operands[0].value);
   return stage.kind == MirInstructionKind::Construct ||
-         stage.kind == MirInstructionKind::Call ||
+         (stage.kind == MirInstructionKind::Call && !stage.loan &&
+          stage.intrinsic == IntrinsicKind::None) ||
          (stage.kind == MirInstructionKind::Compute &&
           stage.operation == MirOperation::Aggregate);
 }
