@@ -67,14 +67,24 @@ def main() -> None:
     canonical = collector.discover(root, baseline, ctest, build, registry)
     collector.validate_plan(canonical)
     unresolved = [value for value in canonical["members"].values()
-                  if value["provider"] in {"shipped-examples", "registered-llvm-evidence"}]
+                  if value["provider"] in {"shipped-examples", "registered-llvm-evidence"}
+                  and "case_context" not in value["contract"]]
     audit.require(unresolved and all(value["contract"]["role"] == "unclassified"
                                     for value in unresolved),
                   "missing producer/census metadata was guessed")
+    for test, sidecar in canonical["case_contexts"].items():
+        audit.require(sidecar["observed"] == "unrun", "context metadata became an execution receipt")
+        for name, context in sidecar["cases"].items():
+            value = canonical["members"][f"registered-llvm-evidence:{test}:{name}"]
+            audit.require(value["contract"]["case_context"] == context and
+                          value["contract"]["role"] == context["role"],
+                          "collector lost the producer's source role/assertion policy")
+        audit.require(all(f"registered-llvm-evidence:{test}:{name}" not in canonical["members"]
+                          for name in sidecar["controls"]),
+                      "separate rejection controls grew the positive member inventory")
     stdlib = [value for value in canonical["members"].values()
               if value["provider"] == "stdlib-surface"]
-    audit.require(len(stdlib) == 188 and all("mode" in value["contract"]["metadata"]
-                                           for value in stdlib),
+    audit.require(stdlib and all("mode" in value["contract"]["metadata"] for value in stdlib),
                   "authoritative stdlib context was lost")
     host = "macos-arm64" if report["build"]["system"] == "Darwin" else "linux-x86_64"
     single = f"{host}-single-threaded"

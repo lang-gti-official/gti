@@ -10140,6 +10140,15 @@ without compiling the example corpus. Deliberate source/profile/option drift
 rejects. One optimized real admission probe remains separate; census emission
 does not supply LLVM execution, target applicability or promotion evidence.
 
+`llvm_scalar_context_controls` freezes the pre-migration manifest and normalized
+plans, keeping source/profile membership, materialized paths, endpoint order,
+environment/cwd/time bounds and full differential assertion policy. Controlled
+observations exercise every case and selection; mutations reject lost failure
+attribution, missing diagnostics, wrong exit/output, replaced sentinel artifacts
+and fabricated sidecar observations. These controls complement
+`backend_execution_protocol` and real selected scalar success/defined-failure
+endpoints; controlled outcomes are not native execution receipts.
+
 The combined O-LLVM-07/08 scalar-owner probe,
 `gti_llvm_session_tests --payload-unique-owner <source-root>`, retains normal
 source lowering, verified scalar-owner payload extraction and both drops. Its

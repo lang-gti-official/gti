@@ -1813,6 +1813,12 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti_llvm_coverage_evidence>" "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}"
   )
   set_tests_properties(llvm_case_context_controls PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME llvm_scalar_context_controls
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_scalar_context_test.py"
+            "${PROJECT_SOURCE_DIR}"
+  )
+  set_tests_properties(llvm_scalar_context_controls PROPERTIES TIMEOUT 180)
   add_test(NAME llvm_placement_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_placement_execution_test.py"
                    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")

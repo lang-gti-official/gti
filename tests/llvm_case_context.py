@@ -18,6 +18,8 @@ class CaseContext:
     loading: str
     observation: str
     unresolved: tuple[str, ...]
+    source_kind: str = "repository"
+    materialized_name: str | None = None
 
     def __post_init__(self) -> None:
         if any(not isinstance(value, str) or not value for value in (
@@ -33,6 +35,13 @@ class CaseContext:
             raise ValueError("case context source digest must be SHA-256 or unresolved")
         if self.execution_profile not in {"single-threaded", "concurrent"}:
             raise ValueError("unknown case execution profile")
+        if self.source_kind not in {"repository", "inline"}:
+            raise ValueError("unknown case source kind")
+        if self.materialized_name is not None and (
+                not isinstance(self.materialized_name, str) or
+                PurePosixPath(self.materialized_name).name != self.materialized_name or
+                self.materialized_name in {"", ".", ".."}):
+            raise ValueError("case materialization needs one safe file name")
         if not self.loading or not self.observation:
             raise ValueError("case context needs loading/observation provenance")
         if (not isinstance(self.unresolved, tuple) or
@@ -42,6 +51,19 @@ class CaseContext:
 
     def record(self) -> dict:
         return {"schema": SCHEMA, **asdict(self), "unresolved": list(self.unresolved)}
+
+    @classmethod
+    def from_record(cls, record: dict) -> "CaseContext":
+        if not isinstance(record, dict) or record.get("schema") != SCHEMA:
+            raise ValueError("unknown case-context schema")
+        values = {key: value for key, value in record.items() if key != "schema"}
+        if not isinstance(values.get("unresolved"), list):
+            raise ValueError("case-context unresolved fields must be a list")
+        values["unresolved"] = tuple(values["unresolved"])
+        try:
+            return cls(**values)
+        except TypeError as error:
+            raise ValueError(f"malformed case-context fields: {error}") from error
 
 
 def source_digest(path) -> str | None:

@@ -5126,6 +5126,14 @@ profile and loading facts through `example_case_context.py` and the validated
 selections, environment defaulting and MIR observation remain census-owned;
 LLVM target applicability and native outcomes remain unresolved. The collector
 binds this context sidecar without changing the pinned source membership.
+The scalar producer supplies a `gti.llvm.case-context-sidecar/v1` envelope bound
+to its unchanged execution-evidence manifest. Its runtime-failure programs are
+positive compilation obligations with exit/diagnostic and complete differential
+assertions; historical unsupported-operation controls remain a separate set.
+Source materialization, endpoint arguments, cwd/environment policy, time bounds
+and assertion data come from the harness's own records and argument planner.
+The sidecar is unrun metadata, never a passing execution receipt. Unresolved
+host/runtime/environment context prevents the collector from guessing a probe.
 Stdlib cases retain their declared context,
 but missing target applicability still prevents a complete collection claim.
 An explicit frontend-rejection control can satisfy only its declared control;

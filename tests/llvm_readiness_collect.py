@@ -18,6 +18,7 @@ import uuid
 
 import example_case_context as examples
 import llvm_coverage_evidence_test as audit
+from llvm_evidence_manifest import validate_context_sidecar
 import stdlib_surface_test as surface
 
 
@@ -108,6 +109,7 @@ def discover(root: Path, baseline_path: Path, ctest: str,
     surface.validate_manifest(manifest, root)
     cases = {case["id"]: case for case in manifest["cases"]}
     members = {}
+    sidecars = {}
 
     def add(provider: str, identity: str, source: dict, contract: dict) -> None:
         key = f"{provider}:{identity}"
@@ -144,11 +146,14 @@ def discover(root: Path, baseline_path: Path, ctest: str,
     for test, module in sorted(modules.items()):
         declared = module.evidence_manifest(root)
         texts = module.evidence_cases(root)
+        context_api = getattr(module, "evidence_context", None)
+        sidecar = context_api(root) if callable(context_api) else None
+        if sidecar is not None:
+            validate_context_sidecar(sidecar, declared)
+            sidecars[test] = sidecar
         for identity, source in declared["sources"].items():
-            add("registered-llvm-evidence", f"{test}:{identity}", {
-                "path": source["origin"], "sha256": source["sha256"],
-                **({"inline": texts[identity]} if source["origin"] == "inline" else {}),
-            }, {
+            contextual = sidecar["cases"][identity] if sidecar is not None else None
+            contract = {
                 "role": "unclassified", "metadata": {
                     "manifest": test, "source": identity,
                     "profiles": sorted(profile for profile, record in declared["profiles"].items()
@@ -157,12 +162,22 @@ def discover(root: Path, baseline_path: Path, ctest: str,
                 "ctest": {"name": test,
                           "script": Path(module.__file__).resolve().relative_to(root).as_posix()},
                 "reason": "execution-evidence/v1 lacks role/loading/options/target metadata",
-            })
+            }
+            if contextual is not None:
+                context = contextual["context"]
+                contract.update(role=contextual["role"], case_context=contextual,
+                                profile=context["execution_profile"], loading=context["loading"],
+                                reason="provider context retains unresolved host/environment obligations")
+            add("registered-llvm-evidence", f"{test}:{identity}", {
+                "path": source["origin"], "sha256": source["sha256"],
+                **({"inline": texts[identity]} if source["origin"] == "inline" else {}),
+            }, contract)
     return {
         "baseline_sha256": audit.file_digest(baseline_path),
         "provider_revision": audit.digest(inventories),
         "members": members, "targets": targets, "gates": gates,
         "registered_context": inventories["registered-llvm-evidence"],
+        "case_contexts": sidecars,
         "host_discovery": {test: inventory[test] for test in modules},
     }
 
@@ -365,7 +380,7 @@ def validate_attempt(directory: Path, manifest: dict, attempt: str,
     audit.require(receipt["member_sha256"] == audit.digest(member),
                   "attempt member contract drifted")
     if receipt["status"] in {"unresolved-metadata", "unresolved-profile",
-                             "unresolved-applicability"}:
+                             "unresolved-applicability", "unresolved-loading"}:
         expected = eligibility(member, target_id, manifest["plan"]["targets"])
         audit.require(receipt["status"] == expected and receipt["observation"] is None and
                       receipt["artifact_sha256"] is None,
@@ -418,9 +433,11 @@ def validate_attempt(directory: Path, manifest: dict, attempt: str,
 
 def eligibility(member: dict, target_id: str, targets: dict) -> str | None:
     contract = member["contract"]
-    if contract["role"] == "unclassified" or contract.get("loading") not in {
-            "repository-source-with-standard-prelude", "inline-source-with-standard-prelude"}:
+    if contract["role"] == "unclassified":
         return "unresolved-metadata"
+    if contract.get("loading") not in {
+            "repository-source-with-standard-prelude", "inline-source-with-standard-prelude"}:
+        return "unresolved-loading"
     if targets[target_id]["execution_profile"] not in contract.get(
             "profiles", [contract.get("profile")]):
         return "unresolved-profile"
@@ -626,7 +643,7 @@ def collect(directory: Path, root: Path, plan: dict, helper: Path, report: dict,
                 if completed.get((member, target)) in {
                         "admitted", "unsupported", "rejected-control",
                         "unresolved-metadata", "unresolved-profile",
-                        "unresolved-applicability"}:
+                        "unresolved-applicability", "unresolved-loading"}:
                     continue
                 receipt = attempt_member(directory, root, manifest, helper,
                                          member, target, timeout=timeout, runner=runner)
