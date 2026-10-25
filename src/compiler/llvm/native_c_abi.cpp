@@ -147,34 +147,54 @@ bool nativeCDeclarationContract(const MirProgram &program,
                      });
 }
 
+namespace {
+bool scalarBoundaryType(const SemanticType &type) {
+  switch (type.kind) {
+  case SemanticType::Void:
+  case SemanticType::Bool:
+  case SemanticType::Int8:
+  case SemanticType::UInt8:
+  case SemanticType::Int16:
+  case SemanticType::UInt16:
+  case SemanticType::Int32:
+  case SemanticType::UInt32:
+  case SemanticType::Int64:
+  case SemanticType::UInt64:
+  case SemanticType::Float:
+  case SemanticType::Double:
+  case SemanticType::CString:
+  case SemanticType::RawPointer:
+    return true;
+  default:
+    return false;
+  }
+}
+} // namespace
+
 bool nativeCScalarImportContract(const MirProgram &program,
                                  const TargetInfo &target,
                                  const MirFunctionInstance &function) {
-  const auto scalar = [](const SemanticType &type) {
-    switch (type.kind) {
-    case SemanticType::Void:
-    case SemanticType::Bool:
-    case SemanticType::Int8:
-    case SemanticType::UInt8:
-    case SemanticType::Int16:
-    case SemanticType::UInt16:
-    case SemanticType::Int32:
-    case SemanticType::UInt32:
-    case SemanticType::Int64:
-    case SemanticType::UInt64:
-    case SemanticType::Float:
-    case SemanticType::Double:
-    case SemanticType::CString:
-    case SemanticType::RawPointer:
-      return true;
-    default:
-      return false;
-    }
-  };
   return nativeCDeclarationContract(program, target, function) &&
-         scalar(function.returnType) &&
+         scalarBoundaryType(function.returnType) &&
          std::all_of(function.parameterTypes.begin(),
-                     function.parameterTypes.end(), scalar);
+                     function.parameterTypes.end(), scalarBoundaryType);
+}
+
+bool nativeCCountedInputContract(const MirProgram &program,
+                                 const TargetInfo &target,
+                                 const MirFunctionInstance &function) {
+  return nativeCDeclarationContract(program, target, function) &&
+         scalarBoundaryType(function.returnType) &&
+         std::any_of(function.parameterTypes.begin(),
+                     function.parameterTypes.end(),
+                     [](const auto &type) {
+                       return type.kind == SemanticType::StringView;
+                     }) &&
+         std::all_of(function.parameterTypes.begin(),
+                     function.parameterTypes.end(), [](const auto &type) {
+                       return type.kind == SemanticType::StringView ||
+                              scalarBoundaryType(type);
+                     });
 }
 
 bool nativeCDirectCallContract(const MirProgram &program,

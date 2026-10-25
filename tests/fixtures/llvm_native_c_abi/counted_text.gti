@@ -1,0 +1,20 @@
+extern "C" {
+  int32_t consume_text(std::string_view value);
+  int32_t consume_text_pressure(uint64_t a, uint64_t b, uint64_t c,
+                               uint64_t d, uint64_t e,
+                               std::string_view value, uint64_t tail);
+}
+int32_t relay_text(std::string_view value) { return consume_text(value); }
+int main() {
+  if (relay_text("") != 100) return 1;
+  if (relay_text("plain") != 101) return 2;
+  if (relay_text("A\0B") != 102) return 3;
+  if (relay_text("éλ") != 103) return 4;
+  if (consume_text_pressure(uint64_t(1), uint64_t(2), uint64_t(3),
+                            uint64_t(4), uint64_t(5), "A\0B", uint64_t(17)) != 134)
+    return 5;
+  std::print("");
+  std::print("A\0B");
+  std::println("éλ");
+  return 0;
+}

@@ -646,6 +646,53 @@ void emitContractProbes(Session &session) {
           "contract fixture must retain all staged C boundaries");
 }
 
+void emitCountedTextProbes(Session &session) {
+  const auto &program = session.program().mir();
+  const auto &target = session.program().target();
+  require(!nativeCValueContract(program, target, SemanticType::StringView,
+                                NativeCValueRole::Result),
+          "counted C input cannot grant text return or ownership transfer");
+  std::set<std::string> emitted;
+  for (const auto &owner : program.functionInstances())
+    for (const auto &block : owner.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *callee =
+            instruction.functionTarget
+                ? program.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (!callee ||
+            (callee->externalSymbol != "consume_text" &&
+             callee->externalSymbol != "consume_text_pressure" &&
+             callee->externalSymbol != "gti_rt_write_stdout") ||
+            !emitted.insert(callee->externalSymbol).second)
+          continue;
+        require(nativeCCountedInputContract(program, target, *callee) &&
+                    !nativeCScalarImportContract(program, target, *callee) &&
+                    nativeCDirectCallContract(program, target, owner.body,
+                                              instruction),
+                "counted C input requires an exact staged record contract");
+        const auto native = planNativeCFunction(session, callee->returnType,
+                                                callee->parameterTypes);
+        require(callee->returnType == SemanticType::Int32 &&
+                    !native.signature.statusResult &&
+                    !native.signature.failureDestination,
+                "counted C input preserves the declared int32 status result");
+        auto *bridge = llvm::Function::Create(
+            native.signature.type, llvm::Function::ExternalLinkage,
+            "bridge_" + callee->externalSymbol, session.module());
+        native.signature.applyTo(*bridge);
+        llvm::IRBuilder<> ir(
+            llvm::BasicBlock::Create(session.context(), "entry", bridge));
+        const auto arguments =
+            decodeNativeCArguments(session, ir, native, *bridge);
+        auto *result = emitNativeCDirectCall(session, ir, owner.body,
+                                             instruction, arguments);
+        emitNativeCReturn(session, ir, native, *bridge, result);
+      }
+  require(emitted.size() == 3,
+          "counted C oracle must include unrelated and actual runtime clients");
+}
+
 void emitSourcePreflight(Session &session,
                          const VerifiedLoweredProgram &input) {
   const auto &program = session.program().mir();
@@ -702,7 +749,9 @@ void emitSourcePreflight(Session &session,
         use.body->kind == MirBodyKind::Function)
       if (const auto *function = program.findFunctionInstance(use.body->owner))
         witnessed = nativeCScalarImportContract(
-            program, session.program().target(), *function);
+                        program, session.program().target(), *function) ||
+                    nativeCCountedInputContract(
+                        program, session.program().target(), *function);
     if (entry.family == "UnsafeOperationKind" &&
         entry.name == "ForeignPointerCall" && use.body)
       if (const auto *body = findMirBody(program, *use.body))
@@ -798,11 +847,12 @@ int main(int argc, char **argv) {
     const bool preflight =
         argc == 6 && std::string(argv[5]) == "--source-preflight";
     const bool storage = argc == 6 && std::string(argv[5]) == "--storage";
+    const bool text = argc == 6 && std::string(argv[5]) == "--text-contracts";
     const bool concurrent =
         argc == 6 && std::string(argv[5]) == "--thread-callbacks";
-    require(argc == 5 || (argc == 6 &&
-                          (std::string(argv[5]) == "--callbacks" ||
-                           concurrent || contracts || preflight || storage)),
+    require(argc == 5 || (argc == 6 && (std::string(argv[5]) == "--callbacks" ||
+                                        concurrent || contracts || preflight ||
+                                        storage || text)),
             "usage: test fixture.gti output.o output.ll O[0-3] "
             "[--callbacks|--thread-callbacks]");
     const auto input = fixture(argv[1], concurrent, argc == 6);
@@ -812,7 +862,9 @@ int main(int argc, char **argv) {
         LlvmCodegenOptimization::None, LlvmCodegenOptimization::Less,
         LlvmCodegenOptimization::Default, LlvmCodegenOptimization::Aggressive};
     Session session(input, {.optimization = levels[level]});
-    if (storage) {
+    if (text) {
+      emitCountedTextProbes(session);
+    } else if (storage) {
       emitStorageProbes(session);
     } else if (preflight) {
       emitSourcePreflight(session, input);
@@ -846,7 +898,8 @@ int main(int argc, char **argv) {
     require(output.good(), "cannot write object output");
     std::cout
         << "classifier/oracle object O" << level
-        << (storage     ? ": exact foreign storage contracts; "
+        << (text        ? ": public counted C input record contracts; "
+            : storage   ? ": exact foreign storage contracts; "
             : preflight ? ": real GTI body native preflight; "
             : contracts ? ": exact declaration/call contracts; "
             : argc == 6

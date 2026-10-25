@@ -24,6 +24,9 @@ nativeCDeclarationContract(const MirProgram &program, const TargetInfo &target,
 [[nodiscard]] bool
 nativeCScalarImportContract(const MirProgram &program, const TargetInfo &target,
                             const MirFunctionInstance &function);
+[[nodiscard]] bool
+nativeCCountedInputContract(const MirProgram &program, const TargetInfo &target,
+                            const MirFunctionInstance &function);
 [[nodiscard]] bool nativeCDirectCallContract(const MirProgram &program,
                                              const TargetInfo &target,
                                              const MirBody &body,
