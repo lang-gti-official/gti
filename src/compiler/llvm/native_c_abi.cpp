@@ -172,6 +172,17 @@ bool nativeCIndirectCallContract(const MirProgram &program,
                               NativeCValueRole::Argument);
 }
 
+bool nativeCStorageContract(const MirProgram &program, const TargetInfo &target,
+                            const ForeignStorageInfo &storage) {
+  const auto *canonical = program.findForeignStorage(storage.symbol);
+  return canonical && *canonical == storage &&
+         !storage.externalSymbol.empty() &&
+         storage.externalSymbol.find('\0') == std::string::npos &&
+         storage.type.kind != SemanticType::Array &&
+         nativeCValueContract(program, target, storage.type,
+                              NativeCValueRole::Storage);
+}
+
 namespace {
 
 [[noreturn]] void unsupported() {
@@ -707,7 +718,9 @@ void declareNativeCStorage(
     Session &session, std::map<SymbolId, llvm::GlobalVariable *> &globals) {
   for (const auto &foreign :
        session.program().mir().foreignStorageDeclarations()) {
-    if (foreign.externalSymbol.empty() || globals.contains(foreign.symbol) ||
+    if (!nativeCStorageContract(session.program().mir(),
+                                session.program().target(), foreign) ||
+        globals.contains(foreign.symbol) ||
         session.module().getNamedValue(foreign.externalSymbol))
       throw std::logic_error("foreign C storage lost its unique sealed symbol");
     if (foreign.type.kind == SemanticType::Class)

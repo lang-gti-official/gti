@@ -569,6 +569,73 @@ void emitSourcePreflight(Session &session,
   lowerScalarProgram(session, admission);
 }
 
+void emitStorageProbes(Session &session) {
+  const auto &program = session.program().mir();
+  std::map<SymbolId, llvm::GlobalVariable *> globals;
+  declareNativeCStorage(session, globals);
+  const auto storage = [&](const std::string &name) -> llvm::GlobalVariable * {
+    for (const auto &row : program.foreignStorageDeclarations()) {
+      require(nativeCStorageContract(program, session.program().target(), row),
+              "foreign storage requires its exact sealed declaration");
+      auto forged = row;
+      forged.externalSymbol += "_forged";
+      require(
+          !nativeCStorageContract(program, session.program().target(), forged),
+          "foreign symbol mismatch cannot establish a storage witness");
+      if (row.externalSymbol == name)
+        return globals.at(row.symbol);
+    }
+    throw std::runtime_error("missing native storage fixture: " + name);
+  };
+  require(!storage("native_limit")->isConstant(),
+          "source read-only access does not prove native value stability");
+  auto *i32 = llvm::Type::getInt32Ty(session.context());
+  const auto function = [&](const char *name, llvm::Type *result,
+                            llvm::ArrayRef<llvm::Type *> parameters) {
+    return llvm::Function::Create(
+        llvm::FunctionType::get(result, parameters, false),
+        llvm::Function::ExternalLinkage, name, session.module());
+  };
+  auto *roundtrip = function("llvm_storage_roundtrip", i32, {i32});
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", roundtrip));
+  ir.CreateStore(roundtrip->getArg(0), storage("native_counter"));
+  const MirInstruction *bump = nullptr;
+  for (const auto &owner : program.functionInstances())
+    for (const auto &block : owner.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.functionTarget)
+          if (const auto *callee =
+                  program.findFunctionInstance(*instruction.functionTarget);
+              callee && callee->externalSymbol == "native_bump")
+            bump = &instruction;
+  require(bump != nullptr, "missing real staged foreign-effect call");
+  static_cast<void>(emitNativeCDirectCall(session, ir, *bump, {}));
+  ir.CreateRet(ir.CreateLoad(i32, storage("native_counter")));
+
+  auto *apply = function("llvm_storage_apply", i32, {i32});
+  ir.SetInsertPoint(
+      llvm::BasicBlock::Create(session.context(), "entry", apply));
+  const std::vector<SemanticType> parameters{SemanticType::Int32};
+  const auto plan =
+      planNativeCFunction(session, SemanticType::Int32, parameters);
+  const std::vector<llvm::Value *> arguments{apply->getArg(0)};
+  ir.CreateRet(emitNativeCCall(
+      session, ir, plan,
+      ir.CreateLoad(session.layouts().pointer(), storage("native_operation")),
+      arguments));
+
+  auto *pointer = function("llvm_storage_pointer", i32, {});
+  ir.SetInsertPoint(
+      llvm::BasicBlock::Create(session.context(), "entry", pointer));
+  ir.CreateRet(ir.CreateLoad(i32, ir.CreateLoad(session.layouts().pointer(),
+                                                storage("native_pointer"))));
+  auto *limit = function("llvm_storage_limit", i32, {});
+  ir.SetInsertPoint(
+      llvm::BasicBlock::Create(session.context(), "entry", limit));
+  ir.CreateRet(ir.CreateLoad(i32, storage("native_limit")));
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -576,10 +643,12 @@ int main(int argc, char **argv) {
     const bool contracts = argc == 6 && std::string(argv[5]) == "--contracts";
     const bool preflight =
         argc == 6 && std::string(argv[5]) == "--source-preflight";
+    const bool storage = argc == 6 && std::string(argv[5]) == "--storage";
     const bool concurrent =
         argc == 6 && std::string(argv[5]) == "--thread-callbacks";
-    require(argc == 5 || (argc == 6 && (std::string(argv[5]) == "--callbacks" ||
-                                        concurrent || contracts || preflight)),
+    require(argc == 5 || (argc == 6 &&
+                          (std::string(argv[5]) == "--callbacks" ||
+                           concurrent || contracts || preflight || storage)),
             "usage: test fixture.gti output.o output.ll O[0-3] "
             "[--callbacks|--thread-callbacks]");
     const auto input = fixture(argv[1], concurrent, argc == 6);
@@ -589,7 +658,9 @@ int main(int argc, char **argv) {
         LlvmCodegenOptimization::None, LlvmCodegenOptimization::Less,
         LlvmCodegenOptimization::Default, LlvmCodegenOptimization::Aggressive};
     Session session(input, {.optimization = levels[level]});
-    if (preflight) {
+    if (storage) {
+      emitStorageProbes(session);
+    } else if (preflight) {
       emitSourcePreflight(session, input);
     } else if (contracts) {
       emitContractProbes(session);
@@ -621,7 +692,8 @@ int main(int argc, char **argv) {
     require(output.good(), "cannot write object output");
     std::cout
         << "classifier/oracle object O" << level
-        << (preflight   ? ": real GTI body native preflight; "
+        << (storage     ? ": exact foreign storage contracts; "
+            : preflight ? ": real GTI body native preflight; "
             : contracts ? ": exact declaration/call contracts; "
             : argc == 6
                 ? ": isolated callback boundary test bodies; "

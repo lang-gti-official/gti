@@ -24,4 +24,8 @@ nativeCIndirectCallContract(const MirProgram &program, const TargetInfo &target,
                             const MirBody &body,
                             const MirInstruction &instruction);
 
+[[nodiscard]] bool nativeCStorageContract(const MirProgram &program,
+                                          const TargetInfo &target,
+                                          const ForeignStorageInfo &storage);
+
 } // namespace lang::native_llvm

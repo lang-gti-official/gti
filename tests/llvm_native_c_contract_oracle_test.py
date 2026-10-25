@@ -59,8 +59,20 @@ def main():
             result = run([executable], "run-" + tag)
             if result.stdout != "exact native C declaration contracts\n" or result.stderr:
                 raise RuntimeError(f"native declaration oracle output mismatch: {tag}")
+        storage_obj = output / f"storage-O{level}.o"
+        run([args.emitter.resolve(), fixture / "native_calls.gti", storage_obj,
+             output / f"storage-O{level}.ll", level, "--storage"], f"emit-storage-O{level}")
+        for c_level in (0, 3):
+            executable = output / f"storage-native{level}-c{c_level}"
+            tag = executable.name
+            run([args.cc, "-std=c17", "-Wall", "-Wextra", "-Werror", f"-O{c_level}",
+                 "-I", repo / "runtime/include", fixture / "native_calls.c",
+                 fixture / "storage_oracle.c", storage_obj, "-o", executable], "link-" + tag)
+            result = run([executable], "run-" + tag)
+            if result.stdout != "native C foreign storage contracts\n" or result.stderr:
+                raise RuntimeError(f"native storage oracle output mismatch: {tag}")
     if not args.compiler and not args.preflight:
-        print(f"PASS: 8 exact-declaration helper executions and malformed-contract controls; "
+        print(f"PASS: 16 declaration/storage helper executions and malformed-contract controls; "
               f"no production GTI body execution claimed; {output}")
         return
 
@@ -99,7 +111,7 @@ def main():
                     raise RuntimeError(f"native failure cleanup/attribution mismatch: {tag}")
                 executions += 1
     scope = "real GTI-body preflight, public admission unchanged" if args.preflight else "production GTI/C"
-    print(f"PASS: 8 helper executions plus {executions} {scope} getter/service/cleanup executions; {output}")
+    print(f"PASS: 16 declaration/storage helper executions plus {executions} {scope} getter/service/cleanup executions; {output}")
 
 
 if __name__ == "__main__":
