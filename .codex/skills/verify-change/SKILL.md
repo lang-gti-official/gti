@@ -95,8 +95,14 @@ invalid setup cheaply; they do not replace required broad coverage.
    `python3 scripts/build_window.py --kind build|suite -- <command>`, so
    concurrent sessions share the host; focused `-R` selections and
    single-file compiles run directly.
-3. For a substantial compiler change, use the broad sequence in the canonical
-   verification document after focused checks pass. Keep
+3. Select completion coverage from the changed invariant and affected consumer
+   graph, as described in the canonical verification document. An independent
+   isolated subsystem change can complete with owning, cross-phase and required
+   platform/runtime checks; an all-target build/full suite is not automatic.
+   Name unchanged boundaries and preserve ABI, sanitizer, installed-consumer
+   and performance obligations where applicable. Shared-contract/cross-cutting
+   changes and designated full integration/release campaigns need broader
+   coverage. Keep
    `scripts/local_language_audit.py --full` non-gating; turn any bug it finds
    into a minimal deterministic regression in the owning suite.
    In a batch, perform component regressions, owning/cross-phase checks and
