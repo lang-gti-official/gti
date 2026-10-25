@@ -1816,6 +1816,15 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/llvm_readiness_baseline.json" "${CMAKE_CTEST_COMMAND}"
   )
   set_tests_properties(llvm_canonical_host_controls PROPERTIES TIMEOUT 240)
+  # Alternative source-library legality/verified-MIR contracts ONLY. This is
+  # deliberately not a native execution manifest or a hosted coverage witness.
+  add_test(
+    NAME llvm_hosted_cleanup_source_contract
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_hosted_cleanup_evidence_test.py"
+            "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_coverage_evidence>"
+            "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}"
+  )
+  set_tests_properties(llvm_hosted_cleanup_source_contract PROPERTIES TIMEOUT 900)
   add_test(
     NAME llvm_case_context_controls
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_case_context_test.py"
