@@ -10132,6 +10132,14 @@ ownership diagnostics and unsaved-version recovery, without editor-only rules.
 O-LLVM-02 adds the following independent checks while full-language LLVM support
 remains pending:
 
+`llvm_case_context_controls` compares every shipped example's normalized census
+plan to a frozen pre-extraction oracle, including sorted discovery, the exact
+concurrent selections, source hashes, cwd, environment `setdefault`, timeout and
+MIR-count/failure observations. A controlled compiler exercises all plans
+without compiling the example corpus. Deliberate source/profile/option drift
+rejects. One optimized real admission probe remains separate; census emission
+does not supply LLVM execution, target applicability or promotion evidence.
+
 The combined O-LLVM-07/08 scalar-owner probe,
 `gti_llvm_session_tests --payload-unique-owner <source-root>`, retains normal
 source lowering, verified scalar-owner payload extraction and both drops. Its

@@ -16,6 +16,7 @@ import subprocess
 import time
 import uuid
 
+import example_case_context as examples
 import llvm_coverage_evidence_test as audit
 import stdlib_surface_test as surface
 
@@ -114,10 +115,18 @@ def discover(root: Path, baseline_path: Path, ctest: str,
         members[key] = {"provider": provider, "id": identity,
                         "source": source, "contract": contract}
 
+    example_contexts = {case.identity: case for case in examples.cases(root)}
+    audit.require(set(example_contexts) == {
+        source["path"] for source in inventories["shipped-examples"]["members"]},
+        "example context discovery differs from the pinned source inventory")
     for source in inventories["shipped-examples"]["members"]:
+        context = example_contexts[source["path"]]
+        audit.require(context.source_sha256 == source["sha256"],
+                      "example context source digest differs from canonical provider")
         add("shipped-examples", source["path"], source, {
-            "role": "unclassified", "metadata": {},
-            "reason": "census has no reusable per-case loading/options/profile contract",
+            "role": "unclassified", "metadata": examples.observation_context(context),
+            "profile": context.execution_profile, "loading": context.loading,
+            "reason": "census context does not establish LLVM applicability or native outcomes",
         })
     for source in inventories["stdlib-surface"]["cases"]:
         case = cases[source["id"]]

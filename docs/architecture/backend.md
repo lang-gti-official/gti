@@ -5120,7 +5120,13 @@ producer APIs and validated stdlib surface manifest, preserving declared case
 context. Missing role, loading context or target/profile applicability remains
 unresolved; filenames and fixture registration do not establish a positive
 standalone program. The current census and execution-manifest vocabulary lack
-reusable case-context metadata. Stdlib cases retain their declared context,
+reusable complete case-context metadata. The census now shares its source,
+profile and loading facts through `example_case_context.py` and the validated
+`gti.llvm.case-context/v1` vocabulary. Its sorted discovery, three concurrent
+selections, environment defaulting and MIR observation remain census-owned;
+LLVM target applicability and native outcomes remain unresolved. The collector
+binds this context sidecar without changing the pinned source membership.
+Stdlib cases retain their declared context,
 but missing target applicability still prevents a complete collection claim.
 An explicit frontend-rejection control can satisfy only its declared control;
 it never establishes executable support.
