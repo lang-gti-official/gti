@@ -3,6 +3,7 @@
 #include "gti/lowered_program_builder.h"
 
 #include "../src/compiler/llvm/coverage.h"
+#include "../src/compiler/llvm/placement.h"
 
 #include <algorithm>
 #include <iostream>
@@ -21,6 +22,84 @@ void expect(bool condition, std::string_view message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+
+void testPlacementPlan() {
+  using namespace lang;
+  using native_llvm::Placement;
+  // Component inputs exercise representation planning only. Public admission
+  // and execution below still require a sealed, verified source program.
+  SemanticType object = SemanticType::Unknown;
+  object.kind = SemanticType::Class;
+  SemanticType array = SemanticType::Unknown;
+  array.kind = SemanticType::Array;
+  array.arguments = {object};
+  array.arrayLength = 1;
+  MirBody body;
+  MirBlock block;
+  block.id = 1;
+  block.instructions = {
+      {.id = 1,
+       .kind = MirInstructionKind::Construct,
+       .result = 1,
+       .info = {.type = object}},
+      {.id = 2,
+       .kind = MirInstructionKind::CallInput,
+       .result = 2,
+       .operands = {{.kind = MirOperandKind::Value,
+                     .value = 1,
+                     .type = object}},
+       .info = {.type = object}},
+      {.id = 3,
+       .kind = MirInstructionKind::Compute,
+       .result = 3,
+       .operands = {{.kind = MirOperandKind::Value,
+                     .value = 2,
+                     .type = object}},
+       .operation = MirOperation::Aggregate,
+       .info = {.type = array}},
+      {.id = 4,
+       .kind = MirInstructionKind::Initialize,
+       .destination = 7,
+       .operands = {{.kind = MirOperandKind::Value,
+                     .value = 3,
+                     .type = array}}},
+      {.id = 5,
+       .kind = MirInstructionKind::Load,
+       .result = 5,
+       .operands = {{.kind = MirOperandKind::Copy, .place = 7, .type = array}},
+       .info = {.type = array}},
+      {.id = 6,
+       .kind = MirInstructionKind::Call,
+       .result = 6,
+       .info = {.type = object}}};
+  block.terminator = {.kind = MirTerminatorKind::Return,
+                      .value = MirOperand{.kind = MirOperandKind::Value,
+                                          .value = 6,
+                                          .type = object}};
+  body.blocks.push_back(block);
+  const Placement placement(body);
+  expect(placement.target(1) && placement.target(1)->aggregate == 3 &&
+             placement.target(1)->element == 0 && placement.target(3) &&
+             placement.target(3)->place == 7,
+         "fresh argument staging preserves exact aggregate destination paths");
+  expect(placement.target(6) && placement.target(6)->returned,
+         "fresh returns use the caller's result destination");
+  expect(!placement.fresh(5) && !placement.target(5),
+         "explicit array copies never become fresh destination aliases");
+  body.blocks[0].instructions.push_back(
+      {.id = 7,
+       .kind = MirInstructionKind::Initialize,
+       .destination = 8,
+       .operands = {
+           {.kind = MirOperandKind::Value, .value = 1, .type = object}}});
+  bool rejected = false;
+  try {
+    const Placement invalid(body);
+  } catch (const BackendUnsupportedError &) {
+    rejected = true;
+  }
+  expect(rejected, "conflicting physical destinations fail closed");
 }
 
 lang::VerifiedLoweredProgram lower(std::string_view source) {
@@ -148,6 +227,7 @@ int main() { Owned value{}; int data[1] = {1}; return data == data ? 0 : 1; }
          "the limitation identifies the exact requirement and its owner");
   lang::LlvmBackend backend(plan.options());
   try {
+    testPlacementPlan();
     static_cast<void>(backend.generate(plan.program()));
     expect(false, "unsupported admission cannot produce an artifact");
   } catch (const lang::BackendUnsupportedError &error) {

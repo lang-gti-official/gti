@@ -10102,6 +10102,14 @@ ownership or entry-signature inference.
 
 ### Native LLVM Admission Gates
 
+`llvm_placement_execution` extends the class profile with fresh-result final
+addresses: immovable return chains and fields/defaults/TLS, movable nested-array
+elements, array copy snapshots/movement, and deleted-copy/move/argument/conditional
+rejections. Run on macOS arm64 and Linux x86_64. The named native-only cases record
+existing C++ comparator limitations, never silent comparator skips.
+`llvm_target_layout_abi` additionally observes exact field/array construction
+rollback and prepared-return cleanup after local destruction fails at O0-O3.
+
 O-LLVM-02 adds the following independent checks while full-language LLVM support
 remains pending:
 

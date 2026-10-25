@@ -622,6 +622,21 @@ private:
       lifetimes.active(ir, target, instruction.info.type, false);
       if (instruction.constructorTarget) {
         result = call(instruction, target);
+      } else if (instruction.constructorKind == ConstructorKind::Ordinary &&
+                 instruction.operands.empty() &&
+                 instruction.info.type.kind == SemanticType::Class) {
+        const auto &object = session.layouts().instance(instruction.info.type);
+        if (object.defaultConstructor != SpecialMemberStatus::Generated ||
+            object.generatedDefaultRequiresSchedule ||
+            !object.declaredFields.empty() || !object.bases.empty())
+          throw BackendUnsupportedError(
+              "LLVM targetless default construction requires an exact empty "
+              "generated object");
+        ir.CreateStore(llvm::Constant::getNullValue(
+                           session.layouts().get(object.type).storage),
+                       target);
+        lifetimes.active(ir, target, object.type, true);
+        result = target;
       } else if (instruction.info.type.kind == SemanticType::Class &&
                  instruction.operands.size() == 1 &&
                  instruction.constructorKind != ConstructorKind::Ordinary) {

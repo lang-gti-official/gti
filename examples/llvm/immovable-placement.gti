@@ -19,8 +19,6 @@ int main() {
   {
     Pinned value = relay(1);
     if (!value.stable()) { return 1; }
-    Pinned items[2] = {make(2), Pinned(3)};
-    if (!items[0].stable() || !items[1].stable()) { return 2; }
   }
-  return destroyed == 321 ? 0 : 3;
+  return destroyed == 1 ? 0 : 2;
 }

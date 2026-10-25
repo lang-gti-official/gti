@@ -651,8 +651,21 @@ public:
   ~Partial() { events = events * 10 + 4; }
 };
 int rollback(bool fail) { Partial value{fail}; return 0; }
+class Element {
+  int id;
+  mut Element* constructed_at = nullptr;
+public:
+  Element(int id, bool fail) : id(id) {
+    this.constructed_at = &this;
+    if (fail) { [[discard]] divide(0); }
+  }
+  ~Element() {
+    if (this.constructed_at != &this) { events = 9; }
+    events = events * 10 + this.id;
+  }
+};
 int array_rollback(bool fail) {
-  Field values[3] = {Field(1, false), Field(2, false), Field(3, fail)};
+  Element values[3] = {Element(1, false), Element(2, false), Element(3, fail)};
   return 0;
 }
 class Exit {
@@ -665,7 +678,10 @@ Field return_rollback(bool fail) { Exit guard{fail}; return Field(5, false); }
 int main() {
   { Ticket ticket{7}; if (ticket.read() != 7) { return 1; } }
   if (events != 12) { return 2; }
-  return rollback(false);
+  [[discard]] rollback(false);
+  [[discard]] array_rollback(false);
+  { Field result = return_rollback(false); }
+  return 0;
 }
 )");
   if (!frontend.canGenerateCode()) {

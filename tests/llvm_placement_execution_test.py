@@ -67,6 +67,20 @@ int main() {
   return constructed == 1234 && destroyed == 4321 ? 0 : 2;
 }
 ''',
+    "array-copy-and-move": r'''
+class Cell { public: mut int value; Cell(int value) : value(value) {} };
+int inspect(Cell values[2], mut Cell& original) {
+  original.value = 9;
+  return values[0].value;
+}
+int main() {
+  mut Cell values[2] = {Cell(3), Cell(4)};
+  Cell snapshot[2] = values;
+  if (inspect(values, values[0]) != 3 || values[0].value != 9 || snapshot[0].value != 3) { return 1; }
+  Cell transferred[2] = std::move(values);
+  return transferred[0].value == 9 && transferred[1].value == 4 ? 0 : 2;
+}
+''',
     "field-defaults": r'''
 struct Record {
   Pinned first = relay(1);
@@ -100,11 +114,18 @@ REJECT = {
     "copy-argument": "void consume(Pinned value) {} int main() { Pinned a{1}; consume(a); return 0; }",
     "fresh-value-argument": "void consume(Pinned value) {} int main() { consume(make(1)); return 0; }",
     "conditional-value": "Pinned choose(bool b) { return b ? make(1) : make(2); } int main() { return 0; }",
+    "immovable-array": "int main() { Pinned values[2] = {make(1), make(2)}; return 0; }",
 }
 
 # The unchanged transitional backend physically relocates these immovable
 # subobjects. Do not use that behavior as the native semantic oracle.
-COMPARATOR_GAPS = {"nested-fields"}
+COMPARATOR_GAPS = {"nested-fields", "nested-arrays", "field-defaults",
+                   "array-copy-and-move"}
+
+# The source language still requires movable fixed-array elements. This case
+# proves that fresh elements nevertheless observe their final array address;
+# deleted-move array initialization is a separate negative control above.
+MOVABLE_ELEMENTS = {"nested-arrays"}
 
 
 def main():
@@ -122,14 +143,16 @@ def main():
             if selected and selected != name:
                 continue
             source = work / f"{name}.gti"
+            prelude = PINNED.replace("Pinned(Pinned&&) = delete;", "Pinned(Pinned&&) = default;") if name in MOVABLE_ELEMENTS else PINNED
             source.write_text((root / "examples/llvm/immovable-placement.gti").read_text()
-                              if text is None else '#include <std/panic>\n' + PINNED + text,
+                              if text is None else '#include <std/panic>\n' + prelude + text,
                               encoding="utf-8")
             for endpoint in endpoints[2:] if name in COMPARATOR_GAPS else endpoints:
                 result = execute(gti, root, work / f"{name}-{endpoint}", source, endpoint, env)
                 if result.error or result.observable != (0, "", ""):
                     raise AssertionError(f"{name} {endpoint}: {result}")
-            print(f"{name}: final addresses/cleanup C++20/23 and LLVM O0-O3 passed", flush=True)
+            comparators = "LLVM O0-O3 (recorded C++ comparator gap)" if name in COMPARATOR_GAPS else "C++20/23 and LLVM O0-O3"
+            print(f"{name}: final addresses/cleanup {comparators} passed", flush=True)
         for name, text in REJECT.items():
             if selected and selected != name:
                 continue

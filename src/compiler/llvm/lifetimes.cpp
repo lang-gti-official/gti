@@ -150,11 +150,13 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
          ir.CreateOr(duringFailure, ir.CreateLoad(ir.getInt1Ty(), failed))}));
   };
   if (recipe.fixedArray) {
-    if (recipe.type.kind != SemanticType::Array || recipe.aggregate.size() != 1)
+    if (recipe.type.kind != SemanticType::Array ||
+        recipe.aggregate.size() > 1 ||
+        (recipe.aggregate.empty() && recipe.requiresActiveCleanup))
       throw std::logic_error(
           "LLVM array cleanup lost its sealed element recipe");
     const auto count = recipe.type.arrayLength;
-    if (count) {
+    if (count && !recipe.aggregate.empty()) {
       auto *entry = ir.GetInsertBlock();
       auto *loop =
           llvm::BasicBlock::Create(session.context(), "elements", function);
