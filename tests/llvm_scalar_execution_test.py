@@ -72,6 +72,25 @@ int main() {
 }
 '''
 
+COVERAGE_CONSTRUCTIONS = r'''
+#include <std/numeric>
+
+using Index = uint8_t;
+mut int implicit_zero;
+
+T convert<std::numeric T>(int value) { return T(value); }
+T default_value<std::default_initializable T>() { return T(); }
+
+int main() {
+  mut int value = 2;
+  int sequenced = (value += 1, +value);
+  Index alias = Index(sequenced);
+  uint8_t converted = convert<uint8_t>(sequenced);
+  uint8_t zero = default_value<uint8_t>();
+  return int(alias) + int(converted) + int(zero) + implicit_zero - 6;
+}
+'''
+
 
 def widths() -> str:
     bodies = []
@@ -137,6 +156,7 @@ int main() { require(false); return 0; }
 
 def successes(root: Path) -> dict[str, str]:
     return {'scalars': SCALARS, 'widths': widths(),
+            'coverage-constructions': COVERAGE_CONSTRUCTIONS,
             'shipped-example': (root / 'examples/llvm/scalar-control-flow.gti').read_text(),
             'globals': '''
 int initialize() { return 3; }
@@ -182,6 +202,7 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         'widths': ('widths',),
         'globals': ('globals',),
         'numeric-intrinsics': ('numeric-intrinsics',),
+        'coverage-constructions': ('coverage-constructions',),
         'defined-failures': tuple(failures()),
         'panic-failures': panic,
     }
@@ -205,11 +226,19 @@ def main() -> None:
         return
     gti = Path(sys.argv[1]).resolve()
     root = Path(sys.argv[2]).resolve()
+    selection = sys.argv[3] if len(sys.argv) > 3 else None
     env = os.environ.copy()
     success_cases = successes(root)
+    failure_cases = failures()
+    rejection_cases = rejections()
+    if (selection and selection not in success_cases and
+            selection not in failure_cases and selection not in rejection_cases):
+        raise ValueError(f'unknown scalar execution case: {selection}')
     with tempfile.TemporaryDirectory(prefix='gti-llvm-scalars-') as temporary:
         work = Path(temporary)
         for name, source_text in success_cases.items():
+            if selection and selection != name:
+                continue
             source = work / f'{name}.gti'
             source.write_text(source_text)
             results = []
@@ -220,7 +249,9 @@ def main() -> None:
                     raise AssertionError(f'{name} {endpoint}: {result}')
                 results.append(result.observable)
             assert results[0] == results[1] == results[2]
-        for name, (source_text, diagnostic) in failures().items():
+        for name, (source_text, diagnostic) in failure_cases.items():
+            if selection and selection != name:
+                continue
             source = work / f'{name}.gti'
             source.write_text(source_text)
             results = []
@@ -232,7 +263,9 @@ def main() -> None:
                 results.append(result.observable)
             if not results[0] == results[1] == results[2]:
                 raise AssertionError(f'{name}: source/failure attribution drift: {results}')
-        for name, text in rejections().items():
+        for name, text in rejection_cases.items():
+            if selection and selection != name:
+                continue
             source = work / f'reject-{name}.gti'
             source.write_text(text)
             output = work / f'reject-{name}'

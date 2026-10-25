@@ -2,16 +2,14 @@
 """Audit LLVM ledger claims against registered, runnable evidence profiles."""
 
 from copy import deepcopy
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 
-import llvm_class_execution_test as class_execution
 from llvm_evidence_manifest import validate_manifest
-import llvm_place_execution_test as place_execution
-import llvm_scalar_execution_test as scalar_execution
 
 
 def run(command: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess[str]:
@@ -33,12 +31,41 @@ def ledger(evidence: Path) -> dict:
     return json.loads(result.stdout)
 
 
-def profile_sources(root: Path) -> dict[str, tuple[dict[str, str], dict[str, tuple[str, ...]]]]:
-    modules = {
-        "llvm_scalar_execution": scalar_execution,
-        "llvm_place_execution": place_execution,
-        "llvm_class_execution": class_execution,
-    }
+def load_registry(registry: Path, root: Path, registered: set[str]) -> dict:
+    modules = {}
+    for index, line in enumerate(registry.read_text(encoding="utf-8").splitlines(), 1):
+        fields = line.split("\t")
+        if len(fields) != 2 or not all(fields):
+            raise AssertionError(f"malformed LLVM evidence registry line {index}")
+        test, raw_script = fields
+        if test in modules:
+            raise AssertionError(f"duplicate LLVM evidence registry test {test}")
+        if test not in registered:
+            raise AssertionError(f"unregistered LLVM evidence test {test}")
+        script = Path(raw_script).resolve()
+        if root not in script.parents or script.suffix != ".py" or not script.is_file():
+            raise AssertionError(f"invalid LLVM evidence script for {test}: {script}")
+        module_name = f"gti_llvm_evidence_{index}"
+        spec = importlib.util.spec_from_file_location(module_name, script)
+        if spec is None or spec.loader is None:
+            raise AssertionError(f"cannot load LLVM evidence script for {test}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(module_name, None)
+            raise
+        for function in ("evidence_cases", "evidence_profiles", "evidence_manifest"):
+            if not callable(getattr(module, function, None)):
+                raise AssertionError(f"{test}: missing {function}")
+        modules[test] = module
+    if not modules:
+        raise AssertionError("LLVM evidence registry is empty")
+    return modules
+
+
+def profile_sources(root: Path, modules: dict) -> dict[str, tuple[dict[str, str], dict[str, tuple[str, ...]]]]:
     sources = {}
     for test, module in modules.items():
         cases = module.evidence_cases(root)
@@ -61,17 +88,18 @@ def profile_sources(root: Path) -> dict[str, tuple[dict[str, str], dict[str, tup
     return sources
 
 
-def manifest_mutation_controls(root: Path) -> None:
+def manifest_mutation_controls(root: Path, modules: dict) -> None:
     test = "llvm_scalar_execution"
+    scalar_execution = modules[test]
     cases = scalar_execution.evidence_cases(root)
     profiles = scalar_execution.evidence_profiles(root)
     manifest = scalar_execution.evidence_manifest(root)
 
-    unknown = deepcopy(manifest)
-    unknown["unexpected"] = True
+    unsupported = deepcopy(manifest)
+    unsupported["schema"] = "gti.llvm.execution-evidence/unsupported"
     try:
-        validate_manifest(unknown, test, cases, profiles)
-        raise AssertionError("unknown manifest field was accepted")
+        validate_manifest(unsupported, test, cases, profiles)
+        raise AssertionError("unsupported manifest schema was accepted")
     except ValueError:
         pass
 
@@ -91,9 +119,52 @@ def manifest_mutation_controls(root: Path) -> None:
     except ValueError:
         pass
 
+    unknown = deepcopy(manifest)
+    unknown["unexpected"] = True
+    try:
+        validate_manifest(unknown, test, cases, profiles)
+        raise AssertionError("unknown manifest field was accepted")
+    except ValueError:
+        pass
 
-def observed_profiles(report: dict, evidence: Path, root: Path) -> dict[tuple[str, str], set[str]]:
-    sources = profile_sources(root)
+
+def registry_mutation_controls(registry: Path, root: Path,
+                               registered: set[str]) -> None:
+    lines = registry.read_text(encoding="utf-8").splitlines()
+    if not lines:
+        raise AssertionError("cannot mutate an empty LLVM evidence registry")
+    test, script = lines[0].split("\t")
+
+    def expect_failure(contents: str, expected: str,
+                       available: set[str] = registered) -> None:
+        with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".tsv") as mutated:
+            mutated.write(contents)
+            mutated.flush()
+            try:
+                load_registry(Path(mutated.name), root, available)
+            except AssertionError as error:
+                if expected not in str(error):
+                    raise AssertionError(
+                        f"unexpected registry rejection: {error}") from error
+            else:
+                raise AssertionError(
+                    f"LLVM evidence registry accepted mutation: {expected}")
+
+    expect_failure("malformed\n", "malformed LLVM evidence registry")
+    expect_failure(f"{lines[0]}\n{lines[0]}\n",
+                   "duplicate LLVM evidence registry test")
+    expect_failure(f"llvm_unregistered_execution\t{script}\n",
+                   "unregistered LLVM evidence test")
+    expect_failure(f"{test}\t{root / 'tests' / 'missing_evidence.py'}\n",
+                   "invalid LLVM evidence script")
+    expect_failure(f"{test}\t{root / 'tests' / 'backend_execution.py'}\n",
+                   f"{test}: missing evidence_cases")
+
+
+def observed_profiles(report: dict, evidence: Path, root: Path,
+                      modules: dict) -> dict[tuple[str, str], set[str]]:
+    sources = profile_sources(root, modules)
     requested = {
         (row["acceptance"]["test"], row["acceptance"]["assertion"])
         for row in report["rows"]
@@ -210,18 +281,21 @@ def mutation_controls(report: dict, registered: set[str],
 
 
 def main() -> None:
-    if len(sys.argv) != 5:
+    if len(sys.argv) != 6:
         raise SystemExit(
             "usage: llvm_coverage_evidence_test.py <evidence-helper> <ctest> "
-            "<build-dir> <repo-root>")
+            "<build-dir> <repo-root> <manifest-registry>")
     evidence = Path(sys.argv[1]).resolve()
     ctest = sys.argv[2]
     build = Path(sys.argv[3]).resolve()
     root = Path(sys.argv[4]).resolve()
+    registry = Path(sys.argv[5]).resolve()
     report = ledger(evidence)
     registered = ctest_names(ctest, build)
-    manifest_mutation_controls(root)
-    observations = observed_profiles(report, evidence, root)
+    modules = load_registry(registry, root, registered)
+    registry_mutation_controls(registry, root, registered)
+    manifest_mutation_controls(root, modules)
+    observations = observed_profiles(report, evidence, root, modules)
     errors = validate(report, registered, observations)
     if errors:
         raise AssertionError("LLVM coverage evidence audit failed:\n" + "\n".join(errors))

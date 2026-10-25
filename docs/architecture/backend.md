@@ -4745,12 +4745,17 @@ runnable case dictionaries. Manifest schema
 `gti.llvm.execution-evidence/v1` binds a test to named profiles, each profile to
 stable source IDs, and each source ID to its repository/inline origin and the
 SHA-256 of the exact UTF-8 text. Unknown fields, stale hashes and dangling
-source IDs reject. A test-only admission probe lowers each named source and
-requires its plan to contain the exact row, including structural
-implementation witnesses. This establishes that the test source reaches the
-claimed coverage vocabulary. It does not establish that an unrun test passed,
-that cleanup and failure behavior were correct, or that another platform ran
-the case. The report therefore records exact source state, build configuration,
+source IDs reject. Evidence producers register through the CMake-owned
+`gti_register_llvm_evidence_manifest` service. Its deferred writer emits one
+generated registry after the tests directory has declared every producer, so
+the audit does not maintain a second hard-coded test list. Malformed, duplicate
+or non-CTest registrations, missing scripts and scripts without the manifest
+contract reject. A test-only admission probe lowers each named source and
+requires its plan to contain the exact row, including structural implementation
+witnesses. This establishes that the test source reaches the claimed coverage
+vocabulary. It does not establish that an unrun test passed, that cleanup and
+failure behavior were correct, or that another platform ran the case. The
+report therefore records exact source state, build configuration,
 host/compiler/LLVM identity and separate `passed`, `failed`, `unrun` or
 `unavailable` observation states. Raw ledger reports start unrun; dirty source
 is explicitly non-exact.

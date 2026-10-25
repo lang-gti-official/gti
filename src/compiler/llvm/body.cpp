@@ -279,9 +279,7 @@ private:
       }
       if (instruction.intrinsic ==
               IntrinsicKind::NumericTypeParameterConversion ||
-          instruction.intrinsic == IntrinsicKind::NumericAliasConversion ||
-          instruction.intrinsic ==
-              IntrinsicKind::ExactTypeParameterConstruction)
+          instruction.intrinsic == IntrinsicKind::NumericAliasConversion)
         return scalars.convert(operand(instruction.operands.at(0)),
                                instruction.operands[0].type,
                                instruction.info.type);
