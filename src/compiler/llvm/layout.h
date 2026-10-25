@@ -34,6 +34,10 @@ public:
                                    HirClassInstanceId base) const;
   [[nodiscard]] std::optional<unsigned>
   activeIndex(const SemanticType &type) const;
+  [[nodiscard]] const MirLambdaInstance &
+  lambda(const SemanticType &type) const;
+  [[nodiscard]] unsigned captureIndex(const SemanticType &type,
+                                      std::size_t capture) const;
 
 private:
   friend class Session;
@@ -46,11 +50,19 @@ private:
     bool building = false;
     std::optional<TypeLayout> layout;
   };
+  struct LambdaRecord {
+    const MirLambdaInstance *instance = nullptr;
+    llvm::StructType *storage = nullptr;
+    bool building = false;
+    std::optional<TypeLayout> layout;
+  };
   Session &session;
   llvm::StructType *textView_ = nullptr;
   std::map<HirClassInstanceId, Record> records;
   std::unordered_map<ClassId, std::vector<HirClassInstanceId>> classes;
+  std::map<HirLambdaId, LambdaRecord> lambdas;
   [[nodiscard]] TypeLayout record(const SemanticType &type);
+  [[nodiscard]] TypeLayout closure(const SemanticType &type);
   [[nodiscard]] TypeLayout describe(llvm::Type *storage,
                                     bool addressOnly = false,
                                     llvm::Type *value = nullptr) const;

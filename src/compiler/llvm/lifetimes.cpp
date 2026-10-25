@@ -5,6 +5,21 @@ namespace lang::native_llvm {
 Lifetimes::Lifetimes(Session &session, Failures &failures, FindBody findBody)
     : session(session), failures(failures), findBody(std::move(findBody)) {}
 
+const MirLambdaInstance &
+Lifetimes::lambda(const SemanticType &type) const {
+  const MirLambdaInstance *result = nullptr;
+  for (const auto &candidate : session.program().mir().lambdaInstances())
+    if (candidate.type == type) {
+      if (result)
+        throw std::logic_error("ambiguous concrete LLVM lambda lifetime");
+      result = &candidate;
+    }
+  if (!result)
+    throw BackendUnsupportedError(
+        "LLVM lambda lifetime requires an exact concrete instance");
+  return *result;
+}
+
 void Lifetimes::active(llvm::IRBuilder<> &ir, llvm::Value *address,
                        const SemanticType &type, bool value) {
   if (type.kind != SemanticType::Class)
@@ -60,6 +75,25 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
           ir.CreateStructGEP(storage, address,
                              session.layouts().fieldIndex(type, field.symbol)),
           field.type);
+  } else if (type.kind == SemanticType::Lambda) {
+    const auto &owner = lambda(type);
+    if (owner.captureTypes.size() != owner.captureModes.size() ||
+        owner.captureTypes.size() !=
+            owner.captureRequiresActiveCleanup.size())
+      throw std::logic_error(
+          "LLVM lambda move state lost its sealed capture facts");
+    for (std::size_t index = 0; index < owner.captureTypes.size(); ++index) {
+      if (isBorrowingCapture(owner.captureModes[index])) {
+        if (owner.captureRequiresActiveCleanup[index])
+          throw std::logic_error(
+              "borrowed LLVM capture acquired owned cleanup state");
+        continue;
+      }
+      if (needsMoveState(owner.captureTypes[index]))
+        moved(ir, ir.CreateStructGEP(storage, address,
+                                     static_cast<unsigned>(index)),
+              owner.captureTypes[index]);
+    }
   }
   ir.CreateRetVoid();
   return function;
@@ -67,6 +101,29 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
 bool Lifetimes::needsMoveState(const SemanticType &type) const {
   if (type.kind == SemanticType::Array)
     return needsMoveState(type.arguments.at(0));
+  if (type.kind == SemanticType::Lambda) {
+    const auto &owner = lambda(type);
+    if (owner.captureTypes.size() != owner.captureModes.size() ||
+        owner.captureTypes.size() !=
+            owner.captureRequiresActiveCleanup.size())
+      throw std::logic_error(
+          "LLVM lambda move state lost its sealed capture facts");
+    for (std::size_t index = 0; index < owner.captureTypes.size(); ++index) {
+      if (isBorrowingCapture(owner.captureModes[index])) {
+        if (owner.captureRequiresActiveCleanup[index])
+          throw std::logic_error(
+              "borrowed LLVM capture acquired owned cleanup state");
+        continue;
+      }
+      const bool nested = needsMoveState(owner.captureTypes[index]);
+      if (nested != owner.captureRequiresActiveCleanup[index])
+        throw std::logic_error(
+            "LLVM capture move state disagrees with its sealed cleanup fact");
+      if (nested)
+        return true;
+    }
+    return false;
+  }
   if (type.kind != SemanticType::Class)
     return false;
   const auto &owner = session.layouts().instance(type);
@@ -92,8 +149,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
     if (previous == recipe)
       return function;
   if (recipe.polymorphicCleanup || recipe.recursiveCleanup ||
-      recipe.uniquePointeeClass || recipe.lambdaInstance ||
-      recipe.payloadVariant)
+      recipe.uniquePointeeClass || recipe.payloadVariant)
     throw BackendUnsupportedError(
         "LLVM cleanup requires its later ownership/dispatch milestone");
   auto *pointer = session.layouts().pointer();
@@ -174,7 +230,44 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
       ir.CreateCondBr(ir.CreateICmpNE(index, ir.getInt64(0)), loop, done);
       ir.SetInsertPoint(done);
     }
+  } else if (recipe.lambdaInstance) {
+    const auto &owner = lambda(recipe.type);
+    if (recipe.type.kind != SemanticType::Lambda ||
+        owner.id != *recipe.lambdaInstance || recipe.classInstance ||
+        recipe.destructor || owner.captureTypes.size() !=
+                                 owner.captureModes.size() ||
+        owner.captureTypes.size() !=
+            owner.captureRequiresActiveCleanup.size())
+      throw std::logic_error(
+          "LLVM closure cleanup lost its sealed lambda identity");
+
+    std::vector<std::size_t> expected;
+    for (std::size_t index = owner.captureTypes.size(); index != 0; --index)
+      if (owner.captureRequiresActiveCleanup[index - 1])
+        expected.push_back(index - 1);
+    if (recipe.requiresActiveCleanup != !expected.empty() ||
+        recipe.aggregate.size() != expected.size())
+      throw std::logic_error(
+          "LLVM closure cleanup lost its sealed active-capture schedule");
+
+    for (std::size_t step = 0; step < recipe.aggregate.size(); ++step) {
+      const auto &selected = recipe.aggregate[step];
+      if (!selected.captureIndex || *selected.captureIndex != expected[step] ||
+          selected.type != owner.captureTypes[expected[step]] ||
+          isBorrowingCapture(owner.captureModes[expected[step]]) ||
+          selected.uniqueOwnerField != 0 || selected.uniqueOwnerBase ||
+          selected.payloadVariant || selected.payloadField)
+        throw std::logic_error(
+            "LLVM closure cleanup lost an exact owned capture projection");
+      child(selected,
+            ir.CreateStructGEP(session.layouts().get(recipe.type).storage,
+                               address,
+                               static_cast<unsigned>(expected[step])));
+    }
   } else {
+    if (recipe.type.kind == SemanticType::Lambda)
+      throw std::logic_error(
+          "LLVM closure cleanup has no concrete lambda identity");
     if (recipe.destructor) {
       const auto *target =
           session.program().mir().findDestructorInstance(*recipe.destructor);

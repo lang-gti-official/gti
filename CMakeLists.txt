@@ -610,6 +610,8 @@ add_library(
   "src/compiler/llvm/reachability.cpp"
   "src/compiler/llvm/failure.cpp"
   "src/compiler/llvm/scalar.cpp"
+  "src/compiler/llvm/callables.cpp"
+  "src/compiler/llvm/parameter_packs.cpp"
   "src/compiler/llvm/body.cpp"
   "src/compiler/llvm/places.cpp"
   "src/compiler/llvm/placement.cpp"

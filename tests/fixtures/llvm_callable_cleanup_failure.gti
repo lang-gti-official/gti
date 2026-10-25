@@ -1,0 +1,15 @@
+#include <std/panic>
+
+class FailingCapture {
+public:
+  FailingCapture() {}
+  FailingCapture(FailingCapture& other) = delete;
+  FailingCapture(FailingCapture&& other) = default;
+  ~FailingCapture() { std::panic("callable capture cleanup failed"); }
+};
+
+int main() {
+  FailingCapture capture{};
+  auto callable = [capture = std::move(capture)]() -> int { return 0; };
+  return callable();
+}

@@ -8,7 +8,7 @@ namespace lang::native_llvm {
 
 // Class-containing aggregates carry object identity, not LLVM SSA snapshots.
 [[nodiscard]] inline bool addressValue(const SemanticType &type) {
-  return type.kind == SemanticType::Class ||
+  return type.kind == SemanticType::Class || type.kind == SemanticType::Lambda ||
          (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
           addressValue(type.arguments[0]));
 }

@@ -1,8 +1,10 @@
 #include "gti/llvm_admission.h"
 
 #include "coverage.h"
+#include "parameter_packs.h"
 #include "reachability.h"
 #include "text.h"
+#include "../mir_verification_queries.h"
 
 #include <iomanip>
 #include <map>
@@ -190,6 +192,29 @@ public:
           selected == SemanticType::CString ||
           selected == SemanticType::NullPtr)
         return true;
+      if (selected.kind == SemanticType::FunctionItem)
+        return selected.hasFunctionItemShape();
+      if (selected.kind == SemanticType::FunctionSignature)
+        return true;
+      if (selected.kind == SemanticType::Lambda) {
+        const MirLambdaInstance *lambda = nullptr;
+        for (const auto &candidate : program.lambdaInstances())
+          if (candidate.type == selected) {
+            if (lambda)
+              return false;
+            lambda = &candidate;
+          }
+        if (!lambda ||
+            lambda->captureTypes.size() != lambda->captureModes.size() ||
+            lambda->captureTypes.size() !=
+                lambda->captureRequiresActiveCleanup.size())
+          return false;
+        return std::all_of(lambda->captureTypes.begin(),
+                           lambda->captureTypes.end(),
+                           [&](const auto &capture) {
+                             return self(self, capture);
+                           });
+      }
       if (selected.kind == SemanticType::Reference ||
           selected.kind == SemanticType::RawPointer)
         return selected.arguments.size() == 1 &&
@@ -212,8 +237,13 @@ public:
             return false;
           owner = &candidate;
         }
-      if (!owner ||
-          owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+      if (!owner)
+        return false;
+      if (owner->compilerCapability ==
+          CompilerCapabilityTypeKind::FunctionPointer)
+        return mir_detail::functionPointerSignature(program, selected) !=
+               nullptr;
+      if (owner->compilerCapability != CompilerCapabilityTypeKind::None ||
           owner->polymorphic || owner->abstract || owner->unionLayout ||
           owner->cOpaqueHandle || !owner->bases.empty() ||
           !owner->structuralBases.empty() || !visiting.insert(owner->id).second)
@@ -233,8 +263,23 @@ public:
             leaf->kind == SemanticType::RawPointer) &&
            leaf->arguments.size() == 1)
       leaf = &leaf->arguments[0];
-    if (leaf->kind == SemanticType::Class && nativeValue(type))
+    if ((leaf->kind == SemanticType::FunctionItem ||
+         leaf->kind == SemanticType::Lambda ||
+         leaf->kind == SemanticType::FunctionSignature) &&
+        nativeValue(type))
+      return leaf->kind == SemanticType::FunctionSignature
+                 ? Shape::CallableMetadata
+                 : Shape::NativeCallableStorage;
+    if (leaf->kind == SemanticType::Class && nativeValue(type)) {
+      const auto owner = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const auto &candidate) { return candidate.type == *leaf; });
+      if (owner != program.classInstances().end() &&
+          owner->compilerCapability ==
+              CompilerCapabilityTypeKind::FunctionPointer)
+        return Shape::NativeCallableStorage;
       return Shape::NativeClassStorage;
+    }
     return {};
   }
   const MirClassInstance *bodyClass() const {
@@ -261,6 +306,9 @@ public:
       if (const auto *storage = program.findThreadLocalStorage(body->owner))
         if (nativeValue(storage->type))
           return Shape::NativeThreadStorage;
+    if (body && body->kind == MirBodyKind::Lambda)
+      if (const auto *lambda = program.findLambda(body->owner))
+        return classShape(lambda->type);
     const auto *owner = bodyClass();
     return owner ? classShape(owner->type) : std::nullopt;
   }
@@ -299,6 +347,12 @@ public:
            (type.kind == SemanticType::Reference &&
             type.arguments.size() == 1 && opaqueReferent(type.arguments[0]));
   }
+  bool callableReference(const SemanticType &type) const {
+    const auto *referent = &type;
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+      referent = &type.arguments[0];
+    return referent->kind == SemanticType::Lambda && nativeValue(*referent);
+  }
   bool erasedReference(const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Call || !stage.loan ||
         stage.functionTarget || stage.operands.size() != 1 ||
@@ -311,16 +365,19 @@ public:
     const bool restore = stage.intrinsic == IntrinsicKind::RestoreReference ||
                          stage.intrinsic == IntrinsicKind::RestoreReferenceMut;
     return (erase && opaqueReferent(stage.info.type) &&
-            passiveReferenceType(stage.parameterTypes[0])) ||
+            (passiveReferenceType(stage.parameterTypes[0]) ||
+             callableReference(stage.parameterTypes[0]))) ||
            (restore && opaqueReferent(stage.parameterTypes[0].arguments[0]) &&
-            passiveReferenceType(stage.info.type));
+            (passiveReferenceType(stage.info.type) ||
+             callableReference(stage.info.type)));
   }
   bool restoredLoanTransport(const MirBody &body,
                              const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Borrow || !stage.loan ||
         stage.operands.size() != 1 ||
         stage.operands[0].kind != MirOperandKind::Loan ||
-        !passiveReference(stage.info.type))
+        !(passiveReference(stage.info.type) ||
+          callableReference(stage.info.type)))
       return false;
     const auto *target = body.findLoan(*stage.loan);
     const auto *source = body.findLoan(stage.operands[0].loan);
@@ -356,7 +413,80 @@ public:
     ++uses[found->second].occurrences;
   }
 
-  void type(const SemanticType &root) {
+  bool concretePackParameter(const MirPlace &place) const {
+    if (!body || !currentBody || place.root != MirPlaceRootKind::Binding ||
+        !place.projections.empty() ||
+        place.type.kind != SemanticType::TypePack ||
+        !place.type.concretePack)
+      return false;
+    const std::vector<HirBindingId> *bindings = nullptr;
+    const std::vector<SemanticType> *parameters = nullptr;
+    if (body->kind == MirBodyKind::Function) {
+      const auto *owner = program.findFunctionInstance(body->owner);
+      if (owner && &owner->body == currentBody) {
+        bindings = &owner->parameterBindings;
+        parameters = &owner->parameterTypes;
+      }
+    } else if (body->kind == MirBodyKind::Constructor) {
+      const auto *owner = program.findConstructorInstance(body->owner);
+      if (owner && &owner->body == currentBody) {
+        bindings = &owner->parameterBindings;
+        parameters = &owner->parameterTypes;
+      }
+    } else if (body->kind == MirBodyKind::Lambda) {
+      const auto *owner = program.findLambda(body->owner);
+      if (owner && &owner->body == currentBody) {
+        bindings = &owner->parameterBindings;
+        parameters = &owner->parameterTypes;
+      }
+    }
+    if (!bindings || !parameters || bindings->empty() ||
+        bindings->back() != place.binding)
+      return false;
+    const auto flattened =
+        native_llvm::flattenConcreteParameters(*parameters);
+    const auto prefix = bindings->size() - 1;
+    if (flattened.size() != prefix + place.type.arguments.size() ||
+        !std::equal(place.type.arguments.begin(), place.type.arguments.end(),
+                    flattened.begin() + prefix))
+      return false;
+    for (std::size_t element = 0; element < place.type.arguments.size();
+         ++element) {
+      std::size_t roots = 0;
+      std::size_t uses = 0;
+      for (const auto &candidate : currentBody->places)
+        if (candidate.root == MirPlaceRootKind::Binding &&
+            candidate.binding == place.binding &&
+            !candidate.projections.empty() &&
+            candidate.projections.front().kind ==
+                MirProjectionKind::PackElement &&
+            candidate.projections.front().constantIndex == element) {
+          ++uses;
+          if (candidate.projections.size() == 1 &&
+              candidate.type == place.type.arguments[element])
+            ++roots;
+        }
+      if (uses != 0 && roots != 1)
+        return false;
+    }
+    return true;
+  }
+
+  void type(const SemanticType &root, bool concretePackMetadata = false) {
+    if (concretePackMetadata) {
+      if (root.kind != SemanticType::TypePack || !root.concretePack)
+        throw std::logic_error(
+            "LLVM concrete-pack metadata lost its verified type");
+      const bool previous = executable;
+      executable = false;
+      add(root.kind);
+      executable = previous;
+      if (!root.arguments.empty())
+        add(Shape::TypeArguments);
+      for (const auto &argument : root.arguments)
+        type(argument);
+      return;
+    }
     std::vector<const SemanticType *> pending{&root};
     while (!pending.empty()) {
       const SemanticType &type = *pending.back();
@@ -532,7 +662,7 @@ public:
               ? std::optional(Shape::PassiveReference)
               : placeClassShape(place));
       add(place.access);
-      type(place.type);
+      type(place.type, concretePackParameter(place));
       traits(place.traits, place.type);
       for (const auto &projection : place.projections)
         add(projection.kind,
@@ -679,6 +809,9 @@ public:
               : textIndex        ? std::optional(Shape::CountedText)
               : referenceAddress ? std::optional(Shape::PassiveReference)
               : arrayAddress     ? std::optional(Shape::CheckedArrayProjection)
+              : stage.operation == MirOperation::Closure ||
+                        stage.operation == MirOperation::FunctionItem
+                  ? classShape(stage.info.type)
               : stage.operation == MirOperation::AddressOf && addressPlace
                   ? placeClassShape(*addressPlace)
                   : std::nullopt);
@@ -690,8 +823,19 @@ public:
               stage.operands.empty() &&
               (stage.intrinsic == IntrinsicKind::StringViewSize ||
                stage.intrinsic == IntrinsicKind::StringViewEmpty);
+          std::optional<Shape> callableIntrinsic;
+          if (stage.intrinsic == IntrinsicKind::FunctionPointerFromItem)
+            callableIntrinsic = classShape(stage.info.type);
+          else if (stage.intrinsic == IntrinsicKind::FunctionPointerInvoke &&
+                   !stage.parameterTypes.empty()) {
+            const auto &receiver = stage.parameterTypes.front();
+            if (receiver.kind == SemanticType::Reference &&
+                receiver.arguments.size() == 1)
+              callableIntrinsic = classShape(receiver.arguments.front());
+          }
           add(stage.intrinsic,
-              erasedReference(stage) ? std::optional(Shape::ErasedReference)
+              callableIntrinsic ? callableIntrinsic
+              : erasedReference(stage) ? std::optional(Shape::ErasedReference)
               : passiveTextViewAddress(stage) || passiveCStringAddress(stage)
                   ? std::optional(Shape::CountedText)
               : passiveRawReference(stage)
@@ -976,7 +1120,8 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     inventory.traits(instance.traits, instance.type);
     inventory.add(instance.kind);
     if (instance.compilerCapability != CompilerCapabilityTypeKind::None)
-      inventory.add(instance.compilerCapability);
+      inventory.add(instance.compilerCapability,
+                    inventory.classShape(instance.type));
     if (!instance.declaredFields.empty())
       inventory.add(Shape::ClassFields, inventory.classShape(instance.type));
     for (const auto &field : instance.declaredFields)

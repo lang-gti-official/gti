@@ -1,0 +1,32 @@
+#include <std/panic>
+
+mut int destroyed = 0;
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() { destroyed = destroyed * 10 + this.identity; }
+  int read() { return this.identity; }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    if (destroyed != 7) std::panic("incorrect callable partial cleanup");
+  }
+};
+
+int fail() { std::panic("later callable argument failed"); return 0; }
+int invoke<F>(F callable, int ignored) { return callable(); }
+
+int main() {
+  Guard guard{};
+  Token capture{7};
+  return invoke([capture = std::move(capture)]() -> int {
+    return capture.read();
+  }, fail());
+}

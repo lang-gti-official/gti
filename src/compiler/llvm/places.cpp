@@ -6,10 +6,20 @@
 namespace lang::native_llvm {
 
 Places::Places(Session &session, llvm::IRBuilder<> &ir, const MirBody &body,
-               std::vector<llvm::Value *> &values, Scalars::Guard guard)
+               std::vector<llvm::Value *> &values, Scalars::Guard guard,
+               const MirLambdaInstance *lambda,
+               std::span<const ConcretePackParameter> packs)
     : session(session), ir(ir), body(body), values(values),
-      guard(std::move(guard)), loans(body.loans.size() + 1),
-      loanTypes(body.loans.size() + 1) {}
+      guard(std::move(guard)), lambda(lambda), loans(body.loans.size() + 1),
+      loanTypes(body.loans.size() + 1) {
+  for (const auto &pack : packs) {
+    if (!pack.binding || pack.type.kind != SemanticType::TypePack ||
+        !pack.type.concretePack ||
+        !packParameters.emplace(pack.binding, pack.type).second)
+      throw std::logic_error(
+          "LLVM parameter map contains an invalid concrete pack");
+  }
+}
 
 Places::Key Places::key(const MirPlace &place) {
   return {place.root,
@@ -18,13 +28,41 @@ Places::Key Places::key(const MirPlace &place) {
           : place.root == MirPlaceRootKind::Symbol    ? place.symbol
           : place.root == MirPlaceRootKind::Loan      ? place.loan
                                                       : place.value,
-          place.root == MirPlaceRootKind::Binding ? place.symbol : 0};
+          place.root == MirPlaceRootKind::Binding ? place.symbol
+          : place.root == MirPlaceRootKind::Symbol ? place.capture
+                                                   : 0};
 }
 llvm::Value *Places::slot(llvm::Type *type) {
   llvm::IRBuilder<> entry(
       &ir.GetInsertBlock()->getParent()->getEntryBlock(),
       ir.GetInsertBlock()->getParent()->getEntryBlock().begin());
   return entry.CreateAlloca(type);
+}
+std::optional<std::size_t>
+Places::packElement(const MirPlace &place) const {
+  if (place.root != MirPlaceRootKind::Binding || place.projections.empty() ||
+      place.projections.front().kind != MirProjectionKind::PackElement ||
+      !place.projections.front().constantIndex)
+    return std::nullopt;
+  const auto found = packParameters.find(place.binding);
+  if (found == packParameters.end())
+    return std::nullopt;
+  const auto index = static_cast<std::size_t>(
+      *place.projections.front().constantIndex);
+  if (index >= found->second.arguments.size())
+    throw std::logic_error(
+        "LLVM PackElement projection exceeds its concrete parameter pack");
+  const auto root = std::find_if(
+      body.places.begin(), body.places.end(), [&](const MirPlace &candidate) {
+        return candidate.root == MirPlaceRootKind::Binding &&
+               candidate.binding == place.binding &&
+               candidate.projections.empty() &&
+               candidate.type == found->second;
+      });
+  if (root == body.places.end())
+    throw std::logic_error(
+        "LLVM PackElement projection lost its exact parameter root");
+  return index;
 }
 void Places::allocate(
     const std::map<SymbolId, llvm::GlobalVariable *> &globals) {
@@ -37,6 +75,24 @@ void Places::allocate(
         place.root != MirPlaceRootKind::Temporary &&
         place.root != MirPlaceRootKind::Symbol)
       continue;
+    if (place.root == MirPlaceRootKind::Binding &&
+        place.type.kind == SemanticType::TypePack) {
+      const auto pack = packParameters.find(place.binding);
+      if (!place.projections.empty() || pack == packParameters.end() ||
+          pack->second != place.type)
+        throw BackendUnsupportedError(
+            "LLVM TypePack storage requires an exact concrete parameter map");
+      continue;
+    }
+    if (place.root == MirPlaceRootKind::Symbol && place.capture != 0) {
+      if (body.kind != MirBodyKind::Lambda || !lambda ||
+          place.capture > lambda->captureTypes.size() ||
+          place.capture > lambda->captureSymbols.size() ||
+          lambda->captureSymbols[place.capture - 1] != place.symbol)
+        throw std::logic_error(
+            "LLVM capture place lost its exact lambda owner");
+      continue;
+    }
     if (place.root == MirPlaceRootKind::Symbol &&
         !globals.contains(place.symbol))
       throw BackendUnsupportedError(
@@ -110,12 +166,61 @@ llvm::Value *Places::loan(MirLoanId id) {
 void Places::publish(MirLoanId id, llvm::Value *address) {
   ir.CreateStore(address, loans.at(id));
 }
-void Places::parameter(HirBindingId binding, llvm::Value *argument,
+void Places::parameter(const ParameterLane &lane, llvm::Value *argument,
                        bool indirect) {
+  if (lane.packElement) {
+    const auto pack = packParameters.find(lane.binding);
+    if (pack == packParameters.end() ||
+        *lane.packElement >= pack->second.arguments.size() ||
+        pack->second.arguments[*lane.packElement] != lane.type)
+      throw std::logic_error(
+          "LLVM ABI lane disagrees with its concrete parameter pack");
+    if (!lane.materialized)
+      return;
+    const MirPlace *projected = nullptr;
+    for (const auto &place : body.places) {
+      if (place.root != MirPlaceRootKind::Binding ||
+          place.binding != lane.binding || place.projections.size() != 1 ||
+          packElement(place) != lane.packElement || place.type != lane.type)
+        continue;
+      if (projected)
+        throw std::logic_error(
+            "LLVM concrete pack has duplicate element roots");
+      projected = &place;
+    }
+    if (!projected)
+      throw std::logic_error(
+          "LLVM concrete pack lost its projected element root");
+    Root root{nullptr, lane.type};
+    if (addressValue(lane.type) && indirect) {
+      root.address = argument;
+    } else {
+      root.address = slot(session.layouts().get(lane.type).storage);
+      store(indirect ? load(argument, lane.type) : argument, root.address,
+            lane.type);
+    }
+    if (!packElements
+             .emplace(std::pair(lane.binding, *lane.packElement), root)
+             .second)
+      throw std::logic_error("LLVM concrete pack ABI lane is duplicated");
+    for (const auto &entry : body.loans) {
+      if (!entry.entry || entry.kind == MirLoanKind::Stored ||
+          std::find(entry.carriers.begin(), entry.carriers.end(),
+                    lane.binding) == entry.carriers.end())
+        continue;
+      const auto *source = body.findPlace(entry.source);
+      if (source && packElement(*source) == lane.packElement)
+        publish(entry.id, argument);
+    }
+    return;
+  }
   for (const auto &place : body.places) {
-    if (place.root != MirPlaceRootKind::Binding || place.binding != binding ||
-        !place.projections.empty())
+    if (place.root != MirPlaceRootKind::Binding ||
+        place.binding != lane.binding || !place.projections.empty())
       continue;
+    if (place.type != lane.type)
+      throw std::logic_error(
+          "LLVM ABI lane disagrees with its parameter place");
     auto &target = roots.at(key(place));
     if (addressValue(place.type) && indirect)
       target.address = argument;
@@ -125,13 +230,27 @@ void Places::parameter(HirBindingId binding, llvm::Value *argument,
   }
   for (const auto &entry : body.loans)
     if (entry.entry && entry.kind != MirLoanKind::Stored &&
-        std::find(entry.carriers.begin(), entry.carriers.end(), binding) !=
+        std::find(entry.carriers.begin(), entry.carriers.end(), lane.binding) !=
             entry.carriers.end())
       publish(entry.id, argument);
 }
 Places::Root Places::root(const MirPlace &place) {
   if (auto found = roots.find(key(place)); found != roots.end())
     return found->second;
+  if (place.root == MirPlaceRootKind::Symbol && place.capture != 0) {
+    if (body.kind != MirBodyKind::Lambda || !lambda || !receiverAddress ||
+        receiverType != lambda->type ||
+        place.capture > lambda->captureTypes.size() ||
+        place.capture > lambda->captureSymbols.size() ||
+        lambda->captureSymbols[place.capture - 1] != place.symbol)
+      throw std::logic_error(
+          "LLVM capture access lost its exact closure environment");
+    const auto index =
+        session.layouts().captureIndex(receiverType, place.capture);
+    return {ir.CreateStructGEP(session.layouts().get(receiverType).storage,
+                               receiverAddress, index),
+            lambda->captureTypes[index]};
+  }
   if (place.root == MirPlaceRootKind::Loan)
     return {loan(place.loan), loanTypes.at(place.loan)};
   if (place.root == MirPlaceRootKind::This && receiverAddress)
@@ -193,8 +312,14 @@ llvm::Value *Places::index(llvm::Value *address, const SemanticType &type,
 }
 llvm::Value *Places::address(MirPlaceId id) {
   const auto &place = *body.findPlace(id);
-  auto [address, type] = root(place);
-  for (const auto &projection : place.projections) {
+  const auto element = packElement(place);
+  const Root selected =
+      element ? packElements.at({place.binding, *element}) : root(place);
+  auto [address, type] = selected;
+  const auto projections =
+      element ? std::span(place.projections).subspan(1)
+              : std::span(place.projections);
+  for (const auto &projection : projections) {
     switch (projection.kind) {
     case MirProjectionKind::Field: {
       const auto &owner = session.layouts().instance(type);
@@ -249,11 +374,17 @@ llvm::Value *Places::address(MirPlaceId id) {
       type = std::move(element);
       break;
     }
+    case MirProjectionKind::PackElement:
+      throw std::logic_error(
+          "LLVM nested PackElement projection escaped parameter mapping");
     default:
       throw BackendUnsupportedError(
           "LLVM class/pack/base projection is not implemented");
     }
   }
+  if (place.capture != 0 && type != place.type)
+    throw std::logic_error(
+        "LLVM capture projection disagrees with its sealed result type");
   return address;
 }
 llvm::Value *Places::selected(const MirOperand &operand) {

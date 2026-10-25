@@ -49,7 +49,8 @@ bool Placement::fresh(MirValueId value) const {
          (stage.kind == MirInstructionKind::Call && !stage.loan &&
           stage.intrinsic == IntrinsicKind::None) ||
          (stage.kind == MirInstructionKind::Compute &&
-          stage.operation == MirOperation::Aggregate);
+          (stage.operation == MirOperation::Aggregate ||
+           stage.operation == MirOperation::Closure));
 }
 
 void Placement::bind(MirValueId value, Target target) {
