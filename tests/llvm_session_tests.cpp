@@ -652,11 +652,6 @@ int main() {
     Session session(*program, {.optimization = level});
     const auto admission = planLlvmAdmission(*program);
     lowerScalarProgram(session, admission);
-    for (const auto &function : session.module())
-      if (function.isDeclaration() &&
-          function.getName().starts_with("__gti_native"))
-        std::cerr << "missing component body: " << function.getName().str()
-                  << '\n';
     const auto object = session.emitObject();
     const auto path = root / "probe.o";
     expect(driver::writeArtifact(path, object.contents) ==

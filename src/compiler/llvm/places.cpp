@@ -114,8 +114,11 @@ void Places::parameter(HirBindingId binding, llvm::Value *argument,
         !place.projections.empty())
       continue;
     auto &target = roots.at(key(place));
-    store(indirect ? load(argument, place.type) : argument, target.address,
-          place.type);
+    if (place.type.kind == SemanticType::Class && indirect)
+      target.address = argument;
+    else
+      store(indirect ? load(argument, place.type) : argument, target.address,
+            place.type);
   }
   for (const auto &entry : body.loans)
     if (entry.entry && entry.kind != MirLoanKind::Stored &&

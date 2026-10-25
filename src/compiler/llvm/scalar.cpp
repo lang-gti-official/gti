@@ -74,8 +74,35 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
     return llvm::ConstantArray::get(llvm::cast<llvm::ArrayType>(storage),
                                     elements);
   }
+  if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
+      aggregate && aggregate->value &&
+      aggregate->value->kind == ConstantAggregateKind::Object &&
+      type.kind == SemanticType::Class) {
+    const auto &object = *aggregate->value;
+    const auto &owner = session.layouts().instance(type);
+    if (!object.exactType || *object.exactType != type ||
+        object.identity != owner.declaration || !owner.bases.empty() ||
+        owner.requiresActiveCleanup ||
+        object.fields.size() != owner.declaredFields.size())
+      throw BackendUnsupportedError("LLVM static object requires its complete "
+                                    "passive concrete constant");
+    auto *record = llvm::cast<llvm::StructType>(storage);
+    std::vector<llvm::Constant *> fields;
+    for (auto *element : record->elements())
+      fields.push_back(llvm::Constant::getNullValue(element));
+    for (const auto &field : owner.declaredFields) {
+      const auto selected = std::find_if(
+          object.fields.begin(), object.fields.end(),
+          [&](const auto &value) { return value.symbol == field.symbol; });
+      if (selected == object.fields.end())
+        throw std::logic_error("LLVM static object lost a sealed field");
+      fields.at(session.layouts().fieldIndex(type, field.symbol)) =
+          constant(selected->value, field.type);
+    }
+    return llvm::ConstantStruct::get(record, fields);
+  }
   throw BackendUnsupportedError("LLVM static datum requires an admitted scalar "
-                                "or passive array constant");
+                                "or aggregate constant");
 }
 
 SemanticType Scalars::domain(const SemanticType &type) const {

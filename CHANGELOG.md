@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.478.0 - Native LLVM classes and storage
+
+- Extend the native backend with concrete ordinary classes, direct methods,
+  field layouts, copy/move transport, deterministic cleanup and rollback,
+  class arrays, passive static objects and explicitly managed thread-local
+  initialization and cleanup. Unsupported ownership capabilities and dynamic
+  dispatch remain rejected; C++ remains the production default.
+
 ## 0.477.0 - Native LLVM places and borrowed text
 
 - Extend the native backend with passive fixed arrays, selected primitive/array

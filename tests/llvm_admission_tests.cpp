@@ -68,7 +68,9 @@ void testLedger() {
     pending += entry.state == LlvmCoverageState::Pending;
     nonexecuting += entry.state == LlvmCoverageState::VerifiedNonExecuting;
     if (entry.state == LlvmCoverageState::Implemented)
-      expect(entry.positiveTest == (entry.milestone == 5
+      expect(entry.positiveTest == (entry.milestone == 6
+                                        ? "llvm_class_execution"
+                                    : entry.milestone == 5
                                         ? "llvm_place_execution"
                                         : "llvm_scalar_execution"),
              "implemented families name real execution evidence");
@@ -110,7 +112,7 @@ void testSnapshotAndWholeProgram() {
   auto verified = lower(R"(
 int dormant(int value) { return value * 3; }
 class Owned { public: Owned() {} ~Owned() {} };
-int main() { Owned value{}; return 0; }
+int main() { Owned value{}; int data[1] = {1}; return data == data ? 0 : 1; }
 )");
   const auto *identity = &verified.program();
   const auto plan = lang::planLlvmAdmission(
@@ -201,8 +203,13 @@ int main() { Value value{}; return value.read() - 1; }
       has(lifecycle, "Shape", "UserDestructor") &&
           has(lifecycle, "MirInstructionKind", "Construct"),
       "class construction and selected cleanup are independently inventoried");
-  expect(!lifecycle.admitted(),
-         "passive-address refinements do not admit class lifecycles");
+  expect(lifecycle.admitted(),
+         "exact native class witnesses admit selected lifecycle execution");
+  expect(std::any_of(lifecycle.requiredBodies().begin(),
+                     lifecycle.requiredBodies().end(), [](auto body) {
+                       return body.kind == lang::MirBodyKind::Destructor;
+                     }),
+         "cleanup recipes retain their exact selected destructor body");
   const auto unsafeScalar = lang::planLlvmAdmission(lower(R"(
 unsafe int identity(int value) { return value; }
 int main() { unsafe { return identity(0); } }
@@ -210,7 +217,7 @@ int main() { unsafe { return identity(0); } }
   expect(unsafeScalar.admitted(),
          "exact unsafe source calls keep ordinary body admission");
   const auto unsafeOwner = lang::planLlvmAdmission(lower(R"(
-class Owner { public: Owner() {} ~Owner() {} };
+class Owner { public: virtual int read() { return 0; } };
 unsafe int create() { Owner value{}; return 0; }
 int main() { unsafe { return create(); } }
 )"));
@@ -220,12 +227,13 @@ int main() { unsafe { return create(); } }
 class Owner { public: Owner() {} ~Owner() {} };
 int main() { Owner values[2] = {Owner(), Owner()}; return 0; }
 )"));
-  expect(!classArray.admitted(),
-         "an array of owning class objects is not a passive-array shape");
+  expect(classArray.admitted(),
+         "native class arrays have explicit lifecycle admission");
   for (const auto &use : classArray.requirements())
     if (use.entry->family == "SemanticType::Kind" && use.entry->name == "Array")
-      expect(!use.implementedShape,
-             "class arrays have no primitive-array implementation witness");
+      expect(use.implementedShape &&
+                 use.implementedShape->name == "NativeClassStorage",
+             "class arrays require the class, not primitive-array witness");
   const auto native = lang::planLlvmAdmission(lower(R"(
 extern "C" { int foreign_call(int value); }
 int main() { return foreign_call(0); }
@@ -241,6 +249,7 @@ int main() { visits += 1; return visits - 1; }
              has(tls, "MirInstructionKind", "BeginThreadLocals"),
          "new thread-local storage and lifetime operations cannot drift behind "
          "coverage");
+  expect(tls.admitted(), "passive TLS is explicitly admitted");
 }
 
 } // namespace

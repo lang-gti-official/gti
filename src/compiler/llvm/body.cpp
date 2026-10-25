@@ -5,6 +5,7 @@
 #include "runtime_abi.h"
 #include "scalar.h"
 #include "text.h"
+#include "thread_locals.h"
 
 #include <algorithm>
 #include <map>
@@ -19,13 +20,17 @@ public:
   explicit Bodies(Session &session)
       : session(session), failures(session),
         lifetimes(session, failures,
-                  [&](MirBodyAddress address) { return function(address); }) {}
+                  [&](MirBodyAddress address) { return function(address); }),
+        threadLocals(session, failures, lifetimes,
+                     [&](MirBodyAddress address) { return function(address); },
+                     [&](MirBodyAddress address) { return signature(address); }) {}
   void lower(const LlvmAdmissionPlan &admission);
 
 private:
   Session &session;
   Failures failures;
   Lifetimes lifetimes;
+  ThreadLocals threadLocals;
   std::map<SymbolId, llvm::GlobalVariable *> globals;
   std::map<std::pair<MirBodyKind, std::size_t>, llvm::Function *> functions;
   [[nodiscard]] llvm::Function *function(MirBodyAddress address);
@@ -37,6 +42,7 @@ private:
 class Body final {
 public:
   Body(Session &session, Failures &failures, Lifetimes &lifetimes,
+       ThreadLocals &threadLocals,
        llvm::Function &function, const MirBody &body, FunctionAbi abi,
        std::span<const HirBindingId> parameters,
        const std::map<SymbolId, llvm::GlobalVariable *> &globals,
@@ -45,7 +51,8 @@ public:
        const MirClassInstance *owner)
       : session(session), failures(failures), function(function), input(body),
         abi(std::move(abi)), globals(globals), ir(session.context()),
-        lifetimes(lifetimes), bodyAbi(std::move(bodyAbi)), owner(owner),
+        lifetimes(lifetimes), threadLocals(threadLocals),
+        bodyAbi(std::move(bodyAbi)), owner(owner),
         scalars(session, ir,
                 [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
                   guard(condition, outcome);
@@ -69,6 +76,7 @@ private:
   const std::map<SymbolId, llvm::GlobalVariable *> &globals;
   llvm::IRBuilder<> ir;
   Lifetimes &lifetimes;
+  ThreadLocals &threadLocals;
   std::function<FunctionAbi(MirBodyAddress)> bodyAbi;
   const MirClassInstance *owner;
   Scalars scalars;
@@ -79,6 +87,7 @@ private:
   std::vector<llvm::BasicBlock *> blocks;
   std::vector<llvm::Value *> live;
   llvm::Value *thisAddress = nullptr;
+  std::map<MirValueId, MirPlaceId> destinations;
   llvm::Value *returnDestination = nullptr, *failureDestination = nullptr;
   llvm::Value *callerSite = nullptr, *callerArtifact = nullptr;
   const MirBlock *current = nullptr;
@@ -111,11 +120,11 @@ private:
                           operand.kind == MirOperandKind::Move)) {
       auto *source = memory.address(operand.place);
       auto *value = load(source, operand.type);
-      if (operand.kind == MirOperandKind::Move &&
-          operand.type.kind == SemanticType::Class) {
+      if (operand.type.kind == SemanticType::Class) {
         auto *target = memory.temporary(operand.type);
         store(value, target, operand.type);
-        lifetimes.moved(ir, source, operand.type);
+        if (operand.kind == MirOperandKind::Move)
+          lifetimes.moved(ir, source, operand.type);
         return target;
       }
       return value;
@@ -285,7 +294,9 @@ private:
       llvm::IRBuilder<> entry(&function.getEntryBlock(),
                               function.getEntryBlock().begin());
       resultSlot =
-          entry.CreateAlloca(session.layouts().get(resultType).storage);
+          instruction.result && destinations.contains(*instruction.result)
+              ? memory.address(destinations.at(*instruction.result))
+              : entry.CreateAlloca(session.layouts().get(resultType).storage);
     }
     std::vector<llvm::Value *> arguments;
     for (const auto &parameter : signature.parameters) {
@@ -475,6 +486,9 @@ private:
           auto *element = operand(instruction.operands[index]);
           if (type.arguments.at(0) == SemanticType::Bool)
             element = ir.CreateZExt(element, ir.getInt8Ty());
+          if (type.arguments.at(0).kind == SemanticType::Class)
+            element = ir.CreateLoad(
+                session.layouts().get(type.arguments.at(0)).storage, element);
           result = ir.CreateInsertValue(result, element,
                                         static_cast<unsigned>(index));
         }
@@ -507,13 +521,6 @@ private:
     case MirInstructionKind::Move:
       result = operand(instruction.operands.at(0));
       if (instruction.kind == MirInstructionKind::CallInput &&
-          instruction.callInputKind == HirCallInputKind::Value &&
-          instruction.info.type.kind == SemanticType::Class) {
-        auto *copy = memory.temporary(instruction.info.type);
-        store(result, copy, instruction.info.type);
-        result = copy;
-      }
-      if (instruction.kind == MirInstructionKind::CallInput &&
           instruction.info.type == SemanticType::CString &&
           instruction.operands[0].type == SemanticType::StringView) {
         if (!wholeCStringLiteral(input, instruction.operands[0]))
@@ -545,7 +552,10 @@ private:
       break;
     }
     case MirInstructionKind::Construct: {
-      auto *destination = memory.temporary(instruction.info.type);
+      auto *destination =
+          instruction.result && destinations.contains(*instruction.result)
+              ? memory.address(destinations.at(*instruction.result))
+              : memory.temporary(instruction.info.type);
       lifetimes.active(ir, destination, instruction.info.type, false);
       if (instruction.constructorTarget) {
         result = call(instruction, destination);
@@ -588,6 +598,23 @@ private:
       ir.CreateCall(
           declareRuntimeService(session, RuntimeService::BeginThreadLocals));
       break;
+    case MirInstructionKind::EnsureThreadLocal: {
+      const auto *storage = session.program().mir().findThreadLocalStorage(
+          instruction.threadLocalStorage);
+      if (storage && storage->dataInitializer)
+        break;
+      const auto &term = current->terminator;
+      if (term.kind != MirTerminatorKind::Invoke ||
+          term.invokeInstruction != instruction.id)
+        throw std::logic_error("LLVM dynamic TLS access lost its Invoke");
+      threadLocals.ensure(
+          ir, instruction.threadLocalStorage, channels.at(term.failureRecord),
+          [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
+            guard(condition, outcome);
+          },
+          [&] { jump(term.elseTarget, term.elseArguments); });
+      break;
+    }
     case MirInstructionKind::DrainThreadLocals: {
       auto *null = llvm::ConstantPointerNull::get(session.layouts().pointer());
       auto *channel = current->activeFailure
@@ -715,6 +742,31 @@ private:
             header.CreatePHI(session.layouts().get(parameter.type).value, 0);
     }
     memory.allocate(globals);
+    // A fresh construction/result consumed by one exact Initialize can use
+    // that destination directly. This preserves object identity; it is not
+    // inferred from source syntax or a C++ copy-elision convention.
+    for (const auto &block : input.blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && stage.kind == MirInstructionKind::Initialize &&
+            stage.destination && stage.operands.size() == 1 &&
+            stage.operands[0].kind == MirOperandKind::Value &&
+            stage.operands[0].type.kind == SemanticType::Class) {
+          const auto value = stage.operands[0].value;
+          const auto *definition = input.findValue(value);
+          const auto *producerBlock =
+              definition ? input.findBlock(definition->definitionBlock)
+                         : nullptr;
+          if (!producerBlock)
+            continue;
+          for (const auto &producer : producerBlock->instructions)
+            if (producer.id == definition->definition &&
+                (producer.kind == MirInstructionKind::Construct ||
+                 producer.kind == MirInstructionKind::Call)) {
+              if (!destinations.emplace(value, *stage.destination).second)
+                throw std::logic_error(
+                    "LLVM fresh value has multiple initializing destinations");
+            }
+        }
     for (std::size_t index = 0; index < abi.parameters.size(); ++index) {
       auto *argument = function.getArg(index);
       const auto &parameter = abi.parameters[index];
@@ -745,6 +797,22 @@ private:
     }
     for (const auto &record : input.failureRecords)
       channels.at(record.id) = ir.CreateAlloca(session.abi().failureChannel());
+    // A constructor's entry Stored loans are the sealed field-publication
+    // contract. Their referent address, not the Load of its scalar contents,
+    // initializes the physical reference field.
+    if (input.kind == MirBodyKind::Constructor && owner)
+      for (const auto &loan : input.loans)
+        if (loan.entry && loan.kind == MirLoanKind::Stored && loan.storedField) {
+          const auto &source = *input.findPlace(loan.source);
+          auto *address = memory.address(source.id);
+          if (source.type.kind == SemanticType::Reference)
+            address = load(address, source.type);
+          ir.CreateStore(
+              address,
+              ir.CreateStructGEP(
+                  session.layouts().get(owner->type).storage, thisAddress,
+                  session.layouts().fieldIndex(owner->type, loan.storedField)));
+        }
     for (const auto &obligation : input.dropObligations) {
       live.at(obligation.id) = ir.CreateAlloca(ir.getInt1Ty());
       ir.CreateStore(ir.getInt1(obligation.initiallyActive),
@@ -847,7 +915,8 @@ llvm::Function *Bodies::function(MirBodyAddress address) {
              address.kind == MirBodyKind::Constructor ||
              address.kind == MirBodyKind::Destructor ||
              address.kind == MirBodyKind::FieldInitializers ||
-             address.kind == MirBodyKind::StaticFieldInitializers) {
+             address.kind == MirBodyKind::StaticFieldInitializers ||
+             address.kind == MirBodyKind::ThreadLocalInitializer) {
     const auto plan = signature(address);
     output = llvm::Function::Create(
         plan.type, llvm::GlobalValue::InternalLinkage,
@@ -878,11 +947,12 @@ void Bodies::body(MirBodyAddress address) {
                      .findConstructorInstance(address.owner)
                      ->parameterBindings;
   Body emission(
-      session, failures, lifetimes, *function(address), input, plan, parameters,
+      session, failures, lifetimes, threadLocals, *function(address), input, plan, parameters,
       globals, [&](MirBodyAddress target) { return function(target); },
       [&](MirBodyAddress target) { return signature(target); }, owner(address));
 }
 void Bodies::lower(const LlvmAdmissionPlan &admission) {
+  threadLocals.allocate(globals);
   llvm::IRBuilder<> constants(session.context());
   Scalars scalars(session, constants, [](llvm::Value *, DefinedFailureOutcome) {
     throw std::logic_error("LLVM static datum cannot perform runtime checking");

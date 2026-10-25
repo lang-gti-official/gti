@@ -185,9 +185,9 @@ int main() {
                 results.append(result.observable)
             if not results[0] == results[1] == results[2]:
                 raise AssertionError(f'{name}: source/failure attribution drift: {results}')
-        for name, text in {'owner': 'class Owner { public: Owner() {} ~Owner() {} }; int main() { Owner value{}; return 0; }',
-                           'array-owner': 'class Owner { public: Owner() {} ~Owner() {} }; int main() { Owner data[2] = {Owner(), Owner()}; return 0; }',
-                           'tls': 'thread_local mut int value = 3; int main() { return value; }'}.items():
+        for name, text in {'polymorphic-owner': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }',
+                           'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; return data[0].read(); }',
+                           'polymorphic-tls': 'class Owner { public: virtual int read() { return 0; } }; thread_local Owner value{}; int main() { return value.read(); }'}.items():
             source = work / f'reject-{name}.gti'
             source.write_text(text)
             output = work / f'reject-{name}'

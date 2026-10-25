@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/runtime_thread.h"
+#include "gti/runtime_execution.h"
 
 #include <exception>
 #include <utility>
@@ -19,15 +20,7 @@ class worker_failure_handoff final {};
 // The callback executes the exact verified MIR cleanup recipe and reports one
 // ordinary failure through `failure`. A cleanup emergency may use the existing
 // private worker handoff; it never escapes the runtime thread boundary.
-struct thread_local_cleanup_entry {
-  thread_local_cleanup_entry *previous = nullptr;
-  void *storage = nullptr;
-  bool (*cleanup)(
-      void *, gti_failure_record_v2 *, const gti_failure_record_v2 *primary,
-      const gti_failure_artifact_descriptor_v1 *primaryArtifact) = nullptr;
-  const gti_failure_artifact_descriptor_v1 *artifact = nullptr;
-  bool registered = false;
-};
+using thread_local_cleanup_entry = gti_thread_local_cleanup_entry_v1;
 
 void register_thread_local_cleanup(thread_local_cleanup_entry *entry) noexcept;
 // Verified hosted entry, managed task entry and dedicated manual-thread entry

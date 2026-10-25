@@ -47,8 +47,10 @@ Reachability reachableProgram(const LoweredProgram &program) {
     if (function.linkage == LanguageLinkage::C &&
         function.definitionKind == MirDefinitionKind::Source)
       body({MirBodyKind::Function, function.id});
-  for (const auto &storage : mir.threadLocalStorage())
+  for (const auto &storage : mir.threadLocalStorage()) {
     body({MirBodyKind::ThreadLocalInitializer, storage.symbol});
+    cleanup(storage.cleanup);
+  }
 
   std::size_t nextBody = 0, nextGenerated = 0;
   while (nextBody < result.bodies.size() ||
