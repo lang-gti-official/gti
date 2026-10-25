@@ -1,5 +1,5 @@
-#include "../src/compiler/llvm/debug_info.h"
 #include "../src/compiler/llvm/abi.h"
+#include "../src/compiler/llvm/debug_info.h"
 #include "../src/compiler/llvm/layout.h"
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
@@ -64,7 +64,8 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
     rejected = true;
   }
   if (!rejected || wrong->getSubprogram())
-    throw std::runtime_error("debug metadata accepted an unrelated LLVM function");
+    throw std::runtime_error(
+        "debug metadata accepted an unrelated LLVM function");
   bool declaration = false;
   for (const auto &candidate : input->program().mir().functionInstances())
     if (candidate.definitionKind == MirDefinitionKind::Declaration) {

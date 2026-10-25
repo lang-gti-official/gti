@@ -62,8 +62,9 @@ extern "C" { int foreign(int value); void install(Unary value); }
                            ->qualifiedName;
     llvm::Function *seed = nullptr;
     if (existing && name == "private_helper") {
-      const auto plan = session.abi().gti(source.returnType, source.parameterTypes,
-                                         source.mayRaiseDefinedFailure);
+      const auto plan =
+          session.abi().gti(source.returnType, source.parameterTypes,
+                            source.mayRaiseDefinedFailure);
       seed = llvm::Function::Create(
           plan.type, llvm::GlobalValue::ExternalLinkage,
           "__gti_native_v" + std::to_string(executionAbiVersion) + "_f" +
@@ -95,9 +96,10 @@ extern "C" { int foreign(int value); void install(Unary value); }
       session.module());
   llvm::IRBuilder<> root(
       llvm::BasicBlock::Create(session.context(), "entry", unknown));
-  root.CreateCall(functions.at("foreign"),
-                  {llvm::Constant::getNullValue(
-                      functions.at("foreign")->getFunctionType()->getParamType(0))});
+  root.CreateCall(
+      functions.at("foreign"),
+      {llvm::Constant::getNullValue(
+          functions.at("foreign")->getFunctionType()->getParamType(0))});
   root.CreateRetVoid();
   bool rejected = false;
   try {
@@ -112,8 +114,7 @@ extern "C" { int foreign(int value); void install(Unary value); }
   const auto *privateFunction = session.module().getFunction(privateName);
   const bool privateInternal =
       !privateFunction || privateFunction->hasInternalLinkage();
-  if (artifact.contents.empty() ||
-      privateInternal == library ||
+  if (artifact.contents.empty() || privateInternal == library ||
       !functions.at("addressed")->hasExternalLinkage() ||
       !functions.at("callback")->hasExternalLinkage() ||
       !functions.at("foreign")->hasExternalLinkage() ||
@@ -137,8 +138,9 @@ void existingSourceObligation() {
     throw std::runtime_error("unverified source obligation fixture");
   Session session(*input, {});
   for (const auto &source : input->program().mir().functionInstances()) {
-    const auto plan = session.abi().gti(source.returnType, source.parameterTypes,
-                                       source.mayRaiseDefinedFailure);
+    const auto plan =
+        session.abi().gti(source.returnType, source.parameterTypes,
+                          source.mayRaiseDefinedFailure);
     auto *function = llvm::Function::Create(
         plan.type, llvm::GlobalValue::ExternalLinkage,
         "__gti_native_v" + std::to_string(executionAbiVersion) + "_f" +
@@ -154,14 +156,15 @@ void existingSourceObligation() {
     rejected = true;
   }
   if (!rejected)
-    throw std::runtime_error("existing source declaration lost its body obligation");
+    throw std::runtime_error(
+        "existing source declaration lost its body obligation");
 }
 
 int main() {
   existingSourceObligation();
-  for (auto level : {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Less,
-                     LlvmCodegenOptimization::Default,
-                     LlvmCodegenOptimization::Aggressive})
+  for (auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Less,
+        LlvmCodegenOptimization::Default, LlvmCodegenOptimization::Aggressive})
     for (bool existing : {false, true}) {
       policy(false, false, existing, level);
       policy(true, false, existing, level);

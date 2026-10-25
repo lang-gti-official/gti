@@ -250,7 +250,8 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     if (mir->definitionKind != MirDefinitionKind::Source)
       return;
     if (!impl->session.hasSourceDefinition(address.owner, function))
-      throw std::logic_error("LLVM debug function does not match its source ABI identity");
+      throw std::logic_error(
+          "LLVM debug function does not match its source ABI identity");
     source = &instance->source;
     name =
         program.findFunctionDeclaration(instance->declaration)->qualifiedName;

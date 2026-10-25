@@ -66,7 +66,8 @@ int main() {
       if (declaration->qualifiedName == "strict")
         strict = session.abi().declareFunction(function.id);
       if (declaration->qualifiedName == "divide")
-        privateName = session.abi().declareFunction(function.id)->getName().str();
+        privateName =
+            session.abi().declareFunction(function.id)->getName().str();
       if (function.entryKind != ProgramEntryKind::None)
         entryName = session.abi().declareFunction(function.id)->getName().str();
     }
@@ -109,7 +110,8 @@ int main() {
     if (privateName.empty() || entryName.empty() ||
         (privateFunction && !privateFunction->hasInternalLinkage()) ||
         !entryFunction || !entryFunction->hasExternalLinkage())
-      throw std::runtime_error("real GTI private/hosted visibility policy failed");
+      throw std::runtime_error(
+          "real GTI private/hosted visibility policy failed");
     if (artifact.kind != BackendArtifactKind::Object ||
         artifact.contents.empty())
       throw std::runtime_error("pipeline did not emit a real object");
@@ -146,6 +148,7 @@ int main() {
     ++levels;
   }
   std::cout << levels
-            << " real pipelines: private/hosted visibility, storage promotion, strict FP, checked "
+            << " real pipelines: private/hosted visibility, storage promotion, "
+               "strict FP, checked "
                "overflow and rejection passed\n";
 }
