@@ -1,0 +1,132 @@
+#include "instrumentation.h"
+
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Module.h>
+#include <llvm/Transforms/Instrumentation/AddressSanitizer.h>
+
+#include <bit>
+#include <stdexcept>
+#include <vector>
+
+namespace lang::native_llvm {
+
+bool instrumentsAddress(InstrumentationMode mode) {
+  switch (mode) {
+  case InstrumentationMode::None:
+  case InstrumentationMode::UndefinedMemory:
+    return false;
+  case InstrumentationMode::Address:
+  case InstrumentationMode::AddressAndUndefinedMemory:
+    return true;
+  }
+  throw std::invalid_argument("invalid LLVM instrumentation mode");
+}
+
+bool instrumentsUndefinedMemory(InstrumentationMode mode) {
+  static_cast<void>(instrumentsAddress(mode));
+  return mode == InstrumentationMode::UndefinedMemory ||
+         mode == InstrumentationMode::AddressAndUndefinedMemory;
+}
+
+std::size_t instrumentUndefinedMemory(llvm::Module &module) {
+  auto &context = module.getContext();
+  const auto &layout = module.getDataLayout();
+  if (layout.isDefault() || layout.isNonIntegralAddressSpace(0))
+    throw std::logic_error(
+        "LLVM memory instrumentation needs an exact native layout");
+  auto *pointer = llvm::PointerType::get(context, 0);
+  auto *integer =
+      llvm::IntegerType::get(context, layout.getPointerSizeInBits(0));
+  auto *i8 = llvm::Type::getInt8Ty(context);
+  auto *i16 = llvm::Type::getInt16Ty(context);
+  auto *i32 = llvm::Type::getInt32Ty(context);
+  auto *source = llvm::StructType::get(context, {pointer, i32, i32});
+  auto *dataType = llvm::StructType::get(context, {source, pointer, i8, i8});
+  auto handler = module.getOrInsertFunction(
+      "__ubsan_handle_type_mismatch_v1_abort",
+      llvm::FunctionType::get(llvm::Type::getVoidTy(context),
+                              {pointer, integer}, false));
+  std::vector<llvm::Instruction *> accesses;
+  for (auto &function : module)
+    if (!function.isDeclaration())
+      for (auto &block : function)
+        for (auto &instruction : block)
+          if (llvm::isa<llvm::LoadInst, llvm::StoreInst>(instruction))
+            accesses.push_back(&instruction);
+  for (auto *access : accesses) {
+    auto *load = llvm::dyn_cast<llvm::LoadInst>(access);
+    auto *store = llvm::dyn_cast<llvm::StoreInst>(access);
+    auto *address =
+        load ? load->getPointerOperand() : store->getPointerOperand();
+    if (address->getType()->getPointerAddressSpace() != 0)
+      throw std::logic_error(
+          "LLVM memory instrumentation requires native address space zero");
+    const auto alignment = load ? load->getAlign() : store->getAlign();
+    llvm::IRBuilder<> ir(access);
+    ir.SetCurrentDebugLocation(access->getDebugLoc());
+    auto *bits = ir.CreatePtrToInt(address, integer);
+    auto *notNull = ir.CreateICmpNE(bits, llvm::ConstantInt::get(integer, 0));
+    auto *aligned = ir.CreateICmpEQ(
+        ir.CreateAnd(bits,
+                     llvm::ConstantInt::get(integer, alignment.value() - 1)),
+        llvm::ConstantInt::get(integer, 0));
+    auto *valid = ir.CreateAnd(notNull, aligned);
+    auto *original = access->getParent();
+    auto *continuation = original->splitBasicBlock(access, "ubsan.memory.ok");
+    original->getTerminator()->eraseFromParent();
+    auto *bad = llvm::BasicBlock::Create(context, "ubsan.memory.bad",
+                                         original->getParent(), continuation);
+    ir.SetInsertPoint(original);
+    ir.CreateCondBr(valid, continuation, bad);
+    ir.SetInsertPoint(bad);
+    auto *name =
+        llvm::ConstantDataArray::getString(context, "'GTI LLVM memory'");
+    auto *descriptorType =
+        llvm::StructType::get(context, {i16, i16, name->getType()});
+    auto *descriptor = new llvm::GlobalVariable(
+        module, descriptorType, true, llvm::GlobalValue::PrivateLinkage,
+        llvm::ConstantStruct::get(descriptorType,
+                                  {ir.getInt16(0xffff), ir.getInt16(0), name}),
+        "gti.ubsan.type");
+    llvm::Constant *filename = llvm::ConstantPointerNull::get(pointer);
+    unsigned line = 0, column = 0;
+    if (const auto location = access->getDebugLoc()) {
+      filename =
+          ir.CreateGlobalString(location->getFilename(), "gti.ubsan.file");
+      line = location.getLine();
+      column = location.getCol();
+    }
+    auto *location = llvm::ConstantStruct::get(
+        source, {filename, ir.getInt32(line), ir.getInt32(column)});
+    // compiler-rt mutates SourceLocation.Column when acquiring a diagnostic.
+    // TypeMismatchData must therefore be writable, unlike its type descriptor.
+    auto *data = new llvm::GlobalVariable(
+        module, dataType, false, llvm::GlobalValue::PrivateLinkage,
+        llvm::ConstantStruct::get(
+            dataType, {location, descriptor,
+                       ir.getInt8(std::countr_zero(alignment.value())),
+                       ir.getInt8(load ? 0 : 1)}),
+        "gti.ubsan.memory");
+    ir.CreateCall(handler, {data, bits});
+    ir.CreateUnreachable();
+  }
+  return accesses.size();
+}
+
+void instrumentAddress(llvm::Module &module,
+                       llvm::ModuleAnalysisManager &analyses) {
+  for (auto &function : module)
+    if (!function.isDeclaration())
+      function.addFnAttr(llvm::Attribute::SanitizeAddress);
+  llvm::AddressSanitizerOptions options;
+  options.Recover = false;
+  options.UseAfterScope = false;
+  analyses.invalidate(module, llvm::PreservedAnalyses::none());
+  llvm::ModulePassManager pipeline;
+  pipeline.addPass(llvm::AddressSanitizerPass(options));
+  pipeline.run(module, analyses);
+}
+
+} // namespace lang::native_llvm
