@@ -1,0 +1,37 @@
+#include <std/atomic>
+#include <std/mutex>
+
+std::atomic<int32_t> drops{0};
+
+class Payload {
+  int32_t id;
+
+public:
+  Payload(int32_t value) : id(value) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  int32_t read() { return this.id; }
+  ~Payload() {
+    drops.store(drops.load() + this.id);
+  }
+};
+
+int main() {
+  {
+    std::mutex<Payload> first{Payload(7)};
+    {
+      std::mutex_guard<Payload> guard = first.lock();
+      if (guard.get().read() != 7) { return 1; }
+    }
+    std::mutex<Payload> second = std::move(first);
+    if (drops.load() != 0) { return 2; }
+    {
+      std::mutex_guard<Payload> guard = second.lock();
+      std::mutex_guard<Payload> moved = std::move(guard);
+      if (moved.get().read() != 7) { return 3; }
+    }
+    // Moving an owner or a guard must not execute payload cleanup.
+    if (drops.load() != 0) { return 4; }
+  }
+  return drops.load() == 7 ? 0 : 5;
+}
