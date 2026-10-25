@@ -1677,6 +1677,19 @@ target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCL
 target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
 add_test(NAME llvm_target_layout_abi COMMAND gti_llvm_session_tests)
 
+add_executable(gti_llvm_hosted_contract_tests llvm_hosted_contract_tests.cpp)
+target_include_directories(gti_llvm_hosted_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_hosted_contract_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
+add_test(NAME llvm_hosted_contracts
+         COMMAND gti_llvm_hosted_contract_tests "${PROJECT_SOURCE_DIR}")
+set_tests_properties(llvm_hosted_contracts PROPERTIES TIMEOUT 180)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_hosted_execution
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_hosted_execution_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_hosted_execution PROPERTIES TIMEOUT 300)
+endif()
+
 add_executable(gti_runtime_execution_tests runtime_execution_tests.cpp)
 target_link_libraries(gti_runtime_execution_tests PRIVATE gti_runtime)
 add_test(NAME runtime_execution_boundary COMMAND gti_runtime_execution_tests)
