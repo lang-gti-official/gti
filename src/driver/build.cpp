@@ -112,7 +112,13 @@ bool darwinDeploymentArgument(std::string_view argument) {
   const auto changesDeployment = [](std::string_view component) {
     const auto option = component.substr(0, component.find('='));
     return (option.starts_with("-m") && option.ends_with("-version-min")) ||
-           (option.starts_with('-') && option.ends_with("_version_min")) ||
+           option == "-macosx_version_min" || option == "-macos_version_min" ||
+           option == "-iphoneos_version_min" ||
+           option == "-ios_simulator_version_min" ||
+           option == "-tvos_version_min" ||
+           option == "-tvos_simulator_version_min" ||
+           option == "-watchos_version_min" ||
+           option == "-watchos_simulator_version_min" ||
            option == "-mtargetos" || option == "-platform_version" ||
            option == "-sdk_version" || option == "-target-sdk-version" ||
            option == "-darwin-target-variant" ||

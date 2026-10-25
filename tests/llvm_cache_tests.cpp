@@ -220,15 +220,18 @@ void runChecks(const std::filesystem::path &self) {
     }
   }
   auto nonDeployment = Policy{};
+  const auto libraryDirectory = temporary.root / "library_version_min";
+  std::filesystem::create_directories(libraryDirectory);
   nonDeployment.native.trailingArguments = {
-      "-DGTI_CACHE_DEPLOYMENT_MARKER=-mmacosx-version-min=11.0"};
+      "-DGTI_CACHE_DEPLOYMENT_MARKER=-mmacosx-version-min=11.0",
+      "-L" + libraryDirectory.string()};
   nonDeployment.native.compilerArguments = {"-mmacosx-version-min=11.0"};
   const auto nonDeploymentBuild = build(nonDeployment);
   checkBuild(nonDeploymentBuild);
   require(nonDeploymentBuild.cache.status == BuildCacheStatus::Bypassed &&
               nonDeploymentBuild.nativeProcess,
-          "non-option text and inactive source-compile flags must not be "
-          "mistaken for LLVM final-link deployment overrides");
+          "non-option text, search paths and inactive source-compile flags "
+          "must not be mistaken for LLVM final-link deployment overrides");
   execute(17);
 #endif
   std::filesystem::remove(output);
