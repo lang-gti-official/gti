@@ -10170,15 +10170,29 @@ type-parameter construction is erased to MIR identity; a forged executable
 exact-construction intrinsic is rejected by LLVM admission. They are therefore
 verified nonexecuting facts rather than implementation claims.
 
-Five implemented-evidence gaps remain promotion blockers:
+The composition reconciliation registers the payload, callable and memory
+execution producers and closes 34 former evidence gaps with exact source
+profiles. The public checked-arithmetic case observes successful and
+overflowing add, subtract and multiply through C++20/C++23 O3 and native LLVM
+O0-O3; no compiler-private intrinsic is called merely to satisfy the audit.
+The callable profile now includes the owned-composition fixture, so consuming
+invocation is observed rather than inferred from storage. The memory profile
+contains an isolated typed-to-void-to-same-typed conversion. Its admission
+probe exposed and corrected the stale intrinsic-based classifier: verified
+raw-pointer conversions are effect-free `Compute/Convert` operations, while
+numeric conversions remain an explicit nonmatch. The central raw-pointer
+contract still rejects missing operands, nonpointer inputs, const removal,
+unrelated concrete pointees, loans, raw-memory claims and mutable result
+access.
+
+Three implemented-evidence gaps remain promotion blockers:
 `MirHostedStartupOperationKind.EndFailureCleanup`,
-`MirHostedStartupOperationKind.TerminateCleanupFailure`,
-`IntrinsicKind.IntegerAddOverflows`,
-`IntrinsicKind.IntegerSubtractOverflows` and
-`IntrinsicKind.IntegerMultiplyOverflows`. The hosted cleanup rows require the
-O-LLVM-12 failure-transport owner. The overflow-query rows require the public
-checked-arithmetic execution surface owned by O-LLVM-07; the compiler-private
-intrinsics are not called directly merely to make the coverage audit pass.
+`MirHostedStartupOperationKind.TerminateCleanupFailure` and
+`CallableBoundary.Owned`. The hosted cleanup rows require the O-LLVM-12
+failure-transport owner. Existing owned closures execute storage, transfer,
+consuming invocation and deterministic cleanup, but no registered executable
+source currently emits the exact `Owned` boundary row; it remains a visible
+gap rather than being inferred from those adjacent facts.
 
 The class gate also checks named moved arguments whose later argument fails,
 including reverse prepared-parameter cleanup, constructor calls that never

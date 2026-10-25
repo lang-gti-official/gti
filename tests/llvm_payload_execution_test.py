@@ -2,12 +2,14 @@
 """Native closed sums: exact alternatives, transport, loans and cleanup."""
 
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from llvm_evidence_manifest import build_manifest
 
 
 RESOURCE = r'''
@@ -450,6 +452,26 @@ int main() {
   return 0;
 }
 ''',
+    "checked-arithmetic": r'''
+#include <std/numeric>
+int main() {
+  auto add_success = std::checked_add(int8_t(20), int8_t(22));
+  auto add_overflow = std::checked_add(int8_t(127), int8_t(1));
+  auto sub_success = std::checked_sub(int8_t(44), int8_t(2));
+  auto sub_overflow = std::checked_sub(int8_t(-128), int8_t(1));
+  auto mul_success = std::checked_mul(int8_t(6), int8_t(7));
+  auto mul_overflow = std::checked_mul(uint8_t(200), uint8_t(2));
+  if (add_success.value_or(int8_t(0)) != int8_t(42) ||
+      add_overflow.has_value() ||
+      sub_success.value_or(int8_t(0)) != int8_t(42) ||
+      sub_overflow.has_value() ||
+      mul_success.value_or(int8_t(0)) != int8_t(42) ||
+      mul_overflow.has_value()) {
+    return 1;
+  }
+  return 0;
+}
+''',
     "example": None,
 }
 
@@ -458,7 +480,38 @@ int main() {
 COMPARATOR_GAPS = {"conditional-publication"}
 
 
+def evidence_cases(root: Path) -> dict[str, str]:
+    cases = {
+        name: ((root / "examples/llvm/payloads-and-unions.gti").read_text(
+            encoding="utf-8") if source is None else source)
+        for name, source in CASES.items()
+    }
+    cases.update({name: source for name, (source, _, _) in FAILURES.items()})
+    return cases
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    del root
+    return {
+        "payload-core": tuple(CASES) + tuple(FAILURES),
+        "payload-packs": ("concrete-packs",),
+        "payload-access-failures": (
+            "empty-optional", "inactive-value", "inactive-error"),
+        "checked-arithmetic": ("checked-arithmetic",),
+    }
+
+
+def evidence_manifest(root: Path) -> dict:
+    return build_manifest(
+        "llvm_payload_execution", evidence_cases(root), evidence_profiles(root),
+        {"example": "examples/llvm/payloads-and-unions.gti"})
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
+        print(json.dumps(evidence_manifest(Path(sys.argv[2]).resolve()),
+                         sort_keys=True))
+        return
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selected = sys.argv[3] if len(sys.argv) > 3 else None
     if selected and selected not in CASES and selected not in FAILURES and selected not in REJECT:

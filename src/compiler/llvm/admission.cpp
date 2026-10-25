@@ -626,20 +626,10 @@ public:
         [&](const auto &operand) { return field(operand.place); });
   }
   bool nativeAddressConversion(const MirInstruction &stage) const {
-    if (stage.intrinsic != IntrinsicKind::RawPointerConversion ||
-        stage.kind != MirInstructionKind::Call || stage.operands.size() != 1 ||
-        stage.parameterTypes !=
-            std::vector<SemanticType>{stage.operands[0].type} ||
-        stage.info.type.kind != SemanticType::RawPointer ||
-        stage.info.type.arguments.size() != 1)
+    if (!mir_detail::rawPointerConversion(stage))
       return false;
     const auto &source = stage.operands[0].type;
     const auto &target = stage.info.type;
-    if (source.kind != SemanticType::RawPointer ||
-        source.arguments.size() != 1 ||
-        (source.pointerAccess == AccessMode::ReadOnly &&
-         target.pointerAccess == AccessMode::Mutable))
-      return false;
     return (source.arguments[0] == SemanticType::Void ||
             nativeValue(source.arguments[0])) &&
            (target.arguments[0] == SemanticType::Void ||
@@ -1266,6 +1256,8 @@ public:
               stage.operation == MirOperation::PayloadConstruct ||
                       stage.operation == MirOperation::PayloadExtract
                   ? classShape(mirInstructionEnumType(stage))
+              : nativeAddressConversion(stage) && validRaw
+                  ? std::optional(Shape::NativeObjectAddress)
               : (nativeRawIndex(stage) && validRaw) || classArithmetic
                   ? std::optional(Shape::NativeClassRawAccess)
               : scalarMutation ? std::optional(Shape::InPlaceScalarMutation)
@@ -1304,9 +1296,7 @@ public:
           }
           add(stage.intrinsic,
               callableIntrinsic ? callableIntrinsic
-              : nativeAddressConversion(stage) && validRaw
-                  ? std::optional(Shape::NativeObjectAddress)
-              : typedMemory ? std::optional(Shape::NativeMemoryOperation)
+              : typedMemory     ? std::optional(Shape::NativeMemoryOperation)
               : erasedReference(stage) ? std::optional(Shape::ErasedReference)
               : passiveTextViewAddress(stage) || passiveCStringAddress(stage)
                   ? std::optional(Shape::CountedText)

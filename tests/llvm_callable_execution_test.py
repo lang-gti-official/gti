@@ -2,6 +2,7 @@
 """Callable execution, cleanup, borrow and optimized-cost evidence."""
 
 from pathlib import Path
+import json
 import os
 import statistics
 import subprocess
@@ -10,6 +11,7 @@ import tempfile
 import time
 
 from backend_execution import Endpoint, execute
+from llvm_evidence_manifest import build_manifest
 
 
 SUCCESS_CASES = (
@@ -17,6 +19,7 @@ SUCCESS_CASES = (
     "llvm_callable_pointer",
     "llvm_callable_ref",
     "llvm_callable_owned",
+    "llvm_callable_owned_composition",
     "function_item_pack_contracts",
     "lambda_pack_invocation",
     "nested_callable_results",
@@ -52,6 +55,31 @@ ENDPOINTS = (
     Endpoint("llvm", "O3"),
 )
 LLVM_ENDPOINTS = ENDPOINTS[1:]
+
+
+def evidence_case_names() -> tuple[str, ...]:
+    return (SUCCESS_CASES + LLVM_ONLY_SUCCESS_CASES + tuple(FAILURE_CASES) +
+            tuple(LLVM_ONLY_FAILURE_CASES))
+
+
+def evidence_cases(root: Path) -> dict[str, str]:
+    return {
+        name: (root / "tests/fixtures" / f"{name}.gti").read_text(
+            encoding="utf-8")
+        for name in evidence_case_names()
+    }
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    del root
+    return {"callable-core": evidence_case_names()}
+
+
+def evidence_manifest(root: Path) -> dict:
+    return build_manifest(
+        "llvm_callable_execution", evidence_cases(root), evidence_profiles(root),
+        {name: f"tests/fixtures/{name}.gti"
+         for name in evidence_case_names()})
 
 
 def run_case(
@@ -167,6 +195,10 @@ def cost_evidence(gti: Path, root: Path, work: Path, env: dict[str, str]):
 
 
 def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
+        print(json.dumps(evidence_manifest(Path(sys.argv[2]).resolve()),
+                         sort_keys=True))
+        return
     gti = Path(sys.argv[1]).resolve()
     root = Path(sys.argv[2]).resolve()
     env = os.environ.copy()

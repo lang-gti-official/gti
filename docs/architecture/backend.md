@@ -4970,6 +4970,21 @@ explicitly non-exact. Structural completeness and observed execution are
 reported separately. Production promotion requires both on an exact source;
 an all-implemented ledger with unrun tests is never promotion-ready.
 
+The payload, callable and memory execution gates participate in that same
+manifest registry. Their profiles are derived from the case dictionaries the
+CTest commands actually execute, including payload pack/access failures,
+public checked arithmetic, callable transfer/cleanup and the memory/lifetime
+matrix. A checked source profile is therefore not a hand-maintained alias for
+some other test. Explicit raw-pointer conversion reaches verified MIR as an
+effect-free `Compute/Convert`, not as an executable intrinsic call. Admission
+reuses the central `rawPointerConversion` verifier before attaching the
+`NativeObjectAddress` witness: both operands remain exact raw-pointer values,
+the conversion cannot add mutable access, concrete pointees must match unless
+one side is `void`, and each non-void pointee must have a supported native
+representation. Numeric conversions and malformed pointer conversions cannot
+borrow that witness. This corrects coverage classification for existing
+language behavior; it does not add a cast or widen the source conversion rule.
+
 The inventory records types and nested arguments, access and ownership modes,
 exact instructions and their failure/cleanup/publication shapes, generated
 dependencies, native signatures, program initialization and thread-local data,

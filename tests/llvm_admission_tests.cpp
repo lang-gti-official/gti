@@ -1502,6 +1502,47 @@ int main() { Owned value{}; int data[1] = {1}; return data == data ? 0 : 1; }
 }
 
 void testShapeWitnesses() {
+  const auto addressConversion = lang::planLlvmAdmission(lower(R"(
+struct Reading { int value = 42; };
+using Erased = void*;
+using Typed = Reading*;
+int main() {
+  mut Reading owner{};
+  Typed address = &owner;
+  Erased erased = Erased(address);
+  Typed restored = Typed(erased);
+  return restored == address ? 0 : 1;
+}
+)"));
+  std::size_t addressConversions = 0;
+  for (const auto &use : addressConversion.requirements())
+    if (use.required && use.entry->family == "MirOperation" &&
+        use.entry->name == "Convert" && use.implementedShape &&
+        use.implementedShape->name == "NativeObjectAddress")
+      addressConversions += use.occurrences;
+  expect(addressConversion.admitted() && addressConversions == 2,
+         "verified typed-to-void-to-same-typed conversion uses the exact "
+         "native object-address witness");
+
+  const auto numericConversion = lang::planLlvmAdmission(lower(R"(
+int widen(int8_t value) { return int(value); }
+int main() { return widen(int8_t(0)); }
+)"));
+  std::size_t numericConverts = 0;
+  bool numericObjectAddress = false;
+  for (const auto &use : numericConversion.requirements())
+    if (use.required && use.entry->family == "MirOperation" &&
+        use.entry->name == "Convert") {
+      numericConverts += use.occurrences;
+      numericObjectAddress |=
+          use.implementedShape &&
+          use.implementedShape->name == "NativeObjectAddress";
+    }
+  expect(numericConversion.admitted() && numericConverts != 0 &&
+             !numericObjectAddress,
+         "ordinary numeric Convert does not borrow the object-address "
+         "witness");
+
   const auto directConsuming = lang::planLlvmAdmission(lower(R"(
 class Value { public: int read() && { return 42; } };
 int main() { return Value().read() - 42; }
