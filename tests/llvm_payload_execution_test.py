@@ -314,11 +314,14 @@ struct Reading {
   int read() { return this.value; }
 };
 T create<T, Args...>(Args... args) { return T(args...); }
+int add(int left, int right) { return left + right; }
+int prefixed<Args...>(int prefix, Args... args) { return prefix + add(args...); }
 int main() {
   Pair pair = create<Pair>(20, 22);
   Unit empty = create<Unit>();
   int value = 42;
   Reading reading = create<Reading, int&>(value);
+  if (prefixed<int, int>(2, 20, 20) != 42) { return 4; }
   return pair.sum() == 42 && reading.read() == 42 ? 0 : 1;
 }
 ''',

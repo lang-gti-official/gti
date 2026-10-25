@@ -5,6 +5,7 @@
 #include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/mir_verifier.h"
 #include "gti/runtime_execution.h"
 #include "gti/runtime_failure.h"
 
@@ -21,6 +22,14 @@
 #include <iterator>
 #include <limits>
 #include <stdexcept>
+
+namespace lang {
+struct MirProgramTestAccess {
+  static std::vector<MirFunctionInstance> &functions(MirProgram &program) {
+    return program.functions;
+  }
+};
+} // namespace lang
 
 namespace {
 using namespace lang;
@@ -896,6 +905,103 @@ int main() {
   std::filesystem::remove_all(root);
 }
 
+void testConcretePackAliases() {
+  namespace fs = std::filesystem;
+  const auto root =
+      fs::temp_directory_path() /
+      ("gti-llvm-pack-aliases-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directories(root);
+  struct Cleanup {
+    fs::path root;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(root, ignored);
+    }
+  } cleanup{root};
+  for (const bool projected : {false, true}) {
+    auto frontend = Frontend().analyze("pack-aliases.gti", R"(
+struct Pair {
+  int left;
+  int right;
+  Pair(int left, int right) : left(left), right(right) {}
+  int sum() { return this.left + this.right; }
+};
+T create<T, Args...>(Args... args) { return T(args...); }
+int main() { Pair value = create<Pair>(20, 22); return value.sum() == 42 ? 0 : 1; }
+)");
+    expect(frontend.canGenerateCode(), "pack alias source fixture is valid");
+    bool duplicated = false;
+    for (auto &function : MirProgramTestAccess::functions(frontend.mir)) {
+      const MirPlace *selected = nullptr;
+      for (const auto &place : function.body.places) {
+        if (place.root != MirPlaceRootKind::Binding)
+          continue;
+        if ((!projected && place.projections.empty() &&
+             place.type.kind == SemanticType::TypePack) ||
+            (projected && place.projections.size() == 1 &&
+             place.projections[0].kind == MirProjectionKind::PackElement)) {
+          selected = &place;
+          break;
+        }
+      }
+      if (selected) {
+        auto alias = *selected;
+        alias.id = function.body.places.size() + 1;
+        function.body.places.push_back(std::move(alias));
+        duplicated = true;
+        break;
+      }
+    }
+    expect(duplicated, "fixture retains a concrete pack root/element");
+    const auto checked = verifyMirProgram(frontend.mir);
+    for (const auto &error : checked.errors)
+      std::cerr << error.message << '\n';
+    expect(checked.valid(), "compatible duplicate pack views are verified MIR");
+    if (!checked.valid())
+      continue;
+    std::vector<LoweredProgramIssue> issues;
+    const auto program = verifiedLoweredProgram(
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+    expect(program.has_value(), "duplicate views survive the sealed boundary");
+    if (!program)
+      continue;
+    std::cout << (projected ? "projected" : "root")
+              << " pack alias: MIR and sealed snapshot verified\n";
+    for (const auto level :
+         {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
+      try {
+        Session session(*program, {.optimization = level});
+        const auto admission = planLlvmAdmission(*program);
+        expect(admission.admitted(),
+               "concrete pack aliases have native admission");
+        lowerScalarProgram(session, admission);
+        const auto object = session.emitObject();
+        const auto path = root / "probe.o";
+        expect(driver::writeArtifact(path, object.contents) ==
+                   driver::ArtifactWriteStatus::Success,
+               "write concrete pack alias object");
+        driver::NativeInputs inputs;
+        inputs.finalLibraryFiles.push_back(
+            driver::discoverToolchainLayout(nullptr).runtimeLibrary);
+        const auto executable = root / "probe";
+        const auto linked =
+            driver::NativeToolchain().invoke(driver::NativeLinkRequest(
+                driver::discoverNativeCompiler(), path, executable, inputs));
+        expect(linked.succeeded(), "link concrete pack alias source program");
+        if (linked.succeeded())
+          expect(driver::invokeProcess({executable.string()}).succeeded(),
+                 "duplicate views preserve distinct incoming pack lanes");
+      } catch (const std::exception &error) {
+        std::cerr << (projected ? "projected" : "root")
+                  << " pack alias: " << error.what() << '\n';
+        expect(false, "verified aliases must not consume additional ABI lanes");
+      }
+    }
+  }
+}
+
 void testExecutionCAbi() {
   const auto root =
       std::filesystem::temp_directory_path() /
@@ -954,14 +1060,19 @@ int main(void) {
 }
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
   try {
+    if (argc == 2 && std::string_view(argv[1]) == "--pack-aliases") {
+      testConcretePackAliases();
+      return failures == 0 ? 0 : 1;
+    }
     const auto input = fixture();
     testLayoutAndAbi(input);
     testInvalidModule(input);
     testDiagnostics(input);
     testObjectHandoff(input);
     testClassBodyComponent();
+    testConcretePackAliases();
     testExecutionCAbi();
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';
