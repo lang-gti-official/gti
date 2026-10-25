@@ -167,26 +167,34 @@ void runChecks(const std::filesystem::path &self) {
   const auto executable = read(output);
   const auto executableMode = std::filesystem::status(output).permissions();
   execute(17);
-  auto explicitTarget = Policy{};
-  explicitTarget.native.targetPolicy.sysroot = "/";
-  const auto targetRejected = build(explicitTarget);
-  require(!targetRejected.succeeded() && !targetRejected.nativeProcess &&
-              targetRejected.cache.status == BuildCacheStatus::Bypassed &&
-              targetRejected.driverDiagnostic.value_or("").find(
-                  "matching target-built runtime") != std::string::npos &&
-              read(output) == executable,
-          "uncoordinated native target policy must reject before cache/link "
-          "publication");
+  for (const bool explicitTriple : {false, true}) {
+    auto explicitTarget = Policy{};
+    if (explicitTriple)
+      explicitTarget.native.targetPolicy.triple = "x86_64-unknown-linux-gnu";
+    else
+      explicitTarget.native.targetPolicy.sysroot = "/";
+    const auto targetRejected = build(explicitTarget);
+    require(!targetRejected.succeeded() && !targetRejected.nativeProcess &&
+                targetRejected.cache.status == BuildCacheStatus::Bypassed &&
+                targetRejected.driverDiagnostic.value_or("").find(
+                    "matching target-built runtime") != std::string::npos &&
+                read(output) == executable,
+            "uncoordinated native target policy must reject before cache/link "
+            "publication");
+  }
 #if defined(__APPLE__)
-  setenv("MACOSX_DEPLOYMENT_TARGET", "11.0", 1);
-  const auto deploymentRejected = build();
-  unsetenv("MACOSX_DEPLOYMENT_TARGET");
-  require(!deploymentRejected.succeeded() &&
-              !deploymentRejected.nativeProcess &&
-              deploymentRejected.cache.status == BuildCacheStatus::Bypassed &&
-              read(output) == executable,
-          "deployment overrides must not publish objects/runtime built for a "
-          "different minimum OS");
+  for (const char *name :
+       {"MACOSX_DEPLOYMENT_TARGET", "SDKROOT", "DEVELOPER_DIR"}) {
+    setenv(name, "uncoordinated-policy", 1);
+    const auto deploymentRejected = build();
+    unsetenv(name);
+    require(!deploymentRejected.succeeded() &&
+                !deploymentRejected.nativeProcess &&
+                deploymentRejected.cache.status == BuildCacheStatus::Bypassed &&
+                read(output) == executable,
+            "deployment/SDK overrides must not publish objects/runtime built "
+            "for a different target policy");
+  }
 #endif
   std::filesystem::remove(output);
   auto retained = Policy{};

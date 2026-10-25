@@ -128,9 +128,19 @@ def main():
         run(["cmake", "--build", consumer, "--target", "gti_installed_llvm_cache",
              "--parallel", "2"], root, environment)
         run([consumer / "gti_installed_llvm_cache", gti], root, environment)
+        coexistence = root / "coexistence-build"
+        configure[configure.index("-S") + 1] = source / "tests/installed_library_smoke"
+        configure[configure.index("-B") + 1] = coexistence
+        run(configure, root, environment)
+        run(["cmake", "--build", coexistence, "--target",
+             "gti_installed_llvm_clang_coexistence_smoke", "--parallel", "2"],
+            root, environment)
+        run(["ctest", "--test-dir", coexistence, "--output-on-failure",
+             "--no-tests=error", "--parallel", "1",
+             "-R", "^installed_llvm_clang_coexistence$"], root, environment)
     channel = "bundled" if cache.get("GTI_BUNDLE_LLVM") == "ON" else "system"
     print(f"Relocated {channel}-LLVM toolchain archive, resource provenance, "
-          "project workflows and installed driver cache passed")
+          "project workflows, installed driver cache and LLVM/libclang coexistence passed")
     return 0
 
 
