@@ -93,19 +93,20 @@ std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
         "LLVM debug metadata emission is not implemented yet (O-LLVM-14)");
   initializeTarget();
   const llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
+#if LLVM_VERSION_MAJOR >= 21
+  const auto &machineTriple = triple;
+#else
+  const auto machineTriple = triple.str();
+#endif
   std::string error;
-  const auto *registered = llvm::TargetRegistry::lookupTarget(triple, error);
+  const auto *registered =
+      llvm::TargetRegistry::lookupTarget(machineTriple, error);
   if (!registered)
     throw std::runtime_error("LLVM target lookup failed: " + error);
   llvm::TargetOptions targetOptions;
   targetOptions.AllowFPOpFusion = llvm::FPOpFusion::Strict;
   // No fast-math flags or function attributes are supplied. LLVM 23 removed
   // older target-wide fast-math toggles in favor of those per-operation facts.
-#if LLVM_VERSION_MAJOR >= 21
-  const auto &machineTriple = triple;
-#else
-  const auto machineTriple = triple.str();
-#endif
   std::unique_ptr<llvm::TargetMachine> machine(registered->createTargetMachine(
       machineTriple, "generic", "", targetOptions, llvm::Reloc::PIC_,
       std::nullopt, codegenLevel(options.optimization)));
