@@ -1,6 +1,7 @@
 #include "body.h"
 #include "failure.h"
 #include "lifetimes.h"
+#include "parameter_packs.h"
 #include "payloads.h"
 #include "placement.h"
 #include "places.h"
@@ -16,6 +17,38 @@
 
 namespace lang::native_llvm {
 namespace {
+
+ConcreteParameterPlan parameterPlan(const MirProgram &program,
+                                    MirBodyAddress address,
+                                    const MirBody &body) {
+  const std::vector<HirBindingId> *bindings = nullptr;
+  const std::vector<SemanticType> *types = nullptr;
+  if (address.kind == MirBodyKind::Function) {
+    const auto *owner = program.findFunctionInstance(address.owner);
+    if (owner && &owner->body == &body) {
+      bindings = &owner->parameterBindings;
+      types = &owner->parameterTypes;
+    }
+  } else if (address.kind == MirBodyKind::Constructor) {
+    const auto *owner = program.findConstructorInstance(address.owner);
+    if (owner && &owner->body == &body) {
+      bindings = &owner->parameterBindings;
+      types = &owner->parameterTypes;
+    }
+  } else {
+    static const std::vector<HirBindingId> emptyBindings;
+    static const std::vector<SemanticType> emptyTypes;
+    bindings = &emptyBindings;
+    types = &emptyTypes;
+  }
+  if (!bindings || !types)
+    throw std::logic_error("LLVM body lost its exact parameter facts");
+  auto result = planConcreteParameters(*types, *bindings, body);
+  if (!result)
+    throw BackendUnsupportedError(
+        "LLVM concrete parameters lost their exact verified ABI mapping");
+  return std::move(*result);
+}
 
 class Bodies final {
 public:
@@ -47,7 +80,8 @@ public:
   Body(Session &session, Failures &failures, Lifetimes &lifetimes,
        ThreadLocals &threadLocals, llvm::Function &function,
        const MirBody &body, FunctionAbi abi,
-       std::span<const HirBindingId> parameters,
+       std::span<const ParameterLane> parameters,
+       std::span<const ConcretePackParameter> packs,
        const std::map<SymbolId, llvm::GlobalVariable *> &globals,
        std::function<llvm::Function *(MirBodyAddress)> findFunction,
        std::function<FunctionAbi(MirBodyAddress)> bodyAbi,
@@ -61,10 +95,12 @@ public:
                   guard(condition, outcome);
                 }),
         findFunction(std::move(findFunction)), values(body.values.size() + 1),
-        memory(session, ir, body, values,
-               [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
-                 guard(condition, outcome);
-               }),
+        memory(
+            session, ir, body, values,
+            [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
+              guard(condition, outcome);
+            },
+            packs),
         channels(body.failureRecords.size() + 1),
         blocks(body.blocks.size() + 1), live(body.dropObligations.size() + 1),
         placement(session.program().mir(), body) {
@@ -926,7 +962,7 @@ private:
     }
   }
 
-  void emit(std::span<const HirBindingId> parameters) {
+  void emit(std::span<const ParameterLane> parameters) {
     auto *entry =
         llvm::BasicBlock::Create(session.context(), "entry", &function);
     ir.SetInsertPoint(entry);
@@ -939,24 +975,12 @@ private:
             header.CreatePHI(session.layouts().get(parameter.type).value, 0);
     }
     memory.allocate(globals);
-    std::vector<HirBindingId> incomingBindings;
-    for (const auto binding : parameters) {
-      const MirPlace *pack = nullptr;
-      for (const auto &place : input.places)
-        if (place.root == MirPlaceRootKind::Binding &&
-            place.binding == binding && place.projections.empty() &&
-            place.type.kind == SemanticType::TypePack &&
-            place.type.concretePack)
-          pack = &place;
-      incomingBindings.insert(incomingBindings.end(),
-                              pack ? pack->type.arguments.size() : 1, binding);
-    }
-    if (incomingBindings.size() !=
-        static_cast<std::size_t>(
-            std::count_if(abi.parameters.begin(), abi.parameters.end(),
-                          [](const auto &parameter) {
-                            return parameter.channel == AbiChannel::Argument;
-                          })))
+    if (parameters.size() != static_cast<std::size_t>(std::count_if(
+                                 abi.parameters.begin(), abi.parameters.end(),
+                                 [](const auto &parameter) {
+                                   return parameter.channel ==
+                                          AbiChannel::Argument;
+                                 })))
       throw std::logic_error(
           "LLVM incoming ABI arguments differ from sealed parameter bindings");
     for (std::size_t index = 0; index < abi.parameters.size(); ++index) {
@@ -976,7 +1000,7 @@ private:
         callerArtifact = argument;
         break;
       case AbiChannel::Argument:
-        memory.parameter(incomingBindings.at(parameter.sourceIndex), argument,
+        memory.parameter(parameters[parameter.sourceIndex], argument,
                          parameter.indirect);
         break;
       case AbiChannel::Receiver:
@@ -1123,21 +1147,17 @@ llvm::Function *Bodies::function(MirBodyAddress address) {
 void Bodies::body(MirBodyAddress address) {
   const auto &input = *findMirBody(session.program().mir(), address);
   const auto plan = signature(address);
-  std::span<const HirBindingId> parameters;
   if (address.kind == MirBodyKind::Function) {
     const auto &declaration =
         *session.program().mir().findFunctionInstance(address.owner);
     if (declaration.definitionKind != MirDefinitionKind::Source)
       return;
-    parameters = declaration.parameterBindings;
-  } else if (address.kind == MirBodyKind::Constructor)
-    parameters = session.program()
-                     .mir()
-                     .findConstructorInstance(address.owner)
-                     ->parameterBindings;
+  }
+  const auto parameters =
+      parameterPlan(session.program().mir(), address, input);
   Body emission(
       session, failures, lifetimes, threadLocals, *function(address), input,
-      plan, parameters, globals,
+      plan, parameters.lanes, parameters.packs, globals,
       [&](MirBodyAddress target) { return function(target); },
       [&](MirBodyAddress target) { return signature(target); }, owner(address));
 }

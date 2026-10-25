@@ -11351,6 +11351,13 @@ or resolve them using source.
   polymorphic model/base layout owned by O-LLVM-10, even without a virtual call.
   Heap-owned field composition requires O-LLVM-08. These remain explicit open
   acceptance dependencies, not silently supported or removed deliverables.
+- **Shared parameter prerequisite:** source optional emplacement needs concrete
+  pack forwarding. Reuse O-LLVM-09's central parameter planner (PR353,
+  `9bc5a6ab110d31a8432db0f1e816014bfdb491f6`) for function/constructor lanes,
+  exact formal admission and compatible duplicate-view coalescing. Remove the
+  earlier body-local cursor/root inference; no separate permanent pack mapper,
+  lambda/capture lowering or new owner schema is introduced. Empty trailing
+  bindings already exist in MIR even when the text printer omits them.
 - **Unlock:** source-defined optional/expected, payload enums, matching and
   propagation in arbitrary user types.
 - **Deliver:** native union overlapping storage and tag/payload layouts for

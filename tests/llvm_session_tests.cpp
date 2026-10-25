@@ -381,8 +381,12 @@ void emitPlaceComponentProbe(Session &session) {
         ir.SetInsertPoint(success);
       });
   places.allocate({});
-  places.parameter(source->parameterBindings[0], function->getArg(0), false);
-  places.parameter(source->parameterBindings[1], function->getArg(1), false);
+  places.parameter({.binding = source->parameterBindings[0],
+                    .type = source->parameterTypes[0]},
+                   function->getArg(0), false);
+  places.parameter({.binding = source->parameterBindings[1],
+                    .type = source->parameterTypes[1]},
+                   function->getArg(1), false);
   auto *storageType =
       llvm::cast<llvm::ArrayType>(session.layouts().get(array->type).storage);
   auto *initial = llvm::ConstantArray::get(
@@ -906,6 +910,25 @@ int main() {
 }
 
 void testConcretePackAliases() {
+  SemanticType empty;
+  empty.kind = SemanticType::TypePack;
+  empty.concretePack = true;
+  const std::vector<SemanticType> noParameters;
+  const std::vector<HirBindingId> noBindings;
+  const std::vector<HirBindingId> emptyBinding{7};
+  expect(concretePackPrefix(noParameters, emptyBinding, 7, empty) == 0,
+         "empty trailing pack retains its exact source formal binding");
+  expect(!concretePackPrefix(noParameters, noBindings, 7, empty),
+         "an unrelated absent binding cannot witness an empty formal pack");
+  auto pair = empty;
+  pair.arguments = {SemanticType::Int32, SemanticType::Int32};
+  const std::vector<HirBindingId> physicalContinuations{7, 0};
+  expect(!concretePackPrefix(pair.arguments, physicalContinuations, 7, pair),
+         "unproduced zero-continuation binding compatibility stays rejected");
+  const std::vector<SemanticType> nonTrailing{pair, SemanticType::Int32};
+  rejects<BackendUnsupportedError>(
+      [&] { static_cast<void>(flattenConcreteParameters(nonTrailing)); },
+      "non-trailing native packs remain rejected");
   namespace fs = std::filesystem;
   const auto root =
       fs::temp_directory_path() /

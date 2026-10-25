@@ -67,7 +67,6 @@ enum class Shape {
   NativePayloadStorage,
   NativeUnionStorage,
   NativeBorrowMetadata,
-  ConcreteParameterPack,
   NativeThreadStorage,
   InPlaceScalarMutation,
   StoredFieldPublication,

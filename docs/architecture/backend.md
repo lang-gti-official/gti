@@ -4734,9 +4734,15 @@ panic, retaining source attribution through source-defined wrappers.
 Concrete variadic parameters remain flattened in the existing private ABI.
 Their MIR pack binding is metadata: each projected element aliases its own
 incoming argument cell, preserving final addresses without a tuple allocation
-or a second aggregate copy. The admission witness requires a concrete input
-binding and absence of runtime pack SSA values. Symbolic packs and whole-pack
-runtime operations remain unsupported. Direct consuming methods similarly use
+or a second aggregate copy. `parameter_packs` is the single shared planner for
+ABI lanes, body entry, place storage and admission. It proves exact owner
+parameter types/bindings and coalesces compatible MIR views by their verified
+identity, never advancing an argument cursor once per view. Even an empty pack
+retains its source formal binding; the text dump's omission is not a different
+owner contract. Absent empty bindings and unproduced zero-continuation forms
+are rejected. TypePack descriptors erase only for exact function/constructor
+formals, while runtime pack SSA values stay forbidden. Symbolic, nested and
+non-trailing native packs remain unsupported. Direct consuming methods similarly use
 their exact selected source target and verified receiver transfer; this does
 not admit erased callables or introduce a separate invocation ABI.
 

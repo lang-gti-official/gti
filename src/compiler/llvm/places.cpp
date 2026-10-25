@@ -6,10 +6,18 @@
 namespace lang::native_llvm {
 
 Places::Places(Session &session, llvm::IRBuilder<> &ir, const MirBody &body,
-               std::vector<llvm::Value *> &values, Scalars::Guard guard)
+               std::vector<llvm::Value *> &values, Scalars::Guard guard,
+               std::span<const ConcretePackParameter> packs)
     : session(session), ir(ir), body(body), values(values),
       guard(std::move(guard)), loans(body.loans.size() + 1),
       loanTypes(body.loans.size() + 1), selectedValues(body.values.size() + 1) {
+  for (const auto &pack : packs) {
+    if (!pack.binding || pack.type.kind != SemanticType::TypePack ||
+        !pack.type.concretePack ||
+        !packParameters.emplace(pack.binding, pack.type).second)
+      throw std::logic_error(
+          "LLVM parameter map contains an invalid concrete pack");
+  }
 }
 
 Places::Key Places::key(const MirPlace &place) {
@@ -27,6 +35,30 @@ llvm::Value *Places::slot(llvm::Type *type) {
       ir.GetInsertBlock()->getParent()->getEntryBlock().begin());
   return entry.CreateAlloca(type);
 }
+std::optional<std::size_t> Places::packElement(const MirPlace &place) const {
+  if (place.root != MirPlaceRootKind::Binding || place.projections.empty() ||
+      place.projections.front().kind != MirProjectionKind::PackElement ||
+      !place.projections.front().constantIndex)
+    return std::nullopt;
+  const auto found = packParameters.find(place.binding);
+  if (found == packParameters.end())
+    return std::nullopt;
+  const auto index =
+      static_cast<std::size_t>(*place.projections.front().constantIndex);
+  if (index >= found->second.arguments.size())
+    throw std::logic_error(
+        "LLVM PackElement projection exceeds its concrete parameter pack");
+  const auto root = std::find_if(
+      body.places.begin(), body.places.end(), [&](const MirPlace &candidate) {
+        return candidate.root == MirPlaceRootKind::Binding &&
+               candidate.binding == place.binding &&
+               candidate.projections.empty() && candidate.type == found->second;
+      });
+  if (root == body.places.end())
+    throw std::logic_error(
+        "LLVM PackElement projection lost its exact parameter root");
+  return index;
+}
 void Places::allocate(
     const std::map<SymbolId, llvm::GlobalVariable *> &globals) {
   for (const auto &place : body.places) {
@@ -42,10 +74,12 @@ void Places::allocate(
         !globals.contains(place.symbol))
       throw BackendUnsupportedError(
           "LLVM symbol place requires declared global storage");
-    if (place.type.kind == SemanticType::TypePack && place.type.concretePack &&
-        place.root == MirPlaceRootKind::Binding) {
-      roots.try_emplace(key(place), Root{nullptr, place.type});
-      packParameters.try_emplace(key(place), place.type.arguments.size());
+    if (place.root == MirPlaceRootKind::Binding &&
+        place.type.kind == SemanticType::TypePack) {
+      const auto pack = packParameters.find(place.binding);
+      if (pack == packParameters.end() || pack->second != place.type)
+        throw BackendUnsupportedError(
+            "LLVM TypePack storage requires an exact concrete parameter map");
       continue;
     }
     auto *storage = globals.contains(place.symbol) &&
@@ -124,26 +158,47 @@ llvm::Value *Places::loan(MirLoanId id) {
 void Places::publish(MirLoanId id, llvm::Value *address) {
   ir.CreateStore(address, loans.at(id));
 }
-void Places::parameter(HirBindingId binding, llvm::Value *argument,
+void Places::parameter(const ParameterLane &lane, llvm::Value *argument,
                        bool indirect) {
-  std::optional<std::size_t> packElement;
-  for (const auto &place : body.places) {
-    if (place.root != MirPlaceRootKind::Binding || place.binding != binding ||
-        !place.projections.empty())
-      continue;
-    auto &target = roots.at(key(place));
-    if (target.type.kind == SemanticType::TypePack) {
-      const auto index = packNext[key(place)]++;
-      const auto &element = target.type.arguments.at(index);
-      auto *address = addressValue(session.program().mir(), element) && indirect
-                          ? argument
-                          : slot(session.layouts().get(element).storage);
-      if (address != argument)
-        store(indirect ? load(argument, element) : argument, address, element);
-      packParameters.at(key(place)).at(index) = {address, element};
-      packElement = index;
-      continue;
+  if (lane.packElement) {
+    const auto pack = packParameters.find(lane.binding);
+    if (pack == packParameters.end() ||
+        *lane.packElement >= pack->second.arguments.size() ||
+        pack->second.arguments[*lane.packElement] != lane.type)
+      throw std::logic_error(
+          "LLVM ABI lane disagrees with its concrete parameter pack");
+    if (!lane.materialized)
+      return;
+    Root root{nullptr, lane.type};
+    if (addressValue(session.program().mir(), lane.type) && indirect) {
+      root.address = argument;
+    } else {
+      root.address = slot(session.layouts().get(lane.type).storage);
+      store(indirect ? load(argument, lane.type) : argument, root.address,
+            lane.type);
     }
+    if (!packElements.emplace(std::pair(lane.binding, *lane.packElement), root)
+             .second)
+      throw std::logic_error("LLVM concrete pack ABI lane is duplicated");
+    for (const auto &entry : body.loans) {
+      if (!entry.entry || entry.kind == MirLoanKind::Stored ||
+          std::find(entry.carriers.begin(), entry.carriers.end(),
+                    lane.binding) == entry.carriers.end())
+        continue;
+      const auto *source = body.findPlace(entry.source);
+      if (source && packElement(*source) == lane.packElement)
+        publish(entry.id, argument);
+    }
+    return;
+  }
+  for (const auto &place : body.places) {
+    if (place.root != MirPlaceRootKind::Binding ||
+        place.binding != lane.binding || !place.projections.empty())
+      continue;
+    if (place.type != lane.type)
+      throw std::logic_error(
+          "LLVM ABI lane disagrees with its parameter place");
+    auto &target = roots.at(key(place));
     if (addressValue(session.program().mir(), place.type) && indirect)
       target.address = argument;
     else
@@ -152,16 +207,9 @@ void Places::parameter(HirBindingId binding, llvm::Value *argument,
   }
   for (const auto &entry : body.loans)
     if (entry.entry && entry.kind != MirLoanKind::Stored &&
-        std::find(entry.carriers.begin(), entry.carriers.end(), binding) !=
+        std::find(entry.carriers.begin(), entry.carriers.end(), lane.binding) !=
             entry.carriers.end())
-      if (!packElement || [&] {
-            const auto *source = body.findPlace(entry.source);
-            return source && !source->projections.empty() &&
-                   source->projections.front().kind ==
-                       MirProjectionKind::PackElement &&
-                   source->projections.front().constantIndex == packElement;
-          }())
-        publish(entry.id, argument);
+      publish(entry.id, argument);
 }
 Places::Root Places::root(const MirPlace &place) {
   if (auto found = roots.find(key(place)); found != roots.end())
@@ -231,23 +279,17 @@ llvm::Value *Places::index(llvm::Value *address, const SemanticType &type,
 }
 llvm::Value *Places::address(MirPlaceId id) {
   const auto &place = *body.findPlace(id);
-  auto [address, type] = root(place);
-  for (const auto &projection : place.projections) {
+  const auto element = packElement(place);
+  const Root selected =
+      element ? packElements.at({place.binding, *element}) : root(place);
+  auto [address, type] = selected;
+  const auto projections = element ? std::span(place.projections).subspan(1)
+                                   : std::span(place.projections);
+  for (const auto &projection : projections) {
     switch (projection.kind) {
-    case MirProjectionKind::PackElement: {
-      if (type.kind != SemanticType::TypePack || !type.concretePack ||
-          !projection.constantIndex)
-        throw std::logic_error(
-            "LLVM pack projection lost its concrete parameter");
-      const auto &selected =
-          packParameters.at(key(place)).at(*projection.constantIndex);
-      if (!selected.address)
-        throw std::logic_error(
-            "LLVM pack element has no incoming ABI argument");
-      address = selected.address;
-      type = selected.type;
-      break;
-    }
+    case MirProjectionKind::PackElement:
+      throw std::logic_error(
+          "LLVM nested PackElement projection escaped parameter mapping");
     case MirProjectionKind::Field: {
       const auto &owner = session.layouts().instance(type);
       const auto index = session.layouts().fieldIndex(type, projection.field);

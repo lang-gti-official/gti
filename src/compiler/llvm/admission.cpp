@@ -1,6 +1,7 @@
 #include "gti/llvm_admission.h"
 
 #include "coverage.h"
+#include "parameter_packs.h"
 #include "reachability.h"
 #include "text.h"
 
@@ -243,19 +244,6 @@ public:
     return supported(supported, type);
   }
   std::optional<Shape> classShape(const SemanticType &type) const {
-    if (type.kind == SemanticType::TypePack && type.concretePack &&
-        currentBody && nativeValue(type) &&
-        std::none_of(currentBody->values.begin(), currentBody->values.end(),
-                     [](const auto &value) {
-                       return value.info.type.kind == SemanticType::TypePack;
-                     }) &&
-        std::any_of(currentBody->places.begin(), currentBody->places.end(),
-                    [&](const auto &place) {
-                      return place.root == MirPlaceRootKind::Binding &&
-                             place.projections.empty() &&
-                             place.initiallyAvailable && place.type == type;
-                    }))
-      return Shape::ConcreteParameterPack;
     const auto *leaf = &type;
     while ((leaf->kind == SemanticType::Array ||
             leaf->kind == SemanticType::Reference ||
@@ -400,7 +388,52 @@ public:
     ++uses[found->second].occurrences;
   }
 
-  void type(const SemanticType &root) {
+  bool concretePackParameter(const MirPlace &place) const {
+    if (!body || !currentBody || place.root != MirPlaceRootKind::Binding ||
+        !place.projections.empty() ||
+        place.type.kind != SemanticType::TypePack || !place.type.concretePack)
+      return false;
+    const std::vector<HirBindingId> *bindings = nullptr;
+    const std::vector<SemanticType> *parameters = nullptr;
+    if (body->kind == MirBodyKind::Function) {
+      const auto *owner = program.findFunctionInstance(body->owner);
+      if (owner && &owner->body == currentBody) {
+        bindings = &owner->parameterBindings;
+        parameters = &owner->parameterTypes;
+      }
+    } else if (body->kind == MirBodyKind::Constructor) {
+      const auto *owner = program.findConstructorInstance(body->owner);
+      if (owner && &owner->body == currentBody) {
+        bindings = &owner->parameterBindings;
+        parameters = &owner->parameterTypes;
+      }
+    }
+    if (!bindings || !parameters)
+      return false;
+    const auto plan = native_llvm::planConcreteParameters(
+        *parameters, *bindings, *currentBody);
+    return plan && std::any_of(plan->packs.begin(), plan->packs.end(),
+                               [&](const auto &pack) {
+                                 return pack.binding == place.binding &&
+                                        pack.type == place.type;
+                               });
+  }
+
+  void type(const SemanticType &root, bool concretePackMetadata = false) {
+    if (concretePackMetadata) {
+      if (root.kind != SemanticType::TypePack || !root.concretePack)
+        throw std::logic_error(
+            "LLVM concrete-pack metadata lost its verified type");
+      const bool previous = executable;
+      executable = false;
+      add(root.kind);
+      executable = previous;
+      if (!root.arguments.empty())
+        add(Shape::TypeArguments);
+      for (const auto &argument : root.arguments)
+        type(argument);
+      return;
+    }
     std::vector<const SemanticType *> pending{&root};
     while (!pending.empty()) {
       const SemanticType &type = *pending.back();
@@ -582,7 +615,7 @@ public:
               ? std::optional(Shape::PassiveReference)
               : placeClassShape(place));
       add(place.access);
-      type(place.type);
+      type(place.type, concretePackParameter(place));
       traits(place.traits, place.type);
       for (const auto &projection : place.projections)
         add(projection.kind,
