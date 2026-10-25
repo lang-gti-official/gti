@@ -88,6 +88,15 @@ int main() {
         llvm::GlobalValue::ExternalLinkage,
         "__ubsan_handle_type_mismatch_v1_abort", *conflict);
     rejectsUnchanged(*conflict);
+    auto convention = memory(context, triple);
+    auto *handler = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context),
+                                {llvm::PointerType::get(context, 0),
+                                 llvm::Type::getInt64Ty(context)}, false),
+        llvm::GlobalValue::ExternalLinkage,
+        "__ubsan_handle_type_mismatch_v1_abort", *convention);
+    handler->setCallingConv(llvm::CallingConv::Fast);
+    rejectsUnchanged(*convention);
     for (auto mode : {InstrumentationMode::None, InstrumentationMode::Address,
                       InstrumentationMode::UndefinedMemory,
                       InstrumentationMode::AddressAndUndefinedMemory}) {

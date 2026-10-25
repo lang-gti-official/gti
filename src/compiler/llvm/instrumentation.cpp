@@ -66,7 +66,9 @@ std::size_t instrumentUndefinedMemory(llvm::Module &module) {
   constexpr const char *handlerName = "__ubsan_handle_type_mismatch_v1_abort";
   if (const auto *existing = module.getNamedValue(handlerName)) {
     const auto *function = llvm::dyn_cast<llvm::Function>(existing);
-    if (!function || function->getFunctionType() != handlerType)
+    if (!function || function->getFunctionType() != handlerType ||
+        function->getCallingConv() != llvm::CallingConv::C ||
+        function->getAddressSpace() != 0)
       throw std::logic_error("conflicting LLVM undefined-memory handler ABI");
   }
   auto handler = module.getOrInsertFunction(handlerName, handlerType);
