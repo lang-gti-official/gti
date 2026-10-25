@@ -67,10 +67,11 @@ void testLedger() {
            "each entry states its admission boundary");
     pending += entry.state == LlvmCoverageState::Pending;
     nonexecuting += entry.state == LlvmCoverageState::VerifiedNonExecuting;
-    expect(entry.state != LlvmCoverageState::Implemented,
-           "no executable LLVM lowering is claimed by the inventory");
+    if (entry.state == LlvmCoverageState::Implemented)
+      expect(entry.positiveTest == "llvm_scalar_execution",
+             "implemented families name real execution evidence");
   }
-  expect(pending > 400 && nonexecuting > 20,
+  expect(pending > 250 && nonexecuting > 20,
          "the full input vocabulary is inventoried");
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \
@@ -106,7 +107,7 @@ void testLedger() {
 void testSnapshotAndWholeProgram() {
   auto verified = lower(R"(
 int dormant(int value) { return value * 3; }
-int main() { return 0; }
+int main() { int values[2] = {0, 1}; return values[0]; }
 )");
   const auto *identity = &verified.program();
   const auto plan = lang::planLlvmAdmission(
@@ -120,16 +121,16 @@ int main() { return 0; }
              plan.program().target() == verified.program().target(),
          "coverage retains target and selected optimization/debug identity");
   expect(!plan.admitted() && plan.firstUnsupported() != nullptr,
-         "a valid scalar program remains a classified unsupported program");
-  expect(plan.closure() == lang::LlvmAdmissionClosure::AllExecutableBodies,
-         "the first inventory does not pretend to establish reachability");
+         "unsupported reachable storage remains a classified limitation");
+  expect(plan.closure() == lang::LlvmAdmissionClosure::SealedEntryDependencies,
+         "sealed roots and dependencies determine required execution");
   const auto expected = std::count_if(
       plan.program().bodies().begin(), plan.program().bodies().end(),
       [](const auto &body) {
         return body.role == lang::LoweredBodyRole::SourceExecutable;
       });
-  expect(plan.requiredBodies().size() == static_cast<std::size_t>(expected),
-         "every executable body, including dormant helpers, remains required");
+  expect(plan.requiredBodies().size() < static_cast<std::size_t>(expected),
+         "dormant helpers remain inventoried without requiring execution");
   const auto *first = plan.firstUnsupported();
   expect(first->source.source.ends_with("llvm-admission.gti") &&
              first->source.end > first->source.start,
@@ -152,6 +153,14 @@ int main() { return 0; }
 }
 
 void testShapeWitnesses() {
+  const auto indirect = lang::planLlvmAdmission(lower(R"(
+int dormant(int value) { return value * 3; }
+int main() { auto function = [](int value) -> int { return value; }; return function(0); }
+)"));
+  expect(
+      indirect.closure() == lang::LlvmAdmissionClosure::AllExecutableBodies &&
+          !indirect.admitted(),
+      "unknown callable dispatch conservatively retains all executable bodies");
   const auto arrays = lang::planLlvmAdmission(lower(R"(
 int main() { mut int values[2] = {1, 2}; return values[0] - 1; }
 )"));

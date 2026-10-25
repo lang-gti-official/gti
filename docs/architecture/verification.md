@@ -10102,7 +10102,7 @@ ownership or entry-signature inference.
 
 ### Native LLVM Admission Gates
 
-O-LLVM-02 adds the following independent checks while executable LLVM support
+O-LLVM-02 adds the following independent checks while full-language LLVM support
 remains pending:
 
 | Gate | Evidence |
@@ -10111,12 +10111,13 @@ remains pending:
 | `llvm_coverage_exhaustiveness` | A real host compilation accepts the ledger, then rejects an added terminator member without a count sentinel and an added MIR instruction field. It does not parse C++ enums with a second language parser. |
 | `llvm_backend_dependency_controls` | New helper discovery, configured target ownership (including included build files), source-only literal checks, transitive frontend/optimizer/C++ dependencies, hidden sources and public LLVM exposure are tested with mutations. |
 | `backend_execution_protocol` | Backend selection and mode arguments, native versus retained-C++ artifact contracts, build rejection/missing artifacts, and exit/stdout/stderr preservation. Real execution evidence comes from the corpus, not its mock protocol controls. |
-| `llvm_backend_cli`, `driver_pipeline` | Stable `GTI-B0003`, exact optional source spans with entry fallback, unchanged argument validation, no output publication and preservation of an existing destination. |
+| `llvm_backend_cli`, `driver_pipeline` | Native scalar object/executable publication, stable `GTI-B0003` for unsupported required shapes, exact optional source spans with entry fallback, unchanged argument validation and preservation of an existing destination on rejection. |
 | `llvm_backend_foundation`, `backend_lowered_program_rejection`, `llvm_backend_library_boundary` | The sealed input still owns generation; malformed input rejects before admission; the installed/public backend interface remains independent of LLVM headers. |
 | `llvm_target_layout_abi` | O-LLVM-03 scalar/array/recursive-record/C-record/union layouts, target mismatch rejection, private result/status/failure signatures, exact C narrow extensions, versioned runtime-record layouts, recursive declaration/provenance, unresolved-definition and LLVM-verifier rejection, diagnostic isolation, and real binary object publication/linking with bidirectional C scalar oracles at O0/O1/O2/O3. Run on macOS arm64 and Linux x86_64. No GTI instruction lowering is claimed. |
 | `runtime_execution_boundary`, `installed_runtime_execution_boundary` | The real C begin/drain hooks attach the runtime lifetime, preserve reverse registered cleanup and idempotent drain, and link from the installed runtime. |
 | `runtime_abi_inventory` | Clang parses every active runtime C declaration into a target-specific exact-signature/resource/failure/callback inventory retained in the build. Missing declarations and unclassified headers reject. C++ helper wrappers are not C services. |
 | `llvm_clang_coexistence`, `installed_llvm_clang_coexistence` | Both LLVM's private static backend closure and the real libclang C reader load, parse a header and shut down in the same build-tree/installed consumer. Linux ELF archive symbol isolation prevents registry interposition with libclang's shared LLVM. Tests have bounded deadlines. |
+| `llvm_scalar_execution` | Real GTI scalar/control-flow/generic/recursive programs, local/PHI staging, ordered scalar globals, IEEE special values, conversions and wrapping/saturation at native O0/O3 against C++ O3. Checked failures and plain panic compare exact exit/stdout/stderr, including original source attribution. Unsupported owners/arrays/TLS reject without replacing an existing output. Includes the shipped `examples/llvm/scalar-control-flow.gti`. Required on macOS arm64 and Linux x86_64. |
 
 The existing example oracle now uses `backend_execution.py`. Default C++ runs
 retain both native standards, every marker/count/ownership check, and observable

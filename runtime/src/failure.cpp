@@ -909,6 +909,13 @@ extern "C" [[noreturn]] void gti_rt_failure_terminate_cleanup_v1(
 }
 
 extern "C" gti_failure_report_result_v1
+gti_rt_failure_capture_panic_bytes_v2(gti_failure_record_v2 *record,
+                                      const uint8_t *data, uint64_t size) {
+  return gti_rt_failure_capture_panic_v2(
+      record, {reinterpret_cast<const char *>(data), size});
+}
+
+extern "C" gti_failure_report_result_v1
 gti_rt_failure_capture_panic_v2(gti_failure_record_v2 *record,
                                 gti_c_string_view message) {
   if (record == nullptr || record->abi_version != GTI_FAILURE_ABI_VERSION_V2 ||

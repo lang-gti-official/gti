@@ -3,6 +3,7 @@
 #include "gti/llvm_admission.h"
 #include "gti/lowered_program.h"
 #include "gti/target.h"
+#include "llvm/body.h"
 #include "llvm/session.h"
 #include <stdexcept>
 #include <string>
@@ -48,9 +49,8 @@ BackendArtifact LlvmBackend::generate(LoweredProgram program) {
   }
 
   native_llvm::Session session(*verified, options);
-  session.verify();
-  throw BackendUnsupportedError(
-      "executable LLVM lowering is not implemented yet");
+  native_llvm::lowerScalarProgram(session, admission);
+  return session.emitObject();
 }
 
 } // namespace lang

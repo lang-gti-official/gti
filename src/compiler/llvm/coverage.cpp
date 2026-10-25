@@ -42,12 +42,16 @@ static_assert(std::variant_size_v<LoweredGeneratedItemPayload> == 7,
     switch (value) {
 #define LLVM_COVERAGE_ENTRY(Name, Milestone, State, Rule, Predicate)           \
   case Enum::Name: {                                                           \
-    static constexpr LlvmCoverageEntry entry{family,                           \
-                                             #Name,                            \
-                                             Milestone,                        \
-                                             LlvmCoverageState::State,         \
-                                             LlvmNonExecutingRule::Rule,       \
-                                             Predicate};                       \
+    static constexpr LlvmCoverageEntry entry{                                  \
+        family,                                                                \
+        #Name,                                                                 \
+        Milestone,                                                             \
+        LlvmCoverageState::State,                                              \
+        LlvmNonExecutingRule::Rule,                                            \
+        Predicate,                                                             \
+        LlvmCoverageState::State == LlvmCoverageState::Implemented             \
+            ? "llvm_scalar_execution"                                          \
+            : "llvm_admission"};                                               \
     return entry;                                                              \
   }
 #define LLVM_COVERAGE_SENTINEL(Name)                                           \

@@ -38,6 +38,11 @@ llvm::Function *declareRuntimeService(Session &session,
     parameters = {ptr, ptr};
     result = llvm::Type::getInt32Ty(context);
     break;
+  case RuntimeService::CapturePanic:
+    name = "gti_rt_failure_capture_panic_bytes_v2";
+    parameters = {ptr, ptr, llvm::Type::getInt64Ty(context)};
+    result = llvm::Type::getInt32Ty(context);
+    break;
   }
   if (name.empty())
     throw std::logic_error("unknown LLVM runtime service identity");

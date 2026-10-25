@@ -24,13 +24,13 @@ reference compiler's current implementation strategy, not the language contract.
 
 The released compiler checks a complete GTI source graph, builds typed HIR and
 MIR, and seals a backend-neutral `LoweredProgram`. The production C++ backend
-then invokes a native C++ compiler. A separately selectable LLVM backend has
-its build and driver foundation but deliberately emits no program yet:
+then invokes a native C++ compiler. A separately selectable LLVM backend emits
+native scalar/control-flow programs; full-language support is still in progress:
 
 ```text
 source graph -> frontend -> checked AST -> typed HIR/MIR
              -> GTI optimization -> LoweredProgram -> C++ backend -> native compiler
-                                                 \-> LLVM backend (foundation only)
+                                                 \-> LLVM backend -> native object (scalar profile)
 ```
 
 > [!IMPORTANT]
@@ -151,9 +151,9 @@ automatically; that mode also requires an explicit `-DCMAKE_BUILD_TYPE`,
 which LLVM's own build insists on. Release builds force that acquisition
 mode. These are two ways to supply one mandatory dependency. The compiler core
 links only the narrowly approved support libraries (`LLVMSupport`,
-`LLVMTargetParser`, and `LLVMDemangle`). The independent foundational LLVM
-backend additionally owns the exact host `Core`/`nativecodegen` closure and is
-not yet capable of producing an executable. See
+`LLVMTargetParser`, and `LLVMDemangle`). The independent LLVM backend
+additionally owns the exact host `Core`/`nativecodegen`/`Passes` closure and
+currently emits the documented scalar executable profile. See
 [ADR 006](docs/decisions/006-llvm-support-adoption.md) and
 [ADR 031](docs/decisions/031-native-llvm-backend-foundation.md) for the two
 boundaries.

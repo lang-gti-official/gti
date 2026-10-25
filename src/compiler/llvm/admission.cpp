@@ -1,6 +1,7 @@
 #include "gti/llvm_admission.h"
 
 #include "coverage.h"
+#include "reachability.h"
 
 #include <iomanip>
 #include <map>
@@ -114,17 +115,17 @@ public:
       add(Shape::ConditionalDrop);
   }
 
-  void inspect(const LoweredBody &row, const MirBody &mir) {
+  void inspect(const LoweredBody &row, const MirBody &mir, bool needed) {
     body = row.identity.address;
     source = row.identity.source;
-    required = row.role == LoweredBodyRole::SourceExecutable;
+    required = needed && row.role == LoweredBodyRole::SourceExecutable;
     executable = false;
     block = 0;
     instruction = 0;
     add(row.role);
     add(row.identity.definition);
     add(mir.kind);
-    if (!required)
+    if (row.role != LoweredBodyRole::SourceExecutable)
       return;
     executable = true;
     type(mir.returnType);
@@ -353,6 +354,10 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   LlvmAdmissionPlan plan(std::move(program), options);
   const auto &input = plan.program();
   const auto &mir = input.mir();
+  const auto closure = native_llvm::reachableProgram(input);
+  plan.closure_ = closure.conservative
+                      ? LlvmAdmissionClosure::AllExecutableBodies
+                      : LlvmAdmissionClosure::SealedEntryDependencies;
   Inventory inventory(plan.uses);
   inventory.add(Shape::ObjectArtifact);
   inventory.add(input.programKind());
@@ -361,16 +366,20 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     const auto *bodyMir = findMirBody(mir, body.identity.address);
     if (bodyMir == nullptr)
       throw std::logic_error("verified LLVM input lost an inventoried body");
-    if (body.role == LoweredBodyRole::SourceExecutable)
+    if (body.role == LoweredBodyRole::SourceExecutable &&
+        closure.contains(body.identity.address))
       plan.bodies.push_back(body.identity.address);
-    inventory.inspect(body, *bodyMir);
+    inventory.inspect(body, *bodyMir, closure.contains(body.identity.address));
   }
   inventory.body.reset();
   inventory.block = 0;
   inventory.instruction = 0;
   inventory.required = true;
   inventory.executable = true;
+  // Until class/payload execution is admitted, their type requirements on
+  // reachable values reject them. Dormant type inventories remain metadata.
   for (const auto &instance : mir.classInstances()) {
+    inventory.required = closure.conservative;
     const auto *row = input.findClassInstance(instance.id);
     inventory.source = row == nullptr ? SourceSpan{} : row->source;
     inventory.type(instance.type);
@@ -395,6 +404,7 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   }
   for (const auto &function : mir.functionInstances()) {
     inventory.body = MirBodyAddress{MirBodyKind::Function, function.id};
+    inventory.required = closure.contains(*inventory.body);
     if (const auto *row = input.findBody(*inventory.body))
       inventory.source = row->identity.source;
     inventory.add(function.definitionKind);
@@ -434,11 +444,13 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
       inventory.add(Shape::MutableReceiver);
   }
   inventory.body.reset();
+  inventory.required = true;
   for (const auto &storage : mir.foreignStorageDeclarations()) {
     inventory.type(storage.type);
     inventory.add(Shape::NativeCall);
   }
   for (const auto &payload : mir.payloadEnums()) {
+    inventory.required = closure.conservative;
     inventory.type(payload.type);
     inventory.add(Shape::PayloadEnum);
     for (const auto &variant : payload.variants)
@@ -446,6 +458,7 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
         inventory.type(type);
   }
   for (const auto &storage : mir.threadLocalStorage()) {
+    inventory.required = true;
     inventory.body =
         MirBodyAddress{MirBodyKind::ThreadLocalInitializer, storage.symbol};
     if (const auto *row = input.findBody(*inventory.body))
@@ -457,14 +470,21 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
       inventory.cleanup(storage.cleanup);
   }
   inventory.body.reset();
+  inventory.required = true;
   inventory.source = {};
-  if (!mir.programInitializationPlan().steps.empty())
-    inventory.add(Shape::ProgramInitialization);
   for (const auto &step : mir.programInitializationPlan().steps) {
+    // Unused passive data is not executable initialization. Reachable symbol
+    // accesses and exports still require an admitted storage representation.
+    inventory.required =
+        closure.conservative ||
+        step.role == ProgramInitializationStepRole::Initializer;
+    if (inventory.required)
+      inventory.add(Shape::ProgramInitialization);
     inventory.add(step.dataInitialization);
     inventory.add(step.storageKind);
     inventory.add(step.role);
   }
+  inventory.required = true;
   if (mir.hostedStartupPlan())
     for (const auto &operation : mir.hostedStartupPlan()->operations) {
       inventory.add(operation.kind);
@@ -473,10 +493,12 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   if (input.embeddingPlan())
     inventory.add(Shape::EmbeddingExports);
   for (const auto &callback : mir.nativeCallbackAdapters()) {
+    inventory.required = closure.conservative;
     inventory.add(Shape::NativeCallback);
     inventory.add(callback.cThreadCallback);
   }
   for (const auto &item : input.generatedItems()) {
+    inventory.required = closure.contains(item.identity);
     inventory.add(item.identity.kind);
     inventory.add(item.sourceKind);
     if (!item.dependencies.empty())

@@ -397,7 +397,7 @@ workflow determine task scope and integration.
 
 | Outcome / owner | Current readiness | Prerequisite and first useful slice |
 | --- | --- | --- |
-| Native LLVM production backend (`O-LLVM-03` onward) | independent foundation and coverage/admission delivered; target/ABI session next | Follow the [LLVM campaign](#llvm-production-backend-campaign), added 2026-10-24. The current vocabulary, conservative body inventory and dependency gates are implemented in 0.474.0; centralize target/layout/call/runtime ABI before scalar lowering. LLVM becomes the default only after complete macOS/Linux language, library, native-interop and performance acceptance. |
+| Native LLVM production backend (`O-LLVM-05` onward) | target/ABI infrastructure and bounded scalar execution implemented | Follow the [LLVM campaign](#llvm-production-backend-campaign). The native scalar profile uses sealed roots, direct dependency closure and defined-failure channels. References/arrays and the later ownership/runtime families remain next. LLVM becomes the default only after complete macOS/Linux language, library, native-interop and performance acceptance. |
 | Reflection clients | ready after delivered phases 1–3 | Phase 3 is integrated in 0.400.0: structural construction, callable/source metadata, receiver/owner fixes and expansion-budget tests. The accepted next client is `std::experimental::json`; validate decoding, rollback, diagnostics and performance before the planned `std::json` deprecation. Metaobject invocation/runtime reflection remain separate goals in the [reflection plan](reflection.md). |
 | `L-UP-10` -> `L-UP-11` | acceptance closure, then adoption; may be co-validated | The retained borrowed-pack reproducer passes current O0/O3 probes. Complete the relevant constructor/cleanup composition matrix while adopting final-node emplacement; do not presume another compiler fix. |
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
@@ -10663,8 +10663,8 @@ only for an owned implementation need and keep package/link boundary tests.
 | --- | --- | --- |
 | O-LLVM-01 | Independent backend/build/driver foundation (complete) | ADR 016 |
 | O-LLVM-02 | Complete coverage inventory, admission and boundary enforcement (complete) | 01 |
-| O-LLVM-03 | Target, layout, private call ABI, runtime ABI and emission session | 02 |
-| O-LLVM-04 | Scalar execution, CFG, direct calls and defined failures | 03 |
+| O-LLVM-03 | Target, layout, private call ABI, runtime ABI and emission session (complete) | 02 |
+| O-LLVM-04 | Scalar execution, CFG, direct calls and defined failures (scalar profile implemented) | 03 |
 | O-LLVM-05 | Places, references, raw addresses, arrays and text views | 04 |
 | O-LLVM-06 | Classes, construction, movement, cleanup and global/thread-local storage | 05 |
 | O-LLVM-07 | Native unions, tagged payloads and conditional value publication | 06 |
@@ -10729,14 +10729,13 @@ or resolve them using source.
   full conservative executable inventory with deterministic source diagnostics;
   source-discovered/transitive dependency gates and mutation controls; and a
   backend-selectable behavioral corpus preserving C++ representation checks.
-  `AllExecutableBodies` deliberately makes no reachability claim. Exact roots
-  remain an O-LLVM-04 prerequisite before a partial executable slice omits unused
-  prelude bodies. See [implemented admission and remaining obligations](../architecture/backend.md#llvm-coverage-and-admission).
+  Its original `AllExecutableBodies` policy deliberately made no reachability
+  claim. O-LLVM-04 subsequently added sealed entry/dependency reachability with
+  conservative fallback. See [implemented admission and remaining obligations](../architecture/backend.md#llvm-coverage-and-admission).
 
 ### O-LLVM-03: Target, Layout And Execution ABI
 
-- **State:** implemented infrastructure; no executable instruction family is
-  admitted. O-LLVM-04 is next. See the [implemented session and precise
+- **State:** implemented infrastructure, now used by O-LLVM-04. See the [implemented session and precise
   representation boundaries](../architecture/backend.md#llvm-target-layout-and-execution-abi).
 - **Unlock:** one reusable native emission session usable by all later buckets.
 - **Deliver:** explicit target machine/module/data layout; recursive type and
@@ -10779,6 +10778,12 @@ or resolve them using source.
 
 ### O-LLVM-04: Scalars, Control Flow And Defined Failure
 
+- **State:** implemented scalar profile in 0.476.0. The native execution gate
+  compares real programs and source-attributed failures at O0/O3 with C++.
+  Plain panic is admitted; formatting-based assertions/panic still depend on
+  the later class/owner/text families rather than receiving nominal exceptions.
+  Scalar namespace/static storage and ordered scalar initialization were pulled
+  forward from O-LLVM-05/06 because ordinary numeric/panic includes need them.
 - **Unlock:** real arithmetic/control-flow programs compiled directly to native
   objects, including concrete generic scalar functions and ordinary recursion.
 - **Deliver:** literals, all current integer widths, char/bool, binary32/64,

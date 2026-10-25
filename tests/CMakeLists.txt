@@ -1687,6 +1687,10 @@ add_test(NAME llvm_clang_coexistence COMMAND gti_llvm_clang_coexistence_smoke)
 set_tests_properties(llvm_clang_coexistence PROPERTIES TIMEOUT 30)
 
 if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_scalar_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_scalar_execution_test.py"
+                   "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_scalar_execution PROPERTIES TIMEOUT 1200)
   add_test(NAME runtime_abi_inventory
            COMMAND "${Python3_EXECUTABLE}"
                    "${PROJECT_SOURCE_DIR}/tests/runtime_abi_inventory_test.py"

@@ -188,6 +188,19 @@ void testPanicCapture() {
              std::memcmp(record.message, "failed locally", 14) == 0,
          "panic owns its message independently of source cleanup");
   const auto snapshot = record;
+  gti_failure_record_v2 scalar = record;
+  expect(gti_rt_failure_capture_panic_bytes_v2(
+             &scalar, reinterpret_cast<const uint8_t *>("failed locally"),
+             14) == GTI_FAILURE_REPORT_OK_V1 &&
+             std::memcmp(&scalar, &snapshot, sizeof(record)) == 0,
+         "scalar panic ABI preserves the existing counted-view contract");
+  expect(gti_rt_failure_capture_panic_bytes_v2(&scalar, nullptr, 1) ==
+                 GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1 &&
+             std::memcmp(&scalar, &snapshot, sizeof(record)) == 0,
+         "invalid scalar panic capture leaves the record unchanged");
+  expect(gti_rt_failure_capture_panic_bytes_v2(nullptr, nullptr, 0) ==
+             GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1,
+         "scalar capture rejects a missing output record");
   expect(gti_rt_failure_capture_panic_v2(&record,
                                          {.data = nullptr, .length = 1}) ==
                  GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1 &&

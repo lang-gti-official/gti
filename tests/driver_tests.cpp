@@ -322,16 +322,20 @@ int main() {
   const bool hostTarget =
       target.os == host.os && target.vendor == host.vendor &&
       target.arch == host.arch && target.dataLayout == host.dataLayout;
-  const std::string_view limitation =
-      hostTarget ? "executable LLVM lowering is not implemented yet"
-                 : "currently accepts only the host target";
   expect(request.backend() == lang::BackendKind::Cpp &&
-             llvmRequest.backend() == lang::BackendKind::Llvm &&
-             !llvmResult.succeeded() && !llvmResult.artifact &&
-             llvmDiagnostic != llvmResult.diagnostics.end() &&
-             llvmDiagnostic->message.find(limitation) != std::string::npos,
-         "LLVM selection should be immutable and preserve a structured "
-         "foundation-limit diagnostic");
+             llvmRequest.backend() == lang::BackendKind::Llvm,
+         "executable backend selection remains immutable");
+  if (hostTarget)
+    expect(llvmResult.succeeded() && llvmResult.artifact &&
+               llvmResult.artifact->kind == lang::BackendArtifactKind::Object,
+           "host scalar compilation returns a native object");
+  else
+    expect(!llvmResult.succeeded() && !llvmResult.artifact &&
+               llvmDiagnostic != llvmResult.diagnostics.end() &&
+               llvmDiagnostic->message.find(
+                   "currently accepts only the host target") !=
+                   std::string::npos,
+           "foreign target selection remains a structured limitation");
   RecordingProgress progress;
   const auto withProgress = lang::driver::compileToCpp(request, &progress);
   expect(withProgress.succeeded() && result.artifact && withProgress.artifact &&

@@ -32,23 +32,16 @@ int main() { return add(20, 22) - 42; }
 
   lang::LlvmBackend backend(
       {.optimization = lang::LlvmCodegenOptimization::Default,
-       .debugInfo = true});
+       .debugInfo = false});
   expect(backend.name() == "llvm",
          "the native backend should expose a stable driver identity");
 
   for (int attempt = 0; attempt < 2; ++attempt) {
-    bool unsupported = false;
-    try {
-      static_cast<void>(backend.generate(
-          gti_test::lowerProgram(frontend, frontend.mir, frontend.mir)));
-    } catch (const lang::BackendUnsupportedError &exception) {
-      unsupported =
-          std::string_view(exception.what())
-              .find("executable LLVM lowering is not implemented yet") !=
-          std::string_view::npos;
-    }
-    expect(unsupported,
-           "a verified program should reach the explicit foundation limit");
+    const auto artifact = backend.generate(
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir));
+    expect(artifact.kind == lang::BackendArtifactKind::Object &&
+               !artifact.contents.empty(),
+           "a verified scalar program produces an independent native object");
   }
 }
 
