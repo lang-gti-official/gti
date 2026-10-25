@@ -20639,8 +20639,116 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       }
     }
   }
+  std::unordered_map<HirClassInstanceId,
+                     std::vector<const MirFunctionInstance *>>
+      virtualMembers;
+  for (const auto &function : program.functionInstances())
+    if (function.owner && function.virtualMethod)
+      virtualMembers[*function.owner].push_back(&function);
   for (const auto &instance : program.classInstances()) {
     checkProgramType(instance.type);
+    // Independently verify the semantic-selected dispatch table. Only this
+    // verifier checks hierarchy/override coherence; backends consume the
+    // selected concrete targets and paths without repeating this selection.
+    const auto derives = [&](HirClassInstanceId from, HirClassInstanceId to) {
+      std::vector<HirClassInstanceId> pending{from};
+      std::unordered_set<HirClassInstanceId> seen;
+      while (!pending.empty()) {
+        const auto current = pending.back();
+        pending.pop_back();
+        if (current == to)
+          return true;
+        const auto *owner = program.findClassInstance(current);
+        if (!owner || !seen.insert(current).second)
+          continue;
+        for (const auto &base : owner->bases)
+          pending.push_back(base.instance);
+      }
+      return false;
+    };
+    const auto exactPath = [&](const auto &path, HirClassInstanceId endpoint) {
+      auto current = instance.id;
+      std::unordered_set<HirClassInstanceId> seen{current};
+      for (const auto next : path) {
+        const auto *owner = program.findClassInstance(current);
+        const auto *base = program.findClassInstance(next);
+        if (!owner || !base || !seen.insert(next).second ||
+            std::none_of(owner->bases.begin(), owner->bases.end(),
+                         [&](const auto &edge) {
+                           return edge.instance == next &&
+                                  edge.type == base->type;
+                         }))
+          return false;
+        current = next;
+      }
+      return current == endpoint && program.findClassInstance(endpoint);
+    };
+    std::unordered_set<HirFunctionInstanceId> expectedRoots;
+    std::vector<const MirFunctionInstance *> members;
+    std::vector<HirClassInstanceId> pending{instance.id};
+    std::unordered_set<HirClassInstanceId> hierarchy;
+    while (!pending.empty()) {
+      const auto id = pending.back();
+      pending.pop_back();
+      const auto *owner = program.findClassInstance(id);
+      if (!owner || !hierarchy.insert(id).second)
+        continue;
+      if (const auto found = virtualMembers.find(id);
+          found != virtualMembers.end())
+        for (const auto *function : found->second) {
+          members.push_back(function);
+          if (!function->overrideMethod)
+            expectedRoots.insert(function->id);
+        }
+      for (const auto &base : owner->bases)
+        pending.push_back(base.instance);
+    }
+    std::unordered_set<HirFunctionInstanceId> actualRoots;
+    for (const auto &row : instance.virtualDispatch) {
+      const auto *root = program.findFunctionInstance(row.root);
+      const auto *target = program.findFunctionInstance(row.target);
+      bool exact =
+          root && target && actualRoots.insert(row.root).second &&
+          expectedRoots.contains(row.root) && root->owner == row.rootOwner &&
+          target->owner == row.targetOwner &&
+          exactPath(row.rootPath, row.rootOwner) &&
+          exactPath(row.targetPath, row.targetOwner) && root->virtualMethod &&
+          !root->overrideMethod && target->virtualMethod &&
+          !root->staticMember && !target->staticMember &&
+          root->parameterTypes == target->parameterTypes &&
+          root->returnType == target->returnType &&
+          root->receiverMutability == target->receiverMutability &&
+          root->overloadedOperator == target->overloadedOperator &&
+          root->returnBorrowOrigin == target->returnBorrowOrigin &&
+          root->returnBorrowParameter == target->returnBorrowParameter &&
+          root->returnBorrowAccess == target->returnBorrowAccess &&
+          (!target->pureVirtual || instance.abstract) &&
+          (target->pureVirtual ||
+           target->definitionKind == MirDefinitionKind::Source) &&
+          std::find(target->virtualRoots.begin(), target->virtualRoots.end(),
+                    root->declaration) != target->virtualRoots.end();
+      if (exact)
+        for (const auto *candidate : members) {
+          if (std::find(candidate->virtualRoots.begin(),
+                        candidate->virtualRoots.end(),
+                        root->declaration) == candidate->virtualRoots.end())
+            continue;
+          if (!derives(row.targetOwner, *candidate->owner))
+            exact = false;
+        }
+      if (!exact)
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message = "virtual dispatch has an incoherent selected "
+                        "root/target/signature/owner/base path"});
+    }
+    if (actualRoots != expectedRoots)
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message =
+               "virtual dispatch has missing or duplicate root entries"});
     std::unordered_set<TypeAliasId> aliases;
     const auto closedAlias = [&](const auto &self,
                                  const SemanticType &type) -> bool {

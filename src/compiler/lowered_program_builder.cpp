@@ -783,6 +783,7 @@ private:
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
             .genericArgumentPatterns = info->genericArgumentPatterns,
+            .virtualDispatch = info->virtualDispatch,
             .traits = info->traits,
             .transferPolicy = info->transferPolicy,
             .sharePolicy = info->sharePolicy,
@@ -1452,6 +1453,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
          .declaration = instance.declaration,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
+         .virtualDispatch = instance.virtualDispatch,
          .source = instance.source == nullptr
                        ? SourceSpan{}
                        : tokenSpan(instance.source->name())});

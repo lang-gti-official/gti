@@ -574,6 +574,15 @@ private:
       output << ";access=" << number(value.bases[index].access)
              << ";interface=" << value.bases[index].interface << '}';
     }
+    output << "];virtual-dispatch=[";
+    for (std::size_t index = 0; index < value.virtualDispatch.size(); ++index) {
+      separator(index);
+      const auto &selected = value.virtualDispatch[index];
+      output << "{root=" << selected.root << ";target=" << selected.target
+             << ";target-owner=";
+      type(selected.targetOwner);
+      output << '}';
+    }
     output << "];";
     traits(value.traits);
     if (value.transferCondition) {
@@ -858,7 +867,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v26\n";
+  output << "lowered-program-v27\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="
@@ -1002,6 +1011,23 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
     values.semanticTypes(instance.typeArguments);
     output << " values=";
     values.compileTimeValues(instance.valueArguments);
+    output << " virtual-dispatch=[";
+    for (std::size_t index = 0; index < instance.virtualDispatch.size();
+         ++index) {
+      if (index)
+        output << ',';
+      const auto &selected = instance.virtualDispatch[index];
+      output << "{root=" << selected.root << ";target=" << selected.target
+             << ";root-owner=" << selected.rootOwner
+             << ";target-owner=" << selected.targetOwner << ";root-path=[";
+      for (const auto id : selected.rootPath)
+        output << id << ',';
+      output << "];target-path=[";
+      for (const auto id : selected.targetPath)
+        output << id << ',';
+      output << "]}";
+    }
+    output << ']';
     output << " source=";
     values.sourceSpan(instance.source);
     output << '\n';

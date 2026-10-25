@@ -1327,6 +1327,7 @@ struct MirClassInstance {
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
   std::vector<HirBaseInstance> structuralBases;
+  std::vector<HirVirtualDispatch> virtualDispatch;
   bool abstract = false;
   bool polymorphic = false;
   bool cAbiRecord = false;

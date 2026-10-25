@@ -33,6 +33,19 @@ def main() -> None:
             "struct MirInstruction {", "struct MirInstruction { bool unclassifiedShape = false;", 1))
         result = subprocess.run(command, capture_output=True, text=True, timeout=120)
         assert result.returncode != 0 and "MirInstruction" in result.stderr, result.stderr
+
+        (include / "mir.h").unlink()
+        for name, record in (("semantic_model.h", "ClassVirtualDispatch"),
+                             ("hir.h", "HirVirtualDispatch"),
+                             ("lowered_program.h", "LoweredClassInstance")):
+            original = (root / "include/gti" / name).read_text()
+            marker = f"struct {record} {{"
+            assert marker in original, f"missing census record: {record}"
+            (include / name).write_text(original.replace(
+                marker, marker + " bool unclassifiedDispatchFact = false;", 1))
+            result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+            assert result.returncode != 0 and record in result.stderr, result.stderr
+            (include / name).unlink()
     print("LLVM enum and input-field drift controls passed")
 
 

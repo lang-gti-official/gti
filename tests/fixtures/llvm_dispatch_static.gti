@@ -1,0 +1,44 @@
+interface Reader { int read(); };
+interface Writer { void write(int value) mut; };
+
+class Root {
+public:
+  mut int root;
+  Root(int value) : root(value) {}
+  int base_value() { return this.root; }
+  virtual int read() { return this.root; }
+};
+
+class Middle : public Root, public Reader {
+  int middle;
+public:
+  Middle(int value) : Root(value), middle(3) {}
+  int read() override { return this.base_value() + this.middle; }
+};
+
+class Leaf : public Middle, public Writer {
+  mut int leaf;
+public:
+  Leaf(int value) : Middle(value), leaf(5) {}
+  void write(int value) mut override { this.leaf = value; }
+  int leaf_value() { return this.leaf; }
+};
+
+class Other : public Reader {
+public:
+  int read() override { return 19; }
+};
+
+int via_reader(Reader& value) { return value.read(); }
+int via_root(Root& value) { return value.read(); }
+void via_writer(mut Writer& value, int next) { value.write(next); }
+
+int main() {
+  mut Leaf leaf{7};
+  Other other{};
+  if (via_reader(leaf) != 10 || via_reader(other) != 19) { return 1; }
+  if (via_root(leaf) != 10 || leaf.read() != 10) { return 2; }
+  via_writer(leaf, 23);
+  if (leaf.leaf_value() != 23) { return 3; }
+  return 0;
+}

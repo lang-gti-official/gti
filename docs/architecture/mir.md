@@ -329,10 +329,17 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v114`/`mir-body-v93`,
-with `lowered-program-v26` declaration metadata. These distinct combined
+The combined deterministic serialization is currently `mir-v115`/`mir-body-v93`,
+with `lowered-program-v27` declaration metadata. These distinct combined
 identities retain both macro result-region/local-initializer authority and
 thread-local initialization, cleanup and reference-pack proof facts.
+Class records also preserve semantic-selected virtual root/target declarations.
+HIR binds each selection to exact concrete function and owner identities plus
+successive direct-base paths; MIR verifies complete root coverage, signatures,
+final target coherence and paths independently. Abstract classes may retain pure
+targets. Lowered declaration and instance records seal and serialize the same
+selection. These are backend-neutral facts; this metadata alone does not admit
+LLVM virtual execution or prescribe a table layout or physical call ABI.
 Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains

@@ -251,6 +251,7 @@ struct LoweredClassDeclaration {
   std::vector<LoweredGenericParameter> genericParameters;
   std::vector<SemanticType> genericArgumentPatterns;
   std::vector<LoweredClassBase> bases;
+  std::vector<ClassVirtualDispatch> virtualDispatch;
   SemanticTypeTraits traits;
   ConcurrencyCapabilityPolicy transferPolicy =
       ConcurrencyCapabilityPolicy::Structural;
@@ -505,6 +506,7 @@ struct LoweredClassInstance {
   ClassId declaration = 0;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
+  std::vector<HirVirtualDispatch> virtualDispatch;
   SourceSpan source;
 
   friend bool operator==(const LoweredClassInstance &,
