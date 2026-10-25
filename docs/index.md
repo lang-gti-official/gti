@@ -191,7 +191,9 @@ than mixed into the active queue.
   [source-defined process allocation phase](plans/implementation-sequence.md#s-alloc-07-source-defined-process-allocation-over-native-byte-providers)
   and the planned
   [LLVM production backend campaign](plans/implementation-sequence.md#llvm-production-backend-campaign),
-  with complete current-language coverage buckets and prerequisite gates
+  with complete current-language coverage buckets, prerequisite gates,
+  [shared implementation contracts](plans/implementation-sequence.md#shared-cross-milestone-contracts)
+  and [parallel assignment boundaries](plans/implementation-sequence.md#agent-assignment-and-evidence)
 - [Systems-readiness roadmap](plans/roadmap-to-1.0.md) — capability outcomes
   and the soft, revisable path to a full-featured 1.0
 - [Language restriction ledger](plans/language-alignment.md) — current

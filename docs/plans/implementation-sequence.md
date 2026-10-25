@@ -10601,6 +10601,264 @@ language pipeline or infer ABI from generated C++. The initial supported
 targets are Darwin AArch64 and Linux x86_64 System V. Broader foreign-language
 import is not needed to lower currently supported C declarations/adapters.
 
+#### Shared Cross-Milestone Contracts
+
+**Decision baseline (2026-10-25):** `13f414af6eb62f8c41576fedf5d1cc6ce213f2b0`.
+These are accepted implementation constraints for the remaining campaign, not
+claims that the pending representations or operations already execute. Existing
+mechanisms are described in [backend architecture](../architecture/backend.md#llvm-target-layout-and-execution-abi).
+The contract identifiers below give agents a common review vocabulary; they
+are not new public APIs, a second IR, or a stable native GTI binary ABI.
+
+##### LLVM-C01: Identity, Authority And Lifetime
+
+One generation owns one immutable verified lowered snapshot and one `Session`.
+Concrete type/instance/body IDs are meaningful only with that snapshot; an
+ID or LLVM pointer from another generation is never a cache key on its own.
+Layouts, symbols, function signatures, adapters and debug types share this
+session and target. Body values, selected addresses and failure records do not
+share compiler-side mappings across functions or generations. This is not a
+restriction on runtime lifetime: owned objects and failure records may cross
+calls and worker boundaries according to their verified transfer schedules.
+No process-global mutable representation registry.
+
+Missing language facts must be added to the lowered producer and verifier,
+with malformed-input tests, before a backend consumes them. A backend-private
+plan may choose representation from sealed facts; it must not repeat overload,
+borrow, override, escape or effect analysis. Generated adapters retain exact
+input identity and dependencies rather than names reconstructed from source.
+
+**Owner:** integration owner; `Session`, lowered builder/verifier. **Acceptance:**
+forged/mismatched snapshots and missing required definitions reject; repeated
+and independent sessions have deterministic plans without shared mutable state.
+
+##### LLVM-C02: Storage, Body Values And Transport Are Distinct
+
+`Layouts` remains the sole provider of storage type, size, alignment, stride,
+field/base/payload offsets and representation state. Each family must separately
+specify its body value form and ABI transport. Today classes use addresses as
+body values, while arrays and counted text can use LLVM aggregate values even
+though `TypeLayout::addressOnly` requests indirect ABI transport. That flag is
+not permission to treat every operand as an object address.
+
+Consumers must use the same layout/representation plan, not duplicate offsets
+or infer ownership from pointer type. Extend that plan and the shared
+load/store/materialization operations when adding another family; subsume
+overlapping class-only assumptions rather than adding different local rules to
+each emitter. A typed byte copy is valid only for an already-authorized transfer
+whose representation and identity requirements allow it. Equal size, passive
+LLVM fields, or an opaque pointer do not prove GTI copyability or relocatability.
+
+**Owner:** layout/publication owner; `layout.*`, `places.*`, lifecycle consumers.
+**Acceptance:** nested composition, bool value/storage differences, zero-size
+alignment, over-aligned storage, stored references and indirect argument/result
+round trips. Foreign layout and foreign call classification stay separate.
+
+##### LLVM-C03: Destination Publication And Ownership Transfer
+
+Allocation of storage, partial initialization, publication of a complete value,
+transfer of a drop obligation and destruction are distinct events. Consume the
+exact MIR destinations, success edges and lifecycle records for those events.
+Do not invent a universal runtime state machine or make every value heap-backed.
+
+Evaluate operands in MIR order. A prepared input destination must contain its
+value before its drop is activated; later-argument failure cleans that exact
+place. Transfer to the callee retires the caller's obligation at the verified
+handoff. Result storage can contain partial construction before failure, but
+callers may observe a completed result only on the success edge. Failure cleans
+only completed subobjects, not an unconstructed outer object. Moving a value
+does not create a second owner or destroy transferred state twice.
+
+Immovable construction must use the final destination throughout, including
+return, argument, field, array and payload placement; a temporary followed by
+`memcpy` is not an implementation. A stored reference publishes the evaluated
+selected address, not loaded referent bytes or a guessed origin address.
+Loan permission, endpoints and escape limits stay upstream facts. Finish
+06-A/06-B for any shape that needs these guarantees before admitting it.
+
+**Owner:** publication/lifecycle owner; `body.cpp`, `places.*`, `lifetimes.*`.
+**Acceptance:** address identity and deleted-move controls; side-effecting
+reference initializers; early moved input followed by failure; constructor and
+callee failure; partial arrays/payloads; replacement and return cleanup. Observe
+values, order and exactly-once effects, not just successful compilation.
+
+##### LLVM-C04: One Private Call ABI And One Failure Convention
+
+Definitions, direct/indirect calls and adapters use `Abi`/`FunctionAbi`; none
+assembles a signature independently. Retain the implemented channel order:
+result destination when required, failure destination when required, optional
+receiver, optional caller site/artifact, then source arguments. Failure-free
+direct scalar/reference results may return directly. Address-only results use
+explicit destination storage. Failure-capable calls return success status and
+publish either a completed result or an owned failure channel.
+
+Plan identity includes concrete result/parameter types, target, representation
+revision, receiver/context role, failure convention and attribution channels;
+source parameter types alone are insufficient. Invocation capability and
+selected adapter identity also participate where applicable. No function-type
+cast may conceal a mismatch. Forward an incoming failure record and its pinned
+artifact; do not replace it with a new panic or lose its original location.
+Nested cleanup follows the established primary/secondary failure protocol.
+
+GTI result pointers are not automatically LLVM `sret` parameters. In particular,
+LLVM requires an `sret` function to return `void`, unlike GTI's status-returning
+failure convention ([LLVM parameter attributes](https://llvm.org/docs/LangRef.html#parameter-attributes)).
+GTI `Invoke` remains explicit status/control flow, not host exception unwinding.
+
+**Owner:** ABI/failure owner; `abi.*`, `failure.*`, all call/adaptor consumers.
+**Acceptance:** definition/call/adapter signature agreement, mixed argument
+shapes, checked reference/aggregate returns, recursion, caller attribution and
+failure before/after parameter ownership transfer.
+
+##### LLVM-C05: Dynamic Calls Use Planned Adapters
+
+For erased GTI callables, use a planned code/environment invocation boundary;
+environment layout, capture access and read/mut/once ownership come from the
+exact capture and callable records. Do not impose a heap allocation merely to
+pass an environment. Stateless direct function items retain direct calls;
+erased stateless targets can use a thunk with an unused environment channel.
+
+The erased adapter family normalizes to the conservative status/result/failure
+convention and explicit caller attribution, with its environment in the
+receiver position. An infallible target adapter returns success. Concrete
+non-erased calls may keep the existing exact, cheaper ABI. The invoking MIR
+must still authorize its actual failure behavior: a normalized status channel
+does not authorize inventing a failure edge, and an infallible call site may
+ignore failure status only with a verified infallibility contract. Before
+admitting erasure, the callable owner must bind these facts to the concrete
+MIR signature/adapter; the declaration-level `LoweredCallableSignature` alone
+does not contain an executable effect or caller-attribution contract.
+
+Virtual dispatch similarly uses a planned root signature and typed adjustment
+thunks. Sealed base/override/target facts choose implementations; the backend
+chooses table representation. Normalize differing implementation ABIs through
+adapters, not pointer casts. Construction/destruction dynamic state and dynamic
+destructor selection are explicit obligations, not inherited C++ behavior.
+If existing sealed facts do not uniquely establish them, add the bounded
+upstream plan and verifier first. Native C callbacks use a separate C adapter,
+never the private code/environment signature directly.
+
+**Owners:** callable and dispatch workers, with ABI-owner review. **Acceptance:**
+same-signature fallible/infallible targets, borrowed/owned/once captures,
+adjusted receivers, virtual failure/cleanup and callback containment. Their
+implementations remain O-LLVM-09/10/11 work, not delivered by this document.
+
+##### LLVM-C06: Payloads And Memory Share Typed Lifetime Services
+
+Use explicit tag plus correctly aligned payload storage for the first safe-sum
+representation, and ordinary overlapping storage for native unions. Tags and
+alternatives come from sealed identities. Publish a live tag only with its
+completed payload; inactive storage cannot be read, dropped or turned into a
+borrow. Keep partial-initialization state distinct from source-visible tags
+unless an exact representation proof establishes a reusable invalid encoding.
+Do not start with niche encoding or infer an active native-union member.
+
+Allocation/slot/owner lowering obtains size, alignment and typed cleanup from
+the same plans as ordinary objects. Byte allocation does not begin an object's
+lifetime. Construction, destruction, relocation, deallocation and shared last
+release obey their existing sealed capability contracts, including allocation
+failure, zero count and overlap rules. Binding is by trusted declaration
+identity, never `std::optional`, `std::vector`, pointer-wrapper or allocator
+names. Source-defined presence, reference-count and growth policy stays source.
+
+**Owners:** payload and memory workers, with publication/layout-owner review.
+**Acceptance:** unrelated user sums and source wrappers compose with empty/live,
+move/replacement, failed construction and active-payload destruction. Primitive
+allocation work need not wait for payload lowering; owning payload composition
+does. Prove successful-path allocation counts and cleanup traces.
+
+##### LLVM-C07: Runtime And Foreign Boundaries Are Explicit C Contracts
+
+Extend the versioned runtime C inventory for services ordinary source or LLVM
+instructions cannot provide. Every new entry must state exact signature, target
+layout, ownership on success/failure, attachment requirements, status meaning,
+cleanup and callback behavior. Typed generated helpers stay native GTI functions
+behind adapters; they do not expose GTI private layouts as C structs. Runtime
+internals may use C++ only with exceptions contained before the C boundary.
+
+Native C argument/result classification remains a separate target ABI plan
+applied symmetrically to imports and exports. Reuse LLVM target machinery and
+libclang's declaration/layout facts within their existing ownership boundaries;
+neither data layout nor LLVM's verifier proves C aggregate call compatibility.
+Keep Darwin AArch64 and Linux x86_64 System V classifier decisions separate and
+prove them against compiled C in both directions before admission.
+
+Workers/callbacks use explicit entry, failure containment and TLS attachment/
+drain schedules. Result/capture ownership on launch failure, successful handoff,
+join and cleanup is the verified task contract, not a new runtime default.
+Atomic storage, access order, scope/alignment and wait/notify must agree; do not
+mix atomic and ordinary accesses or replace blocking with an improvised spin
+loop. Scalar atomic lowering may start early; complete owned-thread execution
+waits for memory, callable and boundary contracts to compose.
+
+**Owners:** native ABI and concurrency/runtime workers. **Acceptance:** C
+layout/signature and bidirectional execution oracles; foreign-thread rejection,
+TLS, callback failure, launch/join/cleanup and sanitizer/litmus matrices on the
+campaign's required hosts. No C++ unwinder crosses generated LLVM frames.
+
+##### LLVM-C08: Reachability And Admission Precede Publication
+
+Each family registers types, executable/generated dependencies, representable
+shapes and required runtime services before emission. Dynamic-call targets,
+virtual implementations, cleanup helpers, callbacks and worker entries must be
+included in the sealed dependency closure or a documented conservative fallback.
+Never omit a required body just because the frontend did not call it directly.
+
+Admitting a type enum alone does not admit all ownership/access/failure shapes.
+Update `coverage.def`, `input_fields.def` and structural witnesses together with
+positive execution and negative admission tests. Unknown required shapes reject
+without replacing an existing artifact. An intrinsic-family emitter cannot
+bypass preflight, weaken a verifier or fall back to C++ to unblock its client.
+
+**Owner:** admission/reachability integration owner; family workers supply exact
+requirements and witnesses. **Acceptance:** dormant versus required bodies,
+address-taken/generated roots, missing services, incomplete shape rejection and
+combinations with another admitted family.
+
+##### LLVM-C09: Representation Changes Carry Invalidation And Cost Evidence
+
+Changing private layouts, signatures, adapter conventions or runtime schemas
+invalidates dependent objects. O-LLVM-14 must key binary caches by the existing
+source/lowered inputs plus backend/schema revision, LLVM/toolchain, native GTI
+ABI, runtime artifacts, target/CPU/features, relocation and optimization/debug
+policy. Continue bypassing object reuse until that identity is implemented.
+Debug metadata consumes the same field/parameter/location plans; it is not a
+second layout or lifetime authority.
+
+No family adds LLVM alias, overflow, lifetime, effect or definedness promises
+without their verified preconditions and scope. Keep successful scalar/direct
+paths lean, allocate only under the admitted ownership policy, and isolate cold
+failure work. Report runtime, allocation, code-size and relevant build/memory
+costs for each new family and its interaction probes. Correctness-only success
+does not waive a material runtime regression.
+
+**Owners:** driver and debug/performance workers, with shared-plan review.
+**Acceptance:** cache invalidation/corruption and atomic publication, installed
+toolchains, optimized differential failures, debugger paths and representative
+composed workload costs. No object-cache format or stable public ABI is promised
+by the decision alone.
+
+##### Open Details And Contract Changes
+
+The ownership and protocols above are decided now. These implementation choices
+still need evidence, not independent guesses by every worker:
+
+| Detail | Decision owner and closure evidence |
+| --- | --- |
+| Exact payload/control-block/environment/table byte layout and helper signatures | Relevant family plus layout/ABI owner; deterministic typed plan, size/alignment tests, composition and cost evidence before another family depends on it. No frozen public byte offsets. |
+| Required immovable/stored-reference publication shapes | 06-A/06-B owner; address-identity, evaluated-loan and partial-cleanup controls before dependent shape admission. |
+| Erased callable/root-dispatch facts missing from current sealed input | Callable/dispatch plus lowered-verifier owner; exact target/effect/attribution plan and malformed-plan tests before new dynamic execution. |
+| Target C aggregate coercion/splitting and callback/export adaptation | O-LLVM-11 owner; per-target ABI specification and bidirectional C execution, not layout equality. |
+| New worker/runtime C entry records and schema/version numbers | O-LLVM-13 and runtime owner; ownership/failure/attachment oracle first, coordinated producer/consumer and package updates. |
+
+A worker proposing to change a shared contract records the affected ID,
+counterexample or new supported shape, producer/consumer changes, invalidation
+and acceptance matrix in its PR. The shared owner reconciles the contract and
+dependent work before integration. This is not a permission bottleneck for
+independent helpers/tests, nor authorization to fabricate missing upstream
+facts. Do not create empty extension frameworks before a concrete client needs
+them, or require one giant refactor before independent work can start.
+
 #### Coverage And Completion Contract
 
 O-LLVM-02 must create a machine-checked coverage ledger covering every member
@@ -11112,6 +11370,48 @@ agent invent its own convention. Driver and debug/performance work can start
 after the first executable slice and validate incrementally. Use focused checks
 per bucket and one coordinated combined campaign when integration requires it;
 do not repeat a complete corpus for every small source edit.
+
+The [shared contracts](#shared-cross-milestone-contracts) make the following
+parallel assignments possible. They do not declare all of O-LLVM-06 complete:
+06-A/06-B remain prerequisites for the shapes that need them, not a reason to
+block unrelated scalar allocation, ABI classification or driver work.
+
+| Lane | Independent work and primary write scope | Required integration boundary |
+| --- | --- | --- |
+| Shared representation/publication owner | Finish 06-A/06-B; own `src/compiler/llvm/{session,layout,abi,places,lifetimes,failure}.*`, common dispatch/publication in `body.cpp`, admission/reachability registration and any lowered-schema changes. Review LLVM-C01 through C04. | Publish concrete prerequisite changes with their tests before dependent shapes are admitted; coordinate registrations from the family workers. Do not introduce empty interfaces for anticipated clients. |
+| Payloads, O-LLVM-07 | Typed payload/union lowering helper, family-specific tests and coverage entries; start with already-supported scalar/passive payloads under LLVM-C06. | Immovable/stored-reference payloads need 06-A/06-B; owning payloads compose with O-LLVM-08 before being admitted. |
+| Memory, O-LLVM-08 | Allocation/capability lowering helper, runtime byte-provider adapters and allocation/cleanup tests under LLVM-C06/07. Primitive allocation can start without payload execution. | Use shared destination/lifetime services; control-block and owned-payload behavior require the relevant layout and payload plans. |
+| Callables, O-LLVM-09 | Callable/environment lowering helper, exact adapters and callable tests under LLVM-C04/05. Direct and borrowed environments can precede heap-owned environments. | Concrete signature/effect/attribution facts must be sealed first; owned environments require the relevant O-LLVM-08 services. Coordinate C callbacks with O-LLVM-11. |
+| Dispatch, O-LLVM-10 | Virtual table/adjustment planning helper and dispatch tests under LLVM-C05; statically allocated non-owning dispatch can precede polymorphic owners. | Root signature/dynamic-state facts and O-LLVM-06 lifetimes first; polymorphic ownership composes with O-LLVM-08. Shared ABI changes go through the shared owner. |
+| Native C ABI, O-LLVM-11 | Per-target aggregate classifier, native-boundary adapters and bidirectional C oracles under LLVM-C07. Layout/classification fixtures do not need whole-stdlib execution. | Wire one classifier into common import/export planning; callbacks need O-LLVM-09, and runtime records need exact C definitions. LLVM data layout alone is not a classifier. |
+| Runtime closure/concurrency, O-LLVM-12/13 | Inventory missing C runtime bindings, add narrowly executable service/atomic helpers and focused tests. Existing scalar/TLS support can validate early independent pieces. | Owned workers and blocking wait/notify require callable, memory, atomic and runtime protocols together. Coordinate `runtime_abi.*` and C runtime inventory changes; no unverified worker stub admission. |
+| Driver and tooling, O-LLVM-14/15 | Driver/cache/package files, backend debug/optimization helpers and their tests under LLVM-C09. Initial object and scalar execution already provide a validation client. | Consume settled layout/ABI identities; complete debug/cache coverage and backend promotion wait for the admitted family matrix, not just initial scalar success. |
+
+These are ownership lanes, not eight mandatory agents or eighteen independent
+phases. A practical first wave is the shared owner plus four to six feature
+workers, selected from available prerequisites and validation capacity. This
+does not change per-task subagent limits or the shared build-window policy.
+Use existing helpers where they own the behavior; create a family-local helper
+only when it removes real shared-file contention and has a concrete consumer.
+Separate fixture files let workers add evidence without rewriting one common
+test harness. Shared-file registration patches remain small and coordinated;
+do not assign several workers independent rewrites of `body.cpp`, `layout.cpp`
+or `abi.cpp`.
+
+Before a worker begins, record the relevant contract IDs, input facts, output
+plan/representation, owning files, admitted shapes and tests in its PR/task
+handoff. Integrate prerequisite protocol changes as coherent, executable,
+verified slices. A consumer may develop against a named prerequisite branch,
+but it must reconcile and validate against the integrated contract before
+admission. Independent preparation is not evidence of completed dependent work.
+
+The integration owner selects interaction probes as families meet: a prepared
+moved owner followed by a failing argument; owning payload construction and
+replacement cleanup; an owned capture destroyed after an indirect call failure;
+virtual and C callback failure containment; and a worker returning an owned
+result. Shared-contract changes require all affected producers/consumers to be
+checked on the combined source. Keep platform/runtime/performance obligations
+from the parent milestones; parallel implementation does not relax them.
 
 LLVM implementation references are the [IR language reference](https://llvm.org/docs/LangRef.html),
 [undefined-behavior guide](https://llvm.org/docs/UndefinedBehavior.html),
