@@ -892,12 +892,11 @@ private:
         result = kind == PayloadExtractionKind::BorrowValue
                      ? field
                      : load(field, fieldType);
-        if (kind == PayloadExtractionKind::MoveValue) {
-          if (addressValue(session.program().mir(), instruction.info.type)) {
-            auto *target = destination(*instruction.result);
-            store(result, target, instruction.info.type);
-            result = target;
-          }
+        if (kind == PayloadExtractionKind::MoveValue &&
+            addressValue(session.program().mir(), instruction.info.type)) {
+          auto *target = destination(*instruction.result);
+          store(result, target, instruction.info.type);
+          result = target;
           lifetimes.moved(ir, field, instruction.info.type);
         }
         break;
