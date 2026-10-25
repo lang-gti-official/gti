@@ -12539,7 +12539,9 @@ containedFailureConstructorRepresentation(
 }
 
 // A fresh aggregate publishes its already completed elements, not copies or
-// moves of them. Keep this independent of element transfer availability.
+// moves of them. This path consumes explicit element lifetime records;
+// cleanup-free aggregates without those records keep their pure-construction
+// or staged-value paths. Element transfer availability is irrelevant here.
 [[nodiscard]] std::vector<MirValueUse> freshPublicationUses(const MirBody &body,
                                                             MirValueId value) {
   std::vector<MirValueUse> uses;
@@ -12563,7 +12565,7 @@ containedFailureConstructorRepresentation(
       aggregate.info.type.arguments.size() != 1 ||
       aggregate.info.type.arrayLengthParameterId ||
       aggregate.operands.size() != aggregate.info.type.arrayLength ||
-      aggregate.operands.empty())
+      aggregate.operands.empty() || aggregate.lifecycle.empty())
     return false;
   const auto &element = aggregate.info.type.arguments.front();
   if (element.kind != SemanticType::Class &&
@@ -12597,8 +12599,13 @@ containedFailureConstructorRepresentation(
 struct FixedArrayPlacement {
   const MirPlace *destination = nullptr;
   std::vector<std::size_t> indices;
+  bool returned = false;
   explicit operator bool() const { return destination != nullptr; }
 };
+
+[[nodiscard]] const MirPlace *
+fixedArrayInitializerResultPlace(const MirProgram &program, const MirBody &body,
+                                 MirValueId value);
 
 // Resolve only final, exact initialization destinations. Existing values,
 // replacement and caller arguments retain their separate transfer protocols.
@@ -12606,6 +12613,10 @@ struct FixedArrayPlacement {
                                                       const MirBody &body,
                                                       MirValueId value) {
   const auto uses = freshPublicationUses(body, value);
+  if (uses.size() == 1 && uses.front().kind == MirValueUseKind::Terminator)
+    if (const auto *result =
+            fixedArrayInitializerResultPlace(program, body, value))
+      return {result, {}, true};
   if (uses.size() != 1 ||
       uses.front().kind != MirValueUseKind::InstructionOperand)
     return {};
@@ -19176,6 +19187,14 @@ fixedArrayInitializerPublication(const MirProgram &program, const MirBody &body,
              : FixedArrayInitializerPublication{};
 }
 
+const MirPlace *fixedArrayInitializerResultPlace(const MirProgram &program,
+                                                 const MirBody &body,
+                                                 MirValueId value) {
+  const auto publication =
+      fixedArrayInitializerPublication(program, body, value);
+  return publication ? publication.result : nullptr;
+}
+
 struct PassiveFixedArrayConstructAggregate {
   const MirInstruction *aggregate = nullptr;
   const MirInstruction *initialize = nullptr;
@@ -19192,7 +19211,8 @@ struct PassiveFixedArrayConstructAggregate {
 // MIR: each failure-free Construct is consumed once by the Aggregate, and the
 // Aggregate initializes one binding. Emit those constructors directly in the
 // braced initializer only when doing so crosses pure value staging and keeps
-// the exact MIR constructor order.
+// the exact MIR constructor order. These exact prvalues are elided into their
+// elements; no copy/move operation or failure-free move proof is required.
 [[nodiscard]] PassiveFixedArrayConstructAggregate
 passiveFixedArrayConstructAggregate(const MirProgram &program,
                                     const MirBody &body,
@@ -19207,9 +19227,7 @@ passiveFixedArrayConstructAggregate(const MirProgram &program,
       instruction.info.type.arrayLength == 0 ||
       instruction.operands.size() != instruction.info.type.arrayLength ||
       instruction.literal || !instruction.localFailureSites.empty() ||
-      !instruction.definedFailure.empty() || !instruction.lifecycle.empty() ||
-      !mirTypeMoveIsDefinedFailureFree(
-          program, instruction.info.type.arguments.front())) {
+      !instruction.definedFailure.empty() || !instruction.lifecycle.empty()) {
     return {};
   }
 
@@ -31597,7 +31615,8 @@ public:
       if (place.root == MirPlaceRootKind::Value && place.projections.empty()) {
         const auto publication =
             fixedArrayPlacement(program, facts.body, place.value);
-        if (publication && !publication.indices.empty())
+        if (publication &&
+            (publication.returned || !publication.indices.empty()))
           continue; // Declare aliases after their final array's storage.
       }
       // An owning class local lives in a sealed lifetime slot so failure
@@ -31876,6 +31895,14 @@ public:
       output << ";\n";
     }
     for (const auto &place : facts.body.places) {
+      if (preparingBase &&
+          std::find(preparation->places.begin(), preparation->places.end(),
+                    place.id) == preparation->places.end())
+        continue;
+      if (preparation &&
+          std::find(preparation->slots.begin(), preparation->slots.end(),
+                    place.id) != preparation->slots.end())
+        continue;
       if (place.root != MirPlaceRootKind::Value || !place.projections.empty())
         continue;
       const auto publication =
@@ -31886,7 +31913,9 @@ public:
       output << lifetimeSlotSpelling() << '<' << typeSpelling(place.type)
              << ", false, true> __gti_mir_p_" << place.id
              << "(std::addressof((";
-      if (publication.destination->root == MirPlaceRootKind::This)
+      if (publication.returned)
+        output << "*__gti_mir_out_result";
+      else if (publication.destination->root == MirPlaceRootKind::This)
         output << destinationSpelling(facts, publication.destination->id);
       else
         output << "*__gti_mir_p_"
@@ -34864,7 +34893,8 @@ private:
                                     : nullptr;
           if (!slot)
             throw std::logic_error("fresh array lost its publication slot");
-          if (slot->root != MirPlaceRootKind::This)
+          if (!(publication.returned && publication.indices.empty()) &&
+              slot->root != MirPlaceRootKind::This)
             output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
                    << ".mark_constructed();\n";
           for (const auto &operand : instruction.operands) {

@@ -8156,12 +8156,12 @@ int32_t main() {
   expect(text.find("mir_lifetime_slot<") != std::string::npos &&
              text.find(".construction_address()") != std::string::npos &&
              text.find("std::array<") != std::string::npos &&
-             text.find("std::move(__gti_mir_v_") != std::string::npos &&
+             text.find(".release();") != std::string::npos &&
              text.find("::gti_internal::backend::array_at(") !=
                  std::string::npos &&
              text.find("failure cleanup drop-obligation") != std::string::npos,
-         "the transformed body should stage both owners in exact lifetime "
-         "slots, roll back a partial aggregate, and bounds-check the move");
+         "the transformed body should publish fresh elements through final "
+         "slot views, retain partial rollback, and bounds-check the move");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,

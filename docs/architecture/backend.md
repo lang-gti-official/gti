@@ -4653,7 +4653,11 @@ The C++ consumer uses external `mir_lifetime_slot` views into the final array;
 the existing byte storage starts implicit-lifetime array/aggregate shells,
 while constructors start each class element's lifetime. Publication releases
 the element views without destruction or relocation and activates the aggregate
-obligation. For array fields, the existing empty-state proof permits retiring
+obligation. TLS initializer arrays use their exact ABI result storage, including
+nested-element lifetime views. Cleanup-free aggregates without element lifetime
+records retain the existing pure-construction/staged-value protocols; exact
+constructor prvalues in that pure path need no move capability.
+For array fields, the existing empty-state proof permits retiring
 each disarmed native shell immediately before that element's construction.
 No source effects are hoisted and no automatic native destructor owns rollback.
 Internal lifetime slots retain their original storage size; only external views

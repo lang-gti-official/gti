@@ -11267,7 +11267,7 @@ or resolve them using source.
   supply O0-O3 execution/rejection evidence.
 - **06-A2 (implemented):** exact fresh fixed-array initialization is separate
   from element copying/movement. Every explicit element is ownership-checked;
-  direct, nested and default-initialized immovable arrays construct at final
+  direct, nested, field, TLS and default-initialized immovable arrays construct at final
   addresses. C++ uses external lifetime-slot views into that storage, including
   its proved disarmed field shells, rather than relocating staged elements.
   MIR retains completed-element rollback. Named-element/array copies and

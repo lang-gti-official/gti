@@ -88,6 +88,20 @@ int main() {
   return destroyed == 21 ? 0 : 1;
 }
 ''',
+    "passive-immovable-array": r'''
+class Passive {
+  mut Passive* address = nullptr;
+public:
+  Passive() { this.address = &this; }
+  Passive(Passive&) = delete;
+  Passive(Passive&&) = delete;
+  bool stable() { return this.address == &this; }
+};
+int main() {
+  Passive values[2] = {Passive(), Passive()};
+  return values[0].stable() && values[1].stable() ? 0 : 1;
+}
+''',
     "field-arrays": r'''
 struct Group {
   Pinned values[2][2] = {{Pinned(1), make(2)}, {relay(3), Pinned(4)}};
@@ -204,6 +218,12 @@ int main() {
     "tls": r'''
 thread_local Pinned item = relay(1);
 int main() { return item.stable() && constructed == 1 ? 0 : 1; }
+''',
+    "tls-arrays": r'''
+thread_local Pinned items[2][1] = {{make(1)}, {relay(2)}};
+int main() {
+  return items[0][0].stable() && items[1][0].stable() && constructed == 12 ? 0 : 1;
+}
 ''',
 }
 
