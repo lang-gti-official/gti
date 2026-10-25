@@ -200,6 +200,82 @@ int main() {
 }
 
 FAILURES = {
+    "moved-argument-failure": (r'''
+#include <std/panic>
+mut int dropped = 0;
+class Ticket {
+  int id;
+public:
+  Ticket(int id) : id(id) {}
+  ~Ticket() { dropped = dropped * 10 + this.id; }
+};
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { if (dropped != 21) { std::panic("incorrect moved argument cleanup"); } }
+};
+int fail() { std::panic("argument failure"); return 0; }
+void consume(Ticket first, Ticket second, int other) {}
+int main() {
+  Guard guard{};
+  mut Ticket first{1};
+  mut Ticket second{2};
+  consume(std::move(first), std::move(second), fail());
+  return 0;
+}
+''', "GTI-R0017", "argument failure"),
+    "moved-constructor-argument-failure": (r'''
+#include <std/panic>
+mut int dropped = 0;
+class Ticket {
+  int id;
+public:
+  Ticket(int id) : id(id) {}
+  ~Ticket() { dropped += this.id; }
+};
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { if (dropped != 7) { std::panic("incorrect constructor argument cleanup"); } }
+};
+class Consumer {
+public:
+  Consumer(Ticket ticket, int other) { std::panic("incorrect constructor entry"); }
+};
+int fail() { std::panic("constructor argument failure"); return 0; }
+int main() {
+  Guard guard{};
+  mut Ticket ticket{7};
+  Consumer consumer{std::move(ticket), fail()};
+  return 0;
+}
+''', "GTI-R0017", "constructor argument failure"),
+    "moved-argument-callee-failure": (r'''
+#include <std/panic>
+mut int dropped = 0;
+class Ticket {
+  int id;
+public:
+  Ticket(int id) : id(id) {}
+  ~Ticket() { dropped += this.id; }
+  int read() { return this.id; }
+};
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { if (dropped != 7) { std::panic("incorrect callee argument cleanup"); } }
+};
+void consume(Ticket ticket) {
+  if (ticket.read() != 7) { std::panic("incorrect argument publication"); }
+  std::panic("callee failure");
+}
+int main() {
+  Guard guard{};
+  mut Ticket ticket{7};
+  consume(std::move(ticket));
+  return 0;
+}
+''', "GTI-R0017", "callee failure"),
     "constructor-rollback": (r'''
 #include <std/panic>
 mut int events = 0;

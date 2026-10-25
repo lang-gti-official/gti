@@ -22,6 +22,9 @@ def main() -> int:
         raise SystemExit("usage: llvm_backend_cli_test.py /path/to/gti")
 
     run([sys.argv[1], "--version"], 0)
+    help_text = run([sys.argv[1], "--help"], 0).stdout
+    if "partial language support" not in help_text or "GTI-B0003" not in help_text:
+        raise AssertionError("CLI help lost the LLVM admission limitation")
 
     with tempfile.TemporaryDirectory(prefix="gti-llvm-backend-cli-") as value:
         root = pathlib.Path(value)

@@ -548,6 +548,17 @@ private:
           instruction.destination)
         store(result, memory.address(*instruction.destination),
               input.findPlace(*instruction.destination)->type);
+      if (instruction.kind == MirInstructionKind::CallInput &&
+          instruction.destination) {
+        const auto &place = *input.findPlace(*instruction.destination);
+        auto *destination = memory.address(place.id);
+        // Publish before activating the prepared parameter's drop obligation:
+        // a later argument can fail before ownership reaches the callee.
+        if (result != destination)
+          store(result, destination, place.type);
+        if (place.type.kind == SemanticType::Class)
+          result = destination;
+      }
       break;
     case MirInstructionKind::Initialize:
     case MirInstructionKind::Assign: {

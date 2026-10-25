@@ -10537,7 +10537,11 @@ ABI evidence; host support must not silently claim them.
 New language changes during this campaign must update the coverage ledger and
 enter an owned bucket. The frozen baseline cannot be reduced to make a release
 gate pass, and the final release must also reconcile everything added on main.
-O-LLVM-01/02 are implemented; all executable lowering milestones remain planned.
+O-LLVM-01/02/03 are implemented. O-LLVM-04/05/06 now execute their documented
+scalar, places/text and ordinary class/TLS profiles; their remaining shape
+restrictions and milestone exit gates below still apply. O-LLVM-07 onward remain
+planned. The [execution audit](../architecture/backend.md#llvm-execution-audit-2026-10-25)
+records the current staging/cleanup regression and its fix.
 The former planned "O-LLVM-02: First Real Scalar LLVM Lowering" is superseded
 by prerequisites O-LLVM-02/03 and executable slice O-LLVM-04.
 
@@ -10665,8 +10669,8 @@ only for an owned implementation need and keep package/link boundary tests.
 | O-LLVM-02 | Complete coverage inventory, admission and boundary enforcement (complete) | 01 |
 | O-LLVM-03 | Target, layout, private call ABI, runtime ABI and emission session (complete) | 02 |
 | O-LLVM-04 | Scalar execution, CFG, direct calls and defined failures (scalar profile implemented) | 03 |
-| O-LLVM-05 | Places, references, raw addresses, arrays and text views | 04 |
-| O-LLVM-06 | Classes, construction, movement, cleanup and global/thread-local storage | 05 |
+| O-LLVM-05 | Places, references, raw addresses, arrays and text views (bounded profile implemented) | 04 |
+| O-LLVM-06 | Classes, construction, movement, cleanup and global/thread-local storage (bounded profile implemented; 06-A/06-B remain) | 05 |
 | O-LLVM-07 | Native unions, tagged payloads and conditional value publication | 06 |
 | O-LLVM-08 | Object storage, allocation, unique/shared ownership and relocation | 06, 07 where payload-bearing |
 | O-LLVM-09 | Function values, lambdas, erased callables and adapters | 06, 08 for owned captures |
