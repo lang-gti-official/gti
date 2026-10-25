@@ -29,7 +29,7 @@ def run_case(gti: Path, root: Path, work: Path, backend: str,
                          timeout=15)
     if (ran.returncode != 70 or
             "null owner later initializer failed" not in ran.stderr or
-            "null owner provider rollback drift" in ran.stderr or
+            "null owner rollback trace drift" in ran.stderr or
             ran.stdout):
         raise AssertionError(
             f"null-owner {backend} {optimization} execution drift: {ran}"

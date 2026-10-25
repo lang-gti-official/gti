@@ -11450,10 +11450,11 @@ authority, a complete typed pointee and O-LLVM-08's exact
 retains backend rejection without that shape. Its focused planner controls
 reject nonnull, wrong-source, incomplete-pointee, duplicate-producer and staged
 forms. `llvm_callable_null_owner_rollback_test.py` supplies a production C++23
-oracle and a test memory provider that counts both allocation and release calls
-across a later-initializer failure; combined native O0--O3 must preserve the
-original failure while observing zero allocations and zero releases. The
-combined execution remains an integration gate rather than component evidence.
+oracle, an ordinary GTI destructor trace and a test memory provider that aborts
+on any allocation or release call. Across a later-initializer failure, combined
+native O0--O3 must preserve the original failure and exact rollback trace;
+reaching either provider entry is an immediate test failure. The combined
+execution remains an integration gate rather than component evidence.
 
 - **Unlock:** higher-order algorithms, capturing callbacks and source-defined
   function wrappers, including owned/borrowed and read/mut/once forms.
