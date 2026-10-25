@@ -4391,6 +4391,13 @@ representations retain their later milestones. No public ordinary-class
 | Caller attribution | Exact site index and pinned artifact pointer, after receiver. This is attribution, not permission to originate a failure. |
 | Ordinary arguments | Source order, scalars/addresses directly and address-only values through already-staged storage. MIR owns moves, loans, cleanup and publication. |
 
+This table describes the **implemented** convention, not a final long-term
+failure-transport decision. The reviewed
+[C04 evaluation](../plans/implementation-sequence.md#c04-failure-transport-evaluation)
+compares current status propagation with native unwinding before dependent
+callable/worker ABIs are extended. No transport change is implemented by that
+approval; definitions and calls continue to agree on the convention above.
+
 All GTI functions use deterministic `__gti_native_v1_f<instance-id>` names.
 Declaration planning retains source spans as private metadata and records
 definition obligations before body emission, enabling recursion without name

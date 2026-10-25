@@ -96,31 +96,70 @@ not independently rediscovered by each language-family emitter.
 ## Shared Implementation Contracts (2026-10-25)
 
 The campaign's [LLVM-C01 through LLVM-C09](../plans/implementation-sequence.md#shared-cross-milestone-contracts)
-settle cross-family authority, representation, publication, call/failure,
-dynamic adapter, payload/memory, runtime/C ABI, admission and invalidation
-protocols. They are accepted constraints for the remaining implementation,
-not claims that all those families execute or a public stable GTI binary ABI.
+were individually reviewed and approved, with refinements reconciled against
+`481b3d7155d116dc7f6de7770302807cd7291fee`. They establish cross-family authority,
+representation, publication, adapter, boundary, admission and cost obligations.
+They are not claims that pending families execute or a public stable binary ABI.
+**C04's final failure transport remains open:** approval covers one ABI authority
+and the evaluation direction below, not a selection of native unwinding or
+permanent status returns. This supersedes the initial requirement to normalize
+future erased calls to status/result/failure channels.
+
+Each emission unit owns isolated mutable session state; immutable verified
+input may feed independent sessions. Backend analyses may derive optimization
+facts but must not recreate source semantic authority. This leaves parallel
+emission and optimization possible without cross-generation mutable registries.
 
 In particular, storage layout, a body's value form and ABI transport are
 distinct: the current `addressOnly` transport flag does not mean every such
-body operand is an address. Destination initialization and drop ownership
-follow verified MIR publication events. All definitions and call forms share
-the private ABI planner; native C classification remains a separate plan.
+body operand is an address. Layout, value operations and ABI planning cooperate
+without becoming one all-purpose layout object. Destination initialization and
+drop ownership follow MIR publication events, not mandatory universal runtime
+flags or temporary copies. Register transport and scalar replacement remain
+possible where identity and lifecycle permit them. All definitions and call
+forms share the private ABI planner; native C classification stays separate.
 
-Future erased GTI invocation adapters use a code/environment boundary and a
-normalized status/result/failure convention with explicit caller attribution.
-Infallible targets adapt by returning success; direct non-erased calls retain
-their cheaper exact ABI. This representation decision does not grant an
-unverified failure edge or change source callable capabilities. Concrete
-effect/attribution facts must be bound and verified before erased invocation
-is admitted. Virtual dispatch and C callbacks use their own planned adapters,
-never casts that conceal incompatible function signatures.
+The implemented backend uses status propagation. The
+[C04 evaluation](../plans/implementation-sequence.md#c04-failure-transport-evaluation)
+must compare it with native unwinding, the leading alternative for hosted GTI,
+before dynamic-call and worker conventions entrench that transport. Compare
+successful-path runtime and code size, exact cleanup/nested failure/worker
+containment, record ownership and source provenance, FFI contracts, runtime
+dependencies and supported targets. MIR success/failure edges can drive either
+mechanism; they do not dictate status-returning machine functions. Source
+`expected` remains an ordinary value protocol. Abort skips stack cleanup and is
+not equivalent evidence or an approved new profile. Record the decision and
+validate its implementation before changing the transport.
+
+Erased invocation uses a planned conceptual code/environment boundary, not
+mandatory two-pointer public layout or heap allocation. Effects, ownership and
+caller attribution must be verified before erasure; physical failure transport
+depends on C04. Adapters are mechanical glue, not implicit conversions or casts
+that conceal incompatible signatures. Direct calls remain eligible for their
+cheaper ABI, inlining and devirtualization.
+
+Safe payloads initially use explicit tags and aligned storage; native unions
+gain no automatic tag. All consumers query replaceable representation plans,
+so a later proven niche encoding need not change lifetime semantics. Host/
+foreign services have explicit ABIs, normally C where required; generated GTI
+helpers retain GTI ABI and LLVM-direct operations need no runtime call. Unwind
+permission is per boundary: non-unwinding C interfaces contain failure, while
+GTI-native unwinding, if selected, is not a blanket license for foreign C++
+exceptions. Thread attachment/ownership and atomic access obey GTI's contracts.
+
+Admission follows the proven required closure, including indirect, cleanup,
+initialization and worker dependencies. Dormant unsupported definitions should
+not reject programs merely by inclusion; uncertain roots remain conservative.
+There is no silent C++ fallback. Representation changes invalidate affected
+artifacts; debug locations and LLVM attributes require truthful plans/proofs.
+Sound optimization is encouraged, and equivalent-contract runtime evidence,
+not correctness alone, determines performance acceptance.
 
 One owner coordinates shared plans while family-local lowering and tests can
 proceed in parallel under the campaign's [assignment matrix](../plans/implementation-sequence.md#agent-assignment-and-evidence).
-Exact byte layouts and target C aggregate classifications remain implementation
-decisions requiring layout, ownership, execution and cost evidence. Changes to
-these contracts require a recorded rationale and affected-consumer validation;
+Failure transport, exact byte layouts and target C aggregate classifications
+remain decisions requiring the named ownership, execution and cost evidence.
+Changes to these contracts require a recorded rationale and affected-consumer validation;
 there is no requirement to preserve an experimental private binary ABI.
 
 ## Current Status
