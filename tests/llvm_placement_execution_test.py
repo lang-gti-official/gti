@@ -74,6 +74,20 @@ int main() {
   return constructed == 12 && destroyed == 21 ? 0 : 2;
 }
 ''',
+    "low-alignment-arrays": r'''
+class Small {
+  int id;
+public:
+  Small(int id) : id(id) {}
+  Small(Small&) = delete;
+  Small(Small&&) = delete;
+  ~Small() { destroyed = destroyed * 10 + this.id; }
+};
+int main() {
+  { Small values[2][1] = {{Small(1)}, {Small(2)}}; }
+  return destroyed == 21 ? 0 : 1;
+}
+''',
     "field-arrays": r'''
 struct Group {
   Pinned values[2][2] = {{Pinned(1), make(2)}, {relay(3), Pinned(4)}};

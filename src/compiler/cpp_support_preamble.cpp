@@ -1837,7 +1837,8 @@ private:
     else return reinterpret_cast<T *>(storage_);
   }
 
-  alignas(T) std::conditional_t<ExternalStorage, T *, std::byte[sizeof(T)]> storage_;
+  alignas(ExternalStorage ? alignof(T *) : alignof(T))
+      std::conditional_t<ExternalStorage, T *, std::byte[sizeof(T)]> storage_;
   bool engaged_ = false;
 };
 
