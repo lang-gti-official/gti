@@ -6,6 +6,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/Target/TargetMachine.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -31,6 +32,11 @@ public:
   [[nodiscard]] Layouts &layouts() { return *layouts_; }
   [[nodiscard]] Abi &abi() { return *abi_; }
   [[nodiscard]] const llvm::DataLayout &dataLayout() const;
+  // Initial native atomic profile: no widening and no libatomic dependency.
+  // This is target legalization policy, not a public lock-free guarantee.
+  [[nodiscard]] bool supportsNativeAtomic(const llvm::Function &function,
+                                          unsigned bits,
+                                          std::uint64_t alignment) const;
   [[nodiscard]] LlvmBackendOptions options() const { return options_; }
   [[nodiscard]] const std::vector<std::string> &diagnostics() const {
     return diagnostics_;

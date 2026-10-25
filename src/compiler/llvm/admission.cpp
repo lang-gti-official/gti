@@ -1,3 +1,4 @@
+#include "atomic_types.h"
 #include "gti/llvm_admission.h"
 
 #include "coverage.h"
@@ -212,6 +213,8 @@ public:
             return false;
           owner = &candidate;
         }
+      if (native_llvm::nativeAtomicElement(program, selected))
+        return true;
       if (!owner ||
           owner->compilerCapability != CompilerCapabilityTypeKind::None ||
           owner->polymorphic || owner->abstract || owner->unionLayout ||
@@ -233,6 +236,8 @@ public:
             leaf->kind == SemanticType::RawPointer) &&
            leaf->arguments.size() == 1)
       leaf = &leaf->arguments[0];
+    if (native_llvm::nativeAtomicElement(program, *leaf) && nativeValue(type))
+      return Shape::NativeAtomicStorage;
     if (leaf->kind == SemanticType::Class && nativeValue(type))
       return Shape::NativeClassStorage;
     return {};
@@ -508,6 +513,17 @@ public:
     if (row.role != LoweredBodyRole::SourceExecutable)
       return;
     executable = true;
+    if (body && body->kind == MirBodyKind::Constructor) {
+      const auto *constructor = program.findConstructorInstance(body->owner);
+      const auto *owner =
+          constructor ? program.findClassInstance(constructor->owner) : nullptr;
+      if (owner && owner->compilerCapability ==
+                       CompilerCapabilityTypeKind::AtomicStorage)
+        add(Shape::AtomicInitialization,
+            native_llvm::nativeAtomicConstructor(program, *constructor)
+                ? std::optional(Shape::NativeAtomicStorage)
+                : std::nullopt);
+    }
     type(mir.returnType);
     add(mir.returnType.kind == SemanticType::Reference ? Shape::BorrowReturn
         : mir.returnType.kind == SemanticType::Class ||
@@ -683,6 +699,7 @@ public:
                   ? placeClassShape(*addressPlace)
                   : std::nullopt);
         }
+        const bool atomic = native_llvm::nativeAtomicCall(program, mir, stage);
         if (stage.intrinsic != IntrinsicKind::None) {
           const bool textQuery =
               stage.receiver &&
@@ -691,7 +708,8 @@ public:
               (stage.intrinsic == IntrinsicKind::StringViewSize ||
                stage.intrinsic == IntrinsicKind::StringViewEmpty);
           add(stage.intrinsic,
-              erasedReference(stage) ? std::optional(Shape::ErasedReference)
+              atomic ? std::optional(Shape::NativeAtomicOperation)
+              : erasedReference(stage) ? std::optional(Shape::ErasedReference)
               : passiveTextViewAddress(stage) || passiveCStringAddress(stage)
                   ? std::optional(Shape::CountedText)
               : passiveRawReference(stage)
@@ -827,11 +845,14 @@ public:
         if (stage.callableInvocation)
           add(*stage.callableInvocation);
         if (stage.synchronization.kind != SynchronizationOperationKind::None) {
-          add(stage.synchronization.kind);
+          const auto witness = atomic
+                                   ? std::optional(Shape::NativeAtomicOperation)
+                                   : std::nullopt;
+          add(stage.synchronization.kind, witness);
           if (stage.synchronization.order)
-            add(*stage.synchronization.order);
+            add(*stage.synchronization.order, witness);
           if (stage.synchronization.failureOrder)
-            add(*stage.synchronization.failureOrder);
+            add(*stage.synchronization.failureOrder, witness);
         }
         if (!stage.definedFailure.empty()) {
           add(Shape::CheckedFailure);
@@ -976,7 +997,10 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     inventory.traits(instance.traits, instance.type);
     inventory.add(instance.kind);
     if (instance.compilerCapability != CompilerCapabilityTypeKind::None)
-      inventory.add(instance.compilerCapability);
+      inventory.add(instance.compilerCapability,
+                    native_llvm::nativeAtomicElement(mir, instance.type)
+                        ? std::optional(Shape::NativeAtomicStorage)
+                        : std::nullopt);
     if (!instance.declaredFields.empty())
       inventory.add(Shape::ClassFields, inventory.classShape(instance.type));
     for (const auto &field : instance.declaredFields)

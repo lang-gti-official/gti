@@ -1672,6 +1672,11 @@ add_executable("gti_llvm_admission_tests"
 target_link_libraries("gti_llvm_admission_tests" PRIVATE gti_llvm_backend)
 add_test(NAME llvm_admission COMMAND gti_llvm_admission_tests)
 
+add_executable(gti_llvm_atomic_contract_tests llvm_atomic_contract_tests.cpp)
+target_include_directories(gti_llvm_atomic_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_atomic_contract_tests PRIVATE gti_llvm_backend gti_driver)
+add_test(NAME llvm_atomic_contracts COMMAND gti_llvm_atomic_contract_tests "${PROJECT_SOURCE_DIR}")
+
 add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
 target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
@@ -1691,6 +1696,10 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_scalar_execution_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(llvm_scalar_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_atomic_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_atomic_execution_test.py"
+                   "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_atomic_execution PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_place_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_place_execution_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")

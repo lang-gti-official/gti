@@ -19,12 +19,21 @@ struct TypeLayout {
   std::vector<std::uint64_t> fieldOffsets;
 };
 
+// Storage facts shared by initialization, atomic operations and host parking.
+// This private scalar representation is not a C/C++ atomic-object ABI.
+struct AtomicStorageLayout {
+  SemanticType element;
+  TypeLayout object;
+  llvm::IntegerType *lane = nullptr;
+};
+
 // All layout queries, allocation sizes and ABI address-only choices share this
 // session-owned map. Opaque LLVM declarations are allocated before their
 // bodies.
 class Layouts final {
 public:
   [[nodiscard]] TypeLayout get(const SemanticType &type);
+  [[nodiscard]] AtomicStorageLayout atomicStorage(const SemanticType &type);
   [[nodiscard]] llvm::PointerType *pointer() const;
   [[nodiscard]] const MirClassInstance &
   instance(const SemanticType &type) const;

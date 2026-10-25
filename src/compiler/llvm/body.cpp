@@ -1,4 +1,5 @@
 #include "body.h"
+#include "atomics.h"
 #include "failure.h"
 #include "lifetimes.h"
 #include "placement.h"
@@ -45,21 +46,22 @@ class Body final {
 public:
   Body(Session &session, Failures &failures, Lifetimes &lifetimes,
        ThreadLocals &threadLocals, llvm::Function &function,
-       const MirBody &body, FunctionAbi abi,
+       MirBodyAddress address, const MirBody &body, FunctionAbi abi,
        std::span<const HirBindingId> parameters,
        const std::map<SymbolId, llvm::GlobalVariable *> &globals,
        std::function<llvm::Function *(MirBodyAddress)> findFunction,
        std::function<FunctionAbi(MirBodyAddress)> bodyAbi,
        const MirClassInstance *owner)
-      : session(session), failures(failures), function(function), input(body),
-        abi(std::move(abi)), globals(globals), ir(session.context()),
-        lifetimes(lifetimes), threadLocals(threadLocals),
+      : session(session), failures(failures), function(function),
+        address(address), input(body), abi(std::move(abi)), globals(globals),
+        ir(session.context()), lifetimes(lifetimes), threadLocals(threadLocals),
         bodyAbi(std::move(bodyAbi)), owner(owner),
         scalars(session, ir,
                 [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
                   guard(condition, outcome);
                 }),
-        findFunction(std::move(findFunction)), values(body.values.size() + 1),
+        atomics(session, ir), findFunction(std::move(findFunction)),
+        values(body.values.size() + 1),
         memory(session, ir, body, values,
                [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
                  guard(condition, outcome);
@@ -74,6 +76,7 @@ private:
   Session &session;
   Failures &failures;
   llvm::Function &function;
+  MirBodyAddress address;
   const MirBody &input;
   FunctionAbi abi;
   const std::map<SymbolId, llvm::GlobalVariable *> &globals;
@@ -83,6 +86,7 @@ private:
   std::function<FunctionAbi(MirBodyAddress)> bodyAbi;
   const MirClassInstance *owner;
   Scalars scalars;
+  Atomics atomics;
   std::function<llvm::Function *(MirBodyAddress)> findFunction;
   std::vector<llvm::Value *> values;
   Places memory;
@@ -239,6 +243,12 @@ private:
       return nullptr;
     }
     if (instruction.intrinsic != IntrinsicKind::None) {
+      if (Atomics::handles(instruction.intrinsic)) {
+        std::vector<llvm::Value *> inputs;
+        for (const auto &source : instruction.operands)
+          inputs.push_back(operand(source));
+        return atomics.emit(input, instruction, inputs);
+      }
       switch (instruction.intrinsic) {
       case IntrinsicKind::StringViewSize:
         return ir.CreateExtractValue(
@@ -855,6 +865,7 @@ private:
             header.CreatePHI(session.layouts().get(parameter.type).value, 0);
     }
     memory.allocate(globals);
+    llvm::Value *atomicArgument = nullptr;
     for (std::size_t index = 0; index < abi.parameters.size(); ++index) {
       auto *argument = function.getArg(index);
       const auto &parameter = abi.parameters[index];
@@ -874,6 +885,8 @@ private:
       case AbiChannel::Argument:
         memory.parameter(parameters[parameter.sourceIndex], argument,
                          parameter.indirect);
+        if (parameter.sourceIndex == 0 && !parameter.indirect)
+          atomicArgument = argument;
         break;
       case AbiChannel::Receiver:
         if (!owner)
@@ -882,6 +895,17 @@ private:
         memory.receiver(argument, owner->type);
         break;
       }
+    }
+    if (input.kind == MirBodyKind::Constructor && owner &&
+        owner->compilerCapability ==
+            CompilerCapabilityTypeKind::AtomicStorage) {
+      const auto *constructor =
+          session.program().mir().findConstructorInstance(address.owner);
+      if (address.kind != MirBodyKind::Constructor || !constructor ||
+          &constructor->body != &input || !thisAddress || !atomicArgument)
+        throw BackendUnsupportedError(
+            "LLVM atomic initialization lost its exact constructor ABI lane");
+      atomics.initialize(*constructor, thisAddress, atomicArgument);
     }
     for (const auto &record : input.failureRecords)
       channels.at(record.id) = ir.CreateAlloca(session.abi().failureChannel());
@@ -1032,8 +1056,8 @@ void Bodies::body(MirBodyAddress address) {
                      .findConstructorInstance(address.owner)
                      ->parameterBindings;
   Body emission(
-      session, failures, lifetimes, threadLocals, *function(address), input,
-      plan, parameters, globals,
+      session, failures, lifetimes, threadLocals, *function(address), address,
+      input, plan, parameters, globals,
       [&](MirBodyAddress target) { return function(target); },
       [&](MirBodyAddress target) { return signature(target); }, owner(address));
 }

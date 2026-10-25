@@ -1,4 +1,5 @@
 #include "layout.h"
+#include "atomic_types.h"
 #include "placement.h"
 
 #include <limits>
@@ -22,6 +23,20 @@ Layouts::Layouts(Session &session) : session(session) {
 
 llvm::PointerType *Layouts::pointer() const {
   return llvm::PointerType::get(session.context(), 0);
+}
+
+AtomicStorageLayout Layouts::atomicStorage(const SemanticType &type) {
+  const auto element = nativeAtomicElement(session.program().mir(), type);
+  if (!element)
+    throw BackendUnsupportedError(
+        "LLVM atomic storage requires an exact trusted scalar capability");
+  const auto object = get(type);
+  auto *lane = llvm::dyn_cast<llvm::IntegerType>(object.storage);
+  if (!lane || !object.addressOnly || object.value != pointer() ||
+      lane->getBitWidth() != object.size * 8)
+    throw std::logic_error(
+        "LLVM atomic scalar layout lost its exact access width");
+  return {*element, object, lane};
 }
 
 TypeLayout Layouts::describe(llvm::Type *storage, bool addressOnly,
@@ -140,6 +155,14 @@ TypeLayout Layouts::record(const SemanticType &type) {
   if (entry.building)
     throw std::logic_error("recursive by-value LLVM record layout");
   const auto &instance = *entry.instance;
+  if (instance.compilerCapability ==
+      CompilerCapabilityTypeKind::AtomicStorage) {
+    const auto element = nativeAtomicElement(session.program().mir(), type);
+    if (!element)
+      throw BackendUnsupportedError("LLVM atomic storage lost its scalar plan");
+    entry.layout = describe(get(*element).storage, true, pointer());
+    return *entry.layout;
+  }
   if (instance.cOpaqueHandle || instance.polymorphic ||
       instance.compilerCapability != CompilerCapabilityTypeKind::None)
     throw BackendUnsupportedError(
