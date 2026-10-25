@@ -2,6 +2,7 @@
 """Small real canonical-driver observations and strict cross-mode controls."""
 
 from copy import deepcopy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -114,6 +115,10 @@ def main() -> None:
     changed = deepcopy(value)
     changed["execution"] = "passed"
     rejects(lambda: validate(changed), "invented emission")
+    for closure in ("invented-closure", "", None, 42, []):
+        changed = deepcopy(value)
+        changed["uses"]["closure"] = closure
+        rejects(lambda: validate(changed), "closure")
     # A changed, unconsumed execution-only resource cannot invalidate the
     # actual no-link admission result, but its identity is not called stable.
     changed = deepcopy(value)
@@ -179,6 +184,41 @@ def main() -> None:
         example_source, audit.file_digest(example_source), target, "O0")
     assert example_outcome in {"admitted-only", "unsupported"}
     collector.write_json(evidence / "example-observer.json", example)
+
+    # Complete source definitions do not prove a sealed native call graph.
+    # Observe a real virtual call through conservative production reachability,
+    # preserving its current positive/unsupported outcome without an oracle
+    # manufactured by changing the production admission plan.
+    virtual_source = """class Value {
+  int data;
+public:
+  Value(int input) : data(input) {}
+  virtual int get() { return this.data; }
+};
+int main() { Value value{3}; return value.get() - 3; }
+"""
+    virtual_member = {"provider": "focused-controls", "id": "conservative-closure",
+        "source": {"path": "inline", "inline": virtual_source,
+                   "sha256": hashlib.sha256(virtual_source.encode()).hexdigest()},
+        "contract": {"role": "positive-admission", "metadata": {"scope": "focused-controls"}}}
+    virtual_plan = deepcopy(plan)
+    virtual_key = "focused-controls:conservative-closure"
+    virtual_plan["members"] = {virtual_key: virtual_member}
+    virtual_plan["provider_revision"] = audit.digest(virtual_plan["members"])
+    virtual_run = evidence / "conservative-closure"
+    virtual_summary = collector.collect_host(virtual_run, root, virtual_plan, helper, report,
+        [virtual_key], ["single-threaded"], ["O0", "O3"], resume=False, scope="focused-controls")
+    assert all(row["status"] in {"admitted-only", "unsupported"} for row in virtual_summary["observations"])
+    virtual_manifest = collector.read_json(virtual_run / "host-run.json")
+    saw_conservative = False
+    for identity, observed_events in collector.event_history(virtual_run).items():
+        checked = collector.validate_host_attempt(virtual_run, virtual_manifest, identity, observed_events["finish"])
+        artifact = collector.read_json(virtual_run / "attempts" / identity / "observer.json")
+        assert artifact["request"]["entry_required"] is True
+        assert artifact["request"]["definition_closure_required"] is True
+        saw_conservative |= artifact["uses"]["closure"] == "all-executable-bodies"
+        assert checked["status"] == ("admitted-only" if artifact["uses"]["admitted"] else "unsupported")
+    assert saw_conservative, "virtual-call control no longer exercises conservative reachability"
 
     absent = evidence / "absent"
     env = dict(os.environ, GTI_RUNTIME_LIBRARY=str(absent / "runtime.a"),

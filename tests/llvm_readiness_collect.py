@@ -771,10 +771,14 @@ def validate_host_artifact(value: dict, report: dict, binding: dict,
                   by_path[binding["standard_library"]["prelude"]]["sha256"] == binding["prelude_sha256"],
                   "required entry/default-prelude snapshot is absent or changed")
     uses = value["uses"]
+    # Source definition completeness and LLVM reachability are distinct:
+    # unknown/virtual dispatch legitimately selects the conservative closure.
+    audit.require(isinstance(uses, dict) and isinstance(uses.get("closure"), str) and
+                  uses["closure"] in {"sealed-entry-dependencies", "all-executable-bodies"},
+                  "canonical admission reachability closure is malformed")
     errors = audit.validate_use_artifact(uses, report)
     audit.require(not errors, f"invalid canonical required-use plan: {errors}")
-    audit.require(uses["target"] == target and uses["closure"] == "sealed-entry-dependencies",
-                  "canonical admission target/profile/capability or closure differs")
+    audit.require(uses["target"] == target, "canonical admission target/profile/capability differs")
     return "admitted-only" if uses["admitted"] else "unsupported"
 
 

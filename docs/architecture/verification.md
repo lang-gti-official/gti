@@ -10174,6 +10174,11 @@ sentinel. Retained raw output, distinct receipts, resumed/interrupt attempts and
 legacy-mode rejection prevent cross-mode evidence reuse. These focused checks
 do not run the corpus, emit native code, execute selected programs or reconcile
 the historical baseline; all broader readiness gates remain open.
+An additional real virtual-call source exercises conservative
+`all-executable-bodies` reachability at `O0`/`O3`; its receipt preserves the
+actual admission result while keeping source definition completeness required.
+Malformed/unknown reachability closures reject. Conservative reachability is
+not a frontend/MIR/observer failure or a source-policy relaxation.
 
 The combined O-LLVM-07/08 scalar-owner probe,
 `gti_llvm_session_tests --payload-unique-owner <source-root>`, retains normal

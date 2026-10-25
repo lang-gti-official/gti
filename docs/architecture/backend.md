@@ -5180,7 +5180,10 @@ definition closure. Public `compileWithBackend` owns loading, semantics,
 optimization and verified lowering. A test-only inspection backend re-verifies
 the detached program and serializes the existing admission plan/selection into
 an in-memory JSON artifact. Observer success is not LLVM emission or execution;
-valid unsupported programs remain unmet admission obligations. Frontend, MIR
+source definition completeness does not force sealed native reachability.
+The observer preserves the production choice between sealed entry dependencies
+and all executable bodies for conservative/unknown dispatch.
+Valid unsupported programs remain unmet admission obligations. Frontend, MIR
 and observer failures remain distinct from unresolved setup and admitted-only
 observations. The preceding `--probe`/`--probe-uses` paths are unchanged.
 
