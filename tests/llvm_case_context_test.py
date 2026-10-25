@@ -78,7 +78,7 @@ def main() -> None:
     equivalent(contexts, root)
     baseline = json.loads((root / "tests/mir_census_baseline.json").read_text())["examples"]
     assert {Path(case.source).name for case in contexts} == set(baseline)
-    assert len(contexts) == 173
+    assert contexts and len(contexts) == len(baseline)
     active = next(index for index, case in enumerate(contexts)
                   if case.execution_profile == "concurrent")
     for changed in (
