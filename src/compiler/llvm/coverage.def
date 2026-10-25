@@ -768,7 +768,7 @@ LLVM_COVERAGE_END()
 
 LLVM_COVERAGE_BEGIN(CallableBoundary)
 LLVM_COVERAGE_ENTRY(Confined, 9, LLVM_COVERAGE_IMPLEMENTED("llvm_callable_execution", "callable-core"), None, "verified nonescaping callable boundary; borrow facts remain authoritative")
-LLVM_COVERAGE_ENTRY(Owned, 9, LLVM_COVERAGE_IMPLEMENTED_GAP("no registered native execution source emits the verified Owned callable boundary; owned closure storage and transfer execute, but do not observe this admission row"), None, "verified owned callable boundary; storage and cleanup remain independently gated")
+LLVM_COVERAGE_ENTRY(Owned, 9, LLVM_COVERAGE_IMPLEMENTED("llvm_callable_execution", "callable-core"), None, "verified owned callable boundary; storage and cleanup remain independently gated")
 LLVM_COVERAGE_END()
 
 LLVM_COVERAGE_BEGIN(BorrowOriginKind)

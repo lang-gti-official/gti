@@ -1502,6 +1502,102 @@ int main() { Owned value{}; int data[1] = {1}; return data == data ? 0 : 1; }
 }
 
 void testShapeWitnesses() {
+  const auto instructionFor = [](const lang::LlvmAdmissionPlan &plan,
+                                 const lang::LlvmCoverageUse &use) {
+    const auto *body =
+        use.body ? lang::findMirBody(plan.program().mir(), *use.body) : nullptr;
+    const auto *block = body ? body->findBlock(use.block) : nullptr;
+    if (!block)
+      return static_cast<const lang::MirInstruction *>(nullptr);
+    const auto found =
+        std::find_if(block->instructions.begin(), block->instructions.end(),
+                     [&](const auto &instruction) {
+                       return instruction.id == use.instruction;
+                     });
+    return found == block->instructions.end() ? nullptr : &*found;
+  };
+
+  const auto ownedCallable = lang::planLlvmAdmission(lower(R"(
+#include <std/memory>
+F retain<F>(F callable) { return std::move(callable); }
+int main() {
+  auto stored = retain([]() -> int { return 0; });
+  return stored();
+}
+)",
+                                                           true));
+  std::size_t ownedDescriptors = 0;
+  for (const auto &use : ownedCallable.requirements()) {
+    if (!use.required || use.entry->family != "CallableBoundary" ||
+        use.entry->name != "Owned")
+      continue;
+    const auto *instruction = instructionFor(ownedCallable, use);
+    if (instruction && std::any_of(instruction->callableArguments.begin(),
+                                   instruction->callableArguments.end(),
+                                   [](const auto &argument) {
+                                     return argument.boundary ==
+                                            lang::CallableBoundary::Owned;
+                                   }))
+      ownedDescriptors += use.occurrences;
+  }
+  expect(ownedCallable.admitted() && ownedDescriptors == 1,
+         "an exact owned callable argument descriptor reaches admission");
+
+  constexpr std::string_view confinedCallableSource = R"(
+int apply<F>(F& callable, int value) { return callable(value); }
+int main() {
+  auto callback = [](int value) -> int { return value; };
+  return apply(callback, 0);
+}
+)";
+  const auto confinedCallable =
+      lang::planLlvmAdmission(lower(confinedCallableSource));
+  bool confinedDescriptor = false;
+  bool confinedInvocation = false;
+  for (const auto &use : confinedCallable.requirements()) {
+    if (!use.required || use.entry->family != "CallableBoundary" ||
+        use.entry->name != "Confined")
+      continue;
+    const auto *instruction = instructionFor(confinedCallable, use);
+    if (!instruction)
+      continue;
+    confinedDescriptor |= std::any_of(
+        instruction->callableArguments.begin(),
+        instruction->callableArguments.end(), [](const auto &argument) {
+          return argument.boundary == lang::CallableBoundary::Confined;
+        });
+    confinedInvocation |=
+        instruction->callableBoundary == lang::CallableBoundary::Confined;
+  }
+  expect(confinedCallable.admitted() && confinedDescriptor &&
+             confinedInvocation,
+         "confined callable argument and invocation boundaries remain "
+         "independent inventory occurrences");
+
+  const auto confinedFrontend = lang::Frontend().analyze(
+      "llvm-callable-boundary.gti", std::string(confinedCallableSource));
+  expect(confinedFrontend.canGenerateCode(),
+         "confined callable descriptor control passes the frontend");
+  for (unsigned mutation = 0; mutation < 2; ++mutation) {
+    auto malformed = confinedFrontend.mir;
+    bool changed = false;
+    for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+             malformed.functionInstances()))
+      for (auto &block : function.body.blocks)
+        for (auto &instruction : block.instructions)
+          if (!changed && !instruction.callableArguments.empty()) {
+            if (mutation == 0)
+              instruction.callableArguments.front().boundary =
+                  lang::CallableBoundary::Owned;
+            else
+              ++instruction.callableArguments.front().parameterIndex;
+            changed = true;
+          }
+    expect(changed && !lang::verifyMirProgram(malformed).valid(),
+           "forged callable argument boundary descriptors fail MIR "
+           "verification");
+  }
+
   const auto addressConversion = lang::planLlvmAdmission(lower(R"(
 struct Reading { int value = 42; };
 using Erased = void*;

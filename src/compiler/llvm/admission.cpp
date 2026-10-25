@@ -1608,6 +1608,8 @@ public:
         if (stage.payloadExtractionKind)
           add(*stage.payloadExtractionKind,
               classShape(mirInstructionEnumType(stage)));
+        for (const auto &argument : stage.callableArguments)
+          add(argument.boundary);
         if (stage.callableBoundary)
           add(*stage.callableBoundary);
         if (stage.callableInvocation) {
