@@ -71,6 +71,13 @@ erasedReferenceResultLoan(const MirProgram &program, const MirBody &body,
 // intrinsic/helper contract and complete reference-field paths.
 [[nodiscard]] const MirInstruction *
 restoredBorrowAuthority(const MirBody &body, const MirLoan &loan);
+// Program-wide proof that one restored-reference call is backed by an exact,
+// finite source-helper chain ending at the checked restore intrinsic. This is
+// the verifier's authority for the call's opaque witness, type, fields, access
+// and argument origin; a summary flag or public helper name is never enough.
+[[nodiscard]] bool
+verifiedReferenceRestoreCall(const MirProgram &program, const MirBody &body,
+                             const MirInstruction &instruction);
 // Nonempty, exact local reference aliases of a CallResult. Every alias has
 // one dominating Initialize from this loan, after its unique typed producer
 // and before consumerPosition; its pointer storage is never reseated, moved,

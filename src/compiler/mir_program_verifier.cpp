@@ -105,7 +105,7 @@ restorationProducer(const MirBody &body, MirLoanId loan,
     return nullptr;
   for (const auto &block : body.blocks)
     for (const auto &instruction : block.instructions) {
-      if (instruction.loan != loan)
+      if (instruction.tombstone || instruction.loan != loan)
         continue;
       if (instruction.kind == MirInstructionKind::Call)
         return instruction.restoresReferenceResult ? &instruction : nullptr;
@@ -178,7 +178,7 @@ verifiedRestoreSummary(const MirProgram &program,
 [[nodiscard]] bool verifiedRestoreCall(const MirProgram &program,
                                        const MirBody &body,
                                        const MirInstruction &instruction) {
-  if (!instruction.restoresReferenceResult ||
+  if (instruction.tombstone || !instruction.restoresReferenceResult ||
       instruction.kind != MirInstructionKind::Call || !instruction.loan ||
       instruction.borrowOrigin != BorrowOriginKind::Argument ||
       instruction.borrowArgument >= instruction.parameterTypes.size() ||
@@ -8922,6 +8922,13 @@ private:
 }
 
 } // namespace
+
+bool mir_detail::verifiedReferenceRestoreCall(
+    const MirProgram &program, const MirBody &body,
+    const MirInstruction &instruction) {
+  return verifiedRestoreCall(program, body, instruction);
+}
+
 namespace {
 [[nodiscard]] bool hasCanonicalBodylessDefinition(
     const MirBody &body, MirBodyKind kind, const SemanticType &returnType,

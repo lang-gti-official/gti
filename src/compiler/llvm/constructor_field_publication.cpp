@@ -96,4 +96,59 @@ UnstagedConstructorFieldPublicationPlan unstagedConstructorFieldPublication(
   return result;
 }
 
+StoredFieldPublicationPlan
+storedFieldPublication(const MirProgram &program, const MirBody &body,
+                       HirConstructorInstanceId constructorId,
+                       const MirLoan &loan) {
+  StoredFieldPublicationPlan result;
+  result.requested = loan.kind == MirLoanKind::Stored && loan.storedField != 0;
+  if (!result.requested)
+    return result;
+
+  const auto *constructor = program.findConstructorInstance(constructorId);
+  const auto *owner =
+      constructor ? program.findClassInstance(constructor->owner) : nullptr;
+  if (!constructor || &constructor->body != &body || !owner ||
+      constructor->owner != owner->id)
+    return result;
+
+  const auto field =
+      std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
+                   [&](const MirClassFieldInfo &candidate) {
+                     return candidate.symbol == loan.storedField;
+                   });
+  const auto initializer = std::find_if(
+      constructor->initializers.begin(), constructor->initializers.end(),
+      [&](const MirConstructorInitializer &candidate) {
+        return candidate.kind == ConstructorInitializerTargetKind::Field &&
+               candidate.field == loan.storedField;
+      });
+  if (field == owner->declaredFields.end() ||
+      initializer == constructor->initializers.end() ||
+      std::count_if(owner->declaredFields.begin(), owner->declaredFields.end(),
+                    [&](const MirClassFieldInfo &candidate) {
+                      return candidate.symbol == loan.storedField;
+                    }) != 1 ||
+      std::count_if(
+          constructor->initializers.begin(), constructor->initializers.end(),
+          [&](const MirConstructorInitializer &candidate) {
+            return candidate.kind == ConstructorInitializerTargetKind::Field &&
+                   candidate.field == loan.storedField;
+          }) != 1 ||
+      field->type != initializer->targetType)
+    return result;
+
+  const bool reference = field->type.kind == SemanticType::Reference;
+  if (initializer->storesReference != reference ||
+      (reference && field->type.arguments.size() != 1))
+    return result;
+
+  result.initializer = &*initializer;
+  result.field = &*field;
+  result.kind = reference ? StoredFieldPublicationKind::ReferenceAddress
+                          : StoredFieldPublicationKind::ProvenanceOnly;
+  result.exact = true;
+  return result;
+}
+
 } // namespace lang::native_llvm

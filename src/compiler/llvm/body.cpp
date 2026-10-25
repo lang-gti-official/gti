@@ -217,17 +217,32 @@ private:
   const MirBlock *current = nullptr;
   const MirInstruction *stage = nullptr;
 
+  [[nodiscard]] StoredFieldPublicationPlan
+  fieldPublication(const MirLoan &loan) const {
+    if (address.kind != MirBodyKind::Constructor)
+      return {};
+    auto plan = storedFieldPublication(session.program().mir(), input,
+                                       address.owner, loan);
+    if (plan.matched() && !plan.exact)
+      throw BackendUnsupportedError(
+          "LLVM stored field publication lost its exact constructor facts");
+    return plan;
+  }
+
   void publishStoredField(const MirLoan &loan, llvm::Value *address) {
-    if (loan.kind != MirLoanKind::Stored || !loan.storedField)
+    const auto plan = fieldPublication(loan);
+    if (!plan.matched() ||
+        plan.kind == StoredFieldPublicationKind::ProvenanceOnly)
       return;
-    if (input.kind != MirBodyKind::Constructor || !owner)
+    if (plan.kind != StoredFieldPublicationKind::ReferenceAddress ||
+        !plan.field || !owner || !thisAddress)
       throw std::logic_error(
           "LLVM stored field publication lost its constructor");
     ir.CreateStore(
         address,
         ir.CreateStructGEP(
             session.layouts().get(owner->type).storage, thisAddress,
-            session.layouts().fieldIndex(owner->type, loan.storedField)));
+            session.layouts().fieldIndex(owner->type, plan.field->symbol)));
   }
 
   [[nodiscard]] llvm::Value *destination(MirValueId value) {
@@ -972,6 +987,13 @@ private:
         memory.publish(*instruction.loan, result);
       break;
     case MirInstructionKind::Borrow:
+      if (instruction.loan) {
+        const auto publication =
+            fieldPublication(*input.findLoan(*instruction.loan));
+        if (publication.matched() &&
+            publication.kind == StoredFieldPublicationKind::ProvenanceOnly)
+          break;
+      }
       result = memory.selected(instruction.operands.at(0));
       memory.publish(*instruction.loan, result);
       publishStoredField(*input.findLoan(*instruction.loan), result);
@@ -1176,6 +1198,9 @@ private:
       for (const auto &loan : input.loans)
         if (loan.entry && loan.kind == MirLoanKind::Stored &&
             loan.storedField) {
+          const auto publication = fieldPublication(loan);
+          if (publication.kind == StoredFieldPublicationKind::ProvenanceOnly)
+            continue;
           const auto &source = *input.findPlace(loan.source);
           auto *address = memory.address(source.id);
           if (source.type.kind == SemanticType::Reference)

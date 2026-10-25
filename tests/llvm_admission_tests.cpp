@@ -7,8 +7,10 @@
 #include "../src/compiler/llvm/coverage.h"
 #include "../src/compiler/llvm/parameter_packs.h"
 #include "../src/compiler/llvm/placement.h"
+#include "../src/compiler/mir_verification_queries.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -183,9 +185,18 @@ void testPlacementPlan() {
   expect(rejected, "conflicting physical destinations fail closed");
 }
 
-lang::VerifiedLoweredProgram lower(std::string_view source) {
-  const auto frontend =
-      lang::Frontend().analyze("llvm-admission.gti", std::string(source));
+lang::VerifiedLoweredProgram lower(std::string_view source,
+                                   bool withStandardLibrary = false) {
+  const auto root =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend = lang::Frontend().analyze(
+      "llvm-admission.gti", std::string(source),
+      withStandardLibrary
+          ? std::vector<std::filesystem::path>{root / "prelude.gti"}
+          : std::vector<std::filesystem::path>{},
+      {},
+      withStandardLibrary ? std::vector<std::filesystem::path>{root}
+                          : std::vector<std::filesystem::path>{});
   if (!frontend.canGenerateCode()) {
     throw std::runtime_error(frontend.diagnostics.empty()
                                  ? "fixture did not pass frontend"
@@ -202,6 +213,138 @@ lang::VerifiedLoweredProgram lower(std::string_view source) {
   if (!verified)
     throw std::runtime_error(issues.front().detail);
   return *verified;
+}
+
+void testVerifiedRestorationRelay() {
+  using namespace lang;
+
+  const auto verified = lower(R"(
+#include <std/memory>
+class Cell {
+  mut int& value;
+public:
+  Cell(mut int& value) : value(value) {}
+  int read() { return this.value; }
+  void add(int amount) mut { this.value += amount; }
+};
+unsafe Cell& relay_read(std::erased_object& object) {
+  unsafe { Cell& cell = std::restore_ref<Cell>(object); return cell; }
+}
+unsafe mut Cell& relay_mut(mut std::erased_object& object) {
+  unsafe { mut Cell& cell = std::restore_mut<Cell>(object); return cell; }
+}
+int main() {
+  mut int value = 3;
+  mut Cell cell{value};
+  { std::erased_object& object = std::erase_ref(cell);
+    unsafe { if (relay_read(object).read() != 3) return 1; } }
+  { mut std::erased_object& object = std::erase_mut(cell);
+    unsafe { relay_mut(object).add(2); } }
+  return cell.read() == 5 ? 0 : 2;
+}
+)",
+                              true);
+  const auto &mir = verified.program().mir();
+  struct Witness {
+    HirFunctionInstanceId owner = 0;
+    MirInstructionId instruction = 0;
+    AccessMode access = AccessMode::ReadOnly;
+  };
+  std::vector<Witness> witnesses;
+  for (const auto &function : mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.functionTarget && instruction.restoresReferenceResult &&
+            mir_detail::verifiedReferenceRestoreCall(mir, function.body,
+                                                     instruction))
+          witnesses.push_back(
+              {function.id, instruction.id, instruction.borrowAccess});
+  expect(std::any_of(witnesses.begin(), witnesses.end(),
+                     [](const auto &entry) {
+                       return entry.access == AccessMode::ReadOnly;
+                     }) &&
+             std::any_of(witnesses.begin(), witnesses.end(),
+                         [](const auto &entry) {
+                           return entry.access == AccessMode::Mutable;
+                         }),
+         "unrelated read and mutable source helpers retain one verified finite "
+         "restoration chain");
+  const auto found =
+      std::find_if(witnesses.begin(), witnesses.end(), [](const auto &entry) {
+        return entry.access == AccessMode::ReadOnly;
+      });
+  if (found == witnesses.end())
+    return;
+  const Witness witness = *found;
+
+  const auto functionAt =
+      [](MirProgram &program,
+         HirFunctionInstanceId id) -> MirFunctionInstance & {
+    auto &functions = const_cast<std::vector<MirFunctionInstance> &>(
+        program.functionInstances());
+    return functions.at(id - 1);
+  };
+  const auto instructionAt = [](MirBody &body,
+                                MirInstructionId id) -> MirInstruction & {
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == id)
+          return instruction;
+    throw std::runtime_error("restoration witness instruction disappeared");
+  };
+  const auto rejects = [&](MirProgram program, const auto &mutation) -> bool {
+    auto &function = functionAt(program, witness.owner);
+    auto &call = instructionAt(function.body, witness.instruction);
+    mutation(program, function, call);
+    return !mir_detail::verifiedReferenceRestoreCall(program, function.body,
+                                                     call);
+  };
+
+  expect(rejects(mir,
+                 [&](MirProgram &program, MirFunctionInstance &,
+                     MirInstruction &call) {
+                   functionAt(program, *call.functionTarget)
+                       .restoresReferenceResult = false;
+                 }),
+         "a restoration helper summary is not authority without its exact "
+         "verified target summary");
+  expect(rejects(mir,
+                 [](MirProgram &, MirFunctionInstance &, MirInstruction &call) {
+                   call.restoredBorrowFields.clear();
+                 }),
+         "restoration rejects incomplete restored-field inventory");
+  expect(rejects(mir,
+                 [](MirProgram &, MirFunctionInstance &, MirInstruction &call) {
+                   call.borrowOrigin = BorrowOriginKind::Receiver;
+                 }),
+         "restoration rejects a changed argument-origin contract");
+  expect(rejects(mir,
+                 [](MirProgram &, MirFunctionInstance &, MirInstruction &call) {
+                   call.borrowAccess = AccessMode::Mutable;
+                 }),
+         "restoration rejects access stronger than its opaque witness");
+  expect(rejects(mir,
+                 [&](MirProgram &program, MirFunctionInstance &,
+                     MirInstruction &call) {
+                   auto &target = functionAt(program, *call.functionTarget);
+                   for (auto &block : target.body.blocks)
+                     for (auto &producer : block.instructions)
+                       if (producer.restoresReferenceResult) {
+                         producer.intrinsic = IntrinsicKind::None;
+                         producer.functionTarget = target.id;
+                       }
+                 }),
+         "a cyclic helper summary without an intrinsic endpoint rejects");
+  expect(rejects(mir,
+                 [&](MirProgram &program, MirFunctionInstance &,
+                     MirInstruction &call) {
+                   auto &target = functionAt(program, *call.functionTarget);
+                   for (auto &block : target.body.blocks)
+                     for (auto &producer : block.instructions)
+                       if (producer.restoresReferenceResult)
+                         producer.tombstone = true;
+                 }),
+         "a tombstoned restore producer cannot witness executable authority");
 }
 
 void testClosureEnvironmentPlan() {
@@ -422,6 +565,125 @@ int main() {
         duplicate, duplicateBody, constructorId, *original);
     expect(ambiguous.matched() && !ambiguous.exact,
            "two record-only producers cannot claim one constructor field");
+  }
+}
+
+void testStoredFieldPublicationPlan() {
+  using namespace lang;
+  using native_llvm::StoredFieldPublicationKind;
+
+  const auto verified = lower(R"(
+#include <std/memory>
+class Holder<F> {
+  mut F callable;
+public:
+  Holder(F callable) : callable(std::move(callable)) {}
+  int run() mut { return this.callable(); }
+};
+Holder<F> store<F>(F callable) { return Holder<F>(std::move(callable)); }
+class View {
+  mut int& value;
+public:
+  View(mut int& value) : value(value) {}
+  int read() { return this.value; }
+};
+int main() {
+  mut int value = 4;
+  mut auto update = [mut &value]() -> int { value += 1; return value; };
+  mut auto stored = store(std::move(update));
+  mut int reference_value = 9;
+  View view{reference_value};
+  return stored.run() == 5 && view.read() == 9 ? 0 : 1;
+}
+)",
+                              true);
+  const auto &mir = verified.program().mir();
+  struct Witness {
+    HirConstructorInstanceId constructor = 0;
+    MirLoanId loan = 0;
+    HirClassInstanceId owner = 0;
+  } carrier, reference;
+  for (const auto &constructor : mir.constructorInstances())
+    for (const auto &loan : constructor.body.loans) {
+      const auto plan = native_llvm::storedFieldPublication(
+          mir, constructor.body, constructor.id, loan);
+      if (!plan.exact)
+        continue;
+      if (plan.kind == StoredFieldPublicationKind::ProvenanceOnly &&
+          plan.field && plan.field->type.kind == SemanticType::Lambda)
+        carrier = {constructor.id, loan.id, constructor.owner};
+      if (plan.kind == StoredFieldPublicationKind::ReferenceAddress)
+        reference = {constructor.id, loan.id, constructor.owner};
+    }
+  expect(carrier.constructor && carrier.loan,
+         "a borrowed callable field has one exact provenance-only stored "
+         "publication");
+  expect(reference.constructor && reference.loan,
+         "an unrelated reference field retains exact physical address "
+         "publication");
+  if (!carrier.constructor || !carrier.loan)
+    return;
+
+  const auto constructorAt =
+      [](MirProgram &program,
+         HirConstructorInstanceId id) -> MirConstructorInstance & {
+    auto &constructors = const_cast<std::vector<MirConstructorInstance> &>(
+        program.constructorInstances());
+    const auto found =
+        std::find_if(constructors.begin(), constructors.end(),
+                     [&](const auto &candidate) { return candidate.id == id; });
+    if (found == constructors.end())
+      throw std::runtime_error("stored publication constructor disappeared");
+    return *found;
+  };
+  const auto loanAt = [](MirBody &body, MirLoanId id) -> MirLoan & {
+    const auto found =
+        std::find_if(body.loans.begin(), body.loans.end(),
+                     [&](const auto &loan) { return loan.id == id; });
+    if (found == body.loans.end())
+      throw std::runtime_error("stored publication loan disappeared");
+    return *found;
+  };
+  const auto ownerAt = [](MirProgram &program,
+                          HirClassInstanceId id) -> MirClassInstance & {
+    auto &owners =
+        const_cast<std::vector<MirClassInstance> &>(program.classInstances());
+    const auto found =
+        std::find_if(owners.begin(), owners.end(),
+                     [&](const auto &candidate) { return candidate.id == id; });
+    if (found == owners.end())
+      throw std::runtime_error("stored publication owner disappeared");
+    return *found;
+  };
+
+  MirProgram wrongField = mir;
+  auto &wrongFieldConstructor = constructorAt(wrongField, carrier.constructor);
+  auto &wrongFieldLoan = loanAt(wrongFieldConstructor.body, carrier.loan);
+  ++wrongFieldLoan.storedField;
+  const auto missing = native_llvm::storedFieldPublication(
+      wrongField, wrongFieldConstructor.body, carrier.constructor,
+      wrongFieldLoan);
+  expect(missing.matched() && !missing.exact,
+         "stored publication rejects a missing declared field identity");
+
+  MirProgram wrongType = mir;
+  auto &wrongTypeConstructor = constructorAt(wrongType, carrier.constructor);
+  auto &wrongTypeLoan = loanAt(wrongTypeConstructor.body, carrier.loan);
+  auto &wrongTypeOwner = ownerAt(wrongType, carrier.owner);
+  const auto field = std::find_if(
+      wrongTypeOwner.declaredFields.begin(),
+      wrongTypeOwner.declaredFields.end(), [&](const auto &candidate) {
+        return candidate.symbol == wrongTypeLoan.storedField;
+      });
+  expect(field != wrongTypeOwner.declaredFields.end(),
+         "stored publication mutation retains its declared field");
+  if (field != wrongTypeOwner.declaredFields.end()) {
+    field->type = SemanticType::referenceTo(SemanticType::Int32);
+    const auto mismatched = native_llvm::storedFieldPublication(
+        wrongType, wrongTypeConstructor.body, carrier.constructor,
+        wrongTypeLoan);
+    expect(mismatched.matched() && !mismatched.exact,
+           "stored publication rejects a declared field/type mismatch");
   }
 }
 
@@ -670,7 +932,9 @@ int main() {
   try {
     testConcreteParameterPackPlan();
     testClosureEnvironmentPlan();
+    testVerifiedRestorationRelay();
     testUnstagedConstructorFieldPublicationPlan();
+    testStoredFieldPublicationPlan();
     testLedger();
     testSnapshotAndWholeProgram();
     testShapeWitnesses();

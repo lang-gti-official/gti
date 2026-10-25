@@ -391,14 +391,24 @@ public:
            target->source == source->source &&
            target->producedBy == source->producedBy)))
       return false;
+    const MirInstruction *producer = nullptr;
     for (const auto &block : body.blocks)
-      for (const auto &producer : block.instructions)
-        if (!producer.tombstone && producer.loan == stage.operands[0].loan &&
-            producer.restoresReferenceResult && erasedReference(producer) &&
-            producer.info.type == stage.info.type &&
-            producer.info.access == stage.info.access)
-          return true;
-    return false;
+      for (const auto &candidate : block.instructions)
+        if (!candidate.tombstone &&
+            candidate.kind == MirInstructionKind::Call &&
+            candidate.loan == source->id) {
+          if (producer)
+            return false;
+          producer = &candidate;
+        }
+    const auto *authority = mir_detail::restoredBorrowAuthority(body, *target);
+    if ((target->storedDependency || source->storedDependency) &&
+        authority != producer)
+      return false;
+    return producer && producer->kind == MirInstructionKind::Call &&
+           producer->info.type == stage.info.type &&
+           producer->info.access == stage.info.access &&
+           mir_detail::verifiedReferenceRestoreCall(program, body, *producer);
   }
 
   std::optional<Shape>
@@ -972,8 +982,10 @@ public:
               stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall;
           add(stage.unsafeOperation,
               ordinaryUnsafe ? std::optional(Shape::OrdinaryUnsafeInvocation)
-              : stage.unsafeOperation ==
-                          UnsafeOperationKind::ErasedReferenceRestore &&
+              : (stage.unsafeOperation ==
+                     UnsafeOperationKind::ErasedReferenceRestore ||
+                 stage.unsafeOperation ==
+                     UnsafeOperationKind::DeclaredUnsafeCall) &&
                       (erasedReference(stage) ||
                        restoredLoanTransport(mir, stage))
                   ? std::optional(Shape::ErasedReference)

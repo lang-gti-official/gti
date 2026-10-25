@@ -4735,6 +4735,12 @@ already-represented complete object, plus concrete closure and invocation-
 pointer storage, and carries only the selected address through erase/restore.
 It does not recognize `std::function_ref` or any other public wrapper name;
 wrapper construction and invocation compose from their ordinary source bodies.
+An unrelated source helper can relay that address only when the central MIR
+verifier proves its finite exact call chain reaches the trusted restore
+intrinsic with the same opaque witness, referent type, complete field path,
+access and argument origin. A complete scalar referent legitimately has an
+empty field path; a summary flag, tombstoned producer, changed origin/access or
+cyclic helper chain without the intrinsic endpoint is not authority.
 Abstract, opaque, symbolic and unsupported capability storage remains rejected
 even when a similarly spelled source wrapper exists.
 
@@ -4745,6 +4751,15 @@ producer's final destination. A staged `Initialize` sibling suppresses this
 route. The requirement is witnessed only by an independently admitted scalar
 transport or concrete storage shape, so adding an owner representation does not
 silently claim constructor publication for it.
+
+A constructor `Stored` loan is not itself a representation decision. The
+shared publication plan resolves the exact declared field and initializer. A
+reference field publishes its selected referent address once; a class or lambda
+field carrying nested borrowed state is provenance-only because its complete
+by-value object was already published by the verified move/copy stage. Native
+emission skips both a second field write and runtime loan-slot materialization
+for that provenance-only handoff. Missing, ambiguous or type-inconsistent
+field facts fail closed rather than treating every Stored loan as a pointer.
 
 Concrete trailing parameter packs have no runtime pack object. One exact
 `concretePackPrefix` plan accepts the verified MIR forms currently emitted:
@@ -4757,24 +4772,24 @@ storage. Symbolic, nested, non-trailing, mismatched and ambiguous mappings fail
 closed.
 
 `llvm_callable_execution` compares direct/indirect calls, read/mutable/once
-invocation, returned/stored and nested generic closures, failure propagation and
-cleanup with the production backend where that backend has a matching
-representation. Native-only wrapper controls exercise final-field placement and
-rollback after a later initializer. Borrow rejection remains a frontend result.
+invocation, returned/stored and nested generic closures, borrowed-carrier field
+storage, checked erased source wrappers, failure propagation and cleanup with
+the production backend where that backend has a matching representation.
+Native-only wrapper controls exercise final-field placement and rollback after
+a later initializer. Borrow rejection remains a frontend result.
 The optimized owned-closure probe also audits the linked executable for GTI
 allocation-provider symbols; performance and code-size observations are bounded
 workload evidence, not a general speedup claim.
 
 The 2026-10-25 macOS arm64 checkpoint uses 400-million-iteration workloads so
 each measured run exceeds 0.09 seconds. Five-sample medians for C++23/O3 versus
-LLVM/O3 were 102.547/93.911 ms for direct calls, 93.384/94.982 ms for a borrowed-
-capture closure, 92.769/646.446 ms for an invocation pointer, and 92.405/646.921
-ms for the mixed closure/pointer path. A preceding run put direct calls within
-1.3% and the closure path 10.9% slower, so quiet-host attribution remains
-pending for those small workloads. The roughly sevenfold pointer overhead is
-stable and material.
-The pointer executables were 107,048/122,344 bytes; direct and closure LLVM
-executables were slightly smaller than their 106,744-byte C++ comparators. The
+LLVM/O3 were 100.606/100.519 ms for direct calls, 102.091/101.377 ms for a
+borrowed-capture closure, 94.638/649.676 ms for an invocation pointer, and
+99.422/654.378 ms for the mixed closure/pointer path. Direct and closure paths
+are within about 1%; the roughly sevenfold pointer overhead is stable and
+material.
+The pointer executables were 107,048/122,344 bytes; direct executables were
+106,744/105,688 bytes and closure executables 106,744/105,640 bytes. The
 separate owned-closure executable was 105,768 bytes and retained no GTI
 allocation-provider symbol. This isolates a remaining indirect-adapter/inlining
 cost; it is not final O-LLVM-09 performance acceptance.

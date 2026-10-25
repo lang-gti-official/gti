@@ -11363,12 +11363,16 @@ generic closures; concrete trailing callable packs; checked failure adapters;
 and reverse owned-capture cleanup. Compatible duplicate lambda instantiations
 share only their checked physical environment plan; formation, invocation and
 cleanup retain exact instance identities. Verified complete-object erased
-references now compose source-defined callable views without public-name
-recognition. Unstaged constructor-field records are admitted only through one
-exact owner/field/result/unique-producer plan plus an independently supported
-storage transport. Focused macOS O0--O3 execution, malformed admission
-controls, borrow rejection, wrapper rollback and allocation-symbol/optimized-
-cost probes pass. This is not the milestone exit: ownership wrappers whose
+references now compose source-defined callable views and unrelated source
+relay helpers through the verifier's finite exact restoration proof, without
+public-name recognition. Unstaged constructor-field records are admitted only
+through one exact owner/field/result/unique-producer plan plus an independently
+supported storage transport. Stored loans publish an address only for an exact
+reference field; a by-value borrowed carrier retains provenance without a
+second physical write or fabricated runtime loan slot. Focused macOS O0--O3
+execution, malformed admission controls, borrow rejection, wrapper rollback
+and allocation-symbol/optimized-cost probes pass. This is not the milestone
+exit: ownership wrappers whose
 representation needs allocator/control-block services still compose with
 O-LLVM-08, polymorphic callable erasure composes with O-LLVM-10, native
 callbacks compose with O-LLVM-11, Linux evidence and the integration campaign
