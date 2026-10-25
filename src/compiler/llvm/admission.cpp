@@ -2,6 +2,7 @@
 
 #include "../mir_verification_queries.h"
 #include "coverage.h"
+#include "memory.h"
 #include "reachability.h"
 #include "text.h"
 
@@ -213,8 +214,16 @@ public:
             return false;
           owner = &candidate;
         }
-      if (!owner ||
-          owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+      if (!owner)
+        return false;
+      if (native_llvm::Memory::uninitializedStorage(program, *owner)) {
+        if (!visiting.insert(owner->id).second)
+          return false;
+        const bool valid = self(self, owner->type.arguments[0]);
+        visiting.erase(owner->id);
+        return valid;
+      }
+      if (owner->compilerCapability != CompilerCapabilityTypeKind::None ||
           owner->polymorphic || owner->abstract || owner->unionLayout ||
           owner->cOpaqueHandle || !owner->bases.empty() ||
           !owner->structuralBases.empty() || !visiting.insert(owner->id).second)
@@ -239,6 +248,9 @@ public:
     return {};
   }
   bool memoryOperation(const MirInstruction &stage) const {
+    if (stage.intrinsic == IntrinsicKind::ObjectConstruct)
+      return native_llvm::Memory::objectConstruction(program, stage) &&
+             nativeValue(stage.parameterTypes[0].arguments[0]);
     if (stage.intrinsic == IntrinsicKind::ObjectSize ||
         stage.intrinsic == IntrinsicKind::ObjectAlignment)
       return mir_detail::objectLayoutQuery(program, stage) &&
@@ -262,20 +274,23 @@ public:
              stage.operands.size() == 2 &&
              stage.operands[0].type == SemanticType::UInt64 &&
              stage.operands[1].type == SemanticType::UInt64;
-    switch (stage.intrinsic) {
-    case IntrinsicKind::RequireAllocation:
-    case IntrinsicKind::RequireVacantStorage:
-    case IntrinsicKind::RequireLiveStorage:
-    case IntrinsicKind::RequireRelocationCapacity:
-    case IntrinsicKind::RequireRelocationSource:
-    case IntrinsicKind::RequireRelocationDestination:
+    if (const auto outcome = intrinsicBooleanFailureOutcome(stage.intrinsic)) {
+      const auto *site =
+          stage.localFailureSites.size() == 1
+              ? program.failureMetadata().findSite(stage.localFailureSites[0])
+              : nullptr;
       return stage.parameterTypes ==
                  std::vector<SemanticType>{SemanticType::Bool} &&
              stage.operands.size() == 1 &&
-             stage.operands[0].type == SemanticType::Bool;
-    default:
-      return false;
+             stage.operands[0].type == SemanticType::Bool &&
+             stage.definedFailure.propagation == FailurePropagationKind::None &&
+             stage.definedFailure.localOrigins.size() == 1 &&
+             stage.definedFailure.localOrigins[0].outcomes ==
+                 std::vector<DefinedFailureOutcome>{*outcome} &&
+             site &&
+             site->outcomes == std::vector<DefinedFailureOutcome>{*outcome};
     }
+    return false;
   }
   const MirClassInstance *bodyClass() const {
     if (!body)
@@ -778,7 +793,8 @@ public:
             stage.lambdaTarget)
           add(stage.dispatch);
         if (stage.constructorTarget)
-          add(stage.constructorKind, classShape(stage.info.type));
+          add(stage.constructorKind,
+              typedMemory ? storageShape : classShape(stage.info.type));
         if (stage.lambdaTarget || stage.functionPointerFunctionTarget ||
             stage.functionPointerLambdaTarget)
           add(Shape::IndirectCall);
@@ -1023,7 +1039,11 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     inventory.traits(instance.traits, instance.type);
     inventory.add(instance.kind);
     if (instance.compilerCapability != CompilerCapabilityTypeKind::None)
-      inventory.add(instance.compilerCapability);
+      inventory.add(instance.compilerCapability,
+                    native_llvm::Memory::uninitializedStorage(mir, instance) &&
+                            inventory.nativeValue(instance.type)
+                        ? std::optional(Shape::NativeMemoryOperation)
+                        : std::nullopt);
     if (!instance.declaredFields.empty())
       inventory.add(Shape::ClassFields, inventory.classShape(instance.type));
     for (const auto &field : instance.declaredFields)

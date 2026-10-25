@@ -1,4 +1,5 @@
 #include "layout.h"
+#include "memory.h"
 #include "placement.h"
 
 #include <limits>
@@ -140,14 +141,19 @@ TypeLayout Layouts::record(const SemanticType &type) {
   if (entry.building)
     throw std::logic_error("recursive by-value LLVM record layout");
   const auto &instance = *entry.instance;
+  const bool vacant =
+      Memory::uninitializedStorage(session.program().mir(), instance);
   if (instance.cOpaqueHandle || instance.polymorphic ||
-      instance.compilerCapability != CompilerCapabilityTypeKind::None)
+      (instance.compilerCapability != CompilerCapabilityTypeKind::None &&
+       !vacant))
     throw BackendUnsupportedError(
         "LLVM record representation requires its later "
         "lifecycle/capability/dispatch milestone");
   entry.building = true;
   try {
     std::vector<llvm::Type *> fields;
+    if (vacant)
+      fields.push_back(get(instance.type.arguments[0]).storage);
     for (const auto &base : instance.bases)
       fields.push_back(get(base.type).storage);
     for (const auto &field : instance.declaredFields)

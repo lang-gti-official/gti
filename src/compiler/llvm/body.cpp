@@ -259,7 +259,37 @@ private:
       jump(term.elseTarget, term.elseArguments);
       return nullptr;
     }
-    if (instruction.intrinsic != IntrinsicKind::None) {
+    if (const auto outcome =
+            intrinsicBooleanFailureOutcome(instruction.intrinsic)) {
+      auto *condition = operand(instruction.operands.at(0));
+      if (!condition->getType()->isIntegerTy(1))
+        throw std::logic_error(
+            "LLVM checked condition lost its sealed Boolean type");
+      guard(ir.CreateNot(condition), *outcome);
+      return nullptr;
+    }
+    std::size_t argumentOffset = 0;
+    if (instruction.intrinsic == IntrinsicKind::ObjectConstruct) {
+      if (!Memory::objectConstruction(session.program().mir(), instruction))
+        throw BackendUnsupportedError("LLVM object construction requires its "
+                                      "exact selected/generated plan");
+      constructed = operand(instruction.operands[0]);
+      argumentOffset = 1;
+      if (!instruction.constructorTarget) {
+        const auto &type = instruction.parameterTypes[0].arguments[0];
+        auto *value = instruction.operands.size() == 2
+                          ? operand(instruction.operands[1])
+                          : llvm::Constant::getNullValue(
+                                session.layouts().get(type).value);
+        store(value, constructed, type);
+        if (instruction.constructorKind == ConstructorKind::Move)
+          lifetimes.moved(ir, value, type);
+        lifetimes.active(ir, constructed, type, true);
+        return nullptr;
+      }
+      // Keep the original MIR instruction, stage and ownership events. Only
+      // source-argument indexing skips the already evaluated raw destination.
+    } else if (instruction.intrinsic != IntrinsicKind::None) {
       if (Memory::handles(instruction.intrinsic)) {
         std::vector<llvm::Value *> inputs;
         for (const auto &value : instruction.operands)
@@ -404,10 +434,10 @@ private:
                                 : failures.artifact());
         break;
       case AbiChannel::Argument: {
-        auto *value = operand(instruction.operands.at(parameter.sourceIndex));
-        if (parameter.indirect &&
-            !addressValue(
-                instruction.operands.at(parameter.sourceIndex).type)) {
+        const auto &source =
+            instruction.operands.at(parameter.sourceIndex + argumentOffset);
+        auto *value = operand(source);
+        if (parameter.indirect && !addressValue(source.type)) {
           llvm::IRBuilder<> entry(&function.getEntryBlock(),
                                   function.getEntryBlock().begin());
           auto *slot = entry.CreateAlloca(value->getType());
@@ -696,6 +726,20 @@ private:
     }
     case MirInstructionKind::Construct: {
       auto *target = destination(*instruction.result);
+      if (instruction.info.type.kind == SemanticType::Class &&
+          Memory::uninitializedStorage(
+              session.program().mir(),
+              session.layouts().instance(instruction.info.type))) {
+        const auto &object = session.layouts().instance(instruction.info.type);
+        if (instruction.constructorTarget || !instruction.operands.empty() ||
+            instruction.constructorKind != ConstructorKind::Ordinary ||
+            object.defaultConstructor != SpecialMemberStatus::Generated ||
+            object.generatedDefaultRequiresSchedule)
+          throw BackendUnsupportedError(
+              "LLVM vacant storage requires exact generated reservation");
+        result = target;
+        break; // No payload lifetime, zeroing, state byte or cleanup is begun.
+      }
       lifetimes.active(ir, target, instruction.info.type, false);
       if (instruction.constructorTarget) {
         result = call(instruction, target);

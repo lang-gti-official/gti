@@ -2,6 +2,7 @@
 
 #include "../mir_verification_queries.h"
 
+#include <algorithm>
 #include <llvm/Support/Alignment.h>
 
 namespace lang::native_llvm {
@@ -9,6 +10,70 @@ namespace lang::native_llvm {
 Memory::Memory(Session &session, llvm::IRBuilder<> &ir, Lifetimes &lifetimes,
                Scalars::Guard guard)
     : session(session), ir(ir), lifetimes(lifetimes), guard(std::move(guard)) {}
+
+bool Memory::uninitializedStorage(const MirProgram &program,
+                                  const MirClassInstance &instance) {
+  return instance.compilerCapability ==
+             CompilerCapabilityTypeKind::UninitializedStorage &&
+         instance.type.kind == SemanticType::Class &&
+         instance.type.arguments.size() == 1 &&
+         mir_detail::completeObjectType(program, instance.type.arguments[0]) &&
+         instance.declaredFields.empty() && instance.bases.empty() &&
+         instance.structuralBases.empty() && !instance.destructor &&
+         instance.destructorStatus == SpecialMemberStatus::Generated &&
+         !instance.requiresActiveCleanup && !instance.requiresActiveDropState &&
+         !instance.polymorphic && !instance.abstract && !instance.cAbiRecord &&
+         !instance.cOpaqueHandle && !instance.cAbiLayout &&
+         !instance.unionLayout;
+}
+
+bool Memory::objectConstruction(const MirProgram &program,
+                                const MirInstruction &instruction) {
+  if (!mir_detail::objectConstruct(program, instruction))
+    return false;
+  const auto &type = instruction.parameterTypes[0].arguments[0];
+  if (instruction.constructorTarget) {
+    const auto *target =
+        program.findConstructorInstance(*instruction.constructorTarget);
+    const auto *owner =
+        target ? program.findClassInstance(target->owner) : nullptr;
+    return owner && owner->type == type &&
+           instruction.parameterTypes.size() ==
+               target->parameterTypes.size() + 1 &&
+           std::equal(instruction.parameterTypes.begin() + 1,
+                      instruction.parameterTypes.end(),
+                      target->parameterTypes.begin());
+  }
+  if (type.kind == SemanticType::Class) {
+    const auto found = std::find_if(
+        program.classInstances().begin(), program.classInstances().end(),
+        [&](const auto &owner) { return owner.type == type; });
+    if (found == program.classInstances().end())
+      return false;
+    if (instruction.constructorKind == ConstructorKind::Ordinary)
+      return instruction.operands.size() == 1 &&
+             found->declaredFields.empty() && found->bases.empty() &&
+             found->defaultConstructor == SpecialMemberStatus::Generated &&
+             !found->generatedDefaultRequiresSchedule;
+    return instruction.operands.size() == 2 &&
+           (instruction.constructorKind == ConstructorKind::Move
+                ? found->moveConstructor == SpecialMemberStatus::Generated
+                : found->copyConstructor == SpecialMemberStatus::Generated);
+  }
+  // Exact completed values already carry their source-owned initialization.
+  // A targetless default may not invent constructors for nested class values.
+  if (instruction.operands.size() == 2)
+    return true;
+  const auto passive = [&](const auto &self,
+                           const SemanticType &selected) -> bool {
+    return selected.kind == SemanticType::Array
+               ? selected.arguments.size() == 1 &&
+                     self(self, selected.arguments[0])
+               : isPassiveScalarValueType(selected) &&
+                     selected != SemanticType::Void;
+  };
+  return passive(passive, type);
+}
 
 bool Memory::handles(IntrinsicKind intrinsic) {
   switch (intrinsic) {
@@ -18,12 +83,6 @@ bool Memory::handles(IntrinsicKind intrinsic) {
   case IntrinsicKind::ObjectRelocate:
   case IntrinsicKind::ObjectRelocateRange:
   case IntrinsicKind::StorageBoundsCheck:
-  case IntrinsicKind::RequireAllocation:
-  case IntrinsicKind::RequireVacantStorage:
-  case IntrinsicKind::RequireLiveStorage:
-  case IntrinsicKind::RequireRelocationCapacity:
-  case IntrinsicKind::RequireRelocationSource:
-  case IntrinsicKind::RequireRelocationDestination:
     return true;
   default:
     return false;
@@ -111,19 +170,6 @@ Memory::Result Memory::emit(const MirInstruction &instruction,
           {DefinedFailureCode::IndexOutOfBounds,
            DefinedFailureDetail::PrivateStorage});
     return {true};
-  case IntrinsicKind::RequireAllocation:
-  case IntrinsicKind::RequireVacantStorage:
-  case IntrinsicKind::RequireLiveStorage:
-  case IntrinsicKind::RequireRelocationCapacity:
-  case IntrinsicKind::RequireRelocationSource:
-  case IntrinsicKind::RequireRelocationDestination: {
-    const auto outcome = intrinsicBooleanFailureOutcome(instruction.intrinsic);
-    if (!outcome || inputs.size() != 1 || !inputs[0]->getType()->isIntegerTy(1))
-      throw std::logic_error(
-          "LLVM slot check lost its source-computed condition");
-    guard(ir.CreateNot(inputs[0]), *outcome);
-    return {true};
-  }
   default:
     return {};
   }

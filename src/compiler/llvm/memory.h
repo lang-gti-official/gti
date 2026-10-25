@@ -19,6 +19,12 @@ public:
   Memory(Session &session, llvm::IRBuilder<> &ir, Lifetimes &lifetimes,
          Scalars::Guard guard);
   [[nodiscard]] static bool handles(IntrinsicKind intrinsic);
+  [[nodiscard]] static bool
+  uninitializedStorage(const MirProgram &program,
+                       const MirClassInstance &instance);
+  [[nodiscard]] static bool
+  objectConstruction(const MirProgram &program,
+                     const MirInstruction &instruction);
   [[nodiscard]] Result emit(const MirInstruction &instruction,
                             std::span<llvm::Value *const> inputs,
                             llvm::Value *failureChannel, bool duringFailure);
