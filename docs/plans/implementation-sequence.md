@@ -10869,10 +10869,20 @@ over validated unsanitized O3 artifacts. It alternates status/unwind candidates
 for direct/indirect success, failure and mixed entry, retaining independent
 checksum checks, runtime distributions and code/unwind-table sizes. The
 evaluation's optional `--build-metrics` records fixture emission/link time and
-peak memory. This is supporting evidence for the bounded local/parameter/return/
+peak memory. Separate `--call-boundaries fixed` and `optimizable` runs compare
+the controlled noinline baseline with the ordinary LLVM optimization pipeline,
+without forcing inlining. Retained post-codegen IR and scalar entry call counts
+record the actual optimizer decision; large status failure-copy paths may remain
+out of line. Cost receipts reject mixed policies. This is supporting evidence
+for the bounded local/parameter/return/
 replacement workloads, not completion of the representative platform comparison:
 allocation measurement, dynamic GTI adapters, workers, foreign containment and
-production inlining remain explicit obligations before choosing the transport.
+representative whole-program optimization remain explicit obligations before
+choosing the transport.
+Do not infer a uniform success-path benefit from the fixed-call baseline:
+the local optimizable returned-owner cleanup probe favored status while several
+other probes favored unwinding. Resolve the workload-specific generated-code
+costs and platform results before making the production decision.
 
 ##### LLVM-C05: Dynamic Calls Use Planned Adapters
 

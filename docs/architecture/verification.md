@@ -10140,7 +10140,15 @@ sanitized runtime archive for runtime coverage. It does not instrument generated
 LLVM code and cannot satisfy production generated-code sanitizer gates.
 The narrow supported profile and remaining proof obligations are recorded in
 [C04](../plans/implementation-sequence.md#c04-failure-transport-evaluation).
-Its fixed-boundary checks cover scalar propagation and exactly-once
+Use `--call-boundaries fixed` (the default) for the controlled noinline baseline
+and `--call-boundaries optimizable` in a separate output directory for ordinary
+LLVM pipeline decisions. The latter removes only the experiment's `noinline`
+attributes; it does not force inlining or alter the production pipeline. Both
+policies run the same cleanup, attribution and rejection checks. Module metadata
+and receipts identify the policy, and the scalar O3 receipts record the number
+of remaining GTI calls in the entry body. A retained call is a valid optimizer
+decision, not evidence that the optimizable experiment failed.
+These checks cover scalar propagation and exactly-once
 scalar/reference-field cleanup across three frames, including repeated and
 alternating failures. Fallible lifecycle cases check remaining local cleanup,
 non-destruction after a failed constructor, original primary/secondary source
@@ -10160,14 +10168,16 @@ schedule. Its unsafe `int*` observers count destruction of the old value,
 prepared replacement and surrounding owner when the old destructor fails;
 preparation failure leaves the old owner live until ordinary cleanup, and a
 second failure while draining the prepared RHS terminates before outer cleanup.
-the observer storage belongs to the caller and outlives every generated call.
+The observer storage belongs to the caller and outlives every generated call.
 The experiment permits only typed scalar raw dereferences, not pointer arithmetic
 or allocation. Opaque-pointer/array fields and projected replacement remain
 rejected before object publication. These are not arbitrary ownership transfer,
 worker or performance
-acceptance and must not substitute for existing backend gates. Retained IR is
-the verified pre-object-emission module: target emission may rewrite `resume`
-into platform unwind-runtime calls. Hash receipts are also printed into the step
+acceptance and must not substitute for existing backend gates. `generated.ll`
+retains verified pre-object-emission IR; `generated.codegen.ll` retains the
+post-pipeline/target module for inspecting actual inlining. Target emission may
+rewrite `resume` into platform unwind-runtime calls, so the latter is not the
+input-IR oracle. Hash receipts are also printed into the step
 log so managed-runner collection retains them before deleting its build tree.
 
 For bounded transport-cost evidence, run that evaluation without `--sanitized`
@@ -10177,7 +10187,8 @@ the fixture compiler invocation and host link, not a full compiler rebuild.
 Then run `python3 tests/llvm_c04_cost.py --evidence <output>/evidence.json
 --output <new-cost-directory>` inside the suite window; provide `--size-tool`
 if `llvm-size` is not on PATH. The reporter verifies object/executable/input
-hashes, rejects sanitized receipts and mismatched MIR, and checks an independent
+hashes (including retained codegen IR when present), rejects sanitized receipts,
+mismatched MIR and mixed boundary policies, and checks an independent
 checksum on every timed run. Defaults use two warmups and nine alternating
 samples per candidate for direct/indirect success, failure and mixed entry.
 Each report retains the raw observations, per-call distributions, medians,
@@ -10185,7 +10196,7 @@ object/executable sizes and code/unwind sections (same-named Mach-O sections
 are summed, with the original tool output retained). Run
 `python3 tests/llvm_c04_cost_test.py` for the automation-only controls; its
 system-time check requires permission to collect child-process memory metrics.
-These fixed-noinline microbenchmarks do not establish whole-program speedups,
+Neither boundary mode's microbenchmarks establish whole-program speedups,
 allocation counts, worker/callback costs, contention isolation or final transport
 acceptance. Keep those missing obligations explicit in the C04 decision.
 

@@ -13,7 +13,8 @@ void validateC04Evaluation(const Session &session,
                            const LlvmAdmissionPlan &admission,
                            std::span<const HirFunctionInstanceId> functions);
 void lowerC04Evaluation(Session &session, const LlvmAdmissionPlan &admission,
-                        std::span<const HirFunctionInstanceId> functions);
+                        std::span<const HirFunctionInstanceId> functions,
+                        bool fixedCallBoundaries);
 #endif
 
 } // namespace lang::native_llvm

@@ -35,6 +35,9 @@ def checksum(outcome, iterations):
 def verify_artifacts(evidence, directory, fixtures):
     if evidence.get("sanitized_native_carrier") is not False:
         raise ValueError("cost requires an unsanitized carrier/runtime evaluation")
+    boundaries = evidence.get("call_boundaries", "fixed")
+    if boundaries not in ("fixed", "optimizable"):
+        raise ValueError("unknown call-boundary policy")
     selected = {}
     for fixture in fixtures:
         signatures = set()
@@ -45,12 +48,16 @@ def verify_artifacts(evidence, directory, fixtures):
             if len(rows) != 1:
                 raise ValueError(f"missing or duplicate O3 receipt: {fixture}/{mode}")
             row = rows[0]
+            if row.get("call_boundaries", "fixed") != boundaries:
+                raise ValueError("candidates used different call-boundary policies")
             case = directory / f"{fixture}-{mode}-O3"
             for file, key in (("generated.lowered", "input_sha256"),
                               ("generated.o", "object_sha256"),
                               ("probe", "executable_sha256")):
                 if digest(case / file) != row[key]:
                     raise ValueError(f"artifact changed after validation: {case / file}")
+            if "codegen_ir_sha256" in row and digest(case / "generated.codegen.ll") != row["codegen_ir_sha256"]:
+                raise ValueError("optimized IR changed after validation")
             signatures.add(row["input_sha256"])
             selected[fixture, mode] = case
         if len(signatures) != 1:
@@ -109,7 +116,8 @@ def main():
         "platform": platform.platform(), "machine": platform.machine(),
         "samples": args.samples, "warmups": args.warmups,
         "runtime_sha256": evidence["runtime_sha256"],
-        "measurement": "in-process checked loop; fixed noinline GTI boundaries; alternating candidates",
+        "measurement": "in-process checked loop; alternating candidates",
+        "call_boundaries": evidence.get("call_boundaries", "fixed"),
         "limitations": ["not a whole-program speedup or production acceptance",
                         "no worker/callback boundary or allocation measurement",
                         "no full-compiler build cost or host-contention isolation"],

@@ -84,7 +84,7 @@ public:
             [&](MirBodyAddress address) { return signature(address); }) {}
   void lower(const LlvmAdmissionPlan &admission);
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
-  void lowerEvaluation(const LlvmAdmissionPlan &admission);
+  void lowerEvaluation(const LlvmAdmissionPlan &admission, bool fixedCallBoundaries);
 #endif
 
 private:
@@ -2068,12 +2068,13 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     body(address);
 }
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
-void Bodies::lowerEvaluation(const LlvmAdmissionPlan &admission) {
+void Bodies::lowerEvaluation(const LlvmAdmissionPlan &admission,
+                             bool fixedCallBoundaries) {
   for (auto address : admission.requiredBodies()) {
     auto *output = function(address);
-    // Equal, explicit call boundaries for the transport microbenchmark, not
-    // a claim about normal whole-program inlining or production performance.
-    output->addFnAttr(llvm::Attribute::NoInline);
+    // Keep the controlled baseline separate from ordinary pipeline decisions.
+    if (fixedCallBoundaries)
+      output->addFnAttr(llvm::Attribute::NoInline);
     output->setUWTableKind(llvm::UWTableKind::Sync);
   }
   for (auto address : admission.requiredBodies())
@@ -2088,9 +2089,10 @@ void lowerScalarProgram(Session &session, const LlvmAdmissionPlan &admission) {
 
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
 void lowerC04Evaluation(Session &session, const LlvmAdmissionPlan &admission,
-                        std::span<const HirFunctionInstanceId> functions) {
+                        std::span<const HirFunctionInstanceId> functions,
+                        bool fixedCallBoundaries) {
   validateC04Evaluation(session, admission, functions);
-  Bodies(session, admission).lowerEvaluation(admission);
+  Bodies(session, admission).lowerEvaluation(admission, fixedCallBoundaries);
 }
 #endif
 

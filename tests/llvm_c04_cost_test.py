@@ -64,6 +64,23 @@ class CostTests(unittest.TestCase):
                     row[key] = digest(path)
                 evidence["receipts"].append(row)
             self.assertEqual(len(verify_artifacts(evidence, root, ("scalar",))), 2)
+            evidence["call_boundaries"] = "optimizable"
+            with self.assertRaisesRegex(ValueError, "different call-boundary"):
+                verify_artifacts(evidence, root, ("scalar",))
+            for row in evidence["receipts"]:
+                row["call_boundaries"] = "optimizable"
+                path = root / f"scalar-{row['mode']}-O3/generated.codegen.ll"
+                path.write_text("optimized IR")
+                row["codegen_ir_sha256"] = digest(path)
+            self.assertEqual(len(verify_artifacts(evidence, root, ("scalar",))), 2)
+            path.write_text("changed IR")
+            with self.assertRaisesRegex(ValueError, "optimized IR changed"):
+                verify_artifacts(evidence, root, ("scalar",))
+            path.write_text("optimized IR")
+            evidence["call_boundaries"] = "unknown"
+            with self.assertRaisesRegex(ValueError, "unknown call-boundary"):
+                verify_artifacts(evidence, root, ("scalar",))
+            evidence["call_boundaries"] = "optimizable"
             evidence["sanitized_native_carrier"] = True
             with self.assertRaisesRegex(ValueError, "unsanitized"):
                 verify_artifacts(evidence, root, ("scalar",))

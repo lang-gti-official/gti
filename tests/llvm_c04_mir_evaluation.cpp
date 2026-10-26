@@ -29,12 +29,16 @@ void write(const std::filesystem::path &path, const std::string &bytes) {
 int main(int argc, char **argv) {
   using namespace lang;
   using namespace lang::native_llvm;
-  if (argc != 4)
+  if (argc != 4 && argc != 5)
     return 64;
   try {
     const std::filesystem::path source(argv[1]);
     const std::string prefix(argv[2]);
     const std::string level(argv[3]);
+    const std::string boundaries(argc == 5 ? argv[4] : "fixed");
+    if (boundaries != "fixed" && boundaries != "optimizable")
+      return 64;
+    const bool fixedCallBoundaries = boundaries == "fixed";
     if (level != "O0" && level != "O3")
       return 64;
     std::ifstream stream(source);
@@ -94,6 +98,8 @@ int main(int argc, char **argv) {
     const bool status = std::string_view(GTI_C04_MODE) == "status";
     session.module().addModuleFlag(llvm::Module::Error, "gti.c04.transport",
                                    status ? 0u : 1u);
+    session.module().addModuleFlag(llvm::Module::Error, "gti.c04.fixed-boundaries",
+                                   fixedCallBoundaries ? 1u : 0u);
     if (abi.statusResult != status ||
         abi.parameters.size() !=
             root->parameterTypes.size() + (status ? 2 : 0) ||
@@ -110,7 +116,7 @@ int main(int argc, char **argv) {
       throw std::runtime_error(
           "C04 C++ carrier differs from the exact generated channel layout");
     const auto name = session.abi().declareFunction(root->id)->getName().str();
-    lowerC04Evaluation(session, admission, selected);
+    lowerC04Evaluation(session, admission, selected, fixedCallBoundaries);
     session.verify();
     // Retain verified input IR: target emission may lower resume instructions
     // to platform unwind-runtime calls in the in-memory module.
@@ -119,6 +125,10 @@ int main(int argc, char **argv) {
     session.module().print(irStream, nullptr);
     const auto object = session.emitObject();
     write(prefix + ".ll", ir);
+    std::string codegenIr;
+    llvm::raw_string_ostream codegenStream(codegenIr);
+    session.module().print(codegenStream, nullptr);
+    write(prefix + ".codegen.ll", codegenIr);
     write(
         prefix + ".h",
         std::string("#pragma once\n#include <cstdint>\n") +

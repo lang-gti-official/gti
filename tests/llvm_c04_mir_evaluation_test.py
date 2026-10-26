@@ -58,6 +58,7 @@ def main():
     parser.add_argument("--cxx", default=shutil.which("c++"))
     parser.add_argument("--sanitized", action="store_true")
     parser.add_argument("--build-metrics", action="store_true")
+    parser.add_argument("--call-boundaries", choices=("fixed", "optimizable"), default="fixed")
     args = parser.parse_args()
     root, output = args.root.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -79,15 +80,33 @@ def main():
         directory = output / f"{fixture}-{mode}-{level}"
         directory.mkdir()
         prefix = directory / "generated"
-        run([emitter, fixtures / f"{fixture}.gti", prefix, level], directory, "emit",
+        run([emitter, fixtures / f"{fixture}.gti", prefix, level, args.call_boundaries], directory, "emit",
             measure_build=args.build_metrics)
         snapshot = prefix.with_suffix(".lowered").read_bytes()
         if fixture in snapshots and snapshot != snapshots[fixture]:
             raise AssertionError("transport candidates did not consume identical sealed-program text")
         snapshots[fixture] = snapshot
         ir = prefix.with_suffix(".ll").read_text()
-        if "noinline" not in ir or "uwtable(sync)" not in ir or "gti.c04.transport" not in ir:
+        scalar_calls = None
+        if (("noinline" in ir) != (args.call_boundaries == "fixed") or
+                "uwtable(sync)" not in ir or "gti.c04.transport" not in ir or
+                f'!"gti.c04.fixed-boundaries", i32 {int(args.call_boundaries == "fixed")}' not in ir):
             raise AssertionError("lost explicit experimental boundary/unwind-table metadata")
+        if fixture == "scalar" and level == "O3":
+            entry = re.search(r"^#define GTI_C04_ENTRY (\w+)$",
+                              prefix.with_suffix(".h").read_text(), re.MULTILINE)[1]
+            optimized = prefix.with_suffix(".codegen.ll").read_text()
+            body = re.search(r"^define [^\n]*@" + re.escape(entry) +
+                             r"\([^\n]*\{\n(.*?)^\}", optimized,
+                             re.MULTILINE | re.DOTALL)
+            if not body:
+                raise AssertionError("missing optimized scalar entry")
+            scalar_calls = len(re.findall(r"\b(?:call|invoke) [^\n]*@__gti_c04_" +
+                                         mode + r"_v2_f\d+\(", body[1]))
+            if args.call_boundaries == "fixed" and scalar_calls == 0:
+                raise AssertionError("scalar O3 pipeline lost the fixed call boundary")
+            # Ordinary LLVM cost heuristics may retain calls. Record the actual
+            # outcome instead of forcing inlining to favor either transport.
         if ("__gti_c04_evaluate_raise" in ir) != (mode == "unwind"):
             raise AssertionError("wrong transport implementation in isolated artifact")
         if mode == "unwind" and fixture != "cleanup":
@@ -152,7 +171,7 @@ def main():
             destination = directory / negative
             marker = b"existing artifact must survive rejection\n"
             destination.with_suffix(".o").write_bytes(marker)
-            result = run([emitter, fixtures / f"{negative}.gti", destination, level],
+            result = run([emitter, fixtures / f"{negative}.gti", destination, level, args.call_boundaries],
                          directory, f"reject-{negative}", expected=65)
             if "C04 evaluation" not in result.stderr:
                 raise AssertionError("negative fixture failed before the structural evaluation boundary")
@@ -163,15 +182,19 @@ def main():
             if destination.with_suffix(".o").read_bytes() != marker:
                 raise AssertionError("rejected experimental shape overwrote an artifact")
         receipts.append({"fixture": fixture, "mode": mode, "level": level, "emitter_sha256": digest(emitter),
+                         "call_boundaries": args.call_boundaries,
+                         "scalar_entry_calls_after_codegen": scalar_calls,
                          "input_sha256": hashlib.sha256(snapshot).hexdigest(),
                          "object_sha256": digest(prefix.with_suffix(".o")),
+                         "codegen_ir_sha256": digest(prefix.with_suffix(".codegen.ll")),
                          "object_bytes": prefix.with_suffix(".o").stat().st_size,
                          "build": {phase: json.loads((directory / f"{phase}.json").read_text())
                                    for phase in ("emit", "link")},
                          "executable_sha256": digest(executable)})
         print(f"{fixture}/{mode}/{level}: lifecycle outcomes, direct/indirect and 5 rejections passed", flush=True)
     evidence = {
-        "scope": "scalar MIR, fallible scalar/reference/record-field lifecycle, explicit unsafe int-pointer observers, owning parameter/return transfer and whole-record replacement; fixed noinline boundaries; test-owned C++ carrier",
+        "scope": "scalar MIR, fallible scalar/reference/record-field lifecycle, explicit unsafe int-pointer observers, owning parameter/return transfer and whole-record replacement; test-owned C++ carrier",
+        "call_boundaries": args.call_boundaries,
         "production_transport_selected": False,
         "runtime_sha256": digest(args.runtime),
         "sanitized_native_carrier": args.sanitized,
