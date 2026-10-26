@@ -1763,11 +1763,17 @@ int main() {
   if (!activeUnique || activeUnique->aggregate.empty())
     return;
   const auto beforeActive = modulePublication(hierarchyOwnerSession);
+  const auto activeInline = mirUniqueCleanupType(
+      hierarchyOwnerSession.program().mir(), activeValue.type);
+  expect(activeInline.has_value(),
+         "inline active hierarchy retains an exact recipe");
+  if (!activeInline)
+    return;
   rejects<BackendUnsupportedError>(
       [&] {
-        static_cast<void>(hierarchyOwnerLifetimes.cleanup(*activeUnique, true));
+        static_cast<void>(hierarchyOwnerLifetimes.cleanup(*activeInline, true));
       },
-      "owned hierarchy child preflight preserves replacement rejection");
+      "in-place hierarchy replacement retains its independent dispatch gate");
   expect(modulePublication(hierarchyOwnerSession) == beforeActive,
          "owned child preflight rejects before requesting a destructor body "
          "or publishing a helper");
@@ -2213,7 +2219,10 @@ void testFreshConstructionPlanning() {
              admission.limitation());
   const auto &program = admission.program().mir();
   std::size_t locals = 0, fields = 0, initializers = 0;
-  for (const auto address : admission.requiredBodies()) {
+  // The planner also serves declaration initializer bodies. Exact dispatch
+  // reachability need not emit those after constructor expansion.
+  for (const auto &row : input->program().bodies()) {
+    const auto address = row.identity.address;
     const auto &body = *findMirBody(program, address);
     const Placement placement(body);
     for (const auto &block : body.blocks)

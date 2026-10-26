@@ -4547,8 +4547,11 @@ events and static class cleanup recipes, even if no source virtual call occurs.
 A shared pure enumeration reads the sealed active-class target rows and requires
 each Source target's sealed executable body; the normal transitive worklist then
 checks its helpers and generated dependencies. Unreachable classes and unrelated
-methods are not new roots. Existing unknown-call/native/thread conservative
-triggers remain unchanged. Production dispatch binds the actual immutable
+methods are not new roots. A sealed virtual call also retains the conservative
+union of source overrides belonging to its concrete root identities, including
+their transitive callees. An identically named unrelated virtual family is not
+a dependency. This is call-graph reachability, not devirtualization. Unknown
+call/native/thread conservative triggers remain unchanged. Production dispatch binds the actual immutable
 admission plan and checks the complete source-target demand before publishing
 tables or adjustment bodies; final unresolved-definition checking is not an
 admission substitute. Only the owning structural test can construct an unbound
@@ -4687,7 +4690,11 @@ reject until an approved backend-neutral lifecycle-dispatch contract exists.
 This is a missing prerequisite, not a permanent source-language prohibition.
 The native execution gate uses verified constructor states and explicit numeric
 destructor IDs to check cleanup order without asserting that missing rule.
-Pure active states, dynamic owners and replacement remain separately pending.
+Pure active states, dynamic owners and in-place hierarchy replacement remain
+separately pending. Resetting a unique/shared handle to an ordinary record is
+not in-place replacement of that record: its exact static pointee recipe retires
+the allocation, including inline hierarchy fields. Canonical recursive recipe
+and dynamic-cleanup checks still run before helper publication.
 Exact pure GTI requirements may supply ABI-only owner/root/signature metadata
 without an executable body. That per-use declaration witness does not excuse a
 demanded concrete definition or promote the declaration family. Nonpure targets
@@ -4696,6 +4703,17 @@ Reference initialization presents its selected address using the destination's
 exact class-reference type before storing it. The original complete-object loan
 is unchanged; loading and forwarding an already selected interface/base alias
 does not apply the offset again.
+Ordinary source-function reference returns use the same selected-address
+projection at the return boundary. Admission binds the actual `CallResult`
+producer, result definition, loan and declared reference type/access; escaping
+`Return` loans retain their verified origin and are not object-byte transfers.
+Exact unique/shared owner-borrow capabilities publish their checked pointee
+address through the same mechanism. Owner-handle representation does not grant
+construction, cleanup, virtual reference-result ABI or by-value hierarchy
+transfer permission. `examples/llvm/borrowed-hierarchy-owners.gti` exercises
+readonly/mutable interface returns, nonzero concrete-base views, forwarding,
+unique reset and exactly-once destruction; shared/failure variants are registered
+in the same execution harness.
 `llvm_dispatch_execution` owns real public native O0/O3 execution, supported
 C++20/23 comparisons and artifact-preserving exclusions, including the shipped
 `examples/llvm/inheritance-and-dispatch.gti`. A nested mutable-reference chain
@@ -4705,10 +4723,12 @@ comparators explicitly rather than counting them as execution passes; all
 supported alias/base/method cases retain both comparators. The self-contained
 failure-cleanup guard checks an exact digit trace and preserves only the original
 failure/code/source/exit. A deliberately wrong expected trace must produce a
-secondary failure and be rejected by the same positive assertion. Importing
-`std/panic` solely for that guard would pull unrelated pending library bodies
-into the unchanged conservative virtual-call closure, so it uses checked scalar
-arithmetic instead. Hosted/stdlib composition remains pending.
+secondary failure and be rejected by the same positive assertion. The guard
+uses checked scalar arithmetic so its failure oracle is independent of a
+library assertion wrapper. Sealed virtual calls no longer force dormant
+private standard-library type inventories into executable admission; reachable
+library operations still require their own representation and operation proofs.
+General hosted/stdlib composition remains pending.
 Its representative loop fixture
 checks correctness only; it proves neither retained dynamic-call cost nor
 allocation counts. Both target ABIs and separate optimized cost acceptance
@@ -5668,7 +5688,8 @@ the sealed generated-item dependency graph. Required bodies retain inventory
 order. All bodies are still scanned; dormant uses are recorded as non-required,
 not erased from coverage. Reachable values independently require their concrete
 types. Passive data without a use is metadata; ordered executable initialization
-is never omitted. Unknown indirect/virtual/callback/task dispatch,
+is never omitted. Sealed virtual root families retain all instantiated source
+overrides and their transitive dependencies. Unknown indirect/virtual/callback/task dispatch,
 declaration-backed generated dependencies, embedding exports and rootless
 libraries conservatively select `AllExecutableBodies` and retain all generated
 items. Each required use still needs its own admitted shape; a supported virtual

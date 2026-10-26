@@ -67,11 +67,21 @@ locals while preserving the complete object's interface views, and a fresh
 inline hierarchy-valued field with independent dispatch state. Build with
 `gti examples/llvm/inheritance-and-dispatch.gti --backend llvm -O3 -o dispatch`.
 `llvm_dispatch_execution` owns its native O0/O3 checks; dedicated transfer
-fixtures additionally run O1/O2. Owning polymorphism, general value transport,
+fixtures additionally run O1/O2. Dynamic owning polymorphism, general value transport,
 replacement and destructor-observed virtual phases remain pending. This
 bounded profile is outside the numbered full-language census. The shared
 preview collector requires its owning execution gate, along with the other
 `llvm/` example gates; registration does not certify pending language shapes.
+
+[`llvm/borrowed-hierarchy-owners.gti`](llvm/borrowed-hierarchy-owners.gti)
+returns readonly and mutable base/interface views from ordinary functions,
+forwards already-adjusted references, and resets a unique owner of an ordinary
+record with an inline hierarchy field. Its cleanup trace checks exactly-once
+destruction. `llvm_dispatch_execution` validates this example and shared-owner,
+failure-cleanup and invalid-borrow controls at LLVM O0-O3. C++ currently rejects
+these owner compositions before execution; those exact failures are retained
+alongside mandatory source/MIR/native evidence. This is another bounded LLVM
+profile outside the numbered full-language census, not dynamic owner support.
 
 [`llvm/immovable-placement.gti`](llvm/immovable-placement.gti) demonstrates
 deleted-copy/deleted-move objects constructed directly through fresh return

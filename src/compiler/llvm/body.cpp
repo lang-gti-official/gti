@@ -1689,6 +1689,14 @@ private:
       if (input.kind == MirBodyKind::Constructor && owner)
         lifetimes.active(ir, thisAddress, owner->type, true);
       auto *value = term.value ? operand(*term.value) : nullptr;
+      if (term.value && input.returnType.kind == SemanticType::Reference &&
+          input.returnType.arguments.at(0).kind == SemanticType::Class) {
+        // Publish the declared return view, just as reference initialization
+        // does. The source loan continues to protect the original object.
+        auto presentation = *term.value;
+        presentation.type = input.returnType;
+        value = memory.selected(presentation);
+      }
       if (term.value) {
         const auto conversion =
             mir_detail::scalarReturnConversion(input, *term.value);
