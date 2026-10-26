@@ -668,9 +668,14 @@ MirScalarReturnConversion scalarReturnConversion(const MirBody &body,
   switch (operand.kind) {
   case MirOperandKind::Value:
   case MirOperandKind::Constant:
-  case MirOperandKind::Copy:
-  case MirOperandKind::Move:
     break;
+  case MirOperandKind::Copy:
+  case MirOperandKind::Move: {
+    const auto *place = body.findPlace(operand.place);
+    if (place == nullptr || place->type != operand.type)
+      return MirScalarReturnConversion::Invalid;
+    break;
+  }
   default:
     return MirScalarReturnConversion::Invalid;
   }

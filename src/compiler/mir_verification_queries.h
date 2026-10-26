@@ -52,8 +52,9 @@ passiveUnionFieldConstruction(const MirProgram &program,
 
 // Only passive scalar destinations participate. NotApplicable grants no
 // reference, aggregate, text, callable or ownership-return authority. Existing
-// initialization conversion policy owns eligibility; ordinary operand and
-// availability verification remains mandatory.
+// initialization conversion policy owns eligibility. Copy/Move bind the source
+// type to their exact selected place; ordinary operand and availability
+// verification remains mandatory.
 enum class MirScalarReturnConversion {
   NotApplicable,
   Exact,

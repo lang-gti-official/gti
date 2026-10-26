@@ -5,6 +5,7 @@
 #include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
 
 #include <llvm/IR/Constants.h>
@@ -1052,6 +1053,123 @@ void scalarReturnContracts() {
             "a scalar result cannot smuggle an address/loan carrier");
 }
 
+void scalarReturnPlaceContracts() {
+  using Kind = mir_detail::MirScalarReturnConversion;
+  struct Source {
+    const char *name;
+    const char *text;
+    SemanticType placeType;
+    bool projected;
+  };
+  const std::array sources{
+      Source{"float", "double source(float value) { return value; }",
+             SemanticType::Float, false},
+      Source{"int32", "double source(int32_t value) { return value; }",
+             SemanticType::Int32, false},
+      Source{"int64", "double source(int64_t value) { return value; }",
+             SemanticType::Int64, false},
+      Source{"double", "double source(double value) { return value; }",
+             SemanticType::Double, false},
+      Source{"field",
+             "struct Record { float value; }; double source(Record value) { "
+             "return value.value; }",
+             SemanticType::Float, true},
+  };
+  for (const auto &test : sources) {
+    const auto frontend = Frontend().analyze(test.name, test.text);
+    require(frontend.canGenerateCode() &&
+                verifyMirProgram(frontend.mir).valid(),
+            "place-return source has verified parameter/field storage");
+    HirFunctionInstanceId id = 0;
+    for (const auto &hir : frontend.hir.functionInstances())
+      if (hir.source && hir.source->name().lexeme == "source")
+        id = hir.id;
+    require(id != 0, "place-return test has its exact function identity");
+    for (const auto carrier : {MirOperandKind::Copy, MirOperandKind::Move}) {
+      // A field may have additional independent move/ownership restrictions.
+      // Its matching copy proves selected projection typing without changing
+      // them.
+      if (test.projected && carrier == MirOperandKind::Move)
+        continue;
+      for (const SemanticType claim :
+           {SemanticType::Float, SemanticType::Int32, SemanticType::Int64,
+            SemanticType::Double}) {
+        auto program = frontend.mir;
+        auto *function =
+            const_cast<MirFunctionInstance *>(program.findFunctionInstance(id));
+        require(function != nullptr, "place-return body remains available");
+        const MirPlace *selected = nullptr;
+        for (const auto &place : function->body.places) {
+          const bool field =
+              std::any_of(place.projections.begin(), place.projections.end(),
+                          [](const auto &projection) {
+                            return projection.kind == MirProjectionKind::Field;
+                          });
+          if (place.type == test.placeType && field == test.projected &&
+              (test.projected ||
+               (place.root == MirPlaceRootKind::Binding &&
+                place.binding == function->parameterBindings.front() &&
+                place.projections.empty()))) {
+            selected = &place;
+            break;
+          }
+        }
+        require(selected != nullptr,
+                "place-return uses the exact typed selected storage");
+        const auto selectedId = selected->id;
+        MirOperand *returned = nullptr;
+        for (auto &block : function->body.blocks)
+          if (block.terminator.kind == MirTerminatorKind::Return &&
+              block.terminator.value) {
+            block.terminator.value =
+                MirOperand{.kind = carrier, .place = selectedId, .type = claim};
+            returned = &*block.terminator.value;
+          }
+        require(returned != nullptr && rebuildMirValueUses(function->body),
+                "place-return control retains a coherent operand-use index");
+        const bool matching = claim == test.placeType;
+        const auto expected = !matching ? Kind::Invalid
+                              : claim == SemanticType::Double
+                                  ? Kind::Exact
+                                  : Kind::Initialization;
+        require(mir_detail::scalarReturnConversion(function->body, *returned) ==
+                    expected,
+                "copy/move return proof binds the claimed type before "
+                "exact/conversion selection");
+        const auto bodyVerification = verifyMirBody(function->body, id);
+        const auto programVerification = verifyMirProgram(program);
+        if (matching) {
+          require(
+              bodyVerification.valid() && programVerification.valid(),
+              "a genuine matching parameter/projected copy/move stays valid");
+        } else {
+          require(!bodyVerification.valid() && !programVerification.valid() &&
+                      std::any_of(bodyVerification.errors.begin(),
+                                  bodyVerification.errors.end(),
+                                  [](const auto &error) {
+                                    return error.message.find(
+                                               "scalar return lacks") !=
+                                           std::string::npos;
+                                  }),
+                  "wider, narrower and reinterpreted storage claims fail the "
+                  "owning return invariant");
+        }
+        auto lowered = LoweredProgramBuilder().build(
+            frontend.program, frontend.semantics, frontend.hir, program,
+            program, {}, TargetInfo::host());
+        std::vector<LoweredProgramIssue> issues;
+        const bool sealed =
+            lowered.valid() &&
+            verifiedLoweredProgram(std::move(*lowered.program), issues)
+                .has_value();
+        require(sealed == matching,
+                "matching place returns cross sealing and mismatched claims "
+                "reject before publication");
+      }
+    }
+  }
+}
+
 void hostedArgumentsContract(const std::filesystem::path &repository) {
   for (const auto triple :
        {"arm64-apple-macos", "x86_64-apple-macos", "x86_64-unknown-linux-gnu",
@@ -1666,6 +1784,7 @@ int main(int argc, char **argv) {
                                    "llvm_hosted_class_pointee_reference.gti");
     sourceMetadataContract(std::filesystem::canonical(argv[1]));
     scalarReturnContracts();
+    scalarReturnPlaceContracts();
     hostedArgumentsContract(std::filesystem::canonical(argv[1]));
     for (const auto &test : cases)
       for (auto optimization :

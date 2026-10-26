@@ -50,8 +50,10 @@ body return type. The MIR-owned scalar-return query proves an exact type or
 uses the existing shared context-free initialization-conversion rule; it does
 not repeat assignability or decide literal-dependent narrowing. Semantic
 contextual typing must already give a narrowed integer literal its exact type.
-Scalar results use value/constant/copy/move carriers, with ordinary operand and
-availability checks still mandatory. Address or loan carriers cannot stand in
+Scalar results use value/constant/copy/move carriers. A copy/move's claimed
+source type must equal its exact selected place type before choosing either an
+exact return or an initialization conversion; ordinary operand and availability
+checks remain mandatory. Address or loan carriers cannot stand in
 for a by-value scalar. The query applies to the destination type: a reference
 return can intentionally carry a referent-typed address operand and retains its
 independent return-loan authority. Aggregate, enum, text, callable, raw and
