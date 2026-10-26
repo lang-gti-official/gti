@@ -29,6 +29,8 @@ struct NativeCMemoryParameter {
   std::uint64_t alignment = 1;
   bool result = false;
   bool byValue = false;
+  friend bool operator==(const NativeCMemoryParameter &,
+                         const NativeCMemoryParameter &) = default;
 };
 struct FunctionAbi {
   llvm::FunctionType *type = nullptr;

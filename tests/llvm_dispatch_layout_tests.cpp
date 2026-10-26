@@ -68,6 +68,31 @@ std::array<std::size_t, 4> modulePublication(Session &session) {
   return result;
 }
 
+void testAbiEquality() {
+  llvm::LLVMContext context;
+  FunctionAbi plan;
+  plan.type = llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+  plan.nativeMemory.push_back(
+      {0, llvm::Type::getInt32Ty(context), 4, false, true});
+  expect(plan == FunctionAbi(plan), "identical native ABI plans compare equal");
+  const auto changed = [&](auto mutate) {
+    auto other = plan;
+    mutate(other.nativeMemory.front());
+    expect(plan != other, "every native memory ABI attribute affects equality");
+  };
+  changed([](auto &parameter) { parameter.index = 1; });
+  changed([&](auto &parameter) {
+    parameter.storage = llvm::Type::getInt64Ty(context);
+  });
+  changed([](auto &parameter) { parameter.alignment = 8; });
+  changed([](auto &parameter) { parameter.result = true; });
+  changed([](auto &parameter) { parameter.byValue = false; });
+  auto withoutMemory = plan;
+  withoutMemory.nativeMemory.clear();
+  expect(plan != withoutMemory,
+         "native memory metadata cannot compare equal to an absent contract");
+}
+
 const MirClassInstance &named(const LoweredProgram &program,
                               std::string_view name) {
   for (const auto &owner : program.mir().classInstances()) {
@@ -3543,6 +3568,7 @@ void test(Session &session, const VerifiedLoweredProgram &input) {
 } // namespace
 
 int main() {
+  testAbiEquality();
   const auto shadow =
       Frontend().analyze("llvm-dispatch-shadow-rejection.gti", std::string(R"(
 class Base { public: int value; };

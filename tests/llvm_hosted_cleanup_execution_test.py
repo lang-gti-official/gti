@@ -48,6 +48,10 @@ def check(result, arguments, executable, library, failures):
         raise AssertionError(f"constructor trigger count drift: {lines}")
     completed = arguments[:arguments.index("fixture-primary")] if primary else arguments
     expected_drops = [f"drop:{value}" for value in reversed([str(executable), *completed])]
+    if secondary:
+        # A second failure during cleanup takes GTI-R0014 immediately; it must
+        # not resume the drain or destroy earlier objects (ADR 007).
+        expected_drops = expected_drops[:1]
     observed_drops = [line for line in lines if line.startswith("drop:") and line != "drop:"]
     if observed_drops != expected_drops:
         raise AssertionError(f"completed owners must drop once in reverse order: {observed_drops} != {expected_drops}")
@@ -55,13 +59,22 @@ def check(result, arguments, executable, library, failures):
         if lines.index("primary-trigger") > lines.index(expected_drops[0]):
             raise AssertionError("failure cleanup ran before the primary trigger")
         source = (library / "std/string.gti").read_text(encoding="utf-8").splitlines()
-        for message in (["hosted cleanup fixture primary", "hosted cleanup fixture secondary"]
-                        if secondary else ["hosted cleanup fixture primary"]):
-            line = next(i for i, text in enumerate(source, 1) if message in text)
-            if message not in result.stderr or f"string.gti:{line}:" not in result.stderr:
-                raise AssertionError(f"lost original failure attribution: {result.stderr}")
-        if not secondary and "hosted cleanup fixture secondary" in result.stderr:
-            raise AssertionError("invented secondary failure")
+        primary_line = next(i for i, text in enumerate(source, 1)
+                            if "hosted cleanup fixture primary" in text)
+        if secondary:
+            secondary_line = next(i for i, text in enumerate(source, 1)
+                                  if "hosted cleanup fixture secondary" in text)
+            expected_error = (
+                f"<std/string>:{secondary_line}: runtime error[GTI-R0014]: "
+                "failure_during_cleanup; primary [GTI-R0017] at "
+                f"<std/string>:{primary_line} message=\"hosted cleanup fixture primary\"; "
+                "secondary [GTI-R0017] message=\"hosted cleanup fixture secondary\"\n")
+        else:
+            expected_error = (
+                f"<std/string>:{primary_line}: runtime error[GTI-R0017]: "
+                "panic: \"hosted cleanup fixture primary\"\n")
+        if result.stderr != expected_error:
+            raise AssertionError(f"lost original failure attribution: {result.stderr}")
     elif result.stderr:
         raise AssertionError(f"successful cleanup reported a failure: {result.stderr}")
 
