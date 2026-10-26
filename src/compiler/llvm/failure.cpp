@@ -75,6 +75,17 @@ llvm::Value *Failures::origin(llvm::IRBuilder<> &ir, llvm::Value *channel) {
       ir.CreateStructGEP(session.abi().failureChannel(), channel, 1));
 }
 
+void Failures::copyChannel(llvm::IRBuilder<> &ir, llvm::Value *destination,
+                           llvm::Value *source) {
+  // Failure channels are plain ABI storage, not source-language owners. Keep
+  // their inline message buffer out of aggregate SSA scalarization; memmove
+  // also preserves the prior load-before-store behavior for aliased channels.
+  auto *type = session.abi().failureChannel();
+  const auto alignment = session.dataLayout().getABITypeAlign(type);
+  ir.CreateMemMove(destination, alignment, source, alignment,
+                   session.dataLayout().getTypeAllocSize(type).getFixedValue());
+}
+
 void Failures::originate(llvm::IRBuilder<> &ir, llvm::Value *channel,
                          const MirInstruction &instruction,
                          DefinedFailureOutcome outcome, llvm::Value *callerSite,
@@ -141,28 +152,53 @@ void Failures::leaveCleanup(llvm::IRBuilder<> &ir, llvm::Value *token) {
         {token});
 }
 void Failures::checkIncomingCleanup(llvm::IRBuilder<> &ir,
-                                     llvm::Value *secondary) {
+                                    llvm::Value *secondary) {
   ir.CreateCall(
       declareRuntimeService(session, RuntimeService::CheckFailureCleanup),
       {record(ir, secondary), origin(ir, secondary)});
 }
 void Failures::terminateCleanup(llvm::IRBuilder<> &ir, llvm::Value *primary,
                                 llvm::Value *secondary) {
+  ir.CreateCall(cleanupTerminator(), {primary, secondary});
+  ir.CreateUnreachable();
+}
+
+llvm::Function *Failures::cleanupTerminator() {
+  if (cleanupTerminator_)
+    return cleanupTerminator_;
+  auto *pointer = session.layouts().pointer();
+  auto *function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                              {pointer, pointer}, false),
+      llvm::GlobalValue::InternalLinkage, "__gti_failure_terminate_cleanup",
+      session.module());
+  // The emergency envelope is needed only at terminal double failure. Keep
+  // its stack storage and copies out of every caller's ordinary cleanup frame.
+  function->addFnAttr(llvm::Attribute::Cold);
+  function->addFnAttr(llvm::Attribute::NoInline);
+  function->addFnAttr(llvm::Attribute::NoReturn);
+  cleanupTerminator_ = function;
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", function));
+  auto *primary = function->getArg(0);
+  auto *secondary = function->getArg(1);
   auto *type = session.abi().failureEmergency();
   auto *envelope = ir.CreateAlloca(type);
-  llvm::Value *value = llvm::Constant::getNullValue(type);
-  value = ir.CreateInsertValue(value, ir.getInt32(2), 0);
-  value = ir.CreateInsertValue(
-      value, ir.CreateLoad(session.abi().failureRecord(), record(ir, primary)),
-      2);
-  value = ir.CreateInsertValue(
-      value,
-      ir.CreateLoad(session.abi().failureRecord(), record(ir, secondary)), 3);
-  ir.CreateStore(value, envelope);
+  ir.CreateStore(ir.getInt32(2), ir.CreateStructGEP(type, envelope, 0));
+  ir.CreateStore(ir.getInt32(0), ir.CreateStructGEP(type, envelope, 1));
+  auto *recordType = session.abi().failureRecord();
+  const auto alignment = session.dataLayout().getABITypeAlign(recordType);
+  const auto bytes =
+      session.dataLayout().getTypeAllocSize(recordType).getFixedValue();
+  ir.CreateMemMove(ir.CreateStructGEP(type, envelope, 2), alignment,
+                   record(ir, primary), alignment, bytes);
+  ir.CreateMemMove(ir.CreateStructGEP(type, envelope, 3), alignment,
+                   record(ir, secondary), alignment, bytes);
   ir.CreateCall(
       declareRuntimeService(session, RuntimeService::TerminateCleanupFailure),
       {envelope, origin(ir, primary), origin(ir, secondary)});
   ir.CreateUnreachable();
+  return function;
 }
 
 } // namespace lang::native_llvm

@@ -10140,13 +10140,80 @@ sanitized runtime archive for runtime coverage. It does not instrument generated
 LLVM code and cannot satisfy production generated-code sanitizer gates.
 The narrow supported profile and remaining proof obligations are recorded in
 [C04](../plans/implementation-sequence.md#c04-failure-transport-evaluation).
-Its fixed-boundary checks cover scalar propagation and exactly-once infallible
+Use `--call-boundaries fixed` (the default) for the controlled noinline baseline
+and `--call-boundaries optimizable` in a separate output directory for ordinary
+LLVM pipeline decisions. The latter removes only the experiment's `noinline`
+attributes; it does not force inlining or alter the production pipeline. Both
+policies run the same cleanup, attribution and rejection checks. Module metadata
+and receipts identify the policy, and the scalar O3 receipts record the number
+of remaining GTI calls in the entry body. A retained call is a valid optimizer
+decision, not evidence that the optimizable experiment failed.
+These checks cover scalar propagation and exactly-once
 scalar/reference-field cleanup across three frames, including repeated and
-alternating failures. They reject fallible constructors/destructors before
-object publication. These are not full cleanup, worker or performance
-acceptance and must not substitute for existing backend gates. Retained IR is
-the verified pre-object-emission module: target emission may rewrite `resume`
-into platform unwind-runtime calls.
+alternating failures. Fallible lifecycle cases check remaining local cleanup,
+non-destruction after a failed constructor, original primary/secondary source
+locations, and terminal stopping before later destructors. The last check uses
+a mapped parent-observable buffer rather than relying on normal process exit.
+Ordinary owned-record fields exercise constructor rollback, cleanup of remaining
+fields after either the containing destructor or one child fails, and terminal
+failure during that drain. Owning parameters check exactly-once cleanup both
+before call entry (a later argument fails) and after transfer to the callee.
+Fresh owning results check both ordinary publication and rollback after a
+remaining local destructor fails. Production `llvm_placement_execution` also
+checks returned borrowed carriers, their referent identity and rollback order;
+its fresh-return chain has an explicit C++ vocabulary comparator gap, while
+the failure-cleanup case retains C++20/23 comparison.
+`llvm_cleanup_context_execution` additionally propagates a long panic message
+with an embedded zero through three source frames, checking every reported byte,
+the original location and deterministic cleanup order against C++23 and LLVM
+O0-O3. A second case preserves two distinct long messages and their original
+sites in the emergency envelope, with no later outer destructor after the
+secondary failure. The C04 retained-input checks reject aggregate-SSA channel
+and emergency-record copies and require the status path's bulk channel transfer.
+Local ordinary-record replacement exercises the paired cleanup/publication
+schedule. Its unsafe `int*` observers count destruction of the old value,
+prepared replacement and surrounding owner when the old destructor fails;
+preparation failure leaves the old owner live until ordinary cleanup, and a
+second failure while draining the prepared RHS terminates before outer cleanup.
+The matrix repeats these cases through a two-field projection chain, retaining
+the parent binding's cleanup while the field's prepared Value is consumed by
+its exact target-zero Replace event. It also admits the existing final Exit
+publication of ConstructionRollback obligations in field-initializer schedules.
+No arbitrary TransferOut or replacement recipe is accepted by that extension.
+The observer storage belongs to the caller and outlives every generated call.
+The experiment permits only typed scalar raw dereferences, not pointer arithmetic
+or allocation. Opaque-pointer/array fields and borrowed-record destinations
+remain rejected before object publication; raw/indexed replacement is outside
+the profile. These are not arbitrary ownership transfer,
+worker or performance
+acceptance and must not substitute for existing backend gates. `generated.ll`
+retains verified pre-object-emission IR; `generated.codegen.ll` retains the
+post-pipeline/target module for inspecting actual inlining. Target emission may
+rewrite `resume` into platform unwind-runtime calls, so the latter is not the
+input-IR oracle. Hash receipts are also printed into the step
+log so managed-runner collection retains them before deleting its build tree.
+
+For bounded transport-cost evidence, run that evaluation without `--sanitized`
+and with `--build-metrics` on macOS or Linux. The latter retains system-time
+output, emission/link wall time and peak RSS (normalized to KiB). It measures
+the fixture compiler invocation and host link, not a full compiler rebuild.
+Then run `python3 tests/llvm_c04_cost.py --evidence <output>/evidence.json
+--output <new-cost-directory>` inside the suite window; provide `--size-tool`
+if `llvm-size` is not on PATH. The reporter verifies object/executable/input
+hashes (including retained codegen IR when present), rejects sanitized receipts,
+mismatched MIR and mixed boundary policies, and checks an independent
+checksum on every timed run. Defaults use two warmups and nine alternating
+samples per candidate for direct/indirect success, failure and mixed entry.
+Each report retains the raw observations, per-call distributions, medians,
+object/executable sizes and code/unwind sections (same-named Mach-O sections
+are summed, with the original tool output retained). Run
+`python3 tests/llvm_c04_cost_test.py` for the automation-only controls; its
+system-time check requires permission to collect child-process memory metrics.
+Use `--fixtures field_replacement_cleanup` to measure the additional nested-field
+case. The default five-workload selection remains compatible with earlier receipts.
+Neither boundary mode's microbenchmarks establish whole-program speedups,
+allocation counts, worker/callback costs, contention isolation or final transport
+acceptance. Keep those missing obligations explicit in the C04 decision.
 
 Under [the backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25),
 LLVM owns new backend development; C++ is bug-fix-only through v1.0 and serves
@@ -10247,6 +10314,7 @@ coverage. General foreign counter getters remain an O-LLVM-11 prerequisite.
 | `llvm_backend_cli`, `driver_pipeline` | Native scalar object/executable publication, stable `GTI-B0003` for unsupported required shapes, exact optional source spans with entry fallback, unchanged argument validation and preservation of an existing destination on rejection. |
 | `llvm_backend_foundation`, `backend_lowered_program_rejection`, `llvm_backend_library_boundary` | The sealed input still owns generation; malformed input rejects before admission; the installed/public backend interface remains independent of LLVM headers. |
 | `llvm_target_layout_abi` | O-LLVM-03 scalar/array/recursive-record/C-record/union layouts, target mismatch rejection, private result/status/failure signatures, exact C narrow extensions, versioned runtime-record layouts, recursive declaration/provenance, unresolved-definition and LLVM-verifier rejection, diagnostic isolation, and real binary object publication/linking with bidirectional C scalar oracles at O0/O1/O2/O3. Run on macOS arm64 and Linux x86_64. No GTI instruction lowering is claimed. |
+| `llvm_polymorphic_storage_layout` | Private inline-slot representation: real trusted capability instances at capacities 1/4096 and every alignment power 1 through 4096; exact extent, offsets, stride and containing-record alignment; malformed identity/footprint rejection; native C observer checks actual stack/payload addresses and first/last-byte access at O0/O3. Public operation admission must remain rejected until lifecycle support lands. Required on macOS arm64 and Linux x86_64; this is component representation evidence, not callable execution. |
 | `runtime_execution_boundary`, `installed_runtime_execution_boundary` | The real C begin/drain hooks attach the runtime lifetime, preserve reverse registered cleanup and idempotent drain, and link from the installed runtime. |
 | `runtime_abi_inventory` | Clang parses every active runtime C declaration into a target-specific exact-signature/resource/failure/callback inventory retained in the build. Missing declarations and unclassified headers reject. C++ helper wrappers are not C services. |
 | `llvm_clang_coexistence`, `installed_llvm_clang_coexistence` | Both LLVM's private static backend closure and the real libclang C reader load, parse a header and shut down in the same build-tree/installed consumer. Linux ELF archive symbol isolation prevents registry interposition with libclang's shared LLVM. Tests have bounded deadlines. |

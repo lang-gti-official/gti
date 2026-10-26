@@ -1,5 +1,6 @@
 #include "../src/compiler/llvm/abi.h"
 #include "../src/compiler/llvm/body.h"
+#include "../src/compiler/llvm/memory_types.h"
 #include "../src/compiler/llvm/places.h"
 #include "../src/compiler/llvm/runtime_abi.h"
 #include "cpp_backend_test_support.h"
@@ -269,6 +270,19 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
       declareRuntimeService(session, RuntimeService::BeginThreadLocals);
   expect(begin->arg_empty() && begin->getReturnType()->isVoidTy(),
          "startup is an actual C void entry");
+  expect(!begin->hasFnAttribute(llvm::Attribute::Cold),
+         "ordinary runtime startup is not classified as failure-only");
+  for (const auto service : {RuntimeService::EnterFailureCleanup,
+                             RuntimeService::LeaveFailureCleanup,
+                             RuntimeService::CheckFailureCleanup}) {
+    const auto *cleanup = declareRuntimeService(session, service);
+    expect(cleanup->hasFnAttribute(llvm::Attribute::Cold) &&
+               !cleanup->hasFnAttribute(llvm::Attribute::NoUnwind) &&
+               !cleanup->doesNotReturn(),
+           "failure cleanup cost hints preserve return and unwind contracts");
+    expect(declareRuntimeService(session, service) == cleanup,
+           "repeated runtime declaration retains the canonical cost policy");
+  }
   const auto *terminate =
       declareRuntimeService(session, RuntimeService::TerminateFailure);
   expect(terminate->arg_size() == 4 && terminate->doesNotReturn(),
@@ -1290,6 +1304,215 @@ int main() { Pair value = create<Pair>(20, 22); return value.sum() == 42 ? 0 : 1
   }
 }
 
+void testPolymorphicStorageLayout(const std::filesystem::path &repository) {
+  namespace fs = std::filesystem;
+  const auto library = fs::canonical(repository / "stdlib/std/polymorphic.gti");
+  std::ifstream input(library);
+  std::string source(std::istreambuf_iterator<char>{input}, {});
+  expect(input.good() || input.eof(), "read trusted polymorphic declarations");
+  source += "\nnamespace slot_layout_probe {\n"
+            "interface Target { int read(); };\nint run() {\n";
+  for (std::uint64_t alignment = 1; alignment <= 4096; alignment *= 2)
+    for (const auto capacity : {1, 4096})
+      source += "gti_internal::polymorphic_storage<Target, " +
+                std::to_string(capacity) + ", " + std::to_string(alignment) +
+                "> slot_" + std::to_string(capacity) + "_" +
+                std::to_string(alignment) + "{};\n";
+  source += "return 0; } }\n";
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  auto frontend = Frontend(options).analyze(
+      repository / "tests/slot-layout-entry.gti",
+      "#include <std/polymorphic>\n"
+      "int main() { return slot_layout_probe::run(); }\n",
+      {repository / "stdlib/prelude.gti"}, {{library.string(), source}},
+      {repository / "stdlib"});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    throw std::runtime_error("invalid polymorphic slot layout source");
+  }
+  std::vector<LoweredProgramIssue> issues;
+  const auto program = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!program)
+    throw std::runtime_error("unverified polymorphic slot layout source");
+  Session session(*program, {});
+  const auto &mir = program->program().mir();
+  std::size_t count = 0;
+  for (const auto &owner : mir.classInstances()) {
+    if (owner.compilerCapability !=
+        CompilerCapabilityTypeKind::PolymorphicStorage)
+      continue;
+    ++count;
+    expect(polymorphicStorageRepresentation(mir, owner),
+           "real sealed capability has one concrete footprint");
+    const auto slot = session.layouts().polymorphicStorage(owner.type);
+    const auto layout = session.layouts().get(owner.type);
+    const auto pointer = session.dataLayout().getPointerSize();
+    const auto expectedAlignment = std::max<std::uint64_t>(
+        session.dataLayout().getPointerABIAlignment(0).value(),
+        slot.payloadAlignment);
+    const auto roundUp = [](std::uint64_t value, std::uint64_t alignment) {
+      return (value + alignment - 1) / alignment * alignment;
+    };
+    const auto payloadOffset = roundUp(2 * pointer, slot.payloadAlignment);
+    expect(layout.storage == slot.type.storage && layout.addressOnly &&
+               layout.alignment == expectedAlignment &&
+               layout.fieldOffsets.at(slot.operationsIndex) == 0 &&
+               layout.fieldOffsets.at(slot.interfaceIndex) == pointer &&
+               layout.fieldOffsets.at(slot.payloadIndex) == payloadOffset &&
+               layout.size ==
+                   roundUp(payloadOffset + slot.capacity, expectedAlignment) &&
+               layout.stride == layout.size,
+           "inline slot extent and payload alignment use target DataLayout");
+    auto *nested = llvm::StructType::get(
+        session.context(),
+        {llvm::Type::getInt8Ty(session.context()), layout.storage,
+         llvm::Type::getInt8Ty(session.context())});
+    const auto *nestedLayout = session.dataLayout().getStructLayout(nested);
+    expect(nestedLayout->getElementOffset(1) == expectedAlignment &&
+               nestedLayout->getElementOffset(2) ==
+                   expectedAlignment + layout.size &&
+               session.dataLayout().getABITypeAlign(nested).value() ==
+                   expectedAlignment,
+           "slot alignment survives ordinary containment without alloca "
+           "overrides");
+    auto invalid = owner;
+    invalid.compilerCapability = CompilerCapabilityTypeKind::None;
+    expect(!polymorphicStorageRepresentation(mir, invalid),
+           "nominal spelling without capability does not grant representation");
+    invalid = owner;
+    invalid.type.valueArguments[1] = CompileTimeValue::uint64(3);
+    expect(!polymorphicStorageRepresentation(mir, invalid),
+           "non-power-of-two alignment rejects");
+    invalid = owner;
+    invalid.type.valueArguments[0] = CompileTimeValue::uint64(0);
+    expect(!polymorphicStorageRepresentation(mir, invalid),
+           "zero capacity rejects");
+    invalid = owner;
+    invalid.type.valueArguments[0] = CompileTimeValue::uint64(4097);
+    expect(!polymorphicStorageRepresentation(mir, invalid),
+           "oversized capacity rejects");
+    invalid = owner;
+    invalid.type.arguments[0] = SemanticType::Int32;
+    expect(!polymorphicStorageRepresentation(mir, invalid),
+           "non-interface target rejects");
+    invalid = owner;
+    invalid.requiresActiveCleanup = true;
+    expect(!polymorphicStorageRepresentation(mir, invalid),
+           "active cleanup cannot use inert slot representation");
+  }
+  expect(count == 26,
+         "all capacities and supported alignment powers were tested");
+  expect(!planLlvmAdmission(*program).admitted(),
+         "layout alone does not admit unimplemented slot lifecycle operations");
+
+  // Native representation oracle only, not an alternative GTI body emitter.
+  // The external observer prevents alignment and payload accesses from being
+  // folded away based solely on LLVM's own layout assumptions.
+  const auto root =
+      fs::temp_directory_path() /
+      ("gti-slot-layout-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directory(root);
+  struct Cleanup {
+    fs::path root;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(root, ignored);
+    }
+  } cleanup{root};
+  const auto consumer = root / "consumer.c";
+  expect(driver::writeArtifact(consumer, R"(
+#include <stdint.h>
+#include <stddef.h>
+extern int gti_slot_probe(void);
+int gti_slot_observe(void *slot, void *payload, uint64_t size,
+                     uint64_t alignment, uint64_t capacity) {
+  uint64_t owner_align = alignment > _Alignof(void*) ? alignment : _Alignof(void*);
+  uint64_t offset = (2 * sizeof(void*) + alignment - 1) / alignment * alignment;
+  uint64_t expected = (offset + capacity + owner_align - 1) / owner_align * owner_align;
+  if ((uintptr_t)slot % owner_align || (uintptr_t)payload % alignment ||
+      (unsigned char*)payload - (unsigned char*)slot != (ptrdiff_t)offset ||
+      size != expected) return 1;
+  ((unsigned char*)payload)[0] = 91;
+  ((unsigned char*)payload)[capacity - 1] = 92;
+  return 0;
+}
+int main(void) { return gti_slot_probe(); }
+)") == driver::ArtifactWriteStatus::Success,
+         "write inline slot C observer");
+  driver::NativeToolchain toolchain;
+  const auto cobject = root / "consumer.o";
+  const auto compiled = toolchain.invoke(driver::NativeCCompileRequest(
+      driver::discoverCCompiler(), consumer, cobject, driver::CStandard::C17,
+      OptimizationLevel::O2, {}, {}));
+  expect(compiled.succeeded(), "compile inline slot C observer");
+  if (!compiled.succeeded())
+    return;
+  for (const auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
+    Session native(*program, {.optimization = level});
+    const auto plan = native.abi().nativeC(SemanticType::Int32, {});
+    auto *probe =
+        llvm::Function::Create(plan.type, llvm::GlobalValue::ExternalLinkage,
+                               "gti_slot_probe", native.module());
+    plan.applyTo(*probe);
+    const std::vector<SemanticType> parameters{
+        SemanticType::rawPointerTo(SemanticType::UInt8),
+        SemanticType::rawPointerTo(SemanticType::UInt8), SemanticType::UInt64,
+        SemanticType::UInt64, SemanticType::UInt64};
+    const auto observerPlan =
+        native.abi().nativeC(SemanticType::Int32, parameters);
+    auto *observer = llvm::Function::Create(
+        observerPlan.type, llvm::GlobalValue::ExternalLinkage,
+        "gti_slot_observe", native.module());
+    observerPlan.applyTo(*observer);
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(native.context(), "entry", probe));
+    llvm::Value *result = ir.getInt32(0);
+    for (const auto &owner : mir.classInstances()) {
+      if (!polymorphicStorageRepresentation(mir, owner))
+        continue;
+      const auto slot = native.layouts().polymorphicStorage(owner.type);
+      auto *address = ir.CreateAlloca(slot.type.storage);
+      auto *payload =
+          ir.CreateStructGEP(slot.type.storage, address, slot.payloadIndex);
+      auto *call = ir.CreateCall(observer,
+                                 {address, payload, ir.getInt64(slot.type.size),
+                                  ir.getInt64(slot.payloadAlignment),
+                                  ir.getInt64(slot.capacity)});
+      observerPlan.applyTo(*call);
+      auto *last = ir.CreateInBoundsGEP(ir.getInt8Ty(), payload,
+                                        ir.getInt64(slot.capacity - 1));
+      auto *actual =
+          ir.CreateZExt(ir.CreateLoad(ir.getInt8Ty(), last), ir.getInt32Ty());
+      result = ir.CreateOr(
+          result, ir.CreateOr(call, ir.CreateXor(actual, ir.getInt32(92))));
+    }
+    ir.CreateRet(result);
+    native.requireDefinition(*probe);
+    const auto object = native.emitObject();
+    const auto path = root / "probe.o";
+    expect(driver::writeArtifact(path, object.contents) ==
+               driver::ArtifactWriteStatus::Success,
+           "write native inline slot layout object");
+    driver::NativeInputs inputs;
+    inputs.libraryFiles.push_back(cobject);
+    const auto executable = root / "probe";
+    const auto linked = toolchain.invoke(driver::NativeLinkRequest(
+        driver::discoverNativeCompiler(), path, executable, inputs));
+    expect(linked.succeeded(), "link native inline slot layout object");
+    if (linked.succeeded())
+      expect(driver::invokeProcess({executable.string()}).succeeded(),
+             "native slot addresses and full payload extents agree with C at "
+             "O0/O3");
+  }
+}
+
 void testPayloadUniqueOwner(const std::filesystem::path &repository,
                             bool sourceOnly) {
   namespace fs = std::filesystem;
@@ -1567,6 +1790,11 @@ int main(void) {
 
 int main(int argc, char **argv) {
   try {
+    if (argc == 3 &&
+        std::string_view(argv[1]) == "--polymorphic-storage-layout") {
+      testPolymorphicStorageLayout(argv[2]);
+      return failures == 0 ? 0 : 1;
+    }
     if (argc >= 3 && std::string_view(argv[1]) == "--payload-unique-owner") {
       testPayloadUniqueOwner(argv[2], argc == 4 && std::string_view(argv[3]) ==
                                                        "--source-only");

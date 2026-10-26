@@ -24,6 +24,13 @@ bool scalarOrReference(const SemanticType &type) {
          (type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
           scalar(type.arguments[0]));
 }
+bool observerPointer(const SemanticType &type) {
+  return type.kind == SemanticType::RawPointer && type.arguments.size() == 1 &&
+         type.arguments.front() == SemanticType::Int32;
+}
+bool scalarInput(const SemanticType &type) {
+  return scalarOrReference(type) || observerPointer(type);
+}
 } // namespace
 
 void validateC04Evaluation(const Session &session,
@@ -40,24 +47,38 @@ void validateC04Evaluation(const Session &session,
       !session.program().mir().programInitializationPlan().steps.empty())
     reject("empty/duplicate selection or program initialization");
   const auto &program = session.program().mir();
+  const auto knownClass = [&](const SemanticType &type) {
+    return std::any_of(
+        program.classInstances().begin(), program.classInstances().end(),
+        [&](const auto &instance) { return instance.type == type; });
+  };
   std::set<HirClassInstanceId> classes;
   for (const auto &instance : program.classInstances()) {
     if (instance.compilerCapability != CompilerCapabilityTypeKind::None ||
         instance.polymorphic || instance.abstract || instance.cAbiRecord ||
         instance.cOpaqueHandle || instance.unionLayout ||
         !instance.bases.empty() || !instance.structuralBases.empty() ||
-        !instance.virtualDispatch.empty() || !instance.fieldDropOrder.empty() ||
-        !std::all_of(
-            instance.declaredFields.begin(), instance.declaredFields.end(),
-            [](const auto &field) { return scalarOrReference(field.type); }))
-      reject("class outside ordinary scalar/reference-field cleanup profile");
+        !instance.virtualDispatch.empty() ||
+        !std::all_of(instance.declaredFields.begin(),
+                     instance.declaredFields.end(), [&](const auto &field) {
+                       return scalarInput(field.type) || knownClass(field.type);
+                     }))
+      reject("class outside ordinary scalar/reference/observer/record-field "
+             "cleanup "
+             "profile");
     classes.insert(instance.id);
   }
   const auto localType = [&](const SemanticType &type) {
-    return scalarOrReference(type) ||
-           std::any_of(
-               program.classInstances().begin(), program.classInstances().end(),
-               [&](const auto &instance) { return instance.type == type; });
+    return scalarInput(type) || type == SemanticType::NullPtr ||
+           knownClass(type);
+  };
+  const auto recordDestination = [&](const MirPlace *place) {
+    return place && place->root == MirPlaceRootKind::Binding &&
+           !place->foreignStorage && knownClass(place->type) &&
+           std::all_of(place->projections.begin(), place->projections.end(),
+                       [](const auto &projection) {
+                         return projection.kind == MirProjectionKind::Field;
+                       });
   };
   for (auto id : selected) {
     const auto *function = session.program().mir().findFunctionInstance(id);
@@ -65,16 +86,16 @@ void validateC04Evaluation(const Session &session,
         function->linkage != LanguageLinkage::Gti || function->owner ||
         function->entryKind != ProgramEntryKind::None ||
         function->requiresUnsafe || function->neverReturns ||
-        !scalar(function->returnType) ||
+        (!scalar(function->returnType) && !knownClass(function->returnType)) ||
         !std::all_of(function->parameterTypes.begin(),
-                     function->parameterTypes.end(), scalarOrReference))
+                     function->parameterTypes.end(), localType))
       reject("function signature or definition");
   }
   for (const auto &constructor : program.constructorInstances())
     if (!classes.contains(constructor.owner) || constructor.requiresUnsafe ||
         constructor.definitionKind != MirDefinitionKind::Source ||
         !std::all_of(constructor.parameterTypes.begin(),
-                     constructor.parameterTypes.end(), scalarOrReference))
+                     constructor.parameterTypes.end(), scalarInput))
       reject("constructor outside scalar/reference profile");
   for (const auto &destructor : program.destructorInstances())
     if (!classes.contains(destructor.owner) ||
@@ -101,7 +122,9 @@ void validateC04Evaluation(const Session &session,
                       [](const auto &projection) {
                         return projection.kind != MirProjectionKind::Field &&
                                projection.kind !=
-                                   MirProjectionKind::Dereference;
+                                   MirProjectionKind::Dereference &&
+                               projection.kind !=
+                                   MirProjectionKind::RawDereference;
                       }))
         reject("place outside scalar/reference/local class profile");
     for (const auto &value : body.values)
@@ -109,11 +132,6 @@ void validateC04Evaluation(const Session &session,
         reject("value outside scalar/reference/local class profile");
     for (const auto &block : body.blocks) {
       const auto term = block.terminator.kind;
-      // MIR's declaration-level may-fail bit is conservative. Helpers here
-      // must have no actual failure edge; fallible lifecycle calls require the
-      // next experiment's helper-unwind integration, not a nominal exemption.
-      if (helper && (term == MirTerminatorKind::Invoke || block.activeFailure))
-        reject("fallible lifecycle body");
       if (term != MirTerminatorKind::Return &&
           term != MirTerminatorKind::Exit && term != MirTerminatorKind::Goto &&
           term != MirTerminatorKind::Branch &&
@@ -126,24 +144,105 @@ void validateC04Evaluation(const Session &session,
         if (instruction.tombstone)
           continue;
         if (instruction.intrinsic != IntrinsicKind::None ||
-            instruction.rawMemoryAccess || instruction.elementCleanup ||
-            instruction.replacementCleanup ||
-            instruction.preparedParameterDrop ||
-            (instruction.successResultDrop &&
-             instruction.kind != MirInstructionKind::Construct) ||
-            instruction.nativeCallbackAdapter || instruction.threadTaskAdapter)
+            instruction.elementCleanup || instruction.nativeCallbackAdapter ||
+            instruction.threadTaskAdapter)
           reject("non-scalar instruction facts");
+        if (instruction.rawMemoryAccess &&
+            (instruction.unsafeOperation !=
+                 UnsafeOperationKind::RawDereference ||
+             !scalar(instruction.info.type) ||
+             (instruction.kind != MirInstructionKind::Load &&
+              instruction.kind != MirInstructionKind::Assign)))
+          reject("raw access outside explicit unsafe scalar observation");
+        if (instruction.replacementCleanup) {
+          const auto *destination =
+              instruction.destination ? body.findPlace(*instruction.destination)
+                                      : nullptr;
+          if (instruction.kind != MirInstructionKind::CleanupBeforeAssign ||
+              !instruction.replacementPair || !recordDestination(destination) ||
+              destination->type != instruction.replacementCleanup->type)
+            reject("replacement outside local ordinary record or field");
+        }
+        if (instruction.successResultDrop &&
+            instruction.kind != MirInstructionKind::Construct) {
+          const auto *target =
+              instruction.functionTarget
+                  ? program.findFunctionInstance(*instruction.functionTarget)
+                  : nullptr;
+          if (instruction.kind != MirInstructionKind::Call || !target ||
+              !selected.contains(target->id) ||
+              instruction.dispatch != CallDispatch::Static ||
+              !knownClass(target->returnType))
+            reject("success result outside ordinary record call profile");
+        }
+        if (instruction.preparedParameterDrop) {
+          const auto *prepared =
+              body.findDropObligation(*instruction.preparedParameterDrop);
+          if (instruction.kind != MirInstructionKind::CallInput || !prepared ||
+              prepared->kind != MirDropObligationKind::PreparedParameter ||
+              !knownClass(prepared->dropType.type))
+            reject("prepared parameter outside ordinary record profile");
+        }
+        for (const auto &event : instruction.lifecycle) {
+          const auto *source = body.findDropObligation(event.source);
+          const bool publication = event.target == 0 && !event.conditional &&
+                                   !event.failureCleanup && source;
+          const bool constructorPublication =
+              publication && address.kind == MirBodyKind::Constructor &&
+              term == MirTerminatorKind::Return &&
+              source->kind == MirDropObligationKind::ConstructionRollback;
+          const bool fieldInitializerPublication =
+              publication && address.kind == MirBodyKind::FieldInitializers &&
+              term == MirTerminatorKind::Exit &&
+              source->kind == MirDropObligationKind::ConstructionRollback;
+          const bool parameterTransfer =
+              publication && instruction.kind == MirInstructionKind::Call &&
+              instruction.functionTarget &&
+              selected.contains(*instruction.functionTarget) &&
+              instruction.dispatch == CallDispatch::Static &&
+              source->kind == MirDropObligationKind::PreparedParameter;
+          const bool resultPublication =
+              publication && address.kind == MirBodyKind::Function &&
+              term == MirTerminatorKind::Return &&
+              (source->kind == MirDropObligationKind::ReturnResult ||
+               source->kind == MirDropObligationKind::Value) &&
+              knownClass(source->dropType.type);
+          const auto *destination =
+              instruction.destination ? body.findPlace(*instruction.destination)
+                                      : nullptr;
+          // A field remains owned by its containing binding. Its prepared RHS
+          // transfers into that field, rather than replacing the parent's drop.
+          const bool fieldReplacement =
+              publication && instruction.kind == MirInstructionKind::Assign &&
+              instruction.replacementPair && recordDestination(destination) &&
+              !destination->projections.empty() &&
+              source->kind == MirDropObligationKind::Value &&
+              source->dropType.type == destination->type;
+          if (event.kind == MirLifecycleEventKind::Replace &&
+              !fieldReplacement) {
+            const auto *target = body.findDropObligation(event.target);
+            if (instruction.kind != MirInstructionKind::Assign ||
+                !instruction.replacementPair || !source || !target ||
+                event.conditional || event.failureCleanup ||
+                target->kind != MirDropObligationKind::Binding ||
+                instruction.destination != target->place ||
+                !knownClass(source->dropType.type) ||
+                source->dropType.type != target->dropType.type)
+              reject("replacement outside exact ordinary record publication");
+          }
+          if (event.kind == MirLifecycleEventKind::TransferOut &&
+              !constructorPublication && !fieldInitializerPublication &&
+              !parameterTransfer && !resultPublication)
+            reject("replacement or escaping owner lifecycle");
+        }
         switch (instruction.kind) {
         case MirInstructionKind::Lifecycle:
-          for (const auto &event : instruction.lifecycle)
-            if (event.kind == MirLifecycleEventKind::Replace ||
-                event.kind == MirLifecycleEventKind::TransferOut)
-              reject("replacement or escaping owner lifecycle");
           break;
         case MirInstructionKind::Borrow:
         case MirInstructionKind::ActivateBorrow:
         case MirInstructionKind::EndBorrow:
         case MirInstructionKind::Drop:
+        case MirInstructionKind::CleanupBeforeAssign:
         case MirInstructionKind::Load:
         case MirInstructionKind::Initialize:
         case MirInstructionKind::Assign:
@@ -188,6 +287,7 @@ void validateC04Evaluation(const Session &session,
           case MirOperation::Literal:
           case MirOperation::Identity:
           case MirOperation::Convert:
+          case MirOperation::AddressOf:
           case MirOperation::Add:
           case MirOperation::Subtract:
           case MirOperation::Multiply:

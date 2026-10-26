@@ -1,0 +1,37 @@
+struct Marker {
+  mut int& slot;
+  int input;
+  bool fail;
+  Marker(int value, mut int& target, bool fails) : slot(target), input(value), fail(fails) {}
+  ~Marker() {
+    if (slot == 0) { slot = 1; }
+    else { slot = 2; }
+    if (fail) {
+      if (input == 2147483647) {
+        int overflow = input + 1;
+      }
+    }
+  }
+};
+
+struct Owner {
+  Marker first;
+  Marker second;
+  mut int& slot;
+  int input;
+  Owner(int value, mut int& one, mut int& two, mut int& own, bool first_fails, bool second_fails)
+    : first(Marker(value, one, first_fails)), second(Marker(value, two, second_fails)), slot(own), input(value) {}
+  ~Owner() {
+    if (slot == 0) { slot = 1; }
+    else { slot = 2; }
+    if (input == 2147483647) {
+      int overflow = input + 1;
+    }
+  }
+};
+
+int sample(int input, mut int& first, mut int& second, mut int& own) {
+  Owner owner{input, first, second, own, false, true};
+  if (input == 2147483647) { return 0; }
+  return input + 1;
+}

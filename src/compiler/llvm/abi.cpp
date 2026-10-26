@@ -201,8 +201,9 @@ FunctionAbi Abi::gti(const SemanticType &result,
 #if !defined(GTI_LLVM_C04_MIR_EVALUATION)
 #error "C04 native transport is restricted to the isolated evaluation target"
 #endif
-  // The test entry validates a no-cleanup scalar closure before emission.
-  // This changes only physical transport; MIR retains its failure edges.
+  // The test entry validates its bounded lifecycle/call closure before
+  // emission. This changes only physical transport; MIR retains its failure
+  // edges.
   mayFail = false;
 #endif
   const auto concreteParameters = flattenConcreteParameters(parameters);
@@ -277,10 +278,10 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
 #else
       "__gti_native_v";
 #endif
-  const auto name = native ? function->externalSymbol
-                           : privatePrefix +
-                                 std::to_string(executionAbiVersion) + "_f" +
-                                 std::to_string(id);
+  const auto name = native
+                        ? function->externalSymbol
+                        : privatePrefix + std::to_string(executionAbiVersion) +
+                              "_f" + std::to_string(id);
   if (name.empty())
     throw std::logic_error(
         "LLVM native declaration has no exact external symbol");

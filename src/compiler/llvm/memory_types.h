@@ -13,6 +13,9 @@ uninitializedStorageRepresentation(const MirProgram &program,
 [[nodiscard]] bool sharedOwnerRepresentation(const MirProgram &program,
                                              const MirClassInstance &instance);
 [[nodiscard]] bool
+polymorphicStorageRepresentation(const MirProgram &program,
+                                 const MirClassInstance &instance);
+[[nodiscard]] bool
 nativeObjectConstructionShape(const MirProgram &program,
                               const MirInstruction &instruction);
 [[nodiscard]] bool

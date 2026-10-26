@@ -88,7 +88,7 @@ public:
             [&](MirBodyAddress address) { return signature(address); }) {}
   void lower(const LlvmAdmissionPlan &admission);
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
-  void lowerEvaluation(const LlvmAdmissionPlan &admission);
+  void lowerEvaluation(const LlvmAdmissionPlan &admission, bool fixedCallBoundaries);
 #endif
 
 private:
@@ -1104,10 +1104,16 @@ private:
       ir.SetInsertPoint(done);
       return;
     }
-    auto *status = ir.CreateCall(
-        lifetimes.cleanup(*recipe, instruction.kind ==
-                                       MirInstructionKind::CleanupBeforeAssign),
+    auto *cleanup = lifetimes.cleanup(
+        *recipe, instruction.kind == MirInstructionKind::CleanupBeforeAssign);
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+    auto *status = evaluationCall(
+        cleanup->getFunctionType(), cleanup,
         {address, channel, ir.getInt1(current->activeFailure != 0)});
+#else
+    auto *status = ir.CreateCall(
+        cleanup, {address, channel, ir.getInt1(current->activeFailure != 0)});
+#endif
     if (checked) {
       auto *bad =
           llvm::BasicBlock::Create(session.context(), "drop.failed", &function);
@@ -1538,8 +1544,6 @@ private:
     case MirInstructionKind::Call:
     case MirInstructionKind::CallBody:
       result = call(instruction);
-      if (instruction.loan && result && result->getType()->isPointerTy())
-        memory.publish(*instruction.loan, result);
       break;
     case MirInstructionKind::Borrow: {
       const auto &loan = *input.findLoan(*instruction.loan);
@@ -1602,6 +1606,13 @@ private:
       throw BackendUnsupportedError(
           "LLVM instruction shape is not implemented");
     }
+    // A constructed borrowed carrier publishes its own address, not the
+    // referent that provides the result's lifetime dependency.
+    if ((instruction.kind == MirInstructionKind::Call ||
+         instruction.kind == MirInstructionKind::CallBody ||
+         instruction.kind == MirInstructionKind::Construct) &&
+        instruction.loan && result && result->getType()->isPointerTy())
+      memory.publish(*instruction.loan, result);
     if (instruction.result && result)
       values.at(*instruction.result) = result;
     if (published.matched()) {
@@ -1642,9 +1653,7 @@ private:
       break;
     case MirTerminatorKind::ContinueFailure: {
       auto *channel = channels.at(term.failureRecord);
-      ir.CreateStore(ir.CreateLoad(session.abi().failureChannel(),
-                                   channels.at(block.activeFailure)),
-                     channel);
+      failures.copyChannel(ir, channel, channels.at(block.activeFailure));
       jump(term.target, term.targetArguments);
       break;
     }
@@ -1752,9 +1761,8 @@ private:
 #endif
       if (!failureDestination)
         throw std::logic_error("LLVM failure propagation has no destination");
-      ir.CreateStore(ir.CreateLoad(session.abi().failureChannel(),
-                                   channels.at(term.failureRecord)),
-                     failureDestination);
+      failures.copyChannel(ir, failureDestination,
+                            channels.at(term.failureRecord));
       leaveFailureCleanup();
       ir.CreateRet(ir.getFalse());
       break;
@@ -2148,12 +2156,13 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     emitEmbedding(session, failures, *function({MirBodyKind::Module, 0}));
 }
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
-void Bodies::lowerEvaluation(const LlvmAdmissionPlan &admission) {
+void Bodies::lowerEvaluation(const LlvmAdmissionPlan &admission,
+                             bool fixedCallBoundaries) {
   for (auto address : admission.requiredBodies()) {
     auto *output = function(address);
-    // Equal, explicit call boundaries for the transport microbenchmark, not
-    // a claim about normal whole-program inlining or production performance.
-    output->addFnAttr(llvm::Attribute::NoInline);
+    // Keep the controlled baseline separate from ordinary pipeline decisions.
+    if (fixedCallBoundaries)
+      output->addFnAttr(llvm::Attribute::NoInline);
     output->setUWTableKind(llvm::UWTableKind::Sync);
   }
   for (auto address : admission.requiredBodies())
@@ -2168,9 +2177,10 @@ void lowerScalarProgram(Session &session, const LlvmAdmissionPlan &admission) {
 
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
 void lowerC04Evaluation(Session &session, const LlvmAdmissionPlan &admission,
-                        std::span<const HirFunctionInstanceId> functions) {
+                        std::span<const HirFunctionInstanceId> functions,
+                        bool fixedCallBoundaries) {
   validateC04Evaluation(session, admission, functions);
-  Bodies(session, admission).lowerEvaluation(admission);
+  Bodies(session, admission).lowerEvaluation(admission, fixedCallBoundaries);
 }
 #endif
 

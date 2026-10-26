@@ -10797,11 +10797,12 @@ and [LLVM exception-handling model](https://www.llvm.org/docs/ExceptionHandling.
 **MIR-derived evaluation staging (not production admission):** the opt-in
 `GTI_BUILD_LLVM_C04_EVALUATION` targets build separate status and native-unwind
 backend copies against the same frontend and sealed MIR. Their structural
-profile accepts a closed scalar static-call graph, scalar-reference parameters,
-and local ordinary classes with scalar/reference fields. Constructor and
-destructor bodies must have no executable MIR failure edge; their conservative
-declaration-level may-fail flag alone is not an infallibility proof. Owning
-fields, hierarchy, global initialization, native imports and adapters remain
+profile accepts a closed static-call graph with scalar or ordinary-record results,
+scalar-reference and ordinary-record parameters,
+and local ordinary classes with scalar/reference/ordinary-record fields
+and explicit `int*` observation handles,
+including fallible source constructors and destructors. Arrays, private owner
+representations, hierarchy, global initialization, native imports and adapters remain
 outside this experiment. Both candidates use the central ABI planner, the same
 verified MIR lifecycle/drop schedules and fixed `noinline` call boundaries.
 Native invokes enter cleanup-only landing pads, follow the MIR failure edge,
@@ -10811,21 +10812,102 @@ the successful path does not consult that carrier. This edge is explicitly
 unwind-permitted and is not a production runtime C service. It uses the platform
 C++ personality/unwinder without reading a C++ exception object's layout.
 Experimental symbols and module flags distinguish the artifacts.
+Generated cleanup helpers invoke the selected source destructor and exact
+verified child recipes. A cleanup landing pad records the original unwind
+token, enters the existing failure-cleanup context, and drains remaining child
+recipes before leaving that context and resuming the original token. A second
+failure terminates instead of continuing cleanup. Constructor return and a
+field-initializer schedule's final Exit may publish their armed construction
+rollback obligations. A staged ordinary-record argument retains its
+verified prepared-parameter drop until the exact static call transfers it to
+the callee. Ordinary-record returns publish their verified Value or ReturnResult
+obligation only at the final return. A prepared result remains owned by that
+invocation while local cleanup can still fail. Local ordinary-record replacement
+uses the sealed CleanupBeforeAssign/Assign pair and its exact source/destination
+drop obligations. Field-only projection paths rooted in a local binding are
+also admitted: their Replace event consumes the prepared Value obligation with
+target zero, while the containing binding retains its aggregate cleanup
+obligation. Borrowed/raw/indexed destinations remain outside this profile. No
+cleanup recipe or publication event is fabricated by the experiment.
 
 This staging replaces hand-built traces for the first comparison, not the
 remaining C04 obligations. The harness checks identical sealed-program input,
 direct/indirect root calls at O0/O3, original failure reporting, exactly-once
-cleanup in three frames, repeated and alternating failure/success entry, and
-structural rejections without overwriting existing objects. It does not validate
-fallible lifecycle bodies, constructor rollback, nested destructor failures,
-owning-field/parameter transfer, callbacks, user TLS, workers, foreign/forced
+cleanup in three frames, remaining local cleanup after a destructor fails,
+non-destruction of a failed construction, and immediate terminal cleanup failure
+in an outer frame while the original failure is already propagating. A mapped
+test observation buffer verifies that later destructors did not run after that
+secondary failure. Repeated and alternating failure/success entry and structural
+rejections preserve their checks. Ordinary owned-record cases additionally
+exercise partial-construction rollback, remaining fields after a source destructor
+or child destructor fails, and terminal failure while draining those fields.
+The evaluation exposed and repaired constructor entry-reference retirement
+before rollback when a later initializer publishes that reference; independent
+MIR mutation checks retain rejection of early dependency retirement.
+Fresh ordinary-record arguments additionally check failure before call entry
+while evaluating a later argument, and after ownership reaches the callee.
+Both cases require exactly-once parameter cleanup alongside caller locals.
+Owning results check both a simple fresh return and destruction of the completed
+result when local cleanup fails before publication. This exposed and repaired
+missing LLVM result-loan publication for constructed borrowed carriers; ordinary
+production placement regressions separately check alias identity and return
+rollback. Replacement checks old-value, prepared-RHS and surrounding cleanup
+with caller-owned observer slots, including failure in the old destructor,
+failed preparation before replacement starts, and terminal secondary failure
+while draining the prepared replacement. The same cases run through two nested
+ordinary fields, distinguishing the prepared field value from its containing
+owner. The original simple projected-replacement rejection is now a positive
+case; a borrowed-record destination retains explicit profile rejection and
+artifact preservation.
+Explicit unsafe scalar dereferences provide those observations without changing
+stored-reference assignment semantics; pointer arithmetic and allocation remain
+excluded. Opaque-pointer/array fields and borrowed-record parameters reject
+before artifact publication.
+It does not validate non-field projections, callbacks, user TLS, workers, foreign/forced
 unwind, carrier OOM, or artifact unloading. Native-carrier/runtime sanitizer runs do not instrument
 the generated LLVM object. No transport selection or production speedup follows
-from these checks. Next, extend real MIR cleanup to fallible lifecycle and
-ownership transfer, then worker containment before the representative
+from these checks. Next, extend real MIR cleanup to dynamic-call and worker
+containment before the representative
 platform/cost comparison and ADR decision.
 Remove or replace these opt-in evaluation hooks once that decision is implemented;
 they are not a permanent second production backend or CLI transport option.
+
+The staging also includes a hash-bound cost reporter, `tests/llvm_c04_cost.py`,
+over validated unsanitized O3 artifacts. It alternates status/unwind candidates
+for direct/indirect success, failure and mixed entry, retaining independent
+checksum checks, runtime distributions and code/unwind-table sizes. The
+evaluation's optional `--build-metrics` records fixture emission/link time and
+peak memory. Separate `--call-boundaries fixed` and `optimizable` runs compare
+the controlled noinline baseline with the ordinary LLVM optimization pipeline,
+without forcing inlining. Retained post-codegen IR and scalar entry call counts
+record the actual optimizer decision; large status failure-copy paths may remain
+out of line. Cost receipts reject mixed policies. This is supporting evidence
+for the bounded local/parameter/return/
+replacement workloads, not completion of the representative platform comparison:
+allocation measurement, dynamic GTI adapters, workers, foreign containment and
+representative whole-program optimization remain explicit obligations before
+choosing the transport.
+The reporter additionally accepts `--fixtures field_replacement_cleanup` for
+the nested-field workload; its default five workloads remain stable so earlier
+hash-bound evidence can still be compared without missing new receipts.
+Do not infer a uniform success-path benefit from the fixed-call baseline:
+the local optimizable returned-owner cleanup probe favored status while several
+other probes favored unwinding. Resolve the workload-specific generated-code
+costs and platform results before making the production decision.
+The integration candidate replaces aggregate-SSA channel and emergency-record
+copies with DataLayout-sized, overlap-safe bulk moves. Failure-cleanup runtime
+services carry a cold cost hint, without new unwind/return or alias promises.
+This recovers the owning-return probe's lost frame shrink-wrapping and reduces
+its generated code; paired local timings no longer show that return regression.
+Terminal double-failure envelope construction now lives in one internal cold,
+non-inlined helper, retaining both records and their artifact pointers without
+introducing an unwind promise. This removes terminal-only dynamic stack storage
+from ordinary cleanup callers. A three-checkpoint paired macOS comparison no
+longer shows the earlier successful replacement-cleanup regression; the helper
+candidate is below the original baseline for both transports and dispatch modes.
+This is bounded local evidence, not isolated-host or whole-program acceptance.
+Required platform and representative-workload comparison remains open; neither
+smaller code nor passing cleanup checks waives it.
 
 ##### LLVM-C05: Dynamic Calls Use Planned Adapters
 
@@ -11535,6 +11617,17 @@ execution remains an integration gate rather than component evidence.
   no accidental capture allocation. Unrelated user wrappers prove generality.
 
 ### O-LLVM-10: Inheritance, Interfaces And Polymorphism
+
+**Inline-owner integration prerequisite:** the private polymorphic slot now has
+a target-checked representation plan and a dedicated component layout oracle.
+This does not close public erased-callable support. The next operation layer
+must use sealed concrete model identity and relocation/cleanup eligibility to
+construct and relocate the payload, recover the exact interface subobject at
+its new address, and implement empty/reset/read behavior. General boxed
+polymorphic ownership and dynamic cleanup remain necessary for payloads that
+do not qualify for inline storage; do not recognize `std::function` by name or
+admit a wrapper merely because its slot has a layout. Required platform and
+composition evidence remains part of milestone acceptance.
 
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not

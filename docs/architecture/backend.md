@@ -4698,6 +4698,30 @@ compares current status propagation with native unwinding before dependent
 callable/worker ABIs are extended. No transport change is implemented by that
 approval; definitions and calls continue to agree on the convention above.
 
+Whole failure-channel propagation uses a `Failures`-owned, DataLayout-sized
+`llvm.memmove`, including the inline message and artifact pointer. Channels are
+plain ABI storage, not GTI owners; this operation does not perform a source
+copy or transfer a loan. Overlap-safe movement preserves the previous
+load-before-store behavior without materializing the message array as aggregate
+SSA values. The publication and cleanup edges remain MIR-owned and unchanged.
+Emergency containment initializes the envelope's version/reserved fields and
+bulk-copies each complete primary/secondary record into its distinct destination;
+it likewise avoids materializing the two message buffers as aggregate values.
+One internal cold, non-inlined terminal helper per emitted module constructs
+that emergency envelope. The caller passes the two live channels; the helper
+copies both records and their artifact identities into the existing runtime
+handoff. Its non-returning contract follows the terminal runtime service, not a
+new assumption about user cleanup. No `nounwind` promise is added. Keeping the
+envelope in this helper prevents terminal-only dynamic stack storage from
+forcing frame setup on ordinary successful cleanup paths; GTI body inlining
+policy is unchanged.
+The failure-cleanup enter/check/leave runtime declarations carry LLVM's `cold`
+cost hint: they execute only during defined-failure propagation, not ordinary
+successful cleanup. This allows target block placement and frame shrink-wrapping
+without attaching a guessed weight to a source value or forcing an inlining
+decision. It adds no `nounwind`, `noreturn`, alias or memory-effect promise;
+ordinary startup/thread-local services do not inherit this classification.
+
 All GTI functions use deterministic `__gti_native_v2_f<instance-id>` names.
 Declaration planning retains source spans as private metadata and records
 definition obligations before body emission, enabling recursion without name
@@ -5128,6 +5152,12 @@ initializer stage, including after a reference-return call's success edge.
 protected borrow origin is an enclosing object. Field publication stores that
 address, not a scalar load and not the enclosing origin's address. The backend
 does not change permission, escape or loan endpoints.
+Constructors and calls that produce a borrowed carrier publish the address and
+type of that completed result on the successful edge. The loan's originating
+referent still determines its lifetime, not its physical result representation.
+A subsequent return/reborrow selects the carrier address; it must not reinterpret
+the referent address as the record. This also preserves cleanup of an already
+constructed return value when a local destructor fails before return publication.
 
 Exact brace arrays now initialize fresh immovable elements without requiring
 movement. Both backends preserve final addresses and MIR's per-element cleanup.
@@ -5258,6 +5288,22 @@ uses ordinary enums, not the legacy `OptionalStorage` capability. The live
 `PolymorphicStorage` family requires concrete polymorphic object layout from
 O-LLVM-10; heap-owned compositions also require O-LLVM-08. Neither dependency is
 silently granted by the existence of a payload layout.
+
+The private `PolymorphicStorage` representation now has a session-owned layout
+plan, without admitting its operations. It retains an operations-descriptor
+pointer, a cached interface address and inline payload bytes. The sealed
+capability identity, concrete interface and bounded byte/alignment arguments
+select this representation, never a public wrapper name. A zero-length LLVM
+vector alignment anchor makes the requested alignment part of the storage type,
+so ordinary containing records preserve it without allocation-site overrides.
+Target DataLayout must agree with the requested power-of-two alignment. No heap
+allocation or payload lifetime begins during layout. Relocation must eventually
+recompute the interface address at the destination rather than copy the cache.
+Construction, relocation, reset, checked reads, dynamic dispatch and cleanup
+remain separately gated pending their exact operation proofs. The component
+layout oracle is not evidence that `std::function` or `std::inline_polymorphic`
+executes on LLVM.
+
 ### LLVM Function Values And Closure Environments
 
 O-LLVM-09 lowers exact function items, invocation-pointer capabilities and

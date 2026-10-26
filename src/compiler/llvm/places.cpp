@@ -119,8 +119,11 @@ void Places::allocate(
           instruction.payloadExtractionKind &&
           isReferencePayloadBinding(*instruction.payloadExtractionKind))
         selectedValues.at(*instruction.result) = true;
-      if (instruction.loan && (instruction.kind == MirInstructionKind::Call ||
-                               instruction.kind == MirInstructionKind::Borrow))
+      if (instruction.loan &&
+          (instruction.kind == MirInstructionKind::Call ||
+           instruction.kind == MirInstructionKind::CallBody ||
+           instruction.kind == MirInstructionKind::Construct ||
+           instruction.kind == MirInstructionKind::Borrow))
         loanTypes.at(*instruction.loan) = instruction.info.type;
     }
 }
