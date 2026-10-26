@@ -32,6 +32,11 @@ void update(mut Writer& value, int next) { value.write(next); }
 bool is_ready(Ready& value) { return value.ready(); }
 
 int main() {
+  // Generated transfers target fresh locals and retain all interface views.
+  Device original{4};
+  Device copied{original};
+  Device moved = std::move(copied);
+  if (inspect(original) != 7 || inspect(moved) != 7) { return 3; }
   mut Device device{4};
   if (inspect(device) != 7) { return 1; }
   update(device, 9);

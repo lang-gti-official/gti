@@ -11505,9 +11505,11 @@ execution remains an integration gate rather than component evidence.
 
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not
-  milestone completion: owning/transfer/replacement, pure active states, exact
-  optimized cost evidence and combined O14/O16 source/evidence identities remain
-  open. The loop fixture checks results, not retained dispatch or allocations.
+  milestone completion: generated scalar-hierarchy copies/moves now have exact
+  fresh-local producer/publication guards and public execution/rejection checks;
+  general transfer, owning/replacement, pure active states, exact optimized cost
+  evidence and combined O14/O16 source/evidence identities remain open. The loop
+  fixture checks results, not retained dispatch or allocations.
 - **Lifecycle authority prerequisite:** existing cleanup order and typed
   destructor ownership do not specify destructor-observed virtual active state.
   `DestructorDispatchObservation` conservatively gates direct/transitive

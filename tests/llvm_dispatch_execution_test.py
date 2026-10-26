@@ -10,7 +10,9 @@ positive traces. Virtual observations during destruction/rollback remain
 rejections pending an explicit backend-neutral phase contract. No C++ result
 defines that missing contract, and no proposed phase trace is accepted here.
 The nested mutable-reference chain is source/MIR-valid and native-required;
-both existing C++ text-vocabulary rejections are recorded, not counted as passes.
+existing C++ text-vocabulary rejections are recorded, not counted as passes.
+The isolated generated copy through a Loan also retains its precise C++20/23
+rejections while requiring verified source/MIR and native O0-O3 execution.
 """
 
 import argparse
@@ -45,8 +47,19 @@ ENDPOINTS = (
 SUCCESS_FILES = {
     "static-dispatch": "tests/fixtures/llvm_dispatch_execution.gti",
     "fresh-hierarchy-transfer": "tests/fixtures/llvm_dispatch_fresh_transfer.gti",
+    "fresh-hierarchy-copy-view": "tests/fixtures/llvm_dispatch_fresh_copy_view.gti",
     "dispatch-cost-correctness": "tests/fixtures/llvm_dispatch_execution_cost.gti",
     "shipped-example": "examples/llvm/inheritance-and-dispatch.gti",
+}
+
+TRANSFER_ENDPOINTS = (
+    *ENDPOINTS[:2],
+    *(Endpoint("llvm", level) for level in ("O0", "O1", "O2", "O3")),
+)
+
+CPP_LIMITATIONS = {
+    "borrowed-mut-reference-chain": "outside the complete C++ text vocabulary",
+    "fresh-hierarchy-copy-view": "generated copy/move construction lacks the complete generic destination and cleanup schedule",
 }
 
 SUCCESS_SOURCES = {
@@ -266,9 +279,10 @@ def execute_case(gti: Path, root: Path, work: Path, name: str,
                  source: Path, env: dict[str, str], *,
                  failure_needle: str | None = None,
                  expected_exit: int = 0,
-                 cpp_vocabulary_limitation: bool = False) -> None:
+                 cpp_limitation: str | None = None,
+                 endpoints: tuple[Endpoint, ...] = ENDPOINTS) -> None:
     observables = []
-    if cpp_vocabulary_limitation:
+    if cpp_limitation:
         mir_case = work / f"{name}-source-mir"
         mir_case.mkdir()
         assert_source_mir(gti, root, mir_case, source, env)
@@ -279,14 +293,14 @@ def execute_case(gti: Path, root: Path, work: Path, name: str,
         if len(matches) != 1:
             raise AssertionError(f"{name}: failure source needle is not unique")
         failure_line = matches[0]
-    for endpoint in ENDPOINTS:
+    for endpoint in endpoints:
         case = work / f"{name}-{endpoint.backend}-{endpoint.optimization}-{endpoint.standard or 'native'}"
         result = execute(gti, root, case, source, endpoint, env)
-        if cpp_vocabulary_limitation and endpoint.backend == "cpp":
+        if cpp_limitation and endpoint.backend == "cpp":
             match = re.search(r"backend diagnostics saved at ([^\n]+)", result.stderr)
             detail = Path(match[1]).read_text(encoding="utf-8") if match else ""
             if (result.compile_returncode != 65 or "GTI-B0001" not in result.stderr
-                    or "outside the complete C++ text vocabulary" not in detail):
+                    or cpp_limitation not in detail):
                 raise AssertionError(f"{name}: C++ comparator status changed; review coverage: {result}")
             print(f"{name} {endpoint.standard}: C++ comparator REJECTED (not execution evidence)", flush=True)
             print(f"command: {result.command}\n{result.stderr}\n{detail}", flush=True)
@@ -301,10 +315,12 @@ def execute_case(gti: Path, root: Path, work: Path, name: str,
         observables.append(result.observable)
     if len(set(observables)) != 1:
         raise AssertionError(f"{name}: backend observable/source-attribution drift: {observables}")
-    if cpp_vocabulary_limitation:
-        print(f"{name}: verified source/MIR and native O0/O3 passed; C++ failures retained", flush=True)
+    levels = "/".join(endpoint.optimization for endpoint in endpoints if endpoint.backend == "llvm")
+    if cpp_limitation:
+        print(f"{name}: verified source/MIR and native {levels} passed; C++ failures retained", flush=True)
     else:
-        print(f"{name}: C++20/23 O3 and native O0/O3 passed (normal exit {expected_exit if failure_needle is None else 70})", flush=True)
+        outcome = f"normal exit {expected_exit}" if failure_needle is None else "source-attributed failure exit 70"
+        print(f"{name}: C++20/23 O3 and native {levels} passed ({outcome})", flush=True)
 
 
 def reject_case(gti: Path, root: Path, work: Path, name: str,
@@ -950,7 +966,8 @@ class DispatchCase:
     kind: str
     expected_exit: int = 0
     failure_needle: str | None = None
-    cpp_vocabulary_limitation: bool = False
+    cpp_limitation: str | None = None
+    endpoints: tuple[Endpoint, ...] = ENDPOINTS
 
     @property
     def is_control(self) -> bool:
@@ -958,10 +975,10 @@ class DispatchCase:
 
     def sidecar_record(self) -> dict:
         endpoints = (tuple(endpoint for endpoint in ENDPOINTS if endpoint.backend == "llvm")
-                     if self.is_control else ENDPOINTS)
+                     if self.is_control else self.endpoints)
         expectation = {"kind": self.kind, "expected_exit": self.expected_exit,
                        "failure_needle": self.failure_needle,
-                       "cpp_vocabulary_limitation": self.cpp_vocabulary_limitation}
+                       "cpp_limitation": self.cpp_limitation}
         if self.kind == "backend-rejection":
             expectation.update(diagnostic="GTI-B0003", verified_source_mir=True,
                                artifact_preservation="absent-and-existing", no_object_publication=True)
@@ -996,7 +1013,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     cases = {}
 
     def add(name, source, kind="success", origin=None, expected_exit=0,
-            failure_needle=None, cpp_vocabulary_limitation=False):
+            failure_needle=None, cpp_limitation=None, endpoints=ENDPOINTS):
         if name in cases:
             raise ValueError(f"duplicate dispatch case: {name}")
         context = CaseContext(
@@ -1011,20 +1028,22 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
             unresolved=("host-target-applicability", "effective-compiler-environment",
                         "implicit-toolchain-runtime", "compiler-build-source-identity"))
         cases[name] = DispatchCase(source, context, kind, expected_exit,
-                                   failure_needle, cpp_vocabulary_limitation)
+                                   failure_needle, cpp_limitation, endpoints)
 
     for name, relative in SUCCESS_FILES.items():
-        add(name, (root / relative).read_text(encoding="utf-8"), origin=relative)
+        add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
+            cpp_limitation=CPP_LIMITATIONS.get(name),
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
-        add(name, source, expected_exit=expected_exit)
+        add(name, source, expected_exit=expected_exit, endpoints=TRANSFER_ENDPOINTS)
     source = (root / SUCCESS_FILES["static-dispatch"]).read_text(encoding="utf-8")
     if source.count(ALIAS_ANCHOR) != 1:
         raise AssertionError("borrowed-view anchor is not unique")
     add("borrowed-dispatch", source.replace(ALIAS_ANCHOR, ALIAS_ANCHOR + '\n    {\n      Reader& view = value;\n      if (view.read(1) != 11) { return 6; }\n      if (via_reader(view, 2) != 12) { return 7; }\n      Reader& second = view;\n      if (via_reader(second, 3) != 13) { return 8; }\n    }\n    {\n      mut Root& root_view = value;\n      if (root_view.base_value() != 7) { return 9; }\n      root_view.set_base(9);\n      if (root_view.base_value() != 9) { return 10; }\n      root_view.set_base(7);\n    }\n    {\n      mut Writer& view = value;\n      via_writer(view, 23);\n    }\n    if (!via_truth(value, true)) { return 11; }\n'))
     add("borrowed-mut-reference-chain", source.replace(ALIAS_ANCHOR, ALIAS_ANCHOR + '\n    {\n      mut Writer& view = value;\n      { mut Writer& second = view; via_writer(second, 23); }\n    }\n    if (!via_truth(value, true)) { return 6; }\n'),
-        cpp_vocabulary_limitation=True)
+        cpp_limitation=CPP_LIMITATIONS["borrowed-mut-reference-chain"])
     lifecycle_origin = "tests/fixtures/llvm_dispatch_execution_lifecycle.gti"
     lifecycle = (root / lifecycle_origin).read_text(encoding="utf-8")
     marker = "// DISPATCH_LIFECYCLE_MAIN\n"
@@ -1032,6 +1051,13 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
         raise AssertionError("lifecycle main marker is not unique")
     add("virtual-failure-cleanup", lifecycle, "defined-failure", lifecycle_origin, 70,
         "return 120 / divisor;")
+    move_anchor = "  Leaf value{7};"
+    if lifecycle.count(move_anchor) != 1:
+        raise AssertionError("fresh move failure anchor is not unique")
+    add("generated-move-virtual-failure",
+        lifecycle.replace(move_anchor, "  Leaf original{7};\n  Leaf value = std::move(original);"),
+        "defined-failure", expected_exit=70, failure_needle="return 120 / divisor;",
+        endpoints=TRANSFER_ENDPOINTS)
     add("constructor-rollback", lifecycle.split(marker, 1)[0] + ROLLBACK_MAIN,
         "defined-failure", expected_exit=70, failure_needle="quotient(12 / divisor)")
     anchor = "mut int expected_cleanup = 1234321;"
@@ -1058,8 +1084,10 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
                                       "static-dispatch", "dispatch-cost-correctness"),
         "dispatch-lifecycle": ("virtual-failure-cleanup", "constructor-rollback",
                                "cleanup-oracle-wrong-trace", "nonobserving-cleanup-helper-cycle"),
-        "fresh-local-generated-transfers": ("fresh-hierarchy-transfer", "generated-copy-former-reject",
-                                             "generated-move-former-reject", "fresh-copy-former-cli-control"),
+        "fresh-local-generated-transfers": (
+            "fresh-hierarchy-transfer", "fresh-hierarchy-copy-view",
+            "generated-copy-former-reject", "generated-move-former-reject",
+            "fresh-copy-former-cli-control", "generated-move-virtual-failure"),
     }
     cases = evidence_cases(root)
     if {name for members in profiles.values() for name in members} != set(cases):
@@ -1092,7 +1120,7 @@ def main() -> None:
         print(json.dumps(evidence_manifest(Path(sys.argv[2]).resolve()), sort_keys=True))
         return
     names = (*SUCCESS_FILES, *SUCCESS_SOURCES, *TRANSFER_SUCCESS_SOURCES, "borrowed-dispatch", "borrowed-mut-reference-chain",
-             "virtual-failure-cleanup", "constructor-rollback", "cleanup-oracle-wrong-trace", *REJECTIONS,
+             "virtual-failure-cleanup", "generated-move-virtual-failure", "constructor-rollback", "cleanup-oracle-wrong-trace", *REJECTIONS,
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)
@@ -1156,7 +1184,7 @@ def main() -> None:
             if specification.kind == "wrong-cleanup-trace":
                 line = next(index for index, value in enumerate(specification.source_text.splitlines(), 1)
                             if specification.failure_needle in value)
-                for endpoint in ENDPOINTS:
+                for endpoint in specification.endpoints:
                     case = work / f"wrong-trace-{endpoint.backend}-{endpoint.optimization}-{endpoint.standard or 'native'}"
                     result = execute(gti, root, case, source, endpoint, env)
                     if (result.error or result.returncode != 70 or result.stdout
@@ -1170,7 +1198,8 @@ def main() -> None:
                 execute_case(gti, root, work, name, source, env,
                              expected_exit=specification.expected_exit,
                              failure_needle=specification.failure_needle,
-                             cpp_vocabulary_limitation=specification.cpp_vocabulary_limitation)
+                             cpp_limitation=specification.cpp_limitation,
+                             endpoints=specification.endpoints)
 
 
 if __name__ == "__main__":

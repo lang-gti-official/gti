@@ -690,8 +690,8 @@ private:
            !formal(address, place->binding);
   }
   bool freshTransfer(const MirBody &body, const MirInstruction &stage) const {
-    // Handoff checkpoint: the prototype remains available for private proof,
-    // but no generic opcode/storage witness may activate unvalidated transfer.
+    // The dedicated row activates only the exact producer/publication proof;
+    // generic opcode/storage witnesses never grant transfer permission.
     if (coverage(Shape::NativeFreshHierarchyTransfer).state !=
         LlvmCoverageState::Implemented)
       return false;

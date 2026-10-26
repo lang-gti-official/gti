@@ -2087,9 +2087,16 @@ void testOrdinaryTransferPlacement() {
 
 void testFreshTransferPlanning() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
-  const auto frontend = Frontend().analyze(
-      root / "tests/fixtures/llvm_dispatch_fresh_transfer.gti", std::nullopt,
-      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  // Match the artifact driver; raw-unit tests deliberately retain complete
+  // trusted declaration inventories elsewhere.
+  const auto frontend =
+      Frontend({.requireEntryPoint = true,
+                .lowerReachableOnly = true,
+                .lowerLibraryReachableOnly = true,
+                .trustedBodies = TrustedBodyAnalysis::Reachable})
+          .analyze(root / "tests/fixtures/llvm_dispatch_fresh_transfer.gti",
+                   std::nullopt, {root / "stdlib/prelude.gti"}, {},
+                   {root / "stdlib"});
   if (!frontend.canGenerateCode())
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -2103,6 +2110,14 @@ void testFreshTransferPlanning() {
   if (!input)
     throw std::runtime_error("fresh-transfer fixture failed its exact seal");
   const auto admission = planLlvmAdmission(*input);
+  expect(std::none_of(admission.requirements().begin(),
+                      admission.requirements().end(),
+                      [](const auto &use) {
+                        return use.required && !use.body &&
+                               use.entry->key() == "SemanticType::Kind.Class" &&
+                               !use.implementedShape;
+                      }),
+         "artifact-profile source does not require dormant raw class metadata");
   expect(admission.admitted(),
          "the bounded fresh hierarchy fixture has exact public admission: " +
              admission.limitation());
@@ -2121,7 +2136,6 @@ void testFreshTransferPlanning() {
   const Placement hierarchyAware(program, body);
   std::vector<std::pair<const MirInstruction *, FreshHierarchyTransfer>> plans;
   std::size_t copyConstructs = 0, copyLoads = 0, moves = 0;
-  bool selectedRoot = false;
   const auto cold = modulePublication(session);
   for (const auto &block : body.blocks)
     for (const auto &stage : block.instructions) {
@@ -2199,21 +2213,14 @@ void testFreshTransferPlanning() {
         expect(!planned.sourceDrop && !planned.valueDrop &&
                    stage.lifecycle.empty(),
                "scalar hierarchy copies leave source cleanup unchanged");
-        if (planned.source.loan && planned.source.place) {
-          const auto *loan = body.findLoan(planned.source.loan);
-          selectedRoot |= loan && loan->source != planned.source.place &&
-                          body.findPlace(planned.source.place)->type ==
-                              named(session.program(), "Root").type;
-        }
       }
       plans.emplace_back(&stage, planned);
     }
   std::cout << "fresh-transfer-counts: copy-construct=" << copyConstructs
-            << " copy-load=" << copyLoads << " move=" << moves
-            << " selected-root=" << selectedRoot << '\n';
-  expect(copyConstructs == 2 && copyLoads == 1 && moves == 2 && selectedRoot,
-         "real MIR covers generated Copy, implicit Copy Load, selected Root "
-         "presentation and both whole-local moves");
+            << " copy-load=" << copyLoads << " move=" << moves << '\n';
+  expect(copyConstructs == 2 && copyLoads == 1 && moves == 2,
+         "real MIR covers generated Copy, implicit Copy Load and both "
+         "whole-local moves");
   expect(modulePublication(session) == cold,
          "cold transfer preflight publishes no functions/globals/IR/state");
   auto *sentinel = llvm::Function::Create(
@@ -2462,6 +2469,47 @@ int main() {
         "actual flags before suppressing the whole source");
   }
   session.verify();
+}
+
+void testFreshCopyViewPlanning() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend =
+      Frontend({.requireEntryPoint = true,
+                .lowerReachableOnly = true,
+                .lowerLibraryReachableOnly = true,
+                .trustedBodies = TrustedBodyAnalysis::Reachable})
+          .analyze(root / "tests/fixtures/llvm_dispatch_fresh_copy_view.gti",
+                   std::nullopt, {root / "stdlib/prelude.gti"}, {},
+                   {root / "stdlib"});
+  expect(frontend.canGenerateCode(), "copy-through-view retains valid source");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!input)
+    throw std::runtime_error("copy-through-view lost its exact MIR seal");
+  const auto &program = input->program().mir();
+  bool selectedRoot = false;
+  for (const auto address : enumerateMirBodyAddresses(program)) {
+    const auto &body = *findMirBody(program, address);
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (!isFreshHierarchyTransferProducer(stage) ||
+            stage.kind != MirInstructionKind::Construct)
+          continue;
+        const auto transfer = planFreshHierarchyTransfer(program, body, stage);
+        const auto *loan = body.findLoan(transfer.source.loan);
+        const auto *place = body.findPlace(transfer.source.place);
+        selectedRoot |= loan && place && loan->source != place->id &&
+                        place->type == named(input->program(), "Root").type &&
+                        transfer.kind == ConstructorKind::Copy &&
+                        !transfer.sourceDrop && !transfer.valueDrop;
+      }
+  }
+  expect(selectedRoot,
+         "generated copy consumes the evaluated static Root view while "
+         "preserving its distinct Derived loan origin and source lifetime");
 }
 
 void testGeneratedEmpty() {
@@ -3534,6 +3582,7 @@ int main() { return 0; }
   testReferencePublication();
   testOrdinaryTransferPlacement();
   testFreshTransferPlanning();
+  testFreshCopyViewPlanning();
   testGeneratedEmpty();
   testDeclarationInitializers();
   testProvedDirectReceiver();

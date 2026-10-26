@@ -1,0 +1,25 @@
+// Generated copy from an evaluated base reference: the new object retains
+// Root dispatch state while the source remains Derived. The existing C++
+// consumer rejects this exact Loan operand; independent MIR/native proof is
+// required, and supported transfer cases keep both C++ comparators.
+interface Front { int front(); };
+class Root {
+  int value;
+public:
+  Root(int input) : value(input) {}
+  virtual int kind() { return 1; }
+  int payload() { return this.value; }
+};
+class Derived : public Front, public Root {
+public:
+  Derived(int input) : Root(input) {}
+  int front() override { return 7; }
+  int kind() override { return 2; }
+};
+int read(Root& value) { return value.kind(); }
+int main() {
+  Derived original{9};
+  Root& view = original;
+  Root copied{view};
+  return read(view) == 2 && read(copied) == 1 && copied.payload() == 9 ? 0 : 1;
+}

@@ -277,10 +277,11 @@ void testPlacementPlan() {
 }
 
 lang::VerifiedLoweredProgram lower(std::string_view source,
-                                   bool withStandardLibrary = false) {
+                                   bool withStandardLibrary = false,
+                                   lang::FrontendOptions options = {}) {
   const auto root =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
-  const auto frontend = lang::Frontend().analyze(
+  const auto frontend = lang::Frontend(options).analyze(
       "llvm-admission.gti", std::string(source),
       withStandardLibrary
           ? std::vector<std::filesystem::path>{root / "prelude.gti"}
@@ -2920,7 +2921,8 @@ void testDispatchPerUseWitnesses() {
          "exact generated Copy Construct and implicit Copy Load into fresh "
          "whole locals have operation-specific admission: " +
              copyPlan.limitation());
-  const auto moveInput = lower(R"(
+  const auto moveInput =
+      lower(R"(
     mut int destroyed = 0;
     class P {
       int value;
@@ -2938,7 +2940,11 @@ void testDispatchPerUseWitnesses() {
       return destroyed == 1 ? 0 : 2;
     }
   )",
-                               true);
+            true,
+            {.requireEntryPoint = true,
+             .lowerReachableOnly = true,
+             .lowerLibraryReachableOnly = true,
+             .trustedBodies = TrustedBodyAnalysis::Reachable});
   const auto movePlan = planLlvmAdmission(moveInput);
   if (!movePlan.admitted()) {
     std::size_t reported = 0;

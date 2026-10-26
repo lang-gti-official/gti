@@ -59,7 +59,8 @@ int via_front(Front& value) { return value.front(); }
 int main() {
   Derived original{7};
   Root& view = original;
-  Root explicit_copy{view};
+  Root direct_source{7};
+  Root explicit_copy{direct_source};
   Root implicit_copy = view;
   Derived complete_copy{original};
   if (via_root(view) != 2 || via_root(explicit_copy) != 1 ||
