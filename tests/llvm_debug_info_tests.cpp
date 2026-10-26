@@ -570,7 +570,7 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
     auto *function = session.abi().declareFunction(source.id);
     debug.begin(address, *function);
     const auto types = function->getSubprogram()->getType()->getTypeArray();
-    if (types.size() != plan->lanes.size() + 1)
+    if (types.size() != source.parameterBindings.size() + 1)
       throw std::runtime_error("debug signature lost concrete parameter types");
     llvm::IRBuilder<> ir(
         llvm::BasicBlock::Create(session.context(), "entry", function));
@@ -592,6 +592,34 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
     debug.local(ir, *prefix, storage, 1);
     const auto &tables =
         *input->program().findBody(address)->sourceDebug.tables;
+    auto *foreign = llvm::Function::Create(
+        function->getFunctionType(), llvm::GlobalValue::ExternalLinkage,
+        "foreign.pack.parameter", session.module());
+    bool rejectedForeign = false;
+    try {
+      debug.parameter(ir, *foreign->getArg(0));
+    } catch (const std::logic_error &) {
+      rejectedForeign = true;
+    }
+    if (!rejectedForeign)
+      throw std::runtime_error(
+          "foreign pack argument registration was accepted");
+    foreign->eraseFromParent();
+    if (!tables.parameterFragments.empty()) {
+      bool rejectedMissing = false;
+      try {
+        debug.point(ir, tables.parameterFragments.front().begin);
+      } catch (const std::logic_error &) {
+        rejectedMissing = true;
+      }
+      if (!rejectedMissing)
+        throw std::runtime_error(
+            "pack value was invented without its ABI argument");
+    }
+    for (auto &argument : function->args())
+      debug.parameter(ir, argument);
+    for (const auto &fragment : tables.parameterFragments)
+      debug.point(ir, fragment.begin);
     const auto &ranges = tables.valueRanges;
     const auto range =
         std::find_if(ranges.begin(), ranges.end(), [&](const auto &row) {
@@ -605,15 +633,24 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
     debug.point(ir, range->begin, prefixValues);
     debug.endLocal(ir, *prefix);
     ir.CreateRet(ir.getInt32(7));
-    unsigned declarations = 0, ends = 0;
+    unsigned declarations = 0, ends = 0, packValues = 0;
     for (const auto &instruction : function->getEntryBlock())
       for (const auto &record : instruction.getDbgRecordRange())
         if (const auto *variable =
                 llvm::dyn_cast<llvm::DbgVariableRecord>(&record)) {
+          if (variable->getVariable()->getName() == "rest" &&
+              variable->getVariable()->getArg() == 2) {
+            if (!variable->getExpression()->isFragment())
+              throw std::runtime_error(
+                  "pack parameter lost its exact lane fragment");
+            if (!variable->isKillLocation())
+              ++packValues;
+            continue;
+          }
           if (variable->getVariable()->getName() != "input" ||
               variable->getVariable()->getArg() != 1)
             throw std::runtime_error(
-                "pack or hidden lane acquired a source name");
+                "hidden or physical lane acquired a source name");
           if (variable->isDbgDeclare() ||
               (variable->isDbgValue() && !variable->isKillLocation()))
             ++declarations;
@@ -623,6 +660,8 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
     if (declarations != 1 || ends != 1)
       throw std::runtime_error(
           "parameter value-unavailable control did not execute");
+    if (plan->lanes.size() == 3 && packValues == 0)
+      throw std::runtime_error("pack parameters lost their physical values");
     unavailable += ends;
     (plan->lanes.size() == 1 ? empty : expanded)++;
   }
@@ -631,7 +670,7 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
       llvm::verifyModule(session.module(), &llvm::errs()))
     throw std::runtime_error("parameter metadata controls did not verify");
   std::cout << empty << " empty and " << expanded
-            << " expanded trailing packs preserve prefix-only named metadata; "
+            << " expanded trailing packs preserve source-grouped metadata; "
             << unavailable << " parameter unavailable controls passed\n";
 }
 

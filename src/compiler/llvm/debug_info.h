@@ -25,6 +25,8 @@ public:
                 MirInstructionId instruction);
   void local(llvm::IRBuilder<> &ir, const MirPlace &place, llvm::Value *storage,
              unsigned parameter = 0);
+  // Binds the factory's existing physical argument to its exact source pack.
+  void parameter(llvm::IRBuilder<> &ir, llvm::Argument &argument);
   // Consumes exact sealed half-open ranges at MIR emission boundaries.
   void point(llvm::IRBuilder<> &ir, MirDebugPoint point,
              std::span<llvm::Value *const> values = {});

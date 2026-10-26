@@ -16332,7 +16332,9 @@ MirDebugAvailabilityBatch queryMirDebugAvailability(
   }
   mir_detail::MirDebugEntryPlaces entries;
   if (std::any_of(places.begin(), places.end(), [&](const auto &query) {
-        return body->findPlace(query.place)->root == MirPlaceRootKind::This;
+        const auto &place = *body->findPlace(query.place);
+        return place.root == MirPlaceRootKind::This ||
+               place.type.kind == SemanticType::TypePack;
       })) {
     entries = mir_detail::debugEntryPlaces(program, address);
     if (!entries.verification.valid()) {
@@ -16340,11 +16342,6 @@ MirDebugAvailabilityBatch queryMirDebugAvailability(
       return batch;
     }
   }
-  // Pack entry observations are independently verified, but their physical
-  // fragments are not registered by the source-debug transport yet.
-  std::erase_if(entries.initialized, [&](MirPlaceId id) {
-    return body->findPlace(id)->root != MirPlaceRootKind::This;
-  });
   const auto observed = verifyMirBodyWithPlaceQueriesImpl(
       *body, address.owner, places, entries.initialized);
   batch.verification = observed.verification;

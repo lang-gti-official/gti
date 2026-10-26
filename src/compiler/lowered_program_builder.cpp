@@ -1446,6 +1446,30 @@ std::vector<LoweredSourceFragmentRange> lowered_detail::deriveSourceFragments(
   return result;
 }
 
+std::vector<LoweredSourceParameterFragment>
+lowered_detail::deriveSourceParameterFragments(
+    const MirProgram &program, MirBodyAddress address,
+    std::span<const LoweredSourceRange> readable) {
+  std::vector<LoweredSourceParameterFragment> fragments;
+  const auto *body = findMirBody(program, address);
+  if (!body || !body->sourceDebug.tables)
+    return fragments;
+  const auto &locals = body->sourceDebug.tables->locals;
+  for (const auto &range : readable) {
+    const auto &local = locals.at(range.local - 1);
+    const auto *place = body->findPlace(local.place);
+    if (!local.declaration.parameter || !place ||
+        place->root != MirPlaceRootKind::Binding ||
+        place->type.kind != SemanticType::TypePack || !place->type.concretePack)
+      continue;
+    for (std::size_t element = 0; element < place->type.arguments.size();
+         ++element)
+      fragments.push_back(
+          {range.local, place->id, element, range.begin, range.end});
+  }
+  return fragments;
+}
+
 std::optional<std::vector<LoweredSourceRange>>
 lowered_detail::deriveSourceRanges(const MirProgram &program,
                                    MirBodyAddress address) {
@@ -1873,6 +1897,9 @@ LoweredProgramBuild LoweredProgramBuilder::build(
         debug.tables->ranges = std::move(*ranges);
         debug.tables->fragments = lowered_detail::deriveSourceFragments(
             lowered.mir_, address, debug.tables->ranges);
+        debug.tables->parameterFragments =
+            lowered_detail::deriveSourceParameterFragments(
+                lowered.mir_, address, debug.tables->ranges);
       } else
         addIssue(build.issues, LoweredProgramIssueKind::InvalidBodyInventory,
                  "source-local ranges require valid current MIR availability",

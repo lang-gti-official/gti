@@ -1461,6 +1461,8 @@ private:
               "LLVM ABI argument exceeds its exact parameter map");
         const auto &lane = parameters[parameter.sourceIndex];
         memory.parameter(lane, argument, parameter.indirect);
+        if (auto *debug = session.debugInfo())
+          debug->parameter(ir, *argument);
         // Only ordinary prefix lanes have a one-to-one source parameter.
         // Expanded packs and hidden ABI channels do not acquire fake names.
         if (auto *debug = session.debugInfo();

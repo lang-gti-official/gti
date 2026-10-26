@@ -119,6 +119,16 @@ struct LoweredSourceFragmentRange {
                          const LoweredSourceFragmentRange &) = default;
 };
 
+struct LoweredSourceParameterFragment {
+  SourceLocalId local = 0;
+  MirPlaceId place = 0;
+  std::size_t element = 0;
+  MirDebugPoint begin;
+  MirDebugPoint end;
+  friend bool operator==(const LoweredSourceParameterFragment &,
+                         const LoweredSourceParameterFragment &) = default;
+};
+
 struct LoweredSourceDebugTables {
   PlaceDomain domain;
   std::vector<SourceDebugScope> scopes;
@@ -127,6 +137,7 @@ struct LoweredSourceDebugTables {
   std::vector<LoweredSourceRange> ranges;
   std::vector<LoweredSourceValueRange> valueRanges;
   std::vector<LoweredSourceFragmentRange> fragments;
+  std::vector<LoweredSourceParameterFragment> parameterFragments;
   friend bool operator==(const LoweredSourceDebugTables &,
                          const LoweredSourceDebugTables &) = default;
 };

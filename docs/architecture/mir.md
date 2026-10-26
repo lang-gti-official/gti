@@ -3745,8 +3745,12 @@ trivial concrete trailing packs without overlapping drop obligations. It still
 requires the ordinary ownership and loan-flow observations; body-only queries
 cannot invent these entry facts. Constructors do not acquire an initialized
 whole receiver at entry. Source-local range production consumes the exact
-receiver entries alongside canonical body observations. Pack entries remain an
-independently tested query until physical debug fragments are transported.
+receiver and concrete-pack entries alongside canonical body observations.
+Lowered parameter fragments preserve the source pack binding, existing root,
+concrete element index and freshly derived readable interval. Independent
+verification reconstructs their complete inventory; missing or forged entries
+cannot become positive debug availability. Borrowed and nontrivial owning packs
+without a complete canonical per-element proof remain unproven.
 The semantic receiver-state producer records its accepted concrete type and one
 implicit local with no binding, symbol or source token. HIR verifies that origin
 against its accepted producer; MIR joins it only to an existing, unprojected

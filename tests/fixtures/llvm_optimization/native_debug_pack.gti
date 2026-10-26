@@ -1,0 +1,7 @@
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+
+int inspect<Args...>(int input, Args... rest) {
+  debug_checkpoint(input);
+  return input;
+}
+int main() { return inspect(debug_input(), 9, 11) == 4 ? 0 : 1; }

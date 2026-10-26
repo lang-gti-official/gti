@@ -1,8 +1,11 @@
 #include "debug_info.h"
+#include "abi.h"
 #include "layout.h"
+#include "parameter_packs.h"
 
 #include <llvm/ADT/APSInt.h>
 #include <llvm/BinaryFormat/Dwarf.h>
+#include <llvm/Config/llvm-config.h>
 #include <llvm/IR/DIBuilder.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/DebugProgramInstruction.h>
@@ -11,6 +14,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -104,6 +108,78 @@ public:
     return entry->second;
   }
 
+  std::vector<std::uint64_t> packOffsets(const SemanticType &pack) {
+    if (pack.kind != SemanticType::TypePack || !pack.concretePack)
+      throw std::logic_error("LLVM debug pack has no concrete source type");
+    std::vector<std::uint64_t> offsets{0};
+    for (const auto &element : pack.arguments) {
+      const auto bytes = session.layouts().get(element).size;
+      if (bytes >
+          (std::numeric_limits<std::uint64_t>::max() - offsets.back()) / 8)
+        throw BackendUnsupportedError(
+            "LLVM debug pack exceeds DWARF size limits");
+      offsets.push_back(offsets.back() + bytes * 8);
+    }
+    return offsets;
+  }
+
+  std::vector<SemanticType> sourceParameters(MirBodyAddress address,
+                                             llvm::Function &function) {
+    const auto &program = session.program().mir();
+    const std::vector<SemanticType> *types = nullptr;
+    const std::vector<HirBindingId> *bindings = nullptr;
+    SemanticType result = SemanticType::Void;
+    bool mayFail = false, receiver = false, tracksCaller = false;
+    if (address.kind == MirBodyKind::Function) {
+      const auto &instance = *program.findFunctionInstance(address.owner);
+      types = &instance.parameterTypes;
+      bindings = &instance.parameterBindings;
+      result = instance.returnType;
+      mayFail = instance.mayRaiseDefinedFailure;
+      receiver = instance.owner.has_value() && !instance.staticMember;
+      tracksCaller = instance.tracksCaller;
+    } else if (address.kind == MirBodyKind::Constructor) {
+      const auto &instance = *program.findConstructorInstance(address.owner);
+      types = &instance.parameterTypes;
+      bindings = &instance.parameterBindings;
+      mayFail = instance.mayRaiseDefinedFailure;
+      receiver = true;
+    } else {
+      return {};
+    }
+    auto concrete = planConcreteParameters(*types, *bindings,
+                                           *findMirBody(program, address));
+    if (!concrete)
+      throw std::logic_error(
+          "LLVM debug parameters lost their concrete source roles");
+    auto abi =
+        session.abi().gti(result, *types, mayFail, receiver, tracksCaller);
+    if (function.getFunctionType() != abi.type)
+      throw std::logic_error(
+          "LLVM debug parameters differ from their factory ABI");
+    std::vector<SemanticType> source;
+    for (const auto binding : *bindings) {
+      const auto pack =
+          std::find_if(concrete->packs.begin(), concrete->packs.end(),
+                       [&](const auto &row) { return row.binding == binding; });
+      if (pack != concrete->packs.end()) {
+        source.push_back(pack->type);
+        continue;
+      }
+      const auto lane = std::find_if(
+          concrete->lanes.begin(), concrete->lanes.end(), [&](const auto &row) {
+            return row.binding == binding && !row.packElement;
+          });
+      if (lane == concrete->lanes.end())
+        throw std::logic_error(
+            "LLVM debug source parameter has no exact physical role");
+      source.push_back(lane->type);
+    }
+    parameters.emplace(&function,
+                       ParameterPlan{std::move(*concrete), std::move(abi)});
+    return source;
+  }
+
   llvm::DIType *type(const SemanticType &value) {
     if (value == SemanticType::Void)
       return nullptr;
@@ -112,8 +188,22 @@ public:
         return metadata.get();
     llvm::DIType *result = nullptr;
     const auto pointerBits = session.dataLayout().getPointerSizeInBits();
-    if (value.kind == SemanticType::RawPointer ||
-        value.kind == SemanticType::Reference) {
+    if (value.kind == SemanticType::TypePack) {
+      // A logical debug grouping, not a contiguous GTI object or ABI layout.
+      const auto offsets = packOffsets(value);
+      std::vector<llvm::Metadata *> elements;
+      for (std::size_t i = 0; i < value.arguments.size(); ++i)
+        elements.push_back(builder.createMemberType(
+            unit, "[" + std::to_string(i) + "]", nullptr, 0,
+            offsets[i + 1] - offsets[i], 8, offsets[i], llvm::DINode::FlagZero,
+            type(value.arguments[i])));
+      result = builder.createStructType(
+          unit,
+          "parameter_pack<" + std::to_string(value.arguments.size()) + ">",
+          nullptr, 0, offsets.back(), 8, llvm::DINode::FlagArtificial, nullptr,
+          builder.getOrCreateArray(elements));
+    } else if (value.kind == SemanticType::RawPointer ||
+               value.kind == SemanticType::Reference) {
       llvm::DIType *pointee =
           value.arguments.empty() ? nullptr : type(value.arguments[0]);
       result =
@@ -269,6 +359,18 @@ public:
   };
   std::map<llvm::Function *, std::vector<llvm::DILocalScope *>> scopes;
   std::map<std::pair<llvm::Function *, SourceLocalId>, Local> locals;
+  struct ParameterPlan {
+    ConcreteParameterPlan concrete;
+    FunctionAbi abi;
+  };
+  std::map<llvm::Function *, ParameterPlan> parameters;
+  struct ParameterValue {
+    llvm::Value *value = nullptr;
+    bool address = false;
+  };
+  std::map<std::tuple<llvm::Function *, SourceLocalId, std::size_t>,
+           ParameterValue>
+      parameterValues;
   using Point =
       std::tuple<llvm::Function *, MirBlockId, MirInstructionId, bool, bool>;
   struct Events {
@@ -278,6 +380,9 @@ public:
     using Fragment = std::tuple<SourceLocalId, MirPlaceId, MirValueId>;
     std::vector<Fragment> fragmentBegins;
     std::vector<Fragment> fragmentEnds;
+    using Parameter = std::pair<SourceLocalId, std::size_t>;
+    std::vector<Parameter> parameterBegins;
+    std::vector<Parameter> parameterEnds;
   };
   std::map<Point, Events> events;
   bool finalized = false;
@@ -388,7 +493,7 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     source = &instance->source;
     name =
         program.findFunctionDeclaration(instance->declaration)->qualifiedName;
-    for (const auto &parameter : mir->parameterTypes)
+    for (const auto &parameter : impl->sourceParameters(address, function))
       parameters.push_back(impl->type(parameter));
   } else if (address.kind == MirBodyKind::Constructor) {
     const auto *instance = program.findConstructorInstance(address.owner);
@@ -398,7 +503,7 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     const auto *owner = program.findClassInstance(instance->owner);
     name = program.findClassDeclaration(owner->declaration)->qualifiedName +
            "::constructor";
-    for (const auto &parameter : instance->parameterTypes)
+    for (const auto &parameter : impl->sourceParameters(address, function))
       parameters.push_back(impl->type(parameter));
   } else if (address.kind == MirBodyKind::Destructor) {
     const auto *instance = program.findDestructorInstance(address.owner);
@@ -449,6 +554,11 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
                              .findConstructorInstance(address.owner)
                              ->parameterBindings;
   std::set<SourceLocalId> valueLocals;
+  std::set<SourceLocalId> packLocals;
+  for (const auto &local : lowered->sourceDebug.tables->locals)
+    if (local.declaration.parameter &&
+        local.declaration.type.kind == SemanticType::TypePack)
+      packLocals.insert(local.declaration.id);
   for (const auto &range : lowered->sourceDebug.tables->valueRanges)
     if (impl->optimized() ||
         lowered->sourceDebug.tables->locals.at(range.local - 1).policy ==
@@ -459,7 +569,8 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
       valueLocals.insert(fragment.local);
   for (const auto &local : lowered->sourceDebug.tables->locals) {
     if (local.policy != MirSourceLocalPolicy::OptimizedOut &&
-        !valueLocals.contains(local.declaration.id))
+        !valueLocals.contains(local.declaration.id) &&
+        !packLocals.contains(local.declaration.id))
       continue;
     const auto &declaration = local.declaration;
     auto *scope = scopes.at(declaration.scope);
@@ -493,7 +604,7 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
                          point.blockEntry}];
   };
   for (const auto &range : lowered->sourceDebug.tables->ranges) {
-    if (valueLocals.contains(range.local))
+    if (valueLocals.contains(range.local) || packLocals.contains(range.local))
       continue;
     event(range.begin).begins.push_back(range.local);
     event(range.end).ends.push_back(range.local);
@@ -511,6 +622,11 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
       event(fragment.begin).fragmentBegins.push_back(value);
       event(fragment.end).fragmentEnds.push_back(value);
     }
+  for (const auto &fragment : lowered->sourceDebug.tables->parameterFragments) {
+    const Impl::Events::Parameter value{fragment.local, fragment.element};
+    event(fragment.begin).parameterBegins.push_back(value);
+    event(fragment.end).parameterEnds.push_back(value);
+  }
 }
 
 void DebugInfo::location(llvm::IRBuilder<> &ir, MirBodyAddress address,
@@ -604,6 +720,40 @@ void DebugInfo::local(llvm::IRBuilder<> &ir, const MirPlace &place,
   }
 }
 
+void DebugInfo::parameter(llvm::IRBuilder<> &ir, llvm::Argument &argument) {
+  if (!ir.GetInsertBlock())
+    return;
+  auto *function = ir.GetInsertBlock()->getParent();
+  if (argument.getParent() != function)
+    throw std::logic_error("LLVM debug parameter belongs to another function");
+  const auto plan = impl->parameters.find(function);
+  if (plan == impl->parameters.end())
+    return;
+  const auto &physical = plan->second.abi.parameters.at(argument.getArgNo());
+  if (physical.channel != AbiChannel::Argument)
+    throw std::logic_error("LLVM debug parameter is a hidden ABI channel");
+  const auto &lane = plan->second.concrete.lanes.at(physical.sourceIndex);
+  if (!lane.packElement)
+    return;
+  const auto &body =
+      *impl->session.program().findBody(impl->bodies.at(function));
+  for (const auto &local : body.sourceDebug.tables->locals) {
+    const auto &declaration = local.declaration;
+    if (!declaration.parameter || declaration.binding != lane.binding ||
+        declaration.type.kind != SemanticType::TypePack)
+      continue;
+    if (*lane.packElement >= declaration.type.arguments.size() ||
+        declaration.type.arguments[*lane.packElement] != lane.type ||
+        argument.getType() !=
+            plan->second.abi.type->getParamType(argument.getArgNo()))
+      throw std::logic_error(
+          "LLVM debug pack parameter lost its exact ABI type");
+    impl->parameterValues.emplace(
+        std::tuple{function, declaration.id, *lane.packElement},
+        Impl::ParameterValue{&argument, physical.indirect});
+  }
+}
+
 void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
                       std::span<llvm::Value *const> values) {
   if (!ir.GetInsertBlock())
@@ -640,6 +790,41 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
       emit(id, false);
   for (const auto id : event->second.begins)
     emit(id, true);
+  const auto emitParameter = [&](const Impl::Events::Parameter &parameter,
+                                 bool begin) {
+    const auto [id, element] = parameter;
+    const auto &local = impl->locals.at({function, id});
+    const auto &tables = *impl->session.program()
+                              .findBody(impl->bodies.at(function))
+                              ->sourceDebug.tables;
+    const auto offsets =
+        impl->packOffsets(tables.locals.at(id - 1).declaration.type);
+    const auto value = impl->parameterValues.find({function, id, element});
+    if (value == impl->parameterValues.end())
+      throw std::logic_error(
+          "LLVM debug pack has no registered physical parameter");
+    auto *expression = impl->builder.createExpression(
+        {llvm::dwarf::DW_OP_LLVM_fragment, offsets.at(element),
+         offsets.at(element + 1) - offsets.at(element)});
+    auto *location = llvm::DILocation::get(
+        impl->session.context(), begin ? local.variable->getLine() : 0, 0,
+        local.variable->getScope());
+    if (begin && value->second.address)
+      impl->builder.insertDeclare(value->second.value, local.variable,
+                                  expression, location, ir.GetInsertBlock());
+    else
+      impl->builder.insertDbgValueIntrinsic(
+          begin ? value->second.value
+                : llvm::PoisonValue::get(value->second.value->getType()),
+          local.variable, expression, location, ir.GetInsertBlock());
+  };
+  for (const auto &parameter : event->second.parameterEnds)
+    if (std::find(event->second.parameterBegins.begin(),
+                  event->second.parameterBegins.end(),
+                  parameter) == event->second.parameterBegins.end())
+      emitParameter(parameter, false);
+  for (const auto &parameter : event->second.parameterBegins)
+    emitParameter(parameter, true);
   const auto fragmentField = [&](MirPlaceId id) {
     const auto address = impl->bodies.at(function);
     const auto *body = findMirBody(impl->session.program().mir(), address);
@@ -730,7 +915,11 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
         if (auto *record =
                 llvm::dyn_cast_if_present<llvm::DbgRecord *>(inserted))
           llvm::salvageDebugInfoForDbgValues(
-              *operation, {llvm::cast<llvm::DbgVariableRecord>(record)});
+              *operation,
+#if LLVM_VERSION_MAJOR < 22
+              {},
+#endif
+              {llvm::cast<llvm::DbgVariableRecord>(record)});
     }
   }
 }

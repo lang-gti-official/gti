@@ -4424,7 +4424,14 @@ ranges, stops cached contents at possible memory writes, and carries no value
 across a CFG edge. Independent verification recomputes every field, value and
 boundary. LLVM chooses the target layout offsets and reads only the existing
 SSA-value table; there is no backend field reload or inferred availability.
-Unloaded fields are not fabricated. Expanded pack fragments, broader optimized
+Unloaded fields are not fabricated. A concrete trailing pack retains one named
+source parameter and a logical DWARF group with indexed, exactly typed members.
+This group is not a contiguous GTI object or a new ABI representation. Its
+fragments read existing physical arguments through the canonical parameter and
+ABI plans; direct lanes use values and indirect lanes use their existing
+addresses. Readability comes only from sealed canonical MIR intervals. Empty
+packs retain a declaration without fabricated storage or values. Foreign
+arguments and missing physical registrations reject. Broader optimized
 representations and the full two-host failure/callback debugger matrix remain
 open.
 Managed Linux debugger checks stage distribution LLDB22 and its missing

@@ -1826,6 +1826,69 @@ int main() { Receiver owner{}; return owner.read(); }
   }
 }
 
+void testDebugPackFragments() {
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("debug-pack-fragments.gti", R"gti(
+int first<Args...>(int input, Args... rest) { return input; }
+int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
+)gti");
+  expect(frontend.canGenerateCode(), "pack fragment fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(), "pack parameter availability seals");
+  if (!built.valid())
+    return;
+  unsigned fragments = 0;
+  for (const auto &body : built.program->bodies())
+    if (body.sourceDebug.tables)
+      for (const auto &fragment : body.sourceDebug.tables->parameterFragments) {
+        ++fragments;
+        const auto &local =
+            body.sourceDebug.tables->locals.at(fragment.local - 1);
+        expect(
+            local.declaration.parameter && local.place == fragment.place &&
+                local.declaration.type.kind == lang::SemanticType::TypePack &&
+                fragment.element < local.declaration.type.arguments.size(),
+            "pack fragment binds exact source parameter and concrete element");
+      }
+  expect(fragments >= 2, "nonempty pack has fresh canonical availability");
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto forged = *built.program;
+    bool changed = false;
+    for (auto &body : lang::LoweredProgramTestAccess::bodies(forged))
+      if (body.sourceDebug.tables &&
+          !body.sourceDebug.tables->parameterFragments.empty()) {
+        auto &fragment = body.sourceDebug.tables->parameterFragments.front();
+        if (mutation == 0)
+          fragment.local = 0;
+        else if (mutation == 1)
+          fragment.place = 0;
+        else if (mutation == 2)
+          fragment.element = 99;
+        else if (mutation == 3)
+          fragment.end = fragment.begin;
+        else
+          body.sourceDebug.tables->parameterFragments.clear();
+        changed = true;
+        break;
+      }
+    const auto issues = lang::verifyLoweredProgram(forged);
+    expect(
+        changed && std::any_of(issues.begin(), issues.end(),
+                               [](const auto &issue) {
+                                 return issue.detail.find(
+                                            "source parameter fragments") !=
+                                        std::string::npos;
+                               }),
+        "forged pack origin, lane, extent and omission reject independently");
+  }
+}
+
 void testDebugValueEvents() {
   const auto frontend =
       lang::Frontend(
@@ -3161,6 +3224,7 @@ int main() {
   testDebugPlaceAvailability();
   testDebugLifetimeAndBorrowAvailability();
   testDebugConcreteEntryAvailability();
+  testDebugPackFragments();
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();
