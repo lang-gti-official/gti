@@ -752,10 +752,18 @@ def focused_use_probes(evidence: Path, root: Path, report: dict) -> dict[str, di
         directory = Path(raw)
         scalar = directory / "scalar.gti"
         scalar.write_text("int main() { return 0; }\n", encoding="utf-8")
-        unsupported = directory / "unsupported.gti"
-        unsupported.write_text(
+        native = directory / "native.gti"
+        native.write_text(
             'extern "C" { int foreign_call(int value); }\n'
             "int main() { return foreign_call(0); }\n", encoding="utf-8")
+        unsupported = directory / "unsupported.gti"
+        # Keep the real unsupported probe aligned with an existing admission
+        # control, not a native import that now has an implemented ABI witness.
+        unsupported.write_text(
+            "class Owner { public: virtual int read() { return 0; } };\n"
+            "unsafe int create() { mut Owner value{}; Owner other{}; "
+            "value = other; return 0; }\n"
+            "int main() { unsafe { return create(); } }\n", encoding="utf-8")
         malformed = directory / "malformed.gti"
         malformed.write_text("int main( { return 0; }\n", encoding="utf-8")
         probes = {
@@ -764,6 +772,8 @@ def focused_use_probes(evidence: Path, root: Path, report: dict) -> dict[str, di
             "callable": probe_uses(
                 evidence, root, root / "tests/fixtures/llvm_callable_pointer.gti",
                 "focused:callable", "single-threaded", report),
+            "native": probe_uses(evidence, root, native, "focused:native",
+                                 "single-threaded", report),
             "unsupported": probe_uses(evidence, root, unsupported,
                                       "focused:unsupported", "single-threaded",
                                       report),
@@ -775,6 +785,8 @@ def focused_use_probes(evidence: Path, root: Path, report: dict) -> dict[str, di
             "real scalar readiness probe was not admitted")
     require(probes["callable"].get("admitted") is True,
             "real callable readiness probe was not admitted")
+    require(probes["native"].get("admitted") is True,
+            "real native import readiness probe was not admitted")
     conditional = [
         use for use in probes["callable"]["uses"]
         if use["base"]["state"] == "pending" and use.get("witness") and
