@@ -1,0 +1,40 @@
+mut int destroyed = 0;
+
+class Capture {
+  int identity;
+public:
+  Capture(int identity) : identity(identity) {}
+  Capture(Capture& other) = delete;
+  Capture(Capture&& other) = default;
+  ~Capture() { destroyed = destroyed * 10 + this.identity; }
+  int read() { return this.identity; }
+};
+
+class Wrapper<F> {
+  int prefix;
+  F callable;
+  int suffix;
+public:
+  Wrapper(int marker, F callable)
+      : prefix(marker), callable(std::move(callable)),
+        suffix(marker + 2) {}
+  int invoke(int value) {
+    int result = this.callable(value);
+    return this.prefix + result + this.suffix;
+  }
+};
+
+Wrapper<F> make_wrapper<F>(int marker, F callable) {
+  return Wrapper<F>(marker, std::move(callable));
+}
+
+int main() {
+  {
+    Capture capture{7};
+    auto wrapper = make_wrapper(3, [capture = std::move(capture)](int value) -> int {
+      return capture.read() + value;
+    });
+    if (wrapper.invoke(5) != 20) return 1;
+  }
+  return destroyed == 7 ? 0 : 2;
+}

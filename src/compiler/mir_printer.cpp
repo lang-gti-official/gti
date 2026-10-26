@@ -615,6 +615,12 @@ public:
         type(instance.parameterTypes[index]);
         output << '}';
       }
+      output << "] parameter-bindings=[";
+      for (std::size_t index = 0; index < instance.parameterBindings.size();
+           ++index) {
+        separator(index);
+        output << 'b' << instance.parameterBindings[index];
+      }
       output << "] ownerless-text-parameters=[";
       for (std::size_t index = 0;
            index < instance.ownerlessTextParameters.size(); ++index) {
@@ -760,6 +766,12 @@ public:
                << ",type=";
         type(instance.parameterTypes[index]);
         output << '}';
+      }
+      output << "] parameter-bindings=[";
+      for (std::size_t index = 0; index < instance.parameterBindings.size();
+           ++index) {
+        separator(index);
+        output << 'b' << instance.parameterBindings[index];
       }
       output << "] borrow=" << number(instance.borrowOrigin) << ':'
              << instance.borrowParameter << ':' << number(instance.borrowAccess)

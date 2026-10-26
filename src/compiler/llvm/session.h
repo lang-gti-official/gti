@@ -41,6 +41,12 @@ public:
 
   void verify() const;
   void requireDefinition(llvm::Function &function);
+  // Only the ABI declaration factory supplies this exact source identity.
+  // Unregistered/generated functions retain their existing linkage.
+  void requireSourceDefinition(HirFunctionInstanceId id,
+                               llvm::Function &function);
+  [[nodiscard]] bool hasSourceDefinition(HirFunctionInstanceId id,
+                                         const llvm::Function &function) const;
   // Rejects unresolved GTI definitions, then verifies before and after the
   // selected LLVM pipeline. Never returns partial object bytes on failure.
   [[nodiscard]] BackendArtifact emitObject();
@@ -57,6 +63,8 @@ private:
   llvm::Module module_;
   std::unique_ptr<Layouts> layouts_;
   std::unique_ptr<Abi> abi_;
+  std::vector<std::pair<HirFunctionInstanceId, llvm::Function *>>
+      sourceDefinitions_;
 };
 
 // Kept separate so target-contract mutations can be tested before any body

@@ -24,6 +24,32 @@ def main() -> None:
         result = subprocess.run(command, capture_output=True, text=True, timeout=120)
         assert result.returncode == 0, result.stderr
 
+        probe = temporary / "owner.cpp"
+        probe.write_text('''#include "coverage.h"
+int main() {
+  unsigned payloads = 0;
+  for (const auto& entry : lang::llvmCoverageLedger()) {
+    if (entry.state == lang::LlvmCoverageState::Implemented && entry.milestone == 7) {
+      const bool evidence = !entry.positiveTest.empty() &&
+                            !entry.positiveAssertion.empty();
+      const bool gap = !entry.positiveEvidenceGap.empty();
+      if (evidence == gap) return 1;
+      if (gap && (!entry.positiveTest.empty() ||
+                  !entry.positiveAssertion.empty())) return 3;
+      ++payloads;
+    }
+  }
+  return payloads ? 0 : 2;
+}
+''')
+        executable = temporary / "owner"
+        linked = [cxx, "-std=c++20", "-O2", "-I", str(temporary),
+                  "-I", str(root / "include"), str(temporary / "coverage.cpp"),
+                  str(probe), "-o", str(executable)]
+        result = subprocess.run(linked, capture_output=True, text=True, timeout=120)
+        assert result.returncode == 0, result.stderr
+        subprocess.run([str(executable)], check=True, timeout=15)
+
         (include / "mir.h").write_text(header.replace(
             "enum class MirTerminatorKind {", "enum class MirTerminatorKind { LlvmUnassignedRegression,", 1))
         result = subprocess.run(command, capture_output=True, text=True, timeout=120)
@@ -33,7 +59,17 @@ def main() -> None:
             "struct MirInstruction {", "struct MirInstruction { bool unclassifiedShape = false;", 1))
         result = subprocess.run(command, capture_output=True, text=True, timeout=120)
         assert result.returncode != 0 and "MirInstruction" in result.stderr, result.stderr
-    print("LLVM enum and input-field drift controls passed")
+
+        # An implementation-state promotion must name its actual execution
+        # test and assertion at the row. It cannot inherit a milestone-wide
+        # default merely by changing Pending to a bare Implemented token.
+        (include / "mir.h").write_text(header)
+        coverage = (root / "src/compiler/llvm/coverage.def").read_text()
+        (temporary / "coverage.def").write_text(
+            coverage.replace(", Pending, None,", ", Implemented, None,", 1))
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        assert result.returncode != 0 and "Implemented" in result.stderr, result.stderr
+    print("LLVM enum, input-field and evidence-claim drift controls passed")
 
 
 if __name__ == "__main__":

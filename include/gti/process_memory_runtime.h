@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <vector>
 
 namespace lang {
 
@@ -27,6 +28,21 @@ enum class ProcessMemoryRuntimeOperation : std::uint8_t {
   AlignedRelease,
   Count
 };
+
+// Immutable fixed-width C contract shared by semantic classification, MIR
+// verification and compiler-generated private allocation mechanisms. Builtin
+// types here carry no snapshot-local declaration IDs or mutable LLVM state.
+struct ProcessMemoryRuntimeSignature {
+  ProcessMemoryRuntimeOperation operation;
+  std::string_view symbol;
+  SemanticType returnType;
+  std::vector<SemanticType> parameters;
+};
+
+// Stable table view, or nullptr for None/Count/unknown values. This query does
+// not authorize application declarations or choose source allocation policy.
+[[nodiscard]] const ProcessMemoryRuntimeSignature *
+processMemoryRuntimeSignature(ProcessMemoryRuntimeOperation operation);
 
 // The exact versioned runtime symbol of an operation; empty for None/Count.
 [[nodiscard]] std::string_view

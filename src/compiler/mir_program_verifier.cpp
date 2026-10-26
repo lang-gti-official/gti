@@ -105,7 +105,7 @@ restorationProducer(const MirBody &body, MirLoanId loan,
     return nullptr;
   for (const auto &block : body.blocks)
     for (const auto &instruction : block.instructions) {
-      if (instruction.loan != loan)
+      if (instruction.tombstone || instruction.loan != loan)
         continue;
       if (instruction.kind == MirInstructionKind::Call)
         return instruction.restoresReferenceResult ? &instruction : nullptr;
@@ -178,7 +178,7 @@ verifiedRestoreSummary(const MirProgram &program,
 [[nodiscard]] bool verifiedRestoreCall(const MirProgram &program,
                                        const MirBody &body,
                                        const MirInstruction &instruction) {
-  if (!instruction.restoresReferenceResult ||
+  if (instruction.tombstone || !instruction.restoresReferenceResult ||
       instruction.kind != MirInstructionKind::Call || !instruction.loan ||
       instruction.borrowOrigin != BorrowOriginKind::Argument ||
       instruction.borrowArgument >= instruction.parameterTypes.size() ||
@@ -8922,6 +8922,13 @@ private:
 }
 
 } // namespace
+
+bool mir_detail::verifiedReferenceRestoreCall(
+    const MirProgram &program, const MirBody &body,
+    const MirInstruction &instruction) {
+  return verifiedRestoreCall(program, body, instruction);
+}
+
 namespace {
 [[nodiscard]] bool hasCanonicalBodylessDefinition(
     const MirBody &body, MirBodyKind kind, const SemanticType &returnType,
@@ -16599,7 +16606,7 @@ mirFieldProjectionType(const MirProgram &program, const SemanticType &receiver,
 
 [[nodiscard]] std::optional<SemanticType>
 projectedMirType(const MirProgram &program, SemanticType current,
-                 const std::vector<MirPlaceProjection> &projections) {
+                 std::span<const MirPlaceProjection> projections) {
   for (const MirPlaceProjection &projection : projections) {
     switch (projection.kind) {
     case MirProjectionKind::Base: {
@@ -17155,6 +17162,60 @@ verifyMirProgramContracts(const MirProgram &program) {
       }
     }
     if (parameters != nullptr) {
+      std::unordered_set<HirBindingId> concretePackBindings;
+      for (const MirPlace &place : body.places) {
+        if (place.root != MirPlaceRootKind::Binding ||
+            !place.projections.empty() ||
+            place.type.kind != SemanticType::TypePack)
+          continue;
+        const bool exactFormal =
+            place.binding != 0 && place.type.concretePack &&
+            place.initiallyAvailable && place.key &&
+            std::count(parameters->begin(), parameters->end(), place.binding) ==
+                1;
+        if (!exactFormal) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .message = "concrete pack root has no exact source formal"});
+          continue;
+        }
+        concretePackBindings.insert(place.binding);
+      }
+      if (concretePackBindings.size() > 1) {
+        result.errors.push_back(
+            {.bodyKind = body.kind,
+             .owner = owner,
+             .message =
+                 "source body has more than one concrete parameter pack"});
+      }
+      for (const HirBindingId binding : concretePackBindings) {
+        if (parameters->empty() || parameters->back() != binding) {
+          result.errors.push_back({.bodyKind = body.kind,
+                                   .owner = owner,
+                                   .message = "concrete parameter pack is not "
+                                              "the trailing source formal"});
+          continue;
+        }
+        const MirPlace *identity = nullptr;
+        for (const MirPlace &place : body.places) {
+          if (place.root != MirPlaceRootKind::Binding ||
+              place.binding != binding || !place.projections.empty())
+            continue;
+          if (identity == nullptr) {
+            identity = &place;
+            continue;
+          }
+          if (place.type != identity->type ||
+              place.symbol != identity->symbol || place.key != identity->key ||
+              place.initiallyAvailable != identity->initiallyAvailable)
+            result.errors.push_back(
+                {.bodyKind = body.kind,
+                 .owner = owner,
+                 .message = "concrete pack aliases disagree on their exact "
+                            "formal identity"});
+        }
+      }
       // Native formal transport consumes these resolved copy/move facts. A
       // binding cannot independently grant copying, forbid an available move,
       // or claim movability contrary to its concrete MIR type. Reference and
@@ -20846,6 +20907,43 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     }
     for (const MirPlace &place : body->places) {
       check(place.type);
+      if (place.root != MirPlaceRootKind::Value)
+        continue;
+      bool raw = false;
+      bool rawField = false;
+      for (const auto &projection : place.projections) {
+        raw |= projection.kind == MirProjectionKind::RawDereference ||
+               projection.kind == MirProjectionKind::RawIndex;
+        rawField |= raw && projection.kind == MirProjectionKind::Field;
+      }
+      if (!rawField)
+        continue;
+      const auto *root = body->findValue(place.value);
+      std::optional<SemanticType> projected =
+          root ? std::optional(root->info.type) : std::nullopt;
+      bool lambdaCapture = false;
+      for (const auto &projection : place.projections) {
+        if (!projected)
+          break;
+        // This check owns raw class/array/base/reference field paths. Lambda
+        // capture selectors have a separate exact environment identity proof;
+        // do not choose the first same-shaped instance as a new authority.
+        if (projected->kind == SemanticType::Lambda &&
+            projection.kind == MirProjectionKind::Field) {
+          lambdaCapture = true;
+          break;
+        }
+        projected = projectedMirType(
+            program, std::move(*projected),
+            std::span<const MirPlaceProjection>(&projection, 1));
+      }
+      if (!lambdaCapture && (!projected || *projected != place.type))
+        result.errors.push_back(
+            {.bodyKind = address.kind,
+             .owner = address.owner,
+             .instruction = root ? root->definition : 0,
+             .message = "place " + std::to_string(place.id) +
+                        " does not match its exact raw field projection type"});
     }
     for (const MirBlock &block : body->blocks) {
       for (const auto &parameter : block.parameters) {

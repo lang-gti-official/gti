@@ -1,0 +1,40 @@
+int apply<F>(F& callable, int value) { return callable(value); }
+F keep<F>(F callable) { return callable; }
+int increment(int value) { return value + 1; }
+
+class Callback<F> {
+  F callable;
+public:
+  Callback(F callable) : callable(std::move(callable)) {}
+  int invoke(int value) { return this.callable(value); }
+};
+
+Callback<F> wrap<F>(F callable) {
+  return Callback<F>(std::move(callable));
+}
+
+int nested<T>(T marker, int value) {
+  auto inner = [value](int input) -> int { return input + value; };
+  return inner(4);
+}
+
+int main() {
+  int offset = 3;
+  auto shifted = [offset](int value) -> int { return value + offset; };
+  mut int total = 1;
+  mut auto accumulate = [mut &total](int value) -> int {
+    total += value;
+    return total;
+  };
+  if (apply(shifted, 4) != 7) return 1;
+  if (accumulate(5) != 6) return 2;
+  auto stored = keep([offset](int value) -> int {
+    return value * offset;
+  });
+  if (stored(4) != 12) return 3;
+  if (nested(true, 5) != 9) return 4;
+  if (increment(8) != 9) return 5;
+  auto wrapped = wrap([offset](int value) -> int { return value - offset; });
+  if (wrapped.invoke(8) != 5) return 6;
+  return 0;
+}

@@ -1,0 +1,23 @@
+enum class Colour { red, green, blue };
+
+mut Colour global = Colour::red;
+Colour& read(Colour& value) { return value; }
+mut Colour& relay(mut Colour& value) { return value; }
+mut Colour& root() { return global; }
+
+int main() {
+  mut Colour value = Colour::red;
+  {
+    Colour& view = read(value);
+    if (view != Colour::red) { return 1; }
+  }
+  relay(value) = Colour::blue;
+  {
+    mut Colour& alias = value;
+    alias = Colour::green;
+  }
+  if (read(value) != Colour::green) { return 2; }
+  root() = read(value);
+  if (read(global) != Colour::green) { return 3; }
+  return 0;
+}

@@ -1,0 +1,41 @@
+#include <std/simd>
+
+int lanes<std::floating_point T, uint64_t N>() {
+  std::simd<T, N> two{T(2)};
+  std::simd<T, N> three{T(3)};
+  std::simd<T, N> five = two + three;
+  std::simd<T, N> one = three - two;
+  std::simd<T, N> six = two * three;
+  std::simd<T, N> quotient = six / three;
+  std::simd_mask<N> equal = quotient.equal(two);
+  std::simd_mask<N> less = two.less(three);
+  if (!equal.all_of() || !less.all_of()) { return 1; }
+  for (mut std::size_t lane = 0; lane < N; lane++) {
+    if (five[lane] != T(5) || one[lane] != T(1) || six[lane] != T(6)) { return 2; }
+  }
+  return five.reduce() == T(N * 5) ? 0 : 3;
+}
+
+int edges<std::floating_point T>() {
+  std::simd<T, 7> zero{T(0)};
+  std::simd<T, 7> one{T(1)};
+  std::simd<T, 7> negative_zero{-T(0)};
+  std::simd<T, 7> reciprocal = one / negative_zero;
+  std::simd<T, 7> nan = zero / zero;
+  std::simd_mask<7> unordered_equal = nan.equal(nan);
+  std::simd_mask<7> unordered_less = nan.less(one);
+  if (!unordered_equal.none_of() || !unordered_less.none_of()) { return 4; }
+  for (mut std::size_t lane = 0; lane < 7; lane++) {
+    if (reciprocal[lane] >= T(0)) { return 5; }
+  }
+  return 0;
+}
+
+int main() {
+  if (lanes<float, 1>() != 0 || lanes<float, 3>() != 0 ||
+      lanes<float, 7>() != 0 || lanes<float, 64>() != 0 ||
+      lanes<double, 1>() != 0 || lanes<double, 3>() != 0 ||
+      lanes<double, 7>() != 0 || lanes<double, 64>() != 0 ||
+      edges<float>() != 0 || edges<double>() != 0) { return 1; }
+  return 0;
+}

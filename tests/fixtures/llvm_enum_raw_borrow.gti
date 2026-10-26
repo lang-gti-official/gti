@@ -1,0 +1,23 @@
+#include <std/memory>
+
+enum class State { idle, complete };
+
+int main() {
+  mut State actual = State::idle;
+  State untouched = State::idle;
+  {
+    mut std::erased_object& erased = std::erase_mut(actual);
+    unsafe { std::restore_mut<State>(erased) = State::complete; }
+  }
+  if (actual != State::complete || untouched != State::idle) {
+    return 1;
+  }
+  {
+    std::erased_object& erased = std::erase_ref(actual);
+    State& selected = unsafe { std::restore_ref<State>(erased) };
+    if (selected != State::complete) {
+      return 2;
+    }
+  }
+  return actual == State::complete ? 0 : 3;
+}

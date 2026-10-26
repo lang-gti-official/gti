@@ -1,5 +1,10 @@
 # GTI examples
 
+[`llvm/payloads-and-unions.gti`](llvm/payloads-and-unions.gti) exercises native
+overlapping union storage, concrete generic alternatives and scoped payload
+borrows. `llvm_payload_execution` runs it at LLVM O0-O3 against C++20/23 O3;
+it is outside the numbered full-language census like the other LLVM profiles.
+
 [`llvm/immovable-placement.gti`](llvm/immovable-placement.gti) demonstrates
 deleted-copy/deleted-move objects constructed directly through fresh return
 chains and nested fixed-array elements, with stable addresses and exactly-once

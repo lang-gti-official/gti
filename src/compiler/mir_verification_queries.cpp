@@ -1453,7 +1453,6 @@ const MirInstruction *restoredBorrowAuthority(const MirBody &body,
         }
     if (producer && producer->kind == MirInstructionKind::Call &&
         producer->restoresReferenceResult &&
-        !producer->restoredBorrowFields.empty() &&
         producer->borrowOrigin == BorrowOriginKind::Argument &&
         producer->borrowArgument < producer->operands.size() &&
         producer->borrowArgument < producer->parameterTypes.size() &&

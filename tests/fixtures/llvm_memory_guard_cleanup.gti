@@ -1,0 +1,25 @@
+#include <std/detail/iterator>
+#include <std/panic>
+
+mut int dropped = 0;
+class Ticket {
+public:
+  Ticket() {}
+  ~Ticket() { dropped += 1; }
+};
+class Observe {
+public:
+  Observe() {}
+  ~Observe() {
+    if (dropped != 1) { std::panic("wrong Boolean-guard cleanup order or count"); }
+    // An intentional secondary failure makes cleanup externally observable
+    // without depending on not-yet-admitted I/O or worker containment.
+    std::panic("Boolean-guard cleanup trace observed");
+  }
+};
+int main() {
+  Observe observation{};
+  Ticket ticket{};
+  auto next = std::detail::checked_iterator_step(uint64_t(3), uint64_t(0), uint64_t(3));
+  return int(next);
+}
