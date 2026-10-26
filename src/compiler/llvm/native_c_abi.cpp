@@ -122,6 +122,30 @@ bool nativeCValueContract(const MirProgram &program, const TargetInfo &target,
   return value(value, type, role, 0);
 }
 
+bool nativeCOpaquePointerReferentContract(const MirProgram &program,
+                                         const TargetInfo &target,
+                                         const SemanticType &pointer) {
+  if (pointer.kind != SemanticType::RawPointer ||
+      pointer.arguments.size() != 1 ||
+      pointer.arguments.front().kind != SemanticType::Class ||
+      !nativeCValueContract(program, target, pointer,
+                            NativeCValueRole::Argument))
+    return false;
+  const MirClassInstance *identity = nullptr;
+  for (const auto &candidate : program.classInstances())
+    if (candidate.type == pointer.arguments.front()) {
+      if (identity)
+        return false;
+      identity = &candidate;
+    }
+  return identity && identity->cOpaqueHandle && !identity->cAbiRecord &&
+         !identity->cAbiLayout && !identity->unionLayout &&
+         identity->declaredFields.empty() && identity->bases.empty() &&
+         identity->structuralBases.empty() && !identity->polymorphic &&
+         !identity->abstract && !identity->requiresActiveCleanup &&
+         !identity->requiresActiveDropState;
+}
+
 bool nativeCDeclarationContract(const MirProgram &program,
                                 const TargetInfo &target,
                                 const MirFunctionInstance &function) {
@@ -397,41 +421,104 @@ bool nativeCStorageImportContract(const MirProgram &program,
           passiveNativeCStorageType(program, storage.type));
 }
 
-bool nativeCStoragePlaceContract(const MirProgram &program,
-                                 const TargetInfo &target, const MirBody &body,
-                                 const MirPlace &place) {
+namespace {
+
+// A representation query over verified places. Traversing an untagged union
+// does not prove native initialization or an active member; source unsafe
+// permission remains a separate requirement of the accessing instruction.
+std::optional<bool> nativeCStorageUnionProjection(
+    const MirProgram &program, const TargetInfo &target, const MirBody &body,
+    const MirPlace &place) {
   const auto *selected = body.findPlace(place.id);
   const auto *storage = program.findForeignStorage(place.symbol);
   if (!selected || *selected != place || !place.foreignStorage ||
       place.root != MirPlaceRootKind::Symbol || place.capture != 0 ||
-      !storage || !nativeCStorageImportContract(program, target, *storage) ||
-      !std::all_of(place.projections.begin(), place.projections.end(),
-                   [](const auto &projection) {
-                     return projection.kind == MirProjectionKind::Field ||
-                            projection.kind == MirProjectionKind::Index;
-                   }))
-    return false;
-  return std::any_of(
+      place.binding != 0 || !place.initiallyAvailable ||
+      !storage || !nativeCStorageImportContract(program, target, *storage))
+    return std::nullopt;
+  const bool root = std::any_of(
       body.places.begin(), body.places.end(), [&](const auto &root) {
         return root.foreignStorage && root.root == MirPlaceRootKind::Symbol &&
                root.symbol == storage->symbol && root.capture == 0 &&
                root.projections.empty() && root.type == storage->type;
       });
+  if (!root)
+    return std::nullopt;
+  SemanticType type = storage->type;
+  auto access = storage->access;
+  bool unionMember = false;
+  for (const auto &projection : place.projections) {
+    if (projection.kind == MirProjectionKind::Field) {
+      const MirClassInstance *record = nullptr;
+      for (const auto &candidate : program.classInstances())
+        if (candidate.type == type) {
+          if (record)
+            return std::nullopt;
+          record = &candidate;
+        }
+      if (!record || !record->cAbiRecord || !record->cAbiLayout)
+        return std::nullopt;
+      const MirClassFieldInfo *field = nullptr;
+      for (std::size_t index = 0; index < record->declaredFields.size(); ++index)
+        if (record->declaredFields[index].symbol == projection.field) {
+          if (field || index >= record->cAbiLayout->fields.size())
+            return std::nullopt;
+          field = &record->declaredFields[index];
+          const auto &layout = record->cAbiLayout->fields[index];
+          if (layout.field != field->symbol || layout.type != field->type)
+            return std::nullopt;
+        }
+      if (!field)
+        return std::nullopt;
+      unionMember |= record->unionLayout.has_value();
+      if (field->access == AccessMode::ReadOnly)
+        access = AccessMode::ReadOnly;
+      type = field->type;
+    } else if (projection.kind == MirProjectionKind::Index) {
+      if (type.kind != SemanticType::Array || type.arguments.size() != 1 ||
+          type.arrayLength == 0 || type.arrayLengthParameterId ||
+          (projection.constantIndex &&
+           *projection.constantIndex >= type.arrayLength))
+        return std::nullopt;
+      // The MIR verifier owns the bounds-check edge. This query only binds
+      // the already evaluated index to this body's exact integer value.
+      if (!projection.constantIndex) {
+        const auto *index = body.findValue(projection.index);
+        if (!index || !constantIntegerDomain(index->info.type))
+          return std::nullopt;
+      }
+      auto element = type.arguments.front();
+      type = std::move(element);
+    } else {
+      return std::nullopt;
+    }
+  }
+  if (type != place.type ||
+      (place.access == AccessMode::Mutable && access != AccessMode::Mutable))
+    return std::nullopt;
+  return unionMember;
 }
 
-bool nativeCStorageAccessContract(const MirProgram &program,
-                                  const TargetInfo &target, const MirBody &body,
-                                  const MirInstruction &instruction) {
+bool nativeCStorageAccess(const MirProgram &program, const TargetInfo &target,
+                           const MirBody &body,
+                           const MirInstruction &instruction,
+                           UnsafeOperationKind permission) {
+  const bool address = instruction.kind == MirInstructionKind::Compute &&
+                       instruction.operation == MirOperation::AddressOf &&
+                       !instruction.rawMemoryAccess;
   if (instruction.tombstone ||
-      instruction.unsafeOperation != UnsafeOperationKind::ForeignStorage ||
-      !instruction.rawMemoryAccess || instruction.receiver ||
+      instruction.unsafeOperation != permission ||
+      (!instruction.rawMemoryAccess && !address) || instruction.receiver ||
       instruction.intrinsic != IntrinsicKind::None ||
       instruction.functionTarget || instruction.constructorTarget ||
-      instruction.lambdaTarget || instruction.nativeCallbackAdapter ||
-      instruction.threadTaskAdapter ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.nativeCalleeType || instruction.nativeCallbackAdapter ||
+      instruction.threadTaskAdapter || instruction.callableInvocation ||
+      instruction.functionPointerFunctionTarget ||
+      instruction.functionPointerLambdaTarget ||
       (instruction.kind != MirInstructionKind::Load &&
        instruction.kind != MirInstructionKind::Assign &&
-       instruction.kind != MirInstructionKind::Modify))
+       instruction.kind != MirInstructionKind::Modify && !address))
     return false;
   bool selected = false;
   for (const auto &block : body.blocks)
@@ -440,14 +527,47 @@ bool nativeCStorageAccessContract(const MirProgram &program,
         selected = candidate == instruction;
   if (!selected)
     return false;
-  bool foreign = false;
+  if (instruction.kind == MirInstructionKind::Assign ||
+      instruction.kind == MirInstructionKind::Modify) {
+    const auto *destination = instruction.destination
+        ? body.findPlace(*instruction.destination) : nullptr;
+    if (!destination || destination->access != AccessMode::Mutable)
+      return false;
+  }
+  if (address) {
+    if (!instruction.result || instruction.destination ||
+        instruction.operands.size() != 1 ||
+        instruction.operands.front().kind != MirOperandKind::Address ||
+        instruction.info.type.kind != SemanticType::RawPointer ||
+        instruction.info.type.arguments.size() != 1)
+      return false;
+    const auto &operand = instruction.operands.front();
+    const auto *place = body.findPlace(operand.place);
+    const auto *result = body.findValue(*instruction.result);
+    const auto projection = place
+        ? nativeCStorageUnionProjection(program, target, body, *place)
+        : std::nullopt;
+    return projection && result && result->definition == instruction.id &&
+           result->info.type == instruction.info.type &&
+           operand.type == place->type &&
+           instruction.info.type.arguments.front() == place->type &&
+           (instruction.info.type.pointerAccess != AccessMode::Mutable ||
+            place->access == AccessMode::Mutable) &&
+           *projection == (permission == UnsafeOperationKind::UnionMember);
+  }
+  bool foreign = false, unionMember = false;
   const auto place = [&](MirPlaceId id) {
     const auto *value = body.findPlace(id);
     if (!value || value->capture != 0)
       return false;
     if (value->foreignStorage) {
       foreign = true;
-      return nativeCStoragePlaceContract(program, target, body, *value);
+      const auto projection =
+          nativeCStorageUnionProjection(program, target, body, *value);
+      if (!projection)
+        return false;
+      unionMember |= *projection;
+      return true;
     }
     // A valid foreign object never authorizes a second raw access. Ordinary
     // local sources/destinations retain their independently verified policy.
@@ -462,13 +582,49 @@ bool nativeCStorageAccessContract(const MirProgram &program,
   for (const auto &operand : instruction.operands) {
     if (operand.place && !place(operand.place))
       return false;
+    if (operand.type == SemanticType::NullPtr &&
+        instruction.kind == MirInstructionKind::Assign &&
+        instruction.operands.size() == 1 && instruction.destination) {
+      const auto *destination = body.findPlace(*instruction.destination);
+      const auto *value = operand.kind == MirOperandKind::Value
+          ? body.findValue(operand.value) : nullptr;
+      if (destination && value && value->info.type == operand.type &&
+          (destination->type.kind == SemanticType::RawPointer ||
+           destination->type.kind == SemanticType::NativeFunction))
+        continue;
+      return false;
+    }
     if (!nativeCValueContract(program, target, operand.type,
                               NativeCValueRole::Storage) ||
         !(nativeCScalarFunctionValueContract(program, target, operand.type) ||
           passiveNativeCStorageType(program, operand.type)))
       return false;
   }
-  return foreign;
+  return foreign &&
+         unionMember == (permission == UnsafeOperationKind::UnionMember);
+}
+
+} // namespace
+
+bool nativeCStoragePlaceContract(const MirProgram &program,
+                                 const TargetInfo &target, const MirBody &body,
+                                 const MirPlace &place) {
+  return nativeCStorageUnionProjection(program, target, body, place).has_value();
+}
+
+bool nativeCStorageAccessContract(const MirProgram &program,
+                                  const TargetInfo &target, const MirBody &body,
+                                  const MirInstruction &instruction) {
+  return nativeCStorageAccess(program, target, body, instruction,
+                              UnsafeOperationKind::ForeignStorage);
+}
+
+bool nativeCStorageUnionAccessContract(const MirProgram &program,
+                                       const TargetInfo &target,
+                                       const MirBody &body,
+                                       const MirInstruction &instruction) {
+  return nativeCStorageAccess(program, target, body, instruction,
+                              UnsafeOperationKind::UnionMember);
 }
 
 namespace {

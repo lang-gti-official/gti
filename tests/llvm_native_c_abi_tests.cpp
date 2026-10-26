@@ -1028,9 +1028,35 @@ void checkStorageImports(Session &session,
   const auto &target = session.program().target();
   std::map<SymbolId, llvm::GlobalVariable *> globals;
   declareNativeCStorage(session, globals);
+  for (const auto &identity : program.classInstances()) {
+    const auto pointer = SemanticType::rawPointerTo(identity.type);
+    require(nativeCOpaquePointerReferentContract(program, target, pointer) ==
+                identity.cOpaqueHandle,
+            "opaque witness must select the exact sealed pointer-only identity");
+  }
   for (const auto &storage : program.foreignStorageDeclarations()) {
     require(nativeCStorageImportContract(program, target, storage),
             "public storage requires its exact bounded import witness");
+    if (nativeCOpaquePointerReferentContract(program, target, storage.type)) {
+      const auto &referent = storage.type.arguments.front();
+      require(!nativeCValueContract(program, target, referent,
+                                    NativeCValueRole::Storage) &&
+                  !nativeCOpaquePointerReferentContract(program, target, referent),
+              "pointer-only identity must not admit an opaque object value");
+      auto pointer = storage.type;
+      pointer.arguments.front() = SemanticType::Int32;
+      require(!nativeCOpaquePointerReferentContract(program, target, pointer),
+              "an ordinary pointer is not an opaque identity witness");
+      pointer = storage.type;
+      pointer.arguments.push_back(referent);
+      require(!nativeCOpaquePointerReferentContract(program, target, pointer),
+              "a malformed pointer cannot authorize opaque type metadata");
+      auto unsupportedTarget = target;
+      unsupportedTarget.arch = "unsupported";
+      require(!nativeCOpaquePointerReferentContract(program, unsupportedTarget,
+                                                    storage.type),
+              "opaque pointer representation remains target bound");
+    }
     auto forged = storage;
     forged.externalSymbol += "_forged";
     require(!nativeCStorageImportContract(program, target, forged),
@@ -1064,17 +1090,30 @@ void checkStorageImports(Session &session,
   for (const auto &function : program.functionInstances())
     for (const auto &block : function.body.blocks)
       for (const auto &stage : block.instructions) {
-        if (stage.unsafeOperation != UnsafeOperationKind::ForeignStorage ||
+        if ((stage.unsafeOperation != UnsafeOperationKind::ForeignStorage &&
+             stage.unsafeOperation != UnsafeOperationKind::UnionMember) ||
             stage.kind == MirInstructionKind::Lifecycle)
           continue;
+        const bool unionAccess =
+            stage.unsafeOperation == UnsafeOperationKind::UnionMember;
+        const auto foreignPlace = [&](MirPlaceId id) {
+          const auto *place = function.body.findPlace(id);
+          return place && place->foreignStorage;
+        };
+        if (unionAccess &&
+            !(stage.destination && foreignPlace(*stage.destination)) &&
+            !std::any_of(stage.operands.begin(), stage.operands.end(),
+                         [&](const auto &operand) { return foreignPlace(operand.place); }))
+          continue;
+        const auto accessContract = unionAccess
+            ? nativeCStorageUnionAccessContract : nativeCStorageAccessContract;
         std::cout << "storage stage " << function.id << '/' << block.id << '/'
                   << stage.id << " kind=" << static_cast<unsigned>(stage.kind)
                   << " witness="
-                  << nativeCStorageAccessContract(program, target,
-                                                  function.body, stage)
+                  << accessContract(program, target, function.body, stage)
                   << '\n';
         require(
-            nativeCStorageAccessContract(program, target, function.body, stage),
+            accessContract(program, target, function.body, stage),
             "actual foreign storage stage must retain exact structural proof");
         if (loads == 0 && assigns == 0) {
           const auto malformed = [&](auto change) {
@@ -1087,11 +1126,16 @@ void checkStorageImports(Session &session,
             require(selected != nullptr, "missing cloned storage stage");
             change(body, *selected);
             require(
-                !nativeCStorageAccessContract(program, target, body, *selected),
+                !accessContract(program, target, body, *selected),
                 "forged or mixed storage stage cannot acquire raw permission");
           };
           malformed([](auto &, auto &value) {
             value.unsafeOperation = UnsafeOperationKind::RawDereference;
+          });
+          malformed([&](auto &, auto &value) {
+            value.unsafeOperation = unionAccess
+                ? UnsafeOperationKind::ForeignStorage
+                : UnsafeOperationKind::UnionMember;
           });
           malformed([](auto &, auto &value) {
             value.kind = MirInstructionKind::Call;
@@ -1162,6 +1206,25 @@ void checkStorageImports(Session &session,
               require(!nativeCStoragePlaceContract(program, target,
                                                    function.body, forged),
                       "forged projection cannot acquire a place witness");
+              const auto malformedPlace = [&](auto change) {
+                auto body = function.body;
+                auto &changed = *std::find_if(
+                    body.places.begin(), body.places.end(),
+                    [&](const auto &candidate) { return candidate.id == place.id; });
+                change(changed);
+                require(!nativeCStoragePlaceContract(program, target, body, changed),
+                        "a matching body row must still prove its exact projection");
+              };
+              malformedPlace([](auto &value) { value.initiallyAvailable = false; });
+              malformedPlace([](auto &value) { value.binding = 1; });
+              malformedPlace([](auto &value) { value.type = SemanticType::StringView; });
+              if (!place.projections.empty()) {
+                malformedPlace([](auto &value) {
+                  value.projections.front().kind = MirProjectionKind::RawDereference;
+                });
+                if (place.projections.front().kind == MirProjectionKind::Field)
+                  malformedPlace([](auto &value) { value.projections.front().field = 0; });
+              }
             }
         }
         loads += stage.kind == MirInstructionKind::Load;
@@ -1262,6 +1325,7 @@ int main(int argc, char **argv) {
             : storage    ? ": exact foreign storage contracts; "
             : preflight  ? ": real GTI body native preflight; "
             : aggregates ? ": exact passive aggregate import contracts; "
+            : storageContracts ? ": exact foreign storage projection contracts; "
             : contracts  ? ": exact declaration/call contracts; "
             : argc == 6
                 ? ": isolated callback boundary test bodies; "

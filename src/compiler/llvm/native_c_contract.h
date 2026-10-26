@@ -16,6 +16,11 @@ enum class NativeCValueRole { Argument, Result, Storage };
                                         const TargetInfo &target,
                                         const SemanticType &type,
                                         NativeCValueRole role);
+// Applies only to the immediate referent of this exact pointer. It does not
+// admit an opaque object value, its layout, or a dereference.
+[[nodiscard]] bool nativeCOpaquePointerReferentContract(
+    const MirProgram &program, const TargetInfo &target,
+    const SemanticType &pointer);
 [[nodiscard]] bool
 nativeCDeclarationContract(const MirProgram &program, const TargetInfo &target,
                            const MirFunctionInstance &function);
@@ -73,5 +78,8 @@ nativeCStorageImportContract(const MirProgram &program,
 nativeCStorageAccessContract(const MirProgram &program,
                              const TargetInfo &target, const MirBody &body,
                              const MirInstruction &instruction);
+[[nodiscard]] bool nativeCStorageUnionAccessContract(
+    const MirProgram &program, const TargetInfo &target, const MirBody &body,
+    const MirInstruction &instruction);
 
 } // namespace lang::native_llvm

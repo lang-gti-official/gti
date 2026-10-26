@@ -101,6 +101,12 @@ def main():
             for line in ir.read_text().splitlines():
                 if line.startswith("@native_") and (" = external global " not in line or ", align " not in line):
                     raise RuntimeError("foreign storage became initialized/constant/unaligned GTI data")
+    for name in PREREQUISITES:
+        if args.focus == "independent":
+            continue
+        run([emitter, fixture / (name + ".gti"), output / (name + "-contracts.o"),
+             output / (name + "-contracts.ll"), 0, "--storage-contracts"],
+            name + "-contracts")
     sources = tuple(name for name in SOURCE_PATHS
                     if (args.focus != "independent" or name not in PREREQUISITES) and
                     (args.focus != "prerequisites" or name in PREREQUISITES))
