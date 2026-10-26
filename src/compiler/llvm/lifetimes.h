@@ -42,8 +42,14 @@ public:
   // payload enums relocate only their active variant and retire the source tag.
   static void preflightInertRelocation(Session &session, Dispatch &dispatch,
                                        const SemanticType &type);
-  [[nodiscard]] llvm::FunctionType *inertRelocationType() const;
+  static void preflightGeneratedRelocation(Session &session, Dispatch &dispatch,
+                                           const SemanticType &type);
+  [[nodiscard]] llvm::FunctionType *relocationType() const;
   [[nodiscard]] llvm::Function *inertRelocation(const SemanticType &type);
+  // Transfer cleanup permission and owner handles without running their
+  // cleanup. Callers must already possess MIR authority for relocation to fresh
+  // storage.
+  [[nodiscard]] llvm::Function *generatedRelocation(const SemanticType &type);
   void active(llvm::IRBuilder<> &ir, llvm::Value *address,
               const SemanticType &type, bool value);
   void moved(llvm::IRBuilder<> &ir, llvm::Value *address,
@@ -61,7 +67,7 @@ private:
   FindBody findBody;
   std::vector<std::pair<MirDropType, llvm::Function *>> cleanups;
   std::map<llvm::Type *, llvm::Function *> moves;
-  std::vector<std::pair<SemanticType, llvm::Function *>> inertRelocations;
+  std::vector<std::pair<SemanticType, llvm::Function *>> relocations;
   std::vector<std::pair<MirDropType, llvm::Function *>> observations;
   [[nodiscard]] llvm::Function *cleanupObservation(const MirDropType &recipe);
   [[nodiscard]] bool needsMoveState(const SemanticType &type) const;

@@ -905,6 +905,16 @@ representation. A C++ exception must never escape through an `extern "C"`
 function; the shim must catch it and translate it to a result allowed by the
 declared boundary. General C++ ABI calls remain outside the language contract.
 
+This applies equally to direct imports and native function-pointer calls.
+An ordinary outbound call is not a GTI containment boundary: an exception
+escaping a faulty shim is not a GTI defined failure, and GTI cleanup during
+that foreign unwind is not guaranteed. The terminating containment of a C
+callback does not turn an intervening outbound call into such a boundary.
+After a conforming shim returns a translated C result, GTI uses that result
+normally; any subsequent GTI defined failure retains its own verified cleanup
+and original source attribution. A shim that terminates instead of returning
+does not provide equivalent cleanup semantics to a GTI defined failure.
+
 ### Objective-C++ Apple API bridges
 
 On macOS, the same boundary can be implemented in a `.mm` Objective-C++

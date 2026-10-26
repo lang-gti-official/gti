@@ -11644,10 +11644,39 @@ fields. Its component execution checks empty/repeated operations, moved-from
 storage, multiple model offsets, and invariant traps. The exact private source
 default constructor now initializes its hidden empty state at entry without
 replacing the original MIR body. Ordinary empty constructors do not acquire
-that behavior. Next: complete body-local publication and transfer; extend
-cleanup-bearing payload/private-capability relocation where needed; complete boxed-owner dynamic
+that behavior. The shared generated-relocation emitter now also transfers
+cleanup-bearing record/payload state and exclusive/shared handles, retaining
+suppressed cleanup bytes and leaving reference counts untouched. Inline-model
+eligibility still uses the stricter inert preflight; the new component is not
+blanket public slot admission. Verified object relocation now uses this emitter
+for structural types, with existing object/storage/vector relocation programs
+passing C++20/23 O3 and LLVM O0-O3 value/cleanup checks. An owning-closure wrapper
+also transfers function-pointer, vacant storage and passive union fields under
+an independent native source oracle; C++ cannot represent that fixture's closure
+forwarding into `construct_at`. Raw class-pointer arithmetic argument staging
+now preserves the exact producer witness, closing the storage-read prerequisite
+exposed by the existing structural-relocation fixture. Next: complete body-local
+publication and transfer; extend remaining capability/borrowed representations
+where needed; complete boxed-owner dynamic
 cleanup and validate ordinary source wrappers end to end. Platform evidence is
 tracked per checkpoint, not inferred from these component checks.
+
+The dispatch descriptor now records an exact target-width displacement from
+each physical pointer owner to its installed active class. Ordinary virtual
+calls retain their two loads and root ABI; per-object layout is unchanged.
+Native representation probes recover the relocated complete state through every
+view and distinguish a subsequently installed base state at nonzero offset.
+This is a prerequisite for dynamic owner cleanup, not ownership admission: the
+cleanup operation still needs an exact selected cleanup adapter and must retain
+the allocation identity before changing lifecycle state. It does not authorize
+source downcasts or establish destructor-observed virtual phase semantics.
+
+Static owner cleanup now distinguishes an ordinary record containing hierarchy
+storage from a dynamically typed pointee. The former retains an exact canonical
+recipe and runs hierarchy preflight at owned child edges; the latter remains
+gated by `polymorphicCleanup`. Unique/shared allocation, last-owner release and
+empty cleanup have native component probes. Public construction/transport and
+dynamic cleanup remain separate integration prerequisites.
 
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not

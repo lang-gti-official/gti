@@ -246,8 +246,8 @@ void PolymorphicStorage::relocate(llvm::IRBuilder<> &ir,
       ir.CreateStructGEP(layout.type.storage, destination, layout.payloadIndex);
   auto *from =
       ir.CreateStructGEP(layout.type.storage, source, layout.payloadIndex);
-  auto *call = ir.CreateCall(lifetimes.inertRelocationType(), relocator,
-                             {payload, from});
+  auto *call =
+      ir.CreateCall(lifetimes.relocationType(), relocator, {payload, from});
   call->setDoesNotThrow();
   ir.CreateStore(ir.CreateGEP(ir.getInt8Ty(), payload, offset),
                  ir.CreateStructGEP(layout.type.storage, destination,

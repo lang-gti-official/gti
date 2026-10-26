@@ -1839,6 +1839,7 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 add_executable(gti_llvm_dispatch_layout_tests llvm_dispatch_layout_tests.cpp)
+add_dependencies(gti_llvm_dispatch_layout_tests gti_runtime)
 target_include_directories(gti_llvm_dispatch_layout_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_dispatch_layout_tests PRIVATE gti_llvm_backend gti_driver)
 add_test(NAME llvm_dispatch_layout COMMAND gti_llvm_dispatch_layout_tests)
@@ -1960,6 +1961,12 @@ if(Python3_Interpreter_FOUND)
       --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
       --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-callback-execution-evidence")
   set_tests_properties(llvm_native_c_callback_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_native_c_outbound_boundary
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_outbound_boundary_test.py"
+      "$<TARGET_FILE:gti>" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-outbound-boundary-evidence")
+  set_tests_properties(llvm_native_c_outbound_boundary PROPERTIES TIMEOUT 1200)
   add_test(NAME llvm_native_c_confined_execution
     COMMAND "${Python3_EXECUTABLE}"
       "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_confined_execution_test.py"
