@@ -86,7 +86,8 @@ def main():
         (evidence / "results.json").write_text(json.dumps(records, indent=2) + "\n")
         valid = result.returncode in (-signal.SIGILL, -signal.SIGTRAP) if death else result.returncode == expected
         if not valid:
-            raise AssertionError(f"{name}: see {evidence / (name + '.log')}")
+            detail = (result.stdout + result.stderr)[-8192:]
+            raise AssertionError(f"{name}: see {evidence / (name + '.log')}\n{detail}")
         print(f"{name}: PASS", flush=True)
         return result.stdout
 

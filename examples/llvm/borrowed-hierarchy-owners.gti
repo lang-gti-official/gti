@@ -1,0 +1,69 @@
+#include <std/memory>
+
+// Ordinary functions return checked base/interface views. Owning an ordinary
+// record does not change the identity or cleanup of its inline hierarchy.
+
+mut int events = 0;
+void record(int value) { events = events * 10 + value; }
+interface Reader { int read(); };
+interface Writer { void write(int value) mut; };
+class Root {
+  mut int state = 31;
+public:
+  Root() { record(1); }
+  ~Root() { record(4); }
+  virtual int phase() { return 1; }
+  virtual int fail(int divisor) { return 120 / divisor; }
+  int root_value() { return this.state; }
+  void set_root(int value) mut { this.state = value; }
+};
+class Leaf : public Reader, public Root, public Writer {
+  mut int payload = 7;
+public:
+  Leaf() : Root() { record(2); }
+  ~Leaf() { record(3); }
+  int phase() override { return 2; }
+  int read() override { return this.payload; }
+  void write(int value) mut override { this.payload = value; }
+};
+struct Record {
+  mut Leaf leaf{};
+  Reader& read_view() { return this.leaf; }
+  mut Writer& write_view() mut { return this.leaf; }
+  Root& root_view() { return this.leaf; }
+  mut Root& mutable_root() mut { return this.leaf; }
+  Reader& checked_view(int divisor) {
+    int checked_before_view = 120 / divisor;
+    return this.leaf;
+  }
+};
+Reader& forward_read(Reader& value) { return value; }
+mut Writer& forward_write(mut Writer& value) { return value; }
+Root& forward_root(Root& value) { return value; }
+mut Root& forward_mutable_root(mut Root& value) { return value; }
+
+// REFERENCE_RESULTS_MAIN
+int main() {
+  {
+    mut Record value{};
+    if (forward_read(value.read_view()).read() != 7) { return 1; }
+    forward_write(value.write_view()).write(23);
+    if (value.read_view().read() != 23) { return 2; }
+    if (forward_root(value.root_view()).root_value() != 31) { return 8; }
+    forward_mutable_root(value.mutable_root()).set_root(41);
+    if (value.root_view().root_value() != 41) { return 9; }
+  }
+  if (events != 1234) { return 3; }
+  events = 0;
+  {
+    mut auto owner = std::make_unique<Record>();
+    if (events != 12 || owner->read_view().read() != 7) { return 4; }
+    owner->write_view().write(29);
+    if (owner->leaf.read() != 29 || owner->leaf.phase() != 2) { return 5; }
+    if (owner->checked_view(1).read() != 29) { return 10; }
+    owner.reset();
+    if (events != 1234) { return 6; }
+    owner.reset();
+  }
+  return events == 1234 ? 0 : 7;
+}

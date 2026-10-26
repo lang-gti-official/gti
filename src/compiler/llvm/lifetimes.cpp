@@ -1304,9 +1304,12 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     // An indirect owner does not make its pointee's inline subobjects dynamic.
     // Prove their exact static schedules at the child edge, including dispatch
     // state, before publishing any helper. Recursive edges reuse that proof.
+    // Replacing an owner retires its allocation; it does not replace a
+    // hierarchy object in-place inside a still-live enclosing object.
     if (&selected != &recipe &&
         containsHierarchyStorage(program, selected.type))
-      preflightCleanup(session, dispatch, selected, replacement);
+      preflightCleanup(session, dispatch, selected,
+                       replacement && ownerDepth == 0);
 
     ancestors.push_back({&selected, ownerDepth});
     const bool ownsChild = selected.type.kind == SemanticType::UniqueOwner;

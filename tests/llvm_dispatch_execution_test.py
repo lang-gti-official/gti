@@ -49,6 +49,7 @@ SUCCESS_FILES = {
     "fresh-hierarchy-transfer": "tests/fixtures/llvm_dispatch_fresh_transfer.gti",
     "fresh-hierarchy-copy-view": "tests/fixtures/llvm_dispatch_fresh_copy_view.gti",
     "inline-hierarchy-fields": "tests/fixtures/llvm_dispatch_inline_fields.gti",
+    "hierarchy-reference-results": "examples/llvm/borrowed-hierarchy-owners.gti",
     "dispatch-cost-correctness": "tests/fixtures/llvm_dispatch_execution_cost.gti",
     "shipped-example": "examples/llvm/inheritance-and-dispatch.gti",
 }
@@ -59,6 +60,10 @@ TRANSFER_ENDPOINTS = (
 )
 
 CPP_LIMITATIONS = {
+    "hierarchy-reference-results": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
+    "owner-reference-failure": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_8743748746c3906f3cb32abc5c52a3d391e4507268de72665a366361f520203d_make_unique'",
+    "owner-failure-before-reference": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_1542b921ce78875e430a1cd950d1c99cce26c90908184496243024d42a33bfd9_make_unique'",
+    "shared-owner-reference": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_6c747ef376f3f4cfb185d24c782b604dd9912f48182009d7ad4f7242536225ae_make_shared'",
     "inline-hierarchy-fields": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
     "inline-field-virtual-failure": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
     "inline-field-constructor-rollback": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
@@ -224,6 +229,8 @@ REJECTIONS["reject-cleanup-helper-cycle-observation"] = SUCCESS_SOURCES[
         "return value.payload();", "return value.read();")
 
 SOURCE_REJECTIONS = {
+    "reject-source-return-local-view": PLAIN + "Plain& invalid() { Plain local{}; return local; }\nint main() { return invalid().read(); }\n",
+    "reject-source-mutable-return-readonly": PLAIN + "mut Plain& invalid(Plain& value) { return value; }\nint main() { Plain value{}; return invalid(value).read(); }\n",
     "reject-source-deleted-copy": """class NoCopy {
 public:
   NoCopy() {}
@@ -1037,12 +1044,58 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name == "inline-hierarchy-fields" else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
         add(name, source, expected_exit=expected_exit, endpoints=TRANSFER_ENDPOINTS)
     source = (root / SUCCESS_FILES["static-dispatch"]).read_text(encoding="utf-8")
+    reference = (root / SUCCESS_FILES["hierarchy-reference-results"]).read_text(encoding="utf-8")
+    reference_prefix, _ = reference.split("// REFERENCE_RESULTS_MAIN\n", 1)
+    add("shared-owner-reference", reference_prefix + """
+int main() {
+  {
+    auto first = std::make_shared<Record>();
+    {
+      auto second = first.clone();
+      if (second->read_view().read() != 7 || second->root_view().root_value() != 31) { return 1; }
+    }
+    if (events != 12 || first->leaf.read() != 7) { return 2; }
+  }
+  return events == 1234 ? 0 : 3;
+}
+""", endpoints=TRANSFER_ENDPOINTS, cpp_limitation=CPP_LIMITATIONS["shared-owner-reference"])
+    add("reject-source-reset-retained-view", reference_prefix + """
+int main() {
+  mut auto owner = std::make_unique<Record>();
+  Reader& view = owner->read_view();
+  owner.reset();
+  return view.read();
+}
+""", "source-rejection")
+    owner_failure = reference_prefix + """
+class Guard {
+public:
+  ~Guard() {
+    if (events != 1234) { int divisor = 0; int checked_cleanup = 1 / divisor; }
+  }
+};
+int main() {
+  Guard guard{};
+  auto owner = std::make_unique<Record>();
+  return owner->leaf.fail(0);
+}
+"""
+    add("owner-reference-failure", owner_failure, "defined-failure", expected_exit=70,
+        failure_needle="return 120 / divisor;", endpoints=TRANSFER_ENDPOINTS,
+        cpp_limitation=CPP_LIMITATIONS["owner-reference-failure"])
+    add("owner-failure-before-reference", owner_failure.replace(
+        "return owner->leaf.fail(0);", "return owner->checked_view(0).read();"),
+        "defined-failure", expected_exit=70, failure_needle="checked_before_view = 120 / divisor;",
+        endpoints=TRANSFER_ENDPOINTS, cpp_limitation=CPP_LIMITATIONS["owner-failure-before-reference"])
+    add("owner-reference-wrong-cleanup", owner_failure.replace("events != 1234", "events != 1235"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle="return 120 / divisor;",
+        endpoints=TRANSFER_ENDPOINTS[2:])
     if source.count(ALIAS_ANCHOR) != 1:
         raise AssertionError("borrowed-view anchor is not unique")
     add("borrowed-dispatch", source.replace(ALIAS_ANCHOR, ALIAS_ANCHOR + '\n    {\n      Reader& view = value;\n      if (view.read(1) != 11) { return 6; }\n      if (via_reader(view, 2) != 12) { return 7; }\n      Reader& second = view;\n      if (via_reader(second, 3) != 13) { return 8; }\n    }\n    {\n      mut Root& root_view = value;\n      if (root_view.base_value() != 7) { return 9; }\n      root_view.set_base(9);\n      if (root_view.base_value() != 9) { return 10; }\n      root_view.set_base(7);\n    }\n    {\n      mut Writer& view = value;\n      via_writer(view, 23);\n    }\n    if (!via_truth(value, true)) { return 11; }\n'))
@@ -1116,7 +1169,10 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
                                        "inline-hierarchy-fields", "nested-object-former-reject",
                                        "inline-field-virtual-failure", "inline-field-constructor-rollback",
                                        "inline-field-wrong-cleanup-trace"),
-        "mut-borrow-scalar-bool": ("borrowed-dispatch", "borrowed-mut-reference-chain"),
+        "mut-borrow-scalar-bool": ("borrowed-dispatch", "borrowed-mut-reference-chain",
+                                  "hierarchy-reference-results", "owner-reference-failure",
+                                  "owner-reference-wrong-cleanup", "shared-owner-reference",
+                                  "owner-failure-before-reference"),
         "scalar-virtual-invocation": ("fresh-local-virtual-call", "scalar-state-virtual-control",
                                       "static-dispatch", "dispatch-cost-correctness"),
         "dispatch-lifecycle": ("virtual-failure-cleanup", "constructor-rollback",
@@ -1160,6 +1216,9 @@ def main() -> None:
              "virtual-failure-cleanup", "generated-move-virtual-failure", "constructor-rollback", "cleanup-oracle-wrong-trace",
              "inline-field-virtual-failure", "inline-field-constructor-rollback",
              "inline-field-wrong-cleanup-trace", *REJECTIONS,
+             "owner-reference-failure", "owner-reference-wrong-cleanup",
+             "shared-owner-reference", "reject-source-reset-retained-view",
+             "owner-failure-before-reference",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

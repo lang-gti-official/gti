@@ -61,7 +61,8 @@ def main():
         retain()
         print(json.dumps(commands[-1], sort_keys=True), flush=True)
         if result.returncode:
-            raise AssertionError(f"{name}: see {output / (name + '.log')}")
+            detail = (result.stdout + result.stderr)[-8192:]
+            raise AssertionError(f"{name}: see {output / (name + '.log')}\n{detail}")
         return result.stdout
 
     def report(complete):

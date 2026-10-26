@@ -4260,6 +4260,13 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             "call or construct result must retain a CallResult or Stored loan",
             block.id, instruction.id);
       }
+      if (loan->kind == MirLoanKind::CallResult &&
+          loan->producedBy != instruction.hirValue) {
+        return verificationFailure(
+            body, owner,
+            "call-result loan producer does not match its call or construct",
+            block.id, instruction.id);
+      }
 
       std::vector<MirLoanDependency> mappedCallSources;
       for (const auto &mapping : instruction.borrowFields) {
