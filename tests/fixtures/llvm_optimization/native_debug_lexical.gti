@@ -1,0 +1,11 @@
+int inspect(int input) {
+  int local = input + 5;
+  mut int result = 0;
+  {
+    int local = input + 7;
+    result = local;
+  }
+  return local + result;
+}
+
+int main() { return inspect(4) == 20 ? 0 : 1; }

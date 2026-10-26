@@ -2,6 +2,7 @@
 
 #include "build_source_identity.h"
 #include "gti/build_identity_config.h"
+#include "gti/llvm_backend.h"
 #include "sha256.h"
 
 #include <algorithm>
@@ -12,10 +13,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -38,69 +42,229 @@ struct StagedDebugBundleCleanup {
   }
 };
 
-// Native Darwin symbols are a bundle, not a single rename-replaceable file.
-// Never replace an unowned directory or follow a symbol-bundle symlink.
-std::optional<std::string>
-publishDebugBundle(const std::filesystem::path &staged,
-                   const std::filesystem::path &destination) {
-  constexpr std::string_view markerName = ".gti-debug-symbols";
-  constexpr std::string_view markerContents = "gti-debug-symbols-v1\n";
-  std::error_code error;
-  const auto status = std::filesystem::symlink_status(destination, error);
-  if (error && error != std::errc::no_such_file_or_directory)
-    return error.message();
-  const bool exists = std::filesystem::exists(status);
-  if (exists) {
-    if (!std::filesystem::is_directory(status))
-      return "refusing to replace a non-directory or symlink debug bundle";
-    const auto marker = destination / markerName;
-    error.clear();
-    if (!std::filesystem::is_regular_file(
-            std::filesystem::symlink_status(marker, error)) ||
-        error)
-      return "refusing to replace a debug bundle not owned by GTI";
-    std::ifstream input(marker);
-    std::string contents(markerContents.size(), '\0');
-    input.read(contents.data(), static_cast<std::streamsize>(contents.size()));
-    if (!input || contents != markerContents ||
-        input.peek() != std::char_traits<char>::eof())
-      return "refusing to replace a debug bundle not owned by GTI";
+// Keep the previous GTI-owned companion until its executable commits. Each
+// directory move is atomic; failure before executable commit restores the pair.
+class DebugBundlePublication final {
+public:
+  DebugBundlePublication() = default;
+  DebugBundlePublication(const DebugBundlePublication &) = delete;
+  DebugBundlePublication &operator=(const DebugBundlePublication &) = delete;
+  ~DebugBundlePublication() { static_cast<void>(rollback()); }
+
+  static std::optional<std::string>
+  validateDestination(const std::filesystem::path &destination) {
+    constexpr std::string_view markerName = ".gti-debug-symbols";
+    constexpr std::string_view markerContents = "gti-debug-symbols-v1\n";
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(destination, error);
+    if (error && error != std::errc::no_such_file_or_directory)
+      return error.message();
+    const bool exists = std::filesystem::exists(status);
+    if (exists) {
+      if (!std::filesystem::is_directory(status))
+        return "refusing to replace a non-directory or symlink debug bundle";
+      const auto marker = destination / markerName;
+      error.clear();
+      if (!std::filesystem::is_regular_file(
+              std::filesystem::symlink_status(marker, error)) ||
+          error)
+        return "refusing to replace a debug bundle not owned by GTI";
+      std::ifstream input(marker);
+      std::string contents(markerContents.size(), '\0');
+      input.read(contents.data(),
+                 static_cast<std::streamsize>(contents.size()));
+      if (!input || contents != markerContents ||
+          input.peek() != std::char_traits<char>::eof())
+        return "refusing to replace a debug bundle not owned by GTI";
+    }
+    return std::nullopt;
   }
-  if (writeArtifact(staged / markerName, markerContents) !=
-      ArtifactWriteStatus::Success)
-    return "cannot mark staged debug bundle as GTI-owned";
-  const auto backup = stagedArtifactPath(destination);
-  if (exists) {
+
+  std::optional<std::string> publish(const std::filesystem::path &staged,
+                                     const std::filesystem::path &destination) {
+    constexpr std::string_view markerName = ".gti-debug-symbols";
+    constexpr std::string_view markerContents = "gti-debug-symbols-v1\n";
+    std::error_code error;
+    if (!std::filesystem::is_directory(
+            std::filesystem::symlink_status(staged, error)) ||
+        error)
+      return "staged debug bundle is not a regular directory";
+    if (const auto failure = validateDestination(destination))
+      return failure;
     error.clear();
-    std::filesystem::rename(destination, backup, error);
+    const bool exists = std::filesystem::exists(destination, error);
     if (error)
       return error.message();
-  }
-  error.clear();
-  std::filesystem::rename(staged, destination, error);
-  if (error) {
+    if (writeArtifact(staged / markerName, markerContents) !=
+        ArtifactWriteStatus::Success)
+      return "cannot mark staged debug bundle as GTI-owned";
+#if !defined(_WIN32)
+    struct stat identity{};
+    if (::lstat(staged.c_str(), &identity) != 0 || !S_ISDIR(identity.st_mode))
+      return "cannot identify staged debug bundle directory";
+    device = static_cast<std::uintmax_t>(identity.st_dev);
+    inode = static_cast<std::uintmax_t>(identity.st_ino);
+#else
+    return "debug companion publication requires native directory identity "
+           "support";
+#endif
+    destinationPath = destination;
+    stagedPath = staged;
+    backupPath = stagedArtifactPath(destination);
     if (exists) {
-      std::error_code restoreError;
-      std::filesystem::rename(backup, destination, restoreError);
-      if (restoreError)
-        return error.message() + "; previous bundle retained at '" +
-               backup.string() +
-               "' (restore failed: " + restoreError.message() + ")";
+      error.clear();
+      std::filesystem::rename(destination, backupPath, error);
+      if (error) {
+        finished = true;
+        return error.message();
+      }
+      previous = true;
     }
-    return error.message();
+    error.clear();
+    std::filesystem::rename(staged, destination, error);
+    if (error) {
+      const auto detail = error.message();
+      const auto restore = rollback();
+      return restore ? detail + "; " + *restore : detail;
+    }
+    installed = true;
+    return std::nullopt;
   }
-  if (exists) {
-    // Exact validated, GTI-owned bundle moved above; never a workspace root.
-    std::filesystem::remove_all(backup, error);
+
+  std::optional<std::string> rollback() {
+    if (finished || destinationPath.empty())
+      return std::nullopt;
+    finished = true;
+    std::error_code error;
+    if (installed) {
+#if !defined(_WIN32)
+      struct stat current{};
+      if (::lstat(destinationPath.c_str(), &current) != 0 ||
+          !S_ISDIR(current.st_mode) ||
+          static_cast<std::uintmax_t>(current.st_dev) != device ||
+          static_cast<std::uintmax_t>(current.st_ino) != inode)
+        return "debug bundle changed during publication; previous bundle "
+               "retained at '" +
+               backupPath.string() + "'";
+#endif
+      std::filesystem::rename(destinationPath, stagedPath, error);
+      if (error)
+        return "cannot retire failed debug publication; previous bundle "
+               "retained at '" +
+               backupPath.string() + "': " + error.message();
+      installed = false;
+    }
+    if (previous) {
+      error.clear();
+      std::filesystem::rename(backupPath, destinationPath, error);
+      if (error)
+        return "previous debug bundle retained at '" + backupPath.string() +
+               "' (restore failed: " + error.message() + ")";
+    }
+    return std::nullopt;
+  }
+
+  std::optional<std::string> commit() {
+    finished = true;
+    if (!previous)
+      return std::nullopt;
+    std::error_code error;
+    std::filesystem::remove_all(backupPath, error);
     if (error)
-      return "published symbols but could not remove previous GTI-owned bundle "
+      return "published debug pair, but previous GTI-owned bundle remains at "
              "'" +
-             backup.string() + "': " + error.message();
+             backupPath.string() + "': " + error.message();
+    return std::nullopt;
+  }
+
+private:
+  std::filesystem::path destinationPath;
+  std::filesystem::path stagedPath;
+  std::filesystem::path backupPath;
+  std::uintmax_t device = 0;
+  std::uintmax_t inode = 0;
+  bool previous = false;
+  bool installed = false;
+  bool finished = false;
+};
+
+std::optional<std::string>
+debugBundleSourceCollision(const std::filesystem::path &symbols,
+                           const SourceManager &sources,
+                           const std::filesystem::path &representation) {
+  std::error_code error;
+  const auto canonical = std::filesystem::weakly_canonical(symbols, error);
+  if (error)
+    return "cannot inspect debug bundle path: " + error.message();
+  const auto generated =
+      std::filesystem::weakly_canonical(representation, error);
+  if (error)
+    return "cannot establish backend representation containment for debug "
+           "publication";
+  const auto relativeGenerated = generated.lexically_relative(canonical);
+  if (!relativeGenerated.empty() && !relativeGenerated.is_absolute() &&
+      *relativeGenerated.begin() != "..")
+    return "debug bundle conflicts with the requested backend representation";
+  for (const auto &name : sources.names()) {
+    const auto source = std::filesystem::weakly_canonical(name, error);
+    if (error)
+      return "cannot establish loaded source containment for debug publication";
+    const auto relative = source.lexically_relative(canonical);
+    if (!relative.empty() && !relative.is_absolute() &&
+        *relative.begin() != "..")
+      return "refusing to replace debug bundle containing loaded source '" +
+             name + "'";
   }
   return std::nullopt;
 }
 
 constexpr std::string_view cacheSchema = "gti-build-cache-v4";
+constexpr std::string_view objectCacheSchema = "gti-build-cache-v5";
+
+bool nativeObjectCache(const ExecutableBuildRequest &request) {
+  return request.compilation().backend() == BackendKind::Llvm;
+}
+
+bool darwinDeploymentArgument(std::string_view argument) {
+  const auto changesDeployment = [](std::string_view component) {
+    const auto option = component.substr(0, component.find('='));
+    return (option.starts_with("-m") && option.ends_with("-version-min")) ||
+           option == "-macosx_version_min" || option == "-macos_version_min" ||
+           option == "-iphoneos_version_min" ||
+           option == "-ios_simulator_version_min" ||
+           option == "-tvos_version_min" ||
+           option == "-tvos_simulator_version_min" ||
+           option == "-watchos_version_min" ||
+           option == "-watchos_simulator_version_min" ||
+           option == "-mtargetos" || option == "-platform_version" ||
+           option == "-sdk_version" || option == "-target-sdk-version" ||
+           option == "-darwin-target-variant" ||
+           option == "-darwin-target-variant-triple" ||
+           option == "-darwin-target-variant-sdk-version";
+  };
+  if (argument.starts_with("-Xlinker="))
+    return changesDeployment(
+        argument.substr(std::string_view("-Xlinker=").size()));
+  if (!argument.starts_with("-Wl,"))
+    return changesDeployment(argument);
+  argument.remove_prefix(std::string_view("-Wl,").size());
+  while (true) {
+    const auto separator = argument.find(',');
+    if (changesDeployment(argument.substr(0, separator)))
+      return true;
+    if (separator == std::string_view::npos)
+      return false;
+    argument.remove_prefix(separator + 1);
+  }
+}
+
+std::string_view buildCacheSchema(const ExecutableBuildRequest &request) {
+  return nativeObjectCache(request) ? objectCacheSchema : cacheSchema;
+}
+
+std::string_view cacheRepresentationFile(bool object) {
+  return object ? "artifact.o" : "generated.cpp";
+}
 using detail::IdentityBuilder;
 
 struct FileDigest {
@@ -1273,6 +1437,17 @@ void addNativeEnvironmentIdentity(IdentityBuilder &identity) {
   }
 }
 
+std::vector<std::string>
+nativeSourceArguments(const std::vector<std::string> &arguments,
+                      const NativeInputs &inputs, bool debugInfo) {
+  auto result = arguments;
+  if (debugInfo)
+    result.emplace_back("-g");
+  if (inputs.instrumentation)
+    append(result, inputs.instrumentation->compileArguments);
+  return result;
+}
+
 std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                                          const CompilationInputs &inputs,
                                          const BuildCachePolicy &policy,
@@ -1280,9 +1455,48 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                                          std::string &errorMessage,
                                          std::string &policyBypassDetail) {
   IdentityBuilder identity;
-  identity.add("cache.schema", cacheSchema);
+  identity.add("cache.schema", buildCacheSchema(request));
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
+  if (request.nativeInputs().instrumentation) {
+    identity.add("native.instrumentation.identity",
+                 request.nativeInputs().instrumentation->identity);
+  }
+  if (nativeObjectCache(request)) {
+    const LlvmBackendOptions options =
+        llvmBackendOptions(request.compilation());
+    const auto backend = queryLlvmBackendIdentity(
+        request.compilation().target(), options, errorMessage);
+    if (!backend || backend->schema.empty() || backend->llvmVersion.empty() ||
+        backend->triple.empty() || backend->dataLayout.empty() ||
+        backend->cpu.empty() || backend->privateAbi == 0 ||
+        backend->instrumentation.empty() ||
+        backend->debugInfo != options.debugInfo ||
+        backend->instrumentation !=
+            llvmInstrumentationModeName(options.instrumentation)) {
+      if (errorMessage.empty())
+        errorMessage = "incomplete LLVM backend identity";
+      return std::nullopt;
+    }
+    // CMake requires a static LLVM closure. The containing executable's bytes
+    // identify the actual GTI + LLVM implementation, including dirty builds.
+    if (!addFileIdentity(identity, "llvm.compiler-image",
+                         backend->compilerExecutable, false, errorMessage))
+      return std::nullopt;
+    identity.add("llvm.schema", backend->schema);
+    identity.add("llvm.version", backend->llvmVersion);
+    identity.add("llvm.private-abi", backend->privateAbi);
+    identity.add("llvm.triple", backend->triple);
+    identity.add("llvm.data-layout", backend->dataLayout);
+    identity.add("llvm.cpu", backend->cpu);
+    identity.add("llvm.features", backend->features);
+    identity.add("llvm.relocation", backend->relocation);
+    identity.add("llvm.code-model", backend->codeModel);
+    identity.add("llvm.codegen-optimization", backend->codegenOptimization);
+    identity.add("llvm.debug-info",
+                 static_cast<std::uint64_t>(backend->debugInfo));
+    identity.add("llvm.instrumentation", backend->instrumentation);
+  }
   addNativeEnvironmentIdentity(identity);
   identity.add("backend.kind",
                static_cast<std::uint64_t>(request.compilation().backend()));
@@ -1563,21 +1777,24 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
               temporaryRoot / (source.stem().string() + ".gti-discovery.d"));
           TemporaryArtifact preprocessedCleanup(preprocessed, true);
           TemporaryArtifact depfileCleanup(depfile, true);
+          const auto effectiveArguments = nativeSourceArguments(
+              arguments, native, request.compilation().debugInfo());
           const std::vector<std::string> probeCommand =
-              cSource
-                  ? nativeToolchain.preprocessCommand(
-                        NativeCCompileRequest(
-                            *request.cCompiler(), source, preprocessed,
-                            cStandard, request.compilation().optimization(),
-                            includeDirectories, arguments, native.targetPolicy),
-                        depfile)
-                  : nativeToolchain.preprocessCommand(
-                        NativeCppCompileRequest(
-                            request.nativeCompiler(), source, preprocessed,
-                            request.compilation().cppStandard(),
-                            request.compilation().optimization(),
-                            includeDirectories, arguments, native.targetPolicy),
-                        depfile);
+              cSource ? nativeToolchain.preprocessCommand(
+                            NativeCCompileRequest(
+                                *request.cCompiler(), source, preprocessed,
+                                cStandard, request.compilation().optimization(),
+                                includeDirectories, effectiveArguments,
+                                native.targetPolicy),
+                            depfile)
+                      : nativeToolchain.preprocessCommand(
+                            NativeCppCompileRequest(
+                                request.nativeCompiler(), source, preprocessed,
+                                request.compilation().cppStandard(),
+                                request.compilation().optimization(),
+                                includeDirectories, effectiveArguments,
+                                native.targetPolicy),
+                            depfile);
           std::optional<std::filesystem::path> memo;
           if (!policy.root.empty()) {
             IdentityBuilder key;
@@ -1654,6 +1871,7 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
 
 struct CacheMetadata {
   std::string key;
+  bool object = false;
   FileDigest generated;
   FileDigest executable;
   std::uint32_t executablePermissions = 0;
@@ -1754,7 +1972,7 @@ bool validDigest(std::string_view digest) {
 }
 
 std::optional<CacheMetadata>
-readCacheMetadata(const std::filesystem::path &path,
+readCacheMetadata(const std::filesystem::path &path, bool object,
                   std::string &errorMessage) {
   std::ifstream input(path, std::ios::binary);
   if (!input) {
@@ -1764,15 +1982,28 @@ readCacheMetadata(const std::filesystem::path &path,
 
   std::string schema;
   CacheMetadata metadata;
+  metadata.object = object;
+  if (object) {
+    std::string label, kind, extension;
+    if (!(input >> schema >> metadata.key >> label >> kind >> extension) ||
+        schema != objectCacheSchema || label != "artifact" ||
+        kind != "object" || extension != ".o") {
+      errorMessage = "metadata has an invalid native artifact schema";
+      return std::nullopt;
+    }
+  } else if (!(input >> schema >> metadata.key) || schema != cacheSchema) {
+    errorMessage = "metadata has an invalid source artifact schema";
+    return std::nullopt;
+  }
   std::string generatedLabel;
   std::string executableLabel;
   std::string symbolsLabel;
   std::string symbolsHash;
-  if (!(input >> schema >> metadata.key >> generatedLabel >>
-        metadata.generated.hash >> metadata.generated.size >> executableLabel >>
+  if (!(input >> generatedLabel >> metadata.generated.hash >>
+        metadata.generated.size >> executableLabel >>
         metadata.executable.hash >> metadata.executable.size >>
         metadata.executablePermissions >> symbolsLabel >> symbolsHash) ||
-      schema != cacheSchema || generatedLabel != "generated" ||
+      generatedLabel != (object ? "representation" : "generated") ||
       executableLabel != "executable" || symbolsLabel != "symbols" ||
       !validDigest(metadata.key) || !validDigest(metadata.generated.hash) ||
       !validDigest(metadata.executable.hash)) {
@@ -1825,7 +2056,9 @@ readCacheMetadata(const std::filesystem::path &path,
 
 std::string renderCacheMetadata(const CacheMetadata &metadata) {
   std::string text =
-      std::string(cacheSchema) + "\n" + metadata.key + "\n" + "generated " +
+      std::string(metadata.object ? objectCacheSchema : cacheSchema) + "\n" +
+      metadata.key + "\n" +
+      (metadata.object ? "artifact object .o\nrepresentation " : "generated ") +
       metadata.generated.hash + " " + std::to_string(metadata.generated.size) +
       "\n" + "executable " + metadata.executable.hash + " " +
       std::to_string(metadata.executable.size) + " " +
@@ -1879,9 +2112,11 @@ std::optional<std::string> readTextFile(const std::filesystem::path &path,
 }
 
 CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
-                                   std::string_view expectedKey) {
+                                   std::string_view expectedKey, bool object,
+                                   bool requiresSymbols) {
   const std::filesystem::path metadataPath = entry / "metadata";
-  const std::filesystem::path generatedPath = entry / "generated.cpp";
+  const std::filesystem::path generatedPath =
+      entry / cacheRepresentationFile(object);
   const std::filesystem::path executablePath = entry / "executable";
   std::error_code error;
   const bool entryExists = std::filesystem::exists(entry, error);
@@ -1895,11 +2130,27 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
   }
 
   std::string detail;
+  if (object) {
+    for (const auto &path : {metadataPath, generatedPath, executablePath}) {
+      error.clear();
+      if (!std::filesystem::is_regular_file(
+              std::filesystem::symlink_status(path, error)) ||
+          error) {
+        return {.status = CacheLookupStatus::Corrupt,
+                .detail = "native cache payload is not a regular file"};
+      }
+    }
+  }
   const std::optional<CacheMetadata> metadata =
-      readCacheMetadata(metadataPath, detail);
+      readCacheMetadata(metadataPath, object, detail);
   if (!metadata) {
     return {.status = CacheLookupStatus::Corrupt, .detail = std::move(detail)};
   }
+  if (metadata->symbols.has_value() != requiresSymbols)
+    return {.status = CacheLookupStatus::Corrupt,
+            .detail =
+                "debug companion presence does not match the requested policy"};
+
   if (metadata->key != expectedKey) {
     return {.status = CacheLookupStatus::Corrupt,
             .detail = "metadata key does not match its cache directory"};
@@ -2047,7 +2298,7 @@ ArtifactPublishResult copyFileAtomically(
 
 bool storeCacheEntry(const ExecutableBuildRequest &request,
                      const std::filesystem::path &entry, std::string_view key,
-                     std::string_view generated,
+                     const BackendArtifact &artifact,
                      const std::vector<std::string> &testCases,
                      std::string &errorMessage) {
   if (!request.managedOutput()) {
@@ -2061,7 +2312,16 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
     return false;
   }
 
-  const std::filesystem::path generatedPath = entry / "generated.cpp";
+  const bool object = nativeObjectCache(request);
+  if (artifact.kind != (object ? BackendArtifactKind::Object
+                               : BackendArtifactKind::Source) ||
+      artifact.extension != (object ? ".o" : ".cpp")) {
+    errorMessage = "backend artifact does not match the cache schema";
+    return false;
+  }
+  const std::string_view generated = artifact.contents;
+  const std::filesystem::path generatedPath =
+      entry / cacheRepresentationFile(object);
   const std::filesystem::path executablePath = entry / "executable";
   const FileDigest generatedDigest{.hash = digestText(generated),
                                    .size = generated.size()};
@@ -2089,6 +2349,7 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
   }
 
   CacheMetadata metadata{.key = std::string(key),
+                         .object = object,
                          .generated = generatedDigest,
                          .executable = *executableDigest,
                          .executablePermissions =
@@ -2297,9 +2558,9 @@ std::optional<std::string>
 nativeCacheBypassDetail(const ExecutableBuildRequest &request,
                         NativeLinkIdentityPlan &plan) {
   plan = {};
-  if (request.compilation().backend() != BackendKind::Cpp) {
-    return "native-object backend artifacts are not yet represented by the "
-           "build cache format";
+  if (request.compilation().backend() != BackendKind::Cpp &&
+      request.compilation().backend() != BackendKind::Llvm) {
+    return "unknown backend artifact identity";
   }
   const NativeInputs &inputs = request.nativeInputs();
   if (!inputs.compilerArguments.empty() || !inputs.cCompilerArguments.empty() ||
@@ -2442,6 +2703,7 @@ effectiveNativeInputs(const ToolchainLayout &toolchain,
   // link-input assembly: without it the final link would silently run the
   // declared cross compiler in its host configuration.
   inputs.targetPolicy = additional.targetPolicy;
+  inputs.instrumentation = additional.instrumentation;
   inputs.includeDirectories =
       nativeCppIncludeDirectories(toolchain, additional);
   append(inputs.compilerArguments, additional.compilerArguments);
@@ -2911,6 +3173,483 @@ bool containsTimeSensitivePreprocessorUse(std::string_view text) {
          text.find("__TIMESTAMP__") != std::string_view::npos;
 }
 
+namespace {
+std::optional<NativeInstrumentationPlan>
+resolveLlvmNativeRuntimeImpl(const std::string &compiler,
+                             const LlvmBackendIdentity &backend,
+                             LlvmInstrumentationMode mode, std::string &error) {
+  NativeInstrumentationPlan plan;
+  try {
+    plan.mode = llvmInstrumentationModeName(mode);
+  } catch (const std::invalid_argument &failure) {
+    error = failure.what();
+    return std::nullopt;
+  }
+  if (mode == LlvmInstrumentationMode::None)
+    return plan;
+  const auto fail =
+      [&](std::string detail) -> std::optional<NativeInstrumentationPlan> {
+    error = std::move(detail);
+    return std::nullopt;
+  };
+  const auto configured = [](const char *name) {
+    const char *value = std::getenv(name);
+    return value && *value;
+  };
+  if (hasDependencyInjectingNativeEnvironment() ||
+      configured("CCC_OVERRIDE_OPTIONS") ||
+      configured("MACOSX_DEPLOYMENT_TARGET") ||
+      configured("IPHONEOS_DEPLOYMENT_TARGET") || configured("LD_PRELOAD") ||
+      configured("LD_AUDIT") || configured("DYLD_INSERT_LIBRARIES") ||
+      configured("DYLD_IMAGE_SUFFIX") || configured("DYLD_ROOT_PATH") ||
+      configured("DYLD_VERSIONED_LIBRARY_PATH") ||
+      configured("DYLD_VERSIONED_FRAMEWORK_PATH"))
+    return fail(
+        "LLVM instrumentation requires an identifiable implicit host "
+        "toolchain without native search, deployment or loader overrides");
+  if (backend.llvmVersion.empty() || backend.triple.empty())
+    return fail("LLVM instrumentation requires the producer's actual toolchain "
+                "identity");
+  const auto executable = resolveExecutableForIdentity(compiler);
+  if (!executable)
+    return fail("cannot resolve the selected instrumentation compiler");
+  plan.compilerCommand = compiler;
+  plan.compilerExecutable = std::filesystem::weakly_canonical(*executable);
+  plan.llvmVersion = backend.llvmVersion;
+  const auto probe =
+      [&](std::vector<std::string> arguments,
+          std::chrono::milliseconds timeout =
+              std::chrono::milliseconds(30000)) -> std::optional<std::string> {
+    const auto result = invokeProcess(
+        arguments, {.captureSuccessfulOutput = true,
+                    .description = "LLVM native runtime identity probe",
+                    .timeout = timeout,
+                    .isolateProcessGroup = true});
+    if (!result.succeeded() || result.output.size() > 1024 * 1024) {
+      error = "selected Clang could not establish a bounded native runtime "
+              "identity";
+      return std::nullopt;
+    }
+    return result.output;
+  };
+  const auto trim = [](std::string text) {
+    const auto begin = text.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos)
+      return std::string{};
+    return text.substr(begin, text.find_last_not_of(" \t\r\n") - begin + 1);
+  };
+  const auto version = probe({compiler, "--version"});
+  if (!version)
+    return std::nullopt;
+  const auto firstLine = version->substr(0, version->find('\n'));
+  const auto marker = firstLine.find("clang version ");
+  if (marker == std::string::npos || firstLine.starts_with("Apple clang"))
+    return fail(
+        "LLVM instrumentation requires matching upstream Clang compiler-rt; "
+        "the selected native compiler is not an identified upstream Clang");
+  const auto versionBegin = marker + std::string_view("clang version ").size();
+  plan.compilerVersion = firstLine.substr(
+      versionBegin,
+      firstLine.find_first_of(" \t", versionBegin) - versionBegin);
+  if (plan.compilerVersion != backend.llvmVersion)
+    return fail("selected Clang version " + plan.compilerVersion +
+                " does not match backend LLVM " + backend.llvmVersion);
+  std::vector<std::string> prefix{compiler, "--no-default-config"};
+  std::istringstream versionLines(*version);
+  std::string line;
+  while (std::getline(versionLines, line)) {
+    constexpr std::string_view label = "Configuration file: ";
+    if (!line.starts_with(label))
+      continue;
+    const auto path =
+        std::filesystem::weakly_canonical(trim(line.substr(label.size())));
+    if (!std::filesystem::is_regular_file(path) ||
+        !plan.configurationFiles.empty())
+      return fail(
+          "cannot identify one flat selected Clang default configuration");
+    std::ifstream input(path);
+    std::string contents{std::istreambuf_iterator<char>(input), {}};
+    if (!input || contents.size() > 65536)
+      return fail("cannot read the selected Clang default configuration");
+    std::istringstream configuration(contents);
+    std::string token;
+    while (configuration >> std::quoted(token)) {
+      if (token.starts_with('#')) {
+        std::getline(configuration, line);
+        continue;
+      }
+      if (token.starts_with('@') || token == "--config" ||
+          token.starts_with("--config=") || token == "-resource-dir" ||
+          token.starts_with("-resource-dir=") ||
+          token.find('\\') != std::string::npos ||
+          token.find('\'') != std::string::npos)
+        return fail(
+            "nested or redirected Clang configuration needs exact input "
+            "discovery before instrumentation can be selected");
+    }
+    plan.configurationFiles.push_back(path);
+    prefix.push_back("--config=" + path.string());
+  }
+  const auto query = [&](std::string option) {
+    auto command = prefix;
+    command.push_back(std::move(option));
+    return probe(std::move(command));
+  };
+  const auto resource = query("--print-resource-dir");
+  const auto runtime = query("--print-runtime-dir");
+  const auto triple = query("-dumpmachine");
+  if (!resource || !runtime || !triple)
+    return std::nullopt;
+  const auto nativeTarget = parseTargetTriple(trim(*triple));
+  const auto producerTarget = parseTargetTriple(backend.triple);
+  if (!nativeTarget || !producerTarget ||
+      nativeTarget->os != producerTarget->os ||
+      nativeTarget->arch != producerTarget->arch ||
+      nativeTarget->dataLayout != producerTarget->dataLayout ||
+      !((producerTarget->os == "macos" && producerTarget->arch == "arm64") ||
+        (producerTarget->os == "linux" && producerTarget->arch == "x86_64")))
+    return fail("selected Clang runtime target does not match the supported "
+                "LLVM host ABI");
+  plan.resourceDirectory = std::filesystem::weakly_canonical(trim(*resource));
+  plan.runtimeDirectory = std::filesystem::weakly_canonical(trim(*runtime));
+  const auto below = [](const std::filesystem::path &root,
+                        const std::filesystem::path &path) {
+    const auto relative = path.lexically_relative(root);
+    return !relative.empty() && !relative.is_absolute() &&
+           *relative.begin() != "..";
+  };
+  if (!std::filesystem::is_directory(plan.resourceDirectory) ||
+      !std::filesystem::is_directory(plan.runtimeDirectory) ||
+      !below(plan.resourceDirectory, plan.runtimeDirectory))
+    return fail("selected compiler-rt directory is unavailable or outside "
+                "Clang's resource root");
+  plan.compileArguments.assign(prefix.begin() + 1, prefix.end());
+  plan.linkArguments = plan.compileArguments;
+  std::string compileMode;
+  std::string linkMode;
+  switch (mode) {
+  case LlvmInstrumentationMode::None:
+    break;
+  case LlvmInstrumentationMode::Address:
+    compileMode = linkMode = "address";
+    break;
+  case LlvmInstrumentationMode::UndefinedMemory:
+    compileMode = "null,alignment";
+    linkMode = "undefined";
+    break;
+  case LlvmInstrumentationMode::AddressAndUndefinedMemory:
+    compileMode = "address,null,alignment";
+    linkMode = "address,undefined";
+    break;
+  case LlvmInstrumentationMode::Thread:
+    compileMode = linkMode = "thread";
+    break;
+  }
+  for (auto *arguments : {&plan.compileArguments, &plan.linkArguments}) {
+    arguments->emplace_back("-fno-sanitize=all");
+    arguments->emplace_back("-fno-sanitize-recover=all");
+    arguments->emplace_back("-fno-sanitize-trap=all");
+  }
+  plan.compileArguments.push_back("-fsanitize=" + compileMode);
+  plan.compileArguments.emplace_back("-fno-sanitize-ignorelist");
+  plan.linkArguments.push_back("-fsanitize=" + linkMode);
+  if (producerTarget->os == "macos") {
+    append(plan.linkArguments,
+           std::vector<std::string>{"-Xlinker", "-rpath", "-Xlinker",
+                                    plan.runtimeDirectory.string()});
+  }
+  if (mode == LlvmInstrumentationMode::Address ||
+      mode == LlvmInstrumentationMode::AddressAndUndefinedMemory)
+    plan.compileArguments.emplace_back("-fno-sanitize-address-use-after-scope");
+  if (mode == LlvmInstrumentationMode::Thread) {
+    plan.compileArguments.emplace_back("-fPIE");
+    plan.linkArguments.push_back(producerTarget->os == "macos" ? "-Wl,-pie"
+                                                               : "-pie");
+  }
+  struct ProbeDirectory {
+    std::filesystem::path path;
+    ~ProbeDirectory() {
+      std::error_code ignored;
+      if (!path.empty())
+        std::filesystem::remove_all(path, ignored);
+    }
+  } temporary;
+  const auto directory = stagedArtifactPath(
+      std::filesystem::temp_directory_path() / "gti-native-runtime-probe");
+  if (!std::filesystem::create_directory(directory))
+    return fail("cannot create isolated native runtime probe directory");
+  temporary.path = directory;
+  const auto source = directory / "probe.c";
+  const auto object = directory / "probe.o";
+  const auto output = directory / "probe";
+  std::string program;
+  std::vector<std::string> hooks;
+  if (mode == LlvmInstrumentationMode::Address ||
+      mode == LlvmInstrumentationMode::AddressAndUndefinedMemory) {
+    program += "extern void __asan_init(void);\n";
+    hooks.emplace_back("__asan_init");
+  }
+  if (mode == LlvmInstrumentationMode::UndefinedMemory ||
+      mode == LlvmInstrumentationMode::AddressAndUndefinedMemory) {
+    program += "extern void __ubsan_handle_type_mismatch_v1_abort(void*, "
+               "unsigned long);\n";
+    hooks.emplace_back("__ubsan_handle_type_mismatch_v1_abort");
+  }
+  if (mode == LlvmInstrumentationMode::Thread) {
+    program += "extern void __tsan_init(void);\n";
+    hooks.emplace_back("__tsan_init");
+  }
+  for (std::size_t index = 0; index < hooks.size(); ++index) {
+    const auto parameters =
+        hooks[index] == "__ubsan_handle_type_mismatch_v1_abort"
+            ? "void*, unsigned long"
+            : "void";
+    program += "void (*volatile hook" + std::to_string(index) + ")(" +
+               parameters + ") = &" + hooks[index] + ";\n";
+  }
+  program += "int main(void) { return ";
+  for (std::size_t index = 0; index < hooks.size(); ++index)
+    program +=
+        (index ? " || " : "") + std::string("!hook") + std::to_string(index);
+  program += "; }\n";
+  {
+    std::ofstream file(source);
+    file << program;
+    if (!file)
+      return fail("cannot stage native runtime probe");
+  }
+  std::vector<std::string> compile{compiler};
+  append(compile, plan.compileArguments);
+  append(compile,
+         std::vector<std::string>{"-x", "c", "-std=c17", "-c", source.string(),
+                                  "-o", object.string()});
+  auto compileTraceCommand = compile;
+  compileTraceCommand.emplace_back("-###");
+  const auto compileTrace = probe(compileTraceCommand);
+  if (!compileTrace || !probe(compile, std::chrono::milliseconds(60000)))
+    return std::nullopt;
+  std::vector<std::string> link{compiler};
+  append(link, plan.linkArguments);
+  append(link,
+         std::vector<std::string>{object.string(), "-o", output.string()});
+  auto traceCommand = link;
+  traceCommand.emplace_back("-###");
+  const auto trace = probe(traceCommand);
+  if (!trace)
+    return std::nullopt;
+  const auto quotedCommands = [&](const std::string &text) {
+    std::vector<std::vector<std::string>> commands;
+    std::istringstream lines(text);
+    std::string row;
+    while (std::getline(lines, row)) {
+      row = trim(std::move(row));
+      if (row.empty() || row.front() != '"')
+        continue;
+      std::istringstream input(row);
+      std::vector<std::string> arguments;
+      while (input >> std::ws && !input.eof()) {
+        std::string argument;
+        if (input.peek() != '"' || !(input >> std::quoted(argument)))
+          return std::vector<std::vector<std::string>>{};
+        arguments.push_back(std::move(argument));
+      }
+      if (!arguments.empty())
+        commands.push_back(std::move(arguments));
+    }
+    return commands;
+  };
+  const auto compilers = quotedCommands(*compileTrace);
+  const auto linkers = quotedCommands(*trace);
+  if (compilers.size() != 1 || linkers.size() != 1 ||
+      std::find(compilers.front().begin(), compilers.front().end(), "-cc1") ==
+          compilers.front().end())
+    return fail(
+        "cannot establish exact Clang frontend and linker command identity");
+  plan.linkTrace = linkers.front();
+  const auto frontend =
+      std::filesystem::weakly_canonical(compilers.front().front());
+  if (!std::filesystem::equivalent(plan.compilerExecutable, frontend))
+    return fail("opaque Clang launchers require explicit transitive toolchain "
+                "provenance");
+  if (producerTarget->os == "macos") {
+    const auto first =
+        std::find(plan.linkTrace.begin(), plan.linkTrace.end(), "-rpath");
+    if (first == plan.linkTrace.end() ||
+        std::next(first) == plan.linkTrace.end() ||
+        std::filesystem::weakly_canonical(*std::next(first)) !=
+            plan.runtimeDirectory)
+      return fail("native runtime loader policy does not prioritize the "
+                  "identified compiler-rt root");
+  }
+  std::set<std::filesystem::path> files{plan.compilerExecutable};
+  files.insert(std::filesystem::weakly_canonical(compilers.front().front()));
+  // Frontend resource files (for example an explicitly selected forced include)
+  // can change native instrumentation without changing preprocessed user code.
+  for (const auto &argument : compilers.front()) {
+    std::filesystem::path path(argument);
+    if (!path.is_absolute()) {
+      const auto equals = argument.find('=');
+      if (equals == std::string::npos)
+        continue;
+      path = argument.substr(equals + 1);
+    }
+    if (!path.is_absolute() || !std::filesystem::is_regular_file(path))
+      continue;
+    const auto canonical = std::filesystem::weakly_canonical(path);
+    if (!below(std::filesystem::weakly_canonical(directory), canonical))
+      files.insert(canonical);
+  }
+  for (auto &argument : plan.linkTrace) {
+    if (argument == object.string()) {
+      argument = "<native-runtime-probe-object>";
+      continue;
+    }
+    if (argument == output.string()) {
+      argument = "<native-runtime-probe-output>";
+      continue;
+    }
+    const std::filesystem::path path(argument);
+    if (!path.is_absolute() || !std::filesystem::is_regular_file(path))
+      continue;
+    const auto canonical = std::filesystem::weakly_canonical(path);
+    const std::filesystem::path reportedRuntime(trim(*runtime));
+    if ((below(reportedRuntime, path) || below(plan.runtimeDirectory, path)) &&
+        !below(plan.runtimeDirectory, canonical))
+      return fail(
+          "selected compiler-rt link escapes Clang's identified runtime root");
+    files.insert(canonical);
+    if (below(plan.runtimeDirectory, canonical))
+      plan.runtimeFiles.push_back(canonical);
+  }
+  if (plan.runtimeFiles.empty())
+    return fail("Clang's native link plan did not select concrete matching "
+                "compiler-rt files");
+  for (std::size_t index = 0; index + 1 < plan.linkTrace.size(); ++index) {
+    if (plan.linkTrace[index] == "-syslibroot" ||
+        plan.linkTrace[index] == "--sysroot") {
+      const auto sdk =
+          std::filesystem::weakly_canonical(plan.linkTrace[index + 1]);
+      if (!std::filesystem::is_directory(sdk / "usr/lib") ||
+          !std::filesystem::is_regular_file(sdk / "SDKSettings.json"))
+        return fail(
+            "selected native SDK library/settings identity is unavailable");
+      plan.sdkDirectories.push_back(sdk);
+    }
+  }
+  // Ask the actual linker for its selected file closure, including SDK tbd
+  // reexports. Unselected SDK directory aliases cannot affect this link.
+  auto tracedLink = link;
+  tracedLink.emplace_back("-Wl,-t");
+  const auto loaded = probe(tracedLink, std::chrono::milliseconds(60000));
+  if (loaded && producerTarget->os == "macos") {
+    // Clang also supplies @executable_path. An unrelated library beside the
+    // probe must not shadow the identified matching runtime directory.
+    for (const auto &file : plan.runtimeFiles) {
+      if (file.extension() != ".dylib")
+        continue;
+      std::ofstream shadow(directory / file.filename());
+      shadow << "unrelated compiler-rt shadow must not load\n";
+      if (!shadow)
+        return fail("cannot establish isolated native runtime loader control");
+    }
+  }
+  if (!loaded || !probe({output.string()}))
+    return fail(
+        "matching compiler-rt could not link and start on the selected host; "
+        "no instrumentation profile was admitted");
+  std::istringstream loadedFiles(*loaded);
+  const auto probeRoot = std::filesystem::weakly_canonical(directory);
+  while (std::getline(loadedFiles, line)) {
+    line = trim(std::move(line));
+    if (line.empty() || !std::filesystem::path(line).is_absolute())
+      continue;
+    std::filesystem::path path(line);
+    if (!std::filesystem::is_regular_file(path) && line.ends_with(')')) {
+      auto member = line.rfind('(');
+      while (member != std::string::npos) {
+        const std::filesystem::path archive(line.substr(0, member));
+        if (std::filesystem::is_regular_file(archive)) {
+          path = archive;
+          break;
+        }
+        member = member == 0 ? std::string::npos : line.rfind('(', member - 1);
+      }
+    }
+    if (!std::filesystem::is_regular_file(path))
+      return fail(
+          "cannot establish an exact native linker input from its file trace");
+    const auto canonical = std::filesystem::weakly_canonical(path);
+    if (below(probeRoot, canonical))
+      continue;
+    const std::filesystem::path reportedRuntime(trim(*runtime));
+    if ((below(reportedRuntime, path) || below(plan.runtimeDirectory, path)) &&
+        !below(plan.runtimeDirectory, canonical))
+      return fail(
+          "selected compiler-rt link escapes Clang's identified runtime root");
+    for (std::size_t index = 0; index + 1 < plan.linkTrace.size(); ++index) {
+      if (plan.linkTrace[index] != "-syslibroot" &&
+          plan.linkTrace[index] != "--sysroot")
+        continue;
+      const std::filesystem::path reportedSdk(plan.linkTrace[index + 1]);
+      const auto sdk = std::filesystem::weakly_canonical(reportedSdk);
+      if ((below(reportedSdk, path) || below(sdk, path)) &&
+          !below(sdk, canonical))
+        return fail("selected native SDK library alias escapes its identified "
+                    "SDK root");
+    }
+    files.insert(canonical);
+    if (below(plan.runtimeDirectory, canonical))
+      plan.runtimeFiles.push_back(canonical);
+  }
+  plan.implementationFiles.assign(files.begin(), files.end());
+  std::sort(plan.runtimeFiles.begin(), plan.runtimeFiles.end());
+  plan.runtimeFiles.erase(
+      std::unique(plan.runtimeFiles.begin(), plan.runtimeFiles.end()),
+      plan.runtimeFiles.end());
+  IdentityBuilder identity;
+  identity.add("schema", "gti-native-instrumentation-v1");
+  identity.add("mode", plan.mode);
+  identity.add("llvm.version", backend.llvmVersion);
+  identity.add("target", backend.triple);
+  identity.add("compiler.command", compiler);
+  identity.add("compiler.version", *version);
+  identity.add("resource", plan.resourceDirectory.generic_string());
+  identity.add("runtime", plan.runtimeDirectory.generic_string());
+  for (const auto &path : plan.configurationFiles)
+    if (!addFileIdentity(identity, "configuration", path, true, error))
+      return std::nullopt;
+  for (const auto &path : plan.implementationFiles)
+    if (!addFileIdentity(identity, "implementation", path, true, error))
+      return std::nullopt;
+  for (const auto &sdk : plan.sdkDirectories)
+    if (!addFileIdentity(identity, "sdk.settings", sdk / "SDKSettings.json",
+                         true, error))
+      return std::nullopt;
+  for (const auto &argument : plan.compileArguments)
+    identity.add("compile.argument", argument);
+  for (const auto &argument : plan.linkArguments)
+    identity.add("link.argument", argument);
+  for (const auto &argument : plan.linkTrace)
+    identity.add("resolved.link.argument", argument);
+  plan.identity = identity.finish();
+  return plan;
+}
+
+} // namespace
+
+std::optional<NativeInstrumentationPlan>
+resolveLlvmNativeRuntime(const std::string &compiler,
+                         const LlvmBackendIdentity &backend,
+                         LlvmInstrumentationMode mode, std::string &error) {
+  try {
+    return resolveLlvmNativeRuntimeImpl(compiler, backend, mode, error);
+  } catch (const std::exception &failure) {
+    error = "cannot inspect selected Clang runtime resources: " +
+            std::string(failure.what());
+    return std::nullopt;
+  }
+}
+
 ExecutableBuildRequest::ExecutableBuildRequest(
     CompilationRequest compilation, ToolchainLayout toolchain,
     std::filesystem::path generatedSource, std::filesystem::path output,
@@ -2988,10 +3727,13 @@ ExecutableBuildRequest::buildReport() const {
   return requestedBuildReport;
 }
 
-ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
-                                      ProgressObserver *progress) {
+namespace {
+ExecutableBuildResult
+buildResolvedExecutable(const ExecutableBuildRequest &request,
+                        ProgressObserver *progress) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
+  result.nativeInstrumentation = request.nativeInputs().instrumentation;
   const auto hasObjectiveCpp = [](const auto &sources) {
     return std::any_of(sources.begin(), sources.end(), [](const auto &source) {
       return source.extension() == ".mm";
@@ -3118,6 +3860,23 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     result.driverDiagnostic = diagnostic;
     return result;
   }
+  if (request.compilation().debugInfo() &&
+      request.compilation().target().os == "macos") {
+    const std::filesystem::path symbols(request.output().string() + ".dSYM");
+    if (const auto collision = debugBundleSourceCollision(
+            symbols, compilationInputs.sources, request.generatedSource())) {
+      result.status = ExecutableBuildStatus::ArtifactPathConflict;
+      result.driverDiagnostic = "gti: " + *collision;
+      return result;
+    }
+    if (const auto failure =
+            DebugBundlePublication::validateDestination(symbols)) {
+      result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+      result.driverDiagnostic =
+          "gti: failed to validate debug companion: " + *failure;
+      return result;
+    }
+  }
   std::optional<BuildProvenance> buildProvenance;
   if (request.buildReport()) {
     if (const std::optional<std::string> diagnostic =
@@ -3198,7 +3957,9 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = "cache requires a managed project output policy";
     } else {
-      const std::filesystem::path versionRoot = request.cache()->root / "v4";
+      const bool object = nativeObjectCache(request);
+      const std::filesystem::path versionRoot =
+          request.cache()->root / (object ? "v5" : "v4");
       const std::filesystem::path cacheProbe = versionRoot / "probe/metadata";
       if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
               *request.managedOutput(), cacheProbe, false)) {
@@ -3229,7 +3990,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
           return result;
         }
 
-        const CacheLookupResult lookup = lookupCacheEntry(*cacheEntry, *key);
+        const CacheLookupResult lookup =
+            lookupCacheEntry(*cacheEntry, *key, object,
+                             request.compilation().debugInfo() &&
+                                 request.compilation().target().os == "macos");
         if (lookup.status == CacheLookupStatus::Hit) {
           cacheProgress.update("hit; restoring executable");
           result.cache.status = BuildCacheStatus::Hit;
@@ -3250,9 +4014,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
           result.compilation.diagnostics =
               std::move(compilationInputs.diagnostics);
           result.compilation.artifact =
-              BackendArtifact{.kind = BackendArtifactKind::Source,
+              BackendArtifact{.kind = object ? BackendArtifactKind::Object
+                                             : BackendArtifactKind::Source,
                               .contents = lookup.generated,
-                              .extension = ".cpp"};
+                              .extension = object ? ".o" : ".cpp"};
           if (request.keepGeneratedSource()) {
             std::string writeError;
             if (!publishTextAtomically(request.generatedSource(),
@@ -3279,34 +4044,58 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
           }
 
           std::string restoreError;
-          result.artifactPublishResult = copyFileAtomically(
-              *cacheEntry / "executable", request.output(), restoreError,
-              lookup.executableDigest, lookup.executablePermissions);
-          if (!result.artifactPublishResult->succeeded()) {
-            result.driverDiagnostic =
-                "gti: failed to restore cached executable: " + restoreError;
-            result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
-            return result;
-          }
           if (lookup.symbols) {
-            // Restore the symbol bundle through the same staged publication
-            // a fresh build uses, so ownership and collision rules hold.
             const std::filesystem::path symbols(request.output().string() +
                                                 ".dSYM");
-            const std::filesystem::path staged = stagedArtifactPath(symbols);
-            if (!copyTree(*lookup.symbols, staged, restoreError)) {
-              result.driverDiagnostic =
-                  "gti: failed to restore cached debug symbols: " +
-                  restoreError;
-              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+            if (const auto collision = debugBundleSourceCollision(
+                    symbols, result.compilation.sources,
+                    request.generatedSource())) {
+              result.status = ExecutableBuildStatus::ArtifactPathConflict;
+              result.driverDiagnostic = "gti: " + *collision;
               return result;
             }
-            if (const auto diagnostic = publishDebugBundle(staged, symbols)) {
-              std::error_code cleanupError;
-              std::filesystem::remove_all(staged, cleanupError);
+            const auto stagedExecutable = stagedArtifactPath(request.output());
+            TemporaryArtifact executableCleanup(stagedExecutable, true);
+            const auto stagedSymbols = stagedArtifactPath(symbols);
+            StagedDebugBundleCleanup symbolsCleanup{stagedSymbols};
+            const auto copied = copyFileAtomically(
+                *cacheEntry / "executable", stagedExecutable, restoreError,
+                lookup.executableDigest, lookup.executablePermissions);
+            if (!copied.succeeded() ||
+                !copyTree(*lookup.symbols, stagedSymbols, restoreError)) {
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
               result.driverDiagnostic =
-                  "gti: failed to publish cached debug bundle '" +
-                  symbols.string() + "': " + *diagnostic;
+                  "gti: failed to stage cached debug pair: " + restoreError;
+              return result;
+            }
+            DebugBundlePublication publication;
+            if (const auto failure =
+                    publication.publish(stagedSymbols, symbols)) {
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+              result.driverDiagnostic =
+                  "gti: failed to publish cached debug bundle: " + *failure;
+              return result;
+            }
+            result.artifactPublishResult =
+                publishArtifact(stagedExecutable, request.output());
+            if (!result.artifactPublishResult->succeeded()) {
+              const auto restore = publication.rollback();
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+              result.driverDiagnostic =
+                  "gti: failed to restore cached executable: " +
+                  result.artifactPublishResult->error.message() +
+                  (restore ? "; " + *restore : "");
+              return result;
+            }
+            if (const auto warning = publication.commit())
+              result.driverDiagnostic = "gti: warning: " + *warning;
+          } else {
+            result.artifactPublishResult = copyFileAtomically(
+                *cacheEntry / "executable", request.output(), restoreError,
+                lookup.executableDigest, lookup.executablePermissions);
+            if (!result.artifactPublishResult->succeeded()) {
+              result.driverDiagnostic =
+                  "gti: failed to restore cached executable: " + restoreError;
               result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
               return result;
             }
@@ -3378,7 +4167,9 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
         TemporaryArtifact stagedNativeObject(stagedObject, true);
         const NativeCCompileRequest cRequest(
             *request.cCompiler(), source, stagedObject, cStandard,
-            request.compilation().optimization(), includeDirectories, arguments,
+            request.compilation().optimization(), includeDirectories,
+            nativeSourceArguments(arguments, request.nativeInputs(),
+                                  request.compilation().debugInfo()),
             request.nativeInputs().targetPolicy);
         NativeCCompilationResult cCompilation{
             .source = source,
@@ -3424,7 +4215,9 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
         const NativeCppCompileRequest cppRequest(
             request.nativeCompiler(), source, stagedObject,
             request.compilation().cppStandard(),
-            request.compilation().optimization(), includeDirectories, arguments,
+            request.compilation().optimization(), includeDirectories,
+            nativeSourceArguments(arguments, request.nativeInputs(),
+                                  request.compilation().debugInfo()),
             request.nativeInputs().targetPolicy);
         NativeCppCompilationResult cppCompilation{
             .source = source,
@@ -3661,36 +4454,17 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     result.provenance = std::move(buildProvenance);
   }
 
+  DebugBundlePublication debugPublication;
   if (request.compilation().debugInfo() &&
       request.compilation().target().os == "macos") {
     const ProgressScope symbolProgress(progress, ProgressPhase::Symbols);
     const std::filesystem::path stagedSymbols(stagedOutput.string() + ".dSYM");
     const std::filesystem::path symbols(request.output().string() + ".dSYM");
-    // Replacing an owned bundle must not remove a loaded source that was
-    // deliberately placed inside it. A symlink bundle is rejected below.
-    std::error_code collisionError;
-    const auto canonicalSymbols =
-        std::filesystem::weakly_canonical(symbols, collisionError);
-    if (collisionError) {
+    if (const auto collision = debugBundleSourceCollision(
+            symbols, result.compilation.sources, request.generatedSource())) {
       result.status = ExecutableBuildStatus::ArtifactPathConflict;
-      result.driverDiagnostic =
-          "gti: cannot inspect debug bundle path: " + collisionError.message();
+      result.driverDiagnostic = "gti: " + *collision;
       return result;
-    }
-    for (const std::string &name : result.compilation.sources.names()) {
-      const auto source =
-          std::filesystem::weakly_canonical(name, collisionError);
-      if (collisionError)
-        continue;
-      if (std::mismatch(canonicalSymbols.begin(), canonicalSymbols.end(),
-                        source.begin(), source.end())
-              .first == canonicalSymbols.end()) {
-        result.status = ExecutableBuildStatus::ArtifactPathConflict;
-        result.driverDiagnostic =
-            "gti: refusing to replace debug bundle containing loaded source '" +
-            name + "'";
-        return result;
-      }
     }
     std::error_code symbolError;
     if (!std::filesystem::is_directory(stagedSymbols, symbolError)) {
@@ -3709,7 +4483,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
         return result;
       }
     }
-    if (const auto diagnostic = publishDebugBundle(stagedSymbols, symbols)) {
+    if (const auto diagnostic =
+            debugPublication.publish(stagedSymbols, symbols)) {
       generatedArtifact.keep();
       result.generatedSourceRetained = true;
       result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
@@ -3726,14 +4501,19 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   result.artifactPublishResult =
       publishArtifact(stagedOutput, request.output());
   if (!result.artifactPublishResult->succeeded()) {
+    const auto restore = debugPublication.rollback();
     generatedArtifact.keep();
     result.generatedSourceRetained = true;
     result.driverDiagnostic =
         "gti: failed to publish executable '" + request.output().string() +
-        "': " + result.artifactPublishResult->error.message();
+        "': " + result.artifactPublishResult->error.message() +
+        (restore ? "; " + *restore : "");
     result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
     return result;
   }
+
+  if (const auto warning = debugPublication.commit())
+    result.driverDiagnostic = "gti: warning: " + *warning;
 
   // The produced artifact's identity is captured from the published
   // executable, so the record describes the exact bytes a consumer holds
@@ -3754,7 +4534,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   if (cacheEntry && !result.cache.key.empty()) {
     std::string cacheStoreError;
     if (storeCacheEntry(request, *cacheEntry, result.cache.key,
-                        result.compilation.artifact->contents,
+                        *result.compilation.artifact,
                         result.compilation.testCases, cacheStoreError)) {
       if (corruptCacheEntry) {
         result.cache.status = BuildCacheStatus::RecoveredCorruption;
@@ -3774,6 +4554,130 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   result.generatedSourceRetained = request.keepGeneratedSource();
   result.status = ExecutableBuildStatus::Success;
   return result;
+}
+
+} // namespace
+
+ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
+                                      ProgressObserver *progress) {
+  ExecutableBuildResult result;
+  result.generatedSource = request.generatedSource();
+  if (nativeObjectCache(request)) {
+    const auto configured = [](const char *name) {
+      const char *value = std::getenv(name);
+      return value != nullptr && *value != '\0';
+    };
+    const auto &policy = request.nativeInputs().targetPolicy;
+    const auto hasDeploymentArgument = [](const auto &arguments) {
+      return std::any_of(arguments.begin(), arguments.end(),
+                         darwinDeploymentArgument);
+    };
+    const bool darwinPolicy =
+        request.compilation().target().os == "macos" &&
+        (configured("MACOSX_DEPLOYMENT_TARGET") || configured("SDKROOT") ||
+         configured("DEVELOPER_DIR") ||
+         hasDeploymentArgument(request.nativeInputs().linkerArguments) ||
+         hasDeploymentArgument(request.nativeInputs().trailingArguments));
+    if (!policy.triple.empty() || !policy.sysroot.empty() || darwinPolicy) {
+      result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
+      result.driverDiagnostic =
+          "gti: explicit LLVM native target, sysroot or deployment policy "
+          "requires coordinated backend target options and a matching "
+          "target-built runtime; the current profile supports implicit host "
+          "policy only";
+      if (request.cache()) {
+        result.cache.status = BuildCacheStatus::Bypassed;
+        result.cache.detail = "LLVM native target/runtime identity unavailable";
+      }
+      return result;
+    }
+  }
+
+  const auto reject = [&](std::string reason) {
+    result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
+    result.driverDiagnostic = "gti: " + std::move(reason);
+    if (request.cache()) {
+      result.cache.status = BuildCacheStatus::Bypassed;
+      result.cache.detail = "LLVM instrumentation configuration unavailable";
+    }
+    return result;
+  };
+  if (request.nativeInputs().instrumentation)
+    return reject(
+        "native instrumentation plans are resolved by the build driver");
+  const auto mode = request.compilation().llvmInstrumentation();
+  if (mode == LlvmInstrumentationMode::None)
+    return buildResolvedExecutable(request, progress);
+  const auto &native = request.nativeInputs();
+  if (!native.compilerArguments.empty() || !native.cCompilerArguments.empty() ||
+      !native.linkerArguments.empty() || !native.trailingArguments.empty())
+    return reject("LLVM instrumentation requires structured native arguments; "
+                  "opaque compiler/linker policy is not admitted");
+  const auto externalLink = [](const NativeDependencyGroup &group) {
+    return !group.linkOperands.empty() || !group.libraryDirectories.empty();
+  };
+  if (!native.finalLibraryFiles.empty() || !native.libraryFiles.empty() ||
+      !native.libraries.empty() || !native.frameworks.empty() ||
+      !native.orderedLinkOperands.empty() ||
+      !native.libraryDirectories.empty() ||
+      std::any_of(native.dependencyGroups.begin(),
+                  native.dependencyGroups.end(), externalLink))
+    return reject("LLVM diagnostic native link dependencies need matching "
+                  "instrumentation provenance before admission");
+  if (mode == LlvmInstrumentationMode::Thread)
+    return reject("LLVM Thread instrumentation requires verified communicating "
+                  "GTI runtime and native-provider instrumentation provenance");
+  if (request.buildReport())
+    return reject("LLVM instrumented build reports require a matching recorded "
+                  "policy and verifier replay contract");
+  std::string reason;
+  // This is a toolchain-only query of the already implemented default policy,
+  // not an identity for the requested instrumented object. Full object policy
+  // is independently preflighted below and used by generation/cache lookup.
+  const auto toolchain =
+      queryLlvmBackendIdentity(request.compilation().target(), {}, reason);
+  if (!toolchain)
+    return reject(reason);
+  auto runtime = resolveLlvmNativeRuntime(request.nativeCompiler(), *toolchain,
+                                          mode, reason);
+  if (!runtime)
+    return reject(reason);
+  const bool cSources =
+      !native.cSources.empty() ||
+      std::any_of(native.dependencyGroups.begin(),
+                  native.dependencyGroups.end(),
+                  [](const auto &group) { return !group.cSources.empty(); });
+  if (cSources) {
+    if (!request.cCompiler())
+      return reject(
+          "instrumented native C sources require an explicit matching Clang");
+    const auto cRuntime = resolveLlvmNativeRuntime(*request.cCompiler(),
+                                                   *toolchain, mode, reason);
+    if (!cRuntime || cRuntime->runtimeDirectory != runtime->runtimeDirectory ||
+        cRuntime->compilerVersion != runtime->compilerVersion)
+      return reject(
+          "native C compiler-rt does not match the selected C++/LLVM runtime");
+    IdentityBuilder combined;
+    combined.add("native-cxx.runtime", runtime->identity);
+    combined.add("native-cc.runtime", cRuntime->identity);
+    runtime->identity = combined.finish();
+    append(runtime->implementationFiles, cRuntime->implementationFiles);
+    std::sort(runtime->implementationFiles.begin(),
+              runtime->implementationFiles.end());
+    runtime->implementationFiles.erase(
+        std::unique(runtime->implementationFiles.begin(),
+                    runtime->implementationFiles.end()),
+        runtime->implementationFiles.end());
+  }
+  result.nativeInstrumentation = *runtime;
+  const auto object = queryLlvmBackendIdentity(
+      request.compilation().target(), llvmBackendOptions(request.compilation()),
+      reason);
+  if (!object)
+    return reject(reason);
+  ExecutableBuildRequest resolved = request;
+  resolved.additionalNativeInputs.instrumentation = std::move(runtime);
+  return buildResolvedExecutable(resolved, progress);
 }
 
 } // namespace lang::driver

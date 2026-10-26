@@ -3568,6 +3568,81 @@ void testModuleManifest() {
   }
 }
 
+void testBackendProfileAuthority() {
+  using namespace lang;
+  using namespace lang::driver;
+  TemporaryDirectory temporary;
+  const auto manifest = temporary.root() / "gti.toml";
+  const std::string prefix =
+      "manifest-version = 1\n[package]\nname = \"backend-policy\"\n"
+      "version = \"0.1.0\"\n[targets.app]\nkind = \"executable\"\n"
+      "root = \"src/main.gti\"\n[profiles.dev]\n";
+  expect(writeFile(temporary.root() / "src/main.gti",
+                   "int main() { return 0; }\n") &&
+             writeFile(manifest, prefix),
+         "backend policy fixture is writable");
+  const auto resolve = [&](ProjectBuildOverrides overrides = {}) {
+    return resolveProjectBuild(ProjectBuildRequest(
+        temporary.root(), "app", "dev", TargetInfo::host(), overrides));
+  };
+  const auto defaultCpp = resolve();
+  expect(defaultCpp.succeeded() &&
+             defaultCpp.plan->backend() == BackendKind::Cpp &&
+             defaultCpp.plan->generatedSource().extension() == ".cpp",
+         "omitted backend preserves the shipped C++ default and artifact kind");
+  expect(writeFile(manifest, prefix + "backend = \"llvm\"\n"),
+         "LLVM profile is writable");
+  const auto profile = resolve();
+  ProjectBuildOverrides llvm;
+  llvm.backend = BackendKind::Llvm;
+  const auto explicitLlvm = resolve(llvm);
+  ProjectBuildOverrides cpp;
+  cpp.backend = BackendKind::Cpp;
+  const auto overridden = resolve(cpp);
+  expect(profile.succeeded() && explicitLlvm.succeeded() &&
+             overridden.succeeded(),
+         "profile and explicit executable backend policies resolve");
+  if (profile.plan && explicitLlvm.plan && overridden.plan) {
+    expect(profile.plan->backend() == BackendKind::Llvm &&
+               profile.plan->generatedSource().extension() == ".o" &&
+               overridden.plan->backend() == BackendKind::Cpp &&
+               overridden.plan->generatedSource().extension() == ".cpp",
+           "explicit backend overrides the profile before artifact planning");
+    expect(profile.plan->projectModelIdentity() ==
+                   explicitLlvm.plan->projectModelIdentity() &&
+               profile.plan->projectModelIdentity() !=
+                   overridden.plan->projectModelIdentity(),
+           "cache policy binds the effective backend, not whether it was "
+           "explicit");
+  }
+  llvm.keepCpp = true;
+  expect(!resolve(llvm).succeeded(),
+         "LLVM rejects C++ representation retention");
+  llvm.keepCpp = false;
+  llvm.cppStandard = CppStandard::Cpp23;
+  expect(!resolve(llvm).succeeded(),
+         "LLVM rejects a C++-specific CLI standard");
+  expect(writeFile(manifest, prefix + "backend = \"llvm\"\nkeep-cpp = true\n"),
+         "conflicting profile is writable");
+  expect(
+      !resolve().succeeded() && resolve(cpp).succeeded(),
+      "effective backend authority decides whether profile retention is valid");
+  llvm.cppStandard.reset();
+  expect(resolve(llvm).succeeded(),
+         "an explicit retention disable repairs an LLVM profile conflict");
+  for (const auto &[value, diagnostic] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"\"unknown\"", "GTI-B1005"}, {"7", "GTI-B1004"}}) {
+    expect(writeFile(manifest, prefix + "backend = " + value + "\n"),
+           "invalid backend profile is writable");
+    const auto invalid = loadProjectManifest(manifest);
+    expect(!invalid.succeeded() &&
+               findDiagnostic(invalid.diagnostics, diagnostic),
+           "invalid backend profile values retain structured manifest "
+           "diagnostics");
+  }
+}
+
 int main(int argc, char *argv[]) {
   if (argc == 5 && std::string_view(argv[1]) == "-C" &&
       std::string_view(argv[3]) == "init" &&
@@ -3589,6 +3664,7 @@ int main(int argc, char *argv[]) {
   }
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
+  testBackendProfileAuthority();
   testManifestDiagnostics();
   testConfigurationFlagManifest();
   testScopedConfigurationFlags();

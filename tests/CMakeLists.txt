@@ -542,6 +542,45 @@ add_test(NAME driver_library_boundary COMMAND gti_driver_library_smoke)
 add_executable("gti_driver_tests" "${PROJECT_SOURCE_DIR}/tests/driver_tests.cpp")
 target_link_libraries("gti_driver_tests" PRIVATE gti_driver)
 add_test(NAME driver_pipeline COMMAND gti_driver_tests)
+add_executable(gti_llvm_cache_tests llvm_cache_tests.cpp)
+target_link_libraries(gti_llvm_cache_tests PRIVATE gti_driver)
+target_compile_definitions(gti_llvm_cache_tests PRIVATE
+  GTI_LLVM_CACHE_FIXTURE="${PROJECT_SOURCE_DIR}/tests/fixtures/llvm_cache")
+add_test(NAME llvm_cache_round_trip COMMAND gti_llvm_cache_tests)
+set_tests_properties(llvm_cache_round_trip PROPERTIES TIMEOUT 180)
+add_test(NAME llvm_debug_artifacts
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/llvm_debug_artifacts_test.py" "$<TARGET_FILE:gti>")
+set_tests_properties(llvm_debug_artifacts PROPERTIES TIMEOUT 240)
+if(APPLE)
+  add_test(NAME cpp_debug_artifacts
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/llvm_debug_artifacts_test.py"
+            "$<TARGET_FILE:gti>" --backend cpp)
+  set_tests_properties(cpp_debug_artifacts PROPERTIES TIMEOUT 240)
+endif()
+# Explicit matching-runtime evidence, separate from default/rejection coverage.
+set(GTI_LLVM_RUNTIME_TEST_COMPILER "" CACHE FILEPATH
+    "Matching Clang++ for the native runtime identity fixture")
+if(GTI_LLVM_RUNTIME_TEST_COMPILER)
+  add_test(NAME llvm_native_runtime_identity
+    COMMAND gti_llvm_cache_tests --runtime-probe "${GTI_LLVM_RUNTIME_TEST_COMPILER}")
+  set_tests_properties(llvm_native_runtime_identity PROPERTIES TIMEOUT 180)
+endif()
+add_test(NAME llvm_cache_component_mapping
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/llvm_cache_component_mapping_test.py"
+          "${CMAKE_BINARY_DIR}" "${CMAKE_SYSTEM_PROCESSOR}")
+set_tests_properties(llvm_cache_component_mapping PROPERTIES TIMEOUT 30)
+add_test(NAME llvm_cache_project_workflows
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/llvm_cache_project_test.py" "$<TARGET_FILE:gti>")
+set_tests_properties(llvm_cache_project_workflows PROPERTIES TIMEOUT 300)
+add_test(NAME llvm_cache_installed_toolchain
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/llvm_cache_installed_test.py"
+          "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
+set_tests_properties(llvm_cache_installed_toolchain PROPERTIES TIMEOUT 600)
 add_executable(gti_test_runner_tests test_runner_tests.cpp)
 target_link_libraries(gti_test_runner_tests PRIVATE gti_driver)
 add_test(NAME test_runner COMMAND gti_test_runner_tests)
@@ -1725,6 +1764,43 @@ endfunction()
 cmake_language(DEFER CALL gti_write_llvm_evidence_registry)
 
 include(llvm_c04_evaluation.cmake)
+
+# O15 helper checks remain component evidence; production debug/mode wiring is
+# separately gated and is not enabled by these private source registrations.
+add_executable(gti_llvm_debug_info_tests llvm_debug_info_tests.cpp)
+target_include_directories(gti_llvm_debug_info_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_debug_info_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_debug_info COMMAND gti_llvm_debug_info_tests)
+set_tests_properties(llvm_debug_info PROPERTIES TIMEOUT 120)
+
+add_executable(gti_llvm_instrumentation_tests llvm_instrumentation_tests.cpp)
+target_include_directories(gti_llvm_instrumentation_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_instrumentation_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_instrumentation COMMAND gti_llvm_instrumentation_tests)
+set_tests_properties(llvm_instrumentation PROPERTIES TIMEOUT 120)
+
+# O15 SIMD uses the same verified MIR capability and private static LLVM closure
+# as production Body emission. The SDK tools must match the configured LLVM.
+add_executable(gti_llvm_simd_lowering_tests llvm_simd_lowering_tests.cpp)
+target_include_directories(gti_llvm_simd_lowering_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_simd_lowering_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_simd_lowering
+         COMMAND gti_llvm_simd_lowering_tests "${CMAKE_CURRENT_BINARY_DIR}/llvm-simd-component.ll")
+if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_simd_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_simd_execution_test.py"
+                   --emitter "$<TARGET_FILE:gti_llvm_simd_lowering_tests>"
+                   --clang "${LLVM_TOOLS_BINARY_DIR}/clang++" --opt "${LLVM_TOOLS_BINARY_DIR}/opt"
+                   --output-root "${CMAKE_BINARY_DIR}/Testing/llvm-simd-execution")
+  set_tests_properties(llvm_simd_execution PROPERTIES TIMEOUT 1200 PROCESSORS 1)
+  add_test(NAME llvm_simd_source
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_simd_source_test.py"
+                   --gti "$<TARGET_FILE:gti>" --gti-build-cache "${CMAKE_BINARY_DIR}/CMakeCache.txt"
+                   --output-root "${CMAKE_BINARY_DIR}/Testing/llvm-simd-source")
+  set_tests_properties(llvm_simd_source PROPERTIES TIMEOUT 1200 PROCESSORS 1)
+  gti_register_llvm_evidence_manifest(
+    llvm_simd_source "${PROJECT_SOURCE_DIR}/tests/llvm_simd_source_test.py")
+endif()
 
 add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
 target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})

@@ -110,6 +110,7 @@ struct FrontendOptions {
   // units (building it first when absent) and analyses only the rest.
   // Editor snapshots set it; builds and checks do not.
   std::shared_ptr<SemanticPreambleCache> preambleCache;
+  SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None;
 };
 
 struct FrontendResult {

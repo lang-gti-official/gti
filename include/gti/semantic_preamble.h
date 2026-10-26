@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/ast.h"
+#include "gti/source_debug.h"
 #include "gti/source_graph.h"
 
 #include <cstddef>
@@ -23,6 +24,8 @@ class SemanticPreamble;
 // Distinct for every preamble built in this process; reusable records that
 // refer to a preamble's synthesized syntax are keyed by it.
 [[nodiscard]] std::uint64_t semanticPreambleIdentity(const SemanticPreamble &);
+[[nodiscard]] bool semanticPreambleSupportsSourceDebug(const SemanticPreamble &,
+                                                       SourceDebugProfile);
 
 // Everything two programs must share for one preamble to serve both: the
 // analysis configuration, every prefix unit by identity, path, digests and

@@ -1,0 +1,15 @@
+#include <std/memory>
+
+interface CacheDispatch { int read(); };
+
+class CacheValue : public CacheDispatch {
+public:
+  CacheValue() {}
+  int read() override { return 29; }
+};
+
+int main() {
+  auto concrete = std::make_unique<CacheValue>();
+  auto erased = std::upcast_unique<CacheDispatch, CacheValue>(std::move(concrete));
+  return erased->read();
+}

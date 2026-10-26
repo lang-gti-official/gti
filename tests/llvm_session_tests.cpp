@@ -100,6 +100,18 @@ int main() {
 
 void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
   Session session(input, {});
+  const auto *executionAbi =
+      llvm::mdconst::dyn_extract_or_null<llvm::ConstantInt>(
+          session.module().getModuleFlag("gti.execution.abi"));
+  std::string identityError;
+  const auto identity =
+      queryLlvmBackendIdentity(input.program().target(), {}, identityError);
+  expect(executionAbi && executionAbi->getZExtValue() == executionAbiVersion,
+         "module flag must bind the selected execution ABI revision");
+  expect(identity && identity->privateAbi == executionAbiVersion &&
+             executionAbi &&
+             identity->privateAbi == executionAbi->getZExtValue(),
+         "llvm.private-abi cache producer must match the emitted module ABI");
   auto &layouts = session.layouts();
   auto &abi = session.abi();
   const auto boolean = layouts.get(SemanticType::Bool);
@@ -272,9 +284,24 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
   rejects<BackendUnsupportedError>(
       [&] { static_cast<void>(session.emitObject()); },
       "unlowered planned definitions cannot escape as linkable objects");
-  rejects<BackendUnsupportedError>(
-      [&] { Session invalid(input, {.debugInfo = true}); },
-      "debug requests do not silently lose debug metadata");
+  Session debugSession(input, {.debugInfo = true});
+  expect(debugSession.debugInfo() != nullptr,
+         "debug sessions own the composed source metadata consumer");
+  expect(session.debugInfo() == nullptr,
+         "default sessions do not allocate a source debug consumer");
+  for (const auto mode : {LlvmInstrumentationMode::Address,
+                          LlvmInstrumentationMode::UndefinedMemory,
+                          LlvmInstrumentationMode::AddressAndUndefinedMemory,
+                          LlvmInstrumentationMode::Thread})
+    rejects<BackendUnsupportedError>(
+        [&] { Session invalid(input, {.instrumentation = mode}); },
+        "instrumentation stays gated until coherent runtime activation");
+  rejects<std::invalid_argument>(
+      [&] {
+        Session invalid(input, {.instrumentation =
+                                    static_cast<LlvmInstrumentationMode>(99)});
+      },
+      "invalid instrumentation identity rejects");
   rejects<std::invalid_argument>(
       [&] {
         Session invalid(

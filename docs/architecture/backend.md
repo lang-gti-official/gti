@@ -4432,6 +4432,52 @@ before and after optimization; LLVM error diagnostics prevent publication and
 warnings remain session-owned. Emission is single-use and returns binary
 `BackendArtifactKind::Object` bytes only after successful target emission.
 
+Source debug is selected by the driver's lexical debug profile; the target
+factory still rejects non-None instrumentation. `Session`
+owns the optional source-debug consumer and finalizes it before initial module
+verification. Body lowering binds source functions and source constructors or
+destructors to the exact existing declaration/factory result, maps sealed MIR
+instruction and terminator locations, and excludes generated source scopes
+before planning their debug types. Lowered bodies now own one optional debug
+record containing lexical declarations, written locations and block-local
+existing-place ranges and verified scalar SSA value ranges. Storage range construction queries the exact owned final MIR;
+independent verification recomputes those queries and mandatory cuts. Unknown
+membership or untracked storage does not acquire positive availability. A move
+followed by reinitialization cannot be bridged by a single readable range.
+The LLVM debug consumer builds scopes from those identities and exposes boundary
+events for existing storage and values, without requesting a new execution slot.
+The body emitter registers existing storage and passes a read-only view of its
+already-emitted SSA values at verified boundaries. Debug value lookup validates
+the concrete type and owning LLVM function; it never resolves an operand,
+materializes a value, loads storage or adds execution instructions. A value
+profile is selected for optimized emission or already-promoted storage; O0
+retains proven existing storage across block boundaries. A value
+replacement at the same boundary supersedes its predecessor without an
+intervening unavailable record; genuine gaps and lexical exits still emit kills.
+Optimized-out locals retain named declarations without fabricated storage or
+value availability. Private execution symbols are not DWARF linkage names:
+source subprogram names remain visible in native backtraces without changing
+execution ABI names. Native macOS O0 breakpoint, stepping, scalar-local and
+backtrace evidence exists. The exact hosted startup factory registers an
+artificial line-zero carrier, without a user source scope, to preserve inlined
+source locations in the executing native entry. Forged startup/body/location
+identities reject. The native macOS O3 scalar gate reaches the executing inline
+frame and exposes its parameter and promoted local through verified SSA events.
+Retained abstract declarations alone do not establish native variable
+availability. Recovery currently covers direct integer/bool/char scalars with
+unique binding storage, no loans, escaping addresses, ownership moves or
+place-bearing edge transport. Ranges are block-local and end at lexical or
+value replacement boundaries; there is no invented cross-block value merge.
+Expanded pack elements, receivers, broader optimized representations and the
+full two-host failure/callback debugger matrix remain open.
+
+The typed diagnostic pipeline places bounded load/store null/alignment checks
+before optimization, and stock Address or Thread instrumentation after it.
+Address and Thread are distinct modes. These guarded hooks and component tests
+do not establish generated-code sanitizer or native debugger acceptance; those
+require coherent factory/driver activation, matching native runtimes and
+end-to-end evidence on the exact activated candidate.
+
 `Layouts` allocates deterministic named opaque types for concrete class
 identities before completing record bodies. It is the shared authority for
 storage sizes, field offsets, alignment, array element strides and address-only
@@ -4885,6 +4931,31 @@ Raw assertions and unsafe source calls share exact earlier-live-producer and
 direct-return transfer checks, but retain separate authority checks. Replacing
 one permission family with the other cannot authorize a checked loan transfer;
 the former broad passive-loan exemption is subsumed by those producer proofs.
+
+### LLVM Bounded SIMD Execution
+
+`simd.cpp` lowers the six verified floating-array capabilities for addition,
+subtraction, multiplication, division, ordered equality and ordered less-than.
+The MIR verifier owns their exact trusted intrinsic identity, float/double lane
+shape, 1–64 matching extents, read-only input loans and mutable output loan.
+The backend consumes those facts without recognizing public wrapper names.
+
+The emitter loads both complete inputs before writing an output lane, uses
+strict floating LLVM operations without fast-math/alias/alignment promises,
+and stores comparison results as canonical byte masks. The target pipeline can
+keep vector operations or scalarize them; lack of vector hardware does not
+change the accepted source profile. Source-defined SIMD construction, indexing,
+mask reductions and scalar reductions retain their ordinary MIR meaning.
+
+`llvm_simd_lowering` checks representation and malformed-contract controls;
+`llvm_simd_execution` checks strict native scalar oracles at O0–O3 and explicit
+scalarization. `llvm_simd_source` requires real GTI arithmetic/masks/reductions,
+lexically attributed lane and copy-range failures, semantic rejection and
+preservation of existing destinations. Both Darwin AArch64 and Linux x86_64
+are required. Copy-range helpers additionally require the O-LLVM-08
+`StorageBoundsCheck` implementation; admitting arithmetic does not bypass that
+independent pending capability. A core-only investigation profile is partial
+evidence and cannot satisfy the full source gate or complete O-LLVM-15.
 
 ### LLVM Places And Counted Text
 

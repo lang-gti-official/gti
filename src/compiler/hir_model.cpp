@@ -1,4 +1,5 @@
 #include "gti/hir.h"
+#include "gti/instance_analysis_cache.h"
 
 #include <algorithm>
 #include <functional>
@@ -319,9 +320,351 @@ HirProgram::valueIdsForSource(const Expr &source) const {
 }
 
 HirProgramPlanVerificationResult
+verifyHirSourceDebug(const SemanticModel &semantics,
+                     const HirProgram &program) {
+  HirProgramPlanVerificationResult result;
+  const auto reject = [&](std::string detail) {
+    result.errors.push_back(std::move(detail));
+  };
+  const auto semanticIssues = semantics.verifySourceDebug();
+  result.errors.insert(result.errors.end(), semanticIssues.begin(),
+                       semanticIssues.end());
+  if (!isValidSourceDebugProfile(program.sourceDebugProfile()) ||
+      program.sourceDebugProfile() != semantics.sourceDebugProfile())
+    reject("HIR source-debug profile differs from its semantic request");
+  const auto check = [&](const HirBody &body, SourceDebugBodyKind kind,
+                         const void *source, bool sourceBody,
+                         const SemanticSourceDebugInstance *instance =
+                             nullptr) {
+    const auto &record = body.sourceDebug;
+    if (!isValidSourceDebugRecord(record)) {
+      reject("HIR source-debug collection/table state is invalid");
+      return;
+    }
+    if (program.sourceDebugProfile() == SourceDebugProfile::None) {
+      if (record.tables ||
+          (sourceBody &&
+           record.collection == SourceDebugCollection::NotApplicable))
+        reject("disabled HIR source-debug profile owns tables");
+      return;
+    }
+    if (!sourceBody) {
+      if (record.tables && (record.tables->sourceFacts().source ||
+                            record.tables->initializers.empty()))
+        reject("source-free HIR body owns source-debug tables");
+      if (!record.tables &&
+          record.collection != SourceDebugCollection::NotApplicable)
+        reject("source-free HIR body lacks its verified not-applicable state");
+      return;
+    }
+    if (record.collection != SourceDebugCollection::CollectedLexicalV1 ||
+        !record.tables) {
+      reject("source HIR body has no collected lexical facts");
+      return;
+    }
+    const auto &tables = *record.tables;
+    const auto &accepted = tables.sourceFacts();
+    if (tables.domain != body.placeDomain || accepted.source != source ||
+        accepted.kind != kind ||
+        accepted.snapshot != body.placeDomain.snapshot ||
+        !accepted.consistent || accepted.scopes.empty() ||
+        (instance && accepted.instance != *instance)) {
+      reject("HIR source facts have a foreign concrete body/analysis domain");
+      return;
+    }
+    if (!accepted.instance.concrete) {
+      const auto *original = semantics.findSourceDebugBody(kind, source);
+      if (!original || !original->facts.tables ||
+          original->facts.tables->scopes != accepted.scopes ||
+          original->facts.tables->statements != accepted.statements ||
+          original->facts.tables->expressions != accepted.expressions)
+        reject(
+            "HIR primary source membership differs from its semantic producer");
+    }
+    for (std::size_t i = 0; i < accepted.scopes.size(); ++i) {
+      const auto &scope = accepted.scopes[i];
+      if (scope.id != i + 1 || scope.parent >= scope.id ||
+          ((i == 0) != (scope.parent == 0)))
+        reject("HIR source scope has an invalid parent relation");
+    }
+    if (tables.locals.size() != accepted.locals.size())
+      reject("HIR source-local inventory differs from its accepted producer");
+    for (std::size_t i = 0;
+         i < std::min(tables.locals.size(), accepted.locals.size()); ++i) {
+      const auto &local = tables.locals[i];
+      const auto &fact = accepted.locals[i];
+      const auto binding = std::find_if(
+          body.bindings.begin(), body.bindings.end(),
+          [&](const auto &candidate) {
+            return (fact.variable && candidate.variable == fact.variable) ||
+                   (fact.parameter && candidate.parameter == fact.parameter);
+          });
+      if (local.id != fact.id || local.scope != fact.scope ||
+          local.symbol != fact.symbol || local.type != fact.type ||
+          local.name != fact.name || local.declaration != fact.declaration ||
+          local.parameter != (fact.parameter != nullptr) ||
+          local.binding != (binding == body.bindings.end() ? 0 : binding->id) ||
+          (binding != body.bindings.end() &&
+           (binding->info.symbol != local.symbol ||
+            binding->info.type != local.type)))
+        reject("HIR source local differs from its exact concrete binding/type");
+    }
+    std::vector<SourceDebugAnchor> statements;
+    for (const auto &statement : body.statements)
+      if (const auto scope = accepted.statements.find(statement.source);
+          scope != accepted.statements.end())
+        statements.push_back(
+            {statement.id, scope->second,
+             statement.source->extent().value_or(SourceSpan{})});
+    std::vector<SourceDebugAnchor> values;
+    for (const auto &value : body.values)
+      if (const auto scope = accepted.expressions.find(value.source);
+          scope != accepted.expressions.end())
+        values.push_back({value.id, scope->second,
+                          value.source->writtenOrigin()
+                              ? *value.source->writtenOrigin()
+                              : SourceSpan{}});
+    if (tables.statements != statements || tables.values != values)
+      reject("HIR source anchors differ from accepted semantic membership");
+  };
+  const auto findClass =
+      [&](HirClassInstanceId id) -> const HirClassInstance * {
+    const auto &classes = program.classInstances();
+    return id != 0 && id <= classes.size() && classes[id - 1].id == id
+               ? &classes[id - 1]
+               : nullptr;
+  };
+  using InitializerRoots =
+      std::vector<std::pair<const VariableDecl *, std::vector<HirValueId>>>;
+  const auto checkInitializers = [&](const HirBody &body,
+                                     const InitializerRoots &expected,
+                                     const HirClassInstance *owner = nullptr,
+                                     bool sourceRegionBody = false) {
+    const auto &record = body.sourceDebug;
+    if (!isValidSourceDebugRecord(record)) {
+      reject("HIR initializer source collection/table state is invalid");
+      return;
+    }
+    if (program.sourceDebugProfile() == SourceDebugProfile::None) {
+      if (record.tables ||
+          (sourceRegionBody &&
+           record.collection == SourceDebugCollection::NotApplicable))
+        reject("disabled HIR initializer source profile owns tables");
+      return;
+    }
+    if (!record.tables) {
+      if (!expected.empty() || sourceRegionBody)
+        reject("HIR initializer source region is missing");
+      return;
+    }
+    const auto &tables = *record.tables;
+    if (tables.domain != body.placeDomain ||
+        tables.initializers.size() != expected.size()) {
+      reject("HIR initializer source inventory/domain differs from its owner");
+      return;
+    }
+    std::vector<std::vector<HirValueId>> roots;
+    for (const auto &[declaration, values] : expected)
+      roots.push_back(values);
+    const auto reachable = hirInitializerReachabilityBatch(body, roots);
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+      const auto &region = tables.initializers[i];
+      const auto &facts = region.sourceFacts();
+      const auto &[declaration, values] = expected[i];
+      if (region.id != i + 1 || region.declaration != declaration ||
+          region.roots != values || !reachable[i].complete ||
+          facts.kind != SourceDebugBodyKind::Initializer ||
+          facts.source != declaration || facts.creator || !facts.consistent ||
+          facts.snapshot != body.placeDomain.snapshot || facts.scopes.empty()) {
+        reject("HIR initializer source region has foreign roots or provenance");
+        continue;
+      }
+      if (facts.instance.concrete) {
+        const SemanticSourceDebugInstance instance{
+            .concrete = true,
+            .kind = static_cast<std::uint8_t>(
+                InstanceAnalysisKind::ClassFieldInitializers),
+            .declaration = owner ? owner->declaration : 0,
+            .classTypes =
+                owner ? owner->typeArguments : std::vector<SemanticType>{},
+            .classValues = owner ? owner->valueArguments
+                                 : std::vector<CompileTimeValue>{}};
+        if (!owner || facts.instance != instance)
+          reject("HIR initializer source region has a foreign substitution");
+      } else {
+        const auto *original = semantics.findSourceDebugBody(
+            SourceDebugBodyKind::Initializer, declaration);
+        if (!original || !original->facts.tables ||
+            original->facts.tables->scopes != facts.scopes ||
+            original->facts.tables->statements != facts.statements ||
+            original->facts.tables->expressions != facts.expressions)
+          reject("HIR initializer source membership differs from semantics");
+      }
+      std::vector<HirSourceLocal> locals;
+      for (const auto &local : facts.locals) {
+        const auto binding = std::find_if(
+            body.bindings.begin(), body.bindings.end(), [&](const auto &row) {
+              return reachable[i].bindings.contains(row.id) &&
+                     row.variable == local.variable;
+            });
+        if (binding != body.bindings.end() &&
+            (binding->info.symbol != local.symbol ||
+             binding->info.type != local.type))
+          reject("HIR initializer local differs from its concrete binding");
+        locals.push_back(
+            {.id = local.id,
+             .scope = local.scope,
+             .binding = binding == body.bindings.end() ? 0 : binding->id,
+             .symbol = local.symbol,
+             .type = local.type,
+             .name = local.name,
+             .declaration = local.declaration});
+      }
+      std::vector<SourceDebugAnchor> statements;
+      for (const auto &statement : body.statements)
+        if (reachable[i].statements.contains(statement.id))
+          if (const auto scope = facts.statements.find(statement.source);
+              scope != facts.statements.end())
+            statements.push_back(
+                {statement.id, scope->second,
+                 statement.source->extent().value_or(SourceSpan{})});
+      std::vector<SourceDebugAnchor> expressions;
+      for (const auto &value : body.values)
+        if (reachable[i].values.contains(value.id))
+          if (const auto scope = facts.expressions.find(value.source);
+              scope != facts.expressions.end())
+            expressions.push_back({value.id, scope->second,
+                                   value.source->writtenOrigin()
+                                       ? *value.source->writtenOrigin()
+                                       : SourceSpan{}});
+      if (region.locals != locals || region.statements != statements ||
+          region.values != expressions)
+        reject("HIR initializer source rows differ from exact reachable roots");
+    }
+  };
+  InitializerRoots moduleRoots;
+  for (const auto &step : program.programInitializationPlan().steps)
+    if (step.role == ProgramInitializationStepRole::Initializer &&
+        step.initializer)
+      moduleRoots.emplace_back(step.source,
+                               std::vector<HirValueId>{*step.initializer});
+  checkInitializers(program.module(), moduleRoots, nullptr, true);
+  for (const auto &storage : program.threadLocalStorage()) {
+    InitializerRoots roots;
+    if (storage.source && storage.source->initializer())
+      for (const auto root : storage.initializer.roots)
+        if (const auto *statement = storage.initializer.findStatement(root);
+            statement && statement->value)
+          roots.emplace_back(storage.source,
+                             std::vector<HirValueId>{*statement->value});
+    checkInitializers(storage.initializer, roots, nullptr, true);
+  }
+  for (const auto &instance : program.classInstances()) {
+    InitializerRoots fields;
+    for (const auto &field : instance.fields)
+      if (field.declaration && field.initializer)
+        fields.emplace_back(field.declaration,
+                            std::vector<HirValueId>{*field.initializer});
+    checkInitializers(instance.fieldInitializers, fields, &instance, true);
+    InitializerRoots statics;
+    for (const auto &field : instance.staticFields)
+      if (field.declaration && field.initializer &&
+          instance.staticFieldInitializers.findValue(*field.initializer))
+        statics.emplace_back(field.declaration,
+                             std::vector<HirValueId>{*field.initializer});
+    checkInitializers(instance.staticFieldInitializers, statics, &instance,
+                      true);
+  }
+  for (const auto &function : program.functionInstances()) {
+    checkInitializers(function.body, {});
+    SemanticSourceDebugInstance instance;
+    const auto &record = function.body.sourceDebug;
+    if (record.tables && record.tables->sourceFacts().instance.concrete) {
+      instance = {.concrete = true,
+                  .kind =
+                      static_cast<std::uint8_t>(InstanceAnalysisKind::Function),
+                  .declaration = function.declaration,
+                  .types = function.typeArguments,
+                  .values = function.valueArguments};
+      if (function.owner)
+        if (const auto *owner = findClass(*function.owner)) {
+          instance.classTypes = owner->typeArguments;
+          instance.classValues = owner->valueArguments;
+        }
+    }
+    check(function.body, SourceDebugBodyKind::Function, function.source,
+          function.source && function.source->body(), &instance);
+  }
+  for (const auto &constructor : program.constructorInstances()) {
+    InitializerRoots roots;
+    const auto *owner = findClass(constructor.owner);
+    if (owner)
+      for (const auto &initializer : constructor.initializers)
+        if (!initializer.source &&
+            initializer.kind == ConstructorInitializerTargetKind::Field)
+          for (const auto &field : owner->fields)
+            if (field.info.symbol == initializer.field && field.declaration &&
+                field.initializer)
+              roots.emplace_back(field.declaration, initializer.arguments);
+    checkInitializers(constructor.body, roots, owner);
+    SemanticSourceDebugInstance instance;
+    if (constructor.body.sourceDebug.tables &&
+        constructor.body.sourceDebug.tables->sourceFacts().instance.concrete) {
+      instance = {
+          .concrete = true,
+          .kind = static_cast<std::uint8_t>(InstanceAnalysisKind::Constructor),
+          .declaration = constructor.declaration,
+          .types = constructor.typeArguments,
+          .values = constructor.valueArguments};
+      if (const auto *owner = findClass(constructor.owner)) {
+        instance.classTypes = owner->typeArguments;
+        instance.classValues = owner->valueArguments;
+      }
+    }
+    check(constructor.body, SourceDebugBodyKind::Constructor,
+          constructor.source,
+          !constructor.generatedDefault && constructor.source &&
+              constructor.source->body(),
+          &instance);
+  }
+  for (const auto &destructor : program.destructorInstances()) {
+    checkInitializers(destructor.body, {});
+    SemanticSourceDebugInstance instance;
+    if (destructor.body.sourceDebug.tables &&
+        destructor.body.sourceDebug.tables->sourceFacts().instance.concrete) {
+      const auto *owner = findClass(destructor.owner);
+      instance = {
+          .concrete = true,
+          .kind = static_cast<std::uint8_t>(InstanceAnalysisKind::Destructor),
+          .declaration = owner ? owner->declaration : 0};
+      if (owner) {
+        instance.classTypes = owner->typeArguments;
+        instance.classValues = owner->valueArguments;
+      }
+    }
+    check(destructor.body, SourceDebugBodyKind::Destructor, destructor.source,
+          destructor.source && destructor.source->body(), &instance);
+  }
+  for (const auto &lambda : program.lambdaInstances()) {
+    checkInitializers(lambda.body, {});
+    check(lambda.body, SourceDebugBodyKind::Lambda, lambda.source,
+          lambda.source != nullptr);
+    if (lambda.body.sourceDebug.tables) {
+      const auto &facts = lambda.body.sourceDebug.tables->sourceFacts();
+      if (lambda.type.kind != SemanticType::Lambda ||
+          lambda.type.lambdaId != lambda.declaration || !facts.creator)
+        reject(
+            "HIR source lambda lacks its exact type/declaration/creator join");
+    }
+  }
+  return result;
+}
+
+HirProgramPlanVerificationResult
 verifyHirProgramPlans(const SemanticModel &semantics,
                       const HirProgram &program) {
-  HirProgramPlanVerificationResult result;
+  HirProgramPlanVerificationResult result =
+      verifyHirSourceDebug(semantics, program);
   for (const HirEnum &enumeration : program.enumDeclarations()) {
     if (!enumeration.payload)
       continue;

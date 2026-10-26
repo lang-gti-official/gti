@@ -212,6 +212,7 @@ lowerSource(const std::filesystem::path &root,
       profile == lang::ExecutionProfile::Concurrent;
   const lang::TargetInfo target = options.target;
   options.lowerReachableOnly = true;
+  options.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1;
   const std::filesystem::path standardLibrary = root / "stdlib";
   const lang::FrontendResult frontend =
       lang::Frontend(std::move(options))

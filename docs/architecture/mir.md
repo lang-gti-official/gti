@@ -3788,6 +3788,70 @@ destruction is not a substitute for releasing checked ownership resources.
 
 ## Controlled Optimization Edits
 
+The private `verifyMirBodyWithPlaceQueries` entry observes the same body verifier
+used by ordinary validation. It does not accept a cached proof or mutate MIR.
+Its first existing-storage profile covers direct integer/bool/char scalar roots
+whose initialization and ownership are both represented by the current
+canonical transfers. Unsupported storage and explicit scalar lifetime drops
+remain `Unknown`, with an `Unproven` reason.
+
+Scalar worklist solving and stable-state observation replay share one transfer
+implementation. Ownership observations run only during the existing stable
+validation replay. A requested readable point requires both proofs; an inactive
+point does not pretend to distinguish a moved/dropped/never-initialized history
+that its current facts cannot establish. Required cuts retain consuming and
+ambiguous CFG-entry boundaries even when later reinitialization restores
+readability. Empty queries take the ordinary verifier path and allocate no
+observation tables. Block entry and the boundary before a terminator are
+distinct points, including in an empty block.
+
+Opt-in lexical-debug transport carries the requested profile into MIR
+and deep-copies collected HIR scopes, concrete local declarations, and source
+membership into `MirBody::sourceDebug`. Initializer-region IDs are flattened
+deterministically within that body. `None` allocates no table. The actual normal
+scope-exit lowering records descriptive local ends even for trivial locals;
+it does not emit fake destruction or change cleanup planning. The builder joins
+source MIR declarations and membership back to exact accepted HIR facts.
+
+`queryMirDebugAvailability` validates local/binding/type/place-domain identity
+before invoking the private canonical place query. It clips positive facts by
+known source membership and lexical ends, returns `Unproven` when membership
+cannot be established, and reports both execution and lexical required cuts.
+Neither this transient batch nor a collected table is a reusable certificate.
+The frontend selects collection before cache lookup. Lowered-program range
+construction queries its owned final MIR, forms block-local half-open intervals
+within known scope segments, and clips them at every required cut. A subsequent
+initialization or assignment can reopen a range only with a fresh readable fact.
+Independent lowered verification recomputes the range inventory, and its full
+serialization participates in the ordinary construction seal. Native emission
+consumes these registered boundaries; full representation coverage and the
+complete two-host debugger matrix remain required for production admission.
+
+`MirSourceValueEvent` binds a concrete local to an existing typed SSA value after
+a specific instruction. Original source-MIR verification reconstructs the event
+inventory from canonical scalar loads, initializations and assignments; ordinary
+SSA dominance/order verification also checks every event. The bounded profile
+requires unique direct scalar binding storage and excludes loans, address
+escape, ownership moves, receiver/drop obligations and place-bearing edge
+transport. It does not infer source readability from a value's type alone.
+Lowering independently derives and verifies block-local value intervals from
+these events, lexical membership and local ends. Indexed scope segments and
+per-local event lists avoid rescanning all events for every range. No range
+crosses an unknown lexical segment or merges values across control-flow edges.
+
+The canonical scalar-promotion, unreachable-block and in-place dead-instruction
+mutators share source-table repair. Promotion invalidates the affected existing
+place; deleting a lexical anchor invalidates that local's value location and
+removes the dangling cut. Declarations and scopes survive as `OptimizedOut`,
+without new storage. Promotion retains eligible value events at the original
+instruction identities, including tombstoned storage operations. Removing a
+referenced value definition, event point or lexical endpoint invalidates that
+local's value events. Optimization provenance replay and independent lowering
+verification bind this repair to the actual transformation. The in-place
+mutator journals changed local policies, removed cuts and value events and
+restores them on refusal. These are transport and repair controls, not an
+alternate lifetime model or permission to fabricate optimized availability.
+
 The compiler-owned optimizer vocabulary gate is described in
 [Optimization](optimization.md#language-growth-conformance-gate). Body
 verification runs its structural admission check before CFG, ownership, and

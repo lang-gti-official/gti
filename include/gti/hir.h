@@ -448,8 +448,60 @@ struct HirEmptyReturnConstruction {
   std::optional<SemanticEmptyReturnConstructionProof> constructionProof;
 };
 
+struct HirSourceLocal {
+  SourceLocalId id = 0;
+  SourceScopeId scope = 0;
+  HirBindingId binding = 0;
+  SymbolId symbol = 0;
+  SemanticType type = SemanticType::Unknown;
+  std::string name;
+  SourceSpan declaration;
+  bool parameter = false;
+
+  friend bool operator==(const HirSourceLocal &,
+                         const HirSourceLocal &) = default;
+};
+
+struct HirInitializerSourceDebug {
+  std::size_t id = 0;
+  const VariableDecl *declaration = nullptr;
+  std::vector<HirValueId> roots;
+  std::vector<HirSourceLocal> locals;
+  std::vector<SourceDebugAnchor> statements;
+  std::vector<SourceDebugAnchor> values;
+
+  [[nodiscard]] const SemanticSourceDebugTables &sourceFacts() const {
+    return acceptedSource_;
+  }
+
+private:
+  friend class HirLowerer;
+  SemanticSourceDebugTables acceptedSource_;
+};
+
+struct HirSourceDebugTables {
+  PlaceDomain domain;
+  std::vector<HirSourceLocal> locals;
+  std::vector<SourceDebugAnchor> statements;
+  std::vector<SourceDebugAnchor> values;
+  // Region-local IDs are qualified by the deterministic region ID. MIR
+  // flattens them only after verifying the exact initializer roots.
+  std::vector<HirInitializerSourceDebug> initializers;
+
+  [[nodiscard]] const SemanticSourceDebugTables &sourceFacts() const {
+    return acceptedSource_;
+  }
+
+private:
+  friend class HirLowerer;
+  // Exact accepted concrete semantic facts, copied before the temporary
+  // instance model is released. Public HIR rows cannot rewrite this witness.
+  SemanticSourceDebugTables acceptedSource_;
+};
+
 struct HirBody {
   PlaceDomain placeDomain;
+  SourceDebugRecord<HirSourceDebugTables> sourceDebug;
   std::vector<HirBinding> bindings;
   std::vector<HirLoan> loans;
   std::vector<HirFullExpression> fullExpressions;
@@ -893,6 +945,10 @@ public:
 
   [[nodiscard]] bool valid() const { return valid_; }
 
+  [[nodiscard]] SourceDebugProfile sourceDebugProfile() const {
+    return sourceDebugProfile_;
+  }
+
   [[nodiscard]] ExecutionProfile executionProfile() const {
     return executionProfile_;
   }
@@ -1018,6 +1074,7 @@ private:
   friend class HirLowerer;
 
   bool valid_ = true;
+  SourceDebugProfile sourceDebugProfile_ = SourceDebugProfile::None;
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
   ProgramKind programKind_ = ProgramKind::Executable;
   SemanticAnalysisSeal semanticAnalysisSeal;
@@ -1043,6 +1100,9 @@ struct HirProgramPlanVerificationResult {
 
   [[nodiscard]] bool valid() const { return errors.empty(); }
 };
+
+[[nodiscard]] HirProgramPlanVerificationResult
+verifyHirSourceDebug(const SemanticModel &semantics, const HirProgram &program);
 
 [[nodiscard]] HirProgramPlanVerificationResult
 verifyHirProgramPlans(const SemanticModel &semantics,
