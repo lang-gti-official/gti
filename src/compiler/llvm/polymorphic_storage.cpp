@@ -65,6 +65,32 @@ void PolymorphicStorage::preflight(const MirBody &body,
   }
 }
 
+void PolymorphicStorage::preflightDefaultConstructor(
+    const MirConstructorInstance &constructor) {
+  const auto &program = session.program().mir();
+  const auto *owner = program.findClassInstance(constructor.owner);
+  if (program.findConstructorInstance(constructor.id) != &constructor ||
+      !owner || constructor.definitionKind != MirDefinitionKind::Source ||
+      constructor.generatedDefault || !constructor.parameterTypes.empty() ||
+      !constructor.parameterBindings.empty() ||
+      !constructor.initializers.empty() || constructor.dispatchState ||
+      constructor.body.kind != MirBodyKind::Constructor ||
+      findMirBody(program, {MirBodyKind::Constructor, constructor.id}) !=
+          &constructor.body)
+    throw std::invalid_argument(
+        "LLVM empty slot requires its sealed source default constructor");
+  static_cast<void>(session.layouts().polymorphicStorage(owner->type));
+}
+
+void PolymorphicStorage::initializeDefaultConstructor(
+    llvm::IRBuilder<> &ir, const MirConstructorInstance &constructor,
+    llvm::Value *receiver) {
+  preflightDefaultConstructor(constructor);
+  initialize(ir,
+             session.program().mir().findClassInstance(constructor.owner)->type,
+             receiver);
+}
+
 llvm::StructType *PolymorphicStorage::descriptorType() {
   return llvm::StructType::get(
       session.context(),

@@ -5333,6 +5333,14 @@ for this cleanup-inert family. The helper signature is owned by `Lifetimes` and
 shared by direct and descriptor-indirect calls. Private slot invariant violations
 retain MIR's trap contract rather than acquiring a defined-failure channel.
 
+The slot's parameterless constructor is a selected source constructor, not a
+generated-empty record constructor. Its entry initializes only the private
+occupancy and cached-interface fields, then executes its original verified MIR
+body. This hook requires the exact session-owned constructor and capability
+identity; it does not replace the source body, zero the payload, or authorize a
+copy/move constructor. The component test starts with nonzero storage bytes and
+checks empty-state behavior before constructing a payload.
+
 Public admission has not changed. The component oracle exercises actual native
 storage and externally observes addresses/values; it does not substitute for
 ordinary source construction, publication, transfer and cleanup integration.

@@ -11637,8 +11637,10 @@ observer. This is not public slot operation admission. The private operation
 component now wires exact construct/reset/read operations and descriptor-driven
 slot relocation, including recomputed interface addresses and nested record
 fields. Its component execution checks empty/repeated operations, moved-from
-storage, multiple model offsets, and invariant traps. Next: integrate ordinary
-body-local construction, publication and transfer; extend structural
+storage, multiple model offsets, and invariant traps. The exact private source
+default constructor now initializes its hidden empty state at entry without
+replacing the original MIR body. Ordinary empty constructors do not acquire
+that behavior. Next: complete body-local publication and transfer; extend structural
 payload/private-capability relocation where needed; complete boxed-owner dynamic
 cleanup and validate ordinary source wrappers end to end. Platform evidence is
 tracked per checkpoint, not inferred from these component checks.
