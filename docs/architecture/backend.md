@@ -4410,8 +4410,8 @@ check-to-sleep window. This uses the reviewed raw-lane compiler profile and
 the fence/coherence rule in [the C++ memory model](https://eel.is/c++draft/atomics.order#4),
 not an inferred synchronization edge in GTI source. ABA remains allowed.
 
-On x86, an acquire/release `wakeNeeded` exchange folds notification's ordering
-and empty-domain test into one RMW. Enrollment exchanges true under the bucket
+On x86, an acquire/release `wakeNeeded` bit RMW folds notification's ordering
+and empty-domain test into one operation. Enrollment sets the bit under the bucket
 mutex before rechecking the lane. If notification precedes enrollment, the RMW
 chain carries its preceding lane publication into the waiter's recheck;
 otherwise notification observes enrollment and takes the bucket mutex. Every

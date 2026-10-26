@@ -15,7 +15,7 @@ struct Bucket {
   pthread_cond_t condition;
   std::atomic<unsigned> waiters{0};
 #if defined(__x86_64__)
-  std::atomic<bool> wakeNeeded{false};
+  std::atomic<unsigned> wakeNeeded{0};
 #endif
 };
 
@@ -76,7 +76,7 @@ void wait(const void *lane, std::uint64_t old, std::uint32_t order) noexcept {
   // Every update is an acquire/release RMW. If notification precedes this
   // enrollment, its preceding lane publication happens before our recheck.
   // Otherwise notification sees this enrollment and must take the mutex.
-  bucket.wakeNeeded.exchange(true, std::memory_order_acq_rel);
+  bucket.wakeNeeded.fetch_or(1U, std::memory_order_acq_rel);
 #else
   // Together with notify's fence, registration and the publishing lane store
   // cannot both be missed: whichever fence comes second observes the other's
@@ -88,7 +88,7 @@ void wait(const void *lane, std::uint64_t old, std::uint32_t order) noexcept {
   const auto previous = bucket.waiters.fetch_sub(1, std::memory_order_relaxed);
 #if defined(__x86_64__)
   if (previous == 1)
-    bucket.wakeNeeded.exchange(false, std::memory_order_acq_rel);
+    bucket.wakeNeeded.fetch_and(~1U, std::memory_order_acq_rel);
 #else
   static_cast<void>(previous);
 #endif
@@ -126,7 +126,7 @@ extern "C" void gti_rt_atomic_notify_v1(const void *lane,
   require(all <= 1);
   auto &bucket = bucketFor(lane, width_bytes);
 #if defined(__x86_64__)
-  if (!bucket.wakeNeeded.exchange(false, std::memory_order_acq_rel))
+  if ((bucket.wakeNeeded.fetch_and(~1U, std::memory_order_acq_rel) & 1U) == 0)
     return;
 #else
   std::atomic_thread_fence(std::memory_order_seq_cst);
@@ -142,8 +142,10 @@ extern "C" void gti_rt_atomic_notify_v1(const void *lane,
   // Concurrent notifications can coalesce only while this notifier owns the
   // check-to-sleep mutex. Rearm before a woken waiter can recheck and repark.
   // RMW preserves the publication chain of notifications coalesced above.
-  bucket.wakeNeeded.exchange(bucket.waiters.load(std::memory_order_relaxed) != 0,
-                             std::memory_order_acq_rel);
+  if (bucket.waiters.load(std::memory_order_relaxed) != 0)
+    bucket.wakeNeeded.fetch_or(1U, std::memory_order_acq_rel);
+  else
+    bucket.wakeNeeded.fetch_and(~1U, std::memory_order_acq_rel);
 #endif
   require(pthread_mutex_unlock(&bucket.mutex) == 0);
 }
