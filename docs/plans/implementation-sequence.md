@@ -11682,6 +11682,11 @@ dynamic cleanup remain separate integration prerequisites.
   has a dedicated public native execution gate and runnable example. It is not
   milestone completion: generated scalar-hierarchy copies/moves now have exact
   fresh-local producer/publication guards and public execution/rejection checks;
+  fresh ordinary hierarchy fields now use one admission/emission destination
+  proof, with native O0-O3 nested-interface, mutation and partial-construction
+  cleanup evidence. This does not grant containing-object transfer or owner
+  construction. Rich field-borrow cases retain the existing C++ text-vocabulary
+  rejection and require independent source/MIR/native results;
   general transfer, owning/replacement, pure active states, exact optimized cost
   evidence and combined O14/O16 source/evidence identities remain open. The loop
   fixture checks results, not retained dispatch or allocations.

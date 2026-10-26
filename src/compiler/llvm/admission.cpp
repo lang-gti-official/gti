@@ -174,7 +174,7 @@ public:
       }
       for (const auto &place : body.places)
         if (contains(place.type) &&
-            (place.type.kind != SemanticType::Class || nested(place.type) ||
+            (place.type.kind != SemanticType::Class ||
              place.root == MirPlaceRootKind::Symbol || place.foreignStorage))
           bodyProof.transfer = true;
       for (const auto &drop : body.dropObligations) {
@@ -186,10 +186,11 @@ public:
           if (stage.tombstone)
             continue;
           auto &proof = operations[key(address, block.id, stage.id)];
-          const bool fresh = freshLocal(address, body, placement, stage);
+          const bool fresh = freshConstruction(address, body, placement, stage);
           const bool transfer = freshTransfer(body, stage);
           const bool initialization =
               freshInitialization(address, body, placement, stage);
+          const bool declaration = declarationOnlyField(address, body, stage);
           if (contains(stage.info.type)) {
             if ((stage.kind == MirInstructionKind::Construct && !fresh &&
                  !transfer) ||
@@ -202,7 +203,7 @@ public:
                 stage.kind == MirInstructionKind::Call ||
                 stage.operation == MirOperation::Aggregate ||
                 (stage.kind == MirInstructionKind::Initialize &&
-                 !initialization))
+                 !initialization && !declaration))
               proof.transfer = true;
           }
           if (stage.destination &&
@@ -215,7 +216,7 @@ public:
               if (contains(place->type) &&
                   stage.kind != MirInstructionKind::InitializeBase &&
                   !(stage.kind == MirInstructionKind::Initialize &&
-                    initialization))
+                    (initialization || declaration)))
                 proof.transfer = true;
           const auto transferred = [&](const MirOperand &operand) {
             return contains(operand.type) &&
@@ -285,14 +286,6 @@ public:
       // An unknown result supplies no NEW dispatch witness or transfer fact.
       return false;
     }
-  }
-  bool nested(const SemanticType &type) const {
-    if (type.kind != SemanticType::Class)
-      return contains(type);
-    for (const auto &field : instance(type).declaredFields)
-      if (contains(field.type))
-        return true;
-    return false;
   }
   bool referent(const SemanticType &type) const {
     return type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
@@ -385,8 +378,7 @@ public:
   }
   std::optional<Shape> cleanup(const MirDropType &recipe,
                                bool replacement = false) {
-    if (!contains(recipe.type) || nested(recipe.type) ||
-        cleanupObserves(recipe))
+    if (!contains(recipe.type) || cleanupObserves(recipe))
       return {};
     try {
       if (!metadata(recipe.type) || !planner())
@@ -507,12 +499,14 @@ private:
         owner.compilerCapability != CompilerCapabilityTypeKind::None ||
         owner.traits.containsBorrowedState || !path.insert(owner.id).second)
       return false;
-    bool valid = !nested(owner.type) &&
-                 std::all_of(owner.declaredFields.begin(),
-                             owner.declaredFields.end(), [](const auto &field) {
-                               return field.type != SemanticType::Void &&
-                                      isPassiveScalarValueType(field.type);
-                             });
+    bool valid =
+        std::all_of(owner.declaredFields.begin(), owner.declaredFields.end(),
+                    [&](const auto &field) {
+                      if (field.type.kind == SemanticType::Class)
+                        return metadataClass(instance(field.type), path);
+                      return field.type != SemanticType::Void &&
+                             isPassiveScalarValueType(field.type);
+                    });
     if (owner.kind == ClassKind::Interface)
       valid &= owner.declaredFields.empty() && !owner.destructor &&
                !owner.requiresActiveCleanup && !owner.requiresActiveDropState;
@@ -600,48 +594,20 @@ private:
     }
     return false;
   }
-  bool formal(MirBodyAddress address, HirBindingId binding) const {
-    if (const auto *target = function(address))
-      return std::find(target->parameterBindings.begin(),
-                       target->parameterBindings.end(),
-                       binding) != target->parameterBindings.end();
-    if (address.kind == MirBodyKind::Constructor) {
-      const auto &target = *program.findConstructorInstance(address.owner);
-      return std::find(target.parameterBindings.begin(),
-                       target.parameterBindings.end(),
-                       binding) != target.parameterBindings.end();
-    }
-    return false;
+  bool declarationOnlyField(MirBodyAddress address, const MirBody &body,
+                            const MirInstruction &stage) const {
+    const auto *owner = address.kind == MirBodyKind::FieldInitializers
+                            ? program.findClassInstance(address.owner)
+                            : nullptr;
+    return owner &&
+           isMirDeclarationOnlyFieldInitialization(*owner, body, stage);
   }
-  bool freshLocal(MirBodyAddress address, const MirBody &body,
-                  const native_llvm::Placement &placement,
-                  const MirInstruction &stage) const {
-    if ((address.kind != MirBodyKind::Function &&
-         address.kind != MirBodyKind::Constructor &&
-         address.kind != MirBodyKind::Destructor) ||
-        stage.kind != MirInstructionKind::Construct || !stage.result ||
-        stage.constructorKind != ConstructorKind::Ordinary ||
-        stage.info.type.kind != SemanticType::Class || nested(stage.info.type))
-      return false;
-    const auto *target = placement.target(*stage.result);
-    const auto *place =
-        target && target->place ? body.findPlace(target->place) : nullptr;
-    std::size_t publications = 0;
-    if (target)
-      for (const auto &block : body.blocks)
-        for (const auto &initialization : block.instructions)
-          publications +=
-              !initialization.tombstone &&
-              initialization.kind == MirInstructionKind::Initialize &&
-              initialization.destination == target->place &&
-              initialization.operands.size() == 1 &&
-              initialization.operands.front().kind == MirOperandKind::Value &&
-              initialization.operands.front().value == *stage.result;
-    return target && !target->aggregate && !target->returned && place &&
-           place->root == MirPlaceRootKind::Binding && place->binding &&
-           !place->capture && publications == 1 && place->projections.empty() &&
-           !place->foreignStorage && place->type == stage.info.type &&
-           !formal(address, place->binding);
+  bool freshConstruction(MirBodyAddress address, const MirBody &body,
+                         const native_llvm::Placement &placement,
+                         const MirInstruction &stage) const {
+    return native_llvm::freshConstructionDestination(program, address, body,
+                                                     placement, stage)
+        .has_value();
   }
   bool freshTransfer(const MirBody &body, const MirInstruction &stage) const {
     // The dedicated row activates only the exact producer/publication proof;
@@ -689,7 +655,7 @@ private:
     for (const auto &block : body.blocks)
       for (const auto &producer : block.instructions)
         if (!producer.tombstone && producer.result == value &&
-            freshLocal(address, body, placement, producer))
+            freshConstruction(address, body, placement, producer))
           return placement.target(value)->place == *stage.destination;
     return false;
   }
@@ -762,6 +728,7 @@ private:
           std::any_of(place->projections.begin(), place->projections.end(),
                       [](const auto &projection) {
                         return projection.kind != MirProjectionKind::Base &&
+                               projection.kind != MirProjectionKind::Field &&
                                projection.kind !=
                                    MirProjectionKind::Dereference;
                       }))
@@ -838,6 +805,9 @@ private:
                                       const native_llvm::Placement &placement,
                                       const MirInstruction &stage) {
     try {
+      if (declarationOnlyField(address, body, stage) &&
+          metadata(stage.info.type))
+        return Shape::NativeStaticDispatchStorage;
       if (freshTransfer(body, stage)) {
         if (!metadata(stage.info.type))
           return {};
@@ -850,7 +820,7 @@ private:
         return Shape::NativeFreshHierarchyTransfer;
       if (stage.kind == MirInstructionKind::Construct &&
           contains(stage.info.type) &&
-          freshLocal(address, body, placement, stage)) {
+          freshConstruction(address, body, placement, stage)) {
         if (!metadata(stage.info.type))
           return {};
         if (!stage.constructorTarget) {
@@ -3097,7 +3067,10 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     for (const auto &field : instance.declaredFields) {
       inventory.type(field.type);
       if (dispatchProofs.contains(field.type))
-        inventory.add(Shape::PolymorphicTransfer);
+        // Storage metadata does not transfer an object. Executable producers,
+        // publications and replacements require their own operation proofs.
+        inventory.add(Shape::ClassFields,
+                      inventory.representationShape(field.type));
     }
     if (!instance.bases.empty() || !instance.structuralBases.empty())
       inventory.add(Shape::ClassBases, representation);

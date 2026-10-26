@@ -317,8 +317,9 @@ private:
       if (target->place) {
         if (hierarchy) {
           bool exactProducer =
-              stage && stage->kind == MirInstructionKind::Construct &&
-              stage->constructorKind == ConstructorKind::Ordinary;
+              stage && freshConstructionDestination(session.program().mir(),
+                                                    address, input, placement,
+                                                    *stage) == target->place;
           if (stage && isFreshHierarchyTransferProducer(*stage)) {
             const auto transfer = planFreshHierarchyTransfer(
                 session.program().mir(), input, *stage);
@@ -326,33 +327,9 @@ private:
                             transfer.publication &&
                             transfer.publication->destination == target->place;
           }
-          const auto *place = input.findPlace(target->place);
-          const bool localBody = input.kind == MirBodyKind::Function ||
-                                 input.kind == MirBodyKind::Constructor ||
-                                 input.kind == MirBodyKind::Destructor;
-          const bool publication = std::any_of(
-              input.blocks.begin(), input.blocks.end(), [&](const auto &block) {
-                return std::any_of(
-                    block.instructions.begin(), block.instructions.end(),
-                    [&](const auto &instruction) {
-                      return !instruction.tombstone &&
-                             instruction.kind ==
-                                 MirInstructionKind::Initialize &&
-                             instruction.destination == target->place &&
-                             instruction.operands.size() == 1 &&
-                             instruction.operands[0].kind ==
-                                 MirOperandKind::Value &&
-                             instruction.operands[0].value == value;
-                    });
-              });
-          if (!place || !localBody || valueType.kind != SemanticType::Class ||
-              place->root != MirPlaceRootKind::Binding || !place->binding ||
-              parameterBindings.contains(place->binding) ||
-              !place->projections.empty() || place->foreignStorage ||
-              place->capture || place->type != valueType || !publication ||
-              !stage || !exactProducer || stage->result != value)
+          if (!stage || !exactProducer || stage->result != value)
             throw BackendUnsupportedError("LLVM hierarchy construction lost "
-                                          "its exact fresh local publication");
+                                          "its exact fresh publication");
         }
         return memory.address(target->place);
       }
