@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--lldb", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--optimization", choices=(0, 3), type=int, default=0)
-    parser.add_argument("--case", choices=("basic", "lexical", "inlined", "receiver", "masked", "pack", "owned-pack", "failure"), default="basic")
+    parser.add_argument("--case", choices=("basic", "lexical", "inlined", "receiver", "masked", "pack", "owned-pack", "failure", "lambda"), default="basic")
     parser.add_argument("--cc", default="clang")
     args = parser.parse_args()
     assert args.case not in ("inlined", "masked") or args.optimization == 3
@@ -53,6 +53,8 @@ def main():
         fixture = "native_debug_owned_pack.gti"
     elif args.case == "failure":
         fixture = "native_debug_failure.gti"
+    elif args.case == "lambda":
+        fixture = "native_debug_lambda.gti"
     shutil.copyfile(root / "tests/fixtures/llvm_optimization" / fixture, source)
     manifest = {
         "status": "running", "commands": [],
@@ -80,7 +82,7 @@ def main():
         manifest["lldb_version"] = run([args.lldb, "--version"]).stdout.strip()
         binary = output / "native-debug"
         native = []
-        if args.optimization == 3 or args.case in ("receiver", "pack", "owned-pack", "failure"):
+        if args.optimization == 3 or args.case in ("receiver", "pack", "owned-pack", "failure", "lambda"):
             provider = root / "tests/fixtures/llvm_optimization/native_debug_probe.c"
             manifest["native_probe_sha256"] = hashlib.sha256(provider.read_bytes()).hexdigest()
             manifest["cc_version"] = run([args.cc, "--version"]).stdout.strip()
@@ -98,7 +100,7 @@ def main():
         if sys.platform == "darwin":
             symbols = Path(str(binary) + ".dSYM") / "Contents/Resources/DWARF" / binary.name
             assert symbols.is_file(), "Darwin production debug companion is missing"
-        line = (5 if args.case == "failure" else 4 if args.case in ("pack", "owned-pack") else 7 if args.case == "receiver" else 6 if args.case == "lexical"
+        line = (6 if args.case == "lambda" else 5 if args.case == "failure" else 4 if args.case in ("pack", "owned-pack") else 7 if args.case == "receiver" else 6 if args.case == "lexical"
                 else 5 if args.optimization == 3 else 4)
         command = [str(args.lldb), "--no-lldbinit", "--batch", str(binary),
                    "-o", f"breakpoint set --file native_debug.gti --line {line}",
@@ -110,7 +112,7 @@ def main():
             command += ["-o", "breakpoint set --file native_debug.gti --line 8",
                         "-o", "continue", "-o", "frame info",
                         "-o", "frame variable -- input local"]
-        elif args.optimization == 0 and args.case not in ("receiver", "pack", "owned-pack", "failure"):
+        elif args.optimization == 0 and args.case not in ("receiver", "pack", "owned-pack", "failure", "lambda"):
             command += ["-o", "thread step-over", "-o", "frame info",
                         "-o", "frame variable -- input local"]
         command += ["-o", "continue"]
@@ -132,6 +134,9 @@ def main():
             assert re.search(r"\binput = 0\b", transcript), transcript
             assert re.search(r"\blocal = 9\b", transcript), transcript
             assert 'GTI-R0002' in transcript and 'native_debug.gti:5' in transcript
+        elif args.case == "lambda":
+            assert re.search(r"\binput = 4\b", transcript), transcript
+            assert re.search(r"\blocal = 4\b", transcript), transcript
         elif args.case == "owned-pack":
             assert re.search(r"\binput = 4\b", transcript), transcript
             assert re.search(r"\brest =", transcript), transcript
@@ -160,7 +165,7 @@ def main():
             for name in ("input", "local"):
                 assert re.search(rf"\b{name} = 4\b", transcript), transcript
             assert re.search(r"frame #\d+.*(?:\[inlined\].*inspect|inspect.*\[inlined\])", transcript), transcript
-        assert re.search(r"frame #\d+.*inspect", transcript)
+        assert re.search(r"frame #\d+.*" + (r"<lambda>" if args.case == "lambda" else "inspect"), transcript)
         assert re.search(r"frame #\d+.*main", transcript)
         assert f"exited with status = {70 if args.case == 'failure' else 0}" in transcript
         manifest["status"] = f"passed-native-debugger-{args.case}-O{args.optimization}"

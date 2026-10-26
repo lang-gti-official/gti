@@ -1,0 +1,10 @@
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+int main() {
+  int32_t captured = 9;
+  auto apply = [captured](int32_t input) -> int32_t {
+    mut int32_t local = input & 31;
+    debug_checkpoint(local);
+    return local + captured;
+  };
+  return apply(debug_input()) == 13 ? 0 : 1;
+}

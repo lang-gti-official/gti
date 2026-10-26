@@ -163,6 +163,13 @@ public:
       bindings = &instance.parameterBindings;
       mayFail = instance.mayRaiseDefinedFailure;
       receiver = true;
+    } else if (address.kind == MirBodyKind::Lambda) {
+      const auto &instance = *program.findLambda(address.owner);
+      types = &instance.parameterTypes;
+      bindings = &instance.parameterBindings;
+      result = instance.returnType;
+      mayFail = !instance.body.failureRecords.empty();
+      receiver = !instance.captureTypes.empty();
     } else {
       return {};
     }
@@ -293,6 +300,41 @@ public:
                                  complete);
         return types[index].second.get();
       }
+    } else if (value.kind == SemanticType::Lambda) {
+      const LoweredLambdaInstance *selected = nullptr;
+      for (const auto &lambda : session.program().lambdaInstances())
+        if (lambda.type == value) {
+          if (selected && selected->captures != lambda.captures)
+            throw std::logic_error(
+                "LLVM debug closure has incompatible capture identities");
+          selected = &lambda;
+        }
+      if (!selected)
+        throw std::logic_error("LLVM debug closure lost its sealed instance");
+      const auto layout = session.layouts().get(value);
+      auto *source = file(selected->source);
+      auto *temporary = builder.createReplaceableCompositeType(
+          llvm::dwarf::DW_TAG_structure_type, "<lambda>", unit, source,
+          selected->source.line, 0, layout.size * 8, layout.alignment * 8);
+      const auto index = types.size();
+      types.emplace_back(value,
+                         llvm::TypedTrackingMDRef<llvm::DIType>(temporary));
+      std::vector<llvm::Metadata *> members;
+      for (std::size_t i = 0; i < selected->captures.size(); ++i) {
+        const auto &capture = selected->captures[i];
+        const auto field = session.layouts().captureIndex(value, i + 1);
+        const auto captureLayout = session.layouts().get(capture.type);
+        members.push_back(builder.createMemberType(
+            temporary, capture.name, source, 0, captureLayout.size * 8,
+            captureLayout.alignment * 8, layout.fieldOffsets.at(field) * 8,
+            llvm::DINode::FlagZero, type(capture.type)));
+      }
+      auto *complete = builder.createStructType(
+          unit, "<lambda>", source, selected->source.line, layout.size * 8,
+          layout.alignment * 8, llvm::DINode::FlagZero, nullptr,
+          builder.getOrCreateArray(members));
+      builder.replaceTemporary(llvm::TempDICompositeType(temporary), complete);
+      return types[index].second.get();
     } else if (value.kind == SemanticType::Enum) {
       for (const auto &enumeration : session.program().mir().integralEnums()) {
         if (enumeration.type != value)
@@ -372,6 +414,7 @@ public:
   std::map<std::pair<MirBodyKind, std::uint32_t>, llvm::Function *>
       lifecycleDefinitions;
   llvm::Function *hostedStartupDefinition = nullptr;
+  std::map<LoweredLambdaInstanceId, llvm::Function *> lambdaDefinitions;
   struct Local {
     llvm::TypedTrackingMDRef<llvm::DILocalVariable> variable;
     llvm::Value *storage = nullptr;
@@ -437,6 +480,33 @@ void DebugInfo::registerLifecycleBody(MirBodyAddress address,
   impl->bodies.emplace(&function, address);
 }
 
+void DebugInfo::registerLambdaBody(MirBodyAddress address,
+                                   llvm::Function &function) {
+  const auto &program = impl->session.program();
+  const auto *lambda = program.findLambdaInstance(address.owner);
+  const auto *mir = program.mir().findLambda(address.owner);
+  if (address.kind != MirBodyKind::Lambda ||
+      function.getParent() != &impl->session.module() || !lambda || !mir ||
+      lambda->declaration != mir->declaration || lambda->type != mir->type ||
+      !program.findBody(address))
+    throw std::logic_error(
+        "LLVM debug lambda is not an exact sealed session body");
+  const auto previous = impl->lambdaDefinitions.find(address.owner);
+  if (previous != impl->lambdaDefinitions.end() &&
+      previous->second != &function)
+    throw std::logic_error("LLVM debug lambda changed its factory result");
+  const auto other = impl->bodies.find(&function);
+  if (other != impl->bodies.end() && other->second != address)
+    throw std::logic_error("LLVM debug lambda is bound to another body");
+  const auto abi = impl->session.abi().gti(mir->returnType, mir->parameterTypes,
+                                           !mir->body.failureRecords.empty(),
+                                           !mir->captureTypes.empty());
+  if (function.getFunctionType() != abi.type)
+    throw std::logic_error("LLVM debug lambda differs from its factory ABI");
+  impl->lambdaDefinitions.emplace(address.owner, &function);
+  impl->bodies.emplace(&function, address);
+}
+
 void DebugInfo::registerHostedStartupBody(MirBodyAddress address,
                                           llvm::Function &function) {
   const auto &program = impl->session.program();
@@ -461,6 +531,12 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     throw std::logic_error(
         "LLVM debug function belongs to another emission session");
   const auto &program = impl->session.program();
+  if (address.kind == MirBodyKind::Lambda) {
+    const auto found = impl->lambdaDefinitions.find(address.owner);
+    if (found == impl->lambdaDefinitions.end() || found->second != &function)
+      throw std::logic_error(
+          "LLVM debug lambda does not match its factory identity");
+  }
   if (address.kind == MirBodyKind::Constructor ||
       address.kind == MirBodyKind::Destructor) {
     if (!impl->sourceLifecycle(address))
@@ -500,6 +576,7 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
   // Generated glue has no source scope, even when its result type has no
   // source debug representation. Exclude it before planning source types.
   if (address.kind != MirBodyKind::Function &&
+      address.kind != MirBodyKind::Lambda &&
       address.kind != MirBodyKind::Constructor &&
       address.kind != MirBodyKind::Destructor)
     return;
@@ -519,6 +596,15 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     source = &instance->source;
     name =
         program.findFunctionDeclaration(instance->declaration)->qualifiedName;
+    for (const auto &parameter : impl->sourceParameters(address, function))
+      parameters.push_back(impl->type(parameter));
+  } else if (address.kind == MirBodyKind::Lambda) {
+    const auto *instance = program.findLambdaInstance(address.owner);
+    if (!instance)
+      throw std::logic_error(
+          "LLVM debug lambda lost its concrete source identity");
+    source = &instance->source;
+    name = "<lambda>";
     for (const auto &parameter : impl->sourceParameters(address, function))
       parameters.push_back(impl->type(parameter));
   } else if (address.kind == MirBodyKind::Constructor) {
@@ -579,6 +665,9 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     parameterBindings = &program.mir()
                              .findConstructorInstance(address.owner)
                              ->parameterBindings;
+  else if (address.kind == MirBodyKind::Lambda)
+    parameterBindings =
+        &program.mir().findLambda(address.owner)->parameterBindings;
   std::set<SourceLocalId> valueLocals;
   std::set<SourceLocalId> packLocals;
   for (const auto &local : lowered->sourceDebug.tables->locals)

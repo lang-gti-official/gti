@@ -15,6 +15,7 @@ public:
   // Only the existing Body function factory registers exact lifecycle bodies.
   // This records its result; it does not plan a signature or require a body.
   void registerLifecycleBody(MirBodyAddress address, llvm::Function &function);
+  void registerLambdaBody(MirBodyAddress address, llvm::Function &function);
   // The startup factory supplies a generated identity, never a user scope.
   void registerHostedStartupBody(MirBodyAddress address,
                                  llvm::Function &function);

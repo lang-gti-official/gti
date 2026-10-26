@@ -483,6 +483,88 @@ int main() { Sample value{}; Generated generated{}; return generated.value == 7 
             << " identity controls passed\n";
 }
 
+void lambdaIdentities() {
+  const auto frontend =
+      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("lambda-debug.gti", R"gti(
+int main() {
+  int captured = 9;
+  auto apply = [captured](int input) -> int { return input + captured; };
+  return apply(4) == 13 ? 0 : 1;
+}
+)gti");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("invalid lambda identity fixture");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host());
+  std::vector<LoweredProgramIssue> issues;
+  if (!lowered.valid())
+    throw std::runtime_error("invalid lambda identity lowering");
+  auto input = verifiedLoweredProgram(*lowered.program, issues);
+  if (!input)
+    throw std::runtime_error("unverified lambda identity lowering");
+  Session session(*input, {}), foreignSession(*input, {});
+  DebugInfo debug(session);
+  unsigned controls = 0, definitions = 0;
+  const auto reject = [&](auto action) {
+    try {
+      action();
+    } catch (const std::logic_error &) {
+      ++controls;
+      return;
+    }
+    throw std::runtime_error("forged lambda factory identity was accepted");
+  };
+  for (const auto &source : input->program().mir().lambdaInstances()) {
+    const MirBodyAddress address{MirBodyKind::Lambda, source.id};
+    const auto plan = session.abi().gti(
+        source.returnType, source.parameterTypes,
+        !source.body.failureRecords.empty(), !source.captureTypes.empty());
+    auto *function =
+        llvm::Function::Create(plan.type, llvm::GlobalValue::InternalLinkage,
+                               "registered_lambda", session.module());
+    auto *other =
+        llvm::Function::Create(plan.type, llvm::GlobalValue::ExternalLinkage,
+                               "other_lambda", session.module());
+    auto *wrong = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                                false),
+        llvm::GlobalValue::ExternalLinkage, "wrong_lambda", session.module());
+    auto *outside = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(foreignSession.context()),
+                                false),
+        llvm::GlobalValue::ExternalLinkage, "foreign_lambda",
+        foreignSession.module());
+    reject([&] { debug.begin(address, *function); });
+    reject([&] { debug.registerLambdaBody(address, *wrong); });
+    reject([&] { debug.registerLambdaBody(address, *outside); });
+    reject(
+        [&] { debug.registerLambdaBody({MirBodyKind::Module, 0}, *function); });
+    reject([&] {
+      debug.registerLambdaBody({MirBodyKind::Lambda, source.id + 1000},
+                               *function);
+    });
+    debug.registerLambdaBody(address, *function);
+    debug.registerLambdaBody(address, *function);
+    reject([&] { debug.registerLambdaBody(address, *other); });
+    reject([&] { debug.begin(address, *other); });
+    debug.begin(address, *function);
+    if (!function->getSubprogram() ||
+        function->getSubprogram()->getName() != "<lambda>" ||
+        !function->getSubprogram()->getLine() || other->getSubprogram())
+      throw std::runtime_error("lambda source identity was lost or forged");
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", function));
+    ir.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));
+    ++definitions;
+  }
+  debug.finalize();
+  if (definitions != 1 || controls != 7 ||
+      llvm::verifyModule(session.module(), &llvm::errs()))
+    throw std::runtime_error("lambda identity controls did not execute");
+}
+
 void generatedMetadataExclusion() {
   const auto frontend =
       Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
@@ -514,7 +596,16 @@ int main() {
         llvm::GlobalValue::InternalLinkage,
         "generated_debug_control_" + std::to_string(source.id),
         session.module());
-    debug.begin(address, *function);
+    bool rejected = false;
+    try {
+      debug.begin(address, *function);
+    } catch (const std::logic_error &) {
+      rejected = true;
+    }
+    if (!rejected)
+      throw std::runtime_error(
+          "unregistered source lambda acquired a source scope");
+    debug.begin({MirBodyKind::Module, 0}, *function);
     if (function->getSubprogram())
       throw std::runtime_error(
           "generated body acquired a fabricated source scope");
@@ -820,6 +911,7 @@ enum class ProductionDebugCase {
   Receiver,
   OwnedPack,
   ScalarPack,
+  Lambda,
   Lexical
 };
 
@@ -829,10 +921,23 @@ void productionValueEmission(
   const bool receiver = selected == ProductionDebugCase::Receiver;
   const bool ownedPack = selected == ProductionDebugCase::OwnedPack;
   const bool scalarPack = selected == ProductionDebugCase::ScalarPack;
+  const bool lambda = selected == ProductionDebugCase::Lambda;
   const bool lexical = selected == ProductionDebugCase::Lexical;
   const auto frontend =
       Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
-          .analyze("value-emission.gti", lexical      ? R"gti(
+          .analyze("value-emission.gti", lambda       ? R"gti(
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+int main() {
+  int32_t captured = 9;
+  auto apply = [captured](int32_t input) -> int32_t {
+    mut int32_t local = input & 31;
+    debug_checkpoint(local);
+    return local + captured;
+  };
+  return apply(debug_input()) == 13 ? 0 : 1;
+}
+)gti"
+                                         : lexical    ? R"gti(
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
 int32_t inspect(int32_t input) {
   int32_t local = input ^ 13;
@@ -1114,6 +1219,7 @@ int main(int argc, char **argv) {
         "debug metadata depends on an absolute checkout root");
   inlinedLocations();
   lifecycleIdentities();
+  lambdaIdentities();
   concreteParameterMetadata();
   generatedMetadataExclusion();
   optimizedOutDeclarations();
@@ -1128,6 +1234,8 @@ int main(int argc, char **argv) {
   productionValueEmission(argc > 1 ? std::string(argv[1]) + ".scalar-pack.ll"
                                    : "",
                           ProductionDebugCase::ScalarPack);
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".lambda.ll" : "",
+                          ProductionDebugCase::Lambda);
   std::cout << "sealed debug identities, locations, locals, recursive layout, "
                "root relocation and inlined source/parameter chains passed\n";
 }

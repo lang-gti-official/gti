@@ -4439,7 +4439,14 @@ an intervening emitted instruction preserves the cut. This prevents static
 address declarations from losing a restored location during optimization.
 Owning packs require all exact element lifetimes to remain available. Empty
 packs retain a declaration without fabricated storage or values. Foreign
-arguments and missing physical registrations reject. Broader optimized
+arguments and missing physical registrations reject. Source lambdas likewise
+require the body factory's exact sealed lambda identity before acquiring a
+scope. Their source parameters exclude the hidden closure channel, and closure
+type members describe existing capture names, types and target-layout offsets.
+Capture member lines remain zero where no individual source span is transported;
+this is not yet a source-local availability proof for captures inside the body.
+Unregistered, foreign-session, wrong-signature and rebound lambda identities
+reject without changing execution signatures or capture storage. Broader optimized
 representations and the full two-host failure/callback debugger matrix remain
 open. The optimized lexical-shadowing probe also remains a failing gate:
 verified inner-local facts reach LLVM, but machine lowering does not retain a

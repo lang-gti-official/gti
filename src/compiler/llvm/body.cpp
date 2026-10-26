@@ -1666,6 +1666,9 @@ llvm::Function *Bodies::function(MirBodyAddress address) {
     throw BackendUnsupportedError("LLVM body kind is not implemented");
   functions.emplace(key, output);
   if (auto *debug = session.debugInfo();
+      debug && address.kind == MirBodyKind::Lambda)
+    debug->registerLambdaBody(address, *output);
+  if (auto *debug = session.debugInfo();
       debug && (address.kind == MirBodyKind::Constructor ||
                 address.kind == MirBodyKind::Destructor))
     debug->registerLifecycleBody(address, *output);
