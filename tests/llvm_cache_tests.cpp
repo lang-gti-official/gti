@@ -255,6 +255,14 @@ void runChecks(const std::filesystem::path &self) {
   const auto executable = read(output);
   const auto executableMode = std::filesystem::status(output).permissions();
   execute(17);
+  auto retainedPolicy = Policy{};
+  retainedPolicy.keep = true;
+  const auto retained = build(retainedPolicy);
+  checkBuild(retained);
+  require(
+      retained.cache.status == BuildCacheStatus::Hit &&
+          read(representation) == object,
+      "rejection control must begin with a genuinely retained native object");
   for (const auto &[mode, spelling] : modes) {
     static_cast<void>(spelling);
     if (mode == LlvmInstrumentationMode::None)
@@ -270,6 +278,7 @@ void runChecks(const std::filesystem::path &self) {
         "unwired diagnostic policy must preserve published output and never "
         "restore a none-mode cache entry");
   }
+  std::filesystem::remove(representation);
   for (const bool explicitTriple : {false, true}) {
     auto explicitTarget = Policy{};
     if (explicitTriple)
