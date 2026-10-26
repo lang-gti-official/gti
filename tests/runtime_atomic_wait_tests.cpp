@@ -11,10 +11,36 @@
 #include <thread>
 #include <utility>
 
+#ifdef GTI_WAIT_LLVM_NOTIFY
+#define GTI_DECLARE_NOTIFY(Bits) \
+  extern "C" void gti_test_wait_u##Bits##_one(const void *); \
+  extern "C" void gti_test_wait_u##Bits##_all(const void *);
+GTI_DECLARE_NOTIFY(8)
+GTI_DECLARE_NOTIFY(16)
+GTI_DECLARE_NOTIFY(32)
+GTI_DECLARE_NOTIFY(64)
+#undef GTI_DECLARE_NOTIFY
+#endif
+
 namespace {
 void require(bool condition) {
   if (!condition)
     std::abort();
+}
+
+void notify(const void *lane, std::uint32_t width, std::uint32_t all) {
+#ifdef GTI_WAIT_LLVM_NOTIFY
+  require(all <= 1);
+  switch (width) {
+  case 1: return all ? gti_test_wait_u8_all(lane) : gti_test_wait_u8_one(lane);
+  case 2: return all ? gti_test_wait_u16_all(lane) : gti_test_wait_u16_one(lane);
+  case 4: return all ? gti_test_wait_u32_all(lane) : gti_test_wait_u32_one(lane);
+  case 8: return all ? gti_test_wait_u64_all(lane) : gti_test_wait_u64_one(lane);
+  default: std::abort();
+  }
+#else
+  gti_rt_atomic_notify_v1(lane, width, all);
+#endif
 }
 
 struct Probe {
@@ -59,7 +85,7 @@ template <typename T> void scalar() {
     await(state, 1);
     published = 42;
     __atomic_store_n(&lane, next, __ATOMIC_RELEASE);
-    gti_rt_atomic_notify_v1(&lane, sizeof(T), order % 2);
+    notify(&lane, sizeof(T), order % 2);
     worker.join();
   }
 }
@@ -74,14 +100,14 @@ void beforeEnrollment(bool aba) {
   });
   state.beforeLock.wait(false);
   __atomic_store_n(&lane, 1U, __ATOMIC_RELEASE);
-  gti_rt_atomic_notify_v1(&lane, 4, 0);
+  notify(&lane, 4, 0);
   if (aba)
     __atomic_store_n(&lane, 0U, __ATOMIC_RELEASE);
   resume(state);
   if (aba) {
     await(state, 1);
     __atomic_store_n(&lane, 2U, __ATOMIC_RELEASE);
-    gti_rt_atomic_notify_v1(&lane, 4, 1);
+    notify(&lane, 4, 1);
   }
   worker.join();
   require(aba || state.waits.load() == 0);
@@ -100,16 +126,16 @@ void collisions() {
     });
   for (unsigned index = 0; index != states.size(); ++index)
     await(states[index], index == 0 ? 2 : 1);
-  gti_rt_atomic_notify_v1(&lanes[0], 8, 0);
+  notify(&lanes[0], 8, 0);
   for (unsigned index = 0; index != states.size(); ++index)
     await(states[index], index == 0 ? 3 : 2);
   __atomic_store_n(&lanes[0], UINT64_MAX, __ATOMIC_RELEASE);
-  gti_rt_atomic_notify_v1(&lanes[0], 8, 1);
+  notify(&lanes[0], 8, 1);
   workers[0].join();
   workers[1].join();
   await(states[2], 3);
   __atomic_store_n(&lanes[256], UINT64_MAX, __ATOMIC_RELEASE);
-  gti_rt_atomic_notify_v1(&lanes[256], 8, 0);
+  notify(&lanes[256], 8, 0);
   workers[2].join();
   gti_rt_atomic_wait_v1(&lanes[0], 0, 8, 2);
 }
@@ -130,7 +156,7 @@ void parkedCpuBudget() {
   await(state, 1);
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
   __atomic_store_n(&lane, 1U, __ATOMIC_RELEASE);
-  gti_rt_atomic_notify_v1(&lane, 4, 0);
+  notify(&lane, 4, 0);
   worker.join();
   require(cpu < 0.025);
   std::cout << "parked_wait_thread_cpu_seconds=" << cpu
@@ -152,7 +178,7 @@ void coalescedNotifications() {
   std::thread first([&] {
     pauseBroadcast = true;
     __atomic_store_n(&lanes[0], 1U, __ATOMIC_RELEASE);
-    gti_rt_atomic_notify_v1(&lanes[0], 8, 0);
+    notify(&lanes[0], 8, 0);
   });
   broadcastEntered.wait(false);
   std::atomic<bool> published{false}, notified{false};
@@ -160,7 +186,7 @@ void coalescedNotifications() {
     __atomic_store_n(&lanes[256], 1U, __ATOMIC_RELEASE);
     published.store(true);
     published.notify_all();
-    gti_rt_atomic_notify_v1(&lanes[256], 8, 0);
+    notify(&lanes[256], 8, 0);
     notified.store(true);
     notified.notify_all();
   });
@@ -247,11 +273,17 @@ int main(int argc, char **argv) {
       gti_rt_atomic_wait_v1(&lane, 256, 1, 0);
     else if (std::strcmp(fault, "notify") == 0)
       gti_rt_atomic_notify_v1(&lane, 8, 2);
+    else if (std::strcmp(fault, "registered-null") == 0)
+      gti_rt_atomic_notify_registered_v1(nullptr, 8, 0);
+    else if (std::strcmp(fault, "registered-width") == 0)
+      gti_rt_atomic_notify_registered_v1(&lane, 3, 0);
+    else if (std::strcmp(fault, "registered-all") == 0)
+      gti_rt_atomic_notify_registered_v1(&lane, 8, 2);
     else if (std::strcmp(fault, "late") == 0) {
       std::thread worker([&] {
         struct AtExit {
           std::uint64_t *lane;
-          ~AtExit() { gti_rt_atomic_notify_v1(lane, 8, 0); }
+          ~AtExit() { notify(lane, 8, 0); }
         };
         thread_local AtExit exit{&lane};
         (void)exit;
@@ -268,7 +300,7 @@ int main(int argc, char **argv) {
   // Empty notifications need no native parking domain, including late use.
   std::array<std::thread, 8> starters;
   for (auto &worker : starters)
-    worker = std::thread([&] { gti_rt_atomic_notify_v1(&lane, 8, 0); });
+    worker = std::thread([&] { notify(&lane, 8, 0); });
   for (auto &worker : starters)
     worker.join();
   require(initializations == 0);
@@ -282,7 +314,7 @@ int main(int argc, char **argv) {
     await(state, 1);
   require(initializations == 256);
   __atomic_store_n(&lane, UINT64_C(2), __ATOMIC_RELEASE);
-  gti_rt_atomic_notify_v1(&lane, 8, 1);
+  notify(&lane, 8, 1);
   for (auto &worker : starters)
     worker.join();
   scalar<std::uint8_t>();

@@ -101,7 +101,8 @@ def main():
     run("late-first-use", [output / "controlled", "late"])
     for fault in ("null", "width", "width-zero", "width-wide", "alignment",
                   "alignment-2", "alignment-4", "order", "bits", "notify",
-                  "init", "lock", "wait"):
+                  "init", "lock", "wait", "registered-null", "registered-width",
+                  "registered-all"):
         run(f"reject-{fault}", [output / "controlled", fault], death=True)
 
 

@@ -48,6 +48,7 @@ def main():
     result = subprocess.run(command, input=source, text=True, capture_output=True, check=True)
     ast = json.loads(result.stdout)
     symbols = {}
+    data = {}
 
     def comments(node):
         return ([node["text"]] if node.get("kind") == "TextComment" else []) + [
@@ -55,6 +56,13 @@ def main():
 
     def walk(node):
         name = node.get("name", "")
+        if node.get("kind") == "VarDecl" and name.startswith("gti_rt_"):
+            owners = [path for path in headers if re.search(r"\b" + re.escape(name) + r"\b", path.read_text())]
+            assert len(owners) == 1, f"ambiguous runtime C data ownership: {name}"
+            data[name] = {"symbol": name, "header": f"gti/{owners[0].name}",
+                          "signature": node["type"]["qualType"], "linkage": "C",
+                          "storage": node.get("storageClass"),
+                          "ownership": "one permanent final-image provider; compiler/runtime-private atomic metadata"}
         if node.get("kind") == "FunctionDecl" and name.startswith("gti_rt_"):
             owners = [path for path in headers if re.search(r"\b" + re.escape(name) + r"\s*\(", path.read_text())]
             assert len(owners) == 1, f"ambiguous runtime C declaration ownership: {name}"
@@ -88,9 +96,13 @@ def main():
     expected = set(re.findall(r"\b(gti_rt_\w+)\s*\(", preprocessed))
     assert set(symbols) == expected, f"runtime C inventory drift: missing={sorted(expected - set(symbols))}, extra={sorted(set(symbols) - expected)}"
     assert len(symbols) > 100, "runtime inventory unexpectedly empty"
+    assert set(data) == {"gti_rt_atomic_wait_domain_v1"}, "runtime C data inventory drift"
+    assert data["gti_rt_atomic_wait_domain_v1"]["signature"] == "gti_atomic_wait_bucket_v1[256]"
+    assert data["gti_rt_atomic_wait_domain_v1"]["storage"] == "extern"
     args.output.write_text(json.dumps({"schema": 1, "command": command,
-                                      "services": [symbols[key] for key in sorted(symbols)]}, indent=2) + "\n")
-    print(f"Inventoried {len(symbols)} exact C signatures with ownership/failure/callback contracts")
+                                      "services": [symbols[key] for key in sorted(symbols)],
+                                      "data": [data[key] for key in sorted(data)]}, indent=2) + "\n")
+    print(f"Inventoried {len(symbols)} exact C signatures and {len(data)} data declarations with ownership contracts")
 
 
 if __name__ == "__main__":

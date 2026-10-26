@@ -2,40 +2,65 @@
 
 #include "atomic_lane.h"
 
-#include <array>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
+#include <new>
 #include <pthread.h>
+
+extern "C" {
+constinit gti_atomic_wait_bucket_v1
+    gti_rt_atomic_wait_domain_v1[GTI_ATOMIC_WAIT_BUCKET_COUNT_V1]{};
+}
 
 namespace {
 using gti::runtime::atomic_lane::require;
 
-struct Bucket {
+using Bucket = gti_atomic_wait_bucket_v1;
+struct Parking {
   pthread_mutex_t mutex;
   pthread_cond_t condition;
-  std::atomic<unsigned> waiters{0};
-#if defined(__x86_64__)
-  std::atomic<unsigned> wakeNeeded{0};
-#endif
 };
+static_assert(sizeof(Bucket) == GTI_ATOMIC_WAIT_BUCKET_BYTES_V1);
+static_assert(alignof(Bucket) == GTI_ATOMIC_WAIT_BUCKET_ALIGNMENT_V1);
+static_assert(offsetof(Bucket, wake_needed) == 0 && offsetof(Bucket, waiters) == 4);
+static_assert(offsetof(Bucket, native_storage) == 8);
+static_assert(sizeof(Parking) <= sizeof(Bucket::native_storage));
+static_assert(offsetof(Bucket, native_storage) % alignof(Parking) == 0);
+static_assert(std::atomic_ref<std::uint32_t>::is_always_lock_free);
+static_assert(std::atomic_ref<std::uint32_t>::required_alignment == 4);
+
+Parking &parking(Bucket &bucket) noexcept {
+  return *std::launder(reinterpret_cast<Parking *>(bucket.native_storage));
+}
+
+auto waiters(Bucket &bucket) noexcept {
+  return std::atomic_ref<std::uint32_t>(bucket.waiters);
+}
+#if defined(__x86_64__)
+auto wakeNeeded(Bucket &bucket) noexcept {
+  return std::atomic_ref<std::uint32_t>(bucket.wake_needed);
+}
+#endif
 
 // Trivial process-lifetime storage: late TLS/static cleanup may be its first
 // user. A failed initialization terminates before publishing a partial domain.
-constinit std::array<Bucket, 256> buckets{};
+constexpr auto &buckets = gti_rt_atomic_wait_domain_v1;
 constinit pthread_once_t initializeOnce = PTHREAD_ONCE_INIT;
 constinit std::atomic<bool> initialized{false};
 
 void initialize() noexcept {
   for (auto &bucket : buckets) {
-    require(pthread_mutex_init(&bucket.mutex, nullptr) == 0);
-    require(pthread_cond_init(&bucket.condition, nullptr) == 0);
+    auto *native = ::new (static_cast<void *>(bucket.native_storage)) Parking{};
+    require(pthread_mutex_init(&native->mutex, nullptr) == 0);
+    require(pthread_cond_init(&native->condition, nullptr) == 0);
   }
   initialized.store(true, std::memory_order_release);
 }
 
 Bucket &bucketFor(const void *address, std::uint32_t width) noexcept {
   return buckets[((reinterpret_cast<std::uintptr_t>(address) >> 3) ^ width) %
-                 buckets.size()];
+                 GTI_ATOMIC_WAIT_BUCKET_COUNT_V1];
 }
 
 void ensureInitialized() noexcept {
@@ -47,20 +72,19 @@ void ensureInitialized() noexcept {
 [[gnu::cold, gnu::noinline]]
 #endif
 void notifyRegistered(Bucket &bucket) noexcept {
-#if !defined(__x86_64__)
   ensureInitialized();
-#endif
-  require(pthread_mutex_lock(&bucket.mutex) == 0);
+  auto &native = parking(bucket);
+  require(pthread_mutex_lock(&native.mutex) == 0);
   // Colliding lanes require broadcast even for source notify-one.
-  require(pthread_cond_broadcast(&bucket.condition) == 0);
+  require(pthread_cond_broadcast(&native.condition) == 0);
 #if defined(__x86_64__)
   // Rearm under the check-to-sleep mutex, retaining coalesced publications.
-  if (bucket.waiters.load(std::memory_order_relaxed) != 0)
-    bucket.wakeNeeded.fetch_or(1U, std::memory_order_acq_rel);
+  if (waiters(bucket).load(std::memory_order_relaxed) != 0)
+    wakeNeeded(bucket).fetch_or(1U, std::memory_order_acq_rel);
   else
-    bucket.wakeNeeded.fetch_and(~1U, std::memory_order_acq_rel);
+    wakeNeeded(bucket).fetch_and(~1U, std::memory_order_acq_rel);
 #endif
-  require(pthread_mutex_unlock(&bucket.mutex) == 0);
+  require(pthread_mutex_unlock(&native.mutex) == 0);
 }
 
 template <typename T>
@@ -89,14 +113,15 @@ void wait(const void *lane, std::uint64_t old, std::uint32_t order) noexcept {
   }
   auto &bucket = bucketFor(lane, sizeof(T));
   ensureInitialized();
-  require(pthread_mutex_lock(&bucket.mutex) == 0);
-  require(bucket.waiters.fetch_add(1, std::memory_order_relaxed) !=
+  auto &native = parking(bucket);
+  require(pthread_mutex_lock(&native.mutex) == 0);
+  require(waiters(bucket).fetch_add(1, std::memory_order_relaxed) !=
           std::numeric_limits<unsigned>::max());
 #if defined(__x86_64__)
   // Every update is an acquire/release RMW. If notification precedes this
   // enrollment, its preceding lane publication happens before our recheck.
   // Otherwise notification sees this enrollment and must take the mutex.
-  bucket.wakeNeeded.fetch_or(1U, std::memory_order_acq_rel);
+  wakeNeeded(bucket).fetch_or(1U, std::memory_order_acq_rel);
 #else
   // Together with notify's fence, registration and the publishing lane store
   // cannot both be missed: whichever fence comes second observes the other's
@@ -104,15 +129,15 @@ void wait(const void *lane, std::uint64_t old, std::uint32_t order) noexcept {
   std::atomic_thread_fence(std::memory_order_seq_cst);
 #endif
   while (gti::runtime::atomic_lane::load<T>(lane, order) == static_cast<T>(old))
-    require(pthread_cond_wait(&bucket.condition, &bucket.mutex) == 0);
-  const auto previous = bucket.waiters.fetch_sub(1, std::memory_order_relaxed);
+    require(pthread_cond_wait(&native.condition, &native.mutex) == 0);
+  const auto previous = waiters(bucket).fetch_sub(1, std::memory_order_relaxed);
 #if defined(__x86_64__)
   if (previous == 1)
-    bucket.wakeNeeded.fetch_and(~1U, std::memory_order_acq_rel);
+    wakeNeeded(bucket).fetch_and(~1U, std::memory_order_acq_rel);
 #else
   static_cast<void>(previous);
 #endif
-  require(pthread_mutex_unlock(&bucket.mutex) == 0);
+  require(pthread_mutex_unlock(&native.mutex) == 0);
 }
 } // namespace
 
@@ -146,12 +171,19 @@ extern "C" void gti_rt_atomic_notify_v1(const void *lane,
   require(all <= 1);
   auto &bucket = bucketFor(lane, width_bytes);
 #if defined(__x86_64__)
-  if ((bucket.wakeNeeded.fetch_and(~1U, std::memory_order_acq_rel) & 1U) == 0)
+  if ((wakeNeeded(bucket).fetch_and(~1U, std::memory_order_acq_rel) & 1U) == 0)
     return;
 #else
   std::atomic_thread_fence(std::memory_order_seq_cst);
-  if (bucket.waiters.load(std::memory_order_relaxed) == 0)
+  if (waiters(bucket).load(std::memory_order_relaxed) == 0)
     return;
 #endif
   notifyRegistered(bucket);
+}
+
+extern "C" void gti_rt_atomic_notify_registered_v1(
+    const void *lane, std::uint32_t width_bytes, std::uint32_t all) noexcept {
+  gti::runtime::atomic_lane::validate(lane, width_bytes);
+  require(all <= 1);
+  notifyRegistered(bucketFor(lane, width_bytes));
 }

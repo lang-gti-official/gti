@@ -33,6 +33,7 @@ enum class RuntimeService {
   CopyThreadCleanupPrimary,
   QuarantineThread,
   ProgramStorageRetirementReady,
+  AtomicNotifyRegistered,
 };
 
 // Only real C symbols with explicitly modeled signatures enter the module.

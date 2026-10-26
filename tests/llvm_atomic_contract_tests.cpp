@@ -473,18 +473,50 @@ void checkWaiting(const std::filesystem::path &root,
               function->getArg(1), session.layouts().get(layout.element).value));
         expect(Atomics(session, ir).emit(owner.body, instruction, inputs) == nullptr,
                "wait.result: no result publication or invented failure channel");
+        if (!wait && notifications == 1) {
+          auto *metadata = session.module().getNamedGlobal("gti_rt_atomic_wait_domain_v1");
+          for (int mutation = 0; mutation != 4; ++mutation) {
+            if (mutation == 0) metadata->setConstant(true);
+            if (mutation == 1) metadata->setThreadLocalMode(llvm::GlobalVariable::GeneralDynamicTLSModel);
+            if (mutation == 2) metadata->setAlignment(llvm::Align(32));
+            if (mutation == 3) metadata->setLinkage(llvm::GlobalValue::InternalLinkage);
+            const auto before = ir.GetInsertBlock()->size();
+            bool rejected = false;
+            try {
+              static_cast<void>(Atomics(session, ir).emit(owner.body, instruction, inputs));
+            } catch (const BackendUnsupportedError &) {
+              rejected = true;
+            }
+            expect(rejected && ir.GetInsertBlock()->size() == before,
+                   "wait.domain: constant/TLS/under-aligned/private replacements reject before emission");
+            metadata->setConstant(false);
+            metadata->setThreadLocalMode(llvm::GlobalVariable::NotThreadLocal);
+            metadata->setAlignment(llvm::Align(64));
+            metadata->setLinkage(llvm::GlobalValue::ExternalLinkage);
+          }
+        }
         ir.CreateRetVoid();
       }
   expect(elements.size() == 9 && orders.size() == 3 && waits >= 27 && notifications >= 18,
          "wait.domain: bool and eight integers, all load orders and both notifications");
   auto *wait = declareRuntimeService(session, RuntimeService::AtomicWait);
   auto *notify = declareRuntimeService(session, RuntimeService::AtomicNotify);
+  auto *registered = declareRuntimeService(session, RuntimeService::AtomicNotifyRegistered);
+  const auto *domain = session.module().getNamedGlobal("gti_rt_atomic_wait_domain_v1");
+  expect(domain && domain->isDeclaration() && !domain->isConstant() &&
+             domain->hasExternalLinkage() && !domain->isThreadLocal() &&
+             domain->getAlign().valueOrOne() == llvm::Align(64) &&
+             session.module().getDataLayout().getTypeAllocSize(domain->getValueType()) == 32768 &&
+             notify->use_empty() && !registered->use_empty() && registered->doesNotThrow() &&
+             !registered->hasFnAttribute(llvm::Attribute::NoReturn),
+         "wait.domain: typed notification shares exact v1 metadata and only calls the slow service");
   expect(wait->arg_size() == 4 && wait->getReturnType()->isVoidTy() &&
              wait->getArg(0)->getType()->isPointerTy() &&
              wait->getArg(1)->getType()->isIntegerTy(64) &&
              wait->getArg(2)->getType()->isIntegerTy(32) &&
              wait->getArg(3)->getType()->isIntegerTy(32) &&
-             notify->arg_size() == 3 && notify->getReturnType()->isVoidTy(),
+             notify->arg_size() == 3 && notify->getReturnType()->isVoidTy() &&
+             registered->getFunctionType() == notify->getFunctionType(),
          "wait.c-abi: exact versioned service signatures");
   session.verify();
   if (!output.empty()) {

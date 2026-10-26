@@ -12,6 +12,12 @@ llvm::Function *declareRuntimeService(Session &session,
   bool neverReturns = false;
   bool noUnwind = false;
   switch (service) {
+  case RuntimeService::AtomicNotifyRegistered:
+    noUnwind = true;
+    name = "gti_rt_atomic_notify_registered_v1";
+    parameters = {ptr, llvm::Type::getInt32Ty(context),
+                  llvm::Type::getInt32Ty(context)};
+    break;
   case RuntimeService::QuarantineThread:
     noUnwind = true;
     name = "gti_rt_thread_quarantine_v1";

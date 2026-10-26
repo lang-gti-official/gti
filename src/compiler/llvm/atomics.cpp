@@ -312,9 +312,54 @@ llvm::Value *Atomics::emit(const MirBody &body,
       ir.CreateCall(declareRuntimeService(session, RuntimeService::AtomicWait),
                     {inputs[0], old, width, ir.getInt32(encoded)});
     } else {
-      ir.CreateCall(declareRuntimeService(session, RuntimeService::AtomicNotify),
+      auto *bucketType = llvm::StructType::get(
+          ir.getInt32Ty(), ir.getInt32Ty(), llvm::ArrayType::get(ir.getInt8Ty(), 120));
+      auto *domainType = llvm::ArrayType::get(bucketType, 256);
+      if (session.module().getDataLayout().getTypeAllocSize(bucketType) != 128)
+        throw BackendUnsupportedError("LLVM wait domain lost its v1 bucket stride");
+      constexpr auto name = "gti_rt_atomic_wait_domain_v1";
+      auto *domain = session.module().getNamedGlobal(name);
+      if (session.module().getNamedValue(name) &&
+          (!domain || domain->getValueType() != domainType || domain->isConstant() ||
+           !domain->isDeclaration() || !domain->hasExternalLinkage() ||
+           domain->isThreadLocal() || domain->getAddressSpace() != 0 ||
+           domain->getAlign().valueOrOne() < llvm::Align(64)))
+        throw BackendUnsupportedError("LLVM wait domain conflicts with its exact runtime ABI");
+      if (!domain) {
+        domain = new llvm::GlobalVariable(
+            session.module(), domainType, false, llvm::GlobalValue::ExternalLinkage,
+            nullptr, name);
+        domain->setAlignment(llvm::Align(64));
+      }
+      auto *index = ir.CreateAnd(
+          ir.CreateXor(ir.CreateLShr(ir.CreatePtrToInt(inputs[0], ir.getInt64Ty()), 3),
+                       ir.getInt64(layout.lane->getBitWidth() / 8)),
+          ir.getInt64(255));
+      const bool x86 = session.program().mir().target().arch == "x86_64";
+      auto *metadata = ir.CreateInBoundsGEP(
+          domainType, domain, {ir.getInt64(0), index, ir.getInt32(x86 ? 0 : 1)});
+      llvm::Value *registered;
+      if (x86) {
+        auto *old = ir.CreateAtomicRMW(
+            llvm::AtomicRMWInst::And, metadata, ir.getInt32(~UINT32_C(1)),
+            llvm::Align(4), llvm::AtomicOrdering::AcquireRelease, llvm::SyncScope::System);
+        registered = ir.CreateICmpNE(ir.CreateAnd(old, ir.getInt32(1)), ir.getInt32(0));
+      } else {
+        ir.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent, llvm::SyncScope::System);
+        auto *count = ir.CreateAlignedLoad(ir.getInt32Ty(), metadata, llvm::Align(4));
+        count->setAtomic(llvm::AtomicOrdering::Monotonic, llvm::SyncScope::System);
+        registered = ir.CreateICmpNE(count, ir.getInt32(0));
+      }
+      auto *function = ir.GetInsertBlock()->getParent();
+      auto *notify = llvm::BasicBlock::Create(session.context(), "notify.registered", function);
+      auto *done = llvm::BasicBlock::Create(session.context(), "notify.done", function);
+      ir.CreateCondBr(registered, notify, done);
+      ir.SetInsertPoint(notify);
+      ir.CreateCall(declareRuntimeService(session, RuntimeService::AtomicNotifyRegistered),
                     {inputs[0], width,
                      ir.getInt32(instruction.intrinsic == IntrinsicKind::AtomicNotifyAll)});
+      ir.CreateBr(done);
+      ir.SetInsertPoint(done);
     }
     return nullptr;
   }

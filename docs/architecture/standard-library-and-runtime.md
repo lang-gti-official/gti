@@ -970,6 +970,24 @@ GTI's documented wait contract, not semantic authority from the C++ spelling.
 No mutex-loan suspension, public-name exception, new syntax or LSP inference
 path is introduced. Ordinary application wrappers compose the same calls.
 
+LLVM notification uses the versioned final-image runtime enrollment domain,
+not a second parking table or a per-object extension. Its 256 buckets have
+128-byte stride and 64-byte alignment; two fixed 32-bit metadata words precede
+120 opaque native bytes. The native provider checks its actual pthread layout
+fits, begins the native object lifetime once and never tears the domain down.
+The domain occupies 32 KiB of static storage (previous private Linux buckets
+occupied 24 KiB); this does not measure pthread/libc internal allocation.
+The x86-64 path retains the acquire/release wake-bit RMW chain; arm64 retains
+the sequentially-consistent fence and relaxed waiter-count test. Only a
+registered notification calls the nonthrowing native broadcast/rearm service,
+which does not consume a second wake bit. Direct C wait/notify services keep
+their full input validation and share the identical domain. Typed code obtains
+lane width/alignment from verified MIR and layout, without rediscovering source
+ownership or weakening the synchronization contract. Independent unloadable
+providers remain unsupported, as before. The identical-source wait cost oracle
+compares optimized public LLVM and C++20/23 execution and retains their build,
+memory and binary-size observations separately from raw C-service cost.
+
 Fixed-width integer `fetch_add`, `fetch_sub`, `fetch_and`, `fetch_or`, and
 `fetch_xor` remain source-library policy: private generic update helpers form
 strong compare/exchange loops from those same exact declarations. Consequently

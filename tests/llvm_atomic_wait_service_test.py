@@ -63,6 +63,14 @@ def main():
                     "-o", output / "runtime.o"])
     run("c-oracle", [args.cc, "-std=c17", *flags, "-c",
                      root / "tests/fixtures/llvm_atomic_wait_service.c", "-o", output / "c.o"])
+    run("controlled-runtime", [args.cxx, "-std=c++20", *flags, "-fno-strict-aliasing",
+        "-I", root / "runtime/include", "-Dpthread_mutex_init=gti_test_wait_init",
+        "-Dpthread_mutex_lock=gti_test_wait_lock", "-Dpthread_cond_broadcast=gti_test_wait_wake",
+        "-Dpthread_cond_wait=gti_test_wait_sleep", "-c", root / "runtime/src/atomic_wait.cpp",
+        "-o", output / "controlled-runtime.o"])
+    run("controlled-driver", [args.cxx, "-std=c++20", *flags,
+        "-I", root / "runtime/include", "-DGTI_WAIT_LLVM_NOTIFY", "-c",
+        root / "tests/runtime_atomic_wait_tests.cpp", "-o", output / "controlled-driver.o"])
     for mode in ("O0", "O1", "O2", "O3"):
         for component in ("lanes", "services"):
             run(f"{component}-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation, "-c",
@@ -76,6 +84,12 @@ def main():
         run(f"link-{mode}", [args.cxx, "-pthread", *instrumentation, output / "runtime.o", output / "c.o",
             output / f"lanes-{mode}.o", output / f"services-{mode}.o", "-o", program])
         run(f"execute-{mode}", [program])
+        controlled = output / f"controlled-{mode}"
+        run(f"controlled-link-{mode}", [args.cxx, "-pthread", *instrumentation,
+            output / "controlled-runtime.o", output / "controlled-driver.o",
+            output / f"services-{mode}.o", "-o", controlled])
+        run(f"controlled-execute-{mode}", [controlled])
+        run(f"controlled-late-{mode}", [controlled, "late"])
 
 
 if __name__ == "__main__":
