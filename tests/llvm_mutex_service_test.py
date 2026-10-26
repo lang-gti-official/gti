@@ -67,14 +67,20 @@ def main():
     for mode in ("O0", "O1", "O2", "O3"):
         run(f"ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation, "-c", output / "mutex.ll",
                            "-o", output / f"mutex-{mode}.o"])
+        run(f"active-ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation, "-c",
+                                  output / "mutex-active.ll", "-o", output / f"mutex-active-{mode}.o"])
         if args.sanitize:
-            symbols = run(f"instrumentation-{mode}", ["nm", "-u", output / f"mutex-{mode}.o"])
             marker = "__tsan_read" if args.sanitize == "thread" else "__asan_report_"
-            if marker not in symbols:
-                raise AssertionError(f"generated {mode} mutex access lacks {args.sanitize} instrumentation")
+            for family in ("mutex", "mutex-active"):
+                symbols = run(f"{family}-instrumentation-{mode}",
+                              ["nm", "-u", output / f"{family}-{mode}.o"])
+                if marker not in symbols:
+                    raise AssertionError(
+                        f"generated {mode} {family} access lacks {args.sanitize} instrumentation")
         program = output / f"mutex-{mode}"
         run(f"link-{mode}", [args.cxx, "-pthread", *instrumentation, output / "fixture.o", output / "runtime.o",
-                             output / f"mutex-{mode}.o", runtime_library, "-o", program])
+                             output / f"mutex-{mode}.o", output / f"mutex-active-{mode}.o",
+                             runtime_library, "-o", program])
         run(f"execute-{mode}", [program])
         for fault in ("active-lock", "wrong-owner", "inactive-read", "retired-lock"):
             run(f"{fault}-{mode}", [program, fault], death=True)

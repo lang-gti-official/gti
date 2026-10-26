@@ -359,9 +359,16 @@ retainedNativeInitializerFailure(const lang::MirProgram &program,
   auto &constructor = const_cast<lang::MirConstructorInstance &>(
       *retained.findConstructorInstance(owner));
   auto &body = constructor.body;
-  if (retained.hostedStartup() || body.blocks.size() != 1 ||
-      !body.failureRecords.empty())
+  if (retained.hostedStartup())
     return std::nullopt;
+  if (body.blocks.size() != 1 || !body.failureRecords.empty()) {
+    for (const auto &block : body.blocks)
+      if (block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+          block.terminator.invokeInstruction == constructInstruction &&
+          lang::cppMirConstructorStatusCannotFail(retained, owner))
+        return retained;
+    return std::nullopt;
+  }
   auto &entry = body.blocks.front();
   const auto construct =
       std::find_if(entry.instructions.begin(), entry.instructions.end(),
@@ -500,6 +507,50 @@ int exercise() { std::mutex<payload> value{payload(4)}; return 0; }
                        .size() == 1,
                "failure-free source constructor proves the retained native "
                "initializer's impossible cleanup edge");
+        const auto &binding = bindings.front();
+        expect(binding.valueDrop != 0 && binding.fieldDrop != 0 &&
+                   stage.preparedParameterDrop != binding.valueDrop,
+               "native shell publication is distinct from payload handoff");
+        for (int mutation = 0; mutation != 8; ++mutation) {
+          auto malformed = *retained;
+          auto &changed = const_cast<lang::MirConstructorInstance &>(
+              *malformed.findConstructorInstance(constructor.id));
+          auto &valueDrop = changed.body.dropObligations[binding.valueDrop - 1];
+          auto &fieldDrop = changed.body.dropObligations[binding.fieldDrop - 1];
+          if (mutation == 0)
+            valueDrop.dropType.classInstance.reset();
+          if (mutation == 1)
+            valueDrop.dropType.aggregate.push_back(
+                {.type = stage.info.type, .requiresActiveCleanup = true});
+          if (mutation == 2)
+            fieldDrop.dropType.requiresActiveCleanup = false;
+          for (auto &block : changed.body.blocks) {
+            if (block.terminator.invokeInstruction !=
+                binding.constructInstruction)
+              continue;
+            if (mutation == 3)
+              block.terminator.successLifecycle.clear();
+            if (mutation == 4)
+              block.terminator.successLifecycle.front().conditional = true;
+            if (mutation == 5)
+              block.terminator.successLifecycle.front().target =
+                  *stage.preparedParameterDrop;
+            for (auto &instruction : block.instructions) {
+              if (instruction.id != binding.constructInstruction)
+                continue;
+              if (mutation == 6)
+                instruction.successResultDrop.reset();
+              if (mutation == 7)
+                instruction.lifecycle.push_back(instruction.lifecycle.front());
+            }
+          }
+          expect(!lang::verifyMirProgram(malformed).valid() &&
+                     lang::cppMirConstructedFieldInitializerBindings(malformed,
+                                                                     changed)
+                         .empty(),
+                 "native shell fusion rejects forged recipes, success-edge "
+                 "publication and duplicate payload transfer");
+        }
         for (int mutation = 0; mutation != 8; ++mutation) {
           auto malformed = *retained;
           auto &changed = const_cast<lang::MirConstructorInstance &>(
@@ -1533,6 +1584,7 @@ int main() {
 
 int main(int argc, char **argv) {
   if (argc == 2 && std::string_view(argv[1]) == "--shell-recipes") {
+    testPreparedMutexPayload();
     testMutexCleanupRecipe();
     testPassiveMutexShellRecipe();
     return failures == 0 ? 0 : 1;

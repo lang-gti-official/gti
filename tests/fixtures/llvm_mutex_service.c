@@ -1,3 +1,4 @@
+#include "gti/runtime_failure.h"
 #include "gti/runtime_mutex.h"
 
 #include <assert.h>
@@ -23,6 +24,94 @@ extern void gti_test_mutex_real_destroy_v1(gti_mutex_slot_v1 *);
 
 static unsigned initialized, destroyed;
 static gti_mutex_slot_v1 *live_shells[8];
+
+struct failure_channel {
+  gti_failure_record_v2 record;
+  const gti_failure_artifact_descriptor_v1 *artifact;
+};
+extern void gti_test_mutex_active_initialize(void *, int32_t, int32_t);
+extern void gti_test_mutex_active_transfer(void *, void *);
+extern uint32_t gti_test_mutex_active_cleanup(void *, struct failure_channel *);
+extern void gti_test_mutex_cell_transfer(void *, void *);
+extern uint32_t gti_test_mutex_cell_cleanup(void *, struct failure_channel *);
+
+static unsigned payload_drops;
+static int32_t payload_trace;
+static const gti_failure_artifact_descriptor_v1 payload_artifact = {
+    .abi_version = 1};
+
+/* Deliberate test double for the selected source destructor, not generated GTI
+ * body evidence or a C++ comparator. Its ABI is checked by the emitter test. */
+bool gti_test_mutex_payload_drop(struct failure_channel *failure,
+                                 void *payload) {
+  int32_t value;
+  memcpy(&value, payload, sizeof(value));
+  ++payload_drops;
+  payload_trace = payload_trace * 10 + value;
+  if (value != 0)
+    return true;
+  memset(failure, 0, sizeof(*failure));
+  failure->record.abi_version = GTI_FAILURE_ABI_VERSION_V2;
+  failure->record.code = GTI_FAILURE_CODE_DIVISION_BY_ZERO_V1;
+  failure->record.detail = GTI_FAILURE_DETAIL_INTEGER_DIVISION_V1;
+  failure->record.site_index = 17;
+  failure->artifact = &payload_artifact;
+  return false;
+}
+
+static void active_lifecycles(void) {
+  _Alignas(8) unsigned char first[80], second[80], replacement[80];
+  struct failure_channel failure, unchanged;
+  memset(&failure, 0xa5, sizeof(failure));
+  memcpy(&unchanged, &failure, sizeof(failure));
+  unsigned start_init = initialized, start_destroy = destroyed;
+  /* A completed shell with no published payload rolls back the shell only. */
+  gti_test_mutex_active_initialize(first, 9, 0);
+  assert(gti_test_mutex_active_cleanup(first, &failure) == 1);
+  assert(gti_test_mutex_active_cleanup(first, &failure) == 1);
+  assert(destroyed == start_destroy + 1 && payload_drops == 0);
+  assert(memcmp(&failure, &unchanged, sizeof(failure)) == 0);
+
+  gti_test_mutex_active_initialize(first, 3, 1);
+  gti_test_mutex_active_transfer(second, first);
+  assert(initialized == start_init + 3 && destroyed == start_destroy + 2);
+  assert(first[72] == 0 && second[72] == 3 && payload_drops == 0);
+  assert(gti_test_mutex_active_cleanup(first, &failure) == 1);
+  assert(payload_drops == 0 && destroyed == start_destroy + 2);
+  gti_test_mutex_active_initialize(replacement, 4, 1);
+  assert(gti_test_mutex_active_cleanup(second, &failure) == 1);
+  assert(payload_trace == 3 && payload_drops == 1);
+  gti_test_mutex_active_transfer(second, replacement);
+  assert(gti_test_mutex_active_cleanup(replacement, &failure) == 1);
+  assert(gti_test_mutex_active_cleanup(second, &failure) == 1);
+  assert(gti_test_mutex_active_cleanup(second, &failure) == 1);
+  assert(payload_trace == 34 && payload_drops == 2);
+  assert(memcmp(&failure, &unchanged, sizeof(failure)) == 0);
+  assert(initialized == destroyed);
+
+  /* Wrapper transfer recursively creates fresh native identities. Reverse
+   * source field cleanup continues after the first payload failure. */
+  _Alignas(8) unsigned char cell[160], moved[160];
+  payload_trace = 0;
+  gti_test_mutex_active_initialize(cell, 5, 1);
+  gti_test_mutex_active_initialize(cell + 80, 0, 1);
+  start_init = initialized;
+  start_destroy = destroyed;
+  gti_test_mutex_cell_transfer(moved, cell);
+  assert(initialized == start_init + 2 && destroyed == start_destroy + 2);
+  assert(gti_test_mutex_cell_cleanup(cell, &failure) == 1);
+  assert(payload_drops == 2);
+  assert(gti_test_mutex_cell_cleanup(moved, &failure) == 0);
+  assert(payload_drops == 4 && payload_trace == 5);
+  assert(failure.record.abi_version == GTI_FAILURE_ABI_VERSION_V2 &&
+         failure.record.code == GTI_FAILURE_CODE_DIVISION_BY_ZERO_V1 &&
+         failure.record.site_index == 17 &&
+         failure.artifact == &payload_artifact);
+  memcpy(&unchanged, &failure, sizeof(failure));
+  assert(gti_test_mutex_cell_cleanup(moved, &failure) == 1);
+  assert(payload_drops == 4 && initialized == destroyed);
+  assert(memcmp(&failure, &unchanged, sizeof(failure)) == 0);
+}
 void gti_rt_mutex_initialize_v1(gti_mutex_slot_v1 *slot) {
   unsigned empty = 8;
   for (unsigned index = 0; index != 8; ++index) {
@@ -120,5 +209,6 @@ int main(int argc, char **argv) {
   gti_test_mutex_unlock(storage, &token);
   gti_test_mutex_destroy(storage);
   assert(initialized == destroyed);
+  active_lifecycles();
   return 0;
 }

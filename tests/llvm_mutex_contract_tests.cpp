@@ -6,6 +6,7 @@
 #include <iostream>
 #include <llvm/Support/raw_ostream.h>
 #include <map>
+#include <tuple>
 
 namespace {
 using namespace lang;
@@ -14,6 +15,164 @@ using namespace lang::native_llvm;
 void require(bool condition, const char *message) {
   if (!condition)
     throw std::runtime_error(message);
+}
+
+void requirePublicRejection(const VerifiedLoweredProgram &input) {
+  require(!planLlvmAdmission(input).admitted(),
+          "kernel evidence does not open public mutex admission");
+  bool rejected = false;
+  try {
+    static_cast<void>(LlvmBackend().generate(input.program()));
+  } catch (const BackendUnsupportedError &) {
+    rejected = true;
+  }
+  require(rejected, "public backend rejects before producing a mutex artifact");
+}
+
+// Test the native lifecycle kernel, not BodyDrop or public admission. The C
+// observer stands in for the selected source destructor, with its exact planned
+// signature; no recipe or source cleanup endpoint is synthesized by this test.
+void checkActive(const std::filesystem::path &root,
+                 const std::filesystem::path &output,
+                 std::string_view sanitizer) {
+  FrontendOptions options;
+  options.target.executionProfile = ExecutionProfile::Concurrent;
+  options.target.runtimeCapabilities.threads = true;
+  options.requireEntryPoint = true;
+  options.requireFunctionDefinitions = true;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      root / "tests/fixtures/llvm_mutex_shell_lifecycle.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  require(frontend.canGenerateCode(),
+          "active shell source reaches verified MIR");
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir,
+                             options.target),
+      issues);
+  require(input.has_value(), "active shell recipes have a sealed snapshot");
+  requirePublicRejection(*input);
+  Session session(*input, {});
+  const auto &program = input->program().mir();
+  SemanticType storage, cell;
+  for (const auto &owner : program.classInstances()) {
+    if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage)
+      storage = owner.type;
+    if (owner.declaredFields.size() == 2 &&
+        owner.declaredFields[0].type == owner.declaredFields[1].type)
+      cell = owner.type;
+  }
+  require(storage.kind == SemanticType::Class &&
+              cell.kind == SemanticType::Class,
+          "source materializes a mutex and unrelated two-field wrapper");
+  const auto recipe = mirUniqueCleanupType(program, storage);
+  const auto cellRecipe = mirUniqueCleanupType(program, cell);
+  require(recipe && recipe->aggregate.size() == 1 && cellRecipe &&
+              cellRecipe->aggregate.size() == 2 &&
+              recipe->aggregate[0].destructor.has_value(),
+          "active shell cleanup has exactly its source-selected payload child");
+  const auto &payload = recipe->aggregate[0];
+  const auto *destructor = program.findDestructorInstance(*payload.destructor);
+  require(destructor && destructor->mayRaiseDefinedFailure,
+          "payload observer exercises the existing fallible destructor ABI");
+  const auto layout = session.layouts().mutexStorage(storage);
+  require(layout.object.size == 80 && layout.payloadIndex == 1 &&
+              layout.object.fieldOffsets[1] == 64 &&
+              layout.object.fieldOffsets[2] == 72 &&
+              session.layouts().get(payload.type).size == 8 &&
+              session.layouts().activeIndex(payload.type) == 1 &&
+              session.layouts().get(cell).size == 160,
+          "C observer checks the exact payload, shell and wrapper layout");
+  Failures failures(session);
+  Lifetimes lifetimes(session, failures, [&](MirBodyAddress address) {
+    require(address.kind == MirBodyKind::Destructor &&
+                address.owner == destructor->id,
+            "cleanup selects only the sealed payload destructor");
+    if (auto *existing =
+            session.module().getFunction("gti_test_mutex_payload_drop"))
+      return existing;
+    const auto abi = session.abi().gti(
+        SemanticType::Void, {}, destructor->mayRaiseDefinedFailure, true);
+    auto *observer =
+        llvm::Function::Create(abi.type, llvm::GlobalValue::ExternalLinkage,
+                               "gti_test_mutex_payload_drop", session.module());
+    abi.applyTo(*observer);
+    return observer;
+  });
+  const auto function = [&](const char *name, llvm::Type *result,
+                            std::vector<llvm::Type *> parameters) {
+    return llvm::Function::Create(
+        llvm::FunctionType::get(result, parameters, false),
+        llvm::GlobalValue::ExternalLinkage, name, session.module());
+  };
+  auto *initialize = function("gti_test_mutex_active_initialize",
+                              llvm::Type::getVoidTy(session.context()),
+                              {session.layouts().pointer(),
+                               llvm::Type::getInt32Ty(session.context()),
+                               llvm::Type::getInt32Ty(session.context())});
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", initialize));
+  Mutexes(session, ir).initializeShell(initialize->getArg(0), storage);
+  auto *value = ir.CreateStructGEP(layout.object.storage, initialize->getArg(0),
+                                   layout.payloadIndex);
+  ir.CreateStore(initialize->getArg(1),
+                 ir.CreateStructGEP(session.layouts().get(payload.type).storage,
+                                    value, 0));
+  ir.CreateStore(
+      ir.CreateZExt(ir.CreateICmpNE(initialize->getArg(2), ir.getInt32(0)),
+                    ir.getInt8Ty()),
+      ir.CreateStructGEP(session.layouts().get(payload.type).storage, value,
+                         *session.layouts().activeIndex(payload.type)));
+  ir.CreateStore(
+      ir.CreateSelect(ir.CreateICmpNE(initialize->getArg(2), ir.getInt32(0)),
+                      ir.getInt8(MutexStorageLayout::shellLive |
+                                 MutexStorageLayout::payloadLive),
+                      ir.getInt8(MutexStorageLayout::shellLive)),
+      ir.CreateStructGEP(layout.object.storage, initialize->getArg(0),
+                         layout.payloadActiveIndex));
+  ir.CreateRetVoid();
+  for (const auto &[type, drop, suffix] :
+       {std::tuple{storage, *recipe, "active"},
+        std::tuple{cell, *cellRecipe, "cell"}}) {
+    auto *transfer = function(
+        (std::string("gti_test_mutex_") + suffix + "_transfer").c_str(),
+        ir.getVoidTy(),
+        {session.layouts().pointer(), session.layouts().pointer()});
+    ir.SetInsertPoint(
+        llvm::BasicBlock::Create(session.context(), "entry", transfer));
+    require(lifetimes.transferMutexes(ir, transfer->getArg(0),
+                                      transfer->getArg(1), type),
+            "structural transfer preserves fresh shell identity");
+    ir.CreateRetVoid();
+    auto *cleanup =
+        function((std::string("gti_test_mutex_") + suffix + "_cleanup").c_str(),
+                 ir.getInt32Ty(),
+                 {session.layouts().pointer(), session.layouts().pointer()});
+    ir.SetInsertPoint(
+        llvm::BasicBlock::Create(session.context(), "entry", cleanup));
+    ir.CreateRet(ir.CreateZExt(
+        ir.CreateCall(lifetimes.cleanup(drop),
+                      {cleanup->getArg(0), cleanup->getArg(1), ir.getFalse()}),
+        ir.getInt32Ty()));
+  }
+  if (!sanitizer.empty())
+    for (auto &function : session.module())
+      if (!function.isDeclaration())
+        function.addFnAttr(sanitizer == "thread"
+                               ? llvm::Attribute::SanitizeThread
+                               : llvm::Attribute::SanitizeAddress);
+  session.verify();
+  if (!output.empty()) {
+    std::error_code error;
+    llvm::raw_fd_ostream stream(output.string(), error);
+    if (error)
+      throw std::runtime_error(error.message());
+    session.module().print(stream, nullptr);
+    stream.close();
+    require(!stream.has_error(), "write source-derived active shell kernel IR");
+  }
 }
 
 void check(const std::filesystem::path &root,
@@ -35,8 +194,7 @@ void check(const std::filesystem::path &root,
                              options.target),
       issues);
   require(input.has_value(), "mutex source has a verified snapshot");
-  require(!planLlvmAdmission(*input).admitted(),
-          "native shell lifecycle remains closed to public admission");
+  requirePublicRejection(*input);
   Session session(*input, {});
   const auto &program = input->program().mir();
   SemanticType storage, token;
@@ -260,6 +418,11 @@ int main(int argc, char **argv) {
     return 2;
   try {
     check(argv[1], argc >= 3 ? argv[2] : "", sanitizer);
+    checkActive(argv[1],
+                argc >= 3 ? std::filesystem::path(argv[2]).parent_path() /
+                                "mutex-active.ll"
+                          : std::filesystem::path{},
+                sanitizer);
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

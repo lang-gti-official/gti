@@ -48429,11 +48429,19 @@ constructedFieldInitializerSchedule(const MirProgram &program,
           nativeRetirements.insert(drop.id);
   ConstructorNoFailureProof noFailure(program);
   std::unordered_set<std::size_t> provedFailureBoundaries;
+  const bool nativeShellPublication = std::any_of(
+      constructor.initializers.begin(), constructor.initializers.end(),
+      [&](const MirConstructorInitializer &initializer) {
+        const auto *fieldOwner =
+            uniqueClassInstanceForType(program, initializer.targetType);
+        return fieldOwner && fieldOwner->compilerCapability ==
+                                 CompilerCapabilityTypeKind::MutexStorage;
+      });
   const auto successSequence = constructorSuccessSequence(
       program, constructor,
       [&](auto target) { return noFailure.prove(target); },
-      &provedFailureBoundaries, false, false, !nativeRetirements.empty(),
-      &nativeRetirements);
+      &provedFailureBoundaries, nativeShellPublication, false,
+      !nativeRetirements.empty(), &nativeRetirements);
   // One straight-line successful prologue with no loans is the only shape
   // whose complete instruction set can be proved here. Empty failure routes
   // are retained in MIR, but cannot execute when their exact callee has no
@@ -48926,7 +48934,10 @@ constructedFieldInitializerSchedule(const MirProgram &program,
           construct->definedFailure.propagation !=
               FailurePropagationKind::Constructor) ||
          construct->ownership || construct->preparedParameterDrop ||
-         construct->successResultDrop || construct->successResultDestination ||
+         (construct->successResultDrop &&
+          constructedOwner->compilerCapability !=
+              CompilerCapabilityTypeKind::MutexStorage) ||
+         construct->successResultDestination ||
          construct->fullExpressionEnd != 0 ||
          construct->earlyExitFullExpressionEnd ||
          construct->cleanupBoundaryEnd != 0 || construct->info != value->info ||
@@ -48990,14 +49001,14 @@ constructedFieldInitializerSchedule(const MirProgram &program,
         const auto position = std::find_if(
             successSequence->begin(), successSequence->end(),
             [&](const auto *candidate) { return candidate->id == input->id; });
-        // The private native mutex constructor takes one cleanup-free payload
-        // directly from the adjacent parameter move. A prepared carrier has no
-        // observable destruction, but its exact initialization and invocation
-        // handoff must still be proved before fusing this native initializer.
+        // A prepared carrier has no observable destruction. The destination
+        // may still own native shell retirement, proved independently below.
         if ((constructedOwner->compilerCapability !=
                  CompilerCapabilityTypeKind::MutexStorage &&
              !passiveMovedArgument && !closureArgument) ||
-            field.requiresActiveCleanup ||
+            (field.requiresActiveCleanup &&
+             constructedOwner->compilerCapability !=
+                 CompilerCapabilityTypeKind::MutexStorage) ||
             materializedConstructorArgumentStage(body, operand.value) !=
                 input ||
             prepared == nullptr || prepared->initiallyActive ||
@@ -49227,7 +49238,11 @@ constructedFieldInitializerSchedule(const MirProgram &program,
       }
     }
     if (preparedNativeInput &&
-        construct->lifecycle.size() != preparedNativeDrops.size())
+        construct->lifecycle.size() !=
+            preparedNativeDrops.size() +
+                (field.requiresActiveCleanup && !construct->successResultDrop
+                     ? 1
+                     : 0))
       return {};
     if (scalarDefault)
       binding.arguments.push_back(
@@ -49270,10 +49285,29 @@ constructedFieldInitializerSchedule(const MirProgram &program,
 
     if (field.requiresActiveCleanup) {
       if (field.dropKind != DropKind::Lexical ||
-          construct->lifecycle.size() != 1) {
+          construct->lifecycle.size() !=
+              preparedNativeDrops.size() +
+                  (construct->successResultDrop ? 0 : 1)) {
         return {};
       }
-      const MirLifecycleEvent &armed = construct->lifecycle.front();
+      const auto activation =
+          std::find_if(construct->lifecycle.begin(), construct->lifecycle.end(),
+                       [](const auto &event) {
+                         return event.kind == MirLifecycleEventKind::Initialize;
+                       });
+      const MirLifecycleEvent *armedEvent =
+          activation != construct->lifecycle.end() ? &*activation : nullptr;
+      if (construct->successResultDrop) {
+        const auto *producer = invokeProducerBlock(body, *construct);
+        if (producer == nullptr ||
+            !invokeSuccessActivates(body, *construct,
+                                    *construct->successResultDrop))
+          return {};
+        armedEvent = &producer->terminator.successLifecycle.front();
+      }
+      if (armedEvent == nullptr)
+        return {};
+      const MirLifecycleEvent &armed = *armedEvent;
       const MirDropObligation *valueDrop =
           body.findDropObligation(armed.target);
       const MirPlace *slot =
@@ -49290,6 +49324,15 @@ constructedFieldInitializerSchedule(const MirProgram &program,
           !slot->projections.empty() || slot->type != initializer.targetType ||
           slot->initiallyAvailable) {
         return {};
+      }
+      if (constructedOwner != nullptr &&
+          constructedOwner->compilerCapability ==
+              CompilerCapabilityTypeKind::MutexStorage) {
+        const auto shell =
+            mirUniqueCleanupType(program, initializer.targetType);
+        if (!shell || !shell->aggregate.empty() ||
+            valueDrop->dropType != *shell)
+          return {};
       }
 
       const std::vector<MirValueUse> uses = nonRootRecordUses(body, value->id);
@@ -49337,6 +49380,11 @@ constructedFieldInitializerSchedule(const MirProgram &program,
           !fieldDrop->dropType.requiresActiveCleanup) {
         return {};
       }
+      if (constructedOwner != nullptr &&
+          constructedOwner->compilerCapability ==
+              CompilerCapabilityTypeKind::MutexStorage &&
+          fieldDrop->dropType != valueDrop->dropType)
+        return {};
       binding.initializeInstruction = initialize->id;
       binding.slotPlace = slot->id;
       binding.fieldPlace = fieldPlace->id;

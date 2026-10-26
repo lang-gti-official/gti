@@ -2770,6 +2770,15 @@ TransferOut must agree in type, place, order, and identity. The carrier adds no
 observable cleanup; its initialization and handoff are still mandatory MIR
 events. This proof does not generalize to active-cleanup payloads or arbitrary
 constructor argument expressions.
+Native shell retirement is distinct from payload cleanup: a passive payload's
+prepared argument still transfers out at invocation, while its result shell
+activates only at construction success. The C++ compatibility proof consumes
+that exact success-edge activation (or the failure-free inline activation),
+the source-derived empty-payload shell recipe, value-to-field reparenting and
+rollback transfer. Erased or conditional publication, a fabricated payload
+drop and duplicate argument handoff reject. The destination's native shell no
+longer makes an otherwise passive argument ineligible for the existing native
+initializer spelling.
 Ordinary source constructors may use the same prepared-input schedule for a
 passive generated class (see below) with generated copy, move, and
 destruction, no state-bearing base, and no active cleanup. Every prepared
@@ -4426,7 +4435,15 @@ passive payload; active payload recipes remain explicit children. Isolated LLVM
 lifecycle helpers initialize a fresh shell, transfer only payloads and retire
 the consumed native identity. Sealed cleanup disarms payload and shell state
 separately. The native-service test counts initialization/retirement and repeats
-cleanup of both moved-from and retired storage. This is not public admission:
+cleanup of both moved-from and retired storage. Its active-payload kernel probe
+also consumes source-derived recipes for an unrelated two-field wrapper. A
+test-only observer replaces the selected destructor using its planned private
+signature, rather than synthesizing a drop recipe or claiming source-body
+execution. It observes payload-free shell rollback, fresh-shell transfer,
+replacement composition, reverse field cleanup after a first payload failure,
+original record/artifact preservation and exactly-once shell retirement at
+O0-O3. These are isolated lifetime-helper checks, not BodyDrop, constructor
+rollback or failure-transport integration evidence. This is not public admission:
 source construction/rollback/replacement integration remains pending, and the
 new active-cleanup fact conflicts with the existing no-global-shutdown policy
 for previously valid passive-payload mutex globals. That policy/hosted endpoint
@@ -4436,6 +4453,21 @@ then exercises the isolated operations with real C runtime services, including
 contention and sanitizer-instrumented emitted accesses. The observational cost
 probe distinguishes runtime-service cost from the token/payload adapter and
 does not claim public-lifecycle parity.
+
+Managed tasks retain the C runtime's entry/destroy, complete/abandon-task and
+take/abandon-result callbacks. Each generated callback must contain GTI failure
+before returning to the non-unwinding C service; an internal GTI call convention
+does not change that permission. The current C++ adapters publish worker failure
+through `runtime_thread.hpp`'s throwing private handoff. Its non-throwing cleanup
+record/query helpers are C++-only and apply only during runtime-owned task
+cleanup, not ordinary task entry. There is no corresponding non-throwing C
+entry-outcome publication and cleanup-state bridge for native LLVM adapters.
+Successful value join transfers result ownership and deletes the worker state,
+so later result take/abandon callbacks also require caller-side containment;
+they cannot publish into a no-longer-live worker. TLS drain precedes join
+publication and abandons a pending result on failure. These boundaries remain
+prerequisites of managed LLVM execution, separate from C04's internal transport
+evaluation and from the isolated mutex lifecycle kernel.
 
 Concurrent hosted programs also consume the sealed startup plan's exact
 C-thread begin/end declarations through their real `void()` C services.
