@@ -5325,6 +5325,42 @@ for a new source copy or move. The mechanism also handles private polymorphic
 slots nested in ordinary records, including empty fields; fixed arrays of the
 private capability remain prohibited by the frontend.
 
+`Lifetimes::generatedRelocation` shares that emitter and exact-type helper cache,
+but also transfers generated cleanup-bearing records and payload fields,
+exclusive handles, and the sealed shared-owner capability. It copies each
+own-destructor permission byte, including a suppressed byte, and clears the
+source byte; it does not unconditionally arm the destination. Exclusive handles
+and both shared-handle addresses move intact and become null at the source.
+Neither reference counts nor pointee storage change. These operations invoke no
+source constructor/destructor and allocate no storage. Pointee destruction still
+requires its separate complete cleanup proof, especially after an upcast.
+`inertRelocation` retains its stricter preflight even when the general helper is
+already cached, so this extension cannot admit cleanup-bearing inline models.
+Deleted/non-generated moves, checked-borrow record carriers and unimplemented
+capability representations still reject. Closure relocation uses the sealed,
+compatible capture inventory: owned captures transfer recursively, while borrowed
+capture addresses preserve their existing loans without acquiring cleanup.
+MIR-proven bitwise capabilities and passive unions retain byte transport; a union
+never visits all its overlapping members as though they were separate fields.
+
+The verified object-relocation memory operation now calls this same typed helper
+for structural types. Only MIR-classified bitwise types use `memcpy`; range
+relocation remains bitwise-only and its zero-count branch touches neither
+address. No new source eligibility is inferred from the physical layout.
+Object-relocation and storage/vector growth fixtures check actual destination
+values, vacant-source reuse and exactly-once destruction. A closure/capability/
+union composition additionally executes against an independent source oracle;
+the C++ representation vocabulary currently rejects its closure forwarding into
+`construct_at`, so that case is explicitly not differential evidence.
+Ordinary body-value publication/transfer and boxed dynamic cleanup remain
+separate integration obligations.
+
+Raw class-pointer arithmetic call arguments retain the exact preceding MIR
+producer witness during call-input staging, including mutable-to-readonly
+pointer coercion. Staging is transport, not a second pointer arithmetic operation
+or an additional unsafe permission. Missing producers, changed pointee types
+and readonly-to-mutable coercions do not acquire that witness.
+
 `PolymorphicStorage` now implements private construct, has-value, read/read-mut,
 reset and relocation operations using instructions owned by the sealed session.
 Non-emitting preflight checks concrete relocation eligibility and exact interface

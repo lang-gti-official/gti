@@ -1,6 +1,7 @@
 #include "memory.h"
 
 #include "../mir_verification_queries.h"
+#include "gti/mir_effects.h"
 
 #include <algorithm>
 #include <array>
@@ -83,9 +84,9 @@ bool nativeProcessMemoryCall(const MirProgram &program,
 }
 
 Memory::Memory(Session &session, llvm::IRBuilder<> &ir, Cleanup cleanup,
-               MoveState moveState, Scalars::Guard guard)
+               Relocate relocateObject, Scalars::Guard guard)
     : session(session), ir(ir), cleanup(std::move(cleanup)),
-      moveState(std::move(moveState)), guard(std::move(guard)) {}
+      relocateObject(std::move(relocateObject)), guard(std::move(guard)) {}
 
 llvm::Function *Memory::provider(ProcessMemoryRuntimeOperation operation) {
   const auto *signature = processMemoryRuntimeSignature(operation);
@@ -535,6 +536,14 @@ void Memory::relocate(const MirInstruction &instruction,
   const auto layout = session.layouts().get(type);
   const bool range =
       instruction.intrinsic == IntrinsicKind::ObjectRelocateRange;
+  if (mirTypeRelocationKind(session.program().mir(), type) !=
+      RelocationKind::Bitwise) {
+    if (range || !relocateObject)
+      throw std::logic_error(
+          "LLVM structural relocation lost its typed transfer");
+    relocateObject(inputs[0], inputs[1], type);
+    return;
+  }
   auto *function = ir.GetInsertBlock()->getParent();
   llvm::BasicBlock *done = nullptr;
   if (range) {
@@ -553,8 +562,6 @@ void Memory::relocate(const MirInstruction &instruction,
   // inferred from LLVM pointer types or the coincidence of object sizes.
   ir.CreateMemCpy(inputs[0], llvm::Align(layout.alignment), inputs[1],
                   llvm::Align(layout.alignment), bytes);
-  if (!range)
-    moveState(inputs[1], type);
   if (done) {
     ir.CreateBr(done);
     ir.SetInsertPoint(done);

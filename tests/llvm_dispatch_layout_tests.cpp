@@ -3573,19 +3573,33 @@ void testInertRelocation() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto frontend =
       Frontend().analyze(root / "inert-relocation.gti", std::string(R"(
+#include <std/memory>
 interface First {};
 interface Second {};
 class Parent : public First { public: mut int number = 17; };
 class Item : public Parent, public Second { public: mut int extra = 25; };
 struct Items { mut Item values[2] = {}; };
-struct Active { ~Active() {} };
+struct Active { mut int marker = 113; ~Active() {} };
+struct Owners {
+  mut std::unique_ptr<int> unique = nullptr;
+  mut std::shared_ptr<int> shared{};
+  mut Active state{};
+};
+struct NonRelocatable {
+  NonRelocatable() {}
+  NonRelocatable(NonRelocatable&& other) = delete;
+};
 enum class Choice { both(Item item, int tail), number(int value), empty };
 enum class ActiveChoice { held(Active value), empty };
 struct Choices {
   mut Choice choice = Choice::empty;
   mut ActiveChoice active = ActiveChoice::empty;
 };
-int main() { Items items{}; Active active{}; Choices choices{}; return 0; }
+int main() {
+  Items items{}; Active active{}; Choices choices{}; Owners owners{};
+  NonRelocatable custom{};
+  return 0;
+}
 )"),
                          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
   if (!frontend.canGenerateCode()) {
@@ -3606,6 +3620,8 @@ int main() { Items items{}; Active active{}; Choices choices{}; return 0; }
   const auto &choices = named(input->program(), "Choices");
   const auto choiceType = choices.declaredFields.at(0).type;
   const auto activeChoiceType = choices.declaredFields.at(1).type;
+  const auto &owners = named(input->program(), "Owners");
+  const auto &customMove = named(input->program(), "NonRelocatable");
   expect(item.polymorphic && !item.requiresActiveCleanup,
          "fixture contains inert polymorphic objects, not plain records");
   const auto temporary =
@@ -3645,6 +3661,21 @@ int gti_relocation_tag_observe(void *source, void *destination,
   memcpy(&relocated, (char*)destination + offset, sizeof(relocated));
   return original != UINT32_MAX || relocated != expected;
 }
+int gti_relocation_handles_observe(void *from_unique, void *to_unique,
+                                  void *from_shared, void *to_shared,
+                                  void *payload, void *control) {
+  void *source, *destination, *old_shared[2], *new_shared[2];
+  memcpy(&source, from_unique, sizeof(source));
+  memcpy(&destination, to_unique, sizeof(destination));
+  memcpy(old_shared, from_shared, sizeof(old_shared));
+  memcpy(new_shared, to_shared, sizeof(new_shared));
+  return source != 0 || destination != payload || old_shared[0] != 0 ||
+         old_shared[1] != 0 || new_shared[0] != control || new_shared[1] != payload;
+}
+int gti_relocation_state_observe(uint8_t *source, uint8_t *destination,
+                                 uint8_t expected) {
+  return *source != 0 || *destination != expected;
+}
 int main(void) { return gti_relocation_probe(); }
 )") == driver::ArtifactWriteStatus::Success,
          "write relocation native consumer");
@@ -3668,6 +3699,12 @@ int main(void) { return gti_relocation_probe(); }
     const auto before = modulePublication(session);
     Lifetimes::preflightInertRelocation(session, dispatch, items.type);
     Lifetimes::preflightInertRelocation(session, dispatch, choiceType);
+    Lifetimes::preflightGeneratedRelocation(session, dispatch, owners.type);
+    Lifetimes::preflightGeneratedRelocation(session, dispatch,
+                                            activeChoiceType);
+    Lifetimes::preflightGeneratedRelocation(
+        session, dispatch,
+        SemanticType::uniqueOwnerOf(named(input->program(), "First").type));
     expect(modulePublication(session) == before,
            "inert relocation preflight publishes no module state");
     rejects<BackendUnsupportedError>(
@@ -3676,6 +3713,20 @@ int main(void) { return gti_relocation_probe(); }
     rejects<BackendUnsupportedError>(
         [&] { static_cast<void>(lifetimes.inertRelocation(activeChoiceType)); },
         "an inactive tag cannot bypass cleanup-bearing variant preflight");
+    rejects<BackendUnsupportedError>(
+        [&] { static_cast<void>(lifetimes.inertRelocation(owners.type)); },
+        "owner relocation does not broaden inline payload eligibility");
+    rejects<BackendUnsupportedError>(
+        [&] {
+          static_cast<void>(lifetimes.generatedRelocation(customMove.type));
+        },
+        "generated relocation cannot bypass a deleted move constructor");
+    rejects<BackendUnsupportedError>(
+        [&] {
+          static_cast<void>(lifetimes.generatedRelocation(
+              SemanticType::uniqueOwnerOf(SemanticType::Unknown)));
+        },
+        "pointer-sized layout alone cannot validate an unknown owner pointee");
     rejects<BackendUnsupportedError>(
         [&] {
           static_cast<void>(lifetimes.inertRelocation(
@@ -3693,6 +3744,8 @@ int main(void) { return gti_relocation_probe(); }
     auto *relocate = lifetimes.inertRelocation(items.type);
     expect(relocate == lifetimes.inertRelocation(items.type),
            "exact type reuses its generated relocation helper");
+    expect(relocate == lifetimes.generatedRelocation(items.type),
+           "inert and general relocation share one emitter and helper cache");
     std::set<std::uint64_t> headers;
     for (const auto &view : dispatch.views(item.id))
       headers.insert(view.location.owner.offset +
@@ -3729,6 +3782,21 @@ int main(void) { return gti_relocation_probe(); }
         llvm::Function::Create(tagPlan.type, llvm::GlobalValue::ExternalLinkage,
                                "gti_relocation_tag_observe", session.module());
     tagPlan.applyTo(*tagObserver);
+    const std::vector<SemanticType> handleParameters(6, pointer);
+    const auto handlePlan =
+        session.abi().nativeC(SemanticType::Int32, handleParameters);
+    auto *handleObserver = llvm::Function::Create(
+        handlePlan.type, llvm::GlobalValue::ExternalLinkage,
+        "gti_relocation_handles_observe", session.module());
+    handlePlan.applyTo(*handleObserver);
+    const std::vector<SemanticType> stateParameters{pointer, pointer,
+                                                    SemanticType::UInt8};
+    const auto statePlan =
+        session.abi().nativeC(SemanticType::Int32, stateParameters);
+    auto *stateObserver = llvm::Function::Create(
+        statePlan.type, llvm::GlobalValue::ExternalLinkage,
+        "gti_relocation_state_observe", session.module());
+    statePlan.applyTo(*stateObserver);
     llvm::IRBuilder<> ir(
         llvm::BasicBlock::Create(session.context(), "entry", probe));
     const auto storage = session.layouts().get(items.type).storage;
@@ -3867,6 +3935,108 @@ int main(void) { return gti_relocation_probe(); }
                      ir.CreateLoad(ir.getInt8Ty(), at(from, payloadOffset)),
                      ir.getInt8(0xA5)));
       }
+    }
+    const auto ownerStorage = session.layouts().get(owners.type).storage;
+    const auto &uniqueWrapper =
+        session.layouts().instance(owners.declaredFields[0].type);
+    const auto &sharedWrapper =
+        session.layouts().instance(owners.declaredFields[1].type);
+    const auto shared = session.layouts().sharedOwner();
+    const auto ownerField = [&](llvm::Value *address, unsigned index) {
+      return ir.CreateStructGEP(
+          ownerStorage, address,
+          session.layouts().fieldIndex(owners.type,
+                                       owners.declaredFields[index].symbol));
+    };
+    const auto handleField = [&](llvm::Value *address,
+                                 const MirClassInstance &wrapper) {
+      return ir.CreateStructGEP(
+          session.layouts().get(wrapper.type).storage, address,
+          session.layouts().fieldIndex(wrapper.type,
+                                       wrapper.declaredFields[0].symbol));
+    };
+    auto *payloadAddress = ir.CreateAlloca(ir.getInt32Ty());
+    auto *control = ir.CreateAlloca(shared.block.storage);
+    ir.CreateStore(llvm::Constant::getNullValue(shared.block.storage), control);
+    ir.CreateStore(
+        ir.getInt64(7),
+        ir.CreateStructGEP(shared.block.storage, control, shared.blockStrong));
+    auto *moveOwners = lifetimes.generatedRelocation(owners.type);
+    rejects<BackendUnsupportedError>(
+        [&] { static_cast<void>(lifetimes.inertRelocation(owners.type)); },
+        "a cached owner helper cannot bypass stricter inline eligibility");
+    const auto activePayload = session.layouts().payload(activeChoiceType);
+    auto *moveActivePayload = lifetimes.generatedRelocation(activeChoiceType);
+    for (const auto permission : {0u, 1u}) {
+      auto *from = ir.CreateAlloca(ownerStorage);
+      auto *to = ir.CreateAlloca(ownerStorage);
+      ir.CreateStore(llvm::Constant::getNullValue(ownerStorage), from);
+      ir.CreateStore(llvm::Constant::getNullValue(ownerStorage), to);
+      auto *uniqueFrom = handleField(ownerField(from, 0), uniqueWrapper);
+      auto *uniqueTo = handleField(ownerField(to, 0), uniqueWrapper);
+      auto *sharedFrom = handleField(ownerField(from, 1), sharedWrapper);
+      auto *sharedTo = handleField(ownerField(to, 1), sharedWrapper);
+      ir.CreateStore(payloadAddress, uniqueFrom);
+      ir.CreateStore(payloadAddress,
+                     ir.CreateStructGEP(shared.handle.storage, sharedFrom,
+                                        shared.handleView));
+      ir.CreateStore(control,
+                     ir.CreateStructGEP(shared.handle.storage, sharedFrom,
+                                        shared.handleBlock));
+      const auto activeStorage = session.layouts().get(active.type).storage;
+      auto *sourceFlag =
+          ir.CreateStructGEP(activeStorage, ownerField(from, 2),
+                             *session.layouts().activeIndex(active.type));
+      auto *destinationFlag =
+          ir.CreateStructGEP(activeStorage, ownerField(to, 2),
+                             *session.layouts().activeIndex(active.type));
+      ir.CreateStore(ir.getInt8(permission), sourceFlag);
+      ir.CreateCall(moveOwners, {to, from});
+      auto *observed =
+          ir.CreateCall(handleObserver, {uniqueFrom, uniqueTo, sharedFrom,
+                                         sharedTo, payloadAddress, control});
+      handlePlan.applyTo(*observed);
+      bad = ir.CreateOr(bad, ir.CreateICmpNE(observed, ir.getInt32(0)));
+      observed = ir.CreateCall(
+          stateObserver, {sourceFlag, destinationFlag, ir.getInt8(permission)});
+      statePlan.applyTo(*observed);
+      bad = ir.CreateOr(bad, ir.CreateICmpNE(observed, ir.getInt32(0)));
+      bad = ir.CreateOr(
+          bad, ir.CreateICmpNE(ir.CreateLoad(ir.getInt64Ty(),
+                                             ir.CreateStructGEP(
+                                                 shared.block.storage, control,
+                                                 shared.blockStrong)),
+                               ir.getInt64(7)));
+      auto *fromPayload = ir.CreateAlloca(activePayload.storage);
+      auto *toPayload = ir.CreateAlloca(activePayload.storage);
+      ir.CreateStore(llvm::Constant::getNullValue(activePayload.storage),
+                     fromPayload);
+      ir.CreateStore(llvm::Constant::getNullValue(activePayload.storage),
+                     toPayload);
+      auto *oldActive =
+          payloadFieldAddress(ir, activePayload, fromPayload, 0, 0);
+      auto *newActive = payloadFieldAddress(ir, activePayload, toPayload, 0, 0);
+      auto *oldFlag =
+          ir.CreateStructGEP(activeStorage, oldActive,
+                             *session.layouts().activeIndex(active.type));
+      auto *newFlag =
+          ir.CreateStructGEP(activeStorage, newActive,
+                             *session.layouts().activeIndex(active.type));
+      ir.CreateStore(ir.getInt8(permission), oldFlag);
+      ir.CreateCall(moveActivePayload, {toPayload, fromPayload});
+      observed = ir.CreateCall(stateObserver,
+                               {oldFlag, newFlag, ir.getInt8(permission)});
+      statePlan.applyTo(*observed);
+      bad = ir.CreateOr(bad, ir.CreateICmpNE(observed, ir.getInt32(0)));
+      observed = ir.CreateCall(
+          tagObserver,
+          {fromPayload, toPayload,
+           ir.getInt64(session.dataLayout()
+                           .getStructLayout(activePayload.storage)
+                           ->getElementOffset(activePayload.tagIndex)),
+           ir.getInt32(0)});
+      tagPlan.applyTo(*observed);
+      bad = ir.CreateOr(bad, ir.CreateICmpNE(observed, ir.getInt32(0)));
     }
     ir.CreateRet(ir.CreateZExt(bad, ir.getInt32Ty()));
     expect(!llvm::verifyModule(session.module()),

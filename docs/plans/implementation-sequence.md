@@ -11644,8 +11644,20 @@ fields. Its component execution checks empty/repeated operations, moved-from
 storage, multiple model offsets, and invariant traps. The exact private source
 default constructor now initializes its hidden empty state at entry without
 replacing the original MIR body. Ordinary empty constructors do not acquire
-that behavior. Next: complete body-local publication and transfer; extend
-cleanup-bearing payload/private-capability relocation where needed; complete boxed-owner dynamic
+that behavior. The shared generated-relocation emitter now also transfers
+cleanup-bearing record/payload state and exclusive/shared handles, retaining
+suppressed cleanup bytes and leaving reference counts untouched. Inline-model
+eligibility still uses the stricter inert preflight; the new component is not
+blanket public slot admission. Verified object relocation now uses this emitter
+for structural types, with existing object/storage/vector relocation programs
+passing C++20/23 O3 and LLVM O0-O3 value/cleanup checks. An owning-closure wrapper
+also transfers function-pointer, vacant storage and passive union fields under
+an independent native source oracle; C++ cannot represent that fixture's closure
+forwarding into `construct_at`. Raw class-pointer arithmetic argument staging
+now preserves the exact producer witness, closing the storage-read prerequisite
+exposed by the existing structural-relocation fixture. Next: complete body-local
+publication and transfer; extend remaining capability/borrowed representations
+where needed; complete boxed-owner dynamic
 cleanup and validate ordinary source wrappers end to end. Platform evidence is
 tracked per checkpoint, not inferred from these component checks.
 
