@@ -439,11 +439,12 @@ void Lifetimes::freshTransfer(llvm::IRBuilder<> &ir, llvm::Value *destination,
     moved(ir, source, owner.type);
 }
 
-void Lifetimes::preflightInertRelocation(Session &session, Dispatch &dispatch,
-                                         const SemanticType &type) {
+namespace {
+void preflightRelocation(Session &session, Dispatch &dispatch,
+                         const SemanticType &type, bool inert) {
   if (!dispatch.boundTo(session))
     throw std::invalid_argument(
-        "LLVM inert relocation uses a foreign dispatch session");
+        "LLVM generated relocation uses a foreign dispatch session");
   const auto &program = session.program().mir();
   std::vector<SemanticType> path;
   const auto visit = [&](const auto &self, const SemanticType &selected,
@@ -459,15 +460,46 @@ void Lifetimes::preflightInertRelocation(Session &session, Dispatch &dispatch,
         path.pop_back();
         return;
       }
+      if (!inert && sharedOwnerRepresentation(program, owner)) {
+        static_cast<void>(session.layouts().get(selected));
+        path.pop_back();
+        return;
+      }
+      if (!inert &&
+          owner.compilerCapability != CompilerCapabilityTypeKind::None &&
+          mirTypeRelocationKind(program, selected) == RelocationKind::Bitwise) {
+        static_cast<void>(session.layouts().get(selected));
+        path.pop_back();
+        return;
+      }
+      if (!inert && owner.unionLayout && !owner.requiresActiveCleanup &&
+          !owner.requiresActiveDropState && !owner.polymorphic &&
+          owner.bases.empty() && !owner.traits.containsBorrowedState &&
+          owner.moveConstructor == SpecialMemberStatus::Generated &&
+          std::all_of(owner.declaredFields.begin(), owner.declaredFields.end(),
+                      [&](const auto &field) {
+                        return mirTypeRelocationKind(program, field.type) ==
+                               RelocationKind::Bitwise;
+                      })) {
+        // A union has no active-member tag. Only its verified passive storage
+        // can be transferred; visiting every overlapping member would be wrong.
+        static_cast<void>(session.layouts().get(selected));
+        path.pop_back();
+        return;
+      }
       if (owner.compilerCapability != CompilerCapabilityTypeKind::None ||
-          owner.requiresActiveCleanup || owner.requiresActiveDropState ||
+          (inert &&
+           (owner.requiresActiveCleanup || owner.requiresActiveDropState)) ||
           owner.traits.containsBorrowedState ||
           owner.lifecycleBoundBorrowCarrier || owner.unionLayout ||
           owner.cOpaqueHandle || (!base && owner.abstract) ||
           (!base && owner.moveConstructor != SpecialMemberStatus::Generated))
-        throw BackendUnsupportedError("LLVM inert relocation requires a "
-                                      "generated borrow-free inert record");
+        throw BackendUnsupportedError("LLVM relocation requires an implemented "
+                                      "generated borrow-free record");
       static_cast<void>(session.layouts().get(selected));
+      if (owner.requiresActiveDropState !=
+          session.layouts().activeIndex(selected).has_value())
+        throw std::logic_error("LLVM relocation lost its sealed active state");
       // Base metadata is installed by the complete object's dispatch state.
       // A field or array element is a distinct complete object of its own.
       if (!base && owner.polymorphic)
@@ -495,11 +527,40 @@ void Lifetimes::preflightInertRelocation(Session &session, Dispatch &dispatch,
             "LLVM inert relocation requires a concrete array extent");
       static_cast<void>(session.layouts().get(selected));
       self(self, selected.arguments.front(), false);
+    } else if (!inert && selected.kind == SemanticType::Lambda) {
+      const auto environment = closureEnvironmentLayout(program, selected);
+      if (!environment ||
+          environment->captureTypes.size() !=
+              environment->captureModes.size() ||
+          environment->captureTypes.size() !=
+              environment->captureRequiresActiveCleanup.size())
+        throw BackendUnsupportedError(
+            "LLVM closure relocation requires one compatible environment");
+      static_cast<void>(session.layouts().get(selected));
+      for (std::size_t index = 0; index < environment->captureTypes.size();
+           ++index) {
+        if (isBorrowingCapture(environment->captureModes[index])) {
+          if (environment->captureRequiresActiveCleanup[index])
+            throw std::logic_error(
+                "borrowed LLVM capture acquired owned cleanup state");
+        } else {
+          self(self, environment->captureTypes[index], false);
+        }
+      }
+    } else if (!inert && selected.kind == SemanticType::UniqueOwner) {
+      // Relocation transfers a handle, not the pointee object. The eventual
+      // cleanup consumer must separately prove its complete pointee recipe.
+      if (selected.arguments.size() != 1)
+        throw std::logic_error("LLVM relocation lost its exact owner pointee");
+      if (!mirUniqueCleanupType(program, selected))
+        throw BackendUnsupportedError(
+            "LLVM owner relocation requires its sealed pointee identity");
+      static_cast<void>(session.layouts().get(selected));
     } else {
       // Other structural representations need a typed relocation schedule.
       // Never silently byte-copy a self-relative representation.
       if (mirTypeRelocationKind(program, selected) != RelocationKind::Bitwise ||
-          semanticTraits(selected).containsBorrowedState ||
+          (inert && semanticTraits(selected).containsBorrowedState) ||
           selected.kind == SemanticType::UniqueOwner)
         throw BackendUnsupportedError("LLVM inert relocation requires an "
                                       "implemented typed representation");
@@ -512,25 +573,42 @@ void Lifetimes::preflightInertRelocation(Session &session, Dispatch &dispatch,
         "LLVM inert relocation requires a sealed generated relocation");
   visit(visit, type, false);
 }
+} // namespace
 
-llvm::FunctionType *Lifetimes::inertRelocationType() const {
+void Lifetimes::preflightInertRelocation(Session &session, Dispatch &dispatch,
+                                         const SemanticType &type) {
+  preflightRelocation(session, dispatch, type, true);
+}
+
+void Lifetimes::preflightGeneratedRelocation(Session &session,
+                                             Dispatch &dispatch,
+                                             const SemanticType &type) {
+  preflightRelocation(session, dispatch, type, false);
+}
+
+llvm::FunctionType *Lifetimes::relocationType() const {
   return llvm::FunctionType::get(
       llvm::Type::getVoidTy(session.context()),
       {session.layouts().pointer(), session.layouts().pointer()}, false);
 }
 
 llvm::Function *Lifetimes::inertRelocation(const SemanticType &type) {
+  preflightInertRelocation(session, dispatch, type);
+  return generatedRelocation(type);
+}
+
+llvm::Function *Lifetimes::generatedRelocation(const SemanticType &type) {
   // Validate the complete finite layout and dispatch graph before publishing
   // even a helper declaration. Failure cannot leave a partial cached helper.
-  preflightInertRelocation(session, dispatch, type);
-  for (const auto &[previous, function] : inertRelocations)
+  preflightGeneratedRelocation(session, dispatch, type);
+  for (const auto &[previous, function] : relocations)
     if (previous == type)
       return function;
   auto *function = llvm::Function::Create(
-      inertRelocationType(), llvm::GlobalValue::InternalLinkage,
-      "__gti_inert_relocate_" + std::to_string(inertRelocations.size()),
+      relocationType(), llvm::GlobalValue::InternalLinkage,
+      "__gti_generated_relocate_" + std::to_string(relocations.size()),
       session.module());
-  inertRelocations.emplace_back(type, function);
+  relocations.emplace_back(type, function);
   function->addFnAttr(llvm::Attribute::NoUnwind);
   llvm::IRBuilder<> ir(
       llvm::BasicBlock::Create(session.context(), "entry", function));
@@ -546,6 +624,17 @@ llvm::Function *Lifetimes::inertRelocation(const SemanticType &type) {
             .relocate(ir, selected, destination, source);
         return;
       }
+      if (sharedOwnerRepresentation(session.program().mir(), owner)) {
+        ir.CreateStore(ir.CreateLoad(layout.storage, source), destination);
+        ir.CreateStore(llvm::Constant::getNullValue(layout.storage), source);
+        return;
+      }
+      if (owner.unionLayout ||
+          owner.compilerCapability != CompilerCapabilityTypeKind::None) {
+        ir.CreateMemCpy(destination, llvm::Align(layout.alignment), source,
+                        llvm::Align(layout.alignment), layout.size);
+        return;
+      }
       for (const auto &entry : owner.bases) {
         const auto index =
             session.layouts().baseIndex(selected, entry.instance);
@@ -555,12 +644,18 @@ llvm::Function *Lifetimes::inertRelocation(const SemanticType &type) {
       }
       for (const auto &field : owner.declaredFields) {
         const auto index = session.layouts().fieldIndex(selected, field.symbol);
-        ir.CreateCall(inertRelocation(field.type),
+        ir.CreateCall(generatedRelocation(field.type),
                       {ir.CreateStructGEP(layout.storage, destination, index),
                        ir.CreateStructGEP(layout.storage, source, index)});
       }
       if (!base && owner.polymorphic)
         dispatch.install(ir, destination, owner.id);
+      if (const auto active = session.layouts().activeIndex(selected)) {
+        auto *from = ir.CreateStructGEP(layout.storage, source, *active);
+        auto *to = ir.CreateStructGEP(layout.storage, destination, *active);
+        ir.CreateStore(ir.CreateLoad(ir.getInt8Ty(), from), to);
+        ir.CreateStore(ir.getInt8(0), from);
+      }
     } else if (const auto *payload =
                    session.program().mir().findPayloadEnum(selected)) {
       const auto physical = session.layouts().payload(selected);
@@ -586,7 +681,7 @@ llvm::Function *Lifetimes::inertRelocation(const SemanticType &type) {
         const auto &fields = payload->variants[variant].payloadTypes;
         for (std::size_t field = 0; field < fields.size(); ++field)
           ir.CreateCall(
-              inertRelocation(fields[field]),
+              generatedRelocation(fields[field]),
               {payloadFieldAddress(ir, physical, destination, variant, field),
                payloadFieldAddress(ir, physical, source, variant, field)});
         ir.CreateStore(tag, payloadTagAddress(ir, physical, destination));
@@ -612,7 +707,7 @@ llvm::Function *Lifetimes::inertRelocation(const SemanticType &type) {
       auto *index = ir.CreatePHI(ir.getInt64Ty(), 2);
       index->addIncoming(ir.getInt64(0), entry);
       ir.CreateCall(
-          inertRelocation(selected.arguments.front()),
+          generatedRelocation(selected.arguments.front()),
           {ir.CreateGEP(layout.storage, destination, {ir.getInt64(0), index}),
            ir.CreateGEP(layout.storage, source, {ir.getInt64(0), index})});
       auto *next = ir.CreateAdd(index, ir.getInt64(1));
@@ -620,6 +715,25 @@ llvm::Function *Lifetimes::inertRelocation(const SemanticType &type) {
       ir.CreateCondBr(ir.CreateICmpULT(next, ir.getInt64(selected.arrayLength)),
                       loop, done);
       ir.SetInsertPoint(done);
+    } else if (selected.kind == SemanticType::Lambda) {
+      const auto environment =
+          *closureEnvironmentLayout(session.program().mir(), selected);
+      for (std::size_t index = 0; index < environment.captureTypes.size();
+           ++index) {
+        auto *to = ir.CreateStructGEP(layout.storage, destination, index);
+        auto *from = ir.CreateStructGEP(layout.storage, source, index);
+        if (isBorrowingCapture(environment.captureModes[index])) {
+          // Relocating the closure preserves the already-verified loan; it
+          // neither transfers nor retires the borrowed object's drop state.
+          ir.CreateStore(ir.CreateLoad(session.layouts().pointer(), from), to);
+        } else {
+          ir.CreateCall(generatedRelocation(environment.captureTypes[index]),
+                        {to, from});
+        }
+      }
+    } else if (selected.kind == SemanticType::UniqueOwner) {
+      ir.CreateStore(ir.CreateLoad(layout.storage, source), destination);
+      ir.CreateStore(llvm::Constant::getNullValue(layout.storage), source);
     } else if (layout.size) {
       ir.CreateMemCpy(destination, llvm::Align(layout.alignment), source,
                       llvm::Align(layout.alignment), layout.size);
