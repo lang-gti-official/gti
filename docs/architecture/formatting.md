@@ -273,7 +273,11 @@ whose operand starts with a lambda capture is not an attribute list: its inner
 `export`; the parser's fix does.
 
 Lambda capture lists use ordinary comma and assignment spacing. The supported
-owned form is written `[target = std::move(source)]`; formatting preserves the
+call-argument spelling keeps the capture adjacent to the opening parenthesis,
+as in `start([]() -> void {})`; later arguments retain comma spacing, as in
+`submit(queue, []() -> void {})`. Comments retain their ordinary separation.
+This rule also applies when the source breaks a line after the parenthesis.
+The supported owned form is written `[target = std::move(source)]`; formatting preserves the
 initializer expression and is idempotent, while semantic analysis—not the
 formatter—decides whether it is the exact permitted move capture.
 Statement boundaries inside a lambda body are relative to that body's opening
