@@ -16,6 +16,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
@@ -1165,6 +1166,7 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   lowerScalarProgram(session, planLlvmAdmission(*input, session.options()));
   lowerScalarProgram(plain, planLlvmAdmission(*input, plain.options()));
   unsigned values = 0, receivers = 0, expressions = 0, fragments = 0;
+  unsigned wholeReceivers = 0;
   unsigned packValues = 0, packEnds = 0, entryPacks = 0;
   for (const auto &function : session.module()) {
     const auto *other = plain.module().getFunction(function.getName());
@@ -1230,6 +1232,11 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
                   "implicit receiver forged a source declaration");
             ++receivers;
             fragments += variable->getExpression()->isFragment();
+            wholeReceivers +=
+                variable->isDbgValue() &&
+                variable->getExpression()->getNumElements() == 0 &&
+                variable->getVariable()->getType()->getSizeInBits() == 32 &&
+                variable->getValue()->getType()->isIntegerTy(32);
           }
         }
         ++otherInstruction;
@@ -1248,9 +1255,12 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   if (receiver && !receivers)
     throw std::runtime_error(
         "production receiver has no existing address metadata");
-  if (receiver && !fragments)
+  if (receiver && !fragments && !wholeReceivers)
     throw std::runtime_error(
-        "eliminated receiver has no verified field fragments");
+        "eliminated receiver has no verified field values");
+  if (receiver && !wholeReceivers)
+    throw std::runtime_error(
+        "a whole-object scalar field must not use a full-width fragment");
   if (!expressions)
     throw std::runtime_error(
         "scalar computation has no existing-operand expression");
@@ -1348,7 +1358,99 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   dump(dumpPath.empty() ? "" : dumpPath + ".optimized.ll");
 }
 
+void ownerPointerMetadata(LlvmCodegenOptimization optimization) {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend =
+      Frontend({.requireEntryPoint = true,
+                .lowerReachableOnly = true,
+                .lowerLibraryReachableOnly = true,
+                .trustedBodies = TrustedBodyAnalysis::Reachable,
+                .sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze(root / "tests/fixtures/llvm_optimization/native_debug_owner.gti",
+                   std::nullopt, {root / "stdlib/prelude.gti"}, {},
+                   {root / "stdlib"});
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("owner debug source failed analysis");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host());
+  if (!lowered.valid())
+    throw std::runtime_error("owner debug source failed lowering");
+  std::vector<LoweredProgramIssue> issues;
+  auto input = verifiedLoweredProgram(std::move(*lowered.program), issues);
+  if (!input)
+    throw std::runtime_error("owner debug source lost its seal");
+  Session session(*input, {.optimization = optimization, .debugInfo = true});
+  Session plain(*input, {.optimization = optimization});
+  lowerScalarProgram(session, planLlvmAdmission(*input, session.options()));
+  lowerScalarProgram(plain, planLlvmAdmission(*input, plain.options()));
+  llvm::DebugInfoFinder finder;
+  session.debugInfo()->finalize();
+  session.verify();
+  finder.processModule(session.module());
+  unsigned typedOwners = 0, nullTypes = 0;
+  for (auto *type : finder.types()) {
+    nullTypes += type->getTag() == llvm::dwarf::DW_TAG_unspecified_type &&
+                 type->getName() == "nullptr_t";
+    const auto *owner = llvm::dyn_cast<llvm::DICompositeType>(type);
+    if (!owner)
+      continue;
+    for (auto *element : owner->getElements()) {
+      const auto *member = llvm::dyn_cast<llvm::DIDerivedType>(element);
+      if (!member || member->getName() != "owner")
+        continue;
+      const auto *pointer =
+          llvm::dyn_cast_or_null<llvm::DIDerivedType>(member->getBaseType());
+      if (!pointer || pointer->getTag() != llvm::dwarf::DW_TAG_pointer_type ||
+          !pointer->getBaseType() || pointer->getBaseType()->getName() != "Node")
+        continue;
+      if (pointer->getSizeInBits() != session.dataLayout().getPointerSizeInBits() ||
+          member->getSizeInBits() != pointer->getSizeInBits())
+        throw std::runtime_error("owner metadata changed its pointer storage size");
+      ++typedOwners;
+    }
+  }
+  if (!typedOwners || !nullTypes)
+    throw std::runtime_error("owner/reset lost typed pointer or null metadata");
+  const auto unchangedExecution = [&] {
+    if (session.module().size() != plain.module().size())
+      throw std::runtime_error("owner debug changed the function inventory");
+    for (const auto &function : session.module()) {
+      const auto *other = plain.module().getFunction(function.getName());
+      if (!other || function.size() != other->size() ||
+          function.arg_size() != other->arg_size())
+        throw std::runtime_error("owner debug changed execution functions");
+      for (unsigned i = 0; i <= function.arg_size(); ++i)
+        if (function.getAttributes().getAsString(i) !=
+            other->getAttributes().getAsString(i))
+          throw std::runtime_error("owner debug changed ABI attributes");
+      if (function.getAttributes().getAsString(
+              llvm::AttributeList::FunctionIndex) !=
+          other->getAttributes().getAsString(llvm::AttributeList::FunctionIndex))
+        throw std::runtime_error("owner debug changed function attributes");
+      auto otherBlock = other->begin();
+      for (const auto &block : function) {
+        if (block.size() != otherBlock->size())
+          throw std::runtime_error("owner debug added execution instructions");
+        auto otherInstruction = otherBlock->begin();
+        for (const auto &instruction : block) {
+          if (instruction.getOpcode() != otherInstruction->getOpcode())
+            throw std::runtime_error("owner debug changed execution opcodes");
+          ++otherInstruction;
+        }
+        ++otherBlock;
+      }
+    }
+  };
+  unchangedExecution();
+  (void)session.emitObject();
+  (void)plain.emitObject();
+  unchangedExecution();
+}
+
 int main(int argc, char **argv) {
+  ownerPointerMetadata(LlvmCodegenOptimization::None);
+  ownerPointerMetadata(LlvmCodegenOptimization::Aggressive);
   if (metadata("/checkout-one/debug.gti") !=
       metadata("/other-checkout/debug.gti"))
     throw std::runtime_error(
