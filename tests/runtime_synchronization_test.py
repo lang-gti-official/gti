@@ -99,7 +99,8 @@ def main():
         "-o", output / "controlled"])
     run("controlled-execution", [output / "controlled"])
     run("late-first-use", [output / "controlled", "late"])
-    for fault in ("null", "width", "alignment", "order", "bits", "notify",
+    for fault in ("null", "width", "width-zero", "width-wide", "alignment",
+                  "alignment-2", "alignment-4", "order", "bits", "notify",
                   "init", "lock", "wait"):
         run(f"reject-{fault}", [output / "controlled", fault], death=True)
 

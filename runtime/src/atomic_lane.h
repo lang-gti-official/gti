@@ -39,7 +39,7 @@ inline void require(bool condition) noexcept {
 
 inline void validate(const void *lane, std::uint32_t width) noexcept {
   require(lane && (width == 1 || width == 2 || width == 4 || width == 8) &&
-          reinterpret_cast<std::uintptr_t>(lane) % width == 0);
+          (reinterpret_cast<std::uintptr_t>(lane) & (width - 1)) == 0);
 }
 
 template <typename T> T load(const void *address, std::uint32_t order) noexcept {

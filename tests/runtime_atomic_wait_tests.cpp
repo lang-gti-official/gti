@@ -231,6 +231,14 @@ int main(int argc, char **argv) {
       gti_rt_atomic_wait_v1(nullptr, 0, 8, 0);
     else if (std::strcmp(fault, "width") == 0)
       gti_rt_atomic_wait_v1(&lane, 0, 3, 0);
+    else if (std::strcmp(fault, "width-zero") == 0)
+      gti_rt_atomic_wait_v1(&lane, 0, 0, 0);
+    else if (std::strcmp(fault, "width-wide") == 0)
+      gti_rt_atomic_wait_v1(&lane, 0, 16, 0);
+    else if (std::strcmp(fault, "alignment-2") == 0)
+      gti_rt_atomic_wait_v1(reinterpret_cast<char *>(&lane) + 1, 0, 2, 0);
+    else if (std::strcmp(fault, "alignment-4") == 0)
+      gti_rt_atomic_wait_v1(reinterpret_cast<char *>(&lane) + 1, 0, 4, 0);
     else if (std::strcmp(fault, "alignment") == 0)
       gti_rt_atomic_wait_v1(reinterpret_cast<char *>(&lane) + 1, 0, 8, 0);
     else if (std::strcmp(fault, "order") == 0)
