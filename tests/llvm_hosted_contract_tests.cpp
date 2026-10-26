@@ -49,6 +49,8 @@ constexpr std::array cases{
     Case{"llvm_hosted_entry_failure.gti", 321, "hosted entry failure", 16},
     Case{"llvm_hosted_reference_input_failure.gti", 321,
          "borrowed argument failure", 18},
+    Case{"llvm_hosted_text_return_failure.gti", 321, "counted text failure",
+         14},
 };
 
 void require(bool value, std::string_view message) {
@@ -222,12 +224,20 @@ void unsafeReferenceLoadContract(const std::filesystem::path &repository,
   }
 }
 
-void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
+void unsafeReferenceReturnContract(
+    const std::filesystem::path &repository, bool countedText = false,
+    bool rawText = false,
+    const SemanticType &borrowedType = SemanticType::StringView) {
   FrontendOptions options;
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = true;
   const auto frontend = Frontend(options).analyze(
-      repository / "tests/fixtures/llvm_hosted_unsafe_reference_return.gti",
+      repository /
+          (countedText
+               ? (borrowedType == SemanticType::CString
+                      ? "tests/fixtures/llvm_hosted_unsafe_cstring_return.gti"
+                      : "tests/fixtures/llvm_hosted_unsafe_text_return.gti")
+               : "tests/fixtures/llvm_hosted_unsafe_reference_return.gti"),
       std::nullopt, {repository / "stdlib/prelude.gti"}, {},
       {repository / "stdlib"});
   require(frontend.canGenerateCode(), "unsafe reference relay is valid GTI");
@@ -239,71 +249,85 @@ void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
   std::size_t owner = 0;
   MirBlockId blockId = 0;
   MirInstructionId transferId = 0;
-  for (const auto &function : frontend.mir.functionInstances())
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (countedText && !rawText && function.requiresUnsafe)
+      continue;
     for (const auto &block : function.body.blocks)
       for (const auto &stage : block.instructions)
         if (stage.kind == MirInstructionKind::Borrow &&
-            stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall) {
+            stage.unsafeOperation ==
+                (rawText ? UnsafeOperationKind::RawDereference
+                         : UnsafeOperationKind::DeclaredUnsafeCall) &&
+            (!countedText || stage.info.type == borrowedType)) {
           require(owner == 0, "relay isolates one repeated unsafe marker");
           owner = function.id;
           blockId = block.id;
           transferId = stage.id;
         }
+  }
   require(owner != 0, "relay has a genuine checked return transfer");
-  using Mutation = std::function<void(MirBody &, MirBlock &, MirInstruction &,
-                                      MirInstruction &, MirLoan &, MirLoan &)>;
-  const std::array<Mutation, 18> mutations{
-      [](auto &, auto &, auto &, auto &, auto &, auto &to) { to.source = 0; },
-      [](auto &, auto &, auto &, auto &, auto &from, auto &to) {
+  using Mutation =
+      std::function<void(MirProgram &, MirBody &, MirBlock &, MirInstruction &,
+                         MirInstruction &, MirLoan &, MirLoan &)>;
+  std::vector<Mutation> mutations{
+      [](auto &, auto &, auto &, auto &, auto &, auto &, auto &to) {
+        to.source = 0;
+      },
+      [](auto &, auto &, auto &, auto &, auto &, auto &from, auto &to) {
         to.additionalDependencies.push_back(
             {.source = from.source, .access = AccessMode::Mutable});
       },
-      [](auto &, auto &, auto &, auto &, auto &, auto &to) {
+      [](auto &, auto &, auto &, auto &, auto &, auto &, auto &to) {
         to.escapes = false;
       },
-      [](auto &, auto &, auto &, auto &, auto &from, auto &to) {
+      [](auto &, auto &, auto &, auto &, auto &, auto &from, auto &to) {
         to.parent = from.id;
       },
-      [](auto &, auto &, auto &, auto &, auto &, auto &to) {
+      [](auto &, auto &, auto &, auto &, auto &, auto &, auto &to) {
         to.access = AccessMode::Mutable;
       },
-      [](auto &, auto &, auto &, auto &, auto &, auto &to) {
+      [](auto &, auto &, auto &, auto &, auto &, auto &, auto &to) {
         to.producedBy = 0;
       },
-      [](auto &, auto &, auto &, auto &, auto &, auto &to) {
+      [](auto &, auto &, auto &, auto &, auto &, auto &, auto &to) {
         to.designatedFields = {1};
       },
-      [](auto &, auto &, auto &stage, auto &, auto &from, auto &) {
+      [](auto &, auto &, auto &, auto &stage, auto &, auto &from, auto &) {
         stage.operands.front().place = from.source;
       },
-      [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
+      [](auto &, auto &, auto &, auto &stage, auto &, auto &, auto &) {
         stage.operands.front().loan = 0;
       },
-      [](auto &, auto &block, auto &, auto &, auto &from, auto &) {
+      [](auto &, auto &, auto &block, auto &, auto &, auto &from, auto &) {
         block.terminator.returnLoan = from.id;
       },
-      [](auto &, auto &block, auto &, auto &, auto &from, auto &) {
+      [](auto &, auto &, auto &block, auto &, auto &, auto &from, auto &) {
         block.terminator.value->loan = from.id;
       },
-      [](auto &, auto &, auto &, auto &call, auto &, auto &) {
-        call.functionTarget.reset();
+      [rawText](auto &, auto &, auto &, auto &, auto &call, auto &, auto &) {
+        if (rawText)
+          call.intrinsic = IntrinsicKind::None;
+        else
+          call.functionTarget.reset();
       },
-      [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
+      [](auto &, auto &, auto &, auto &stage, auto &, auto &, auto &) {
         stage.rawMemoryAccess = true;
       },
-      [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
-        stage.unsafeOperation = UnsafeOperationKind::RawDereference;
+      [rawText](auto &, auto &, auto &, auto &stage, auto &, auto &, auto &) {
+        stage.unsafeOperation = rawText
+                                    ? UnsafeOperationKind::DeclaredUnsafeCall
+                                    : UnsafeOperationKind::RawDereference;
       },
-      [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
+      [](auto &, auto &, auto &, auto &stage, auto &, auto &, auto &) {
         stage.info.type = SemanticType::Char;
       },
-      [](auto &, auto &, auto &, auto &call, auto &, auto &) {
+      [](auto &, auto &, auto &, auto &, auto &call, auto &, auto &) {
         ++call.hirValue;
       },
-      [](auto &, auto &, auto &stage, auto &call, auto &, auto &) {
+      [](auto &, auto &, auto &, auto &stage, auto &call, auto &, auto &) {
         std::swap(stage, call);
       },
-      [](auto &, auto &block, auto &stage, auto &, auto &from, auto &) {
+      [](auto &, auto &, auto &block, auto &stage, auto &, auto &from, auto &) {
         const auto ended = std::find_if(
             block.instructions.begin(), block.instructions.end(),
             [&](const auto &candidate) {
@@ -315,6 +339,62 @@ void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
         std::swap(stage, *ended);
       },
   };
+  if (countedText) {
+    if (!rawText && borrowedType == SemanticType::StringView) {
+      mutations.push_back(
+          [](auto &, auto &body, auto &, auto &, auto &call, auto &, auto &) {
+            auto &previous =
+                body.blocks[body.findValue(*call.result)->definitionBlock - 1];
+            previous.terminator.target = previous.terminator.elseTarget;
+          });
+      mutations.push_back([](auto &, auto &body, auto &, auto &, auto &call,
+                             auto &, auto &) {
+        auto &previous =
+            body.blocks[body.findValue(*call.result)->definitionBlock - 1];
+        std::swap(previous.terminator.target, previous.terminator.elseTarget);
+      });
+      mutations.push_back([](auto &, auto &body, auto &block, auto &,
+                             auto &call, auto &, auto &) {
+        body.values[*call.result - 1].definitionBlock = block.id;
+      });
+      mutations.push_back([](auto &, auto &, auto &, auto &, auto &call, auto &,
+                             auto &) { call.tombstone = true; });
+    }
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &from,
+                           auto &) { from.kind = MirLoanKind::CallResult; });
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &from,
+                           auto &) { from.escapes = true; });
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &from,
+                           auto &to) { from.parent = to.id; });
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &from,
+                           auto &) { from.lifecycleBound = true; });
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &from,
+                           auto &) { from.carriers.push_back(1); });
+    mutations.push_back(
+        [](auto &, auto &, auto &, auto &, auto &call, auto &, auto &) {
+          call.info.category = ValueCategory::Place;
+        });
+    mutations.push_back([](auto &, auto &, auto &block, auto &, auto &, auto &,
+                           auto &) { block.terminator.value->value = 0; });
+    mutations.push_back([rawText](auto &mir, auto &, auto &, auto &, auto &call,
+                                  auto &, auto &) {
+      if (rawText)
+        call.functionTarget = 1;
+      else
+        MirProgramTestAccess::functions(mir)[*call.functionTarget - 1]
+            .requiresUnsafe = false;
+    });
+    mutations.push_back([rawText](auto &mir, auto &, auto &, auto &, auto &call,
+                                  auto &, auto &) {
+      if (rawText)
+        call.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeCall;
+      else
+        MirProgramTestAccess::functions(mir)[*call.functionTarget - 1].linkage =
+            LanguageLinkage::C;
+    });
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &,
+                           auto &to) { to.carriers.push_back(1); });
+  }
   for (const auto &mutate : mutations) {
     auto invalid = frontend.mir;
     auto &body = MirProgramTestAccess::functions(invalid)[owner - 1].body;
@@ -324,13 +404,16 @@ void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
         [&](const auto &stage) { return stage.id == transferId; });
     auto &from = body.loans[transfer.operands.front().loan - 1];
     auto &to = body.loans[*transfer.loan - 1];
-    auto &call =
-        *std::find_if(block.instructions.begin(), block.instructions.end(),
-                      [&](const auto &stage) {
-                        return stage.kind == MirInstructionKind::Call &&
-                               stage.loan == from.id;
-                      });
-    mutate(body, block, transfer, call, from, to);
+    MirInstruction *producer = nullptr;
+    for (auto &candidate : body.blocks)
+      for (auto &stage : candidate.instructions)
+        if (stage.kind == MirInstructionKind::Call && stage.loan == from.id) {
+          require(!producer, "return witness has one exact call producer");
+          producer = &stage;
+        }
+    require(producer, "return witness retains its call producer");
+    auto &call = *producer;
+    mutate(invalid, body, block, transfer, call, from, to);
     auto built = LoweredProgramBuilder().build(
         frontend.program, frontend.semantics, frontend.hir, invalid, invalid,
         {}, TargetInfo::host(), true);
@@ -1073,6 +1156,13 @@ int main(int argc, char **argv) {
     unsafeReferenceLoadContract(std::filesystem::canonical(argv[1]));
     unsafeReferenceLoadContract(std::filesystem::canonical(argv[1]), true);
     unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]));
+    unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]), true);
+    unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]), true,
+                                  true);
+    unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]), true,
+                                  false, SemanticType::CString);
+    unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]), true,
+                                  true, SemanticType::CString);
     classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]),
                                    "llvm_hosted_class_owner_reference.gti");
     classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]),

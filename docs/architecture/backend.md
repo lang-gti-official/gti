@@ -4556,6 +4556,29 @@ panic verifies that the consumer is never entered and that local/TLS cleanup
 precedes hosted reporting through the existing C observer. This no-argument
 failure case is separate from pending owned-argv cleanup evidence.
 
+A direct fundamental text return has a distinct bounded witness: its source call
+publishes a `Stored` dependency and an SSA text value, then the return
+publishes that exact value with the unchanged escaping `Return` dependency.
+Only fundamental `StringView` and `CString` values enter this proof; owning values, parent-
+derived stored carriers and other borrowed-value families remain outside it.
+The direct ordinary unsafe source producer, complete owner dependencies and
+live ordering are verified. The producer is in the same block or the immediate
+`Invoke` success predecessor, where its typed SSA definition names the exact
+last live call and the failure edge cannot publish the return. The return never
+reconstructs a view from an owner address or recalculates its byte extent. Primitive-owner tests
+keep the raw data address independent, distinguish different C-string addresses
+with the same witness, and preserve embedded NUL bytes in counted text. A
+failure-capable relay also checks original panic attribution, an unentered
+consumer, and local/TLS cleanup through the existing hosted observer.
+Raw text construction uses the same exact value/dependency return
+proof, but requires the verified `TextViewFromAddress` or `CStringFromAddress`
+producer and its existing
+passive-owner structural contract. Raw and declared-unsafe source authority
+cannot substitute for one another; both have dedicated forgery controls.
+This return witness does not widen the separate text-from-address owner
+representation predicate; capability/class-owner closure still needs its own
+structural evidence.
+
 Raw references to primitive or ordinary, independently represented native
 class objects may use passive or ordinary native class lifetime witnesses.
 One structural predicate covers both roles; their types and addresses remain

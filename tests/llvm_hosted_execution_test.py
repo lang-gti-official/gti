@@ -66,10 +66,40 @@ def arguments(gti, root, scratch, endpoints, env):
           flush=True)
 
 
+def text_source_rejections(gti, root, scratch, endpoints, env):
+    cases = (
+        ("llvm_hosted_unsafe_text_escape.gti", "GTI-S2045", 5),
+        ("llvm_hosted_unsafe_text_owner_write.gti", "GTI-S2017", 15),
+        ("llvm_hosted_unsafe_cstring_escape.gti", "GTI-S2045", 5),
+        ("llvm_hosted_unsafe_cstring_owner_write.gti", "GTI-S2017", 12),
+    )
+    for filename, code, line in cases:
+        source = root / "tests/fixtures" / filename
+        for index, endpoint in enumerate(endpoints):
+            directory = scratch / f"text-rejection-{filename}-{index}"
+            directory.mkdir()
+            output = directory / "program"
+            marker = b"preserved hosted text rejection\n"
+            output.write_bytes(marker)
+            command = [str(gti), str(source), "--backend", endpoint.backend,
+                       f"-{endpoint.optimization}", "-o", str(output)]
+            if endpoint.standard:
+                command += ["--std", endpoint.standard]
+            built = subprocess.run(command, cwd=root, env=env, text=True,
+                                   capture_output=True, check=False, timeout=30)
+            if (built.returncode != 65 or code not in built.stderr
+                    or f"{filename}:{line}:" not in built.stderr
+                    or "GTI-B0001" in built.stderr or "GTI-B0003" in built.stderr
+                    or output.read_bytes() != marker):
+                raise AssertionError(f"text lifetime rejection {endpoint}: {built}")
+        print(f"{filename}: {code} and output preservation passed all endpoints",
+              flush=True)
+
+
 def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selection = sys.argv[3] if len(sys.argv) > 3 else "all"
-    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments", "reference-input", "vector"}:
+    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments", "reference-input", "vector", "array", "text-return"}:
         raise ValueError(f"unknown hosted case: {selection}")
     cases = (
         ("llvm_hosted_success.gti", None),
@@ -83,6 +113,10 @@ def main():
         ("llvm_hosted_class_owner_reference.gti", None),
         ("llvm_hosted_class_pointee_reference.gti", None),
         ("stdlib_surface_vector.gti", None),
+        ("stdlib_surface_array.gti", None),
+        ("llvm_hosted_unsafe_text_return.gti", None),
+        ("llvm_hosted_unsafe_cstring_return.gti", None),
+        ("llvm_hosted_text_return_failure.gti", "counted text failure"),
     )
     endpoints = (
         Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
@@ -102,8 +136,18 @@ def main():
                 continue
             if selection == "vector" and filename != "stdlib_surface_vector.gti":
                 continue
+            if selection == "array" and filename != "stdlib_surface_array.gti":
+                continue
+            if selection == "text-return" and filename not in {
+                    "llvm_hosted_unsafe_text_return.gti",
+                    "llvm_hosted_unsafe_cstring_return.gti",
+                    "llvm_hosted_text_return_failure.gti"}:
+                continue
             if selection == "startup" and filename in {
-                    "stdlib_surface_source_location.gti", "stdlib_surface_vector.gti"}:
+                    "stdlib_surface_source_location.gti", "stdlib_surface_vector.gti",
+                    "stdlib_surface_array.gti", "llvm_hosted_unsafe_text_return.gti",
+                    "llvm_hosted_unsafe_cstring_return.gti",
+                    "llvm_hosted_text_return_failure.gti"}:
                 continue
             if selection == "source-location" and filename != "stdlib_surface_source_location.gti":
                 continue
@@ -142,6 +186,8 @@ def main():
                     raise AssertionError(f"portable exit {status} {endpoint}: {result}")
             print(f"portable exit {status}: preserved GTI function result and status {expected}",
                   flush=True)
+        if selection in {"all", "text-return"}:
+            text_source_rejections(gti, root, scratch, endpoints, env)
         if selection in {"all", "arguments"}:
             arguments(gti, root, scratch, endpoints, env)
 

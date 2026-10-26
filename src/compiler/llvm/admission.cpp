@@ -811,7 +811,9 @@ public:
   const MirInstruction *
   earlierLiveCallResult(const MirBody &body, const MirBlock &block,
                         const MirInstruction &stage, const MirLoan &loan,
-                        const SemanticType &referent) const {
+                        const SemanticType &referent,
+                        ValueCategory category = ValueCategory::Place,
+                        MirValueId returned = 0) const {
     if (body.findBlock(block.id) != &block)
       return nullptr;
     // A source expression's caller permission is repeated on materialization.
@@ -836,8 +838,41 @@ public:
         return nullptr;
       producer = &candidate;
     }
-    return encountered && producer && producer->result &&
-                   producer->info.category == ValueCategory::Place &&
+    if (!encountered)
+      return nullptr;
+    if (!producer && category == ValueCategory::Value &&
+        (referent == SemanticType::StringView ||
+         referent == SemanticType::CString) &&
+        returned) {
+      const auto *value = body.findValue(returned);
+      const auto *previous =
+          value ? body.findBlock(value->definitionBlock) : nullptr;
+      if (!value || !previous || previous == &block ||
+          value->sourceValue != stage.hirValue || block.failureParameter ||
+          block.activeFailure || !block.parameters.empty())
+        return nullptr;
+      const auto &term = previous->terminator;
+      if (term.kind != MirTerminatorKind::Invoke || term.target != block.id ||
+          !term.elseTarget || term.elseTarget == block.id ||
+          !term.failureRecord || term.invokeInstruction != value->definition ||
+          !term.targetArguments.empty() || !term.elseArguments.empty() ||
+          !term.successLifecycle.empty())
+        return nullptr;
+      for (const auto &candidate : previous->instructions) {
+        if (candidate.tombstone)
+          continue;
+        if (producer)
+          return nullptr;
+        if (candidate.id == value->definition)
+          producer = &candidate;
+      }
+      if (!producer || producer->kind != MirInstructionKind::Call ||
+          producer->hirValue != stage.hirValue || producer->loan != loan.id)
+        return nullptr;
+    }
+    return producer && producer->result &&
+                   (!returned || *producer->result == returned) &&
+                   producer->info.category == category &&
                    producer->info.type == referent &&
                    producer->info.access == loan.access
                ? producer
@@ -847,14 +882,26 @@ public:
   bool unsafeCallResultProducer(const MirBody &body, const MirBlock &block,
                                 const MirInstruction &stage,
                                 const MirLoan &loan,
-                                const SemanticType &referent) const {
-    const auto *producer =
-        earlierLiveCallResult(body, block, stage, loan, referent);
+                                const SemanticType &referent,
+                                ValueCategory category = ValueCategory::Place,
+                                MirValueId returned = 0) const {
+    const auto *producer = earlierLiveCallResult(body, block, stage, loan,
+                                                 referent, category, returned);
     const auto *target =
         producer && producer->functionTarget
             ? program.findFunctionInstance(*producer->functionTarget)
             : nullptr;
-    return producer && target &&
+    const bool exactReturn =
+        target && ((category == ValueCategory::Place &&
+                    target->returnType.kind == SemanticType::Reference &&
+                    target->returnType.arguments.size() == 1 &&
+                    target->returnType.arguments.front() == referent &&
+                    target->returnType.referenceAccess == loan.access) ||
+                   (category == ValueCategory::Value &&
+                    (referent == SemanticType::StringView ||
+                     referent == SemanticType::CString) &&
+                    target->returnType == referent));
+    return producer && target && exactReturn &&
            producer->unsafeOperation ==
                UnsafeOperationKind::DeclaredUnsafeCall &&
            producer->intrinsic == IntrinsicKind::None &&
@@ -862,11 +909,7 @@ public:
            !producer->lambdaTarget &&
            producer->dispatch == CallDispatch::Static &&
            target->definitionKind == MirDefinitionKind::Source &&
-           target->linkage == LanguageLinkage::Gti && target->requiresUnsafe &&
-           target->returnType.kind == SemanticType::Reference &&
-           target->returnType.arguments.size() == 1 &&
-           target->returnType.arguments.front() == referent &&
-           target->returnType.referenceAccess == loan.access;
+           target->linkage == LanguageLinkage::Gti && target->requiresUnsafe;
   }
 
   bool unsafeCallResultLoad(const MirBody &body, const MirBlock &block,
@@ -953,11 +996,20 @@ public:
   const MirLoan *directReturnSourceLoan(const MirBody &body,
                                         const MirBlock &block,
                                         const MirInstruction &stage) const {
+    const bool text = body.returnType == SemanticType::StringView ||
+                      body.returnType == SemanticType::CString;
+    const bool reference = body.returnType.kind == SemanticType::Reference &&
+                           body.returnType.arguments.size() == 1;
+    if (!text && !reference)
+      return nullptr;
+    const auto &referent =
+        text ? body.returnType : body.returnType.arguments.front();
+    const auto category = text ? ValueCategory::Value : ValueCategory::Place;
     if (stage.kind != MirInstructionKind::Borrow || !stage.loan ||
         stage.result || stage.hirValue == 0 || stage.rawMemoryAccess ||
         stage.intrinsic != IntrinsicKind::None ||
         stage.operation != MirOperation::None ||
-        stage.info.category != ValueCategory::Place ||
+        stage.info.category != category || stage.info.type != referent ||
         stage.operands.size() != 1 || stage.destination || stage.receiver ||
         stage.functionTarget || stage.constructorTarget || stage.lambdaTarget ||
         stage.bodyTarget || stage.nativeCalleeType ||
@@ -968,12 +1020,13 @@ public:
       return nullptr;
     const auto &input = stage.operands.front();
     if (input.kind != MirOperandKind::Loan || input.place || input.value ||
-        input.type != stage.info.type)
+        input.literal || input.type != stage.info.type)
       return nullptr;
     const auto *from = body.findLoan(input.loan);
     const auto *to = body.findLoan(*stage.loan);
-    if (!from || !to || from->kind != MirLoanKind::CallResult || from->entry ||
-        from->escapes || from->producedBy != stage.hirValue ||
+    if (!from || !to ||
+        from->kind != (text ? MirLoanKind::Stored : MirLoanKind::CallResult) ||
+        from->entry || from->escapes || from->producedBy != stage.hirValue ||
         from->referenceSelection || to->referenceSelection ||
         to->kind != MirLoanKind::Return || to->entry || !to->escapes ||
         to->parent || to->producedBy != from->producedBy ||
@@ -985,15 +1038,31 @@ public:
         to->additionalDependencies != from->additionalDependencies)
       return nullptr;
     const auto &term = block.terminator;
-    return body.returnType.kind == SemanticType::Reference &&
-                   body.returnType.arguments.size() == 1 &&
-                   body.returnType.arguments.front() == stage.info.type &&
-                   body.returnType.referenceAccess == from->access &&
-                   term.kind == MirTerminatorKind::Return &&
-                   term.returnLoan == to->id && term.value &&
-                   term.value->kind == MirOperandKind::Loan &&
-                   term.value->loan == to->id && !term.value->place &&
-                   !term.value->value && term.value->type == stage.info.type
+    if (term.kind != MirTerminatorKind::Return || term.returnLoan != to->id ||
+        !term.value || term.value->type != stage.info.type ||
+        term.value->place || term.value->literal)
+      return nullptr;
+    if (!text)
+      return body.returnType.referenceAccess == from->access &&
+                     term.value->kind == MirOperandKind::Loan &&
+                     term.value->loan == to->id && !term.value->value
+                 ? from
+                 : nullptr;
+    // Fundamental text is a borrowed value, not an owning object or a reference
+    // address. Preserve its complete dependency and exact returned SSA value.
+    if (from->parent || from->lifecycleBound || from->twoPhase ||
+        !from->carriers.empty() || to->lifecycleBound || to->twoPhase ||
+        !to->carriers.empty() || from->access != AccessMode::ReadOnly ||
+        stage.ownership || stage.preparedParameterDrop ||
+        stage.successResultDrop || stage.successResultDestination)
+      return nullptr;
+    if (term.value->kind != MirOperandKind::Value || !term.value->value ||
+        term.value->loan)
+      return nullptr;
+    const auto *producer = earlierLiveCallResult(
+        body, block, stage, *from, referent, category, term.value->value);
+    return producer && term.value->kind == MirOperandKind::Value &&
+                   term.value->value == *producer->result && !term.value->loan
                ? from
                : nullptr;
   }
@@ -1004,7 +1073,40 @@ public:
       return false;
     const auto *from = directReturnSourceLoan(body, block, stage);
     return from &&
-           unsafeCallResultProducer(body, block, stage, *from, stage.info.type);
+           unsafeCallResultProducer(
+               body, block, stage, *from, stage.info.type, stage.info.category,
+               stage.info.category == ValueCategory::Value &&
+                       block.terminator.value
+                   ? block.terminator.value->value
+                   : 0);
+  }
+
+  bool rawTextResultReturn(const MirBody &body, const MirBlock &block,
+                           const MirInstruction &stage) const {
+    if (stage.unsafeOperation != UnsafeOperationKind::RawDereference ||
+        (stage.info.type != SemanticType::StringView &&
+         stage.info.type != SemanticType::CString))
+      return false;
+    const auto *from = directReturnSourceLoan(body, block, stage);
+    const auto *producer =
+        from && block.terminator.value
+            ? earlierLiveCallResult(body, block, stage, *from, stage.info.type,
+                                    ValueCategory::Value,
+                                    block.terminator.value->value)
+            : nullptr;
+    return producer &&
+           (passiveTextViewAddress(*producer) ||
+            passiveCStringAddress(*producer)) &&
+           producer->unsafeOperation == UnsafeOperationKind::RawDereference &&
+           !producer->rawMemoryAccess && !producer->functionTarget &&
+           !producer->constructorTarget && !producer->lambdaTarget &&
+           !producer->bodyTarget && !producer->nativeCalleeType &&
+           !producer->nativeCallbackAdapter && !producer->threadTaskAdapter &&
+           !producer->receiver && !producer->callableInvocation &&
+           producer->dispatch == CallDispatch::Static &&
+           producer->operation == MirOperation::None &&
+           producer->definedFailure.empty() &&
+           producer->localFailureSites.empty();
   }
 
   bool representedRawReference(const MirBody &body, const MirBlock &block,
@@ -1690,7 +1792,8 @@ public:
               : ((stage.unsafeOperation ==
                       UnsafeOperationKind::RawDereference &&
                   (passiveTextViewAddress(stage) ||
-                   passiveCStringAddress(stage))) ||
+                   passiveCStringAddress(stage) ||
+                   rawTextResultReturn(mir, mirBlock, stage))) ||
                  (stage.unsafeOperation ==
                       UnsafeOperationKind::DeclaredUnsafeCall &&
                   rawReference) ||
