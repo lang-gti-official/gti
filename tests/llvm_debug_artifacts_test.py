@@ -106,6 +106,49 @@ def main():
             assert output.read_bytes() == original
             assert uuid(output) == uuid(bundle)
             run([output], 17)
+            def tree_bytes(path):
+                return {str(p.relative_to(path)): p.read_bytes()
+                        for p in path.rglob('*') if p.is_file()}
+            # Force final executable rename to fail after symbol publication.
+            # The existing executable is held by the fixture, while a directory
+            # blocks its destination. Cold and cache paths must restore symbols.
+            for cached, value in ((False, 31), (True, 23)):
+                if cached:
+                    write_source(23)
+                    build()
+                previous_pair = tree_bytes(bundle)
+                saved_executable = root / 'saved-app'
+                output.rename(saved_executable)
+                output.mkdir()
+                write_source(17 if cached else value)
+                before_entries = set((root / 'build').rglob('metadata'))
+                failed = build(False)
+                expected = ('failed to restore cached executable' if cached else
+                            'failed to publish executable')
+                assert expected in failed.stderr, failed.stderr
+                assert tree_bytes(bundle) == previous_pair, 'failed executable rename lost previous companion'
+                assert set((root / 'build').rglob('metadata')) == before_entries
+                assert output.is_dir() and not list(output.iterdir())
+                output.rmdir()
+                saved_executable.rename(output)
+                run([output], 23 if cached else 17)
+                assert uuid(output) == uuid(bundle)
+            write_source(17)
+            build()
+            # A symbol-directory symlink is never an owned bundle.
+            bundle.rename(saved)
+            outside = root / 'unowned-symbols'
+            outside.mkdir()
+            (outside / 'keep').write_text('preserve')
+            bundle.symlink_to(outside, target_is_directory=True)
+            write_source(23)
+            failed = build(False)
+            assert 'non-directory or symlink' in failed.stderr, failed.stderr
+            assert output.read_bytes() == original
+            assert (outside / 'keep').read_text() == 'preserve'
+            bundle.unlink()
+            saved.rename(bundle)
+            write_source(17)
             # A valid-looking metadata record cannot suppress a required
             # companion and advertise a successful incomplete cache hit.
             metadata = cache[0].read_text()
@@ -118,6 +161,19 @@ def main():
             assert 'companion presence' in recovered.stderr, recovered.stderr
             assert uuid(output) == uuid(bundle)
             run([output], 17)
+        # Relocating the executable with its companion retains symbol lookup.
+        relocated = root / 'relocated debug with spaces'
+        relocated.mkdir()
+        moved = relocated / output.name
+        shutil.move(output, moved)
+        if sys.platform == 'darwin':
+            moved_bundle = Path(str(moved) + '.dSYM')
+            shutil.move(bundle, moved_bundle)
+            assert uuid(moved) == uuid(moved_bundle)
+            assert 'main.gti' in run(['dwarfdump', '--debug-line', moved_bundle]).stdout
+        else:
+            assert 'main.gti' in run(['readelf', '--debug-dump=decodedline', moved]).stdout
+        run([moved], 17)
         assert not list((root / 'build').rglob('*.gti-stage-*'))
         print(f'{args.backend}: real debug object, source metadata, cold/warm/restoration, '
               'companion rejection/recovery passed; compiler sha256=' +

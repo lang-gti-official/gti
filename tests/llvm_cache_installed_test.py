@@ -125,6 +125,8 @@ def main():
         assert str(stage) not in serialized and str(build) not in serialized
         run([sys.executable, source / "tests/llvm_cache_project_test.py", gti],
             root, environment)
+        run([sys.executable, source / "tests/llvm_debug_artifacts_test.py", gti],
+            root, environment)
         consumer = root / "consumer-build"
         configure = ["cmake", "-S", source / "tests/llvm_cache_installed_consumer",
                      "-B", consumer, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
