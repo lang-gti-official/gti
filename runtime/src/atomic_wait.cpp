@@ -34,10 +34,13 @@ void initialize() noexcept {
 }
 
 Bucket &bucketFor(const void *address, std::uint32_t width) noexcept {
-  if (!initialized.load(std::memory_order_acquire))
-    require(pthread_once(&initializeOnce, initialize) == 0);
   return buckets[((reinterpret_cast<std::uintptr_t>(address) >> 3) ^ width) %
                  buckets.size()];
+}
+
+void ensureInitialized() noexcept {
+  if (!initialized.load(std::memory_order_acquire))
+    require(pthread_once(&initializeOnce, initialize) == 0);
 }
 
 template <typename T>
@@ -65,6 +68,7 @@ void wait(const void *lane, std::uint64_t old, std::uint32_t order) noexcept {
       return;
   }
   auto &bucket = bucketFor(lane, sizeof(T));
+  ensureInitialized();
   require(pthread_mutex_lock(&bucket.mutex) == 0);
   require(bucket.waiters.fetch_add(1, std::memory_order_relaxed) !=
           std::numeric_limits<unsigned>::max());
@@ -128,6 +132,7 @@ extern "C" void gti_rt_atomic_notify_v1(const void *lane,
   std::atomic_thread_fence(std::memory_order_seq_cst);
   if (bucket.waiters.load(std::memory_order_relaxed) == 0)
     return;
+  ensureInitialized();
 #endif
   require(pthread_mutex_lock(&bucket.mutex) == 0);
   // A single native wake could choose a different colliding lane and strand

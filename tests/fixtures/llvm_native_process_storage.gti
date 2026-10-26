@@ -1,5 +1,7 @@
 #include <std/mutex>
 
+extern "C" { void gti_test_program_ready(); }
+
 class Box {
   std::mutex<int32_t> value;
 public:
@@ -12,4 +14,4 @@ public:
   static Box last{};
 };
 
-int main() { return 0; }
+int main() { gti_test_program_ready(); return 0; }

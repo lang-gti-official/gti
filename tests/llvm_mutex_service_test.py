@@ -64,6 +64,11 @@ def main():
         "-o", output / "runtime.o"])
     run("fixture", [args.cc, "-std=c17", *flags, "-c", root / "tests/fixtures/llvm_mutex_service.c",
                     "-o", output / "fixture.o"])
+    run("emit-source-composition", [args.emitter.resolve(), root, "--source-composition",
+                                     output / "source.ll", *sanitize])
+    run("source-observer", [args.cc, "-std=c17", *flags, "-c",
+                             root / "tests/fixtures/llvm_native_process_storage.c",
+                             "-o", output / "source-observer.o"])
     for mode in ("O0", "O1", "O2", "O3"):
         run(f"ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation, "-c", output / "mutex.ll",
                            "-o", output / f"mutex-{mode}.o"])
@@ -92,6 +97,14 @@ def main():
                              output / f"mutex-process-{mode}.o",
                              runtime_library, "-o", program])
         run(f"execute-{mode}", [program])
+        run(f"source-ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation,
+                                   "-c", output / "source.ll", "-o", output / f"source-{mode}.o"])
+        source_program = output / f"source-{mode}"
+        run(f"source-link-{mode}", [args.cxx, "-pthread", *instrumentation,
+                                     output / "source-observer.o", output / "runtime.o",
+                                     output / f"source-{mode}.o", runtime_library,
+                                     "-o", source_program])
+        run(f"source-execute-{mode}", [source_program])
         for fault in ("active-lock", "wrong-owner", "inactive-read", "retired-lock"):
             run(f"{fault}-{mode}", [program, fault], death=True)
 

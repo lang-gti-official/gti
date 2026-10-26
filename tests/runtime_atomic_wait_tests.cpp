@@ -249,7 +249,7 @@ int main(int argc, char **argv) {
         (void)exit;
       });
       worker.join();
-      require(initializations == 256);
+      require(initializations == 0);
       return 0;
     } else
       gti_rt_atomic_wait_v1(&lane, 1, 8, 0);
@@ -257,17 +257,31 @@ int main(int argc, char **argv) {
   }
   gti_rt_atomic_wait_v1(&lane, 0, 8, 0);
   require(initializations == 0);
-  // Concurrent first use must publish exactly one initialized table.
+  // Empty notifications need no native parking domain, including late use.
   std::array<std::thread, 8> starters;
   for (auto &worker : starters)
     worker = std::thread([&] { gti_rt_atomic_notify_v1(&lane, 8, 0); });
   for (auto &worker : starters)
     worker.join();
+  require(initializations == 0);
+  std::array<Probe, 8> enrollments;
+  for (unsigned index = 0; index != starters.size(); ++index)
+    starters[index] = std::thread([&, index] {
+      probe = &enrollments[index];
+      gti_rt_atomic_wait_v1(&lane, 1, 8, 1);
+    });
+  for (auto &state : enrollments)
+    await(state, 1);
   require(initializations == 256);
+  __atomic_store_n(&lane, UINT64_C(2), __ATOMIC_RELEASE);
+  gti_rt_atomic_notify_v1(&lane, 8, 1);
+  for (auto &worker : starters)
+    worker.join();
   scalar<std::uint8_t>();
   scalar<std::uint16_t>();
   scalar<std::uint32_t>();
   scalar<std::uint64_t>();
+  require(initializations == 256);
   beforeEnrollment(false);
   beforeEnrollment(true);
   collisions();

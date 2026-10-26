@@ -1,5 +1,6 @@
 #include "../src/compiler/llvm/lifetimes.h"
 #include "../src/compiler/llvm/mutexes.h"
+#include "../src/compiler/llvm/body.h"
 #include "cpp_backend_test_support.h"
 #include "gti/mir_effects.h"
 
@@ -125,6 +126,41 @@ void checkProcessStorage(const std::filesystem::path &root,
     require(!error, "process kernel IR output opens");
     session.module().print(stream, nullptr);
   }
+  static_cast<void>(session.emitObject());
+}
+
+void checkSourceComposition(const std::filesystem::path &root,
+                             const std::filesystem::path &output,
+                             std::string_view sanitizer) {
+  FrontendOptions options;
+  options.target.executionProfile = ExecutionProfile::Concurrent;
+  options.target.runtimeCapabilities.threads = true;
+  options.requireEntryPoint = true;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      root / "tests/fixtures/llvm_native_process_storage.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  require(frontend.canGenerateCode(), "source composition reaches verified MIR");
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir,
+                             options.target), issues);
+  require(input.has_value(), "source composition has a sealed snapshot");
+  requirePublicRejection(*input);
+  Session session(*input, {});
+  // Deliberate pre-admission composition oracle: every body is real source MIR.
+  // This must never change the public gate or claim coverage from this bypass.
+  lowerScalarProgram(session, planLlvmAdmission(*input));
+  if (!sanitizer.empty())
+    for (auto &function : session.module())
+      if (!function.isDeclaration())
+        function.addFnAttr(sanitizer == "thread" ? llvm::Attribute::SanitizeThread
+                                                : llvm::Attribute::SanitizeAddress);
+  std::error_code error;
+  llvm::raw_fd_ostream stream(output.string(), error);
+  require(!error, "source composition IR output opens");
+  session.module().print(stream, nullptr);
   static_cast<void>(session.emitObject());
 }
 
@@ -509,6 +545,20 @@ void check(const std::filesystem::path &root,
 } // namespace
 
 int main(int argc, char **argv) {
+  if ((argc == 4 || argc == 5) &&
+      std::string_view(argv[2]) == "--source-composition") {
+    try {
+      const std::string_view sanitizer = argc == 5 ? argv[4] : "";
+      if (!sanitizer.empty() && sanitizer != "thread" &&
+          sanitizer != "address,undefined")
+        return 2;
+      checkSourceComposition(argv[1], argv[3], sanitizer);
+      return 0;
+    } catch (const std::exception &error) {
+      std::cerr << error.what() << '\n';
+      return 1;
+    }
+  }
   if (argc != 2 && argc != 3 && argc != 4)
     return 2;
   const std::string_view sanitizer = argc == 4 ? argv[3] : "";

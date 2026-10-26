@@ -4421,6 +4421,12 @@ and rearms under the mutex before any woken waiter can recheck and repark.
 Deterministic controls pause after broadcast while a second colliding-lane
 notification coalesces, then require both waiters to finish. This does not
 replace parking with spinning or weaken one/all notification semantics.
+Empty notification touches only the constant-initialized atomic enrollment
+state; it need not initialize native parking objects. A waiter initializes the
+domain before publishing enrollment. On x86 the acquire RMW observes that
+initialization; ARM enters the one-time initialization barrier before using a
+nonempty bucket. Ready waits and late empty notifications allocate no parking
+domain resources.
 
 All callers in an executable must share one final-image parking provider. This
 does not establish independently linked module attachment/unload support. The
