@@ -1660,6 +1660,9 @@ llvm::Function *Bodies::function(MirBodyAddress address) {
       debug && (address.kind == MirBodyKind::Constructor ||
                 address.kind == MirBodyKind::Destructor))
     debug->registerLifecycleBody(address, *output);
+  if (auto *debug = session.debugInfo();
+      debug && address.kind == MirBodyKind::HostedStartup)
+    debug->registerHostedStartupBody(address, *output);
   return output;
 }
 void Bodies::body(MirBodyAddress address) {

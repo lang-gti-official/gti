@@ -1,4 +1,5 @@
 #include "../src/compiler/llvm/abi.h"
+#include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/debug_info.h"
 #include "../src/compiler/llvm/layout.h"
 #include "../src/compiler/llvm/parameter_packs.h"
@@ -656,6 +657,79 @@ void optimizedOutDeclarations() {
                                  "storage or availability");
 }
 
+void hostedArtificialCarrier() {
+  const auto frontend =
+      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("startup-debug.gti", "int main() { return 0; }");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host());
+  std::vector<LoweredProgramIssue> issues;
+  if (!lowered.valid())
+    throw std::runtime_error("invalid startup debug fixture");
+  auto input = verifiedLoweredProgram(std::move(*lowered.program), issues);
+  if (!input)
+    throw std::runtime_error("invalid startup debug snapshot");
+  Session session(*input, {.debugInfo = true});
+  auto &debug = *session.debugInfo();
+  const MirBodyAddress address{
+      MirBodyKind::HostedStartup,
+      input->program().mir().hostedStartupPlan()->entry};
+  auto *alien = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getInt32Ty(session.context()), false),
+      llvm::GlobalValue::ExternalLinkage, "forged_startup", session.module());
+  const auto rejects = [](auto action) {
+    try {
+      action();
+    } catch (const std::logic_error &) {
+      return;
+    }
+    throw std::runtime_error("forged startup identity was accepted");
+  };
+  rejects([&] { debug.begin(address, *alien); });
+  lowerScalarProgram(session, planLlvmAdmission(*input));
+  auto *entry = session.module().getFunction("main");
+  if (!entry || !entry->getSubprogram())
+    throw std::runtime_error("registered startup lost its artificial carrier");
+  const auto *scope = entry->getSubprogram();
+  if (!(scope->getFlags() & llvm::DINode::FlagArtificial) || scope->getLine() ||
+      scope->getScopeLine() ||
+      scope->getFile()->getFilename() != "<gti-generated>")
+    throw std::runtime_error("startup acquired a fabricated source scope");
+  rejects([&] { debug.begin(address, *alien); });
+  rejects([&] { debug.registerHostedStartupBody(address, *alien); });
+  rejects([&] {
+    debug.begin({MirBodyKind::HostedStartup, address.owner + 1}, *entry);
+  });
+  rejects([&] {
+    debug.registerHostedStartupBody({MirBodyKind::Function, address.owner},
+                                    *entry);
+  });
+  llvm::IRBuilder<> ir(&entry->getEntryBlock());
+  rejects([&] {
+    debug.location(ir, {MirBodyKind::Function, address.owner}, 1, 0);
+  });
+  unsigned calls = 0;
+  for (const auto &block : *entry)
+    for (const auto &instruction : block) {
+      if (const auto &location = instruction.getDebugLoc())
+        if (location.getLine() || location->getScope() != scope ||
+            location->getInlinedAt())
+          throw std::runtime_error(
+              "generated startup acquired a user source location");
+      if (llvm::isa<llvm::CallBase>(instruction)) {
+        ++calls;
+        if (!instruction.getDebugLoc())
+          throw std::runtime_error(
+              "startup call lost its line-zero inline carrier");
+      }
+    }
+  debug.finalize();
+  if (!calls || scope->getRetainedNodes().size() || alien->getSubprogram() ||
+      llvm::verifyModule(session.module(), &llvm::errs()))
+    throw std::runtime_error("artificial startup metadata failed verification");
+}
+
 int main() {
   if (metadata("/checkout-one/debug.gti") !=
       metadata("/other-checkout/debug.gti"))
@@ -666,6 +740,7 @@ int main() {
   concreteParameterMetadata();
   generatedMetadataExclusion();
   optimizedOutDeclarations();
+  hostedArtificialCarrier();
   std::cout << "sealed debug identities, locations, locals, recursive layout, "
                "root relocation and inlined source/parameter chains passed\n";
 }

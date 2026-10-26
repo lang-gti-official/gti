@@ -4389,9 +4389,15 @@ Optimized-out locals retain named declarations without fabricated storage or
 value availability. Private execution symbols are not DWARF linkage names:
 source subprogram names remain visible in native backtraces without changing
 execution ABI names. Native macOS O0 breakpoint, stepping, scalar-local and
-backtrace evidence exists; O3 startup inlining currently loses the executing
-copy's source chain because generated entry glue has no debug carrier. This is
-an unresolved debugger gate, not an accepted optimized-debug boundary. Expanded pack elements,
+backtrace evidence exists. The exact hosted startup factory registers an
+artificial line-zero carrier, without a user source scope, to preserve inlined
+source locations in the executing native entry. Forged startup/body/location
+identities reject. Native O3 source breakpoints now reach the executing inline
+frame; the full gate still fails because locals can lose their concrete inline
+variable entries. Retained abstract declarations alone do not establish native
+variable availability. Promoted-value provenance and optimized location updates
+remain required; unavailable values must not acquire invented storage or values.
+Expanded pack elements,
 receivers and recovered optimized values still need their complete contracts
 and execution evidence.
 

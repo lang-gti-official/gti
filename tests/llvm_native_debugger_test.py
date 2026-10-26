@@ -25,10 +25,11 @@ def main():
     parser.add_argument("--lldb", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--optimization", choices=(0, 3), type=int, default=0)
-    parser.add_argument("--case", choices=("basic", "lexical"), default="basic")
+    parser.add_argument("--case", choices=("basic", "lexical", "inlined"), default="basic")
     parser.add_argument("--cc", default="clang")
     args = parser.parse_args()
-    assert args.case == "basic" or args.optimization == 0
+    assert args.case != "lexical" or args.optimization == 0
+    assert args.case != "inlined" or args.optimization == 3
     root = Path(__file__).resolve().parents[1]
     output = args.output.resolve()
     assert not output.exists() and not output.is_relative_to(root)
@@ -40,6 +41,8 @@ def main():
     fixture = "native_debug_optimized.gti" if args.optimization == 3 else "native_debug.gti"
     if args.case == "lexical":
         fixture = "native_debug_lexical.gti"
+    elif args.case == "inlined":
+        fixture = "native_debug_inline.gti"
     shutil.copyfile(root / "tests/fixtures/llvm_optimization" / fixture, source)
     manifest = {
         "status": "running", "commands": [],
@@ -121,7 +124,7 @@ def main():
         else:
             for name in ("input", "local"):
                 assert re.search(rf"\b{name} = (4\b|<variable not available>)", transcript), transcript
-            assert "[inlined] inspect" in transcript, transcript
+            assert re.search(r"frame #\d+.*(?:\[inlined\].*inspect|inspect.*\[inlined\])", transcript), transcript
         assert re.search(r"frame #\d+.*inspect", transcript)
         assert re.search(r"frame #\d+.*main", transcript)
         assert "exited with status = 0" in transcript

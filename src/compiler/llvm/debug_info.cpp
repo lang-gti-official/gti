@@ -259,6 +259,7 @@ public:
   std::map<llvm::Function *, MirBodyAddress> bodies;
   std::map<std::pair<MirBodyKind, std::uint32_t>, llvm::Function *>
       lifecycleDefinitions;
+  llvm::Function *hostedStartupDefinition = nullptr;
   struct Local {
     llvm::DILocalVariable *variable = nullptr;
     llvm::Value *storage = nullptr;
@@ -298,6 +299,25 @@ void DebugInfo::registerLifecycleBody(MirBodyAddress address,
   impl->bodies.emplace(&function, address);
 }
 
+void DebugInfo::registerHostedStartupBody(MirBodyAddress address,
+                                          llvm::Function &function) {
+  const auto &program = impl->session.program();
+  if (function.getParent() != &impl->session.module() ||
+      address.kind != MirBodyKind::HostedStartup ||
+      !program.mir().hostedStartupPlan() ||
+      address.owner != program.mir().hostedStartupPlan()->entry ||
+      !program.findBody(address) || !findMirBody(program.mir(), address))
+    throw std::logic_error("LLVM debug startup is not an exact session body");
+  if (impl->hostedStartupDefinition &&
+      impl->hostedStartupDefinition != &function)
+    throw std::logic_error("LLVM debug startup changed its factory result");
+  const auto other = impl->bodies.find(&function);
+  if (other != impl->bodies.end() && other->second != address)
+    throw std::logic_error("LLVM debug startup is bound to another body");
+  impl->hostedStartupDefinition = &function;
+  impl->bodies.emplace(&function, address);
+}
+
 void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
   if (function.getParent() != &impl->session.module())
     throw std::logic_error(
@@ -316,6 +336,29 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
   const auto *body = findMirBody(program.mir(), address);
   if (!body)
     throw std::logic_error("LLVM debug body does not belong to the snapshot");
+  if (address.kind == MirBodyKind::HostedStartup) {
+    if (!program.mir().hostedStartupPlan() ||
+        address.owner != program.mir().hostedStartupPlan()->entry ||
+        impl->hostedStartupDefinition != &function)
+      throw std::logic_error(
+          "LLVM debug startup does not match its factory identity");
+    const auto *lowered = program.findBody(address);
+    if (!lowered || lowered->sourceDebug.tables ||
+        program.mir().sourceDebugProfile() != SourceDebugProfile::LexicalV1 ||
+        lowered->sourceDebug.collection != SourceDebugCollection::NotApplicable)
+      throw std::logic_error(
+          "LLVM generated startup acquired source debug facts");
+    auto flags = llvm::DISubprogram::SPFlagDefinition;
+    if (impl->optimized())
+      flags |= llvm::DISubprogram::SPFlagOptimized;
+    auto *file = impl->builder.createFile("<gti-generated>", ".");
+    function.setSubprogram(impl->builder.createFunction(
+        file, function.getName(), {}, file, 0,
+        impl->builder.createSubroutineType(
+            impl->builder.getOrCreateTypeArray({})),
+        0, llvm::DINode::FlagArtificial, flags));
+    return;
+  }
   // Generated glue has no source scope, even when its result type has no
   // source debug representation. Exclude it before planning source types.
   if (address.kind != MirBodyKind::Function &&
@@ -440,6 +483,10 @@ void DebugInfo::location(llvm::IRBuilder<> &ir, MirBodyAddress address,
   if (!ir.GetInsertBlock())
     return;
   auto *scope = ir.GetInsertBlock()->getParent()->getSubprogram();
+  const auto identity = impl->bodies.find(ir.GetInsertBlock()->getParent());
+  if (scope && (identity == impl->bodies.end() || identity->second != address))
+    throw std::logic_error(
+        "LLVM debug location does not match its factory body");
   const auto *body = impl->session.program().findBody(address);
   if (!scope || !body)
     return;
