@@ -65,7 +65,7 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
     DebugInfo reusedDebug(reused);
     const auto plan = reused.abi().gti(
         selected->returnType, selected->parameterTypes,
-        selected->mayRaiseDefinedFailure, nullptr, selected->tracksCaller);
+        selected->mayRaiseDefinedFailure, false, selected->tracksCaller);
     auto *existing =
         llvm::Function::Create(plan.type, llvm::GlobalValue::ExternalLinkage,
                                function->getName(), reused.module());
