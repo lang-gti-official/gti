@@ -21620,6 +21620,85 @@ int main() {
          }),
          "generated default arguments still require exact full-expression "
          "materialization and drop authority");
+
+  const auto unionFrontend =
+      lang::Frontend().analyze("generated-default-union-boundary.gti", R"gti(
+union Overlay { mut uint64_t first; mut uint32_t second; };
+Overlay zero() { return Overlay(); }
+int main() {
+  mut Overlay overlay{uint64_t(7)};
+  unsafe { overlay.second = uint32_t(2); }
+  return 0;
+}
+)gti");
+  expect(unionFrontend.canGenerateCode() && unionFrontend.mirValid &&
+             lang::verifyMirProgram(unionFrontend.mir).valid(),
+         "exact first-field union construction remains distinct from an "
+         "empty generated default");
+  if (!unionFrontend.canGenerateCode())
+    return;
+  const auto rejectsUnion = [&](auto mutation) {
+    auto program = unionFrontend.mir;
+    for (const auto &original : unionFrontend.mir.functionInstances()) {
+      auto *function = const_cast<lang::MirFunctionInstance *>(
+          program.findFunctionInstance(original.id));
+      for (auto &block : function->body.blocks)
+        for (auto &construct : block.instructions) {
+          if (construct.kind != lang::MirInstructionKind::Construct ||
+              construct.constructorTarget || construct.operands.size() != 1)
+            continue;
+          mutation(program, construct);
+          return !lang::verifyMirProgram(program).valid();
+        }
+    }
+    return false;
+  };
+  expect(rejectsUnion([](auto &, auto &construct) {
+           construct.operands.push_back(construct.operands.front());
+           construct.parameterTypes.push_back(construct.parameterTypes.front());
+         }),
+         "a union cannot invent another initialization input");
+  expect(rejectsUnion([](auto &, auto &construct) {
+           construct.parameterTypes.front() = lang::SemanticType::UInt32;
+           construct.operands.front() = {.kind = lang::MirOperandKind::Constant,
+                                         .literal =
+                                             lang::Literal{std::uint64_t(1)},
+                                         .type = lang::SemanticType::UInt32};
+         }),
+         "a union initializer must use its first field's exact type");
+  expect(rejectsUnion([](auto &program, auto &construct) {
+           auto &owners = const_cast<std::vector<lang::MirClassInstance> &>(
+               program.classInstances());
+           for (auto &owner : owners)
+             if (owner.type == construct.info.type)
+               owner.kind = lang::ClassKind::Struct;
+         }),
+         "ordinary records cannot impersonate union-field construction");
+  expect(rejectsUnion([](auto &program, auto &construct) {
+           auto &owners = const_cast<std::vector<lang::MirClassInstance> &>(
+               program.classInstances());
+           std::erase_if(owners, [&](const auto &owner) {
+             return owner.type == construct.info.type;
+           });
+         }),
+         "union initialization requires its concrete owner");
+  expect(rejectsUnion([](auto &program, auto &construct) {
+           auto &owners = const_cast<std::vector<lang::MirClassInstance> &>(
+               program.classInstances());
+           for (auto &owner : owners)
+             if (owner.type == construct.info.type)
+               owner.unionLayout->fields.front().field =
+                   owner.declaredFields.back().symbol;
+         }),
+         "union construction retains the exact declared field/layout identity");
+  expect(rejectsUnion([](auto &, auto &construct) {
+           construct.definedFailure.propagation =
+               lang::FailurePropagationKind::Constructor;
+         }),
+         "passive union construction cannot invent a constructor failure");
+  expect(
+      rejectsUnion([](auto &, auto &construct) { construct.enumVariant = 0; }),
+      "native union construction cannot acquire a payload-enum variant");
 }
 
 void testGeneratedDefaultConstructionContexts() {

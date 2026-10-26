@@ -40,6 +40,11 @@ same construction operation. A targetless ordinary `Call` cannot stand in for
 construction; native/deferred calls retain their separate typed targets or
 invocation capabilities.
 
+The existing one-input passive-union family is proved separately: the exact concrete union,
+sealed overlapping layout and first declared field type must match the input.
+That proof grants no ordinary call target, default-constructor policy, cleanup,
+borrow, failure or precise effect authority.
+
 Raw address conversion uses `Compute/Convert` with one evaluated pointer value.
 The independent `rawPointerConversion` query is shared by body verification and
 production backend admission: only typed/void or same-pointee conversion is

@@ -3766,10 +3766,14 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             unique = false;
           constructed = &candidate;
         }
-        if (!mir_detail::generatedDefaultConstruction(instruction) ||
-            constructed == nullptr || !unique ||
-            constructed->defaultConstructor != SpecialMemberStatus::Generated ||
-            constructed->generatedDefaultRequiresSchedule)
+        const bool generatedDefault =
+            mir_detail::generatedDefaultConstruction(instruction) &&
+            constructed != nullptr && unique &&
+            constructed->defaultConstructor == SpecialMemberStatus::Generated &&
+            !constructed->generatedDefaultRequiresSchedule;
+        const bool unionField =
+            mir_detail::passiveUnionFieldConstruction(program, instruction);
+        if (!generatedDefault && !unionField)
           return verificationFailure(
               body, owner,
               constructed && constructed->generatedDefaultRequiresSchedule

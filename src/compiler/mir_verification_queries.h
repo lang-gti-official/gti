@@ -42,6 +42,14 @@ generatedUniqueConstruction(const MirInstruction &instruction);
 [[nodiscard]] bool
 generatedDefaultConstruction(const MirInstruction &instruction);
 
+// A passive union's one-input first-field initialization is independent of
+// generated default construction. Prove its exact concrete owner, overlapping
+// field layout, first field type and neutral construction metadata. This does
+// not grant source-call, cleanup, borrow or precise effect authority.
+[[nodiscard]] bool
+passiveUnionFieldConstruction(const MirProgram &program,
+                              const MirInstruction &instruction);
+
 // Runtime representation queries have no runtime input and cannot acquire
 // ownership or borrow authority merely by naming a type.
 [[nodiscard]] bool objectLayoutQuery(const MirProgram &program,
