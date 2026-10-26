@@ -10152,6 +10152,42 @@ sanitized runtime archive for runtime coverage. It does not instrument generated
 LLVM code and cannot satisfy production generated-code sanitizer gates.
 The narrow supported profile and remaining proof obligations are recorded in
 [C04](../plans/implementation-sequence.md#c04-failure-transport-evaluation).
+The default `scalar-cleanup` profile still rejects native imports. Explicit
+`--profile native-boundary` selects a separate private matrix for declaration-
+backed scalar C calls with exact optional `int*` observer parameters. It binds
+the sealed declaration, signature, staged inputs and pointer-call unsafe
+permission; function-pointer imports, opaque objects, foreign storage and
+callbacks remain outside this evaluation profile. Omitted/default profiles,
+mutated targets/symbols/signatures/stages/permissions and frontend unsafe
+violations reject. No production admission or backend selection is changed.
+
+This private-profile implementation checkpoint is not acceptance-ready: the
+separate C04 cleanup landingpad in `lifetimes.cpp` still needs the same exception
+argument forwarding as `body.cpp`. The harness rejects any remaining
+one-argument channel-transfer call before linking. The identity contract below
+must cover both sites atomically before either matrix is claimed verified.
+
+Every experimental unwind landingpad must supply its actual exception pointer
+to the test-owned carrier transfer helper. Before reading a GTI channel, the
+helper checks the public unwind-header class for the linked libc++abi/libsupc++
+runtime, then compares the opaque pointer returned by `__cxa_get_exception_ptr`
+with the live private carrier object's registered address. TLS activity alone
+is insufficient. This uses the
+[Itanium unwind and C++ accessor contracts](https://itanium-cxx-abi.github.io/cxx-abi/abi-eh.html),
+not private exception-header offsets, payload casts or catch ownership changes.
+Dependent exceptions, other runtime classes and nonmatching objects terminate
+in this private evaluation; cross-runtime and forced-unwind support is not claimed.
+
+The native matrix checks conforming translated C results, subsequent GTI failure
+attribution and source cleanup, plus deliberately violating foreign throws
+before a primary and during its cleanup. The latter includes an unrelated C++
+exception, an unregistered object of the same private type, and a Level-I unwind
+object without any C++ header. Parent-visible cleanup slots and channel-read
+counts distinguish these from the actual active carrier. They terminate without
+reusing a primary record; this is experimental classification, not a newly
+selected outbound containment contract. `llvm_c04_cost.py --fixtures
+native_boundary` consumes only matching native-profile receipts and reports
+the same bounded candidate cost fields as the scalar matrix.
 Use `--call-boundaries fixed` (the default) for the controlled noinline baseline
 and `--call-boundaries optimizable` in a separate output directory for ordinary
 LLVM pipeline decisions. The latter removes only the experiment's `noinline`

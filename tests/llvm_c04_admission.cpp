@@ -1,4 +1,5 @@
 #include "../src/compiler/llvm/body.h"
+#include "../src/compiler/llvm/native_c_contract.h"
 
 #include <algorithm>
 #include <set>
@@ -35,7 +36,11 @@ bool scalarInput(const SemanticType &type) {
 
 void validateC04Evaluation(const Session &session,
                            const LlvmAdmissionPlan &admission,
-                           std::span<const HirFunctionInstanceId> functions) {
+                           std::span<const HirFunctionInstanceId> functions,
+                           C04EvaluationProfile profile) {
+  if (profile != C04EvaluationProfile::ScalarCleanup &&
+      profile != C04EvaluationProfile::NativeBoundary)
+    reject("unknown evaluation profile");
   if (&session.program() != &admission.program() || !admission.admitted() ||
       session.options().optimization != admission.options().optimization ||
       session.options().debugInfo != admission.options().debugInfo)
@@ -276,12 +281,53 @@ void validateC04Evaluation(const Session &session,
               !classes.contains(instruction.bodyTarget->owner))
             reject("body call outside field initialization");
           break;
-        case MirInstructionKind::Call:
+        case MirInstructionKind::Call: {
+          const auto *callee =
+              instruction.functionTarget
+                  ? program.findFunctionInstance(*instruction.functionTarget)
+                  : nullptr;
+          if (callee && callee->linkage == LanguageLinkage::C &&
+              profile == C04EvaluationProfile::NativeBoundary) {
+            const auto *declaration =
+                session.program().findFunctionDeclaration(callee->declaration);
+            const bool pointer =
+                std::any_of(callee->parameterTypes.begin(),
+                            callee->parameterTypes.end(), observerPointer);
+            if (!declaration || declaration->linkage != LanguageLinkage::C ||
+                declaration->definitionKind != MirDefinitionKind::Declaration ||
+                declaration->externalSymbol != callee->externalSymbol ||
+                declaration->returnType != callee->returnType ||
+                !std::equal(callee->parameterTypes.begin(),
+                            callee->parameterTypes.end(),
+                            declaration->parameters.begin(),
+                            declaration->parameters.end(),
+                            [](const auto &type, const auto &parameter) {
+                              return type == parameter.type;
+                            }) ||
+                instruction.dispatch != CallDispatch::Static ||
+                !nativeCDirectCallContract(program, session.program().target(),
+                                           body, instruction) ||
+                !scalar(callee->returnType) ||
+                !std::all_of(callee->parameterTypes.begin(),
+                             callee->parameterTypes.end(),
+                             [](const auto &type) {
+                               return scalar(type) || observerPointer(type);
+                             }) ||
+                instruction.unsafeOperation !=
+                    (pointer ? UnsafeOperationKind::ForeignPointerCall
+                             : UnsafeOperationKind::None))
+              reject("native call lost exact scalar/observer signature, stage "
+                     "or unsafe authority");
+            break;
+          }
           if (!instruction.functionTarget ||
               !selected.contains(*instruction.functionTarget) ||
-              instruction.dispatch != CallDispatch::Static)
+              instruction.dispatch != CallDispatch::Static ||
+              instruction.nativeCalleeType ||
+              instruction.unsafeOperation != UnsafeOperationKind::None)
             reject("callee outside selected static closure");
           break;
+        }
         case MirInstructionKind::Compute:
           switch (instruction.operation) {
           case MirOperation::Literal:

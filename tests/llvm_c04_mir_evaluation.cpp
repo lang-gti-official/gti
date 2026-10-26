@@ -24,18 +24,98 @@ void write(const std::filesystem::path &path, const std::string &bytes) {
   if (!output)
     throw std::runtime_error("cannot write C04 evaluation artifact");
 }
+
+void checkNativeControls(
+    lang::native_llvm::Session &session,
+    const lang::LlvmAdmissionPlan &admission,
+    const std::vector<lang::HirFunctionInstanceId> &selected) {
+  using namespace lang;
+  using namespace lang::native_llvm;
+  unsigned checked = 0;
+  for (auto address : admission.requiredBodies()) {
+    const auto *body = findMirBody(session.program().mir(), address);
+    for (const auto &block : body->blocks)
+      for (const auto &stage : block.instructions) {
+        const auto *callee = stage.functionTarget
+                                 ? session.program().mir().findFunctionInstance(
+                                       *stage.functionTarget)
+                                 : nullptr;
+        if (stage.kind != MirInstructionKind::Call || !callee ||
+            callee->linkage != LanguageLinkage::C ||
+            stage.unsafeOperation != UnsafeOperationKind::ForeignPointerCall)
+          continue;
+        auto &mutableStage = const_cast<MirInstruction &>(stage);
+        const auto original = stage;
+        const auto rejectMutation = [&](const auto &mutate) {
+          mutate(mutableStage);
+          bool rejected = false;
+          try {
+            validateC04Evaluation(session, admission, selected,
+                                  C04EvaluationProfile::NativeBoundary);
+          } catch (const BackendUnsupportedError &) {
+            rejected = true;
+          }
+          mutableStage = original;
+          if (!rejected)
+            throw std::runtime_error("C04 native mutation escaped admission");
+          ++checked;
+        };
+        rejectMutation(
+            [](auto &instruction) { instruction.functionTarget.reset(); });
+        rejectMutation(
+            [](auto &instruction) { instruction.parameterTypes.clear(); });
+        rejectMutation([](auto &instruction) { ++instruction.callSite; });
+        rejectMutation([](auto &instruction) {
+          instruction.unsafeOperation = UnsafeOperationKind::None;
+        });
+        rejectMutation([&](auto &instruction) {
+          instruction.functionTarget = selected.front();
+        });
+        auto &mutableCallee = const_cast<MirFunctionInstance &>(*callee);
+        const auto originalSymbol = callee->externalSymbol;
+        mutableCallee.externalSymbol += "_forged";
+        bool rejected = false;
+        try {
+          validateC04Evaluation(session, admission, selected,
+                                C04EvaluationProfile::NativeBoundary);
+        } catch (const BackendUnsupportedError &) {
+          rejected = true;
+        }
+        mutableCallee.externalSymbol = originalSymbol;
+        if (!rejected)
+          throw std::runtime_error(
+              "C04 forged native symbol escaped admission");
+        ++checked;
+      }
+  }
+  if (checked == 0)
+    throw std::runtime_error(
+        "C04 native controls require a real pointer import");
+  validateC04Evaluation(session, admission, selected,
+                        C04EvaluationProfile::NativeBoundary);
+  std::cout << "native mutation controls: " << checked << '\n';
+}
 } // namespace
 
 int main(int argc, char **argv) {
   using namespace lang;
   using namespace lang::native_llvm;
-  if (argc != 4 && argc != 5)
+  if (argc < 4 || argc > 7)
     return 64;
   try {
     const std::filesystem::path source(argv[1]);
     const std::string prefix(argv[2]);
     const std::string level(argv[3]);
-    const std::string boundaries(argc == 5 ? argv[4] : "fixed");
+    const std::string boundaries(argc >= 5 ? argv[4] : "fixed");
+    const std::string profileName(argc >= 6 ? argv[5] : "scalar-cleanup");
+    if (profileName != "scalar-cleanup" && profileName != "native-boundary")
+      return 64;
+    const auto profile = profileName == "native-boundary"
+                             ? C04EvaluationProfile::NativeBoundary
+                             : C04EvaluationProfile::ScalarCleanup;
+    if (argc == 7 && (std::string_view(argv[6]) != "--native-contracts" ||
+                      profile != C04EvaluationProfile::NativeBoundary))
+      return 64;
     if (boundaries != "fixed" && boundaries != "optimizable")
       return 64;
     const bool fixedCallBoundaries = boundaries == "fixed";
@@ -79,7 +159,9 @@ int main(int argc, char **argv) {
     }
     // Reject before writing an object, including before the test declaration
     // planner could accidentally make an unsupported return look compatible.
-    validateC04Evaluation(session, admission, selected);
+    validateC04Evaluation(session, admission, selected, profile);
+    if (argc == 7)
+      checkNativeControls(session, admission, selected);
     const auto reference =
         SemanticType::referenceTo(SemanticType::Int32, AccessMode::Mutable);
     const bool borrowedCleanup =
@@ -98,8 +180,12 @@ int main(int argc, char **argv) {
     const bool status = std::string_view(GTI_C04_MODE) == "status";
     session.module().addModuleFlag(llvm::Module::Error, "gti.c04.transport",
                                    status ? 0u : 1u);
-    session.module().addModuleFlag(llvm::Module::Error, "gti.c04.fixed-boundaries",
+    session.module().addModuleFlag(llvm::Module::Error,
+                                   "gti.c04.fixed-boundaries",
                                    fixedCallBoundaries ? 1u : 0u);
+    session.module().addModuleFlag(
+        llvm::Module::Error, "gti.c04.native-boundary",
+        profile == C04EvaluationProfile::NativeBoundary ? 1u : 0u);
     if (abi.statusResult != status ||
         abi.parameters.size() !=
             root->parameterTypes.size() + (status ? 2 : 0) ||
@@ -116,7 +202,8 @@ int main(int argc, char **argv) {
       throw std::runtime_error(
           "C04 C++ carrier differs from the exact generated channel layout");
     const auto name = session.abi().declareFunction(root->id)->getName().str();
-    lowerC04Evaluation(session, admission, selected, fixedCallBoundaries);
+    lowerC04Evaluation(session, admission, selected, fixedCallBoundaries,
+                       profile);
     session.verify();
     // Retain verified input IR: target emission may lower resume instructions
     // to platform unwind-runtime calls in the in-memory module.
@@ -136,6 +223,8 @@ int main(int argc, char **argv) {
             "struct Channel { gti_failure_record_v2 record; "
             "const gti_failure_artifact_descriptor_v1* artifact; };\n" +
             "#define GTI_C04_STATUS " + (status ? "1\n" : "0\n") +
+            "#define GTI_C04_NATIVE_BOUNDARY " +
+            (profile == C04EvaluationProfile::NativeBoundary ? "1\n" : "0\n") +
             "#define GTI_C04_BORROWED_CLEANUP " +
             (borrowedCleanup ? "1\n" : "0\n") + "#define GTI_C04_ENTRY " +
             name + "\n" + "extern \"C\" " + (status ? "bool " : "int32_t ") +

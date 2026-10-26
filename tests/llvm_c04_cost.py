@@ -40,6 +40,9 @@ def verify_artifacts(evidence, directory, fixtures):
         raise ValueError("unknown call-boundary policy")
     selected = {}
     for fixture in fixtures:
+        required_profile = "native-boundary" if fixture == "native_boundary" else "scalar-cleanup"
+        if evidence.get("profile", "scalar-cleanup") != required_profile:
+            raise ValueError("cost fixture requires its exact evaluation profile")
         signatures = set()
         for mode in MODES:
             rows = [row for row in evidence["receipts"]
@@ -48,6 +51,8 @@ def verify_artifacts(evidence, directory, fixtures):
             if len(rows) != 1:
                 raise ValueError(f"missing or duplicate O3 receipt: {fixture}/{mode}")
             row = rows[0]
+            if row.get("profile", "scalar-cleanup") != required_profile:
+                raise ValueError("cost receipt requires its exact evaluation profile")
             if row.get("call_boundaries", "fixed") != boundaries:
                 raise ValueError("candidates used different call-boundary policies")
             case = directory / f"{fixture}-{mode}-O3"
@@ -96,7 +101,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--size-tool", default=shutil.which("llvm-size"))
     parser.add_argument("--fixtures", nargs="+",
-                        choices=(*FIXTURES, "field_replacement_cleanup"), default=FIXTURES)
+                        choices=(*FIXTURES, "field_replacement_cleanup", "native_boundary"), default=FIXTURES)
     parser.add_argument("--samples", type=int, default=9)
     parser.add_argument("--warmups", type=int, default=2)
     parser.add_argument("--success-iterations", type=int, default=2000000)
@@ -119,6 +124,7 @@ def main():
         "runtime_sha256": evidence["runtime_sha256"],
         "measurement": "in-process checked loop; alternating candidates",
         "call_boundaries": evidence.get("call_boundaries", "fixed"),
+        "profile": evidence.get("profile", "scalar-cleanup"),
         "limitations": ["not a whole-program speedup or production acceptance",
                         "no worker/callback boundary or allocation measurement",
                         "no full-compiler build cost or host-contention isolation"],

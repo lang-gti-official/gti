@@ -250,9 +250,11 @@ private:
     ir.CreateStore(landing, unwindSlot());
     auto transfer = session.module().getOrInsertFunction(
         "__gti_c04_evaluate_current",
-        llvm::FunctionType::get(ir.getVoidTy(), {session.layouts().pointer()},
-                                false));
-    auto *copy = ir.CreateCall(transfer, {channels.at(term.failureRecord)});
+        llvm::FunctionType::get(
+            ir.getVoidTy(),
+            {session.layouts().pointer(), session.layouts().pointer()}, false));
+    auto *copy = ir.CreateCall(
+        transfer, {channels.at(term.failureRecord), ir.CreateExtractValue(landing, 0)});
     copy->setDoesNotThrow();
     failedOperation();
     ir.SetInsertPoint(normal);
@@ -2194,8 +2196,9 @@ void lowerScalarProgram(Session &session, const LlvmAdmissionPlan &admission) {
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
 void lowerC04Evaluation(Session &session, const LlvmAdmissionPlan &admission,
                         std::span<const HirFunctionInstanceId> functions,
-                        bool fixedCallBoundaries) {
-  validateC04Evaluation(session, admission, functions);
+                        bool fixedCallBoundaries,
+                        C04EvaluationProfile profile) {
+  validateC04Evaluation(session, admission, functions, profile);
   Bodies(session, admission).lowerEvaluation(admission, fixedCallBoundaries);
 }
 #endif

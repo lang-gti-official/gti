@@ -1,3 +1,4 @@
+#include "carrier.h"
 #include "generated.h"
 
 #include <chrono>
@@ -10,32 +11,13 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#if GTI_C04_NATIVE_BOUNDARY
+#include "native_boundary_driver.h"
+#endif
+
 struct Observation {
   int32_t slots[3]{};
 };
-
-// The isolated experimental edge is explicitly unwind-permitted. It does not
-// alter any production C callback/runtime service contract. C++ exception
-// storage/OOM/foreign exception handling are not validated by this experiment.
-#if !GTI_C04_STATUS
-namespace {
-struct EvaluationFailure {};
-thread_local Channel activeFailure{};
-thread_local bool unwinding = false;
-} // namespace
-extern "C" [[noreturn]] void __gti_c04_evaluate_raise(const Channel *channel) {
-  if (unwinding)
-    std::terminate();
-  activeFailure = *channel;
-  unwinding = true;
-  throw EvaluationFailure{};
-}
-extern "C" void __gti_c04_evaluate_current(Channel *channel) noexcept {
-  if (!unwinding)
-    std::terminate();
-  *channel = activeFailure;
-}
-#endif
 
 bool call(int32_t input, int32_t &value, Channel &failure, bool indirect,
           int32_t (&slots)[3]) {
@@ -46,17 +28,32 @@ bool call(int32_t input, int32_t &value, Channel &failure, bool indirect,
 #define GTI_C04_ARGUMENTS input
 #endif
 #if GTI_C04_STATUS
-  return indirect ? target(&value, &failure, GTI_C04_ARGUMENTS)
-                  : GTI_C04_ENTRY(&value, &failure, GTI_C04_ARGUMENTS);
+#if GTI_C04_NATIVE_BOUNDARY
+  try {
+#endif
+    return indirect ? target(&value, &failure, GTI_C04_ARGUMENTS)
+                    : GTI_C04_ENTRY(&value, &failure, GTI_C04_ARGUMENTS);
+#if GTI_C04_NATIVE_BOUNDARY
+  } catch (...) {
+    std::fputs("C04 foreign exception outside channel\n", stderr);
+    std::_Exit(86);
+  }
+#endif
 #else
   try {
     value =
         indirect ? target(GTI_C04_ARGUMENTS) : GTI_C04_ENTRY(GTI_C04_ARGUMENTS);
     return true;
-  } catch (const EvaluationFailure &) {
-    failure = activeFailure;
-    unwinding = false;
+  } catch (const c04_test::EvaluationFailure &caught) {
+    if (!c04_test::unwinding || &caught != c04_test::activeCarrier)
+      c04_test::foreignException();
+    failure = c04_test::activeFailure;
+    c04_test::unwinding = false;
     return false;
+#if GTI_C04_NATIVE_BOUNDARY
+  } catch (...) {
+    c04_test::foreignException();
+#endif
   }
 #endif
 #undef GTI_C04_ARGUMENTS
