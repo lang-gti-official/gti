@@ -1752,6 +1752,19 @@ target_link_libraries(gti_llvm_dispatch_layout_tests PRIVATE gti_llvm_backend)
 add_test(NAME llvm_dispatch_layout COMMAND gti_llvm_dispatch_layout_tests)
 set_tests_properties(llvm_dispatch_layout PROPERTIES TIMEOUT 120)
 
+# Private component execution for cleanup composition only. This deliberately
+# does not enter the LLVM evidence manifest or public admission/coverage gates.
+add_executable(gti_llvm_cleanup_composition_execution_tests
+  llvm_cleanup_composition_execution_tests.cpp)
+target_include_directories(gti_llvm_cleanup_composition_execution_tests SYSTEM
+  PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_cleanup_composition_execution_tests
+  PRIVATE gti_llvm_backend gti_driver gti_runtime)
+add_test(NAME llvm_cleanup_composition_execution
+  COMMAND gti_llvm_cleanup_composition_execution_tests
+          "${PROJECT_SOURCE_DIR}" "$<TARGET_FILE:gti_runtime>")
+set_tests_properties(llvm_cleanup_composition_execution PROPERTIES TIMEOUT 180)
+
 add_executable(gti_runtime_execution_tests runtime_execution_tests.cpp)
 target_link_libraries(gti_runtime_execution_tests PRIVATE gti_runtime)
 add_test(NAME runtime_execution_boundary COMMAND gti_runtime_execution_tests)
