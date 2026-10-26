@@ -10794,6 +10794,29 @@ unwind strategy is relevant precedent, not GTI's acceptance rule; see the
 [Rust panic reference](https://doc.rust-lang.org/stable/reference/panic.html)
 and [LLVM exception-handling model](https://www.llvm.org/docs/ExceptionHandling.html).
 
+**MIR-derived evaluation staging (not production admission):** the opt-in
+`GTI_BUILD_LLVM_C04_EVALUATION` targets build separate status and native-unwind
+backend copies against the same frontend and sealed MIR. Their structural
+profile accepts only a closed scalar static-call graph with no cleanup, loans,
+global initialization, native imports or adapters. Empty full-expression
+lifecycle markers are permitted; actual lifecycle events are not. Both use
+the central ABI planner and fixed `noinline` call boundaries. A test-owned C++
+carrier copies the original failure channel and catches it outside GTI frames;
+this edge is explicitly unwind-permitted and is not a production runtime C
+service. Experimental symbols and module flags distinguish the artifacts.
+
+This staging replaces hand-built traces for the first comparison, not the
+remaining C04 obligations. The harness checks identical sealed-program input,
+direct/indirect root calls at O0/O3, original failure reporting and structural
+rejections without overwriting existing objects. It does not validate cleanup,
+ownership transfer, callbacks, TLS, workers, foreign/forced unwind, carrier OOM,
+or artifact unloading. Native-carrier/runtime sanitizer runs do not instrument
+the generated LLVM object. No transport selection or production speedup follows
+from these checks. Next, extend the experiment with real MIR cleanup and worker
+containment before the representative platform/cost comparison and ADR decision.
+Remove or replace these opt-in evaluation hooks once that decision is implemented;
+they are not a permanent second production backend or CLI transport option.
+
 ##### LLVM-C05: Dynamic Calls Use Planned Adapters
 
 For erased GTI callables, use a planned code/environment invocation boundary;

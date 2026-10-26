@@ -197,6 +197,14 @@ Abi::Abi(Session &session, Layouts &layouts)
 FunctionAbi Abi::gti(const SemanticType &result,
                      std::span<const SemanticType> parameters, bool mayFail,
                      bool receiver, bool tracksCaller) {
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+#if !defined(GTI_LLVM_C04_MIR_EVALUATION)
+#error "C04 native transport is restricted to the isolated evaluation target"
+#endif
+  // The test entry validates a no-cleanup scalar closure before emission.
+  // This changes only physical transport; MIR retains its failure edges.
+  mayFail = false;
+#endif
   const auto concreteParameters = flattenConcreteParameters(parameters);
   const auto output = layouts.get(result);
   FunctionAbi plan;
@@ -261,8 +269,16 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
                    function->mayRaiseDefinedFailure,
                    function->owner.has_value() && !function->staticMember,
                    function->tracksCaller);
+  constexpr const char *privatePrefix =
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+      "__gti_c04_unwind_v";
+#elif defined(GTI_LLVM_C04_MIR_EVALUATION)
+      "__gti_c04_status_v";
+#else
+      "__gti_native_v";
+#endif
   const auto name = native ? function->externalSymbol
-                           : "__gti_native_v" +
+                           : privatePrefix +
                                  std::to_string(executionAbiVersion) + "_f" +
                                  std::to_string(id);
   if (name.empty())

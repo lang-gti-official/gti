@@ -1724,6 +1724,8 @@ function(gti_write_llvm_evidence_registry)
 endfunction()
 cmake_language(DEFER CALL gti_write_llvm_evidence_registry)
 
+include(llvm_c04_evaluation.cmake)
+
 add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
 target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)

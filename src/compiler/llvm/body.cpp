@@ -82,6 +82,9 @@ public:
             session, [&](MirBodyAddress address) { return function(address); },
             [&](MirBodyAddress address) { return signature(address); }) {}
   void lower(const LlvmAdmissionPlan &admission);
+#if defined(GTI_LLVM_C04_MIR_EVALUATION)
+  void lowerEvaluation(std::span<const HirFunctionInstanceId> selected);
+#endif
 
 private:
   Session &session;
@@ -1613,6 +1616,20 @@ private:
       break;
     }
     case MirTerminatorKind::PropagateFailure:
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+      // The evaluator permits no cleanup in any traversed GTI frame. The
+      // test-owned shim copies the channel before unwinding to its outer catch.
+      // This is not an ordinary runtime C import or a production unwind edge.
+      leaveFailureCleanup();
+      ir.CreateCall(
+          session.module().getOrInsertFunction(
+              "__gti_c04_evaluate_raise",
+              llvm::FunctionType::get(ir.getVoidTy(),
+                                      {session.layouts().pointer()}, false)),
+          {channels.at(term.failureRecord)});
+      ir.CreateUnreachable();
+      break;
+#endif
       if (!failureDestination)
         throw std::logic_error("LLVM failure propagation has no destination");
       ir.CreateStore(ir.CreateLoad(session.abi().failureChannel(),
@@ -1943,10 +1960,31 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
   for (auto address : admission.requiredBodies())
     body(address);
 }
+#if defined(GTI_LLVM_C04_MIR_EVALUATION)
+void Bodies::lowerEvaluation(std::span<const HirFunctionInstanceId> selected) {
+  for (auto id : selected) {
+    auto *output = function({MirBodyKind::Function, id});
+    // Equal, explicit call boundaries for the transport microbenchmark, not
+    // a claim about normal whole-program inlining or production performance.
+    output->addFnAttr(llvm::Attribute::NoInline);
+    output->setUWTableKind(llvm::UWTableKind::Sync);
+  }
+  for (auto id : selected)
+    body({MirBodyKind::Function, id});
+}
+#endif
 } // namespace
 
 void lowerScalarProgram(Session &session, const LlvmAdmissionPlan &admission) {
   Bodies(session, admission).lower(admission);
 }
+
+#if defined(GTI_LLVM_C04_MIR_EVALUATION)
+void lowerC04Evaluation(Session &session, const LlvmAdmissionPlan &admission,
+                        std::span<const HirFunctionInstanceId> functions) {
+  validateC04Evaluation(session, admission, functions);
+  Bodies(session, admission).lowerEvaluation(functions);
+}
+#endif
 
 } // namespace lang::native_llvm

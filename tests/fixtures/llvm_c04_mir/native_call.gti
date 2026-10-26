@@ -1,0 +1,2 @@
+extern "C" { int foreign(int input); }
+int sample(int input) { unsafe { return foreign(input) + 1; } }

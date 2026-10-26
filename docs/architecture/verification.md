@@ -10116,6 +10116,21 @@ calls or freed bytes. These are execution checks, not stock-library census recei
 for the pending managed-worker transport. `runtime_failure_boundary` separately
 checks root/nested cleanup tokens, restoration and per-thread isolation.
 
+The optional C04 MIR transport experiment is outside normal production targets
+and CTest acceptance. Configure an optimized compiler build with
+`-DGTI_BUILD_LLVM_C04_EVALUATION=ON`, explicitly build
+`gti_c04_status_emitter` and `gti_c04_unwind_emitter`, then run
+`tests/llvm_c04_mir_evaluation_test.py` with `--root`, `--status-emitter`,
+`--unwind-emitter`, `--runtime` and a new `--output` directory. Use the shared
+build/suite windows. The output retains commands, diagnostics, sealed MIR, IR,
+objects and hash receipts. `--sanitized` instruments the C++ carrier; supply a
+sanitized runtime archive for runtime coverage. It does not instrument generated
+LLVM code and cannot satisfy production generated-code sanitizer gates.
+The narrow supported profile and remaining proof obligations are recorded in
+[C04](../plans/implementation-sequence.md#c04-failure-transport-evaluation).
+Do not use its fixed-boundary scalar checks as cleanup, worker or performance
+acceptance, or silently substitute it for existing backend gates.
+
 Under [the backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25),
 LLVM owns new backend development; C++ is bug-fix-only through v1.0 and serves
 as a comparator for its existing supported behavior. Retain valid differential
