@@ -45,8 +45,8 @@ struct Case {
 };
 
 constexpr std::array cases{
-    Case{"llvm_hosted_union_first_field.gti", 1235, "", 0},
-    Case{"llvm_hosted_union_first_field_aggregate.gti", 4, "", 0},
+    Case{"llvm_hosted_union_first_field.gti", 12356, "", 0},
+    Case{"llvm_hosted_union_first_field_aggregate.gti", 47, "", 0},
     Case{"llvm_hosted_union_first_field_failure.gti", 321,
          "union first-field initialization failure", 15},
     Case{"llvm_hosted_generated_default.gti", 33333, "", 0},
