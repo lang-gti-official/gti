@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Alternative source-library cleanup CONTRACT checks, never native witnesses.
 
-Owned-argv LLVM execution/admission is not enabled by this harness. It only
+Owned-argv LLVM execution/admission is not proved by this harness. It only
 uses the public driver's --emit-mir path, and preserves every runtime obligation
 as unrun. The stock library is copied, never modified. No post-seal MIR edits,
 new native bindings, compiler-private access exemptions or failure seams exist.
@@ -256,7 +256,7 @@ def main() -> None:
     record = {"schema": SCHEMA, "source": report["source"], "build": report["build"],
         "compiler_sha256": compiler_hash, "fixture_sha256": source_hash, "trace_sha256": trace_hash,
         "canonical_repository_observation": False, "stock_cleanup_reachability": "unproven",
-        "owned_argv_llvm_execution": "blocked-pending-human-approval", "hosted_gap_rows_closed": False,
+        "owned_argv_llvm_execution": "not-observed-by-this-contract-harness", "hosted_gap_rows_closed": False,
         "runtime_obligations": {key: "unrun" for key in ("trace", "reverse_cleanup", "main_not_entered",
             "primary_secondary_origins", "single_termination", "allocator_counts", "double_cleanup")},
         "planned_runtime_cases": {

@@ -1219,6 +1219,43 @@ void hostedArgumentsContract(const std::filesystem::path &repository) {
   require(frontend.canGenerateCode() && verifyMirProgram(frontend.mir).valid(),
           "hosted arguments have a real verified source startup plan");
   const auto &body = *frontend.mir.hostedStartup();
+  const auto &startup = *frontend.mir.hostedStartupPlan();
+  const auto nextIndex = std::find_if(
+      startup.operations.begin(), startup.operations.end(), [](const auto &op) {
+        return op.kind == MirHostedStartupOperationKind::ComputeNextArgumentIndex;
+      });
+  const auto advance = std::find_if(
+      startup.operations.begin(), startup.operations.end(), [](const auto &op) {
+        return op.kind == MirHostedStartupOperationKind::AdvanceArgumentIndex;
+      });
+  require(nextIndex != startup.operations.end() && advance != startup.operations.end(),
+          "hosted index arithmetic and commit have separate sealed identities");
+  for (unsigned mutation = 0; mutation != 4; ++mutation) {
+    auto invalid = frontend.mir;
+    auto &invalidBody = *const_cast<MirBody *>(invalid.hostedStartup());
+    auto &block = invalidBody.blocks[nextIndex->block - 1];
+    auto &compute = *std::find_if(
+        block.instructions.begin(), block.instructions.end(), [&](const auto &op) {
+          return op.id == nextIndex->instruction;
+        });
+    auto &commit = *std::find_if(
+        block.instructions.begin(), block.instructions.end(), [&](const auto &op) {
+          return op.id == advance->instruction;
+        });
+    if (mutation == 0)
+      compute.operands[1].literal = Literal{std::uint64_t{2}};
+    else if (mutation == 1)
+      compute.operation = MirOperation::Subtract;
+    else if (mutation == 2)
+      commit.operands[0].value = compute.operands[0].value;
+    else {
+      commit.kind = MirInstructionKind::Modify;
+      commit.operands.clear();
+      commit.operation = MirOperation::PreIncrement;
+    }
+    require(!verifyMirProgram(invalid).valid(),
+            "hosted index cannot change step, direction, commit or use legacy mutation");
+  }
   std::array<bool, 3> seen{};
   for (const auto &block : body.blocks)
     for (const auto &stage : block.instructions) {
@@ -1293,6 +1330,79 @@ void hostedArgumentsContract(const std::filesystem::path &repository) {
   require(seen[0] && seen[1] && seen[2],
           "count validation/conversion and argument view have real producer "
           "contracts");
+}
+
+void hostedArgumentsBoundary(const std::filesystem::path &repository,
+                             const std::filesystem::path &scratch,
+                             LlvmCodegenOptimization optimization) {
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      repository / "tests/fixtures/llvm_hosted_arguments.gti", std::nullopt,
+      {repository / "stdlib/prelude.gti"}, {}, {repository / "stdlib"});
+  require(frontend.canGenerateCode(), "owned arguments have valid source MIR");
+  std::vector<LoweredProgramIssue> issues;
+  const auto program = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  require(program.has_value(), "owned arguments cross the sealed boundary");
+  const LlvmBackendOptions backendOptions{.optimization = optimization};
+  const auto admission = planLlvmAdmission(*program, backendOptions);
+  if (!admission.admitted())
+    std::cerr << admission.limitation() << '\n';
+  require(admission.admitted(), "entire owned-argument closure is admitted");
+  Session session(*program, backendOptions);
+  lowerScalarProgram(session, admission);
+  auto *entry = session.module().getFunction("main");
+  require(entry && entry->arg_size() == 2 &&
+              entry->getArg(0)->getType()->isIntegerTy(32) &&
+              entry->getArg(1)->getType()->isPointerTy(),
+          "hosted entry exposes the exact C argc/argv boundary");
+  // Rename only the external entry so a C caller can exercise zero/negative
+  // argc. All source bodies, guards, cleanup and runtime calls are unchanged.
+  entry->setName("gti_hosted_entry");
+  const auto directory = scratch / "arguments-boundary" /
+      (optimization == LlvmCodegenOptimization::None ? "O0" : "O3");
+  std::filesystem::create_directories(directory);
+  const auto object = directory / "program.o";
+  require(driver::writeArtifact(object, session.emitObject().contents) ==
+              driver::ArtifactWriteStatus::Success,
+          "owned-argument object publishes through normal emission");
+  const auto shim = directory / "caller.c";
+  require(driver::writeArtifact(shim,
+      "#include <stddef.h>\n"
+      "extern int gti_hosted_entry(int, char **);\n"
+      "int main(int argc, char **argv) {\n"
+      "  (void)argv;\n"
+      "  return gti_hosted_entry(argc == 1 ? 0 : -1, NULL);\n"
+      "}\n") == driver::ArtifactWriteStatus::Success,
+      "write hosted C boundary caller");
+  const auto layout = driver::discoverToolchainLayout(nullptr);
+  driver::NativeToolchain toolchain;
+  const auto callerObject = directory / "caller.o";
+  const auto compiled = toolchain.invoke(driver::NativeCCompileRequest(
+      driver::discoverCCompiler(), shim, callerObject, driver::CStandard::C17,
+      OptimizationLevel::O2, {}, {}));
+  require(compiled.succeeded(), "hosted boundary caller compiles as C17");
+  driver::NativeInputs inputs;
+  inputs.finalLibraryFiles = {callerObject, layout.runtimeLibrary};
+  const auto executable = directory / "program";
+  const auto linked = toolchain.invoke(driver::NativeLinkRequest(
+      driver::discoverNativeCompiler(), object, executable, inputs));
+  if (!linked.succeeded())
+    std::cerr << linked.output;
+  require(linked.succeeded(), "real owned startup links to its runtime");
+  const auto zero = driver::invokeProcess({executable.string()});
+  require(zero.succeeded() && zero.output.empty(),
+          "zero count constructs and drops an empty owner without reading null argv");
+  const auto negative = driver::invokeProcess({executable.string(), "negative"});
+  if (negative.exitCode != 70)
+    std::cerr << negative.output;
+  require(negative.exitCode == 70 && !negative.signal && !negative.timedOut &&
+              negative.output.find("hosted_runtime_contract_failure") != std::string::npos &&
+              negative.output.find("negative_argument_count") != std::string::npos &&
+              negative.output.find("llvm_hosted_arguments.gti:4:") != std::string::npos,
+          "negative argc terminates with the original hosted failure and main anchor");
 }
 
 void sourceMetadataContract(const std::filesystem::path &repository) {
@@ -1787,6 +1897,10 @@ int main(int argc, char **argv) {
     scalarReturnContracts();
     scalarReturnPlaceContracts();
     hostedArgumentsContract(std::filesystem::canonical(argv[1]));
+    for (auto optimization :
+         {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive})
+      hostedArgumentsBoundary(std::filesystem::canonical(argv[1]), scratch,
+                              optimization);
     for (const auto &test : cases)
       for (auto optimization :
            {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive})

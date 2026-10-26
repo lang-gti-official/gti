@@ -15,6 +15,7 @@ from llvm_evidence_manifest import build_manifest
 
 
 HOSTED_CASES = {
+    "arguments": ("llvm_hosted_arguments.gti", None),
     "scalar-return": ("llvm_hosted_scalar_return.gti", None),
     "scalar-return-failure": ("llvm_hosted_scalar_return_failure.gti",
                               "scalar return failure"),
@@ -53,6 +54,7 @@ HOSTED_CASES = {
 }
 
 HOSTED_GROUPS = {
+    "arguments": ("arguments",),
     "startup": ("success", "startup-failure", "entry-failure",
                 "unsafe-reference-load", "unsafe-reference-return",
                 "reference-input", "reference-input-failure",
@@ -135,22 +137,6 @@ namespace llvm_source_metadata {
         if result.error or result.observable != (0, "", ""):
             raise AssertionError(f"source literals {endpoint}: {result}")
     print("source literals: UTF-8 byte extent and caller metadata passed all endpoints",
-          flush=True)
-
-
-def arguments(gti, root, scratch, endpoints, env):
-    source = root / "tests/fixtures/llvm_hosted_arguments.gti"
-    for index, endpoint in enumerate(endpoints):
-        case = scratch / f"arguments-{index}"
-        result = execute(gti, root, case, source, endpoint, env)
-        if result.error or result.observable != (0, "", ""):
-            raise AssertionError(f"hosted arguments {endpoint}: {result}")
-        ran = subprocess.run([str(case / "program"), "", "a,b\nc", "\u00e9"],
-                             cwd=root, env=env, text=True, capture_output=True,
-                             check=False, timeout=15)
-        if (ran.returncode, ran.stdout, ran.stderr) != (0, "", ""):
-            raise AssertionError(f"owned argument bytes {endpoint}: {ran}")
-    print("hosted arguments: empty, multiline and UTF-8 inputs passed all endpoints",
           flush=True)
 
 
@@ -242,14 +228,14 @@ def main():
         return
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selection = sys.argv[3] if len(sys.argv) > 3 else "all"
-    if selection not in {*HOSTED_GROUPS, "all", "status", "source-literals", "arguments"}:
+    if selection not in {*HOSTED_GROUPS, "all", "status", "source-literals"}:
         raise ValueError(f"unknown hosted case: {selection}")
     selected_names = (tuple(HOSTED_CASES) if selection == "all"
                       else HOSTED_GROUPS.get(selection, ()))
     endpoints = (
         Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
         *(Endpoint("llvm", f"O{level}") for level in
-          (range(4) if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction", "scalar-return"}
+          (range(4) if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction", "scalar-return", "arguments"}
            else (0, 3))),
     )
     env = {**os.environ, "NO_COLOR": "1"}
@@ -283,6 +269,13 @@ def main():
                     continue
                 if result.error:
                     raise AssertionError(f"{filename} {endpoint}: {result}")
+                if name == "arguments":
+                    ran = subprocess.run(
+                        [str(scratch / filename / str(index) / "program"),
+                         "", "a,b\nc", "\u00e9"], cwd=root, env=env,
+                        text=True, capture_output=True, check=False, timeout=15)
+                    if (ran.returncode, ran.stdout, ran.stderr) != (0, "", ""):
+                        raise AssertionError(f"owned argument bytes {endpoint}: {ran}")
                 expected_code = 70 if failure else 0
                 if (result.returncode != expected_code or result.stdout
                         or (not failure and result.stderr)
@@ -293,7 +286,7 @@ def main():
                 observations.append(result.observable)
             if any(value != observations[0] for value in observations):
                 raise AssertionError(f"hosted observable drift: {filename}: {observations}")
-            levels = "O0-O3" if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction", "scalar-return"} else "O0/O3"
+            levels = "O0-O3" if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction", "scalar-return", "arguments"} else "O0/O3"
             scope = (f"LLVM {levels}; recorded C++ aggregate vocabulary gap {comparator_gaps}"
                      if comparator_gaps else f"C++20/23 O3 and LLVM {levels}")
             print(f"{filename}: uninstrumented {scope} passed", flush=True)
@@ -322,8 +315,6 @@ def main():
                   flush=True)
         if selection in {"all", "text-return"}:
             text_source_rejections(gti, root, scratch, endpoints, env)
-        if selection in {"all", "arguments"}:
-            arguments(gti, root, scratch, endpoints, env)
 
 
 if __name__ == "__main__":

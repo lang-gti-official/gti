@@ -234,6 +234,8 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
     return "prepare-append-argument-move";
   case MirHostedStartupOperationKind::CallAppend:
     return "call-append";
+  case MirHostedStartupOperationKind::ComputeNextArgumentIndex:
+    return "compute-next-argument-index";
   case MirHostedStartupOperationKind::AdvanceArgumentIndex:
     return "advance-argument-index";
   case MirHostedStartupOperationKind::ContinueArgumentLoop:
@@ -280,7 +282,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v115 valid=" << program.valid() << '\n';
+    output << "mir-v116 valid=" << program.valid() << '\n';
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)

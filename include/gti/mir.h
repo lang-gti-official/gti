@@ -1731,6 +1731,7 @@ enum class MirHostedStartupOperationKind {
   PrepareAppendReceiver,
   PrepareAppendArgumentMove,
   CallAppend,
+  ComputeNextArgumentIndex,
   AdvanceArgumentIndex,
   ContinueArgumentLoop,
   PrepareEntryCount,

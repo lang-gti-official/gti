@@ -4702,14 +4702,18 @@ TLS. Private ownership capabilities, indirect/virtual dispatch, general native
 calls and native debug information remain explicit limitations. No mixed-backend
 fallback is used. C++ stays the default.
 
-The staged owned-argument bridge derives one native C signature from target
+The owned-argument bridge derives one native C signature from target
 `int`, `char**` and `size_t` facts, keeping raw host inputs out of GTI parameter
 bindings. Its count checks and byte-view helpers match exact verified startup
 operation identities. A zero count permits a null argv without reading it;
 positive counts require the host C contract's valid, non-null, NUL-terminated
 strings. Counted views are copied by the already selected GTI constructors.
-Executable owned-argument admission remains disabled: helper/type/identity
-tests are not full argv, construction-failure or cleanup execution evidence.
+The real source-defined vector/string closure executes through the public driver
+at O0-O3, including empty, multiline and UTF-8 arguments. C boundary tests also
+exercise zero/null argv and negative counts with original main attribution.
+The generated index update is ordinary verified arithmetic and assignment.
+Construction-failure and secondary-cleanup execution remain separate promotion
+obligations; successful argv tests do not establish them.
 
 Hosted returns preserve GTI's portable status policy: values from 0 through 255
 are returned unchanged and every other `int32_t` result becomes status 1. This

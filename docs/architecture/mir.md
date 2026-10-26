@@ -370,7 +370,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v115`/`mir-body-v93`,
+The combined deterministic serialization is currently `mir-v116`/`mir-body-v93`,
 with `lowered-program-v27` declaration metadata. These distinct combined
 identities retain both macro result-region/local-initializer authority and
 thread-local initialization, cleanup and reference-pack proof facts.
@@ -2799,7 +2799,12 @@ A `MirBody` owns:
   `TerminateCleanupFailure`. Production backend emission consumes this verified
   schedule, including admitted partial-construction rollback. New unsupported
   startup shapes must extend its construction and containment proof, not an
-  older source-tree execution path;
+  older source-tree execution path. The argument loop uses ordinary `Load`,
+  `Compute(Add)` and `Assign` instructions rather than a fused `Modify`.
+  `ComputeNextArgumentIndex` and `AdvanceArgumentIndex` bind arithmetic and
+  commit separately. The exact verified loop edge establishes
+  `0 <= index < count <= INT32_MAX`, so adding one cannot overflow; the verifier
+  rejects changes to the step, direction, source value or commit identity;
 - lexical scopes, cleanup edges, loans, carrier bindings, and source/HIR
   provenance.
 

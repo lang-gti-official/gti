@@ -5,6 +5,9 @@ int main(int argc, std::vector<std::string> argv) {
   if (argc < 0 || argv.size() != std::size_t(argc)) {
     return 1;
   }
+  if (argc == 0) {
+    return 0;
+  }
   if (argc == 1) {
     return argv[std::size_t(0)].empty() ? 2 : 0;
   }

@@ -12268,18 +12268,6 @@ borrowStagedCallInput(const MirBody &body, const MirOperand &operand) {
   return true;
 }
 
-[[nodiscard]] bool
-isHostedStartupArgumentIndexAdvance(const MirBody &body,
-                                    const MirInstruction &instruction) {
-  // The hosted-startup verifier binds every nonzero operation tag to one
-  // exact plan row. It is therefore the sole authority for the generated
-  // Modify/PreIncrement schedule; source Modify remains unsupported here.
-  return body.kind == MirBodyKind::HostedStartup &&
-         instruction.hostedStartupOperation != 0 &&
-         instruction.kind == MirInstructionKind::Modify &&
-         instruction.operation == MirOperation::PreIncrement;
-}
-
 [[nodiscard]] bool instructionHasInvoke(const MirBlock &block,
                                         const MirInstruction &instruction) {
   return block.terminator.kind == MirTerminatorKind::Invoke &&
@@ -24344,8 +24332,7 @@ private:
           "MIR operation is outside the exhaustive emitter vocabulary");
       return;
     }
-    if (encoding == CppMirEmissionEncoding::MissingMirAuthority &&
-        !isHostedStartupArgumentIndexAdvance(body, instruction)) {
+    if (encoding == CppMirEmissionEncoding::MissingMirAuthority) {
       // The closed narrowing compound assignment keeps its fused origin
       // by design; the terminal compatibility helper spells it whole
       // and contains the failure at the site. The per-form walks own
@@ -24566,8 +24553,7 @@ private:
           "instruction kind is outside the exhaustive emitter vocabulary");
       return;
     }
-    if (kind == CppMirEmissionEncoding::MissingMirAuthority &&
-        !isHostedStartupArgumentIndexAdvance(body, instruction)) {
+    if (kind == CppMirEmissionEncoding::MissingMirAuthority) {
       add(CppMirBodyEmissionIssueKind::MissingOrderedCompoundMir, block.id,
           instruction.id,
           "Modify lacks the verified read/check/convert/commit schedule");
@@ -50805,6 +50791,7 @@ bool cppMirHostedStartupOwnedArgumentsSchedule(const MirProgram &program) {
       {Kind::DropFailureCleanup, Behavior::None, false, false, false},
       {Kind::EndFailureCleanup, Behavior::None, false, false, false},
       {Kind::ContainFailure, Behavior::None, true, false, false},
+      {Kind::ComputeNextArgumentIndex, Behavior::None, false, false, false},
       {Kind::AdvanceArgumentIndex, Behavior::None, false, false, false},
       {Kind::ContinueArgumentLoop, Behavior::None, true, false, false},
       {Kind::PrepareEntryCount, Behavior::None, false, false, false},

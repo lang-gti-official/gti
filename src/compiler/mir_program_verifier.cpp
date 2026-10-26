@@ -11192,16 +11192,35 @@ verifyMirHostedStartup(const MirProgram &program) {
           takeFailureRoute(iterationBlock, appendCall.expected.instruction,
                            {vector.expected.dropObligation});
     }
+    const TakenOperation nextIndex =
+        take(MirHostedStartupOperationKind::ComputeNextArgumentIndex,
+             MirHostedStartupFailureBehavior::None, iterationBlock, true, false,
+             true, false);
+    exactValue(nextIndex, generatedInfo(SemanticType::Int32));
+    exactInstruction(nextIndex,
+                     {.kind = MirInstructionKind::Compute,
+                      .result = nextIndex.expected.value,
+                      .operands = {{.kind = MirOperandKind::Value,
+                                    .value = loadIndex.expected.value,
+                                    .type = SemanticType::Int32},
+                                   {.kind = MirOperandKind::Constant,
+                                    .literal = Literal{std::uint64_t{1}},
+                                    .type = SemanticType::Int32}},
+                      .operation = MirOperation::Add,
+                      .info = generatedInfo(SemanticType::Int32)});
     const TakenOperation advance =
         take(MirHostedStartupOperationKind::AdvanceArgumentIndex,
              MirHostedStartupFailureBehavior::None, iterationBlock, true, false,
              true, false);
     exactValue(advance, generatedInfo(SemanticType::Int32, ValueCategory::Place,
                                       AccessMode::Mutable));
-    exactInstruction(advance, {.kind = MirInstructionKind::Modify,
+    exactInstruction(advance, {.kind = MirInstructionKind::Assign,
                                .result = advance.expected.value,
                                .destination = initializeIndex.expected.place,
-                               .operation = MirOperation::PreIncrement,
+                               .operands = {{.kind = MirOperandKind::Value,
+                                             .value = nextIndex.expected.value,
+                                             .type = SemanticType::Int32}},
+                               .operation = MirOperation::Assign,
                                .info = generatedInfo(SemanticType::Int32,
                                                      ValueCategory::Place,
                                                      AccessMode::Mutable)});
