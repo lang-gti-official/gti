@@ -217,6 +217,7 @@ def main() -> int:
     )
     expect(helper, "panic_cleanup", 0, b"", panic_cleanup)
     expect(helper, "panic_terminal_cleanup", 70, b"", panic_cleanup)
+    expect(helper, "panic_context_cleanup", 70, b"", panic_cleanup)
     expect(helper, "panic_legacy_join", 70, b"", panic)
     expect(helper, "panic_nested_legacy_join", 70, b"", panic)
     for mode in ("panic_terminal_observer", "panic_terminal_mutation",

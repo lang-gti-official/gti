@@ -249,7 +249,8 @@ int run(const char *mode) {
           gti_rt_failure_write_report_v2(&record, &panic.artifact));
     }
     if (std::strcmp(mode, "panic_cleanup") == 0 ||
-        std::strcmp(mode, "panic_terminal_cleanup") == 0) {
+        std::strcmp(mode, "panic_terminal_cleanup") == 0 ||
+        std::strcmp(mode, "panic_context_cleanup") == 0) {
       Fixture secondary(GTI_FAILURE_CODE_PANIC_V2,
                         GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2, 5, "cleanup.gti",
                         11, 11);
@@ -257,6 +258,18 @@ int run(const char *mode) {
           .abi_version = GTI_FAILURE_ABI_VERSION_V2,
           .primary = record,
           .secondary = panicRecord(secondary, "cleanup failed", 14)};
+      if (std::strcmp(mode, "panic_context_cleanup") == 0) {
+        const auto *root =
+            gti_rt_failure_cleanup_enter_v1(&record, &panic.artifact);
+        const auto *nested = gti_rt_failure_cleanup_enter_v1(
+            &emergency.secondary, &secondary.artifact);
+        if (root != &record || nested != nullptr)
+          return 99;
+        gti_rt_failure_cleanup_leave_v1(nested);
+        gti_rt_failure_cleanup_check_v1(&emergency.secondary,
+                                         &secondary.artifact);
+        return 98;
+      }
       if (std::strcmp(mode, "panic_terminal_cleanup") == 0) {
         gti_rt_failure_terminate_cleanup_v2(&emergency, &panic.artifact,
                                             &secondary.artifact);

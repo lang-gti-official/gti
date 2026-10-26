@@ -854,7 +854,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     auto *output = function->getArg(1);
     auto *duringFailure = function->getArg(2);
     auto *failed = ir.CreateAlloca(ir.getInt1Ty());
-    auto *cleanupToken = ir.CreateAlloca(session.layouts().pointer());
+    llvm::Value *cleanupToken = nullptr;
     auto *scratch = ir.CreateAlloca(session.abi().failureChannel());
     ir.CreateStore(ir.getFalse(), failed);
     const bool unique = recipe.type.kind == SemanticType::UniqueOwner;
@@ -932,6 +932,11 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     // first record, so return the first new failure without replacing that
     // record.
     const auto observe = [&](llvm::Value *status) {
+      if (!cleanupToken) {
+        llvm::IRBuilder<> entry(&function->getEntryBlock(),
+                                function->getEntryBlock().begin());
+        cleanupToken = entry.CreateAlloca(session.layouts().pointer());
+      }
       auto *bad =
           llvm::BasicBlock::Create(session.context(), "failed", function);
       auto *next =
@@ -1134,18 +1139,22 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       Memory memory(session, ir, {}, {}, {});
       memory.releaseBytes(allocation);
     }
-    auto *failedResult = ir.CreateLoad(ir.getInt1Ty(), failed);
-    auto *leave = llvm::BasicBlock::Create(session.context(),
+    if (cleanupToken) {
+      auto *failedResult = ir.CreateLoad(ir.getInt1Ty(), failed);
+      auto *leave = llvm::BasicBlock::Create(session.context(),
                                            "cleanup.context.leave", function);
-    auto *result = llvm::BasicBlock::Create(session.context(),
+      auto *result = llvm::BasicBlock::Create(session.context(),
                                             "cleanup.result", function);
-    ir.CreateCondBr(failedResult, leave, result);
-    ir.SetInsertPoint(leave);
-    failures.leaveCleanup(
-        ir, ir.CreateLoad(session.layouts().pointer(), cleanupToken));
-    ir.CreateBr(result);
-    ir.SetInsertPoint(result);
-    ir.CreateRet(ir.CreateNot(failedResult));
+      ir.CreateCondBr(failedResult, leave, result);
+      ir.SetInsertPoint(leave);
+      failures.leaveCleanup(
+          ir, ir.CreateLoad(session.layouts().pointer(), cleanupToken));
+      ir.CreateBr(result);
+      ir.SetInsertPoint(result);
+      ir.CreateRet(ir.CreateNot(failedResult));
+    } else {
+      ir.CreateRet(ir.getTrue());
+    }
     context.stack.pop_back();
     return function;
   };
