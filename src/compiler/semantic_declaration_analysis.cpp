@@ -10291,6 +10291,26 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
                                           ? SemanticType::Unknown
                                           : member->second.symbol.type});
     }
+    std::vector<ClassVirtualDispatch> virtualDispatch;
+    for (const auto &[name, member] : owner.members) {
+      (void)name;
+      for (const auto &candidate : member.symbol.overloads) {
+        if (!candidate.virtualMethod || candidate.staticMember)
+          continue;
+        for (const auto root : candidate.virtualRoots)
+          virtualDispatch.push_back({.root = root,
+                                     .target = candidate.id,
+                                     .targetOwner = candidate.dispatchOwner});
+      }
+    }
+    std::sort(virtualDispatch.begin(), virtualDispatch.end(),
+              [](const auto &left, const auto &right) {
+                return std::tie(left.root, left.target) <
+                       std::tie(right.root, right.target);
+              });
+    virtualDispatch.erase(
+        std::unique(virtualDispatch.begin(), virtualDispatch.end()),
+        virtualDispatch.end());
     semanticModel.recordClassType(
         *owner.declaration,
         ClassTypeInfo{
@@ -10316,6 +10336,7 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .mutexGuardBorrowCarrier = isDefaultLibraryMutexGuardCarrier(owner),
             .kind = owner.kind,
             .bases = owner.bases,
+            .virtualDispatch = std::move(virtualDispatch),
             .abstract = owner.abstract,
             .polymorphic = owner.polymorphic,
             .cAbiRecord = owner.cAbiRecord,

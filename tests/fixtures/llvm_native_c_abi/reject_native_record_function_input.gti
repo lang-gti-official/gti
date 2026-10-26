@@ -1,0 +1,12 @@
+using NativeUnary = (int32_t) -> int32_t;
+[[c_abi]] struct NativePacket {
+  mut int8_t tag; mut uint16_t extent; mut int32_t count; mut double ratio;
+};
+extern "C" {
+  NativePacket native_packet_make(int32_t count);
+  NativeUnary native_record_unary();
+  int32_t native_record_with_callback(NativePacket value, NativeUnary operation);
+}
+int main() {
+  unsafe { return native_record_with_callback(native_packet_make(41), native_record_unary()) == 1 ? 0 : 1; }
+}

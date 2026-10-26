@@ -765,6 +765,20 @@ The backend consumes the verified MIR group, not these HIR records alone.
 
 ## Executable Values
 
+A semantic-selected ordinary generated default with no initializer schedule
+uses `DirectInitializer`, including the `Type()` expression spelling. Its
+exact concrete class retains generated default policy, zero runtime inputs and
+no constructor instance. Plan verification checks that semantic selection;
+an unexplained `Call` result type cannot establish construction authority.
+Scheduled generated defaults and declared constructors retain their exact
+constructor targets. MIR consumes the existing construction path for each.
+Generic construction verification substitutes declaration-bound arguments from
+the exact enclosing concrete class/function/constructor instance through the
+shared semantic substitution kernel, including exact specializations. A lambda
+uses its exact lexical creator and must have one compatible context; missing,
+conflicting or cyclic creator contexts cannot establish construction authority.
+No argument is inferred from the construction result type.
+
 An unsafe expression is the same grouping value after frontend permission
 checking. Exact unsafe operations on its operand retain their ordinary
 semantic/HIR/MIR markers and verifier requirements. Class fresh-result
@@ -1217,6 +1231,33 @@ every local detector origin to its exact site; propagating calls remain
 un-sited. HIR still owns only compiler vocabulary and snapshot-local
 origin/propagation identity. It does not acquire artifact IDs, failure records,
 cleanup edges, or backend representation policy.
+
+## Optional Source Regions
+
+The opt-in `LexicalV1` source-debug profile preserves accepted semantic
+source bodies and initializer regions in deep-owned HIR tables. Collection is
+descriptive and does not establish execution availability. The frontend default
+remains `None`; these tables alone do not enable native local-variable debugging.
+The frontend selects the profile before preamble lookup and semantic analysis.
+Preamble and concrete-instance reuse must match the profile and retain valid
+collected facts. Declaration-only functions are explicitly not applicable;
+empty source-region inventories are collected, not inferred from missing rows.
+Written source spans travel with body-local statement/value membership and are
+independently compared with the accepted source before syntax is detached.
+
+Module and TLS initializers, class field/static initializer bodies, and field
+defaults selected by a constructor retain their exact accepted declaration,
+concrete substitution and HIR value roots. A generated default constructor can
+therefore contain real source regions. An explicitly overridden field default
+does not appear among that constructor's regions. Empty generic packs still use
+the concrete field-initializer analysis.
+
+Initializer regions qualify their scope/local IDs by a deterministic body-local
+region ID. `hirInitializerReachabilityBatch` binds each region to its actual
+roots without rebuilding the body index per initializer. Verification compares
+the owner inventory, roots, concrete binding/types and source membership. Missing
+regions, sibling-instance facts and foreign roots are rejected. Accepted facts
+remain private owned witnesses until a later phase strips the syntax anchors.
 
 ## Boundary
 

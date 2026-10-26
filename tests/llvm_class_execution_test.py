@@ -13,6 +13,22 @@ from llvm_evidence_manifest import build_manifest
 
 
 CASES = {
+    "initializer-list-and-defaults": r'''
+mut int events = 0;
+int mark(int value) { events = events * 10 + value; return value; }
+class Mixed {
+  int data;
+  int defaulted = mark(2);
+  int overridden = mark(9);
+public:
+  Mixed(int input) : data(mark(input)), overridden(mark(3)) {}
+  int total() { return this.data + this.defaulted + this.overridden; }
+};
+int main() {
+  Mixed value{1};
+  return value.total() == 6 && events == 123 ? 0 : 1;
+}
+''',
     "ordinary": r'''
 mut int events = 0;
 class Ticket {
@@ -377,6 +393,9 @@ def success_cases(root: Path) -> dict[str, str]:
     cases["shipped-example"] = (
         root / "examples/llvm/classes-and-lifetimes.gti").read_text(
             encoding="utf-8")
+    cases["fresh-transfer-placement"] = (
+        root / "tests/fixtures/llvm_class_fresh_transfer_regression.gti").read_text(
+            encoding="utf-8")
     return cases
 
 
@@ -397,7 +416,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
 def evidence_manifest(root: Path) -> dict:
     return build_manifest(
         "llvm_class_execution", evidence_cases(root), evidence_profiles(root),
-        {"shipped-example": "examples/llvm/classes-and-lifetimes.gti"})
+        {"shipped-example": "examples/llvm/classes-and-lifetimes.gti",
+         "fresh-transfer-placement": "tests/fixtures/llvm_class_fresh_transfer_regression.gti"})
 
 
 def list_evidence(root: Path) -> None:

@@ -17,6 +17,8 @@ nativeMutexConstructor(const MirProgram &program,
 [[nodiscard]] bool nativeMutexCall(const MirProgram &program,
                                    const MirBody &body,
                                    const MirInstruction &instruction);
+[[nodiscard]] bool nativeMutexLockFailure(const MirProgram &program,
+                                          const MirInstruction &instruction);
 
 class Mutexes final {
 public:

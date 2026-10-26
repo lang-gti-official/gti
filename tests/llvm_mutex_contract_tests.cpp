@@ -19,16 +19,120 @@ void require(bool condition, const char *message) {
     throw std::runtime_error(message);
 }
 
-void requirePublicRejection(const VerifiedLoweredProgram &input) {
-  require(!planLlvmAdmission(input).admitted(),
-          "kernel evidence does not open public mutex admission");
-  bool rejected = false;
-  try {
-    static_cast<void>(LlvmBackend().generate(input.program()));
-  } catch (const BackendUnsupportedError &) {
-    rejected = true;
+void checkPredicates(const std::filesystem::path &root) {
+  FrontendOptions options;
+  options.target.executionProfile = ExecutionProfile::Concurrent;
+  options.target.runtimeCapabilities.threads = true;
+  options.requireEntryPoint = true;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      root / "tests/fixtures/mutex_basic.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  require(frontend.canGenerateCode(), "mutex predicate source reaches MIR");
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, options.target),
+      issues);
+  require(input.has_value(), "mutex predicates consume a sealed source snapshot");
+  const auto &program = input->program().mir();
+  std::vector<const MirBody *> bodies;
+  for (const auto &owner : program.functionInstances())
+    bodies.push_back(&owner.body);
+  for (const auto &owner : program.destructorInstances())
+    bodies.push_back(&owner.body);
+  std::set<IntrinsicKind> seen;
+  for (const auto *body : bodies)
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions) {
+        const bool terminal =
+            instruction.intrinsic == IntrinsicKind::MutexLockFailure;
+        if (!terminal && !Mutexes::handles(instruction.intrinsic))
+          continue;
+        const auto recognized = [&](const MirInstruction &call) {
+          return terminal ? nativeMutexLockFailure(program, call)
+                          : nativeMutexCall(program, *body, call);
+        };
+        require(recognized(instruction), "exact mutex operation recognized");
+        seen.insert(instruction.intrinsic);
+        const auto reject = [&](auto mutate) {
+          auto bad = instruction;
+          mutate(bad);
+          require(!recognized(bad), "mutex operation rejects unrelated metadata");
+        };
+        reject([](auto &call) { call.nativeCalleeType = SemanticType::Int32; });
+        reject([](auto &call) { call.nativeCallbackAdapter = 1; });
+        reject([](auto &call) { call.threadTaskAdapter = 1; });
+        reject([](auto &call) { call.functionPointerFunctionTarget = 1; });
+        reject([](auto &call) { call.rawMemoryAccess = true; });
+        reject([](auto &call) { call.dispatch = CallDispatch::Virtual; });
+        reject([](auto &call) { call.objectLayoutType = SemanticType::Int32; });
+        reject([](auto &call) { call.callableBoundary = CallableBoundary::Owned; });
+        reject([](auto &call) { call.borrowArguments.push_back(0); });
+        reject([](auto &call) { call.preparedParameterDrop = 1; });
+        reject([](auto &call) { call.successResultDestination = 1; });
+        if (terminal) {
+          reject([](auto &call) { call.localFailureSites.clear(); });
+          reject([](auto &call) { call.definedFailure.localOrigins.clear(); });
+          reject([](auto &call) { ++call.definedFailure.localOrigins.front().start; });
+          reject([](auto &call) {
+            call.definedFailure.localOrigins.front().outcomes.front().detail =
+                DefinedFailureDetail::FixedArray;
+          });
+          reject([](auto &call) { call.synchronization.kind =
+                                      SynchronizationOperationKind::MutexLock; });
+          reject([](auto &call) { call.info.type = SemanticType::Int32; });
+        } else {
+          reject([](auto &call) { call.parameterTypes.clear(); });
+          reject([](auto &call) { call.operands[0].kind = MirOperandKind::Move; });
+          reject([](auto &call) {
+            call.synchronization.order = AtomicMemoryOrder::Acquire;
+          });
+          if (instruction.loan) {
+            reject([](auto &call) { call.loan.reset(); });
+            auto missingLoan = *body;
+            missingLoan.loans.clear();
+            require(!nativeMutexCall(program, missingLoan, instruction),
+                    "guard access requires its exact MIR result loan");
+          }
+          if (instruction.result) {
+            auto missingValue = *body;
+            missingValue.values.clear();
+            require(!nativeMutexCall(program, missingValue, instruction),
+                    "mutex result requires its exact MIR value identity");
+          }
+        }
+      }
+  require(seen.size() == 6, "all five mutex operations and lock failure checked");
+  std::size_t constructors = 0;
+  for (const auto &constructor : program.constructorInstances()) {
+    const auto *owner = program.findClassInstance(constructor.owner);
+    if (!owner || owner->compilerCapability !=
+                      CompilerCapabilityTypeKind::MutexStorage)
+      continue;
+    require(nativeMutexConstructor(program, constructor).has_value(),
+            "mutex constructor binds exact private payload initialization");
+    ++constructors;
+    auto malformed = constructor;
+    malformed.parameterTypes.clear();
+    require(!nativeMutexConstructor(program, malformed),
+            "mutex constructor rejects a mismatched payload parameter");
+    malformed = constructor;
+    malformed.body.places.clear();
+    require(!nativeMutexConstructor(program, malformed),
+            "mutex constructor rejects missing payload storage identity");
   }
-  require(rejected, "public backend rejects before producing a mutex artifact");
+  require(constructors != 0, "source predicate fixture materializes a native constructor");
+  std::cout << "mutex exact predicates: six operation families and malformed controls PASS\n";
+}
+
+void requirePublicAdmission(const VerifiedLoweredProgram &input) {
+  const auto plan = planLlvmAdmission(input);
+  if (const auto *unsupported = plan.firstUnsupported())
+    throw std::runtime_error("mutex public admission pending: " +
+                             unsupported->entry->key());
+  require(plan.admitted(), "mutex exact public admission");
+  static_cast<void>(LlvmBackend().generate(input.program()));
 }
 
 // Exercise publication/retirement with source-selected roots and recipes.
@@ -50,7 +154,7 @@ void checkProcessStorage(const std::filesystem::path &root,
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir,
                              options.target), issues);
   require(input.has_value(), "process shell source has a sealed snapshot");
-  requirePublicRejection(*input);
+  requirePublicAdmission(*input);
   Session session(*input, {});
   const auto &program = input->program().mir();
   std::map<SymbolId, llvm::GlobalVariable *> globals;
@@ -70,7 +174,9 @@ void checkProcessStorage(const std::filesystem::path &root,
         llvm::Constant::getNullValue(type), "process-root"));
   }
   Failures failures(session);
-  Lifetimes lifetimes(session, failures, [](MirBodyAddress) -> llvm::Function * {
+  const auto admission = planLlvmAdmission(*input);
+  Dispatch dispatch(session, admission);
+  Lifetimes lifetimes(session, failures, dispatch, [](MirBodyAddress) -> llvm::Function * {
     throw std::logic_error("native process retirement invokes no source body");
   });
   lifetimes.prepareProgramStorage(globals);
@@ -148,7 +254,8 @@ void checkProcessStorage(const std::filesystem::path &root,
 
 void checkSourceComposition(const std::filesystem::path &root,
                              const std::filesystem::path &output,
-                             std::string_view sanitizer, bool activePayload) {
+                             std::string_view sanitizer, bool activePayload,
+                             bool guard = false) {
   FrontendOptions options;
   options.target.executionProfile = ExecutionProfile::Concurrent;
   options.target.runtimeCapabilities.threads = true;
@@ -156,7 +263,8 @@ void checkSourceComposition(const std::filesystem::path &root,
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = true;
   const auto frontend = Frontend(options).analyze(
-      root / (activePayload ? "tests/fixtures/llvm_mutex_source_lifecycle.gti"
+      root / (guard ? "tests/fixtures/llvm_mutex_guard_lifecycle.gti"
+                    : activePayload ? "tests/fixtures/llvm_mutex_source_lifecycle.gti"
                             : "tests/fixtures/llvm_native_process_storage.gti"), std::nullopt,
       {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
   require(frontend.canGenerateCode(), "source composition reaches verified MIR");
@@ -165,10 +273,10 @@ void checkSourceComposition(const std::filesystem::path &root,
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir,
                              options.target), issues);
   require(input.has_value(), "source composition has a sealed snapshot");
-  requirePublicRejection(*input);
+  requirePublicAdmission(*input);
   Session session(*input, {});
-  // Deliberate pre-admission composition oracle: every body is real source MIR.
-  // This must never change the public gate or claim coverage from this bypass.
+  // The public backend was exercised above. This second emission instruments
+  // the same admitted source MIR for the native observer/sanitizer oracles.
   const auto admission = planLlvmAdmission(*input);
   std::set<std::string> pending;
   for (const auto &use : admission.requirements())
@@ -216,7 +324,7 @@ void checkActive(const std::filesystem::path &root,
                              options.target),
       issues);
   require(input.has_value(), "active shell recipes have a sealed snapshot");
-  requirePublicRejection(*input);
+  requirePublicAdmission(*input);
   Session session(*input, {});
   const auto &program = input->program().mir();
   SemanticType storage, cell;
@@ -281,7 +389,9 @@ void checkActive(const std::filesystem::path &root,
               session.layouts().get(cell).size == 160,
           "C observer checks the exact payload, shell and wrapper layout");
   Failures failures(session);
-  Lifetimes lifetimes(session, failures, [&](MirBodyAddress address) {
+  const auto admission = planLlvmAdmission(*input);
+  Dispatch dispatch(session, admission);
+  Lifetimes lifetimes(session, failures, dispatch, [&](MirBodyAddress address) {
     require(address.kind == MirBodyKind::Destructor &&
                 address.owner == destructor->id,
             "cleanup selects only the sealed payload destructor");
@@ -389,7 +499,7 @@ void check(const std::filesystem::path &root,
                              options.target),
       issues);
   require(input.has_value(), "mutex source has a verified snapshot");
-  requirePublicRejection(*input);
+  requirePublicAdmission(*input);
   Session session(*input, {});
   const auto &program = input->program().mir();
   SemanticType storage, token;
@@ -559,8 +669,10 @@ void check(const std::filesystem::path &root,
   mutexes.moveToken(move->getArg(0), move->getArg(1), token);
   ir.CreateRetVoid();
   Failures failures(session);
+  const auto admission = planLlvmAdmission(*input);
+  Dispatch dispatch(session, admission);
   Lifetimes lifetimes(
-      session, failures, [](MirBodyAddress) -> llvm::Function * {
+      session, failures, dispatch, [](MirBodyAddress) -> llvm::Function * {
         throw std::logic_error("passive shell has no source cleanup body");
       });
   auto *transfer =
@@ -605,8 +717,18 @@ void check(const std::filesystem::path &root,
 } // namespace
 
 int main(int argc, char **argv) {
+  if (argc == 3 && std::string_view(argv[2]) == "--predicates") {
+    try {
+      checkPredicates(argv[1]);
+      return 0;
+    } catch (const std::exception &error) {
+      std::cerr << error.what() << '\n';
+      return 1;
+    }
+  }
   if ((argc == 4 || argc == 5) &&
       (std::string_view(argv[2]) == "--source-composition" ||
+       std::string_view(argv[2]) == "--guard-source-composition" ||
        std::string_view(argv[2]) == "--active-source-composition")) {
     try {
       const std::string_view sanitizer = argc == 5 ? argv[4] : "";
@@ -614,7 +736,8 @@ int main(int argc, char **argv) {
           sanitizer != "address,undefined")
         return 2;
       checkSourceComposition(argv[1], argv[3], sanitizer,
-                             std::string_view(argv[2]) == "--active-source-composition");
+                             std::string_view(argv[2]) == "--active-source-composition",
+                             std::string_view(argv[2]) == "--guard-source-composition");
       return 0;
     } catch (const std::exception &error) {
       std::cerr << error.what() << '\n';
@@ -628,6 +751,7 @@ int main(int argc, char **argv) {
       sanitizer != "address,undefined")
     return 2;
   try {
+    checkPredicates(argv[1]);
     check(argv[1], argc >= 3 ? argv[2] : "", sanitizer);
     checkActive(argv[1],
                 argc >= 3 ? std::filesystem::path(argv[2]).parent_path() /

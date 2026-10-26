@@ -1,0 +1,37 @@
+unsafe int& checked_read(int& value) { return value; }
+unsafe mut int& checked_write(mut int& value) { return value; }
+int observe(int& value) { return value; }
+void update(mut int& value) { value += 1; }
+mut int retired = 0;
+struct Record {
+  int prefix;
+  mut int value;
+  Record(int value) : prefix(11), value(value) {}
+  ~Record() { retired = retired * 10 + this.value; }
+};
+[[borrowed_from(second)]]
+unsafe Record& selected_record(Record& first, Record& second) { return second; }
+[[borrowed_from(second)]]
+unsafe mut Record& selected_record_write(mut Record& first, mut Record& second) {
+  return second;
+}
+int observe_record(Record& value) { return value.value; }
+void update_record(mut Record& value) { value.value += 1; }
+int main() {
+  mut int value = 42;
+  unsafe {
+    if (observe(checked_read(value)) != 42) { return 1; }
+    update(checked_write(value));
+  }
+  if (value != 43) { return 2; }
+  {
+    mut Record first{1};
+    mut Record second{2};
+    unsafe {
+      if (observe_record(selected_record(first, second)) != 2) { return 3; }
+      update_record(selected_record_write(first, second));
+    }
+    if (first.prefix != 11 || first.value != 1 || second.value != 3) { return 4; }
+  }
+  return retired == 31 ? 0 : 5;
+}

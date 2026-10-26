@@ -119,8 +119,11 @@ void Places::allocate(
           instruction.payloadExtractionKind &&
           isReferencePayloadBinding(*instruction.payloadExtractionKind))
         selectedValues.at(*instruction.result) = true;
-      if (instruction.loan && (instruction.kind == MirInstructionKind::Call ||
-                               instruction.kind == MirInstructionKind::Borrow))
+      if (instruction.loan &&
+          (instruction.kind == MirInstructionKind::Call ||
+           instruction.kind == MirInstructionKind::CallBody ||
+           instruction.kind == MirInstructionKind::Construct ||
+           instruction.kind == MirInstructionKind::Borrow))
         loanTypes.at(*instruction.loan) = instruction.info.type;
     }
 }
@@ -134,6 +137,10 @@ llvm::Value *Places::load(llvm::Value *address, const SemanticType &type) {
 void Places::store(llvm::Value *value, llvm::Value *address,
                    const SemanticType &type) {
   if (addressValue(session.program().mir(), type)) {
+    if (containsHierarchyStorage(session.program().mir(), type))
+      throw BackendUnsupportedError(
+          "LLVM hierarchy storage requires its exact fresh destination, not "
+          "object-byte transport");
     if (value == address)
       return;
     const auto layout = session.layouts().get(type);
@@ -319,12 +326,30 @@ llvm::Value *Places::address(MirPlaceId id) {
           "LLVM nested PackElement projection escaped parameter mapping");
     case MirProjectionKind::Field: {
       const auto &owner = session.layouts().instance(type);
-      const auto index = session.layouts().fieldIndex(type, projection.field);
-      const auto field = owner.declaredFields.at(index - owner.bases.size());
-      if (!owner.unionLayout)
-        address = ir.CreateStructGEP(session.layouts().get(type).storage,
-                                     address, index);
-      type = field.type;
+      SemanticType selectedFieldType = SemanticType::Unknown;
+      if (owner.unionLayout) {
+        const MirClassFieldInfo *selected = nullptr;
+        for (const auto &field : owner.declaredFields)
+          if (field.symbol == projection.field) {
+            if (selected)
+              throw BackendUnsupportedError(
+                  "LLVM union projection has an ambiguous field identity");
+            selected = &field;
+          }
+        if (!selected)
+          throw BackendUnsupportedError(
+              "LLVM union projection requires its exact declared field");
+        selectedFieldType = selected->type;
+      } else {
+        const auto field =
+            session.layouts().fieldSubobject(type, projection.field);
+        address = baseAddress(address, type, field.owner);
+        address =
+            ir.CreateStructGEP(session.layouts().get(field.owner.type).storage,
+                               address, field.index);
+        selectedFieldType = field.type;
+      }
+      type = selectedFieldType;
       break;
     }
     case MirProjectionKind::Base: {
@@ -382,16 +407,73 @@ llvm::Value *Places::address(MirPlaceId id) {
   return address;
 }
 llvm::Value *Places::selected(const MirOperand &operand) {
+  llvm::Value *result = nullptr;
+  SemanticType source = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
   if (operand.place) {
-    auto *result = address(operand.place);
-    const auto &type = body.findPlace(operand.place)->type;
-    return type.kind == SemanticType::Reference ? load(result, type) : result;
+    const auto *place = body.findPlace(operand.place);
+    if (!place)
+      throw std::logic_error("LLVM selected address lost its sealed place");
+    result = address(operand.place);
+    source = place->type;
+    access = place->access;
+    if (source.kind == SemanticType::Reference)
+      result = load(result, source);
+  } else if (operand.loan) {
+    const auto *record = body.findLoan(operand.loan);
+    if (!record)
+      throw std::logic_error("LLVM selected address lost its sealed loan");
+    result = loan(operand.loan);
+    source = loanTypes.at(operand.loan);
+    access = record->access;
+  } else if (operand.value) {
+    const auto *value = body.findValue(operand.value);
+    if (!value)
+      throw std::logic_error("LLVM selected address lost its sealed value");
+    result = values.at(operand.value);
+    source = value->info.type;
+    access = value->info.access;
+  } else {
+    throw std::logic_error("LLVM selected address has no verified source");
   }
-  if (operand.loan)
-    return loan(operand.loan);
-  if (operand.value)
-    return values.at(operand.value);
-  throw std::logic_error("LLVM selected address has no verified source");
+  if (!result)
+    throw std::logic_error("LLVM selected address has no dominating value");
+  if (source.kind == SemanticType::Reference) {
+    access = source.referenceAccess;
+    auto referent = source.arguments.at(0);
+    source = std::move(referent);
+  }
+  auto target = operand.type;
+  const bool mutableTarget = operand.kind == MirOperandKind::BorrowWrite ||
+                             (target.kind == SemanticType::Reference &&
+                              target.referenceAccess == AccessMode::Mutable);
+  if (target.kind == SemanticType::Reference) {
+    auto referent = target.arguments.at(0);
+    target = std::move(referent);
+  }
+  if (source.kind == SemanticType::Class ||
+      target.kind == SemanticType::Class) {
+    if (source.kind != SemanticType::Class ||
+        target.kind != SemanticType::Class ||
+        (mutableTarget && access != AccessMode::Mutable))
+      throw BackendUnsupportedError(
+          "LLVM class reference adjustment has incompatible type or access");
+    result = baseAddress(result, source,
+                         session.layouts().baseSubobject(source, target));
+  }
+  return result;
+}
+
+llvm::Value *Places::baseAddress(llvm::Value *address, SemanticType source,
+                                 const BaseSubobjectLayout &path) {
+  for (const auto index : path.indices) {
+    address = ir.CreateStructGEP(session.layouts().get(source).storage, address,
+                                 index);
+    source = session.layouts().instance(source).bases.at(index).type;
+  }
+  if (source != path.type)
+    throw std::logic_error("LLVM base projection lost its sealed target");
+  return address;
 }
 
 } // namespace lang::native_llvm

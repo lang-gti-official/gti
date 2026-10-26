@@ -1,0 +1,21 @@
+struct Marker {
+  int* slot = nullptr;
+  Marker(int* target, int input) : slot(target) {
+    if (input == 2147483647) {
+      int overflow = input + 1;
+    }
+  }
+  ~Marker() {
+    unsafe {
+      if (*slot == 0) { *slot = 1; }
+      else { *slot = 2; }
+    }
+  }
+};
+
+int sample(int input, mut int& first, mut int& second, mut int& outer) {
+  Marker local{&outer, 0};
+  mut Marker replaced{&second, 0};
+  replaced = Marker(&first, input);
+  return input + 1;
+}

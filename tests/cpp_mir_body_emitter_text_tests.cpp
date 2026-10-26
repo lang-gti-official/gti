@@ -4133,11 +4133,13 @@ int32_t main() {
 
     for (const lang::MirBlock &block : function.body.blocks) {
       for (const lang::MirInstruction &instruction : block.instructions) {
-        if (instruction.kind == lang::MirInstructionKind::Call &&
+        if (instruction.kind == lang::MirInstructionKind::Construct &&
+            instruction.constructorKind == lang::ConstructorKind::Ordinary &&
             instruction.result && !instruction.functionTarget &&
             !instruction.constructorTarget && !instruction.receiver &&
             instruction.intrinsic == lang::IntrinsicKind::None &&
             instruction.operands.empty() &&
+            instruction.parameterTypes.empty() &&
             instruction.info.type.kind == lang::SemanticType::Class) {
           defaultReturn = &function;
         }

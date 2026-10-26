@@ -234,6 +234,8 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
     return "prepare-append-argument-move";
   case MirHostedStartupOperationKind::CallAppend:
     return "call-append";
+  case MirHostedStartupOperationKind::ComputeNextArgumentIndex:
+    return "compute-next-argument-index";
   case MirHostedStartupOperationKind::AdvanceArgumentIndex:
     return "advance-argument-index";
   case MirHostedStartupOperationKind::ContinueArgumentLoop:
@@ -282,7 +284,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v115 valid=" << program.valid() << '\n';
+    output << "mir-v116 valid=" << program.valid() << '\n';
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -313,6 +315,8 @@ public:
       }
     }
     const auto &target = program.target();
+    output << "source-debug-profile="
+           << sourceDebugProfileName(program.sourceDebugProfile()) << '\n';
     output << "target os=" << target.os << " vendor=" << target.vendor
            << " arch=" << target.arch
            << " pointer-width=" << target.dataLayout.pointerWidthBits()
@@ -519,6 +523,19 @@ public:
         output << "{instance=" << base.instance << ",type=";
         type(base.type);
         output << ",interface=" << base.interface << '}';
+      }
+      output << "] virtual-dispatch=[";
+      for (std::size_t index = 0; index < instance.virtualDispatch.size();
+           ++index) {
+        separator(index);
+        const auto &selected = instance.virtualDispatch[index];
+        output << "{root=" << selected.root << ",target=" << selected.target
+               << ",root-owner=" << selected.rootOwner
+               << ",target-owner=" << selected.targetOwner << ",root-path=[";
+        list(selected.rootPath);
+        output << "],target-path=[";
+        list(selected.targetPath);
+        output << "]}";
       }
       output << "] structural-bases=[";
       for (std::size_t index = 0; index < instance.structuralBases.size();
@@ -809,6 +826,12 @@ public:
       output << " may-raise-defined-failure="
              << instance.mayRaiseDefinedFailure;
       effectSummary(instance.effectSummary);
+      output << " dispatch-state=";
+      if (instance.dispatchState)
+        output << instance.dispatchState->activeClass << ':'
+               << instance.dispatchState->afterBaseInitialization;
+      else
+        output << "unrepresented";
       output << " initializers=[";
       for (std::size_t index = 0; index < instance.initializers.size();
            ++index) {
@@ -2101,6 +2124,62 @@ private:
         use(value.valueUses[index][useIndex]);
       }
       output << "]\n";
+    }
+    output << " source-debug="
+           << sourceDebugCollectionName(value.sourceDebug.collection)
+           << " tables=" << static_cast<bool>(value.sourceDebug.tables) << '\n';
+    if (value.sourceDebug.tables) {
+      const auto &tables = *value.sourceDebug.tables;
+      output << "  source-domain=";
+      placeDomain(tables.domain);
+      output << '\n';
+      const auto span = [&](const SourceSpan &source) {
+        output << std::quoted(source.source) << ':' << source.start << ':'
+               << source.end << ':' << source.line;
+      };
+      for (const auto &scope : tables.scopes) {
+        output << "  source-scope=" << scope.id << " parent=" << scope.parent
+               << " unit=" << scope.sourceUnit
+               << " expansion=" << scope.expansion << " span=";
+        span(scope.source);
+        output << '\n';
+      }
+      for (const auto &local : tables.locals) {
+        const auto &declaration = local.declaration;
+        output << "  source-local=" << declaration.id
+               << " scope=" << declaration.scope
+               << " binding=" << declaration.binding
+               << " symbol=" << declaration.symbol
+               << " name=" << std::quoted(declaration.name)
+               << " parameter=" << declaration.parameter << " type=";
+        type(declaration.type);
+        output << " span=";
+        span(declaration.declaration);
+        output << " place=" << local.place << " policy=" << number(local.policy)
+               << '\n';
+      }
+      for (const auto &statement : tables.statements) {
+        output << "  source-statement=" << statement.id
+               << " scope=" << statement.scope << " span=";
+        span(statement.source);
+        output << '\n';
+      }
+      for (const auto &sourceValue : tables.values) {
+        output << "  source-value=" << sourceValue.id
+               << " scope=" << sourceValue.scope << " span=";
+        span(sourceValue.source);
+        output << '\n';
+      }
+      for (const auto &end : tables.localEnds)
+        output << "  source-end=" << end.local << " block=" << end.point.block
+               << " instruction=" << end.point.instruction
+               << " after=" << end.point.after
+               << " entry=" << end.point.blockEntry << '\n';
+      for (const auto &event : tables.valueEvents)
+        output << "  source-value-event=" << event.local
+               << " value=" << event.value << " block=" << event.point.block
+               << " instruction=" << event.point.instruction
+               << " after=" << event.point.after << '\n';
     }
     output << "end-body\n";
   }

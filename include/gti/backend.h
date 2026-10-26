@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace lang {
 
@@ -26,10 +27,16 @@ enum class BackendArtifactKind {
   Object,
 };
 
+struct EmbeddingCompanion {
+  std::string header;
+  std::vector<std::string> publicSymbols;
+};
+
 struct BackendArtifact {
   BackendArtifactKind kind = BackendArtifactKind::Source;
   std::string contents;
   std::string extension;
+  std::optional<EmbeddingCompanion> embedding;
 };
 
 // A verified GTI program can reach a backend capability that is deliberately

@@ -4628,8 +4628,9 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   state->entries.emplace(key, entry);
   state->discovered.insert(key);
   ++state->depth;
-  auto worker = std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
-                                       sources, rawPointerAudit);
+  auto worker = std::make_unique<Impl>(
+      target, sourceGraph, false, workMetrics, sources, rawPointerAudit, false,
+      TrustedBodyAnalysis::Complete, sourceDebugProfile);
   if (state->idleCatalogs.empty())
     worker->catalog = catalog.snapshotForInstanceAnalysis();
   else {

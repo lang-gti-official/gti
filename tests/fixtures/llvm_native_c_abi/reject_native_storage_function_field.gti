@@ -1,0 +1,4 @@
+using Operation = (int32_t) -> int32_t;
+[[c_abi]] struct StorageCallbacks { mut Operation apply; mut int32_t cookie; };
+extern "C" { mut StorageCallbacks native_callbacks; }
+int main() { return 0; }

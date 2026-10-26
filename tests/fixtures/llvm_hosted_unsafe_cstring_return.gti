@@ -1,0 +1,14 @@
+#include <std/memory>
+unsafe c_string select_c_string(int& owner, const char* bytes) {
+  unsafe { return std::assume_c_string(bytes, owner); }
+}
+c_string relay_c_string(int& owner, const char* bytes) {
+  unsafe { return select_c_string(owner, bytes); }
+}
+int main() {
+  int owner = 22;
+  char bytes[3] = {'a', 'b', '\0'};
+  c_string first = relay_c_string(owner, &bytes[std::size_t(0)]);
+  c_string second = relay_c_string(owner, &bytes[std::size_t(1)]);
+  return first != nullptr && second != nullptr && first != second ? 0 : 1;
+}

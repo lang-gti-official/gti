@@ -22,6 +22,7 @@ struct ProjectBuildOverrides {
   std::optional<bool> debugInfo;
   ConfigurationFlags configurationFlags;
   WarningPolicy warningPolicy;
+  std::optional<BackendKind> backend;
 };
 
 // Native compiler selections supplied by the caller rather than the
@@ -165,7 +166,8 @@ public:
       ProjectTargetLinkage targetLinkage = ProjectTargetLinkage::None,
       std::vector<ProjectExport> exports = {},
       ConfigurationFlags declaredConfigurationFlags = {},
-      bool rawPointerAuditLibraryFindings = false);
+      bool rawPointerAuditLibraryFindings = false,
+      BackendKind backend = BackendKind::Cpp);
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -184,6 +186,7 @@ public:
   [[nodiscard]] const TargetInfo &target() const;
   [[nodiscard]] OptimizationLevel optimization() const;
   [[nodiscard]] CppStandard cppStandard() const;
+  [[nodiscard]] BackendKind backend() const;
   [[nodiscard]] bool keepCpp() const;
   [[nodiscard]] bool debugInfo() const;
   [[nodiscard]] RawPointerAuditMode rawPointerAudit() const;
@@ -215,6 +218,7 @@ private:
   TargetInfo targetInfo;
   OptimizationLevel optimizationLevel;
   CppStandard backendStandard;
+  BackendKind selectedBackend;
   bool retainGeneratedSource;
   NativeInputs resolvedNativeInputs;
   std::vector<PackageSourceRoot> resolvedPackageSources;

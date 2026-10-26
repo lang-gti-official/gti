@@ -3,6 +3,7 @@
 #include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/llvm_admission.h"
 #include "gti/mir_effects.h"
 
 #include <array>
@@ -16,8 +17,8 @@ using namespace lang::native_llvm;
 
 // Mechanical component execution, not language admission or source-failure
 // attribution evidence. Public owner programs remain separate mandatory tests.
-void emitProbe(Session &session, std::string_view name, bool uniqueOnly,
-               bool overflow) {
+void emitProbe(Session &session, const LlvmAdmissionPlan &admission,
+               std::string_view name, bool uniqueOnly, bool overflow) {
   auto &context = session.context();
   auto *type = llvm::FunctionType::get(
       llvm::Type::getInt32Ty(context),
@@ -36,7 +37,8 @@ void emitProbe(Session &session, std::string_view name, bool uniqueOnly,
     ir.SetInsertPoint(next);
   };
   Failures failures(session);
-  Lifetimes lifetimes(session, failures, {});
+  Dispatch dispatch(session, admission);
+  Lifetimes lifetimes(session, failures, dispatch, {});
   Memory memory(
       session, ir,
       [&](const MirDropType &recipe) { return lifetimes.cleanup(recipe); },
@@ -426,10 +428,14 @@ int main() {
        {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Less,
         LlvmCodegenOptimization::Default,
         LlvmCodegenOptimization::Aggressive}) {
-    Session session(*input, {.optimization = level});
-    emitProbe(session, "probe_unique", true, false);
-    emitProbe(session, "probe_shared", false, false);
-    emitProbe(session, "probe_overflow", false, true);
+    const LlvmBackendOptions options{.optimization = level};
+    const auto admission = planLlvmAdmission(*input, options);
+    if (!admission.admitted())
+      return 3;
+    Session session(*input, options);
+    emitProbe(session, admission, "probe_unique", true, false);
+    emitProbe(session, admission, "probe_shared", false, false);
+    emitProbe(session, admission, "probe_overflow", false, true);
     emitConcurrentProbes(session);
     emitArrayRangeProbe(session);
     const auto object = session.emitObject();

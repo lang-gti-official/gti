@@ -1,0 +1,23 @@
+#include <std/panic>
+mut int trace = 0;
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  int read() { return this.value; }
+  ~Marker() { trace = trace * 10 + this.value; }
+};
+thread_local Marker early{1};
+thread_local Marker late{2};
+double fail_return(float value, bool success) {
+  if (!success) { std::panic("scalar return failure"); }
+  return value;
+}
+int main() {
+  [[discard]] early.read();
+  [[discard]] late.read();
+  Marker local{3};
+  double unpublished = fail_return(1.25, false);
+  trace = 9999;
+  return 0;
+}

@@ -1,0 +1,7 @@
+#include <std/memory>
+c_string escape() {
+  int owner = 0;
+  char bytes[2] = {'a', '\0'};
+  unsafe { return std::assume_c_string(&bytes[std::size_t(0)], owner); }
+}
+int main() { return escape() == nullptr ? 0 : 1; }

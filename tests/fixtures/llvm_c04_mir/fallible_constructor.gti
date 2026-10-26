@@ -1,0 +1,33 @@
+struct Marker {
+  mut int& slot;
+  Marker(mut int& target) : slot(target) {}
+  ~Marker() {
+    if (slot == 0) { slot = 1; }
+    else { slot = 2; }
+  }
+};
+
+struct Owner {
+  mut int& slot;
+  int value;
+  Owner(int input, mut int& target) : slot(target), value(input + 1) {}
+  ~Owner() {
+    if (slot == 0) { slot = 1; }
+    else { slot = 2; }
+  }
+};
+
+int leaf(int input, mut int& slot) {
+  Owner owner{input, slot};
+  return input + 1;
+}
+
+int middle(int input, mut int& leaf_slot, mut int& middle_slot) {
+  Marker marker{middle_slot};
+  return leaf(input, leaf_slot);
+}
+
+int sample(int input, mut int& leaf_slot, mut int& middle_slot, mut int& outer_slot) {
+  Marker marker{outer_slot};
+  return middle(input, leaf_slot, middle_slot);
+}

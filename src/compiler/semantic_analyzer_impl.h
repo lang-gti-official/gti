@@ -223,13 +223,15 @@ public:
       const SourceManager *sources,
       RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
       bool requireFunctionDefinitions = false,
-      TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete)
+      TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete,
+      SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None)
       : target(std::move(target)), sourceGraph(sourceGraph), sources(sources),
         toolingOccurrences(toolingOccurrences), workMetrics(workMetrics),
         rawPointerAudit(rawPointerAudit),
         requireFunctionDefinitions(requireFunctionDefinitions),
-        trustedBodies(trustedBodies) {
+        trustedBodies(trustedBodies), sourceDebugProfile(sourceDebugProfile) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
+    semanticModel.setSourceDebugProfile(sourceDebugProfile);
   }
 
   // Every public analysis entry point establishes one complete request state.
@@ -257,6 +259,9 @@ public:
   [[nodiscard]] SemanticType expressionType() const;
 
   [[nodiscard]] const SemanticModel &model() const;
+  [[nodiscard]] SourceDebugProfile requestedSourceDebugProfile() const {
+    return sourceDebugProfile;
+  }
 
   // Moves the accumulated model out of the visitor. The visitor must not run
   // further analysis (including concrete instance reanalysis) afterwards.
@@ -302,6 +307,14 @@ public:
       visitor.catalog.assertUnchangedSinceSeal();
       visitor.semanticModel.beginInstanceDelta(baseModel,
                                                visitor.instanceSymbolCeiling);
+      if (auto *tables = visitor.semanticModel.sourceDebug_.tables.get())
+        tables->instance = {.concrete = true,
+                            .kind = static_cast<std::uint8_t>(instance.kind),
+                            .declaration = instance.declaration,
+                            .classTypes = instance.classTypes,
+                            .classValues = instance.classValues,
+                            .types = instance.types,
+                            .values = instance.values};
       visitor.requestSession.programExpressionCache = {};
       visitor.requestSession.fullExpressionStates.clear();
       if (visitor.journalNextInstance)
@@ -1447,11 +1460,31 @@ private:
 
   struct ScopeIdentity {};
   struct Scope : std::unordered_map<std::string, Symbol> {
+    // Value state so existing scope snapshots and transactions retain exact
+    // descriptive identity without another owner registry or semantic IDs.
+    std::optional<std::size_t> sourceDebugBody;
+    const void *sourceDebugOwner = nullptr;
+    SourceScopeId sourceDebugScope = 0;
+    std::size_t sourceDebugNextChild = 0;
     // Only isolated query frames need an identity. Ordinary lexical frames
     // remain allocation-free; snapshots retain the same lexical identity.
     std::shared_ptr<const ScopeIdentity> identity;
   };
   using ScopeStack = std::vector<Scope>;
+
+  // An initializer is a source region, not a new semantic lookup scope.
+  struct SourceDebugRegionGuard {
+    Impl &visitor;
+    std::size_t scopeIndex = 0;
+    bool active = false;
+    std::optional<std::size_t> body;
+    const void *owner = nullptr;
+    SourceScopeId scope = 0;
+    std::size_t nextChild = 0;
+
+    SourceDebugRegionGuard(Impl &visitor, const VariableDecl &declaration);
+    ~SourceDebugRegionGuard();
+  };
 
   enum class ValueControlFlowKind {
     Loop,
@@ -6051,6 +6084,15 @@ private:
   void validateLoopBackedge(const ScopeStack &beforeLoop,
                             const ScopeStack &backedge, const Token &location);
 
+  [[nodiscard]] SemanticSourceDebugTables *activeSourceDebugTables();
+  void beginSourceDebugBody(SourceDebugBodyKind kind, const void *source,
+                            const SourceSpan &extent,
+                            std::span<const Parameter> parameters = {},
+                            const void *creator = nullptr,
+                            std::size_t expansion = 0);
+  void recordSourceDebugStatement(const Stmt &statement);
+  void recordSourceDebugExpression(const Expr &expression);
+  void recordSourceDebugLocal(const VariableDecl &declaration);
   void beginScope();
   void endScope();
 
@@ -7265,6 +7307,7 @@ private:
   // code. Closed executable/library requests need every actual GTI call target.
   bool requireFunctionDefinitions = false;
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
+  SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None;
 
   // ---- Staged constant evaluation worker --------------------------------
   // The model the constants required here stage against: this analyzer's

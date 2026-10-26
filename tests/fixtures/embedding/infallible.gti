@@ -1,0 +1,32 @@
+[[c_opaque]] struct Engine;
+[[c_abi]] struct Pair { mut int32_t first; mut double second; };
+[[c_abi]] struct Large { mut int64_t a; mut int64_t b; mut int64_t c; };
+[[c_abi]] struct Hfa { mut float a; mut float b; mut float c; mut float d; };
+[[c_abi]] struct Fixed { mut int32_t values[3]; };
+
+uint64_t seed() { return 17; }
+mut uint64_t current = seed();
+uint64_t exchange(uint64_t value) {
+  uint64_t previous = current;
+  current = value;
+  return previous;
+}
+uint64_t mix(uint64_t value) { return value ^ 91; }
+Pair pair(Pair value) { return value; }
+Large large(Large value) { return value; }
+Hfa hfa(Hfa value) { return value; }
+Engine* engine(Engine* value) { return value; }
+Pair* record(Pair* value) { return value; }
+void nothing() {}
+int8_t tiny(int8_t value) { return value; }
+uint16_t small(uint16_t value) { return value; }
+double real(double value) { return value; }
+Fixed fixed(Fixed value) { return value; }
+int16_t signed_short(int16_t value) { return value; }
+int32_t signed_word(int32_t value) { return value; }
+int64_t signed_long(int64_t value) { return value; }
+uint8_t unsigned_byte(uint8_t value) { return value; }
+uint32_t unsigned_word(uint32_t value) { return value; }
+float single(float value) { return value; }
+// Unselected failure must not become an export or a required body.
+int32_t unused(int32_t value) { return value + 1; }

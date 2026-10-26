@@ -7,7 +7,6 @@
 namespace lang::llvm_detail {
 
 namespace {
-
 struct CoverageClaim {
   LlvmCoverageState state;
   std::string_view positiveTest;

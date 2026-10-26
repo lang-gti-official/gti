@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""Production scalar native-function values, staged calls and closed boundaries."""
+import argparse
+from hashlib import sha256
+import json
+from pathlib import Path
+import platform
+import subprocess
+import sys
+import time
+
+from llvm_evidence_manifest import build_manifest
+
+FIXTURE_SOURCES = ("contracts", "native_indirect", "native_indirect_order",
+                   "native_indirect_failure", "native_indirect_roots",
+                   "native_function_borrows")
+EXAMPLE = "native_c_function_values"
+SOURCE_PATHS = {name: f"tests/fixtures/llvm_native_c_abi/{name}.gti"
+                for name in FIXTURE_SOURCES}
+SOURCE_PATHS[EXAMPLE] = "examples/llvm/native-c-function-values.gti"
+SOURCE_PATHS["existing_indirect"] = "tests/fixtures/native_indirect_calls.gti"
+SOURCES = tuple(SOURCE_PATHS)
+
+
+def evidence_cases(root):
+    return {name: (root / path).read_text() for name, path in SOURCE_PATHS.items()}
+
+
+def evidence_profiles(root):
+    del root
+    return {**{profile: SOURCES for profile in
+               ("function-values", "function-imports", "scalar-indirect")},
+            "function-borrows": ("native_function_borrows", "existing_indirect"),
+            "result-inputs": ("existing_indirect",)}
+
+
+def evidence_manifest(root):
+    return build_manifest(
+        "llvm_native_c_indirect_execution", evidence_cases(root),
+        evidence_profiles(root),
+        SOURCE_PATHS)
+
+
+def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
+        print(json.dumps(evidence_manifest(Path(sys.argv[2])), sort_keys=True))
+        return
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("compiler", type=Path)
+    parser.add_argument("--emitter", type=Path, required=True)
+    parser.add_argument("--focus", choices=("reachability", "example", "borrows"))
+    parser.add_argument("--cc", default="clang")
+    parser.add_argument("--cxx", default="clang++")
+    parser.add_argument("--output-dir", type=Path, required=True)
+    args = parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
+    fixture = root / "tests/fixtures/llvm_native_c_abi"
+    dormant = (fixture / "native_indirect_roots.gti").read_text()
+    required = (fixture / "reject_native_indirect_required.gti").read_text()
+    dormant_edge = "  if (required_dependency(8) != 9) return 3;"
+    required_edge = "  if (dormant_unsupported() != 9) return 3;"
+    if (dormant.count(dormant_edge) != 1 or
+            dormant.replace(dormant_edge, required_edge) != required):
+        raise RuntimeError("dormant/required fixtures must differ only in their main-call edge")
+    output = args.output_dir.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    compiler = args.compiler.resolve()
+    report = {"head": subprocess.check_output(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip(),
+        "dirty": bool(subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"])),
+        "compiler_sha256": sha256(compiler.read_bytes()).hexdigest(),
+        "input_sha256": {path: sha256((root / path).read_bytes()).hexdigest()
+                         for path in (*SOURCE_PATHS.values(),
+                                      "tests/fixtures/native_indirect_calls.c",
+                                      "tests/fixtures/llvm_native_c_abi/native_indirect.c",
+                                      "tests/fixtures/llvm_native_c_abi/contracts_oracle.c")},
+        "platform": platform.platform(), "focus": args.focus,
+        "reachability_pair": {"only_change": [dormant_edge, required_edge],
+                              "equal_after_edge_replacement": True}, "steps": []}
+
+    def run(argv, tag, expected=0):
+        argv = [str(part) for part in argv]
+        started = time.monotonic()
+        result = subprocess.run(argv, capture_output=True, timeout=180)
+        log = output / (tag + ".log")
+        log.write_bytes(result.stdout + result.stderr)
+        report["steps"].append({"argv": argv, "exit": result.returncode,
+                                "expected": expected,
+                                "seconds": time.monotonic() - started,
+                                "log": str(log)})
+        (output / "evidence.json").write_text(json.dumps(report, indent=2) + "\n")
+        if result.returncode != expected:
+            raise RuntimeError(f"{tag}: exit {result.returncode}, expected {expected}; {log}")
+        return result
+
+    def observe(source, result):
+        if source == "native_indirect_order":
+            expected = b"selected\nmark:1\nmark:2\nentered:1,2\nmark:99\n"
+            if result.stdout != expected or result.stderr:
+                raise RuntimeError("native receiver/argument staging or cleanup mismatch")
+        elif source == "native_indirect_failure":
+            line = next(index for index, text in enumerate(
+                (fixture / (source + ".gti")).read_text().splitlines(), 1)
+                        if "1 / native_zero()" in text)
+            site = f"{source}.gti:{line}:".encode()
+            if (result.stdout != b"selected\nmark:1\nmark:99\n" or
+                    b"division" not in result.stderr.lower() or site not in result.stderr):
+                raise RuntimeError("native later-argument failure/cleanup attribution mismatch")
+        elif source == EXAMPLE:
+            expected = b"selected\nargument:31\nresult:42\ncleanup\n"
+            if result.stdout != expected or result.stderr:
+                raise RuntimeError("native function-value example selection/result/cleanup mismatch")
+        elif source == "native_indirect_roots":
+            if result.stdout != b"mark:99\n" or result.stderr:
+                raise RuntimeError("native exact roots or typed cleanup mismatch")
+        elif source == "native_function_borrows":
+            if result.stdout != b"borrow-cleanup\n" or result.stderr:
+                raise RuntimeError("native function borrow mutation/snapshot/cleanup mismatch")
+        elif result.stdout or result.stderr:
+            raise RuntimeError("unexpected native scalar indirect output")
+
+    run([args.cc, "--version"], "c-version")
+    run([args.cxx, "--version"], "cxx-version")
+    root_checks = (
+            ("native_indirect_roots", "--reachability"),
+            ("reject_native_indirect", "--native-boundary-reachability"),
+            ("reject_native_indirect_callback", "--native-boundary-reachability"))
+    if args.focus in ("example", "borrows"):
+        root_checks = ()
+    if args.focus in (None, "borrows"):
+        run([args.emitter.resolve(), fixture / "native_function_borrows.gti",
+             output / "borrow-contracts.o", output / "borrow-contracts.ll", 0,
+             "--borrow-contracts"], "borrow-contracts")
+        run([args.emitter.resolve(), root / SOURCE_PATHS["existing_indirect"],
+             output / "result-contracts.o", output / "result-contracts.ll", 0,
+             "--result-contracts"], "result-contracts")
+    for source, mode in root_checks:
+        run([args.emitter.resolve(), fixture / (source + ".gti"),
+             output / (source + ".o"), output / (source + ".ll"), 0, mode],
+            "roots-" + source)
+    executions = controls = negatives = 0
+    sources = (("native_indirect_roots",) if args.focus == "reachability" else
+               ("native_function_borrows", "existing_indirect") if args.focus == "borrows" else
+               (EXAMPLE,) if args.focus == "example" else SOURCES)
+    levels = (0, 3) if args.focus == "reachability" else range(4)
+    for c_level in (0, 3):
+        objects = []
+        for source in ("contracts_oracle", "native_indirect"):
+            obj = output / f"{source}-c{c_level}.o"
+            run([args.cc, "-std=c17", f"-O{c_level}", "-Wall", "-Wextra", "-Werror",
+                 "-DGTI_SOURCE_HOST", "-c", fixture / (source + ".c"), "-o", obj],
+                f"host-{source}-c{c_level}")
+            objects.append(obj)
+        existing_object = output / f"existing-indirect-c{c_level}.o"
+        if "existing_indirect" in sources:
+            run([compiler, root / SOURCE_PATHS["existing_indirect"],
+                 "--emit-native-header", "-o", output / "native_indirect_calls.h"],
+                f"existing-header-c{c_level}")
+            run([args.cc, "-std=c17", f"-O{c_level}", "-Wall", "-Wextra", "-Werror",
+                 "-I", output, "-I", root / "runtime/include", "-c",
+                 root / "tests/fixtures/native_indirect_calls.c", "-o", existing_object],
+                f"existing-host-c{c_level}")
+        example_object = output / f"example-c{c_level}.o"
+        if EXAMPLE in sources:
+            run([args.cc, "-std=c17", f"-O{c_level}", "-Wall", "-Wextra", "-Werror",
+                 "-c", root / "examples/llvm/native-c-function-values-native/operation.c",
+                 "-o", example_object], f"host-example-c{c_level}")
+        oracles = {}
+        for source in sources:
+            source_path = root / SOURCE_PATHS[source]
+            source_objects = ([example_object] if source == EXAMPLE else
+                              [existing_object] if source == "existing_indirect" else objects)
+            for standard in ("c++20", "c++23"):
+                tag = f"{source}-{standard}-c{c_level}"
+                binary = output / tag
+                run([compiler, source_path, "--std", standard,
+                     "-O3", "-o", binary, "--", *source_objects], "build-" + tag)
+                result = run([binary], "run-" + tag,
+                             70 if source == "native_indirect_failure" else 0)
+                observe(source, result)
+                controls += 1
+                value = (result.stdout, result.stderr)
+                if source in oracles and oracles[source] != value:
+                    raise RuntimeError("supported C++ comparator standards disagree")
+                oracles[source] = value
+            for level in levels:
+                tag = f"{source}-llvm{level}-c{c_level}"
+                binary = output / tag
+                run([compiler, source_path, "--backend", "llvm",
+                     f"-O{level}", "-o", binary, "--", *source_objects], "build-" + tag)
+                result = run([binary], "run-" + tag,
+                             70 if source == "native_indirect_failure" else 0)
+                observe(source, result)
+                if (result.stdout, result.stderr) != oracles[source]:
+                    raise RuntimeError("native indirect execution differs from supported C++ comparator")
+                executions += 1
+    rejected = fixture / "reject_native_indirect.gti"
+    for standard in (() if args.focus else ("c++20", "c++23")):
+        binary = output / f"aggregate-indirect-{standard}"
+        run([compiler, rejected, "--std", standard, "-O3", "-o", binary,
+             "--", *objects], "build-" + binary.name)
+        result = run([binary], "run-" + binary.name)
+        controls += 1
+        if result.stdout or result.stderr:
+            raise RuntimeError("supported aggregate C++ comparator output mismatch")
+    promoted_sources = ("reject_native_indirect_required", "reject_native_indirect_callback")
+    if not args.focus:
+        promoted_sources = ("reject_native_indirect", *promoted_sources)
+    elif args.focus in ("example", "borrows"):
+        promoted_sources = ()
+    for source in promoted_sources:
+        for level in (0, 3):
+            destination = output / f"{source}-O{level}"
+            run([compiler, fixture / (source + ".gti"), "--backend", "llvm",
+                 f"-O{level}", "-o", destination, "--", *objects], "build-" + destination.name)
+            result = run([destination], "run-" + destination.name,
+                         2 if source == "reject_native_indirect_callback" else 0)
+            expected = b"mark:99\n" if source == "reject_native_indirect_required" else b""
+            if result.stdout != expected or result.stderr:
+                raise RuntimeError("promoted native signature/callback execution mismatch")
+            executions += 1
+    rejections = (
+        ("reject_native_indirect_unsafe", b"GTI-S2055", b":6:21:"),
+        ("reject_native_indirect_signature", b"GTI-S2003", b":5:46:"),
+        ("reject_native_function_readonly", b"GTI-S2002", b":2:31:"),
+    )
+    if args.focus and args.focus != "borrows":
+        rejections = ()
+    for source, code, site in rejections:
+        for backend in ("cpp", "llvm"):
+            destination = output / f"{source}-{backend}"
+            sentinel = b"existing native artifact\n"
+            destination.write_bytes(sentinel)
+            result = run([compiler, fixture / (source + ".gti"), "--backend", backend,
+                          "-O3", "-o", destination], destination.name, 65)
+            if (code not in result.stderr or site not in result.stderr or
+                    (source + ".gti").encode() not in result.stderr or
+                    b"GTI-B0003" in result.stderr or
+                    destination.read_bytes() != sentinel):
+                raise RuntimeError("native source rejection or artifact preservation mismatch")
+            negatives += 1
+    report["totals"] = {"llvm_executions": executions, "cpp_controls": controls,
+                        "root_checks": len(root_checks), "artifact_negatives": negatives}
+    report["executable_bytes"] = {
+        step["argv"][0]: Path(step["argv"][0]).stat().st_size
+        for step in report["steps"]
+        if len(step["argv"]) == 1 and Path(step["argv"][0]).is_file()}
+    (output / "evidence.json").write_text(json.dumps(report, indent=2) + "\n")
+    print(f"PASS: {executions} public LLVM native-function executions, {controls} C++ controls, {len(root_checks)} exact-root checks and {negatives} artifact negatives; {output}")
+
+
+if __name__ == "__main__":
+    main()

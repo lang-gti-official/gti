@@ -1536,6 +1536,16 @@ relates the earlier borrow; there is no automatic operand-reordering fix.
 
 ## SemanticModel
 
+The optional `LexicalV1` source-debug profile records
+accepted source scopes and bindings independently of semantic identities.
+Program storage, thread-local storage and field initializers enter descriptive
+initializer regions at the existing declaration-analysis decision. Their guard
+saves and restores only source context, including early returns; it creates no
+lookup scope and changes no ownership or constant-evaluation rule. Ordinary
+locals remain in their function or lambda region. Each initializer region must
+resolve to the accepted declaration binding in its exact analysis snapshot.
+
+
 `SemanticModel` is a set of snapshot-owned side tables keyed by AST identity or
 compiler IDs. Important facts include:
 

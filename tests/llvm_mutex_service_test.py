@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Source-verified mutex emitter/runtime boundary, not public lifecycle admission."""
+"""Public mutex lifecycle, native identity and isolated runtime boundary oracles."""
 
 import argparse
 import json
@@ -10,8 +10,30 @@ import subprocess
 import sys
 import time
 
+from llvm_evidence_manifest import build_manifest
+
+
+def evidence_manifest(root):
+    fixtures = {
+        "guard": "mutex_basic.gti",
+        "guard-cleanup": "llvm_mutex_guard_lifecycle.gti",
+        "array-cleanup": "llvm_mutex_array_lifecycle.gti",
+        "process-retirement": "llvm_native_process_storage.gti",
+        "payload-cleanup": "llvm_mutex_source_lifecycle.gti",
+    }
+    return build_manifest(
+        "llvm_mutex_service",
+        {key: (root / "tests/fixtures" / path).read_text(encoding="utf-8")
+         for key, path in fixtures.items()},
+        {"mutex.public-lifecycle": tuple(fixtures)},
+        {key: f"tests/fixtures/{path}" for key, path in fixtures.items()},
+        execution_profiles={"mutex.public-lifecycle": "concurrent"})
+
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
+        print(json.dumps(evidence_manifest(Path(sys.argv[2]).resolve()), sort_keys=True))
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("emitter", type=Path)
@@ -20,11 +42,16 @@ def main():
     parser.add_argument("--cxx", default="c++")
     parser.add_argument("--llvm-cc", default="clang")
     parser.add_argument("--runtime-library", type=Path)
+    parser.add_argument("--public-gti", type=Path,
+                        help="require public driver O0-O3 admission and execution")
+    parser.add_argument("--rejections-only", action="store_true")
     parser.add_argument("--sanitize", choices=("address,undefined", "thread"))
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--gti", type=Path,
                         help="also run the existing C++ source-cleanup differential")
     args = parser.parse_args()
+    if args.rejections_only and not args.public_gti:
+        parser.error("--rejections-only requires --public-gti")
     if args.gti and args.sanitize:
         parser.error("run the C++ differential separately from native instrumentation")
     root, output = args.root.resolve(), args.output.resolve()
@@ -59,6 +86,51 @@ def main():
             raise AssertionError(f"{name}: see {evidence / (name + '.log')}")
         print(f"{name}: PASS", flush=True)
         return result.stdout
+
+    if args.public_gti:
+        rejections = {
+            "relock": ("std::mutex<int32_t> value{1}; "
+                       "auto first = value.lock(); auto second = value.lock();", "GTI-S2017"),
+            "move-locked-owner": ("std::mutex<int32_t> value{1}; auto guard = value.lock(); "
+                                  "std::mutex<int32_t> moved = std::move(value);", "GTI-S2017"),
+            "temporary-guard-escape": ("std::mutex<int32_t> value{1}; "
+                                       "int32_t& escaped = value.lock().get();", "GTI-S2017"),
+        }
+        for name, (body, diagnostic) in rejections.items():
+            source = output / f"reject-{name}.gti"
+            source.write_text("#include <std/mutex>\nint main() { " + body +
+                              " return 0; }\n", encoding="utf-8")
+            for backend in ("cpp", "llvm"):
+                artifact = output / f"rejected-{name}-{backend}"
+                artifact.write_bytes(b"preserved")
+                label = f"reject-{name}-{backend}"
+                run(label, [args.public_gti.resolve(), "--backend", backend,
+                    "--execution-profile", "concurrent", source, "-o", artifact], expected=65)
+                log = (evidence / f"{label}.log").read_text(encoding="utf-8")
+                if (f"error[{diagnostic}]" not in log or "GTI-B0001" in log or
+                        artifact.read_bytes() != b"preserved"):
+                    raise AssertionError(f"{label}: wrong rejection or changed artifact")
+        for name, source, profile, diagnostic in (
+            ("single-threaded", root / "tests/fixtures/mutex_basic.gti", [], "GTI-S2084"),
+            ("source-global-cleanup", output / "reject-source-global.gti",
+             ["--execution-profile", "concurrent"], "GTI-S2061"),
+        ):
+            if name == "source-global-cleanup":
+                source.write_text("#include <std/mutex>\n"
+                    "class Owned { public: ~Owned() {} }; "
+                    "std::mutex<Owned> global{Owned()};\nint main() { return 0; }\n",
+                    encoding="utf-8")
+            artifact = output / f"rejected-{name}"
+            artifact.write_bytes(b"preserved")
+            label = f"reject-{name}"
+            run(label, [args.public_gti.resolve(), "--backend", "llvm", *profile,
+                source, "-o", artifact], expected=65)
+            log = (evidence / f"{label}.log").read_text(encoding="utf-8")
+            if (f"error[{diagnostic}]" not in log or "GTI-B0001" in log or
+                    artifact.read_bytes() != b"preserved"):
+                raise AssertionError(f"{label}: wrong rejection or changed artifact")
+    if args.rejections_only:
+        return
 
     sanitize = [args.sanitize] if args.sanitize else []
     run("emit", [args.emitter.resolve(), root, output / "mutex.ll", *sanitize])
@@ -98,6 +170,17 @@ def main():
                                     "-Dgti_rt_failure_terminate_cleanup_v2=gti_test_real_failure_terminate_cleanup_v2",
                                     "-c", root / "runtime/src/failure.cpp",
                                     "-o", output / "active-failure-runtime.o"])
+    run("emit-guard-source", [args.emitter.resolve(), root, "--guard-source-composition",
+                               output / "guard-source.ll", *sanitize])
+    run("guard-source-observer", [args.cc, "-std=c17", *flags, "-c",
+                                   root / "tests/fixtures/llvm_mutex_guard_lifecycle.c",
+                                   "-o", output / "guard-source-observer.o"])
+    run("guard-runtime", [args.cxx, "-std=c++20", *flags,
+        "-Dgti_rt_mutex_lock_v1=gti_test_mutex_real_lock_v1",
+        "-Dgti_rt_mutex_unlock_v1=gti_test_mutex_real_unlock_v1",
+        "-Dgti_rt_mutex_initialize_v1=gti_test_mutex_real_initialize_v1",
+        "-Dgti_rt_mutex_destroy_v1=gti_test_mutex_real_destroy_v1",
+        "-c", root / "runtime/src/mutex.cpp", "-o", output / "guard-runtime.o"])
     for mode in ("O0", "O1", "O2", "O3"):
         run(f"ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation, "-c", output / "mutex.ll",
                            "-o", output / f"mutex-{mode}.o"])
@@ -155,8 +238,62 @@ def main():
         for failure_mode in ("nested", "cell-last", "cell-first", "double"):
             run(f"active-source-{failure_mode}-{mode}", [active_program], expected=70,
                 failure_mode=failure_mode)
+        run(f"guard-source-ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}",
+            *instrumentation, "-c", output / "guard-source.ll",
+            "-o", output / f"guard-source-{mode}.o"])
+        guard_program = output / f"guard-source-{mode}"
+        run(f"guard-source-link-{mode}", [args.cxx, "-pthread", *instrumentation,
+            output / "guard-source-observer.o", output / "guard-runtime.o",
+            output / "failure-runtime.o", output / f"guard-source-{mode}.o",
+            runtime_library, "-o", guard_program])
+        run(f"guard-source-execute-{mode}", [guard_program])
+        for fault in ("guard-lock", "guard-body"):
+            run(f"guard-source-{fault}-{mode}", [guard_program],
+                expected=70, failure_mode=fault)
         for fault in ("active-lock", "wrong-owner", "inactive-read", "retired-lock", "quarantined-unload"):
             run(f"{fault}-{mode}", [program, fault], death=True)
+
+        if args.public_gti:
+            if args.sanitize:
+                parser.error("public driver checks need a separate unsanitized run")
+            for family, fixture, observer, runtime, failure, faults in (
+                ("process", "llvm_native_process_storage.gti", "source-observer.o",
+                 "runtime.o", "failure-runtime.o", ("before", "partial-first", "partial-last",
+                                       "after", "entry", "quarantine")),
+                ("payload", "llvm_mutex_source_lifecycle.gti", "active-source-observer.o",
+                 "runtime.o", "active-failure-runtime.o", ("nested", "cell-last", "cell-first", "double")),
+                ("guard", "llvm_mutex_guard_lifecycle.gti", "guard-source-observer.o",
+                 "guard-runtime.o", "failure-runtime.o", ("guard-lock", "guard-body")),
+            ):
+                public_program = output / f"public-{family}-{mode}"
+                run(f"public-{family}-build-{mode}", [args.public_gti.resolve(),
+                    "--backend", "llvm", "--execution-profile", "concurrent", f"-{mode}",
+                    root / "tests/fixtures" / fixture, "-o", public_program,
+                    "--", output / observer, output / runtime, output / failure,
+                    *worker_objects])
+                run(f"public-{family}-execute-{mode}", [public_program])
+                for fault in faults:
+                    run(f"public-{family}-{fault}-{mode}", [public_program],
+                        expected=70, failure_mode=fault)
+            guard_program = output / f"public-basic-{mode}"
+            run(f"public-basic-build-{mode}", [args.public_gti.resolve(),
+                "--backend", "llvm", "--execution-profile", "concurrent", f"-{mode}",
+                root / "tests/fixtures/mutex_basic.gti", "-o", guard_program])
+            run(f"public-basic-execute-{mode}", [guard_program])
+            array_program = output / f"public-array-{mode}"
+            run(f"public-array-build-{mode}", [args.public_gti.resolve(),
+                "--backend", "llvm", "--execution-profile", "concurrent", f"-{mode}",
+                root / "tests/fixtures/llvm_mutex_array_lifecycle.gti", "-o", array_program])
+            run(f"public-array-execute-{mode}", [array_program])
+
+    if args.public_gti:
+        for standard in ("c++20", "c++23"):
+            program = output / f"cpp-guard-{standard}"
+            run(f"cpp-guard-build-{standard}", [args.public_gti.resolve(),
+                "--backend", "cpp", "--execution-profile", "concurrent",
+                "--std", standard, "-O3", root / "tests/fixtures/mutex_basic.gti",
+                "-o", program])
+            run(f"cpp-guard-execute-{standard}", [program])
 
     if args.gti:
         run("cpp-source-observer", [args.cc, "-std=c17", *flags, "-DGTI_CPP_ORACLE", "-c",

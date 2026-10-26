@@ -51,6 +51,57 @@ def main():
             print(f"cleanup context {endpoint}: normal, first, inherited and restored passed",
                   flush=True)
 
+        # Exercise the full inline panic buffer across calls and cleanup drains,
+        # including bytes beyond the first cache line and embedded zero bytes.
+        message = "abcdefghijklmnopqrstuvwxyz0123456789" * 12
+        panic = scratch / "copied-panic.gti"
+        panic.write_text('''#include <std/panic>
+class Marker {
+  char code;
+public:
+  Marker(char code) : code(code) {}
+  ~Marker() { std::print(this.code); }
+};
+void leaf() {
+  Marker local{'L'};
+  std::panic("''' + message + r'''\0tail");
+}
+void middle() { Marker local{'M'}; leaf(); }
+int main() { Marker local{'O'}; middle(); return 0; }
+''')
+        expected = (70, "LMO", 'copied-panic.gti:10: runtime error[GTI-R0017]: panic: "' +
+                    message + r'\x00tail' + '"\n')
+        for index, endpoint in enumerate(endpoints):
+            result = execute(gti, root, scratch / f"panic-{index}", panic, endpoint, env)
+            if result.error or result.observable != expected:
+                raise AssertionError(f"copied panic {endpoint}: {result} != {expected}")
+            print(f"copied panic {endpoint}: full message, source and cleanup order passed", flush=True)
+
+        secondary_message = message[::-1]
+        nested = scratch / "copied-secondary.gti"
+        nested.write_text('''#include <std/panic>
+class Outer { public: ~Outer() { std::print('O'); } };
+class Failing { public: ~Failing() {
+  std::print('D');
+  std::panic("''' + secondary_message + r'''\0tail");
+} };
+int main() {
+  Outer outer{};
+  Failing inner{};
+  std::panic("''' + message + r'''\0tail");
+}
+''')
+        emergency = ('copied-secondary.gti:5: runtime error[GTI-R0014]: '
+                     'failure_during_cleanup; primary [GTI-R0017] at '
+                     'copied-secondary.gti:10 message="' + message + r'\x00tail' +
+                     '"; secondary [GTI-R0017] message="' + secondary_message +
+                     r'\x00tail' + '"\n')
+        for index, endpoint in enumerate(endpoints):
+            result = execute(gti, root, scratch / f"secondary-{index}", nested, endpoint, env)
+            if result.error or result.observable != (70, "D", emergency):
+                raise AssertionError(f"copied secondary {endpoint}: {result}")
+            print(f"copied secondary {endpoint}: both messages and terminal cleanup passed", flush=True)
+
 
 if __name__ == "__main__":
     main()

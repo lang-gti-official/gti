@@ -1104,6 +1104,59 @@ struct MirRangeIteration {
                          const MirRangeIteration &) = default;
 };
 
+struct MirDebugPoint {
+  MirBlockId block = 0;
+  // Zero names the boundary before the terminator, unless blockEntry is set.
+  MirInstructionId instruction = 0;
+  bool after = false;
+  bool blockEntry = false;
+  friend bool operator==(const MirDebugPoint &,
+                         const MirDebugPoint &) = default;
+};
+
+enum class MirSourceLocalPolicy : std::uint8_t {
+  ExistingPlace,
+  Unproven,
+  OptimizedOut,
+};
+
+struct MirSourceLocal {
+  HirSourceLocal declaration;
+  MirPlaceId place = 0;
+  MirSourceLocalPolicy policy = MirSourceLocalPolicy::Unproven;
+  friend bool operator==(const MirSourceLocal &,
+                         const MirSourceLocal &) = default;
+};
+
+struct MirSourceLocalEnd {
+  SourceLocalId local = 0;
+  MirDebugPoint point;
+  friend bool operator==(const MirSourceLocalEnd &,
+                         const MirSourceLocalEnd &) = default;
+};
+
+struct MirSourceValueEvent {
+  SourceLocalId local = 0;
+  MirDebugPoint point;
+  MirValueId value = 0;
+  friend bool operator==(const MirSourceValueEvent &,
+                         const MirSourceValueEvent &) = default;
+};
+
+struct MirSourceDebugTables {
+  PlaceDomain domain;
+  std::vector<SourceDebugScope> scopes;
+  std::vector<MirSourceLocal> locals;
+  std::vector<SourceDebugAnchor> statements;
+  std::vector<SourceDebugAnchor> values;
+  // Descriptive exits from the actual lexical lowering walk, not Drop events
+  // or evidence that any storage was initialized or readable.
+  std::vector<MirSourceLocalEnd> localEnds;
+  std::vector<MirSourceValueEvent> valueEvents;
+  friend bool operator==(const MirSourceDebugTables &,
+                         const MirSourceDebugTables &) = default;
+};
+
 struct MirBody {
   MirBodyKind kind = MirBodyKind::Function;
   // Only a tracked source function owns an incoming caller-location parameter.
@@ -1130,6 +1183,7 @@ struct MirBody {
   std::vector<MirRangeIteration> rangeIterations;
   std::vector<MirValue> values;
   std::vector<std::vector<MirValueUse>> valueUses;
+  SourceDebugRecord<MirSourceDebugTables> sourceDebug;
 
   [[nodiscard]] const MirBlock *findBlock(MirBlockId id) const {
     return id == 0 || id > blocks.size() ? nullptr : &blocks[id - 1];
@@ -1328,6 +1382,7 @@ struct MirClassInstance {
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
   std::vector<HirBaseInstance> structuralBases;
+  std::vector<HirVirtualDispatch> virtualDispatch;
   bool abstract = false;
   bool polymorphic = false;
   bool cAbiRecord = false;
@@ -1519,6 +1574,16 @@ struct MirConstructorInitializer {
                          const MirConstructorInitializer &) = default;
 };
 
+struct MirConstructorDispatchState {
+  HirClassInstanceId activeClass = 0;
+  // Activation follows successful execution of this exact InitializeBase.
+  // Zero selects entry only when there is no state-bearing base.
+  MirInstructionId afterBaseInitialization = 0;
+
+  friend bool operator==(const MirConstructorDispatchState &,
+                         const MirConstructorDispatchState &) = default;
+};
+
 struct MirConstructorInstance {
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
@@ -1542,6 +1607,9 @@ struct MirConstructorInstance {
   bool mayRaiseDefinedFailure = true;
   MirEffectSummary effectSummary;
   std::vector<MirConstructorInitializer> initializers;
+  // Absent for a construction family whose base staging is not represented
+  // yet. This remains valid core MIR; native admission must reject that shape.
+  std::optional<MirConstructorDispatchState> dispatchState;
   MirBody body;
 
   friend bool operator==(const MirConstructorInstance &,
@@ -1721,6 +1789,7 @@ enum class MirHostedStartupOperationKind {
   PrepareAppendReceiver,
   PrepareAppendArgumentMove,
   CallAppend,
+  ComputeNextArgumentIndex,
   AdvanceArgumentIndex,
   ContinueArgumentLoop,
   PrepareEntryCount,
@@ -1882,6 +1951,9 @@ public:
   }
 
   [[nodiscard]] bool valid() const { return valid_; }
+  [[nodiscard]] SourceDebugProfile sourceDebugProfile() const {
+    return sourceDebugProfile_;
+  }
   [[nodiscard]] const TargetInfo &target() const { return target_; }
   [[nodiscard]] ExecutionProfile executionProfile() const {
     return executionProfile_;
@@ -2054,6 +2126,7 @@ private:
   friend struct MirProgramTestAccess;
 
   bool valid_ = true;
+  SourceDebugProfile sourceDebugProfile_ = SourceDebugProfile::None;
   TargetInfo target_ = TargetInfo::host();
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
   ProgramKind programKind_ = ProgramKind::Executable;
@@ -2085,6 +2158,15 @@ enumerateMirBodyAddresses(const MirProgram &program);
 [[nodiscard]] const MirBody *findMirBody(const MirProgram &program,
                                          MirBodyAddress address);
 [[nodiscard]] MirBody *findMirBody(MirProgram &program, MirBodyAddress address);
+
+// Shape of a declaration-only instance-field inventory row. Source/HIR-to-MIR
+// coherence independently proves that the exact field has no declaration
+// initializer. Consumers must use a verified source-sealed program; this does
+// not authorize omitting a required constructor write or publishing a loan.
+[[nodiscard]] bool
+isMirDeclarationOnlyFieldInitialization(const MirClassInstance &owner,
+                                        const MirBody &body,
+                                        const MirInstruction &instruction);
 
 // A constructor record can publish a field initializer that the body leaves
 // unstaged: no Initialize instruction carries that initializer, so the field

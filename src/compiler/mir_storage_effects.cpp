@@ -103,11 +103,13 @@ bool unknownSourceInvocation(const MirProgram &program, const MirBody &body,
            : instruction.replacementCleanup
                ? mirDropHasPolymorphicCleanup(*instruction.replacementCleanup)
                : !targets.addresses.empty();
-  // Generated construction without a source constructor executes no hidden
-  // GTI body. Exact source constructors still enter the ordinary call graph.
-  if (instruction.kind == MirInstructionKind::Construct ||
-      instruction.kind == MirInstructionKind::InitializeBase)
+  // Base initialization retains its existing separate contract. A proved
+  // bodyless Construct already returned above with boundary=false; an
+  // unproven Construct must not hide a possible GTI persistent write.
+  if (instruction.kind == MirInstructionKind::InitializeBase)
     return false;
+  if (instruction.kind == MirInstructionKind::Construct)
+    return true;
   return instruction.kind == MirInstructionKind::Call &&
          instruction.intrinsic == IntrinsicKind::None &&
          instruction.synchronization.kind == SynchronizationOperationKind::None;

@@ -1,0 +1,18 @@
+using NativeOperation = (int32_t) -> int32_t;
+extern "C" {
+  mut int32_t native_counter;
+  mut NativeOperation native_operation;
+  void native_storage_reset();
+  int32_t native_storage_zero();
+  int32_t native_storage_swap(int32_t value);
+  void native_storage_cleanup();
+}
+struct Guard { ~Guard() { native_storage_cleanup(); } };
+int main() {
+  Guard guard{};
+  native_storage_reset();
+  unsafe {
+    native_counter = 23;
+    return native_operation(native_storage_swap(1 / native_storage_zero()));
+  }
+}

@@ -1,11 +1,44 @@
 #pragma once
 
 #include "gti/mir.h"
+#include "gti/mir_verifier.h"
 
 #include <cstddef>
 #include <optional>
+#include <span>
 
 namespace lang::mir_detail {
+
+using ::lang::MirDebugPoint;
+
+using ::lang::MirDebugAvailabilityReason;
+using ::lang::MirDebugReadability;
+
+struct MirExistingPlaceQuery {
+  MirPlaceId place = 0;
+  MirDebugPoint point;
+  friend bool operator==(const MirExistingPlaceQuery &,
+                         const MirExistingPlaceQuery &) = default;
+};
+
+struct MirExistingPlaceFact {
+  MirExistingPlaceQuery request;
+  MirDebugReadability readability = MirDebugReadability::Unknown;
+  MirDebugAvailabilityReason reason = MirDebugAvailabilityReason::Unproven;
+};
+
+struct MirExistingPlaceQueryBatch {
+  MirVerificationResult verification;
+  std::vector<MirExistingPlaceFact> requested;
+  // A positive interval cannot cross these canonical inactive/consuming cuts.
+  std::vector<MirExistingPlaceQuery> requiredStops;
+};
+
+// Fresh observations of the verifier's canonical transfers. This transient
+// result is not a proof token and cannot authorize a lowered snapshot.
+[[nodiscard]] MirExistingPlaceQueryBatch
+verifyMirBodyWithPlaceQueries(const MirBody &body, std::size_t owner,
+                              std::span<const MirExistingPlaceQuery> requests);
 
 // Shape of one closed consuming-arm setup: cache every payload address, retire
 // one exact dependency group, then publish its successor bindings. This is not
@@ -33,13 +66,36 @@ selectedReferenceHandoff(const MirBody &body, const MirLoan &selected);
 [[nodiscard]] bool
 generatedUniqueConstruction(const MirInstruction &instruction);
 
-// A zero-input ordinary class value may use generated default construction
-// without a source constructor instance. This is only its producer shape:
+// A zero-input ordinary Construct explicitly represents generated default
+// construction without a source constructor instance. An unexplained Call is
+// never construction authority. This is only its producer shape:
 // program verification must prove the exact owner's generated policy and
 // absence of a required initializer schedule, while ordinary materialization,
 // full-expression drop, and call-loan verification remain mandatory.
 [[nodiscard]] bool
 generatedDefaultConstruction(const MirInstruction &instruction);
+
+// A passive union's one-input first-field initialization is independent of
+// generated default construction. Prove its exact concrete owner, overlapping
+// field layout, first field type and neutral construction metadata. This does
+// not grant source-call, cleanup, borrow or precise effect authority.
+[[nodiscard]] bool
+passiveUnionFieldConstruction(const MirProgram &program,
+                              const MirInstruction &instruction);
+
+// Only passive scalar destinations participate. NotApplicable grants no
+// reference, aggregate, text, callable or ownership-return authority. Existing
+// initialization conversion policy owns eligibility. Copy/Move bind the source
+// type to their exact selected place; ordinary operand and availability
+// verification remains mandatory.
+enum class MirScalarReturnConversion {
+  NotApplicable,
+  Exact,
+  Initialization,
+  Invalid
+};
+[[nodiscard]] MirScalarReturnConversion
+scalarReturnConversion(const MirBody &body, const MirOperand &operand);
 
 // Runtime representation queries have no runtime input and cannot acquire
 // ownership or borrow authority merely by naming a type.

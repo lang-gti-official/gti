@@ -111,20 +111,76 @@ bool Mutexes::handles(IntrinsicKind intrinsic) {
          intrinsic == IntrinsicKind::MutexGuardReadMut;
 }
 
+namespace {
+bool mutexCallMetadata(const MirProgram &program,
+                        const MirInstruction &instruction) {
+  const auto &target = program.target();
+  return target.executionProfile == ExecutionProfile::Concurrent &&
+      target.runtimeCapabilities.threads &&
+      ((target.os == "macos" && target.arch == "arm64") ||
+       (target.os == "linux" && target.arch == "x86_64")) &&
+      instruction.kind == MirInstructionKind::Call &&
+      instruction.operation == MirOperation::None && !instruction.receiver &&
+      !instruction.functionTarget && !instruction.constructorTarget &&
+      !instruction.lambdaTarget && !instruction.bodyTarget &&
+      !instruction.nativeCalleeType && !instruction.nativeCallbackAdapter &&
+      !instruction.threadTaskAdapter && instruction.scopedThreadTasks.empty() &&
+      !instruction.functionPointerFunctionTarget &&
+      !instruction.functionPointerLambdaTarget &&
+      instruction.closureCaptureTypes.empty() &&
+      instruction.closureCaptureModes.empty() &&
+      instruction.callableArguments.empty() && !instruction.callableBoundary &&
+      !instruction.callableInvocation && !instruction.destination &&
+      !instruction.callInputRole && !instruction.retainedOwnerPlace &&
+      !instruction.preparedParameterDrop && !instruction.successResultDrop &&
+      !instruction.successResultDestination &&
+      instruction.lifecycle.empty() && !instruction.elementCleanup &&
+      !instruction.replacementCleanup && !instruction.replacementPair &&
+      !instruction.objectAllocation && !instruction.objectLayoutType &&
+      !instruction.rawMemoryAccess &&
+      instruction.unsafeOperation == UnsafeOperationKind::None &&
+      instruction.dispatch == CallDispatch::Static &&
+      instruction.dispatchOwner == SemanticType::Unknown &&
+      instruction.borrowArguments.empty() && instruction.borrowFields.empty() &&
+      !instruction.borrowPlace && !instruction.restoresReferenceResult &&
+      instruction.restoredBorrowFields.empty() &&
+      !instruction.dependentTextPublication && !instruction.provisionalTextRelays;
+}
+} // namespace
+
+bool nativeMutexLockFailure(const MirProgram &program,
+                             const MirInstruction &instruction) {
+  const DefinedFailureOutcome outcome{
+      DefinedFailureCode::InfallibleHostOperationFailed,
+      DefinedFailureDetail::MutexLock};
+  const auto *site = instruction.localFailureSites.size() == 1
+                         ? program.failureMetadata().findSite(
+                               instruction.localFailureSites.front())
+                         : nullptr;
+  return mutexCallMetadata(program, instruction) &&
+         instruction.intrinsic == IntrinsicKind::MutexLockFailure &&
+         instruction.operands.empty() && instruction.parameterTypes.empty() &&
+         !instruction.result && instruction.info.type == SemanticType::Void &&
+         instruction.info.category == ValueCategory::Value &&
+         !instruction.loan && instruction.borrowOrigin == BorrowOriginKind::None &&
+         !instruction.borrowArgument &&
+         instruction.borrowAccess == AccessMode::ReadOnly &&
+         instruction.synchronization == SynchronizationOperation{} &&
+         instruction.definedFailure.propagation == FailurePropagationKind::None &&
+         instruction.definedFailure.localOrigins.size() == 1 &&
+         instruction.definedFailure.localOrigins.front().outcomes ==
+             std::vector<DefinedFailureOutcome>{outcome} &&
+         site &&
+         program.failureMetadata().siteFor(
+             instruction.definedFailure.localOrigins.front()) ==
+             instruction.localFailureSites.front() &&
+         site->outcomes == std::vector<DefinedFailureOutcome>{outcome};
+}
+
 bool nativeMutexCall(const MirProgram &program, const MirBody &body,
                      const MirInstruction &instruction) {
-  const auto &target = program.target();
   if (!Mutexes::handles(instruction.intrinsic) ||
-      target.executionProfile != ExecutionProfile::Concurrent ||
-      !target.runtimeCapabilities.threads ||
-      !((target.os == "macos" && target.arch == "arm64") ||
-        (target.os == "linux" && target.arch == "x86_64")) ||
-      instruction.kind != MirInstructionKind::Call ||
-      instruction.operation != MirOperation::None || instruction.receiver ||
-      instruction.functionTarget || instruction.constructorTarget ||
-      instruction.lambdaTarget || instruction.bodyTarget ||
-      instruction.destination || !instruction.lifecycle.empty() ||
-      instruction.unsafeOperation != UnsafeOperationKind::None ||
+      !mutexCallMetadata(program, instruction) ||
       !instruction.definedFailure.empty() ||
       !instruction.localFailureSites.empty() ||
       instruction.parameterTypes.size() != instruction.operands.size() ||
@@ -190,6 +246,15 @@ bool nativeMutexCall(const MirProgram &program, const MirBody &body,
       (result == SemanticType::Void ? instruction.result.has_value()
                                     : !instruction.result))
     return false;
+  if (instruction.result) {
+    const auto *value = body.findValue(*instruction.result);
+    if (!value || value->info.type != result ||
+        value->info.category != instruction.info.category ||
+        value->info.access != instruction.info.access ||
+        value->sourceValue != instruction.hirValue ||
+        value->definition != instruction.id)
+      return false;
+  }
   if (instruction.synchronization.kind !=
       (lock     ? SynchronizationOperationKind::MutexLock
        : unlock ? SynchronizationOperationKind::MutexUnlock

@@ -760,13 +760,36 @@ void compareRuntime(std::vector<BuildProvenanceDifference> &differences,
                recorded.materialsSha256, observed.materialsSha256);
 }
 
+std::vector<std::string>
+normalizeEmbeddingCommand(const std::vector<std::string> &command) {
+  auto normalized = command;
+  const auto output = std::find(command.begin(), command.end(), "-o");
+  if (output == command.end() || std::next(output) == command.end())
+    return normalized;
+  const auto staging = std::filesystem::path(*std::next(output)).parent_path();
+  // Only SDK-owned inputs next to this invocation's staged library are
+  // location-independent. User objects, flags and export policies stay exact.
+  if (command.size() > 1 && command[1] == (staging / "module.o").string())
+    normalized[1] = "<embedding-object>";
+  for (std::size_t index = 2; index + 2 < command.size(); ++index) {
+    if (command[index - 1] == "-Xlinker" &&
+        (command[index] == "-exported_symbols_list" ||
+         command[index] == "--version-script") &&
+        command[index + 1] == "-Xlinker" &&
+        command[index + 2] == (staging / "exports.txt").string())
+      normalized[index + 2] = "<embedding-exports>";
+  }
+  return normalized;
+}
+
 void compareNativeCommand(std::vector<BuildProvenanceDifference> &differences,
                           const std::vector<std::string> &recordedCommand,
-                          const std::vector<std::string> &observedCommand) {
-  const std::vector<std::string> recorded =
-      normalizeNativeCommandForComparison(recordedCommand);
-  const std::vector<std::string> observed =
-      normalizeNativeCommandForComparison(observedCommand);
+                          const std::vector<std::string> &observedCommand,
+                          bool embedding) {
+  const std::vector<std::string> recorded = normalizeNativeCommandForComparison(
+      embedding ? normalizeEmbeddingCommand(recordedCommand) : recordedCommand);
+  const std::vector<std::string> observed = normalizeNativeCommandForComparison(
+      embedding ? normalizeEmbeddingCommand(observedCommand) : observedCommand);
   const std::size_t shared = std::min(recorded.size(), observed.size());
   for (std::size_t index = 0; index < shared; ++index) {
     if (recorded[index] != observed[index]) {
@@ -920,6 +943,10 @@ std::string serializeBuildProvenanceJson(const BuildProvenance &provenance) {
   writeBuildFileJson(stream, provenance.runtime.archive);
   stream << "\n    }\n  },\n  \"artifact\": ";
   writeBuildFileJson(stream, provenance.artifact);
+  if (provenance.embeddingHeader) {
+    stream << ",\n  \"embedding_header\": ";
+    writeBuildFileJson(stream, *provenance.embeddingHeader);
+  }
   stream << "\n}\n";
   return stream.str();
 }
@@ -1193,6 +1220,14 @@ parseBuildProvenanceJson(std::string_view text, std::string &errorMessage) {
                         errorMessage)) {
     return std::nullopt;
   }
+  if (document->member("embedding_header") ||
+      (provenance.project && provenance.project->targetKind == "library")) {
+    BuildFileProvenance header;
+    if (!requireBuildFile(*document, "embedding_header", "report", header,
+                          errorMessage))
+      return std::nullopt;
+    provenance.embeddingHeader = std::move(header);
+  }
   return provenance;
 }
 
@@ -1246,11 +1281,23 @@ compareBuildProvenance(const BuildProvenance &recorded,
   compareFile(differences, "native compiler executable",
               recorded.nativeCompilerExecutable,
               observed.nativeCompilerExecutable);
-  compareNativeCommand(differences, recorded.nativeCommand,
-                       observed.nativeCommand);
+  compareNativeCommand(
+      differences, recorded.nativeCommand, observed.nativeCommand,
+      recorded.project && observed.project &&
+          recorded.project->targetKind == "library" &&
+          observed.project->targetKind == "library" &&
+          recorded.embeddingHeader && observed.embeddingHeader);
   compareRuntime(differences, recorded.runtime, observed.runtime);
   compareFile(differences, "built artifact", recorded.artifact,
               observed.artifact);
+  if (recorded.embeddingHeader.has_value() !=
+      observed.embeddingHeader.has_value())
+    compareValue(differences, "embedding header", "presence",
+                 recorded.embeddingHeader ? "present" : "absent",
+                 observed.embeddingHeader ? "present" : "absent");
+  else if (recorded.embeddingHeader)
+    compareFile(differences, "embedding header", *recorded.embeddingHeader,
+                *observed.embeddingHeader);
   return differences;
 }
 

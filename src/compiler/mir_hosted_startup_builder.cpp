@@ -863,6 +863,27 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                             {vectorDrop});
     }
 
+    // The verified loop edge establishes index < count <= INT32_MAX.
+    // Keep the arithmetic and commit explicit, as for source scalar updates.
+    const MirHostedStartupOperationId nextIndexOperation = beginOperation(
+        MirHostedStartupOperationKind::ComputeNextArgumentIndex,
+        MirHostedStartupFailureBehavior::None, iterationBlock->id);
+    const MirValueId nextIndexValue = appendValue(
+        nextIndexOperation, iterationBlock->id, nextInstruction,
+        generatedInfo(SemanticType::Int32));
+    MirInstruction nextIndex;
+    nextIndex.kind = MirInstructionKind::Compute;
+    nextIndex.result = nextIndexValue;
+    nextIndex.operands = {{.kind = MirOperandKind::Value,
+                           .value = indexValue,
+                           .type = SemanticType::Int32},
+                          {.kind = MirOperandKind::Constant,
+                           .literal = Literal{std::uint64_t{1}},
+                           .type = SemanticType::Int32}};
+    nextIndex.operation = MirOperation::Add;
+    nextIndex.info = generatedInfo(SemanticType::Int32);
+    appendInstruction(nextIndexOperation, *iterationBlock, std::move(nextIndex));
+
     const MirHostedStartupOperationId advanceOperation = beginOperation(
         MirHostedStartupOperationKind::AdvanceArgumentIndex,
         MirHostedStartupFailureBehavior::None, iterationBlock->id);
@@ -872,10 +893,13 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                     generatedInfo(SemanticType::Int32, ValueCategory::Place,
                                   AccessMode::Mutable));
     MirInstruction advance;
-    advance.kind = MirInstructionKind::Modify;
+    advance.kind = MirInstructionKind::Assign;
     advance.result = advancedIndex;
     advance.destination = indexPlace;
-    advance.operation = MirOperation::PreIncrement;
+    advance.operands = {{.kind = MirOperandKind::Value,
+                         .value = nextIndexValue,
+                         .type = SemanticType::Int32}};
+    advance.operation = MirOperation::Assign;
     advance.info = generatedInfo(SemanticType::Int32, ValueCategory::Place,
                                  AccessMode::Mutable);
     appendInstruction(advanceOperation, *iterationBlock, std::move(advance));

@@ -1,0 +1,15 @@
+extern "C" { uint64_t native_array_read(uint64_t** slots, uint64_t index); }
+uint64_t snapshot(mut uint64_t* slots[2], uint64_t* next, uint64_t index) {
+  slots[0] = next;
+  unsafe { return native_array_read(&slots[0], index); }
+}
+int main() {
+  mut uint64_t first = 3;
+  mut uint64_t second = 7;
+  uint64_t* slots[2] = {&first, &second};
+  mut uint64_t total = 0;
+  for (mut uint64_t index = 0; index < uint64_t(20000000); index = index + uint64_t(1)) {
+    total = total + snapshot(slots, &second, index);
+  }
+  return total == uint64_t(140000000) && slots[0] == &first ? 0 : 1;
+}

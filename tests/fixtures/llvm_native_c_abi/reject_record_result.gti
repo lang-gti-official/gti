@@ -1,0 +1,6 @@
+[[c_abi]] struct NativeRecord { mut int32_t value; };
+extern "C" { NativeRecord obtain_record(); }
+int main() {
+  NativeRecord record = obtain_record();
+  return record.value;
+}

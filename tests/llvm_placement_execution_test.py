@@ -34,6 +34,23 @@ Pinned relay(int id) { return make(id); }
 '''
 
 CASES = {
+    "borrowed-result-publication": r'''
+class ReferenceResult {
+  mut int& value;
+public:
+  ReferenceResult(mut int& source) : value(source) {}
+  ~ReferenceResult() { this.value = this.value + 1; }
+  int read() { return this.value; }
+};
+ReferenceResult make_view(mut int& source) { return ReferenceResult(source); }
+ReferenceResult relay_view(mut int& source) { return make_view(source); }
+int main() {
+  mut int source = 41;
+  { ReferenceResult result = relay_view(source);
+    if (result.read() != 41) { return 1; } }
+  return source == 42 ? 0 : 2;
+}
+''',
     "returns-and-arguments": r'''
 int inspect(Pinned& value) { return value.stable() ? 0 : 1; }
 Pinned choose(bool first) { if (first) { return relay(1); } return Pinned(2); }
@@ -243,6 +260,40 @@ int main() {
 }
 
 FAILURES = {
+    "borrowed-return-rollback": r'''
+class ReferenceResult {
+  mut int& source;
+public:
+  ReferenceResult(mut int& value) : source(value) {}
+  ~ReferenceResult() {
+    destroyed = destroyed * 10 + 1;
+    this.source = this.source + 1;
+  }
+};
+class FailingLocal {
+public:
+  ~FailingLocal() {
+    destroyed = destroyed * 10 + 2;
+    std::panic("return cleanup failure");
+  }
+};
+ReferenceResult make_view(mut int& source) {
+  FailingLocal local{};
+  return ReferenceResult(source);
+}
+class Observer {
+public:
+  ~Observer() {
+    if (destroyed != 21) { std::panic("incorrect return cleanup"); }
+  }
+};
+int main() {
+  mut int source = 0;
+  Observer observer{};
+  ReferenceResult result = make_view(source);
+  return 0;
+}
+''',
     "nested-array-rollback": r'''
 class Guard {
 public:
@@ -257,12 +308,18 @@ Pinned checked(int id) {
   if (id == 3) { std::panic("array element failure"); }
   return Pinned(id);
 }
+
 int main() {
   Guard guard{};
   Pinned values[2][2] = {{checked(1), checked(2)}, {checked(3), checked(4)}};
   return 0;
 }
 ''',
+}
+
+FAILURE_MESSAGES = {
+    "nested-array-rollback": ("array element failure", "incorrect partial array cleanup"),
+    "borrowed-return-rollback": ("return cleanup failure", "incorrect return cleanup"),
 }
 
 REJECT = {
@@ -285,7 +342,9 @@ REJECT = {
 # subobjects. Do not use that behavior as the native semantic oracle.
 COMPARATOR_GAPS = {"nested-fields", "field-defaults", "array-copy-and-move",
                    "stored-reference-publication", "projected-reference-publication",
-                   "shared-reference-publication"}
+                   "shared-reference-publication", "borrowed-result-publication"}
+# Borrowed-result publication also reaches an unsupported C++ MIR vocabulary
+# shape. Its explicit source-state/cleanup assertions remain the native oracle.
 
 
 def main():
@@ -319,11 +378,12 @@ def main():
             source = work / f"{name}.gti"
             source.write_text('#include <std/panic>\n' + PINNED + text, encoding="utf-8")
             observables = []
+            expected_message, wrong_cleanup = FAILURE_MESSAGES[name]
             for endpoint in endpoints:
                 result = execute(gti, root, work / f"{name}-{endpoint}", source, endpoint, env)
                 if (result.error or result.returncode != 70 or "GTI-R0017" not in result.stderr
-                        or "array element failure" not in result.stderr
-                        or "incorrect partial array cleanup" in result.stderr):
+                        or expected_message not in result.stderr
+                        or wrong_cleanup in result.stderr):
                     raise AssertionError(f"{name} {endpoint}: {result}")
                 observables.append(result.observable)
             if any(value != observables[0] for value in observables):

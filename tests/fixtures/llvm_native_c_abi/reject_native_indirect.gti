@@ -1,0 +1,13 @@
+[[c_abi]] struct NativeRecord { mut int32_t value; };
+using NativeOperation = (NativeRecord) -> NativeRecord;
+extern "C" {
+  NativeOperation obtain_operation();
+  NativeRecord* obtain_record_pointer();
+}
+int main() {
+  unsafe {
+    NativeOperation operation = obtain_operation();
+    [[discard]] operation(*obtain_record_pointer());
+    return 0;
+  }
+}

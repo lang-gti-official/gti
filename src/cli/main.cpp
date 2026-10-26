@@ -212,6 +212,7 @@ struct ProjectOptions {
   std::optional<std::string> cxx;
   std::optional<std::string> cc;
   std::optional<lang::CppStandard> standard;
+  std::optional<lang::BackendKind> backend;
   std::optional<lang::OptimizationLevel> optimization;
   std::optional<lang::ExecutionProfile> executionProfile;
   std::optional<bool> keepCpp;
@@ -413,6 +414,7 @@ void printUsage(std::ostream &stream) {
          "      --format <mode> Test results: human (default), json (JSON "
          "Lines).\n"
          "      --std <version>  Override c++20 or c++23.\n"
+         "      --backend <name> Select cpp or llvm for executable builds.\n"
          "      --execution-profile <name>\n"
          "                       Override single-threaded or concurrent "
          "semantics.\n"
@@ -1234,6 +1236,27 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.cc = argv[index];
       continue;
     }
+    if (argument == "--backend") {
+      if (!buildsExecutable(options.command)) {
+        std::cerr << "gti: --backend is not valid for gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
+      if (++index >= argc) {
+        std::cerr << "gti: missing name after --backend\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.backend) {
+        std::cerr << "gti: --backend may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.backend = lang::parseBackendKind(argv[index]);
+      if (!options.backend) {
+        std::cerr << "gti: --backend must be cpp or llvm\n";
+        return ArgumentResult::ExitFailure;
+      }
+      continue;
+    }
     if (argument == "--std") {
       if (!buildsExecutable(options.command)) {
         std::cerr << "gti: --std is not valid for gti "
@@ -1434,6 +1457,11 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
     std::cerr << "gti: --emit-mir and --keep-cpp cannot be used together\n";
     return ArgumentResult::ExitFailure;
   }
+  if (options.emitMir && options.backend) {
+    std::cerr
+        << "gti: --backend requires executable generation, not --emit-mir\n";
+    return ArgumentResult::ExitFailure;
+  }
   if (options.command == ProjectCommand::Test && options.test.exact &&
       !options.test.filter) {
     std::cerr << "gti: --exact requires --filter\n";
@@ -1461,10 +1489,10 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
     return ArgumentResult::ExitFailure;
   }
   if (options.noBuild &&
-      (options.cxx || options.cc || options.standard || options.optimization ||
-       options.executionProfile || options.rawPointerAudit ||
-       options.rawPointerAuditLibraryFindings || options.keepCpp ||
-       options.debugInfo || options.jobs ||
+      (options.cxx || options.cc || options.standard || options.backend ||
+       options.optimization || options.executionProfile ||
+       options.rawPointerAudit || options.rawPointerAuditLibraryFindings ||
+       options.keepCpp || options.debugInfo || options.jobs ||
        !options.configurationFlags.empty() ||
        !options.disabledWarnings.empty() || !options.useCache)) {
     std::cerr << "gti: --no-build cannot be combined with compiler, build, "
@@ -1474,7 +1502,8 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   if (options.command == ProjectCommand::Install) {
     if (options.list &&
         (options.target || options.package || options.projectPath ||
-         options.profileSelected || options.targetTriple || options.force)) {
+         options.profileSelected || options.targetTriple || options.force ||
+         options.backend)) {
       std::cerr << "gti: gti install --list accepts only --root\n";
       return ArgumentResult::ExitFailure;
     }
@@ -2886,7 +2915,8 @@ int buildProjectPlan(
                   plan.warnings(), plan.debugInfo(), plan.packageWarnings(),
                   plan.rawPointerAudit(), plan.programRequest(),
                   plan.declaredConfigurationFlags(),
-                  plan.rawPointerAuditLibraryFindings()),
+                  plan.rawPointerAuditLibraryFindings())
+                  .withBackend(plan.backend()),
               toolchain, plan.generatedSource(), plan.output(), cppCompiler,
               nativeInputs, plan.keepCpp(), true, options.verbose,
               lang::driver::ManagedOutputPolicy{
@@ -2925,6 +2955,7 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectBuildOverrides overrides;
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
+  overrides.backend = options.backend;
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.rawPointerAuditLibraryFindings =
@@ -2991,6 +3022,10 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
     if (options.standard) {
       command.emplace_back("--std");
       command.emplace_back(lang::cli::cppStandardName(*options.standard));
+    }
+    if (options.backend) {
+      command.emplace_back("--backend");
+      command.emplace_back(lang::backendKindName(*options.backend));
     }
     if (options.optimization) {
       command.emplace_back("-O" + std::to_string(lang::cli::optimizationNumber(
@@ -3213,6 +3248,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectBuildOverrides overrides;
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
+  overrides.backend = options.backend;
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.rawPointerAuditLibraryFindings =
@@ -3477,6 +3513,7 @@ int runProjectVerify(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectBuildOverrides overrides;
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
+  overrides.backend = options.backend;
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit =
       options.rawPointerAudit.value_or(recorded->rawPointerAudit);
@@ -3597,6 +3634,7 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectBuildOverrides overrides;
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
+  overrides.backend = options.backend;
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.rawPointerAuditLibraryFindings =

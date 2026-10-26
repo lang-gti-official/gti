@@ -1,0 +1,15 @@
+[[c_abi]] struct Pair {
+  mut int32_t first;
+  mut double second;
+};
+
+uint64_t initial_value() { return 17; }
+mut uint64_t current = initial_value();
+
+uint64_t exchange(uint64_t next) {
+  uint64_t previous = current;
+  current = next;
+  return previous;
+}
+
+Pair echo(Pair value) { return value; }

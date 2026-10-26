@@ -2,12 +2,15 @@
 
 Status: Accepted
 
-Implementation disposition (2026-10-11): manifest/configuration and exact
-semantic export roots are delivered. Context runtime, generated wrapper/header,
-shared artifact publication, editor and installed load/call/fail/unload/reload
-acceptance remain the E-EMBED-01B/C and B-LIB/T-EMBED/Q-EMBED campaign. The ABI
-contract below is accepted direction, not a claim that current artifacts already
-provide those completed embedding boundaries.
+Implementation disposition (2026-10-26): manifest/configuration and exact
+semantic export roots are delivered. The LLVM infallible embedding profile
+adds image-local lifecycle, generated C wrappers/header/descriptor and focused
+dynamic-host tests; see the [implemented profile](../architecture/backend.md#native-infallible-embedding).
+Normal LLVM project builds now publish immutable library/header generations
+with checked companion caches and build reports. Fallible containment, editor and installed
+load/call/fail/unload/reload acceptance remain the E-EMBED-01B/C and
+B-LIB/T-EMBED/Q-EMBED campaign. The ABI contract below is accepted direction,
+not a claim that all those embedding boundaries are complete.
 
 ## Context
 

@@ -1,0 +1,2 @@
+struct Owner { void* pointer = nullptr; ~Owner() {} };
+int sample(int input) { Owner value{}; return input + 1; }

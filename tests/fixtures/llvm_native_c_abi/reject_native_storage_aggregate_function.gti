@@ -1,0 +1,4 @@
+[[c_abi]] struct StorageRecord { mut int32_t value; };
+using Operation = (StorageRecord) -> StorageRecord;
+extern "C" { mut Operation native_record_operation; }
+int main() { return 0; }

@@ -1,0 +1,30 @@
+struct Marker {
+  mut int& slot;
+  int input;
+  bool fail;
+  Marker(int value, mut int& target, bool fails) : slot(target), input(value), fail(fails) {}
+  ~Marker() {
+    if (slot == 0) { slot = 1; }
+    else { slot = 2; }
+    if (fail) {
+      if (input == 2147483647) {
+        int secondary = input + 1;
+      }
+    }
+  }
+};
+
+int leaf(int input, mut int& slot) {
+  Marker marker{input, slot, false};
+  return input + 1;
+}
+
+int middle(int input, mut int& leaf_slot, mut int& middle_slot) {
+  Marker marker{input, middle_slot, true};
+  return leaf(input, leaf_slot);
+}
+
+int sample(int input, mut int& leaf_slot, mut int& middle_slot, mut int& outer_slot) {
+  Marker marker{input, outer_slot, false};
+  return middle(input, leaf_slot, middle_slot);
+}

@@ -1,0 +1,62 @@
+// A first virtual failure must unwind Leaf, Middle and Root in that order.
+// The harness derives a constructor-failure main from the exact marker below;
+// that case expects only the completed Middle and Root to be destroyed.
+// Destructors record explicit IDs, not a virtual-state observation.
+mut int events = 0;
+mut int expected_cleanup = 1234321;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Side { int side(); };
+interface OtherSide { bool other_side(bool expected); };
+
+class Root {
+public:
+  Root(int value) { record(this.phase()); }
+  ~Root() { record(1); }
+  virtual int phase() { return 1; }
+  virtual int fail(int divisor) { return 12 / divisor; }
+};
+
+class Middle : public Side, public Root {
+  int value;
+public:
+  Middle(int value) : Root(value), value(value) { record(this.phase()); }
+  ~Middle() { record(2); }
+  int phase() override { return 2; }
+  int side() override { return this.value; }
+};
+
+class Leaf : public OtherSide, public Middle {
+  int quotient;
+public:
+  Leaf(int divisor) : Middle(divisor), quotient(12 / divisor) {
+    record(this.phase());
+  }
+  ~Leaf() { record(3); }
+  int phase() override { return 3; }
+  bool other_side(bool expected) override { return expected; }
+  int fail(int divisor) override {
+    record(4);
+    return 120 / divisor;
+  }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+int invoke_failure(Root& value, int divisor) { return value.fail(divisor); }
+
+// DISPATCH_LIFECYCLE_MAIN
+int main() {
+  Guard guard{};
+  Leaf value{7};
+  return invoke_failure(value, 0);
+}

@@ -1,0 +1,4 @@
+extern "C" { mut int32_t native_counter; }
+int main() {
+  unsafe { return native_counter; }
+}

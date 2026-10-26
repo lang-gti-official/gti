@@ -1,0 +1,16 @@
+// Alternative-library observation only: no owning strings, formatting or panic.
+// A nonzero byte-write status ends the trace attempt; incomplete output must
+// fail any future runtime oracle rather than become a primary/secondary failure.
+namespace gti_hosted_cleanup_fixture {
+void write(std::string_view text) {
+  // For immutable size N, index<N guards the byte access. The final increment
+  // is at most N (even N=UINT64_MAX), never N+1. Fixed fixture markers/arguments
+  // contain ASCII code units, so their uint8_t conversion is representable.
+  // MIR still conservatively records the checked index/add failure effects.
+  for (mut uint64_t index = 0; index < text.size(); index++) {
+    if (gti_internal::runtime::write_stdout_byte(uint8_t(text[index])) != 0) {
+      return;
+    }
+  }
+}
+}

@@ -1,0 +1,19 @@
+using Operation = (uint64_t) -> uint64_t;
+extern "C" {
+  Operation native_cost_operation();
+  uint64_t native_cost_text(std::string_view value);
+  int32_t native_cost_finish(uint64_t scalar, uint64_t text);
+}
+int main() {
+  mut uint64_t scalar = 0;
+  mut uint64_t text = 0;
+  unsafe {
+    Operation operation = native_cost_operation();
+    if (operation == nullptr) return 3;
+    for (mut uint64_t index = 0; index < uint64_t(20000000); index = index + uint64_t(1)) {
+      scalar = scalar + operation(index);
+      text = text + native_cost_text("A\0B");
+    }
+  }
+  return native_cost_finish(scalar, text);
+}

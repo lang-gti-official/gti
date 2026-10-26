@@ -17,6 +17,7 @@ POLICIES = {
     "c_abi.h": ("borrowed records", "no functions", "none"),
     "charconv.h": ("call-bounded input/output buffers", "explicit status", "none"),
     "chrono.h": ("call-bounded output records", "explicit status", "none"),
+    "embedding.h": ("image-owned context; borrowed descriptors until unload", "generated lifecycle and export status; output publication only on success", "retained optional failure observer; no unwind through host boundary"),
     "cthread.h": ("opaque handles; explicit create/destroy/join", "status or documented terminal contract", "C callbacks; explicit attachment and containment"),
     "environment.h": ("call-bounded views and output buffers", "explicit status", "none"),
     "filesystem.h": ("explicit opaque directory handles and borrowed buffers", "explicit status", "none"),
@@ -99,6 +100,13 @@ def main():
     assert set(data) == {"gti_rt_atomic_wait_domain_v1"}, "runtime C data inventory drift"
     assert data["gti_rt_atomic_wait_domain_v1"]["signature"] == "gti_atomic_wait_bucket_v1[256]"
     assert data["gti_rt_atomic_wait_domain_v1"]["storage"] == "extern"
+    # Generated per-image entry points are declared publicly but are not
+    # runtime archive services. Keep the distinction explicit in this inventory.
+    embedding = (include / "gti/embedding.h").read_text()
+    for name in ("gti_get_module_descriptor_v1", "gti_context_create_v1",
+                 "gti_context_destroy_v1"):
+        assert re.search(r"\b" + name + r"\s*\(", embedding)
+        assert name not in symbols
     args.output.write_text(json.dumps({"schema": 1, "command": command,
                                       "services": [symbols[key] for key in sorted(symbols)],
                                       "data": [data[key] for key in sorted(data)]}, indent=2) + "\n")

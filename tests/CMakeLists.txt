@@ -552,6 +552,45 @@ add_test(NAME driver_library_boundary COMMAND gti_driver_library_smoke)
 add_executable("gti_driver_tests" "${PROJECT_SOURCE_DIR}/tests/driver_tests.cpp")
 target_link_libraries("gti_driver_tests" PRIVATE gti_driver)
 add_test(NAME driver_pipeline COMMAND gti_driver_tests)
+add_executable(gti_llvm_cache_tests llvm_cache_tests.cpp)
+target_link_libraries(gti_llvm_cache_tests PRIVATE gti_driver)
+target_compile_definitions(gti_llvm_cache_tests PRIVATE
+  GTI_LLVM_CACHE_FIXTURE="${PROJECT_SOURCE_DIR}/tests/fixtures/llvm_cache")
+add_test(NAME llvm_cache_round_trip COMMAND gti_llvm_cache_tests)
+set_tests_properties(llvm_cache_round_trip PROPERTIES TIMEOUT 180)
+add_test(NAME llvm_debug_artifacts
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/llvm_debug_artifacts_test.py" "$<TARGET_FILE:gti>")
+set_tests_properties(llvm_debug_artifacts PROPERTIES TIMEOUT 240)
+if(APPLE)
+  add_test(NAME cpp_debug_artifacts
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/llvm_debug_artifacts_test.py"
+            "$<TARGET_FILE:gti>" --backend cpp)
+  set_tests_properties(cpp_debug_artifacts PROPERTIES TIMEOUT 240)
+endif()
+# Explicit matching-runtime evidence, separate from default/rejection coverage.
+set(GTI_LLVM_RUNTIME_TEST_COMPILER "" CACHE FILEPATH
+    "Matching Clang++ for the native runtime identity fixture")
+if(GTI_LLVM_RUNTIME_TEST_COMPILER)
+  add_test(NAME llvm_native_runtime_identity
+    COMMAND gti_llvm_cache_tests --runtime-probe "${GTI_LLVM_RUNTIME_TEST_COMPILER}")
+  set_tests_properties(llvm_native_runtime_identity PROPERTIES TIMEOUT 180)
+endif()
+add_test(NAME llvm_cache_component_mapping
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/llvm_cache_component_mapping_test.py"
+          "${CMAKE_BINARY_DIR}" "${CMAKE_SYSTEM_PROCESSOR}")
+set_tests_properties(llvm_cache_component_mapping PROPERTIES TIMEOUT 30)
+add_test(NAME llvm_cache_project_workflows
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/llvm_cache_project_test.py" "$<TARGET_FILE:gti>")
+set_tests_properties(llvm_cache_project_workflows PROPERTIES TIMEOUT 300)
+add_test(NAME llvm_cache_installed_toolchain
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/llvm_cache_installed_test.py"
+          "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
+set_tests_properties(llvm_cache_installed_toolchain PROPERTIES TIMEOUT 600)
 add_executable(gti_test_runner_tests test_runner_tests.cpp)
 target_link_libraries(gti_test_runner_tests PRIVATE gti_driver)
 add_test(NAME test_runner COMMAND gti_test_runner_tests)
@@ -1638,6 +1677,10 @@ add_executable("gti_lowered_program_tests"
                "${PROJECT_SOURCE_DIR}/tests/lowered_program_contract_client.cpp")
 target_link_libraries("gti_lowered_program_tests" PRIVATE gti_compiler)
 add_test(NAME lowered_program_contract COMMAND gti_lowered_program_tests)
+add_executable(gti_llvm_dispatch_plan_tests llvm_dispatch_plan_tests.cpp)
+target_link_libraries(gti_llvm_dispatch_plan_tests PRIVATE gti_compiler)
+add_test(NAME llvm_dispatch_plans COMMAND gti_llvm_dispatch_plan_tests)
+set_tests_properties(llvm_dispatch_plans PROPERTIES TIMEOUT 120)
 add_executable(gti_field_symbol_identity_tests field_symbol_identity_tests.cpp)
 target_link_libraries(gti_field_symbol_identity_tests PRIVATE gti_compiler)
 add_test(NAME field_symbol_identity COMMAND gti_field_symbol_identity_tests)
@@ -1696,7 +1739,8 @@ target_link_libraries(gti_llvm_mutex_contract_tests PRIVATE gti_llvm_backend gti
 add_test(NAME llvm_mutex_contracts COMMAND gti_llvm_mutex_contract_tests "${PROJECT_SOURCE_DIR}")
 add_executable("gti_llvm_coverage_evidence"
                "${PROJECT_SOURCE_DIR}/tests/llvm_coverage_evidence.cpp")
-target_link_libraries("gti_llvm_coverage_evidence" PRIVATE gti_llvm_backend)
+target_link_libraries("gti_llvm_coverage_evidence" PRIVATE gti_llvm_backend gti_driver)
+target_include_directories("gti_llvm_coverage_evidence" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_include_directories("gti_llvm_coverage_evidence"
                            PRIVATE "${CMAKE_BINARY_DIR}/generated")
 add_dependencies("gti_llvm_coverage_evidence" gti_build_identity_refresh)
@@ -1738,10 +1782,52 @@ function(gti_write_llvm_evidence_registry)
 endfunction()
 cmake_language(DEFER CALL gti_write_llvm_evidence_registry)
 
+include(llvm_c04_evaluation.cmake)
+
+# O15 helper checks remain component evidence; production debug/mode wiring is
+# separately gated and is not enabled by these private source registrations.
+add_executable(gti_llvm_debug_info_tests llvm_debug_info_tests.cpp)
+target_include_directories(gti_llvm_debug_info_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_debug_info_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_debug_info COMMAND gti_llvm_debug_info_tests)
+set_tests_properties(llvm_debug_info PROPERTIES TIMEOUT 120)
+
+add_executable(gti_llvm_instrumentation_tests llvm_instrumentation_tests.cpp)
+target_include_directories(gti_llvm_instrumentation_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_instrumentation_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_instrumentation COMMAND gti_llvm_instrumentation_tests)
+set_tests_properties(llvm_instrumentation PROPERTIES TIMEOUT 120)
+
+# O15 SIMD uses the same verified MIR capability and private static LLVM closure
+# as production Body emission. The SDK tools must match the configured LLVM.
+add_executable(gti_llvm_simd_lowering_tests llvm_simd_lowering_tests.cpp)
+target_include_directories(gti_llvm_simd_lowering_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_simd_lowering_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_simd_lowering
+         COMMAND gti_llvm_simd_lowering_tests "${CMAKE_CURRENT_BINARY_DIR}/llvm-simd-component.ll")
+if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_simd_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_simd_execution_test.py"
+                   --emitter "$<TARGET_FILE:gti_llvm_simd_lowering_tests>"
+                   --clang "${LLVM_TOOLS_BINARY_DIR}/clang++" --opt "${LLVM_TOOLS_BINARY_DIR}/opt"
+                   --output-root "${CMAKE_BINARY_DIR}/Testing/llvm-simd-execution")
+  set_tests_properties(llvm_simd_execution PROPERTIES TIMEOUT 1200 PROCESSORS 1)
+  add_test(NAME llvm_simd_source
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_simd_source_test.py"
+                   --gti "$<TARGET_FILE:gti>" --gti-build-cache "${CMAKE_BINARY_DIR}/CMakeCache.txt"
+                   --output-root "${CMAKE_BINARY_DIR}/Testing/llvm-simd-source")
+  set_tests_properties(llvm_simd_source PROPERTIES TIMEOUT 1200 PROCESSORS 1)
+  gti_register_llvm_evidence_manifest(
+    llvm_simd_source "${PROJECT_SOURCE_DIR}/tests/llvm_simd_source_test.py")
+endif()
+
 add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
 target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
 add_test(NAME llvm_target_layout_abi COMMAND gti_llvm_session_tests)
+add_test(NAME llvm_polymorphic_storage_layout
+  COMMAND gti_llvm_session_tests --polymorphic-storage-layout "${PROJECT_SOURCE_DIR}")
+set_tests_properties(llvm_polymorphic_storage_layout PROPERTIES TIMEOUT 120)
 add_test(NAME llvm_payload_unique_owner
   COMMAND gti_llvm_session_tests --payload-unique-owner "${PROJECT_SOURCE_DIR}")
 set_tests_properties(llvm_payload_unique_owner PROPERTIES TIMEOUT 120)
@@ -1769,6 +1855,179 @@ if(Python3_Interpreter_FOUND)
     llvm_hosted_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_hosted_execution_test.py"
   )
+endif()
+
+add_executable(gti_llvm_dispatch_layout_tests llvm_dispatch_layout_tests.cpp)
+target_include_directories(gti_llvm_dispatch_layout_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_dispatch_layout_tests PRIVATE gti_llvm_backend gti_driver)
+add_test(NAME llvm_dispatch_layout COMMAND gti_llvm_dispatch_layout_tests)
+set_tests_properties(llvm_dispatch_layout PROPERTIES TIMEOUT 120)
+
+add_executable(gti_llvm_polymorphic_storage_tests llvm_polymorphic_storage_tests.cpp)
+target_include_directories(gti_llvm_polymorphic_storage_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_polymorphic_storage_tests PRIVATE gti_llvm_backend gti_driver)
+add_test(NAME llvm_polymorphic_storage_mechanisms COMMAND gti_llvm_polymorphic_storage_tests)
+set_tests_properties(llvm_polymorphic_storage_mechanisms PROPERTIES TIMEOUT 120)
+
+# Private component execution for cleanup composition only. This deliberately
+# does not enter the LLVM evidence manifest or public admission/coverage gates.
+add_library(gti_llvm_cleanup_release_oracle STATIC
+  llvm_cleanup_release_oracle.cpp)
+add_executable(gti_llvm_cleanup_composition_execution_tests
+  llvm_cleanup_composition_execution_tests.cpp)
+add_dependencies(gti_llvm_cleanup_composition_execution_tests
+  gti_llvm_cleanup_release_oracle)
+target_include_directories(gti_llvm_cleanup_composition_execution_tests SYSTEM
+  PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_cleanup_composition_execution_tests
+  PRIVATE gti_llvm_backend gti_driver gti_runtime)
+add_test(NAME llvm_cleanup_composition_execution
+  COMMAND gti_llvm_cleanup_composition_execution_tests
+          "${PROJECT_SOURCE_DIR}" "$<TARGET_FILE:gti_runtime>"
+          "$<TARGET_FILE:gti_llvm_cleanup_release_oracle>")
+set_tests_properties(llvm_cleanup_composition_execution PROPERTIES TIMEOUT 180)
+add_executable(gti_llvm_native_c_abi_tests llvm_native_c_abi_tests.cpp)
+add_executable(gti_llvm_embedding_emitter llvm_embedding_emitter.cpp)
+target_link_libraries(gti_llvm_embedding_emitter PRIVATE gti_driver gti_llvm_backend)
+add_executable(gti_runtime_embedding_tests runtime_embedding_tests.cpp)
+target_include_directories(gti_runtime_embedding_tests PRIVATE "${PROJECT_SOURCE_DIR}/runtime/src")
+target_link_libraries(gti_runtime_embedding_tests PRIVATE gti_runtime)
+target_compile_options(gti_runtime_embedding_tests PRIVATE -UNDEBUG)
+add_test(NAME runtime_embedding_context COMMAND gti_runtime_embedding_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_embedding_execution
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_embedding_execution_test.py"
+      "$<TARGET_FILE:gti_llvm_embedding_emitter>" --runtime "$<TARGET_FILE:gti_runtime>"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-embedding-evidence")
+  gti_register_llvm_evidence_manifest(llvm_embedding_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_embedding_execution_test.py")
+  add_test(NAME llvm_embedding_project
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_embedding_project_test.py"
+      "$<TARGET_FILE:gti>" --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-embedding-project-evidence")
+  set_tests_properties(llvm_embedding_project PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_embedding_cost
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_embedding_cost_test.py"
+      "$<TARGET_FILE:gti_llvm_embedding_emitter>" --runtime "$<TARGET_FILE:gti_runtime>"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-embedding-cost")
+endif()
+target_include_directories(gti_llvm_native_c_abi_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_native_c_abi_tests PRIVATE gti_llvm_backend)
+add_dependencies(gti_llvm_native_c_abi_tests gti_runtime)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_native_c_abi
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_abi_oracle_test.py"
+      "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --cc "${CMAKE_C_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-abi-evidence")
+  set_tests_properties(llvm_native_c_abi PROPERTIES TIMEOUT 600)
+  add_test(NAME llvm_native_c_contract_preflight
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_contract_oracle_test.py"
+      "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --runtime "$<TARGET_FILE:gti_runtime>" --preflight --profile scalar
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-preflight-evidence")
+  add_test(NAME llvm_native_c_scalar_execution
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_contract_oracle_test.py"
+      "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --compiler "$<TARGET_FILE:gti>" --profile scalar
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-scalar-evidence")
+  add_test(NAME llvm_native_c_counted_input
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_text_oracle_test.py"
+      "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --runtime "$<TARGET_FILE:gti_runtime>" --compiler "$<TARGET_FILE:gti>"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-counted-evidence")
+  set_tests_properties(llvm_native_c_contract_preflight
+    llvm_native_c_scalar_execution llvm_native_c_counted_input PROPERTIES TIMEOUT 600)
+  add_test(NAME llvm_native_c_indirect_execution
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_indirect_oracle_test.py"
+      "$<TARGET_FILE:gti>" --emitter "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-indirect-evidence")
+  set_tests_properties(llvm_native_c_indirect_execution PROPERTIES TIMEOUT 600)
+  add_test(NAME llvm_native_c_aggregate_execution
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_aggregate_oracle_test.py"
+      "$<TARGET_FILE:gti>" --emitter "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-aggregate-evidence")
+  set_tests_properties(llvm_native_c_aggregate_execution PROPERTIES TIMEOUT 1200)
+  gti_register_llvm_evidence_manifest(llvm_native_c_aggregate_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_aggregate_oracle_test.py")
+  add_test(NAME llvm_native_c_storage_execution
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_storage_oracle_test.py"
+      "$<TARGET_FILE:gti>" --emitter "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-storage-evidence")
+  set_tests_properties(llvm_native_c_storage_execution PROPERTIES TIMEOUT 1200)
+  gti_register_llvm_evidence_manifest(llvm_native_c_storage_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_storage_oracle_test.py")
+  add_test(NAME llvm_native_c_callback_execution
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_callback_execution_test.py"
+      "$<TARGET_FILE:gti>" --emitter "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-callback-execution-evidence")
+  set_tests_properties(llvm_native_c_callback_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_native_c_confined_execution
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_confined_execution_test.py"
+      "$<TARGET_FILE:gti>" --cc "${CMAKE_C_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-confined-evidence")
+  set_tests_properties(llvm_native_c_confined_execution PROPERTIES TIMEOUT 1200)
+  gti_register_llvm_evidence_manifest(llvm_native_c_callback_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_callback_execution_test.py")
+  add_test(NAME llvm_native_c_callback_cost
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_cost_test.py"
+      "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --cc "${CMAKE_C_COMPILER}" --callback
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-callback-cost-evidence")
+  set_tests_properties(llvm_native_c_callback_cost PROPERTIES TIMEOUT 180)
+  add_test(NAME llvm_native_c_storage_cost
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_cost_test.py"
+      "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --cc "${CMAKE_C_COMPILER}" --storage
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-storage-cost")
+  set_tests_properties(llvm_native_c_storage_cost PROPERTIES TIMEOUT 180)
+  add_test(NAME llvm_native_c_indirect_cost
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_cost_test.py"
+      "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --indirect --cc "${CMAKE_C_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-indirect-cost")
+  set_tests_properties(llvm_native_c_indirect_cost PROPERTIES TIMEOUT 180)
+  add_test(NAME llvm_raw_pointer_array_cost
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_cost_test.py"
+      "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --pointer-array --cc "${CMAKE_C_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-raw-pointer-array-cost")
+  set_tests_properties(llvm_raw_pointer_array_cost PROPERTIES TIMEOUT 180)
+  add_test(NAME llvm_native_c_aggregate_cost
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_cost_test.py"
+      "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --aggregate --cc "${CMAKE_C_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-aggregate-cost")
+  set_tests_properties(llvm_native_c_aggregate_cost PROPERTIES TIMEOUT 180)
+  gti_register_llvm_evidence_manifest(llvm_native_c_indirect_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_indirect_oracle_test.py")
+  gti_register_llvm_evidence_manifest(llvm_native_c_scalar_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_contract_oracle_test.py")
+  gti_register_llvm_evidence_manifest(llvm_native_c_counted_input
+    "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_text_oracle_test.py")
 endif()
 
 add_executable(gti_runtime_execution_tests runtime_execution_tests.cpp)
@@ -1845,9 +2104,12 @@ if(Python3_Interpreter_FOUND)
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_mutex_service_test.py"
                 "${PROJECT_SOURCE_DIR}" "$<TARGET_FILE:gti_llvm_mutex_contract_tests>"
                 "${CMAKE_BINARY_DIR}/mutex-service-evidence"
+                --public-gti "$<TARGET_FILE:gti>"
                 --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
                 --llvm-cc "${GTI_LLVM_TEST_CLANG}")
       set_tests_properties(llvm_mutex_service PROPERTIES TIMEOUT 240)
+      gti_register_llvm_evidence_manifest(
+        llvm_mutex_service "${PROJECT_SOURCE_DIR}/tests/llvm_mutex_service_test.py")
     endif()
   endif()
   gti_register_llvm_evidence_manifest(
@@ -1862,6 +2124,13 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_place_execution_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(llvm_place_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_raw_pointer_array_execution
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_raw_pointer_array_test.py"
+      "$<TARGET_FILE:gti>" --cc "${CMAKE_C_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-raw-pointer-array-evidence")
+  set_tests_properties(llvm_raw_pointer_array_execution PROPERTIES TIMEOUT 600)
+  gti_register_llvm_evidence_manifest(llvm_raw_pointer_array_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_raw_pointer_array_test.py")
   gti_register_llvm_evidence_manifest(
     llvm_place_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_place_execution_test.py"
@@ -1882,8 +2151,64 @@ if(Python3_Interpreter_FOUND)
       "$<TARGET_FILE:gti_llvm_coverage_evidence>" "${CMAKE_CTEST_COMMAND}"
       "${CMAKE_BINARY_DIR}" "${PROJECT_SOURCE_DIR}"
       "${GTI_LLVM_EVIDENCE_REGISTRY}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_readiness_baseline.json"
   )
   set_tests_properties(llvm_coverage_evidence PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME llvm_readiness_collection_controls
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_readiness_collect_test.py"
+      "$<TARGET_FILE:gti_llvm_coverage_evidence>" "${PROJECT_SOURCE_DIR}"
+      "${CMAKE_BINARY_DIR}" "${GTI_LLVM_EVIDENCE_REGISTRY}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_readiness_baseline.json"
+      "${CMAKE_CTEST_COMMAND}"
+  )
+  set_tests_properties(llvm_readiness_collection_controls PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME llvm_canonical_host_controls
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_canonical_host_test.py"
+            "$<TARGET_FILE:gti_llvm_coverage_evidence>" "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}" "${GTI_LLVM_EVIDENCE_REGISTRY}"
+            "${PROJECT_SOURCE_DIR}/tests/llvm_readiness_baseline.json" "${CMAKE_CTEST_COMMAND}"
+  )
+  set_tests_properties(llvm_canonical_host_controls PROPERTIES TIMEOUT 240)
+  # Alternative source-library legality/verified-MIR contracts ONLY. This is
+  # deliberately not a native execution manifest or a hosted coverage witness.
+  add_test(
+    NAME llvm_hosted_cleanup_source_contract
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_hosted_cleanup_evidence_test.py"
+            "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_coverage_evidence>"
+            "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}"
+  )
+  set_tests_properties(llvm_hosted_cleanup_source_contract PROPERTIES TIMEOUT 900)
+  add_test(
+    NAME llvm_case_context_controls
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_case_context_test.py"
+            "$<TARGET_FILE:gti_llvm_coverage_evidence>" "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}"
+  )
+  set_tests_properties(llvm_case_context_controls PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME llvm_scalar_context_controls
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_scalar_context_test.py"
+            "${PROJECT_SOURCE_DIR}"
+  )
+  set_tests_properties(llvm_scalar_context_controls PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME stdlib_surface_context_controls
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/stdlib_surface_context_test.py"
+            "${PROJECT_SOURCE_DIR}"
+  )
+  set_tests_properties(stdlib_surface_context_controls PROPERTIES TIMEOUT 180)
+
+  add_test(NAME llvm_dispatch_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_dispatch_execution_test.py"
+                   "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_dispatch_execution PROPERTIES TIMEOUT 1200)
+  gti_register_llvm_evidence_manifest(
+    llvm_dispatch_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_dispatch_execution_test.py"
+  )
   add_test(NAME llvm_placement_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_placement_execution_test.py"
                    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
