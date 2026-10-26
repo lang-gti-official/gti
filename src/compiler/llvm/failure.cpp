@@ -152,20 +152,44 @@ void Failures::leaveCleanup(llvm::IRBuilder<> &ir, llvm::Value *token) {
         {token});
 }
 void Failures::checkIncomingCleanup(llvm::IRBuilder<> &ir,
-                                     llvm::Value *secondary) {
+                                    llvm::Value *secondary) {
   ir.CreateCall(
       declareRuntimeService(session, RuntimeService::CheckFailureCleanup),
       {record(ir, secondary), origin(ir, secondary)});
 }
 void Failures::terminateCleanup(llvm::IRBuilder<> &ir, llvm::Value *primary,
                                 llvm::Value *secondary) {
+  ir.CreateCall(cleanupTerminator(), {primary, secondary});
+  ir.CreateUnreachable();
+}
+
+llvm::Function *Failures::cleanupTerminator() {
+  if (cleanupTerminator_)
+    return cleanupTerminator_;
+  auto *pointer = session.layouts().pointer();
+  auto *function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                              {pointer, pointer}, false),
+      llvm::GlobalValue::InternalLinkage, "__gti_failure_terminate_cleanup",
+      session.module());
+  // The emergency envelope is needed only at terminal double failure. Keep
+  // its stack storage and copies out of every caller's ordinary cleanup frame.
+  function->addFnAttr(llvm::Attribute::Cold);
+  function->addFnAttr(llvm::Attribute::NoInline);
+  function->addFnAttr(llvm::Attribute::NoReturn);
+  cleanupTerminator_ = function;
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", function));
+  auto *primary = function->getArg(0);
+  auto *secondary = function->getArg(1);
   auto *type = session.abi().failureEmergency();
   auto *envelope = ir.CreateAlloca(type);
   ir.CreateStore(ir.getInt32(2), ir.CreateStructGEP(type, envelope, 0));
   ir.CreateStore(ir.getInt32(0), ir.CreateStructGEP(type, envelope, 1));
   auto *recordType = session.abi().failureRecord();
   const auto alignment = session.dataLayout().getABITypeAlign(recordType);
-  const auto bytes = session.dataLayout().getTypeAllocSize(recordType).getFixedValue();
+  const auto bytes =
+      session.dataLayout().getTypeAllocSize(recordType).getFixedValue();
   ir.CreateMemMove(ir.CreateStructGEP(type, envelope, 2), alignment,
                    record(ir, primary), alignment, bytes);
   ir.CreateMemMove(ir.CreateStructGEP(type, envelope, 3), alignment,
@@ -174,6 +198,7 @@ void Failures::terminateCleanup(llvm::IRBuilder<> &ir, llvm::Value *primary,
       declareRuntimeService(session, RuntimeService::TerminateCleanupFailure),
       {envelope, origin(ir, primary), origin(ir, secondary)});
   ir.CreateUnreachable();
+  return function;
 }
 
 } // namespace lang::native_llvm

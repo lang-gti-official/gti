@@ -4609,6 +4609,14 @@ SSA values. The publication and cleanup edges remain MIR-owned and unchanged.
 Emergency containment initializes the envelope's version/reserved fields and
 bulk-copies each complete primary/secondary record into its distinct destination;
 it likewise avoids materializing the two message buffers as aggregate values.
+One internal cold, non-inlined terminal helper per emitted module constructs
+that emergency envelope. The caller passes the two live channels; the helper
+copies both records and their artifact identities into the existing runtime
+handoff. Its non-returning contract follows the terminal runtime service, not a
+new assumption about user cleanup. No `nounwind` promise is added. Keeping the
+envelope in this helper prevents terminal-only dynamic stack storage from
+forcing frame setup on ordinary successful cleanup paths; GTI body inlining
+policy is unchanged.
 The failure-cleanup enter/check/leave runtime declarations carry LLVM's `cold`
 cost hint: they execute only during defined-failure propagation, not ordinary
 successful cleanup. This allows target block placement and frame shrink-wrapping

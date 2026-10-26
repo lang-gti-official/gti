@@ -25,13 +25,15 @@ public:
   void terminateCleanup(llvm::IRBuilder<> &ir, llvm::Value *primary,
                         llvm::Value *secondary);
   [[nodiscard]] llvm::Value *enterCleanup(llvm::IRBuilder<> &ir,
-                                        llvm::Value *primary);
+                                          llvm::Value *primary);
   void leaveCleanup(llvm::IRBuilder<> &ir, llvm::Value *token);
   void checkIncomingCleanup(llvm::IRBuilder<> &ir, llvm::Value *secondary);
 
 private:
+  [[nodiscard]] llvm::Function *cleanupTerminator();
   Session &session;
   llvm::Constant *artifact_ = nullptr;
+  llvm::Function *cleanupTerminator_ = nullptr;
 };
 
 } // namespace lang::native_llvm

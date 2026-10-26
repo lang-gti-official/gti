@@ -10888,10 +10888,15 @@ copies with DataLayout-sized, overlap-safe bulk moves. Failure-cleanup runtime
 services carry a cold cost hint, without new unwind/return or alias promises.
 This recovers the owning-return probe's lost frame shrink-wrapping and reduces
 its generated code; paired local timings no longer show that return regression.
-The replacement-cleanup probe still regresses on successful execution. Performance
-acceptance remains open: neither smaller code nor passing cleanup checks waives
-it. Continue investigating generated frame/register costs and platform behavior
-before accepting or revising this change.
+Terminal double-failure envelope construction now lives in one internal cold,
+non-inlined helper, retaining both records and their artifact pointers without
+introducing an unwind promise. This removes terminal-only dynamic stack storage
+from ordinary cleanup callers. A three-checkpoint paired macOS comparison no
+longer shows the earlier successful replacement-cleanup regression; the helper
+candidate is below the original baseline for both transports and dispatch modes.
+This is bounded local evidence, not isolated-host or whole-program acceptance.
+Required platform and representative-workload comparison remains open; neither
+smaller code nor passing cleanup checks waives it.
 
 ##### LLVM-C05: Dynamic Calls Use Planned Adapters
 

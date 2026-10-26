@@ -94,8 +94,29 @@ def main():
         if mode == "status" and "@llvm.memmove." not in ir:
             raise AssertionError("status propagation lost its bulk failure-channel transfer")
         scalar_calls = None
-        if (("noinline" in ir) != (args.call_boundaries == "fixed") or
-                "uwtable(sync)" not in ir or "gti.c04.transport" not in ir or
+        attributes = dict(re.findall(r"^attributes #(\d+) = \{([^\n]*)\}",
+                                     ir, re.MULTILINE))
+        body_attributes = re.findall(
+            r"^define [^\n]*@__gti_(?:c04_\w+_v2_f|native_v1_body_)"
+            r"[^\s(]*\([^\n]*\) #(\d+)", ir, re.MULTILINE)
+        if not body_attributes or any(
+                ("noinline" in attributes[group]) != (args.call_boundaries == "fixed")
+                for group in body_attributes):
+            raise AssertionError("lost experimental GTI body call-boundary policy")
+        terminal_helpers = re.findall(
+            r"^define internal void @__gti_failure_terminate_cleanup\([^\n]*\) #(\d+) \{\n(.*?)^\}",
+            ir, re.MULTILINE | re.DOTALL)
+        if "alloca %gti.c.failure_emergency.v2" in ir:
+            if len(terminal_helpers) != 1:
+                raise AssertionError("emergency envelope must have one isolated terminal helper")
+            group, helper_body = terminal_helpers[0]
+            if (not all(flag in attributes[group].split()
+                        for flag in ("cold", "noinline", "noreturn")) or
+                    "nounwind" in attributes[group].split() or
+                    helper_body.count("alloca %gti.c.failure_emergency.v2") != 1 or
+                    ir.count("alloca %gti.c.failure_emergency.v2") != 1):
+                raise AssertionError("lost isolated emergency storage or exact terminal attributes")
+        if ("uwtable(sync)" not in ir or "gti.c04.transport" not in ir or
                 f'!"gti.c04.fixed-boundaries", i32 {int(args.call_boundaries == "fixed")}' not in ir):
             raise AssertionError("lost explicit experimental boundary/unwind-table metadata")
         if fixture == "scalar" and level == "O3":
