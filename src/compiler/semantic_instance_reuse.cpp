@@ -185,6 +185,8 @@ bool SemanticVisitor::Impl::prepareInstanceReuse() {
     return false;
   InstanceAnalysisGenerationKey key;
   key.context = instanceCacheContext;
+  key.context += "\nsource-debug:";
+  key.context += sourceDebugProfileName(sourceDebugProfile);
   key.context += requireFunctionDefinitions ? "\ndefinitions:required"
                                             : "\ndefinitions:optional";
   key.context += toolingOccurrences ? "\noccurrences:1" : "\noccurrences:0";
@@ -395,6 +397,9 @@ SemanticVisitor::Impl::reuseInstance(const InstanceAnalysisKey &key) {
       ++workMetrics->semanticInstanceReuseRejected;
     return std::nullopt;
   };
+  if (entry->model.sourceDebugProfile() != sourceDebugProfile ||
+      !entry->model.verifySourceDebug().empty())
+    return reject();
   if (entry->declaration == nullptr ||
       entry->declaration != instanceDeclarationSyntax(key))
     return reject();

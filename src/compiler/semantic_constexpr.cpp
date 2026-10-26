@@ -238,8 +238,9 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
       worker.definitions != definitions ||
       worker.constructors != constructors) {
     const PhaseTimeScope workerScope("constexpr-staged-worker");
-    worker.impl = std::make_unique<Impl>(target, sourceGraph, false,
-                                         workMetrics, sources, rawPointerAudit);
+    worker.impl = std::make_unique<Impl>(
+        target, sourceGraph, false, workMetrics, sources, rawPointerAudit,
+        false, TrustedBodyAnalysis::Complete, sourceDebugProfile);
     worker.impl->catalog = catalog.snapshotForInstanceAnalysis();
     worker.impl->semanticModel = stagingModel;
     worker.impl->macroLookup = macroLookup;

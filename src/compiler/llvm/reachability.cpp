@@ -1,4 +1,5 @@
 #include "reachability.h"
+#include "native_c_contract.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -87,8 +88,12 @@ Reachability reachableProgram(const LoweredProgram &program) {
             cleanup(*instruction.elementCleanup);
           if (instruction.replacementCleanup)
             cleanup(*instruction.replacementCleanup);
+          const bool scalarNativeCall = nativeCScalarIndirectCallContract(
+              mir, program.target(), *input, instruction);
           if (instruction.dispatch == CallDispatch::Virtual ||
-              instruction.nativeCalleeType || instruction.callableInvocation ||
+              (instruction.nativeCalleeType && !scalarNativeCall) ||
+              (instruction.callableInvocation && !instruction.lambdaTarget &&
+               !instruction.functionTarget && !scalarNativeCall) ||
               instruction.nativeCallbackAdapter ||
               instruction.threadTaskAdapter ||
               !instruction.scopedThreadTasks.empty())

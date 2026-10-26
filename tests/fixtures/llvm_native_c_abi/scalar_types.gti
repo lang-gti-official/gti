@@ -1,0 +1,47 @@
+extern "C" {
+  bool scalar_bool(bool value);
+  int8_t scalar_i8(int8_t value);
+  uint8_t scalar_u8(uint8_t value);
+  int16_t scalar_i16(int16_t value);
+  uint16_t scalar_u16(uint16_t value);
+  int32_t scalar_i32(int32_t value);
+  uint32_t scalar_u32(uint32_t value);
+  int64_t scalar_i64(int64_t value);
+  uint64_t scalar_u64(uint64_t value);
+  float scalar_f32(float value);
+  double scalar_f64(double value);
+  c_char scalar_char(c_char value);
+  c_longlong scalar_long_long(c_longlong value);
+  c_ulong scalar_unsigned_long(c_ulong value);
+  c_string scalar_string(c_string value);
+  int32_t scalar_string_check(c_string value);
+  int32_t* scalar_pointer();
+  int32_t scalar_pointer_check(int32_t* value);
+  void scalar_touch(int32_t value);
+  int32_t scalar_touched();
+}
+
+int main() {
+  if (scalar_bool(true)) return 1;
+  if (scalar_i8(int8_t(-97)) != int8_t(-96)) return 2;
+  if (scalar_u8(uint8_t(201)) != uint8_t(202)) return 3;
+  if (scalar_i16(int16_t(-12345)) != int16_t(-12344)) return 4;
+  if (scalar_u16(uint16_t(54321)) != uint16_t(54322)) return 5;
+  if (scalar_i32(int32_t(-1234567)) != int32_t(-1234566)) return 6;
+  if (scalar_u32(uint32_t(3456789012)) != uint32_t(3456789013)) return 7;
+  if (scalar_i64(int64_t(-4294967307)) != int64_t(-4294967306)) return 8;
+  if (scalar_u64(uint64_t(4294967307)) != uint64_t(4294967308)) return 9;
+  if (scalar_f32(float(1.5)) != float(1.75)) return 10;
+  if (scalar_f64(1.5d) != 1.75d) return 11;
+  if (scalar_char(c_char(97)) != c_char(98)) return 12;
+  if (scalar_long_long(c_longlong(2147483650)) != c_longlong(2147483651)) return 13;
+  if (scalar_unsigned_long(c_ulong(2147483650)) != c_ulong(2147483651)) return 14;
+  if (scalar_string_check(scalar_string("native scalar")) != 1) return 15;
+  unsafe {
+    int32_t* address = scalar_pointer();
+    if (address == nullptr || scalar_pointer_check(address) != 1) return 16;
+  }
+  scalar_touch(71);
+  if (scalar_touched() != 71) return 17;
+  return 0;
+}

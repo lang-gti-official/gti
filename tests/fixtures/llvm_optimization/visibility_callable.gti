@@ -1,0 +1,26 @@
+#include <std/functional>
+extern "C" { c_int gti_visibility_select(); void gti_visibility_drop(c_int id); }
+
+int identity(int value) { return value; }
+int checked(int value) { return value + 1; }
+
+class Guard {
+  c_int id;
+public:
+  Guard(c_int id) : id(id) {}
+  ~Guard() { gti_visibility_drop(this.id); }
+};
+
+int main() {
+  Guard outer{c_int(1)};
+  {
+    Guard inner{c_int(2)};
+    std::function_ptr<int(int)> pointer{identity};
+    if (gti_visibility_select() != 0) {
+      pointer = std::function_ptr<int(int)>{checked};
+    }
+    int result = pointer(2147483647);
+    if (result != 2147483647) { return 1; }
+  }
+  return 0;
+}

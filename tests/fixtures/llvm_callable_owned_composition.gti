@@ -1,0 +1,82 @@
+#include <std/memory>
+
+mut int cleanup_trace = 0;
+mut int payload_drops = 0;
+
+class Payload {
+  int value;
+public:
+  Payload(int value) : value(value) {}
+  ~Payload() {
+    payload_drops++;
+    cleanup_trace = cleanup_trace * 10 + 7;
+  }
+  int read() { return this.value; }
+};
+
+class Marker {
+  int identity;
+public:
+  Marker(int identity) : identity(identity) {}
+  Marker(Marker& other) = delete;
+  Marker(Marker&& other) = default;
+  ~Marker() { cleanup_trace = cleanup_trace * 10 + this.identity; }
+  int read() { return this.identity; }
+};
+
+// Deliberately unrelated to the standard callable wrappers. The native
+// backend must consume the verified callable/environment plan, not this name.
+class Stored<F> {
+  mut F callable;
+public:
+  Stored(F callable) : callable(std::move(callable)) {}
+  int invoke(int value) { return this.callable(value); }
+  int operator()(int value) && {
+    return std::move(this.callable)(value);
+  }
+};
+
+Stored<F> retain<F>(F callable) {
+  return Stored<F>(std::move(callable));
+}
+
+int main() {
+  {
+    mut auto owner = std::make_shared<Payload>(40);
+    mut auto outside = owner.clone();
+    Marker first{1};
+    Marker second{2};
+    auto stored = retain(
+        [first = std::move(first), owner = std::move(owner),
+         second = std::move(second)](int value) -> int {
+          mut auto temporary = owner.clone();
+          if (owner.use_count() != uint64_t(2) ||
+              temporary.use_count() != uint64_t(2)) {
+            return -1;
+          }
+          temporary.reset();
+          return owner->read() + value;
+        });
+    if (outside.use_count() != uint64_t(2) || payload_drops != 0) return 1;
+    outside.reset();
+    if (payload_drops != 0 || std::move(stored)(2) != 42) return 2;
+  }
+
+  // The closure fields are first, shared owner, second. Reverse cleanup must
+  // therefore release second, then the last shared owner, then first exactly
+  // once: 2, 7, 1.
+  if (cleanup_trace != 271 || payload_drops != 1) return 3;
+
+  {
+    Marker borrowed{4};
+    {
+      auto callback = [&borrowed](int value) -> int {
+        return borrowed.read() + value;
+      };
+      if (callback(5) != 9) return 4;
+    }
+    // A borrowed capture is not an owner and cannot clean its referent.
+    if (cleanup_trace != 271) return 5;
+  }
+  return cleanup_trace == 2714 && payload_drops == 1 ? 0 : 6;
+}

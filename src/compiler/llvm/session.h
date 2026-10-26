@@ -14,9 +14,13 @@ namespace lang::native_llvm {
 
 class Layouts;
 class Abi;
+class DebugInfo;
 
 // Private, invalidatable whole-program ABI, not an external GTI ABI promise.
 inline constexpr unsigned executionAbiVersion = 1;
+
+[[nodiscard]] std::unique_ptr<llvm::TargetMachine>
+makeMachine(const TargetInfo &target, LlvmBackendOptions options);
 
 class Session final {
 public:
@@ -30,6 +34,7 @@ public:
   [[nodiscard]] llvm::Module &module() { return module_; }
   [[nodiscard]] Layouts &layouts() { return *layouts_; }
   [[nodiscard]] Abi &abi() { return *abi_; }
+  [[nodiscard]] DebugInfo *debugInfo() { return debugInfo_.get(); }
   [[nodiscard]] const llvm::DataLayout &dataLayout() const;
   [[nodiscard]] LlvmBackendOptions options() const { return options_; }
   [[nodiscard]] const std::vector<std::string> &diagnostics() const {
@@ -38,6 +43,12 @@ public:
 
   void verify() const;
   void requireDefinition(llvm::Function &function);
+  // Only the ABI declaration factory supplies this exact source identity.
+  // Unregistered/generated functions retain their existing linkage.
+  void requireSourceDefinition(HirFunctionInstanceId id,
+                               llvm::Function &function);
+  [[nodiscard]] bool hasSourceDefinition(HirFunctionInstanceId id,
+                                         const llvm::Function &function) const;
   // Rejects unresolved GTI definitions, then verifies before and after the
   // selected LLVM pipeline. Never returns partial object bytes on failure.
   [[nodiscard]] BackendArtifact emitObject();
@@ -54,6 +65,9 @@ private:
   llvm::Module module_;
   std::unique_ptr<Layouts> layouts_;
   std::unique_ptr<Abi> abi_;
+  std::unique_ptr<DebugInfo> debugInfo_;
+  std::vector<std::pair<HirFunctionInstanceId, llvm::Function *>>
+      sourceDefinitions_;
 };
 
 // Kept separate so target-contract mutations can be tested before any body

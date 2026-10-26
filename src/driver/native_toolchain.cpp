@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <sstream>
+#include <stdexcept>
 #include <string_view>
 #include <system_error>
 #include <utility>
@@ -525,6 +526,10 @@ void appendNativeLinkPlan(std::vector<std::string> &command,
       }
     }
   }
+  if (inputs.instrumentation) {
+    command.insert(command.end(), inputs.instrumentation->linkArguments.begin(),
+                   inputs.instrumentation->linkArguments.end());
+  }
   command.insert(command.end(), inputs.linkerArguments.begin(),
                  inputs.linkerArguments.end());
   command.emplace_back("-o");
@@ -554,6 +559,9 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
       request.compiler(), std::string(standardFlag(request.standard())),
       std::string(optimizationFlag(request.optimization()))};
   const NativeInputs &inputs = request.inputs();
+  if (inputs.instrumentation)
+    throw std::invalid_argument("diagnostic native policy requires separate "
+                                "source compilation and object linking");
   // Driver-owned target selection precedes every forwarded native argument
   // and every input, because it selects which toolchain files the compiler
   // resolves the rest of the command against.

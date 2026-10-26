@@ -1,0 +1,14 @@
+extern "C" {
+  uint64_t native_cost_scalar(uint64_t value);
+  uint64_t native_cost_text(std::string_view value);
+  int32_t native_cost_finish(uint64_t scalar, uint64_t text);
+}
+int main() {
+  mut uint64_t scalar = 0;
+  mut uint64_t text = 0;
+  for (mut uint64_t index = 0; index < uint64_t(20000000); index = index + uint64_t(1)) {
+    scalar = scalar + native_cost_scalar(index);
+    text = text + native_cost_text("A\0B");
+  }
+  return native_cost_finish(scalar, text);
+}

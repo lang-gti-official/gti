@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "admitted": ["arithmetic", "branches", "arrays", "text", "classes", "tls", "cleanup", "simd"],
+  "pending": {
+    "allocation_containers": ["O-LLVM-08 verified allocation, ownership and container composition"],
+    "callables": ["O-LLVM-09 executable callable families through the central ABI"],
+    "polymorphism": ["O-LLVM-10 executable dispatch and polymorphic ownership"],
+    "io": ["O-LLVM-12 exact runtime I/O service transport"],
+    "concurrency": ["O-LLVM-13 verified thread/atomic/runtime composition"]
+  },
+  "unmeasured_obligations": [
+    "actual allocator-call counts across generated and runtime services",
+    "whole-compiler build peak memory and installed-toolchain costs",
+    "cross-family costs after their production admission",
+    "debug stepping, locals, inline frames, failures and callback debugger probes on both hosts"
+  ]
+}

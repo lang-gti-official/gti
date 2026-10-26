@@ -80,6 +80,8 @@ scriptIdentity(const ProjectBuildPlan &project, const BuildScriptPlan &plan,
   if (plan.source) {
     identity.add("gti-compiler", options.compilerIdentity);
     identity.add("host-cxx", options.hostCppCompiler);
+    if (project.backend() != BackendKind::Cpp)
+      identity.add("host-backend", backendKindName(project.backend()));
   }
   for (const std::string &argument : plan.command) {
     identity.add("argv", argument);
@@ -512,18 +514,32 @@ std::optional<std::vector<std::string>> buildScriptCommand(
   }
 
   const std::filesystem::path generated =
-      script.outputDirectory / ".build-script.gti.cpp";
+      script.outputDirectory / (project.backend() == BackendKind::Cpp
+                                    ? ".build-script.gti.cpp"
+                                    : ".build-script.gti.o");
   const std::filesystem::path executable =
       script.outputDirectory / "build-script-host";
+  std::optional<BuildCachePolicy> hostCache;
+  if (project.backend() == BackendKind::Llvm) {
+    hostCache = BuildCachePolicy{
+        .root = project.workspaceRoot() / "build/gti/cache",
+        .sourceRoot = script.packageRoot,
+        .compilerIdentity = options.compilerIdentity,
+        .projectModelIdentity =
+            "gti-build-script-host-v1:" + script.packageIdentity,
+    };
+  }
   const ExecutableBuildResult built = buildExecutable(ExecutableBuildRequest(
       CompilationRequest(*script.source, options.hostToolchain->standardLibrary,
                          TargetInfo::host(), OptimizationLevel::O0,
-                         CppStandard::Cpp20),
+                         CppStandard::Cpp20)
+          .withBackend(project.backend()),
       *options.hostToolchain, generated, executable, options.hostCppCompiler,
       {}, false, true, options.verbose,
       ManagedOutputPolicy{.trustedRoot = project.workspaceRoot(),
                           .outputRoot =
-                              project.workspaceRoot() / "build" / "gti"}));
+                              project.workspaceRoot() / "build" / "gti"},
+      std::nullopt, std::move(hostCache)));
   if (!built.succeeded()) {
     if (!built.compilation.succeeded() &&
         !built.compilation.diagnostics.empty()) {
@@ -614,7 +630,12 @@ executeBuildScripts(const ProjectBuildPlan &plan,
     const std::filesystem::path state = script.outputDirectory / stateFilename;
     const std::string expectedState =
         std::string(cacheSchema) + "\n" + *identity + "\n";
-    if (readFile(state) == expectedState) {
+    // The legacy script-output state does not identify transitive GTI inputs
+    // and backend/runtime artifacts. Native host programs use the exact
+    // executable cache, but rerun rather than trust that older output state.
+    const bool reusableState =
+        !script.source || plan.backend() == BackendKind::Cpp;
+    if (reusableState && readFile(state) == expectedState) {
       std::vector<Diagnostic> staleDiagnostics;
       if (std::optional<ScriptNativeOutput> native =
               parseOutput(script, plan.target(), staleDiagnostics)) {

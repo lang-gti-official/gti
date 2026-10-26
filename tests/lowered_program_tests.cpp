@@ -4,6 +4,8 @@
 #include "gti/lowered_program_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
+#include "gti/semantic_analyzer.h"
+#include "gti/source_debug.h"
 
 #include "lowered_program_contract_client.h"
 
@@ -23,6 +25,10 @@ static_assert(
     std::is_same_v<decltype(lang::MirUnionFieldLayout::field), lang::SymbolId>);
 
 namespace lang {
+
+struct SemanticModelTestAccess {
+  static auto &debug(SemanticModel &model) { return model.sourceDebug_; }
+};
 
 struct LoweredProgramTestAccess {
   static std::vector<LoweredBody> &bodies(LoweredProgram &program) {
@@ -71,6 +77,271 @@ void expect(bool condition, std::string_view message) {
   if (!condition) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
+  }
+}
+
+struct SourceDebugTestTables {
+  std::vector<int> rows;
+  friend bool operator==(const SourceDebugTestTables &,
+                         const SourceDebugTestTables &) = default;
+};
+
+void testSourceDebugRecordOwnership() {
+  using lang::SourceDebugCollection;
+  using Record = lang::SourceDebugRecord<SourceDebugTestTables>;
+  Record uncollected;
+  expect(lang::isValidSourceDebugRecord(uncollected) && !uncollected.tables,
+         "uncollected records have no table storage");
+  Record notApplicable;
+  notApplicable.collection = SourceDebugCollection::NotApplicable;
+  expect(lang::isValidSourceDebugRecord(notApplicable) && !notApplicable.tables,
+         "not-applicable records have no table storage");
+  const Record uncollectedCopy(uncollected);
+  const Record notApplicableCopy(notApplicable);
+  expect(uncollectedCopy == uncollected && !uncollectedCopy.tables &&
+             notApplicableCopy == notApplicable && !notApplicableCopy.tables,
+         "copying absent collection preserves state without allocating tables");
+  Record collected;
+  collected.collection = SourceDebugCollection::CollectedLexicalV1;
+  expect(!lang::isValidSourceDebugRecord(collected),
+         "collected state requires tables, including for an empty body");
+  collected.tables = std::make_unique<SourceDebugTestTables>();
+  expect(lang::isValidSourceDebugRecord(collected) &&
+             collected.tables->rows.empty() && collected != uncollected,
+         "collected empty tables differ from uncollected facts");
+  collected.tables->rows = {1, 2, 3};
+  Record copy(collected);
+  expect(copy == collected && copy.tables.get() != collected.tables.get() &&
+             copy.tables->rows.data() != collected.tables->rows.data(),
+         "copy construction deeply owns equal table contents");
+  collected.tables->rows[0] = 9;
+  expect(copy.tables->rows[0] == 1 && copy != collected,
+         "mutating source rows does not alter a copied snapshot");
+  Record assigned;
+  assigned = copy;
+  expect(assigned == copy && assigned.tables.get() != copy.tables.get(),
+         "copy assignment does not share mutable tables");
+  copy.tables->rows.push_back(4);
+  expect(assigned.tables->rows.size() == 3,
+         "copy-assigned table contents remain independent");
+  const auto *owned = assigned.tables.get();
+  Record moved(std::move(assigned));
+  expect(moved.tables.get() == owned &&
+             lang::isValidSourceDebugRecord(moved) &&
+             lang::isValidSourceDebugRecord(assigned) && !assigned.tables,
+         "move construction transfers tables and leaves a valid empty source");
+  Record moveAssigned;
+  moveAssigned = std::move(moved);
+  expect(moveAssigned.tables.get() == owned &&
+             lang::isValidSourceDebugRecord(moveAssigned) &&
+             lang::isValidSourceDebugRecord(moved) && !moved.tables,
+         "move assignment transfers tables and resets collection state");
+  for (const auto state : {SourceDebugCollection::Uncollected,
+                           SourceDebugCollection::NotApplicable,
+                           static_cast<SourceDebugCollection>(255)}) {
+    Record forged;
+    forged.collection = state;
+    forged.tables = std::make_unique<SourceDebugTestTables>();
+    expect(!lang::isValidSourceDebugRecord(forged),
+           "unexpected table storage and unknown collection states reject");
+  }
+  Record unknown;
+  unknown.collection = static_cast<SourceDebugCollection>(255);
+  expect(!lang::isValidSourceDebugRecord(unknown),
+         "an unknown collection state also rejects without tables");
+  expect(lang::isValidSourceDebugProfile(lang::SourceDebugProfile::None) &&
+             lang::isValidSourceDebugProfile(
+                 lang::SourceDebugProfile::LexicalV1) &&
+             !lang::isValidSourceDebugProfile(
+                 static_cast<lang::SourceDebugProfile>(255)),
+         "only the two reviewed collection profiles are valid");
+}
+
+void testSemanticSourceDebugProducers() {
+  const auto syntax =
+      lang::Frontend({.stopAfter = lang::FrontendPhase::Parsing})
+          .analyze("source-debug-semantic.gti", R"gti(
+T identity<T>(T value) { T copy = value; return copy; }
+void empty() {}
+int32_t parent(int32_t input) {
+  mut int32_t local = input;
+  { int32_t local = 3; }
+  if (input > 0) { local = input + 1; } else { local = input - 1; }
+  mut int32_t index = 0;
+  while (index < 2) { index++; }
+  auto make = []() -> int32_t { int32_t inside = 7; return inside; };
+  return local + make();
+}
+int main() { return parent(4); }
+)gti");
+  expect(syntax.syntaxValid, "source-debug producer fixture parses");
+  if (!syntax.syntaxValid)
+    return;
+  lang::SemanticVisitor plain;
+  lang::SemanticVisitor collected(
+      lang::TargetInfo::host(), nullptr, true, nullptr, nullptr,
+      lang::RawPointerAuditMode::Off, false,
+      lang::TrustedBodyAnalysis::Complete, lang::SourceDebugProfile::LexicalV1);
+  expect(plain.check(syntax.program), "disabled source-debug fixture analyzes");
+  expect(collected.check(syntax.program),
+         "collected source-debug fixture analyzes");
+  const auto issues = collected.model().verifySourceDebug();
+  for (const auto &issue : issues)
+    std::cerr << "source debug: " << issue << '\n';
+  expect(issues.empty(), "accepted source producers pass exact-domain checks");
+  expect(plain.model().sourceDebugBodies().empty() &&
+             !lang::SemanticModelTestAccess::debug(
+                  const_cast<lang::SemanticModel &>(plain.model()))
+                  .tables,
+         "disabled semantic collection owns no source tables");
+  const auto &plainSymbols = plain.model().database().symbols();
+  const auto &debugSymbols = collected.model().database().symbols();
+  bool sameSymbols = plainSymbols.size() == debugSymbols.size();
+  for (std::size_t i = 0; sameSymbols && i < plainSymbols.size(); ++i)
+    sameSymbols = plainSymbols[i].id == debugSymbols[i].id &&
+                  plainSymbols[i].name == debugSymbols[i].name &&
+                  plainSymbols[i].type == debugSymbols[i].type;
+  expect(
+      sameSymbols && plain.errors().size() == collected.errors().size(),
+      "collection preserves semantic symbol identities/types and diagnostics");
+  const auto &bodies = collected.model().sourceDebugBodies();
+  const lang::SemanticSourceDebugBody *parent = nullptr;
+  const lang::SemanticSourceDebugBody *empty = nullptr;
+  const lang::SemanticSourceDebugBody *lambda = nullptr;
+  lang::FunctionId generic = 0;
+  for (const auto &body : bodies) {
+    if (body.kind == lang::SourceDebugBodyKind::Lambda) {
+      lambda = &body;
+      continue;
+    }
+    if (body.kind != lang::SourceDebugBodyKind::Function)
+      continue;
+    const auto *source = static_cast<const lang::FunctionDecl *>(body.source);
+    if (source->name().lexeme == "parent")
+      parent = &body;
+    if (source->name().lexeme == "empty")
+      empty = &body;
+    if (source->name().lexeme == "identity")
+      generic = collected.model().findFunction(*source)->id;
+  }
+  expect(empty && empty->facts.tables &&
+             empty->facts.collection ==
+                 lang::SourceDebugCollection::CollectedLexicalV1 &&
+             empty->facts.tables->locals.empty() &&
+             empty->facts.tables->statements.empty(),
+         "an analyzed empty body is collected with real empty facts");
+  expect(parent && lambda && lambda->creator == parent->source &&
+             lambda->facts.tables->scopes.front().parent == 0,
+         "lambda has an exact creator and an independent lexical root");
+  if (parent) {
+    std::vector<lang::SourceScopeId> shadowed;
+    for (const auto &local : parent->facts.tables->locals)
+      if (local.name == "local")
+        shadowed.push_back(local.scope);
+    expect(shadowed.size() == 2 && shadowed[0] != shadowed[1],
+           "shadowed declarations retain distinct accepted lexical scopes");
+    auto copy = collected.model();
+    auto &rows = lang::SemanticModelTestAccess::debug(copy).tables->bodies;
+    auto found = std::find_if(rows.begin(), rows.end(), [&](const auto &body) {
+      return body.source == parent->source;
+    });
+    expect(found != rows.end() &&
+               found->facts.tables.get() != parent->facts.tables.get(),
+           "semantic model copies deeply own phase-body tables");
+    if (found != rows.end()) {
+      const auto saved = *found;
+      found->facts.collection = lang::SourceDebugCollection::Uncollected;
+      expect(!copy.verifySourceDebug().empty(),
+             "forged collected-state pair rejects");
+      *found = saved;
+      found->facts.tables->scopes.front().parent = 1;
+      expect(!copy.verifySourceDebug().empty(), "cyclic source parent rejects");
+      *found = saved;
+      found->facts.tables->snapshot++;
+      expect(!copy.verifySourceDebug().empty(),
+             "foreign source snapshot rejects");
+      *found = saved;
+      found->facts.tables->source = empty->source;
+      expect(!copy.verifySourceDebug().empty(), "foreign source body rejects");
+      *found = saved;
+      found->facts.tables->locals.front().type = lang::SemanticType::Bool;
+      expect(!copy.verifySourceDebug().empty(),
+             "forged concrete binding type rejects");
+      *found = saved;
+      expect(
+          copy.verifySourceDebug().empty() &&
+              parent->facts.tables->locals.front().type !=
+                  lang::SemanticType::Bool,
+          "forgery controls leave the independent source snapshot unchanged");
+    }
+  }
+  auto stripped = collected.model();
+  lang::SemanticModelTestAccess::debug(stripped) = {};
+  expect(!stripped.verifySourceDebug().empty(),
+         "a stripped semantic snapshot cannot satisfy LexicalV1 capability");
+  auto lowered = lang::HirLowerer(lang::TargetInfo::host())
+                     .lower(syntax.program, collected.model(), collected);
+  expect(lowered.program.valid() &&
+             lang::verifyHirSourceDebug(collected.model(), lowered.program)
+                 .valid(),
+         "concrete HIR retains its exact accepted source scopes and bindings");
+  if (lowered.program.valid()) {
+    for (const auto &function : lowered.program.functionInstances()) {
+      if (!function.body.sourceDebug.tables ||
+          function.body.sourceDebug.tables->locals.empty())
+        continue;
+      auto &body = const_cast<lang::HirBody &>(function.body);
+      const auto saved = body.sourceDebug;
+      body.sourceDebug.tables->locals.front().type = lang::SemanticType::Bool;
+      expect(!lang::verifyHirSourceDebug(collected.model(), lowered.program)
+                  .valid(),
+             "HIR cannot forge its concrete source-local type");
+      body.sourceDebug = saved;
+      body.sourceDebug.tables->domain.body++;
+      expect(!lang::verifyHirSourceDebug(collected.model(), lowered.program)
+                  .valid(),
+             "HIR cannot transplant a source table into a foreign place body");
+      body.sourceDebug = saved;
+      body.sourceDebug.collection = lang::SourceDebugCollection::NotApplicable;
+      body.sourceDebug.tables.reset();
+      expect(!lang::verifyHirSourceDebug(collected.model(), lowered.program)
+                  .valid(),
+             "a real source HIR body cannot claim not-applicable collection");
+      body.sourceDebug = saved;
+      break;
+    }
+    expect(
+        lang::verifyHirSourceDebug(collected.model(), lowered.program).valid(),
+        "HIR forgery controls restore the deep-owned source snapshot");
+  }
+  expect(generic != 0, "generic source body was collected");
+  if (generic != 0) {
+    const auto narrow = collected.analyzeFunctionInstance(
+        generic, {}, {}, {lang::SemanticType::Int32}, {});
+    const auto wide = collected.analyzeFunctionInstance(
+        generic, {}, {}, {lang::SemanticType::Int64}, {});
+    expect(narrow.model.verifySourceDebug().empty() &&
+               wide.model.verifySourceDebug().empty(),
+           "concrete analyses verify in their own accepted domains");
+    const auto &left = narrow.model.sourceDebugBodies();
+    const auto &right = wide.model.sourceDebugBodies();
+    expect(!left.empty() && !right.empty() &&
+               left.front().facts.tables->instance !=
+                   right.front().facts.tables->instance &&
+               left.front().facts.tables->locals.front().type ==
+                   lang::SemanticType::Int32 &&
+               right.front().facts.tables->locals.front().type ==
+                   lang::SemanticType::Int64,
+           "same source spelling retains exact concrete substitution and local "
+           "type");
+    if (!left.empty() && !right.empty()) {
+      auto forged = narrow.model;
+      lang::SemanticModelTestAccess::debug(forged)
+          .tables->bodies.front()
+          .facts = right.front().facts;
+      expect(!forged.verifySourceDebug().empty(),
+             "a sibling concrete instance cannot supply this body's facts");
+    }
   }
 }
 
@@ -1671,6 +1942,8 @@ int main() {
 } // namespace
 
 int main() {
+  testSourceDebugRecordOwnership();
+  testSemanticSourceDebugProducers();
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();

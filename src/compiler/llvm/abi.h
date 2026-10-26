@@ -22,6 +22,13 @@ struct AbiParameter {
   bool indirect = false;
   AbiExtension extension = AbiExtension::None;
 };
+struct NativeCMemoryParameter {
+  unsigned index = 0;
+  llvm::Type *storage = nullptr;
+  std::uint64_t alignment = 1;
+  bool result = false;
+  bool byValue = false;
+};
 struct FunctionAbi {
   llvm::FunctionType *type = nullptr;
   std::vector<AbiParameter> parameters;
@@ -29,6 +36,8 @@ struct FunctionAbi {
   bool statusResult = false;
   std::optional<unsigned> resultDestination;
   std::optional<unsigned> failureDestination;
+  // Empty for every private GTI signature; these are native C attributes only.
+  std::vector<NativeCMemoryParameter> nativeMemory;
   void applyTo(llvm::Function &function) const;
   void applyTo(llvm::CallBase &call) const;
 };

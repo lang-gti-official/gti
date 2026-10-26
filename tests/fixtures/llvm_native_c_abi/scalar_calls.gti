@@ -1,0 +1,11 @@
+extern "C" {
+  int32_t unrelated_getter();
+  double unrelated_math(double left, double right);
+}
+int main() {
+  unsafe {
+    if (unrelated_getter() != 37) return 1;
+    if (unrelated_math(1.25d, 3.0d) != 5.5d) return 2;
+  }
+  return 0;
+}

@@ -245,13 +245,16 @@ foreach(gti_llvm_target IN ITEMS LLVMSupport LLVMTargetParser LLVMDemangle)
 endforeach()
 
 # Resolve the smallest LLVM component roots needed by the backend foundation.
-# `explicit_map_components_to_libraries` deliberately avoids a distribution's
-# monolithic libLLVM preference: component targets retain an auditable closure
-# in both ordinary builds and self-contained packages.
-if(NOT COMMAND explicit_map_components_to_libraries)
+# Map canonical component targets before walking their auditable dependency
+# closure; do not resolve a bare shared C API target such as Remarks.
+if(NOT COMMAND llvm_map_components_to_libnames)
   include("${LLVM_CMAKE_DIR}/LLVM-Config.cmake")
 endif()
-explicit_map_components_to_libraries(
+if(GTI_BUNDLE_LLVM)
+  # LLVM's native-architecture variable is local to its added subdirectory.
+  set(LLVM_NATIVE_ARCH "${GTI_LLVM_NATIVE_TARGET}")
+endif()
+llvm_map_components_to_libnames(
   GTI_LLVM_BACKEND_DIRECT_LIBRARIES core nativecodegen passes)
 if(NOT GTI_LLVM_BACKEND_DIRECT_LIBRARIES)
   message(FATAL_ERROR
@@ -604,16 +607,27 @@ add_library(
   "src/compiler/llvm/admission.cpp"
   "src/compiler/llvm/coverage.cpp"
   "src/compiler/llvm/session.cpp"
+  "src/compiler/llvm/debug_info.cpp"
+  "src/compiler/llvm/instrumentation.cpp"
   "src/compiler/llvm/layout.cpp"
   "src/compiler/llvm/abi.cpp"
+  "src/compiler/llvm/native_c_abi.cpp"
   "src/compiler/llvm/runtime_abi.cpp"
+  "src/compiler/llvm/hosted.cpp"
   "src/compiler/llvm/reachability.cpp"
   "src/compiler/llvm/failure.cpp"
   "src/compiler/llvm/scalar.cpp"
+  "src/compiler/llvm/simd.cpp"
+  "src/compiler/llvm/closure_environment.cpp"
+  "src/compiler/llvm/constructor_field_publication.cpp"
+  "src/compiler/llvm/callables.cpp"
+  "src/compiler/llvm/parameter_packs.cpp"
   "src/compiler/llvm/body.cpp"
   "src/compiler/llvm/places.cpp"
+  "src/compiler/llvm/parameter_packs.cpp"
   "src/compiler/llvm/placement.cpp"
   "src/compiler/llvm/lifetimes.cpp"
+  "src/compiler/llvm/memory.cpp"
   "src/compiler/llvm/thread_locals.cpp"
   "src/compiler/llvm/text.cpp"
 )

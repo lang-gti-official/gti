@@ -34,6 +34,15 @@ int main() {
   int& viewed = view(cell);
   if (viewed != 4) return 4;
 
+  mut int calls = 0;
+  mut auto selecting = [mut &calls](int& value) -> int& {
+    calls += 1;
+    return value;
+  };
+  mut std::function_ref<int&(int&) mut> exclusive{selecting};
+  int& selected = exclusive(cell);
+  if (selected != 4 || calls != 1) return 6;
+
   Record record{7, 8};
   std::function_ptr<int&(Record&)> field{pick_first};
   int& first = field(record);
