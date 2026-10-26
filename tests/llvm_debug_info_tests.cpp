@@ -1012,6 +1012,7 @@ enum class ProductionDebugCase {
   OwnedPack,
   ScalarPack,
   Lambda,
+  Callback,
   Lexical
 };
 
@@ -1022,10 +1023,27 @@ void productionValueEmission(
   const bool ownedPack = selected == ProductionDebugCase::OwnedPack;
   const bool scalarPack = selected == ProductionDebugCase::ScalarPack;
   const bool lambda = selected == ProductionDebugCase::Lambda;
+  const bool callback = selected == ProductionDebugCase::Callback;
   const bool lexical = selected == ProductionDebugCase::Lexical;
   const auto frontend =
       Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
-          .analyze("value-emission.gti", lambda       ? R"gti(
+          .analyze("value-emission.gti", callback     ? R"gti(
+using Operation = (int32_t) -> int32_t;
+extern "C" {
+  int32_t debug_input(); void debug_checkpoint(int32_t value);
+  int32_t debug_invoke(Operation operation, int32_t value);
+}
+int32_t inspect(int32_t input) {
+  int32_t local = input & 31;
+  debug_checkpoint(local);
+  return local;
+}
+int main() {
+  Operation callback = inspect;
+  unsafe { return debug_invoke(callback, debug_input()) == 5 ? 0 : 1; }
+}
+)gti"
+                                         : lambda     ? R"gti(
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
 int main() {
   int32_t captured = 9;
@@ -1355,6 +1373,8 @@ int main(int argc, char **argv) {
                           ProductionDebugCase::ScalarPack);
   productionValueEmission(argc > 1 ? std::string(argv[1]) + ".lambda.ll" : "",
                           ProductionDebugCase::Lambda);
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".callback.ll" : "",
+                          ProductionDebugCase::Callback);
   std::cout << "sealed debug identities, locations, locals, recursive layout, "
                "root relocation and inlined source/parameter chains passed\n";
 }
