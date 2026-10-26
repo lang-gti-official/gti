@@ -2920,9 +2920,9 @@ private:
   }
 
   void appendInitializerSourceDebug(const SemanticModel &model,
-                                     const VariableDecl &declaration,
-                                     HirBody &body,
-                                     std::vector<HirValueId> roots) {
+                                    const VariableDecl &declaration,
+                                    HirBody &body,
+                                    std::vector<HirValueId> roots) {
     if (output.program.sourceDebugProfile_ == SourceDebugProfile::None)
       return;
     const auto *accepted = model.findSourceDebugBody(

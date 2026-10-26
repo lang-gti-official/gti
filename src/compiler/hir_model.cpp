@@ -347,9 +347,8 @@ verifyHirSourceDebug(const SemanticModel &semantics,
       return;
     }
     if (!sourceBody) {
-      if (record.tables &&
-          (record.tables->sourceFacts().source ||
-           record.tables->initializers.empty()))
+      if (record.tables && (record.tables->sourceFacts().source ||
+                            record.tables->initializers.empty()))
         reject("source-free HIR body owns source-debug tables");
       return;
     }
@@ -428,8 +427,8 @@ verifyHirSourceDebug(const SemanticModel &semantics,
   using InitializerRoots =
       std::vector<std::pair<const VariableDecl *, std::vector<HirValueId>>>;
   const auto checkInitializers = [&](const HirBody &body,
-                                      const InitializerRoots &expected,
-                                      const HirClassInstance *owner = nullptr) {
+                                     const InitializerRoots &expected,
+                                     const HirClassInstance *owner = nullptr) {
     const auto &record = body.sourceDebug;
     if (!isValidSourceDebugRecord(record)) {
       reject("HIR initializer source collection/table state is invalid");
@@ -473,10 +472,10 @@ verifyHirSourceDebug(const SemanticModel &semantics,
             .kind = static_cast<std::uint8_t>(
                 InstanceAnalysisKind::ClassFieldInitializers),
             .declaration = owner ? owner->declaration : 0,
-            .classTypes = owner ? owner->typeArguments
-                               : std::vector<SemanticType>{},
+            .classTypes =
+                owner ? owner->typeArguments : std::vector<SemanticType>{},
             .classValues = owner ? owner->valueArguments
-                                : std::vector<CompileTimeValue>{}};
+                                 : std::vector<CompileTimeValue>{}};
         if (!owner || facts.instance != instance)
           reject("HIR initializer source region has a foreign substitution");
       } else {
@@ -539,7 +538,7 @@ verifyHirSourceDebug(const SemanticModel &semantics,
         if (const auto *statement = storage.initializer.findStatement(root);
             statement && statement->value)
           roots.emplace_back(storage.source,
-                              std::vector<HirValueId>{*statement->value});
+                             std::vector<HirValueId>{*statement->value});
     checkInitializers(storage.initializer, roots);
   }
   for (const auto &instance : program.classInstances()) {
@@ -547,14 +546,14 @@ verifyHirSourceDebug(const SemanticModel &semantics,
     for (const auto &field : instance.fields)
       if (field.declaration && field.initializer)
         fields.emplace_back(field.declaration,
-                             std::vector<HirValueId>{*field.initializer});
+                            std::vector<HirValueId>{*field.initializer});
     checkInitializers(instance.fieldInitializers, fields, &instance);
     InitializerRoots statics;
     for (const auto &field : instance.staticFields)
       if (field.declaration && field.initializer &&
           instance.staticFieldInitializers.findValue(*field.initializer))
         statics.emplace_back(field.declaration,
-                              std::vector<HirValueId>{*field.initializer});
+                             std::vector<HirValueId>{*field.initializer});
     checkInitializers(instance.staticFieldInitializers, statics, &instance);
   }
   for (const auto &function : program.functionInstances()) {

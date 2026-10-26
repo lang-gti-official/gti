@@ -3714,6 +3714,24 @@ destruction is not a substitute for releasing checked ownership resources.
 
 ## Controlled Optimization Edits
 
+The private `verifyMirBodyWithPlaceQueries` entry observes the same body verifier
+used by ordinary validation. It does not accept a cached proof or mutate MIR.
+Its first existing-storage profile covers direct integer/bool/char scalar roots
+whose initialization and ownership are both represented by the current
+canonical transfers. Unsupported storage and explicit scalar lifetime drops
+remain `Unknown`, with an `Unproven` reason.
+
+Scalar worklist solving and stable-state observation replay share one transfer
+implementation. Ownership observations run only during the existing stable
+validation replay. A requested readable point requires both proofs; an inactive
+point does not pretend to distinguish a moved/dropped/never-initialized history
+that its current facts cannot establish. Required cuts retain consuming and
+ambiguous CFG-entry boundaries even when later reinitialization restores
+readability. Empty queries take the ordinary verifier path and allocate no
+observation tables. These transient observations are groundwork for source-local
+debug transport, not native debugger acceptance or an alternate lifetime model.
+
+
 The compiler-owned optimizer vocabulary gate is described in
 [Optimization](optimization.md#language-growth-conformance-gate). Body
 verification runs its structural admission check before CFG, ownership, and

@@ -458,8 +458,8 @@ struct HirSourceLocal {
   SourceSpan declaration;
   bool parameter = false;
 
-  friend bool operator==(const HirSourceLocal &, const HirSourceLocal &) =
-      default;
+  friend bool operator==(const HirSourceLocal &,
+                         const HirSourceLocal &) = default;
 };
 
 struct HirInitializerSourceDebug {

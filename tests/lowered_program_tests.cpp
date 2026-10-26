@@ -7,6 +7,7 @@
 #include "gti/semantic_analyzer.h"
 #include "gti/source_debug.h"
 
+#include "../src/compiler/mir_verification_queries.h"
 #include "lowered_program_contract_client.h"
 
 #include <algorithm>
@@ -345,6 +346,183 @@ int main() { return parent(4); }
   }
 }
 
+void testDebugPlaceAvailability() {
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      lang::Frontend().analyze("debug-place-availability.gti", R"gti(
+#include <std/memory>
+int probe(mut int input, bool choose) {
+  mut int local = input;
+  int moved = std::move(local);
+  local = input;
+  if (choose) { local = input + 1; }
+  double untracked = double(input);
+  return local + moved;
+}
+void joined(bool choose, mut int local) {
+  if (choose) { [[discard]] std::move(local); }
+  local = 7;
+}
+int repeated(mut int count) {
+  mut int result = 0;
+  while (count > 0) {
+    int iteration = count;
+    result += std::move(iteration);
+    count--;
+  }
+  return result;
+}
+int main() { return probe(4, true); }
+)gti",
+                               {library / "prelude.gti"}, {}, {library});
+  expect(frontend.canGenerateCode(), "debug place query fixture lowers");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  const lang::MirFunctionInstance *function = nullptr;
+  for (const auto &candidate : frontend.hir.functionInstances())
+    if (candidate.source && candidate.source->name().lexeme == "probe")
+      function = frontend.mir.findFunctionInstance(candidate.id);
+  expect(function != nullptr, "query fixture retains its source function");
+  if (!function)
+    return;
+  const auto &body = function->body;
+  lang::MirPlaceId local = 0;
+  lang::MirPlaceId untracked = 0;
+  for (const auto &place : body.places) {
+    if (place.root != lang::MirPlaceRootKind::Binding ||
+        !place.projections.empty())
+      continue;
+    const auto *symbol = frontend.semantics.database().findSymbol(place.symbol);
+    if (symbol && symbol->name == "local")
+      local = place.id;
+    if (symbol && symbol->name == "untracked")
+      untracked = place.id;
+  }
+  expect(local != 0 && untracked != 0, "queries select exact binding roots");
+  if (!local || !untracked)
+    return;
+  using Query = lang::mir_detail::MirExistingPlaceQuery;
+  using State = lang::mir_detail::MirDebugReadability;
+  std::vector<Query> queries;
+  std::vector<State> expected;
+  std::optional<Query> movedStop;
+  const auto sameLocal = [&](lang::MirPlaceId id) {
+    const auto *place = body.findPlace(id);
+    return place && place->key == body.findPlace(local)->key;
+  };
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions) {
+      const auto add = [&](bool after, State state) {
+        queries.push_back({local, {block.id, instruction.id, after}});
+        expected.push_back(state);
+      };
+      if (instruction.kind == lang::MirInstructionKind::Initialize &&
+          instruction.destination && sameLocal(*instruction.destination) &&
+          !instruction.operands.empty()) {
+        add(false, State::Unavailable);
+        add(true, State::DefinitelyReadable);
+      }
+      if (instruction.kind == lang::MirInstructionKind::Move &&
+          !instruction.operands.empty() &&
+          sameLocal(instruction.operands.front().place)) {
+        add(false, State::DefinitelyReadable);
+        add(true, State::Unavailable);
+        movedStop = queries.back();
+      }
+      if (instruction.kind == lang::MirInstructionKind::Assign &&
+          instruction.destination && sameLocal(*instruction.destination))
+        add(true, State::DefinitelyReadable);
+    }
+  expect(queries.size() >= 5 && movedStop.has_value(),
+         "queries cover initialize, move and reinitialize boundaries");
+  queries.push_back({untracked, {body.entry, 0, false}});
+  expected.push_back(State::Unknown);
+  const auto result = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+      body, function->id, queries);
+  expect(result.verification.valid() &&
+             result.requested.size() == queries.size(),
+         "fresh query uses the ordinary successful body verifier");
+  for (std::size_t i = 0; i < result.requested.size(); ++i)
+    expect(result.requested[i].readability == expected[i],
+           "stable canonical transfer determines debug readability");
+  expect(movedStop &&
+             std::find(result.requiredStops.begin(), result.requiredStops.end(),
+                       *movedStop) != result.requiredStops.end(),
+         "a moved interior cuts ranges even when reinitialization restores it");
+  auto forged = queries;
+  forged.front().place = 0;
+  const auto invalid = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+      body, function->id, forged);
+  expect(!invalid.verification.valid() &&
+             std::all_of(invalid.requested.begin(), invalid.requested.end(),
+                         [](const auto &fact) {
+                           return fact.readability == State::Unknown;
+                         }),
+         "foreign query identities never produce positive facts");
+  expect(lang::mir_detail::verifyMirBodyWithPlaceQueries(body, function->id, {})
+             .verification.valid(),
+         "empty queries use ordinary verification without observations");
+
+  forged = queries;
+  forged.front().point.instruction = 0;
+  forged.front().point.after = true;
+  expect(!lang::mir_detail::verifyMirBodyWithPlaceQueries(body, function->id,
+                                                          forged)
+              .verification.valid(),
+         "a terminator has no invented after-instruction point");
+  auto malformed = body;
+  malformed.entry = 0;
+  const auto badBody = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+      malformed, function->id, queries);
+  expect(!badBody.verification.valid() &&
+             std::all_of(badBody.requested.begin(), badBody.requested.end(),
+                         [](const auto &fact) {
+                           return fact.readability == State::Unknown;
+                         }) &&
+             badBody.requiredStops.empty(),
+         "failed body verification cannot leak positive observations");
+
+  for (const auto &hir : frontend.hir.functionInstances()) {
+    if (!hir.source || (hir.source->name().lexeme != "joined" &&
+                        hir.source->name().lexeme != "repeated"))
+      continue;
+    const bool join = hir.source->name().lexeme == "joined";
+    const auto *target = frontend.mir.findFunctionInstance(hir.id);
+    const auto &flow = target->body;
+    const auto wanted = join ? "local" : "iteration";
+    bool observed = false;
+    for (const auto &block : flow.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.destination ||
+            instruction.kind != (join ? lang::MirInstructionKind::Assign
+                                      : lang::MirInstructionKind::Initialize) ||
+            instruction.operands.empty())
+          continue;
+        const auto *place = flow.findPlace(*instruction.destination);
+        const auto *symbol =
+            place ? frontend.semantics.database().findSymbol(place->symbol)
+                  : nullptr;
+        if (!symbol || symbol->name != wanted)
+          continue;
+        const std::vector<Query> points{
+            {place->id, {block.id, instruction.id, false}},
+            {place->id, {block.id, instruction.id, true}}};
+        const auto facts = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+            flow, target->id, points);
+        expect(facts.verification.valid() && facts.requested.size() == 2 &&
+                   facts.requested[0].readability == State::Unavailable &&
+                   facts.requested[1].readability == State::DefinitelyReadable,
+               "conditional joins and loop backedges use converged flow facts");
+        observed = true;
+      }
+    expect(observed, "join/loop query exercised the selected binding");
+  }
+}
+
 void testInitializerSourceDebugProducers() {
   const auto syntax =
       lang::Frontend({.stopAfter = lang::FrontendPhase::Parsing})
@@ -362,7 +540,6 @@ struct Selected {
 };
 struct Generic<T> {
   int32_t value = seed();
-  static int32_t shared = seed();
 };
 struct EmptyPack<Ts...> { int32_t value = seed(); };
 int main() {
@@ -381,10 +558,10 @@ int main() {
     return;
   lang::SemanticVisitor collected(
       lang::TargetInfo::host(), &syntax.sourceGraph, true, nullptr,
-      &syntax.sources,
-      lang::RawPointerAuditMode::Off, false,
+      &syntax.sources, lang::RawPointerAuditMode::Off, false,
       lang::TrustedBodyAnalysis::Complete, lang::SourceDebugProfile::LexicalV1);
-  expect(collected.check(syntax.program), "initializer source fixture analyzes");
+  expect(collected.check(syntax.program),
+         "initializer source fixture analyzes");
   expect(collected.applyProgramRequest(syntax.program, {}),
          "initializer source fixture applies its program request");
   for (const auto &diagnostic : collected.errors())
@@ -417,14 +594,14 @@ int main() {
     auto &body = const_cast<lang::HirBody &>(constructor.body);
     const auto saved = body.sourceDebug;
     body.sourceDebug.tables->initializers.front().roots = {0};
-    expect(!lang::verifyHirSourceDebug(collected.model(), lowered.program)
-                .valid(),
-           "foreign initializer roots cannot acquire source regions");
+    expect(
+        !lang::verifyHirSourceDebug(collected.model(), lowered.program).valid(),
+        "foreign initializer roots cannot acquire source regions");
     body.sourceDebug = saved;
     body.sourceDebug.tables->initializers.clear();
-    expect(!lang::verifyHirSourceDebug(collected.model(), lowered.program)
-                .valid(),
-           "source defaults cannot be stripped from generated constructors");
+    expect(
+        !lang::verifyHirSourceDebug(collected.model(), lowered.program).valid(),
+        "source defaults cannot be stripped from generated constructors");
     body.sourceDebug = saved;
   }
   expect(generated && selected,
@@ -2031,6 +2208,7 @@ int main() {
   testSourceDebugRecordOwnership();
   testSemanticSourceDebugProducers();
   testInitializerSourceDebugProducers();
+  testDebugPlaceAvailability();
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();

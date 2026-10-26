@@ -2216,8 +2216,7 @@ std::vector<std::string> SemanticModel::verifySourceDebug() const {
       break;
     }
     case SourceDebugBodyKind::Initializer: {
-      const auto &declaration =
-          *static_cast<const VariableDecl *>(body.source);
+      const auto &declaration = *static_cast<const VariableDecl *>(body.source);
       exactBody = findBinding(declaration) != nullptr;
       break;
     }

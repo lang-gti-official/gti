@@ -1,11 +1,51 @@
 #pragma once
 
 #include "gti/mir.h"
+#include "gti/mir_verifier.h"
 
 #include <cstddef>
 #include <optional>
+#include <span>
 
 namespace lang::mir_detail {
+
+struct MirDebugPoint {
+  MirBlockId block = 0;
+  // Zero denotes the boundary before the terminator; it has no after point.
+  MirInstructionId instruction = 0;
+  bool after = false;
+  friend bool operator==(const MirDebugPoint &,
+                         const MirDebugPoint &) = default;
+};
+
+enum class MirDebugReadability { Unknown, Unavailable, DefinitelyReadable };
+enum class MirDebugAvailabilityReason { Unproven, Inactive, Readable };
+
+struct MirExistingPlaceQuery {
+  MirPlaceId place = 0;
+  MirDebugPoint point;
+  friend bool operator==(const MirExistingPlaceQuery &,
+                         const MirExistingPlaceQuery &) = default;
+};
+
+struct MirExistingPlaceFact {
+  MirExistingPlaceQuery request;
+  MirDebugReadability readability = MirDebugReadability::Unknown;
+  MirDebugAvailabilityReason reason = MirDebugAvailabilityReason::Unproven;
+};
+
+struct MirExistingPlaceQueryBatch {
+  MirVerificationResult verification;
+  std::vector<MirExistingPlaceFact> requested;
+  // A positive interval cannot cross these canonical inactive/consuming cuts.
+  std::vector<MirExistingPlaceQuery> requiredStops;
+};
+
+// Fresh observations of the verifier's canonical transfers. This transient
+// result is not a proof token and cannot authorize a lowered snapshot.
+[[nodiscard]] MirExistingPlaceQueryBatch
+verifyMirBodyWithPlaceQueries(const MirBody &body, std::size_t owner,
+                              std::span<const MirExistingPlaceQuery> requests);
 
 // Shape of one closed consuming-arm setup: cache every payload address, retire
 // one exact dependency group, then publish its successor bindings. This is not
