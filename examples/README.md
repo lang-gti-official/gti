@@ -1,5 +1,25 @@
 # GTI examples
 
+[`llvm/native-c-record-values.gti`](llvm/native-c-record-values.gti) receives
+passive C records from native factories, copies and returns them through
+ordinary GTI functions, and passes a fixed-array record back to C. It checks
+that updating a by-value copy preserves the original and that scoped wrapper
+cleanup runs once. Build and run from the repository root with an optimized GTI
+compiler:
+
+```sh
+cc -std=c17 -O3 -c examples/llvm/native-c-record-values-native/records.c -o /tmp/native-records.o
+gti examples/llvm/native-c-record-values.gti --backend llvm -O3 -o /tmp/native-record-values -- /tmp/native-records.o
+/tmp/native-record-values
+```
+
+It prints `records:7,8` and `cleanup`, one per line. The registered
+`llvm_native_c_aggregate_execution` harness uses the actual example source at
+LLVM O0-O3 against C O0/O3 and C++20/23 controls. Native records carry passive
+representation; factories and ordinary source wrappers provide initialization
+and cleanup policy. Like the other bounded LLVM profiles, this example is
+outside the numbered full-language census.
+
 [`llvm/native-c-function-values.gti`](llvm/native-c-function-values.gti)
 demonstrates an exact scalar function pointer returned by C, its nullable check
 and copied value, native invocation after argument preparation changes C's next

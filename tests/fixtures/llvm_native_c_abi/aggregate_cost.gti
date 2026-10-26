@@ -1,0 +1,23 @@
+[[c_abi]] struct CostPair { mut uint64_t first; mut uint64_t second; };
+[[c_abi]] struct CostLarge { mut uint64_t values[3]; };
+extern "C" {
+  CostPair native_cost_pair_seed();
+  CostLarge native_cost_large_seed();
+  CostPair native_cost_pair_step(CostPair value);
+  CostLarge native_cost_large_step(CostLarge value);
+  int32_t native_cost_aggregate_finish(uint64_t checksum, CostPair small, CostLarge large);
+}
+int main() {
+  mut CostPair small = native_cost_pair_seed();
+  mut CostLarge large = native_cost_large_seed();
+  mut uint64_t checksum = uint64_t(0);
+  mut uint64_t index = uint64_t(0);
+  while (index < uint64_t(20000000)) {
+    small = native_cost_pair_step(small);
+    large = native_cost_large_step(large);
+    checksum += small.first;
+    checksum += large.values[2];
+    index += uint64_t(1);
+  }
+  return native_cost_aggregate_finish(checksum, small, large);
+}

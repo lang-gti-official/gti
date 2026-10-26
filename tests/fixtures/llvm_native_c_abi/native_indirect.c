@@ -10,6 +10,10 @@ typedef void (*Selected)(int32_t, int32_t);
 static int32_t unary(int32_t value) { return value + 11; }
 Unary native_unary(void) { return unary; }
 Unary native_absent(void) { return NULL; }
+typedef struct {
+  Unary operation;
+} DormantRecord;
+DormantRecord obtain_native_record(void) { return (DormantRecord){unary}; }
 static int16_t narrow(int8_t value, uint16_t check) {
   return check == UINT16_C(54321) ? (int16_t)(value + 1) : 0;
 }

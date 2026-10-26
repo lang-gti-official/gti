@@ -27,6 +27,10 @@ nativeCScalarImportContract(const MirProgram &program, const TargetInfo &target,
 [[nodiscard]] bool
 nativeCCountedInputContract(const MirProgram &program, const TargetInfo &target,
                             const MirFunctionInstance &function);
+[[nodiscard]] bool
+nativeCAggregateImportContract(const MirProgram &program,
+                               const TargetInfo &target,
+                               const MirFunctionInstance &function);
 [[nodiscard]] bool nativeCScalarFunctionValueContract(const MirProgram &program,
                                                       const TargetInfo &target,
                                                       const SemanticType &type);

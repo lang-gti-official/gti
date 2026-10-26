@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Direct C boundary cost probe; --measure requires an uncontended host window."""
+"""C boundary cost probe; --measure requires an uncontended host window."""
 
 import argparse
 import json
@@ -18,18 +18,23 @@ def main():
     parser.add_argument("--cc", default="clang")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--measure", action="store_true")
-    parser.add_argument("--indirect", action="store_true")
+    family = parser.add_mutually_exclusive_group()
+    family.add_argument("--indirect", action="store_true")
+    family.add_argument("--aggregate", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     fixture = root / "tests/fixtures/llvm_native_c_abi"
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    stem = "indirect_cost" if args.indirect else "direct_cost"
+    stem = ("aggregate_cost" if args.aggregate else
+            "indirect_cost" if args.indirect else "direct_cost")
     report = {"head": subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip(),
         "platform": platform.platform(), "cc": args.cc,
-        "family": "scalar-indirect" if args.indirect else "direct",
-        "calls_per_process": 40000002 if args.indirect else 40000001,
+        "family": ("passive-aggregate" if args.aggregate else
+                   "scalar-indirect" if args.indirect else "direct"),
+        "calls_per_process": (40000003 if args.aggregate else
+                              40000002 if args.indirect else 40000001),
         "measured": args.measure,
         "measurement": "whole process including startup; same C oracle and checked additions",
         "records": {}, "steps": []}
@@ -68,7 +73,8 @@ def main():
     run([args.cc, "--version"], "c-version")
     host = output / "host.o"
     run([args.cc, "-std=c17", "-O3", "-Wall", "-Wextra", "-Werror",
-         "-I", root / "runtime/include", "-c", fixture / "direct_cost.c", "-o", host], "host")
+         "-I", root / "runtime/include", "-c",
+         fixture / ("aggregate_cost.c" if args.aggregate else "direct_cost.c"), "-o", host], "host")
     native, baseline = output / "native", output / "baseline"
     run([args.compiler.resolve(), fixture / (stem + ".gti"), "--backend", "llvm",
          "-O3", "-o", native, "--", host], "build-native", measured_build=True)

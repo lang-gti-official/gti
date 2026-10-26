@@ -1,0 +1,4 @@
+#include <std/span>
+[[c_abi]] struct NativeRecord { mut int32_t value; };
+extern "C" { int32_t native_mutable_view(NativeRecord value, std::span<int8_t> text); }
+int main() { return 0; }

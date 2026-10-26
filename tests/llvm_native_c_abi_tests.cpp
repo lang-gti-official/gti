@@ -892,6 +892,72 @@ void emitStorageProbes(Session &session) {
 
 } // namespace
 
+void checkAggregateImports(Session &session) {
+  const auto &program = session.program().mir();
+  const auto &target = session.program().target();
+  unsigned imports = 0, calls = 0;
+  bool callbackField = false;
+  for (const auto &function : program.functionInstances()) {
+    if (function.externalSymbol == "native_unadmitted_hook") {
+      require(nativeCDeclarationContract(program, target, function) &&
+                  !nativeCAggregateImportContract(program, target, function),
+              "physical native layout cannot admit a function-pointer field");
+      callbackField = true;
+    }
+    if (nativeCAggregateImportContract(program, target, function)) {
+      ++imports;
+      require(
+          !nativeCScalarImportContract(program, target, function) &&
+              !nativeCCountedInputContract(program, target, function) &&
+              !nativeCScalarFunctionImportContract(program, target, function),
+          "aggregate import witness cannot relabel scalar/count/getter "
+          "families");
+      const auto plan = planNativeCFunction(session, function.returnType,
+                                            function.parameterTypes);
+      verifyNativeCImport(*session.abi().declareFunction(function.id),
+                          plan.signature);
+      for (unsigned mutation = 0; mutation < 5; ++mutation) {
+        auto invalid = function;
+        if (mutation == 0)
+          invalid.externalSymbol += "_forged";
+        if (mutation == 1)
+          invalid.definitionKind = MirDefinitionKind::RuntimeBinding;
+        if (mutation == 2)
+          invalid.returnType = SemanticType::Unknown;
+        if (mutation == 3)
+          invalid.parameterTypes.push_back(SemanticType::Int32);
+        if (mutation == 4)
+          invalid.linkage = LanguageLinkage::Gti;
+        require(!nativeCAggregateImportContract(program, target, invalid),
+                "forged aggregate declaration cannot acquire a native witness");
+      }
+    }
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *callee =
+            instruction.functionTarget
+                ? program.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (!callee ||
+            !nativeCAggregateImportContract(program, target, *callee))
+          continue;
+        require(
+            nativeCDirectCallContract(program, target, function.body,
+                                      instruction),
+            "aggregate calls consume the exact canonical staged C contract");
+        auto invalid = instruction;
+        ++invalid.callSite;
+        require(
+            !nativeCDirectCallContract(program, target, function.body, invalid),
+            "aggregate transport cannot accept mismatched staged inputs");
+        ++calls;
+      }
+  }
+  require(
+      imports >= 8 && calls >= 8 && callbackField,
+      "aggregate fixture must exercise multiple result and argument families");
+}
+
 void checkNativeReachability(Session &session, bool conservative) {
   const auto roots = reachableProgram(session.program());
   require(roots.conservative == conservative,
@@ -943,11 +1009,13 @@ void checkNativeReachability(Session &session, bool conservative) {
     for (auto &block : function.body.blocks)
       for (auto &instruction : block.instructions)
         if (instruction.nativeCalleeType) {
+          const bool required = roots.contains(
+              MirBodyAddress{MirBodyKind::Function, function.id});
           ++instruction.callSite;
-          require(reachableProgram(exported).conservative,
-                  "malformed staged native calls retain conservative closure");
+          require(reachableProgram(exported).conservative == required,
+                  "only malformed required native calls broaden the closure");
           --instruction.callSite;
-          checkedMalformed = true;
+          checkedMalformed |= required;
         }
   }
   require(checkedExport && checkedMalformed,
@@ -961,6 +1029,8 @@ int main(int argc, char **argv) {
         argc == 6 && std::string(argv[5]) == "--source-preflight";
     const bool storage = argc == 6 && std::string(argv[5]) == "--storage";
     const bool text = argc == 6 && std::string(argv[5]) == "--text-contracts";
+    const bool aggregates =
+        argc == 6 && std::string(argv[5]) == "--aggregate-contracts";
     const bool reachability =
         argc == 6 && std::string(argv[5]) == "--reachability";
     const bool conservative =
@@ -970,7 +1040,7 @@ int main(int argc, char **argv) {
     require(argc == 5 || (argc == 6 &&
                           (std::string(argv[5]) == "--callbacks" ||
                            concurrent || contracts || preflight || storage ||
-                           text || reachability || conservative)),
+                           text || aggregates || reachability || conservative)),
             "usage: test fixture.gti output.o output.ll O[0-3] "
             "[--callbacks|--thread-callbacks]");
     const auto input = fixture(argv[1], concurrent, argc == 6);
@@ -985,7 +1055,10 @@ int main(int argc, char **argv) {
       std::cout << "PASS: exact native call dependency roots\n";
       return 0;
     }
-    if (text) {
+    if (aggregates) {
+      checkAggregateImports(session);
+      emitSourcePreflight(session, input);
+    } else if (text) {
       emitCountedTextProbes(session);
     } else if (storage) {
       emitStorageProbes(session);
@@ -1021,10 +1094,11 @@ int main(int argc, char **argv) {
     require(output.good(), "cannot write object output");
     std::cout
         << "classifier/oracle object O" << level
-        << (text        ? ": public counted C input record contracts; "
-            : storage   ? ": exact foreign storage contracts; "
-            : preflight ? ": real GTI body native preflight; "
-            : contracts ? ": exact declaration/call contracts; "
+        << (text         ? ": public counted C input record contracts; "
+            : storage    ? ": exact foreign storage contracts; "
+            : preflight  ? ": real GTI body native preflight; "
+            : aggregates ? ": exact passive aggregate import contracts; "
+            : contracts  ? ": exact declaration/call contracts; "
             : argc == 6
                 ? ": isolated callback boundary test bodies; "
                 : ": 25 records, 3 pressure signatures, explicit rejections; ")

@@ -186,9 +186,9 @@ def main():
                 raise RuntimeError("unsupported required native boundary replaced an artifact")
             if source == "reject_native_indirect_required":
                 if (b"MirDefinitionKind.Declaration (O-LLVM-03)" not in result.stderr or
-                        b"reject_native_indirect_required.gti:4:11:" not in result.stderr or
-                        b"consume_record" not in result.stderr):
-                    raise RuntimeError("required body must reject at its unchanged native aggregate import")
+                        b"reject_native_indirect_required.gti:4:17:" not in result.stderr or
+                        b"obtain_native_record" not in result.stderr):
+                    raise RuntimeError("required body must reject at its unchanged function-field import")
             if source == "reject_native_indirect_callback":
                 if (b"MirOperation.NativeCallback (O-LLVM-11)" not in result.stderr or
                         b"reject_native_indirect_callback.gti:4:5:" not in result.stderr):

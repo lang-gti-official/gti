@@ -1593,11 +1593,16 @@ public:
                          native_llvm::nativeCCountedInputContract(
                              program, nativeTarget, *callee) ||
                          native_llvm::nativeCScalarFunctionImportContract(
+                             program, nativeTarget, *callee) ||
+                         native_llvm::nativeCAggregateImportContract(
                              program, nativeTarget, *callee)) &&
                         native_llvm::nativeCDirectCallContract(
                             program, nativeTarget, mir, stage)
                   ? std::optional(
-                        native_llvm::nativeCScalarFunctionImportContract(
+                        native_llvm::nativeCAggregateImportContract(
+                            program, nativeTarget, *callee)
+                            ? Shape::NativeCAggregateImport
+                        : native_llvm::nativeCScalarFunctionImportContract(
                             program, nativeTarget, *callee)
                             ? Shape::NativeCFunctionImport
                         : native_llvm::nativeCCountedInputContract(
@@ -1860,6 +1865,9 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
         : native_llvm::nativeCScalarFunctionImportContract(mir, input.target(),
                                                            function)
             ? std::optional(Shape::NativeCFunctionImport)
+        : native_llvm::nativeCAggregateImportContract(mir, input.target(),
+                                                      function)
+            ? std::optional(Shape::NativeCAggregateImport)
             : std::nullopt;
     inventory.add(function.definitionKind, nativeImport);
     inventory.add(function.linkage, nativeImport);

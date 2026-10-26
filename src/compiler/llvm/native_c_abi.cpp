@@ -197,6 +197,52 @@ bool nativeCCountedInputContract(const MirProgram &program,
                      });
 }
 
+bool nativeCAggregateImportContract(const MirProgram &program,
+                                    const TargetInfo &target,
+                                    const MirFunctionInstance &function) {
+  if (!nativeCDeclarationContract(program, target, function))
+    return false;
+  // The canonical value contract owns layout/identity/target validity. This
+  // profile only bounds the already verified representation family. Existing
+  // immutable counted inputs compose; native function fields remain excluded.
+  const auto storage = [&](const auto &self, const SemanticType &type,
+                           unsigned depth) -> bool {
+    if (depth > 256)
+      return false;
+    if (type.kind == SemanticType::Class) {
+      for (const auto &record : program.classInstances())
+        if (record.type == type)
+          return std::all_of(record.declaredFields.begin(),
+                             record.declaredFields.end(),
+                             [&](const auto &field) {
+                               return self(self, field.type, depth + 1);
+                             });
+      return false;
+    }
+    if (type.kind == SemanticType::Array)
+      return type.arguments.size() == 1 &&
+             self(self, type.arguments[0], depth + 1);
+    return scalarBoundaryType(type) && type.kind != SemanticType::Void &&
+           type.kind != SemanticType::CString;
+  };
+  bool aggregate = false;
+  const auto boundary = [&](const SemanticType &type, bool input) {
+    if (input && type.kind == SemanticType::StringView)
+      return true;
+    if (scalarBoundaryType(type))
+      return true;
+    if (type.kind != SemanticType::Class)
+      return false;
+    aggregate = true;
+    return storage(storage, type, 0);
+  };
+  return boundary(function.returnType, false) &&
+         std::all_of(function.parameterTypes.begin(),
+                     function.parameterTypes.end(),
+                     [&](const auto &type) { return boundary(type, true); }) &&
+         aggregate;
+}
+
 bool nativeCScalarFunctionValueContract(const MirProgram &program,
                                         const TargetInfo &target,
                                         const SemanticType &type) {

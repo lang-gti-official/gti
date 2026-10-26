@@ -1,0 +1,21 @@
+#include <std/string>
+[[c_abi]] struct NativePacket {
+  mut int8_t tag; mut uint16_t extent; mut int32_t count; mut double ratio;
+};
+extern "C" {
+  NativePacket native_record_mark_packet(int32_t count);
+  int32_t native_record_mixed(NativePacket value, std::string_view text, int32_t last);
+  int32_t native_record_mark(int32_t value);
+  int32_t native_record_zero();
+}
+struct Guard { ~Guard() { [[discard]] native_record_mark(99); } };
+std::string_view marked_view(std::string& owner) {
+  [[discard]] native_record_mark(2);
+  return owner.view();
+}
+int main() {
+  Guard guard{};
+  std::string owner{"native"};
+  [[discard]] native_record_mixed(native_record_mark_packet(1), marked_view(owner), 1 / native_record_zero());
+  return 0;
+}

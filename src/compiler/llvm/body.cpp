@@ -695,13 +695,19 @@ private:
       const auto &targetInfo = session.program().target();
       if (!nativeCScalarImportContract(program, targetInfo, *target) &&
           !nativeCCountedInputContract(program, targetInfo, *target) &&
-          !nativeCScalarFunctionImportContract(program, targetInfo, *target))
+          !nativeCScalarFunctionImportContract(program, targetInfo, *target) &&
+          !nativeCAggregateImportContract(program, targetInfo, *target))
         throw BackendUnsupportedError(
             "LLVM direct C call requires its supported exact import profile");
       std::vector<llvm::Value *> arguments;
       for (const auto &argument : instruction.operands)
         arguments.push_back(operand(argument));
-      return emitNativeCDirectCall(session, ir, input, instruction, arguments);
+      auto *resultDestination =
+          instruction.result && addressValue(program, target->returnType)
+              ? destination(*instruction.result)
+              : nullptr;
+      return emitNativeCDirectCall(session, ir, input, instruction, arguments,
+                                   resultDestination);
     }
     FunctionAbi signature;
     llvm::Function *callee = nullptr;
