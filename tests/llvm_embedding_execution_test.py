@@ -121,6 +121,17 @@ def main():
                  *(f"{name}=embed_{name}" for name in EXPORTS)], "failed-link", 1)
             assert not (directory / "failed-generation").exists()
             assert not list(directory.glob("*stage*"))
+            race = directory / "race-generation"
+            linker = directory / "racing-linker"
+            linker.write_text("#!" + sys.executable + "\nimport pathlib, subprocess, sys\n"
+                              + f"result = subprocess.run([{args.cxx!r}, *sys.argv[1:]])\n"
+                              + f"pathlib.Path({str(race)!r}).mkdir()\n"
+                              + "sys.exit(result.returncode)\n")
+            linker.chmod(0o755)
+            run([emitter, root / SOURCE, directory / "race", level, linker, args.runtime.resolve(),
+                 *(f"{name}=embed_{name}" for name in EXPORTS)], "racing-generation", 1)
+            assert race.is_dir() and not list(race.iterdir()), "existing generation replaced during link"
+            assert not list(directory.glob("*stage*"))
             # Valid C symbols may collide with source record names. Header
             # representation names must avoid that collision in both languages.
             collision_stem = directory / "collision"

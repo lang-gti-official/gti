@@ -3,7 +3,17 @@
 #include "gti/driver/native_toolchain.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <set>
+
+#if defined(__APPLE__)
+#include <stdio.h>
+#elif defined(__linux__)
+#include <fcntl.h>
+#include <linux/fs.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 namespace lang::driver {
 namespace {
@@ -15,6 +25,24 @@ bool identifier(std::string_view name) {
          std::all_of(name.begin(), name.end(), [&](char c) {
            return letter(c) || (c >= '0' && c <= '9');
          });
+}
+
+ArtifactPublishResult
+publishNewGeneration(const std::filesystem::path &staged,
+                     const std::filesystem::path &destination) {
+  // The pre-link absence check is diagnostic only. The publication operation
+  // itself must refuse a generation created while the native linker ran.
+#if defined(__APPLE__)
+  if (::renamex_np(staged.c_str(), destination.c_str(), RENAME_EXCL) == 0)
+    return {};
+#elif defined(__linux__) && defined(SYS_renameat2)
+  if (::syscall(SYS_renameat2, AT_FDCWD, staged.c_str(), AT_FDCWD,
+                destination.c_str(), RENAME_NOREPLACE) == 0)
+    return {};
+#else
+  return {std::make_error_code(std::errc::operation_not_supported)};
+#endif
+  return {std::error_code(errno, std::generic_category())};
 }
 } // namespace
 
@@ -127,7 +155,7 @@ publishEmbeddingLibrary(const LlvmEmbeddingArtifacts &artifacts,
     return reject("cannot remove staged embedding object");
   if (!std::filesystem::remove(exports, error) || error)
     return reject("cannot remove staged embedding export map");
-  const auto published = publishArtifact(staging, destination);
+  const auto published = publishNewGeneration(staging, destination);
   if (!published.succeeded())
     return reject("embedding generation publication failed: " +
                   published.error.message());

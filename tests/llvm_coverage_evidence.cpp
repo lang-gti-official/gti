@@ -202,8 +202,8 @@ void printDiagnostics(const lang::FrontendResult &frontend) {
 
 std::optional<lang::VerifiedLoweredProgram>
 lowerSource(const std::filesystem::path &root,
-            const std::filesystem::path &source,
-            lang::ExecutionProfile profile, lang::ProgramRequest request = {}) {
+            const std::filesystem::path &source, lang::ExecutionProfile profile,
+            lang::ProgramRequest request = {}) {
   lang::FrontendOptions options;
   options.program = std::move(request);
   options.target = lang::TargetInfo::host();
@@ -656,7 +656,8 @@ int main(int argc, char **argv) {
       for (int i = 6; i < argc; ++i) {
         const std::string spec = argv[i];
         const auto split = spec.find('=');
-        if (split == std::string::npos || split == 0 || split + 1 == spec.size() ||
+        if (split == std::string::npos || split == 0 ||
+            split + 1 == spec.size() ||
             spec.find('=', split + 1) != std::string::npos)
           return 2;
         request.exports.push_back({.function = spec.substr(0, split),
