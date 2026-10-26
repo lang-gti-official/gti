@@ -260,12 +260,130 @@ int caller(int input) { return identity(input); }
     throw std::runtime_error("inlining lost callee source metadata");
 }
 
+void lifecycleIdentities() {
+  const auto frontend = Frontend().analyze("/scope/lifecycle.gti", R"(
+class Sample { public: Sample() {} ~Sample() {} };
+struct Generated { int value = 7; };
+int main() { Sample value{}; Generated generated{}; return generated.value == 7 ? 0 : 1; }
+)");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("invalid lifecycle debug source");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host(), true);
+  if (!lowered.valid())
+    throw std::runtime_error("invalid lifecycle debug lowering");
+  std::vector<LoweredProgramIssue> issues;
+  auto input = verifiedLoweredProgram(*lowered.program, issues);
+  if (!input)
+    throw std::runtime_error("invalid lifecycle debug snapshot");
+  Session session(*input, {});
+  DebugInfo debug(session);
+  unsigned constructors = 0, destructors = 0, excluded = 0, controls = 0;
+  llvm::Function *constructorFunction = nullptr;
+  const auto reject = [&](auto operation) {
+    bool rejected = false;
+    try {
+      operation();
+    } catch (const std::logic_error &) {
+      rejected = true;
+    }
+    if (!rejected)
+      throw std::runtime_error(
+          "malformed lifecycle debug identity was accepted");
+    ++controls;
+  };
+  const auto check = [&](MirBodyAddress address, const FunctionAbi &plan,
+                         bool source) {
+    auto *function =
+        llvm::Function::Create(plan.type, llvm::GlobalValue::ExternalLinkage,
+                               "metadata_lifecycle", session.module());
+    plan.applyTo(*function);
+    if (!source) {
+      debug.registerLifecycleBody(address, *function);
+      debug.begin(address, *function);
+      if (function->getSubprogram())
+        throw std::runtime_error(
+            "generated lifecycle acquired a user source scope");
+      ++excluded;
+      return function;
+    }
+    auto *wrong =
+        llvm::Function::Create(plan.type, llvm::GlobalValue::ExternalLinkage,
+                               "unrelated_lifecycle", session.module());
+    reject([&] { debug.begin(address, *wrong); });
+    debug.registerLifecycleBody(address, *function);
+    debug.registerLifecycleBody(
+        address, *function); // Reusing the same factory result is lawful.
+    reject([&] { debug.registerLifecycleBody(address, *wrong); });
+    reject([&] { debug.begin(address, *wrong); });
+    if (wrong->getSubprogram())
+      throw std::runtime_error("wrong lifecycle retained source metadata");
+    debug.begin(address, *function);
+    if (!function->getSubprogram())
+      throw std::runtime_error("exact lifecycle lost its source metadata");
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", function));
+    if (function->getReturnType()->isVoidTy())
+      ir.CreateRetVoid();
+    else
+      ir.CreateRet(llvm::ConstantInt::getTrue(session.context()));
+    return function;
+  };
+  for (const auto &row : input->program().mir().constructorInstances()) {
+    const bool source = row.definitionKind == MirDefinitionKind::Source &&
+                        !row.generatedDefault;
+    auto *function =
+        check({MirBodyKind::Constructor, row.id},
+              session.abi().gti(SemanticType::Void, row.parameterTypes,
+                                row.mayRaiseDefinedFailure, true),
+              source);
+    if (source) {
+      ++constructors;
+      constructorFunction = function;
+    }
+  }
+  for (const auto &row : input->program().mir().destructorInstances()) {
+    const bool source = row.definitionKind == MirDefinitionKind::Source;
+    if (source && constructorFunction)
+      reject([&] {
+        debug.registerLifecycleBody({MirBodyKind::Destructor, row.id},
+                                    *constructorFunction);
+      });
+    check({MirBodyKind::Destructor, row.id},
+          session.abi().gti(SemanticType::Void, {}, row.mayRaiseDefinedFailure,
+                            true),
+          source);
+    if (source)
+      ++destructors;
+  }
+  llvm::Module foreign("foreign_debug_session", session.context());
+  auto *outside = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
+      llvm::GlobalValue::ExternalLinkage, "outside", foreign);
+  const auto &first = input->program().mir().constructorInstances().front();
+  reject([&] {
+    debug.registerLifecycleBody({MirBodyKind::Constructor, first.id}, *outside);
+  });
+  if (!constructors || !destructors || !excluded)
+    throw std::runtime_error(
+        "lifecycle identity or generated-exclusion controls did not execute");
+  debug.finalize();
+  if (llvm::verifyModule(session.module(), &llvm::errs()))
+    throw std::runtime_error("lifecycle debug metadata did not verify");
+  std::cout << constructors << " source constructors, " << destructors
+            << " source destructors, " << excluded
+            << " generated exclusions and " << controls
+            << " identity controls passed\n";
+}
+
 int main() {
   if (metadata("/checkout-one/debug.gti") !=
       metadata("/other-checkout/debug.gti"))
     throw std::runtime_error(
         "debug metadata depends on an absolute checkout root");
   inlinedLocations();
+  lifecycleIdentities();
   std::cout << "sealed debug identities, locations, locals, recursive layout, "
                "root relocation and inlined source/parameter chains passed\n";
 }

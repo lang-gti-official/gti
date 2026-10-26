@@ -8,6 +8,7 @@
 #include <llvm/IR/Metadata.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include <stdexcept>
 
@@ -49,6 +50,35 @@ public:
     session.module().addModuleFlag(llvm::Module::Warning, "Debug Info Version",
                                    llvm::DEBUG_METADATA_VERSION);
     session.module().addModuleFlag(llvm::Module::Warning, "Dwarf Version", 4);
+  }
+
+  bool sourceLifecycle(MirBodyAddress address) const {
+    const auto &program = session.program();
+    if (address.kind == MirBodyKind::Constructor) {
+      const auto *mir = program.mir().findConstructorInstance(address.owner);
+      if (!mir)
+        throw std::logic_error("LLVM debug constructor is not in the snapshot");
+      if (mir->definitionKind != MirDefinitionKind::Source ||
+          mir->generatedDefault)
+        return false;
+      if (!program.findConstructorInstance(address.owner))
+        throw std::logic_error(
+            "LLVM debug constructor lost its source identity");
+      return true;
+    }
+    if (address.kind == MirBodyKind::Destructor) {
+      const auto *mir = program.mir().findDestructorInstance(address.owner);
+      if (!mir)
+        throw std::logic_error("LLVM debug destructor is not in the snapshot");
+      if (mir->definitionKind != MirDefinitionKind::Source)
+        return false;
+      if (!program.findDestructorInstance(address.owner))
+        throw std::logic_error(
+            "LLVM debug destructor lost its source identity");
+      return true;
+    }
+    throw std::logic_error(
+        "LLVM debug lifecycle registration requires a lifecycle body");
   }
 
   bool optimized() const {
@@ -222,6 +252,8 @@ public:
   std::vector<std::pair<SemanticType, llvm::TypedTrackingMDRef<llvm::DIType>>>
       types;
   std::map<llvm::Function *, MirBodyAddress> bodies;
+  std::map<std::pair<MirBodyKind, std::uint32_t>, llvm::Function *>
+      lifecycleDefinitions;
   std::map<std::pair<llvm::Function *, SymbolId>, llvm::DILocalVariable *>
       locals;
   bool finalized = false;
@@ -231,11 +263,40 @@ DebugInfo::DebugInfo(Session &session)
     : impl(std::make_unique<Impl>(session)) {}
 DebugInfo::~DebugInfo() = default;
 
+void DebugInfo::registerLifecycleBody(MirBodyAddress address,
+                                      llvm::Function &function) {
+  if (function.getParent() != &impl->session.module())
+    throw std::logic_error("LLVM debug lifecycle belongs to another session");
+  if (!impl->sourceLifecycle(address))
+    return;
+  const auto key = std::pair(address.kind, address.owner);
+  const auto previous = impl->lifecycleDefinitions.find(key);
+  if (previous != impl->lifecycleDefinitions.end() &&
+      previous->second != &function)
+    throw std::logic_error(
+        "LLVM debug lifecycle identity changed its factory result");
+  const auto other = impl->bodies.find(&function);
+  if (other != impl->bodies.end() && other->second != address)
+    throw std::logic_error("LLVM debug function is bound to another body");
+  impl->lifecycleDefinitions.emplace(key, &function);
+  impl->bodies.emplace(&function, address);
+}
+
 void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
   if (function.getParent() != &impl->session.module())
     throw std::logic_error(
         "LLVM debug function belongs to another emission session");
   const auto &program = impl->session.program();
+  if (address.kind == MirBodyKind::Constructor ||
+      address.kind == MirBodyKind::Destructor) {
+    if (!impl->sourceLifecycle(address))
+      return;
+    const auto found =
+        impl->lifecycleDefinitions.find(std::pair(address.kind, address.owner));
+    if (found == impl->lifecycleDefinitions.end() || found->second != &function)
+      throw std::logic_error(
+          "LLVM debug lifecycle does not match its factory identity");
+  }
   const auto *body = findMirBody(program.mir(), address);
   if (!body)
     throw std::logic_error("LLVM debug body does not belong to the snapshot");
