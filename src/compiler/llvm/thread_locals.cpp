@@ -75,9 +75,28 @@ llvm::Function *ThreadLocals::cleanup(const MirThreadLocalStorage &storage,
     return function;
   }
   auto *channel = ir.CreateAlloca(session.abi().failureChannel());
+  auto *entry = ir.GetInsertBlock();
+  auto *inherit =
+      llvm::BasicBlock::Create(session.context(), "primary.enter", function);
+  auto *invoke =
+      llvm::BasicBlock::Create(session.context(), "cleanup", function);
+  auto *hasPrimary = ir.CreateIsNotNull(function->getArg(2));
+  ir.CreateCondBr(hasPrimary, inherit, invoke);
+  ir.SetInsertPoint(inherit);
+  // The registry owns this borrowed record and its possibly distinct artifact.
+  // An existing outer cleanup context remains authoritative.
+  auto *token = ir.CreateCall(
+      declareRuntimeService(session, RuntimeService::EnterFailureCleanup),
+      {function->getArg(2), function->getArg(3)});
+  ir.CreateBr(invoke);
+  ir.SetInsertPoint(invoke);
+  auto *cleanupToken = ir.CreatePHI(pointer, 2);
+  cleanupToken->addIncoming(llvm::ConstantPointerNull::get(pointer), entry);
+  cleanupToken->addIncoming(token, inherit);
   auto *status = ir.CreateCall(
       lifetimes.cleanup(storage.cleanup),
-      {function->getArg(0), channel, ir.CreateIsNotNull(function->getArg(2))});
+      {function->getArg(0), channel, hasPrimary});
+  failures.leaveCleanup(ir, cleanupToken);
   auto *success =
       llvm::BasicBlock::Create(session.context(), "success", function);
   auto *failed =

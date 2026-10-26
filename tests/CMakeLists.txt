@@ -1763,6 +1763,18 @@ endif()
 add_executable(gti_runtime_execution_tests runtime_execution_tests.cpp)
 target_link_libraries(gti_runtime_execution_tests PRIVATE gti_runtime)
 add_test(NAME runtime_execution_boundary COMMAND gti_runtime_execution_tests)
+add_executable(gti_llvm_tls_contract_tests llvm_tls_contract_tests.cpp)
+target_include_directories(gti_llvm_tls_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_tls_contract_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_tls_contracts
+         COMMAND gti_llvm_tls_contract_tests "${PROJECT_SOURCE_DIR}")
+set_tests_properties(llvm_tls_contracts PROPERTIES TIMEOUT 180)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_tls_cleanup_context
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_tls_cleanup_context_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_tls_cleanup_context PROPERTIES TIMEOUT 300)
+endif()
 
 add_executable(gti_llvm_clang_coexistence_smoke llvm_clang_coexistence_smoke.cpp)
 target_link_libraries(gti_llvm_clang_coexistence_smoke PRIVATE gti_llvm_backend gti_bindgen)

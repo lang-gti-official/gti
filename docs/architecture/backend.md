@@ -4753,6 +4753,18 @@ the C layout and callback signature directly, with no C++ cleanup-entry API,
 exception transport, hidden allocation or native TLS destructor. A C17 oracle
 and target-layout assertions check this boundary independently.
 
+For active TLS cleanup, the LLVM callback scopes the registry's explicit
+borrowed primary record and artifact around its generated cleanup call. A
+secondary failure in a source destructor or a function it calls is therefore
+checked before that function's local cleanup. An existing incoming context is
+not replaced; returning callbacks leave only the context they acquired.
+The primary artifact is not inferred from the TLS registration artifact.
+Focused TLS execution checks cover ordinary cleanup, a first TLS failure,
+body-failure drain, and an earlier TLS failure entering a later callback.
+This is not managed-worker admission: the legacy runtime emergency handoff can
+unwind, and generated managed callbacks still require the C04 containment
+boundary.
+
 Stored reference fields consume either their entry capability or the address
 published by their non-entry MIR Borrow. The latter executes at its actual
 initializer stage, including after a reference-return call's success edge.
