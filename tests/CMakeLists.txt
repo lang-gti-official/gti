@@ -1679,6 +1679,10 @@ add_executable(gti_llvm_atomic_contract_tests llvm_atomic_contract_tests.cpp)
 target_include_directories(gti_llvm_atomic_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_atomic_contract_tests PRIVATE gti_llvm_backend gti_driver)
 add_test(NAME llvm_atomic_contracts COMMAND gti_llvm_atomic_contract_tests "${PROJECT_SOURCE_DIR}")
+add_executable(gti_llvm_mutex_contract_tests llvm_mutex_contract_tests.cpp)
+target_include_directories(gti_llvm_mutex_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_mutex_contract_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
+add_test(NAME llvm_mutex_contracts COMMAND gti_llvm_mutex_contract_tests "${PROJECT_SOURCE_DIR}")
 add_executable("gti_llvm_coverage_evidence"
                "${PROJECT_SOURCE_DIR}/tests/llvm_coverage_evidence.cpp")
 target_link_libraries("gti_llvm_coverage_evidence" PRIVATE gti_llvm_backend)
@@ -1791,6 +1795,13 @@ if(Python3_Interpreter_FOUND)
                 --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
                 --llvm-cc "${GTI_LLVM_TEST_CLANG}")
       set_tests_properties(llvm_atomic_wait_service PROPERTIES TIMEOUT 240)
+      add_test(NAME llvm_mutex_service
+        COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_mutex_service_test.py"
+                "${PROJECT_SOURCE_DIR}" "$<TARGET_FILE:gti_llvm_mutex_contract_tests>"
+                "${CMAKE_BINARY_DIR}/mutex-service-evidence"
+                --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+                --llvm-cc "${GTI_LLVM_TEST_CLANG}")
+      set_tests_properties(llvm_mutex_service PROPERTIES TIMEOUT 240)
     endif()
   endif()
   gti_register_llvm_evidence_manifest(

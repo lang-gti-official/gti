@@ -10,6 +10,7 @@ llvm::Function *declareRuntimeService(Session &session,
   std::vector<llvm::Type *> parameters;
   std::string name;
   bool neverReturns = false;
+  bool noUnwind = false;
   switch (service) {
   case RuntimeService::BeginThreadLocals:
     name = "gti_rt_thread_locals_begin_v1";
@@ -55,14 +56,37 @@ llvm::Function *declareRuntimeService(Session &session,
     result = llvm::Type::getInt32Ty(context);
     break;
   case RuntimeService::AtomicWait:
+    noUnwind = true;
     name = "gti_rt_atomic_wait_v1";
     parameters = {ptr, llvm::Type::getInt64Ty(context),
                   llvm::Type::getInt32Ty(context), llvm::Type::getInt32Ty(context)};
     break;
   case RuntimeService::AtomicNotify:
+    noUnwind = true;
     name = "gti_rt_atomic_notify_v1";
     parameters = {ptr, llvm::Type::getInt32Ty(context),
                   llvm::Type::getInt32Ty(context)};
+    break;
+  case RuntimeService::MutexInitialize:
+    noUnwind = true;
+    name = "gti_rt_mutex_initialize_v1";
+    parameters = {ptr};
+    break;
+  case RuntimeService::MutexDestroy:
+    noUnwind = true;
+    name = "gti_rt_mutex_destroy_v1";
+    parameters = {ptr};
+    break;
+  case RuntimeService::MutexLock:
+    noUnwind = true;
+    name = "gti_rt_mutex_lock_v1";
+    parameters = {ptr};
+    result = llvm::Type::getInt32Ty(context);
+    break;
+  case RuntimeService::MutexUnlock:
+    noUnwind = true;
+    name = "gti_rt_mutex_unlock_v1";
+    parameters = {ptr};
     break;
   }
   if (name.empty())
@@ -73,12 +97,16 @@ llvm::Function *declareRuntimeService(Session &session,
     if (!function || function->getFunctionType() != signature)
       throw std::logic_error("conflicting LLVM runtime service signature: " +
                              name);
+    if (noUnwind)
+      function->addFnAttr(llvm::Attribute::NoUnwind);
     return function;
   }
   auto *function = llvm::Function::Create(
       signature, llvm::GlobalValue::ExternalLinkage, name, session.module());
   if (neverReturns)
     function->addFnAttr(llvm::Attribute::NoReturn);
+  if (noUnwind)
+    function->addFnAttr(llvm::Attribute::NoUnwind);
   return function;
 }
 

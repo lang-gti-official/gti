@@ -17,6 +17,10 @@ enum class RuntimeService {
   CapturePanic,
   AtomicWait,
   AtomicNotify,
+  MutexInitialize,
+  MutexDestroy,
+  MutexLock,
+  MutexUnlock,
 };
 
 // Only real C symbols with explicitly modeled signatures enter the module.

@@ -27,6 +27,14 @@ struct AtomicStorageLayout {
   llvm::IntegerType *lane = nullptr;
 };
 
+struct MutexStorageLayout {
+  SemanticType element;
+  TypeLayout object;
+  unsigned nativeIndex = 0;
+  unsigned payloadIndex = 1;
+  unsigned payloadActiveIndex = 2;
+};
+
 struct PayloadLayout {
   TypeLayout type;
   llvm::StructType *storage = nullptr;
@@ -56,6 +64,7 @@ class Layouts final {
 public:
   [[nodiscard]] TypeLayout get(const SemanticType &type);
   [[nodiscard]] AtomicStorageLayout atomicStorage(const SemanticType &type);
+  [[nodiscard]] MutexStorageLayout mutexStorage(const SemanticType &type);
   [[nodiscard]] const PayloadLayout &payload(const SemanticType &type);
   [[nodiscard]] llvm::PointerType *pointer() const;
   [[nodiscard]] const SharedOwnerLayout &sharedOwner();

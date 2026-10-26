@@ -612,6 +612,7 @@ add_library(
   "src/compiler/llvm/failure.cpp"
   "src/compiler/llvm/scalar.cpp"
   "src/compiler/llvm/atomics.cpp"
+  "src/compiler/llvm/mutexes.cpp"
   "src/compiler/llvm/closure_environment.cpp"
   "src/compiler/llvm/constructor_field_publication.cpp"
   "src/compiler/llvm/callables.cpp"
