@@ -181,6 +181,10 @@ def main():
     run("array-source-observer", [args.cc, "-std=c17", *flags, "-c",
                                    root / "tests/fixtures/llvm_mutex_array_lifecycle.c",
                                    "-o", output / "array-source-observer.o"])
+    run("emit-array-source", [args.emitter.resolve(), root, "--array-source-composition",
+                               output / "array-source.ll", *sanitize])
+    run("array-runtime", [args.cxx, "-std=c++20", *flags, "-c",
+                            root / "runtime/src/mutex.cpp", "-o", output / "array-runtime.o"])
     run("guard-runtime", [args.cxx, "-std=c++20", *flags,
         "-Dgti_rt_mutex_lock_v1=gti_test_mutex_real_lock_v1",
         "-Dgti_rt_mutex_unlock_v1=gti_test_mutex_real_unlock_v1",
@@ -256,6 +260,17 @@ def main():
         for fault in ("guard-lock", "guard-body"):
             run(f"guard-source-{fault}-{mode}", [guard_program],
                 expected=70, failure_mode=fault)
+        run(f"array-source-ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}",
+            *instrumentation, "-c", output / "array-source.ll",
+            "-o", output / f"array-source-{mode}.o"])
+        array_program = output / f"array-source-{mode}"
+        run(f"array-source-link-{mode}", [args.cxx, "-pthread", *instrumentation,
+            output / "array-source-observer.o", output / "array-runtime.o",
+            output / "failure-runtime.o", output / f"array-source-{mode}.o",
+            runtime_library, "-o", array_program])
+        run(f"array-source-execute-{mode}", [array_program])
+        run(f"array-source-bounds-{mode}", [array_program],
+            expected=70, failure_mode="array-bounds")
         for fault in ("active-lock", "wrong-owner", "inactive-read", "retired-lock", "quarantined-unload"):
             run(f"{fault}-{mode}", [program, fault], death=True)
 

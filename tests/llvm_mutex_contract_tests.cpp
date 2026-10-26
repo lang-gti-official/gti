@@ -338,7 +338,7 @@ void checkProcessStorage(const std::filesystem::path &root,
 void checkSourceComposition(const std::filesystem::path &root,
                              const std::filesystem::path &output,
                              std::string_view sanitizer, bool activePayload,
-                             bool guard = false) {
+                             bool guard = false, bool array = false) {
   FrontendOptions options;
   options.target.executionProfile = ExecutionProfile::Concurrent;
   options.target.runtimeCapabilities.threads = true;
@@ -346,7 +346,8 @@ void checkSourceComposition(const std::filesystem::path &root,
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = true;
   const auto frontend = Frontend(options).analyze(
-      root / (guard ? "tests/fixtures/llvm_mutex_guard_lifecycle.gti"
+      root / (array ? "tests/fixtures/llvm_mutex_array_lifecycle.gti"
+                    : guard ? "tests/fixtures/llvm_mutex_guard_lifecycle.gti"
                     : activePayload ? "tests/fixtures/llvm_mutex_source_lifecycle.gti"
                             : "tests/fixtures/llvm_native_process_storage.gti"), std::nullopt,
       {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
@@ -851,6 +852,7 @@ int main(int argc, char **argv) {
   if ((argc == 4 || argc == 5) &&
       (std::string_view(argv[2]) == "--source-composition" ||
        std::string_view(argv[2]) == "--guard-source-composition" ||
+       std::string_view(argv[2]) == "--array-source-composition" ||
        std::string_view(argv[2]) == "--active-source-composition")) {
     try {
       const std::string_view sanitizer = argc == 5 ? argv[4] : "";
@@ -859,7 +861,8 @@ int main(int argc, char **argv) {
         return 2;
       checkSourceComposition(argv[1], argv[3], sanitizer,
                              std::string_view(argv[2]) == "--active-source-composition",
-                             std::string_view(argv[2]) == "--guard-source-composition");
+                             std::string_view(argv[2]) == "--guard-source-composition",
+                             std::string_view(argv[2]) == "--array-source-composition");
       return 0;
     } catch (const std::exception &error) {
       std::cerr << error.what() << '\n';
