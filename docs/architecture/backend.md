@@ -4369,8 +4369,31 @@ width/alignment combinations before producing an artifact. Object-symbol checks
 exclude unintended `libatomic` calls, but do not establish a lock-free or
 performance guarantee. Checked arithmetic fetch operations remain source-defined
 CAS loops: overflow must fail before modifying shared storage. Their complete
-native execution, wait/notify, mutexes and managed-worker integration remain
-pending O-LLVM-13 work; the scalar-core profile is not whole-milestone acceptance.
+native execution, mutexes and managed-worker integration remain pending
+O-LLVM-13 work; the scalar-core profile is not whole-milestone acceptance.
+
+Native wait/notify has a separate structural admission witness for concurrent
+executables on reviewed Darwin arm64 and Linux x86_64 targets. It consumes the
+same exact scalar storage identity and verified load order. The versioned C
+boundary receives the zero-extended same-width old representation (including
+signed lanes); booleans use their canonical byte lane. The private service
+uses same-width native atomic loads and a process-lifetime pthread parking
+domain. An already-changed lane returns before domain initialization or locking.
+Blocking checks and enrollment share the notification lock, and every wake
+rechecks the value. Hash collisions require broadcast even for notify-one;
+notifications carry neither saved credit nor a memory-order edge. No spin wait,
+GTI allocation, callback, or C++ exception transport implements this operation.
+
+All callers in an executable must share one final-image parking provider. This
+does not establish independently linked module attachment/unload support. The
+`atomic.wait-ready` profile exercises public lane/order conversion at LLVM
+O0-O3; `llvm_atomic_wait_service` joins actual source-verified emitter plans to
+the production service through test-only C-shaped adapters. Runtime controls
+separately cover enrollment races, spurious wakes, collisions, ABA/no credit,
+late first use and terminal native errors. Neither those adapters nor this
+witness admits managed/scoped workers. Generated boundary sanitizer, platform,
+installed-consumer and runtime-cost evidence remain separate acceptance duties;
+the whole O-LLVM-13 milestone is not complete.
 
 O-LLVM-03 provides the private machinery shared by all native lowering profiles.
 `Session` owns the exact

@@ -29,7 +29,8 @@ void expect(bool condition, std::string_view message) {
 // emitter and exact source-verified MIR plans; they are not GTI body wrappers,
 // a production foreign-object ABI, or admission of AtomicWait/AtomicNotify.
 void emitWaitLanes(const std::filesystem::path &root,
-                   const std::filesystem::path &output) {
+                   const std::filesystem::path &output,
+                   std::string_view sanitizer = {}) {
   FrontendOptions options;
   options.target.executionProfile = ExecutionProfile::Concurrent;
   options.target.runtimeCapabilities.threads = true;
@@ -113,6 +114,9 @@ void emitWaitLanes(const std::filesystem::path &root,
           std::string("gti_test_llvm_") + (load ? "load" : "store") +
               std::to_string(bits),
           session.module());
+      if (!sanitizer.empty())
+        function->addFnAttr(sanitizer == "thread" ? llvm::Attribute::SanitizeThread
+                                                 : llvm::Attribute::SanitizeAddress);
       llvm::IRBuilder<> ir(
           llvm::BasicBlock::Create(session.context(), "entry", function));
       Atomics atomics(session, ir);
@@ -375,7 +379,8 @@ void check(const std::filesystem::path &root) {
   }
 }
 void checkWaiting(const std::filesystem::path &root,
-                  const std::filesystem::path &output = {}) {
+                  const std::filesystem::path &output = {},
+                  std::string_view sanitizer = {}) {
   FrontendOptions options;
   options.target.executionProfile = ExecutionProfile::Concurrent;
   options.target.runtimeCapabilities.threads = true;
@@ -457,6 +462,9 @@ void checkWaiting(const std::filesystem::path &root,
         auto *function = llvm::Function::Create(
             signature, llvm::GlobalValue::ExternalLinkage,
             name, session.module());
+        if (!sanitizer.empty())
+          function->addFnAttr(sanitizer == "thread" ? llvm::Attribute::SanitizeThread
+                                                   : llvm::Attribute::SanitizeAddress);
         llvm::IRBuilder<> ir(llvm::BasicBlock::Create(session.context(), "entry", function));
         std::vector<llvm::Value *> inputs;
         inputs.push_back(function->getArg(0));
@@ -494,15 +502,18 @@ void checkWaiting(const std::filesystem::path &root,
 
 int main(int argc, char **argv) {
   if (argc != 2 &&
-      !(argc == 4 && (std::string_view(argv[2]) == "--emit-wait-lanes" ||
+      !((argc == 4 || argc == 5) && (std::string_view(argv[2]) == "--emit-wait-lanes" ||
                      std::string_view(argv[2]) == "--emit-wait-services")))
     return 2;
+  const std::string_view sanitizer = argc == 5 ? argv[4] : "";
+  if (!sanitizer.empty() && sanitizer != "address,undefined" && sanitizer != "thread")
+    return 2;
   try {
-    if (argc == 4 && std::string_view(argv[2]) == "--emit-wait-services")
-      checkWaiting(std::filesystem::path(argv[1]), std::filesystem::path(argv[3]));
-    else if (argc == 4)
+    if (argc >= 4 && std::string_view(argv[2]) == "--emit-wait-services")
+      checkWaiting(std::filesystem::path(argv[1]), std::filesystem::path(argv[3]), sanitizer);
+    else if (argc >= 4)
       emitWaitLanes(std::filesystem::path(argv[1]),
-                    std::filesystem::path(argv[3]));
+                    std::filesystem::path(argv[3]), sanitizer);
     else {
       check(std::filesystem::path(argv[1]));
       checkWaiting(std::filesystem::path(argv[1]));

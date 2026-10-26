@@ -1782,6 +1782,16 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/runtime-synchronization-evidence"
               --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(runtime_synchronization PROPERTIES TIMEOUT 180)
+    find_program(GTI_LLVM_TEST_CLANG NAMES clang HINTS "${LLVM_TOOLS_BINARY_DIR}" NO_DEFAULT_PATH)
+    if(GTI_LLVM_TEST_CLANG)
+      add_test(NAME llvm_atomic_wait_service
+        COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_atomic_wait_service_test.py"
+                "${PROJECT_SOURCE_DIR}" "$<TARGET_FILE:gti_llvm_atomic_contract_tests>"
+                "${CMAKE_BINARY_DIR}/atomic-wait-service-evidence"
+                --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+                --llvm-cc "${GTI_LLVM_TEST_CLANG}")
+      set_tests_properties(llvm_atomic_wait_service PROPERTIES TIMEOUT 240)
+    endif()
   endif()
   gti_register_llvm_evidence_manifest(
     llvm_scalar_execution
