@@ -4600,6 +4600,13 @@ compares current status propagation with native unwinding before dependent
 callable/worker ABIs are extended. No transport change is implemented by that
 approval; definitions and calls continue to agree on the convention above.
 
+Whole failure-channel propagation uses a `Failures`-owned, DataLayout-sized
+`llvm.memmove`, including the inline message and artifact pointer. Channels are
+plain ABI storage, not GTI owners; this operation does not perform a source
+copy or transfer a loan. Overlap-safe movement preserves the previous
+load-before-store behavior without materializing the message array as aggregate
+SSA values. The publication and cleanup edges remain MIR-owned and unchanged.
+
 All GTI functions use deterministic `__gti_native_v2_f<instance-id>` names.
 Declaration planning retains source spans as private metadata and records
 definition obligations before body emission, enabling recursion without name

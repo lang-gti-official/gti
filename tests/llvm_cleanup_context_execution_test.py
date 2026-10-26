@@ -51,6 +51,32 @@ def main():
             print(f"cleanup context {endpoint}: normal, first, inherited and restored passed",
                   flush=True)
 
+        # Exercise the full inline panic buffer across calls and cleanup drains,
+        # including bytes beyond the first cache line and embedded zero bytes.
+        message = "abcdefghijklmnopqrstuvwxyz0123456789" * 12
+        panic = scratch / "copied-panic.gti"
+        panic.write_text('''#include <std/panic>
+class Marker {
+  char code;
+public:
+  Marker(char code) : code(code) {}
+  ~Marker() { std::print(this.code); }
+};
+void leaf() {
+  Marker local{'L'};
+  std::panic("''' + message + r'''\0tail");
+}
+void middle() { Marker local{'M'}; leaf(); }
+int main() { Marker local{'O'}; middle(); return 0; }
+''')
+        expected = (70, "LMO", 'copied-panic.gti:10: runtime error[GTI-R0017]: panic: "' +
+                    message + r'\x00tail' + '"\n')
+        for index, endpoint in enumerate(endpoints):
+            result = execute(gti, root, scratch / f"panic-{index}", panic, endpoint, env)
+            if result.error or result.observable != expected:
+                raise AssertionError(f"copied panic {endpoint}: {result} != {expected}")
+            print(f"copied panic {endpoint}: full message, source and cleanup order passed", flush=True)
+
 
 if __name__ == "__main__":
     main()

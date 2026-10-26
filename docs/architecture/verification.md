@@ -10163,6 +10163,11 @@ remaining local destructor fails. Production `llvm_placement_execution` also
 checks returned borrowed carriers, their referent identity and rollback order;
 its fresh-return chain has an explicit C++ vocabulary comparator gap, while
 the failure-cleanup case retains C++20/23 comparison.
+`llvm_cleanup_context_execution` additionally propagates a long panic message
+with an embedded zero through three source frames, checking every reported byte,
+the original location and deterministic cleanup order against C++23 and LLVM
+O0-O3. The C04 retained-input checks reject aggregate-SSA channel copies and
+require the status path's bulk channel transfer.
 Whole ordinary-record replacement exercises the paired cleanup/publication
 schedule. Its unsafe `int*` observers count destruction of the old value,
 prepared replacement and surrounding owner when the old destructor fails;

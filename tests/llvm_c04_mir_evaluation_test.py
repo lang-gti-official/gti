@@ -87,6 +87,10 @@ def main():
             raise AssertionError("transport candidates did not consume identical sealed-program text")
         snapshots[fixture] = snapshot
         ir = prefix.with_suffix(".ll").read_text()
+        if "load %gti.failure_channel.v1," in ir:
+            raise AssertionError("failure channel copy regressed to aggregate SSA transport")
+        if mode == "status" and "@llvm.memmove." not in ir:
+            raise AssertionError("status propagation lost its bulk failure-channel transfer")
         scalar_calls = None
         if (("noinline" in ir) != (args.call_boundaries == "fixed") or
                 "uwtable(sync)" not in ir or "gti.c04.transport" not in ir or

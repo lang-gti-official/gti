@@ -1621,9 +1621,7 @@ private:
       break;
     case MirTerminatorKind::ContinueFailure: {
       auto *channel = channels.at(term.failureRecord);
-      ir.CreateStore(ir.CreateLoad(session.abi().failureChannel(),
-                                   channels.at(block.activeFailure)),
-                     channel);
+      failures.copyChannel(ir, channel, channels.at(block.activeFailure));
       jump(term.target, term.targetArguments);
       break;
     }
@@ -1731,9 +1729,8 @@ private:
 #endif
       if (!failureDestination)
         throw std::logic_error("LLVM failure propagation has no destination");
-      ir.CreateStore(ir.CreateLoad(session.abi().failureChannel(),
-                                   channels.at(term.failureRecord)),
-                     failureDestination);
+      failures.copyChannel(ir, failureDestination,
+                            channels.at(term.failureRecord));
       leaveFailureCleanup();
       ir.CreateRet(ir.getFalse());
       break;

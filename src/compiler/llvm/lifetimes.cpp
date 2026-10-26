@@ -960,8 +960,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       ir.SetInsertPoint(secondary);
       failures.terminateCleanup(ir, output, scratch);
       ir.SetInsertPoint(first);
-      ir.CreateStore(ir.CreateLoad(session.abi().failureChannel(), scratch),
-                     output);
+      failures.copyChannel(ir, output, scratch);
       auto *resume =
           llvm::BasicBlock::Create(session.context(), "resume", function);
       auto *stop =

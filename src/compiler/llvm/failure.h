@@ -13,6 +13,8 @@ public:
                                     llvm::Value *channel);
   [[nodiscard]] llvm::Value *origin(llvm::IRBuilder<> &ir,
                                     llvm::Value *channel);
+  void copyChannel(llvm::IRBuilder<> &ir, llvm::Value *destination,
+                   llvm::Value *source);
   void originate(llvm::IRBuilder<> &ir, llvm::Value *channel,
                  const MirInstruction &instruction,
                  DefinedFailureOutcome outcome,

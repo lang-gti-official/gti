@@ -75,6 +75,17 @@ llvm::Value *Failures::origin(llvm::IRBuilder<> &ir, llvm::Value *channel) {
       ir.CreateStructGEP(session.abi().failureChannel(), channel, 1));
 }
 
+void Failures::copyChannel(llvm::IRBuilder<> &ir, llvm::Value *destination,
+                           llvm::Value *source) {
+  // Failure channels are plain ABI storage, not source-language owners. Keep
+  // their inline message buffer out of aggregate SSA scalarization; memmove
+  // also preserves the prior load-before-store behavior for aliased channels.
+  auto *type = session.abi().failureChannel();
+  const auto alignment = session.dataLayout().getABITypeAlign(type);
+  ir.CreateMemMove(destination, alignment, source, alignment,
+                   session.dataLayout().getTypeAllocSize(type).getFixedValue());
+}
+
 void Failures::originate(llvm::IRBuilder<> &ir, llvm::Value *channel,
                          const MirInstruction &instruction,
                          DefinedFailureOutcome outcome, llvm::Value *callerSite,
