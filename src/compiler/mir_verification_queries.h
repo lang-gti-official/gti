@@ -9,17 +9,10 @@
 
 namespace lang::mir_detail {
 
-struct MirDebugPoint {
-  MirBlockId block = 0;
-  // Zero denotes the boundary before the terminator; it has no after point.
-  MirInstructionId instruction = 0;
-  bool after = false;
-  friend bool operator==(const MirDebugPoint &,
-                         const MirDebugPoint &) = default;
-};
+using ::lang::MirDebugPoint;
 
-enum class MirDebugReadability { Unknown, Unavailable, DefinitelyReadable };
-enum class MirDebugAvailabilityReason { Unproven, Inactive, Readable };
+using ::lang::MirDebugAvailabilityReason;
+using ::lang::MirDebugReadability;
 
 struct MirExistingPlaceQuery {
   MirPlaceId place = 0;

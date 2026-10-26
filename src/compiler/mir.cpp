@@ -6,6 +6,7 @@
 #include "gti/optimization/coverage.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
+#include "mir_source_debug.h"
 #include "mir_storage_effects.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
@@ -1964,7 +1965,7 @@ ownershipSuccessors(const MirBody &body, const MirTerminator &terminator) {
 struct MirPlaceObservationSink {
   using Point = mir_detail::MirDebugPoint;
   using Query = mir_detail::MirExistingPlaceQuery;
-  using PointKey = std::tuple<MirBlockId, MirInstructionId, bool>;
+  using PointKey = std::tuple<MirBlockId, MirInstructionId, bool, bool>;
   const MirBody &body;
   std::span<const Query> requests;
   std::map<PointKey, std::vector<std::size_t>> byPoint;
@@ -2000,7 +2001,7 @@ struct MirPlaceObservationSink {
       const auto &request = requests[i];
       covered[i] = coverage.at(request.place);
       byPoint[{request.point.block, request.point.instruction,
-               request.point.after}]
+               request.point.after, request.point.blockEntry}]
           .push_back(i);
       if (covered[i] &&
           std::find(roots.begin(), roots.end(), request.place) == roots.end())
@@ -2009,8 +2010,8 @@ struct MirPlaceObservationSink {
   }
 
   template <typename Observe> void at(Point point, Observe observe) {
-    const auto found =
-        byPoint.find({point.block, point.instruction, point.after});
+    const auto found = byPoint.find(
+        {point.block, point.instruction, point.after, point.blockEntry});
     if (found != byPoint.end())
       for (const auto index : found->second)
         if (covered[index])
@@ -2076,7 +2077,7 @@ struct MirPlaceObservationSink {
       return;
     const auto key = [](const Query &query) {
       return std::tuple{query.place, query.point.block, query.point.instruction,
-                        query.point.after};
+                        query.point.after, query.point.blockEntry};
     };
     std::sort(stops.begin(), stops.end(),
               [&](const auto &left, const auto &right) {
@@ -2247,10 +2248,7 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner,
       if (!entryStates[block.id - 1])
         continue;
       auto state = *entryStates[block.id - 1];
-      const auto first = block.instructions.empty()
-                             ? MirInstructionId{0}
-                             : block.instructions.front().id;
-      observations->initialization({block.id, first, false}, storageForPlace,
+      observations->initialization({block.id, 0, false, true}, storageForPlace,
                                    state, true);
       for (const auto &instruction : block.instructions) {
         observations->initialization({block.id, instruction.id, false},
@@ -2347,12 +2345,7 @@ verifyMirOwnershipFlow(const MirBody &body, std::size_t owner,
       MirOwnershipFlowState state = *entryStates[blockId - 1];
 
       if (validating && observations)
-        observations->ownership({blockId,
-                                 block->instructions.empty()
-                                     ? MirInstructionId{0}
-                                     : block->instructions.front().id,
-                                 false},
-                                state, true);
+        observations->ownership({blockId, 0, false, true}, state, true);
 
       for (const MirInstruction &instruction : block->instructions) {
         struct Observation {
@@ -6427,6 +6420,58 @@ bool rebuildMirValueUses(MirBody &body) {
   return valid;
 }
 
+mir_detail::MirDebugRepairUndo
+mir_detail::repairMirSourceDebug(const MirBody &before, MirBody &candidate,
+                                 const MirDebugEditEffect &effect) {
+  MirDebugRepairUndo undo;
+  if (!before.sourceDebug.tables || !candidate.sourceDebug.tables)
+    return undo;
+  auto &tables = *candidate.sourceDebug.tables;
+  const auto removed = [&](const MirSourceLocalEnd &end) {
+    return std::find(effect.removedBlocks.begin(), effect.removedBlocks.end(),
+                     end.point.block) != effect.removedBlocks.end() ||
+           (end.point.instruction &&
+            std::find(effect.removedInstructions.begin(),
+                      effect.removedInstructions.end(),
+                      end.point.instruction) !=
+                effect.removedInstructions.end());
+  };
+  std::unordered_set<SourceLocalId> affected;
+  for (std::size_t i = 0; i < tables.localEnds.size(); ++i)
+    if (removed(tables.localEnds[i])) {
+      affected.insert(tables.localEnds[i].local);
+      undo.ends.emplace_back(i, tables.localEnds[i]);
+    }
+  const auto *promoted = before.findPlace(effect.promotedPlace);
+  for (std::size_t i = 0; i < tables.locals.size(); ++i) {
+    auto &local = tables.locals[i];
+    const auto *place = before.findPlace(local.place);
+    if (local.policy == MirSourceLocalPolicy::ExistingPlace &&
+        (affected.contains(local.declaration.id) ||
+         (promoted && place &&
+          sameScalarInitializationStorage(*promoted, *place)))) {
+      undo.locals.push_back({i, local.place, local.policy});
+      local.place = 0;
+      local.policy = MirSourceLocalPolicy::OptimizedOut;
+    }
+  }
+  std::erase_if(tables.localEnds, removed);
+  return undo;
+}
+
+void mir_detail::MirDebugRepairUndo::restore(MirBody &body) const {
+  if (!body.sourceDebug.tables)
+    return;
+  auto &tables = *body.sourceDebug.tables;
+  for (const auto &local : locals) {
+    tables.locals[local.index].place = local.place;
+    tables.locals[local.index].policy = local.policy;
+  }
+  for (const auto &[index, end] : ends)
+    tables.localEnds.insert(
+        tables.localEnds.begin() + static_cast<std::ptrdiff_t>(index), end);
+}
+
 std::optional<MirScalarPromotionRewrite>
 rewriteMirScalarPlace(MirBody &body, MirPlaceId placeId) {
   if (!verifyMirBody(body).valid()) {
@@ -6723,6 +6768,10 @@ rewriteMirScalarPlace(MirBody &body, MirPlaceId placeId) {
             rewrite.replacedInstructions.end());
   std::sort(rewrite.removedInstructions.begin(),
             rewrite.removedInstructions.end());
+  (void)mir_detail::repairMirSourceDebug(
+      body, candidate,
+      {.promotedPlace = placeId,
+       .removedInstructions = rewrite.removedInstructions});
   if (!rebuildMirValueUses(candidate)) {
     return std::nullopt;
   }
@@ -6839,6 +6888,8 @@ mir_detail::rewriteVerifiedMirDeadInstruction(MirProgram &program,
   // touched and the body-wide facts derived from it.
   const MirInstruction saved = *target;
   *target = makeMirInstructionTombstone(*target);
+  const auto debugUndo = mir_detail::repairMirSourceDebug(
+      *body, *body, {.removedInstructions = std::span(&instructionId, 1)});
   if (rebuildMirValueUses(*body)) {
     rebuildMirReachability(*body);
     if (verifyMirBody(*body, address.owner).valid()) {
@@ -6846,6 +6897,7 @@ mir_detail::rewriteVerifiedMirDeadInstruction(MirProgram &program,
     }
   }
   *target = saved;
+  debugUndo.restore(*body);
   (void)rebuildMirValueUses(*body);
   rebuildMirReachability(*body);
   return std::nullopt;
@@ -6901,6 +6953,10 @@ rewriteMirUnreachableBlock(MirBody &body, MirBlockId blockId) {
   block.terminator = {.kind = MirTerminatorKind::Unreachable,
                       .hirValue = block.terminator.hirValue,
                       .hirStatement = block.terminator.hirStatement};
+  (void)mir_detail::repairMirSourceDebug(
+      body, candidate,
+      {.removedInstructions = rewrite.removedInstructions,
+       .removedBlocks = std::span(&blockId, 1)});
   if (!rebuildMirValueUses(candidate)) {
     return std::nullopt;
   }
@@ -9979,9 +10035,95 @@ const SemanticType *mirConcretePackElementType(const MirBody &body,
   return &element;
 }
 
+static bool validMirDebugPoint(const MirBody &body, MirDebugPoint point) {
+  const auto *block = body.findBlock(point.block);
+  if (!block || block->id != point.block)
+    return false;
+  if (point.blockEntry)
+    return point.instruction == 0 && !point.after;
+  if (point.instruction == 0)
+    return !point.after;
+  return std::any_of(block->instructions.begin(), block->instructions.end(),
+                     [&](const auto &instruction) {
+                       return instruction.id == point.instruction &&
+                              !instruction.tombstone;
+                     });
+}
+
+static MirVerificationResult verifyMirSourceDebugStructure(const MirBody &body,
+                                                           std::size_t owner) {
+  const auto &record = body.sourceDebug;
+  if (!isValidSourceDebugRecord(record))
+    return failure(body, owner,
+                   "MIR source-debug collection/table state is invalid");
+  if (!record.tables)
+    return {};
+  const auto &tables = *record.tables;
+  if (tables.domain != body.placeDomain)
+    return failure(body, owner,
+                   "MIR source-debug facts have a foreign place domain");
+  for (std::size_t i = 0; i < tables.scopes.size(); ++i)
+    if (tables.scopes[i].id != i + 1 || tables.scopes[i].parent >= i + 1)
+      return failure(body, owner,
+                     "MIR source scope has an invalid parent identity");
+  for (std::size_t i = 0; i < tables.locals.size(); ++i) {
+    const auto &local = tables.locals[i];
+    const auto &declaration = local.declaration;
+    if (declaration.id != i + 1 || declaration.scope == 0 ||
+        declaration.scope > tables.scopes.size())
+      return failure(
+          body, owner,
+          "MIR source local has a foreign declaration/scope identity");
+    switch (local.policy) {
+    case MirSourceLocalPolicy::ExistingPlace: {
+      const auto *place = body.findPlace(local.place);
+      if (!place || place->id != local.place || !declaration.binding ||
+          place->root != MirPlaceRootKind::Binding ||
+          !place->projections.empty() ||
+          place->binding != declaration.binding ||
+          place->symbol != declaration.symbol ||
+          place->type != declaration.type || !place->key ||
+          !place->key->valid() || place->key->domain != body.placeDomain)
+        return failure(body, owner,
+                       "MIR source local has a foreign binding, place or type");
+      break;
+    }
+    case MirSourceLocalPolicy::Unproven:
+    case MirSourceLocalPolicy::OptimizedOut:
+      if (local.place != 0)
+        return failure(body, owner,
+                       "unavailable MIR source local retains a place claim");
+      break;
+    default:
+      return failure(body, owner,
+                     "MIR source local has an invalid location policy");
+    }
+  }
+  const auto validMembership = [&](const auto &rows) {
+    std::unordered_set<std::size_t> seen;
+    for (const auto &[anchor, scope] : rows)
+      if (!anchor || !scope || scope > tables.scopes.size() ||
+          !seen.insert(anchor).second)
+        return false;
+    return true;
+  };
+  if (!validMembership(tables.statements) || !validMembership(tables.values))
+    return failure(body, owner,
+                   "MIR source membership has invalid or duplicate identities");
+  for (const auto &end : tables.localEnds)
+    if (!end.local || end.local > tables.locals.size() ||
+        !validMirDebugPoint(body, end.point))
+      return failure(body, owner,
+                     "MIR source-local end has a foreign local or point");
+  return {};
+}
+
 static MirVerificationResult
 verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                   MirPlaceObservationSink *observations) {
+  if (auto sourceDebug = verifyMirSourceDebugStructure(body, owner);
+      !sourceDebug.valid())
+    return sourceDebug;
   if (body.hasCallerLocation && body.kind != MirBodyKind::Function) {
     return failure(body, owner,
                    "only a source function body can receive caller location");
@@ -15843,17 +15985,8 @@ mir_detail::verifyMirBodyWithPlaceQueries(
   }
   for (const auto &request : requests) {
     const auto *place = body.findPlace(request.place);
-    const auto *block = body.findBlock(request.point.block);
-    const bool validPoint =
-        block &&
-        (request.point.instruction == 0
-             ? !request.point.after
-             : std::any_of(block->instructions.begin(),
-                           block->instructions.end(), [&](const auto &row) {
-                             return row.id == request.point.instruction &&
-                                    !row.tombstone;
-                           }));
-    if (!place || place->id != request.place || !validPoint) {
+    if (!place || place->id != request.place ||
+        !validMirDebugPoint(body, request.point)) {
       batch.verification = failure(
           body, owner, "debug place query has a foreign place or program point",
           request.point.block, request.point.instruction);
@@ -15865,6 +15998,152 @@ mir_detail::verifyMirBodyWithPlaceQueries(
   MirPlaceObservationSink observations(body, requests);
   batch.verification = verifyMirBodyImpl(body, owner, &observations);
   observations.finish(batch);
+  return batch;
+}
+
+MirDebugAvailabilityBatch queryMirDebugAvailability(
+    const MirProgram &program, MirBodyAddress address,
+    std::span<const MirDebugAvailabilityRequest> requests) {
+  MirDebugAvailabilityBatch batch;
+  for (const auto &request : requests)
+    batch.requested.push_back({.request = request});
+  const auto *body = findMirBody(program, address);
+  if (!body) {
+    batch.verification.errors.push_back(
+        {.bodyKind = address.kind,
+         .owner = address.owner,
+         .message = "source-local query has a foreign body"});
+    return batch;
+  }
+  batch.verification = verifyMirSourceDebugStructure(*body, address.owner);
+  if (!batch.verification.valid())
+    return batch;
+  if (requests.empty()) {
+    batch.verification = verifyMirBody(*body, address.owner);
+    return batch;
+  }
+  if (program.sourceDebugProfile() != SourceDebugProfile::LexicalV1 ||
+      !body->sourceDebug.tables) {
+    batch.verification =
+        failure(*body, address.owner,
+                "source-local query requires collected lexical facts");
+    return batch;
+  }
+  const auto &tables = *body->sourceDebug.tables;
+  std::vector<mir_detail::MirExistingPlaceQuery> places;
+  std::vector<std::size_t> indices;
+  for (std::size_t i = 0; i < requests.size(); ++i) {
+    const auto &request = requests[i];
+    if (!request.local || request.local > tables.locals.size() ||
+        !validMirDebugPoint(*body, request.point)) {
+      batch.verification =
+          failure(*body, address.owner,
+                  "source-local query has a foreign local or point",
+                  request.point.block, request.point.instruction);
+      return batch;
+    }
+    const auto &local = tables.locals[request.local - 1];
+    if (local.policy == MirSourceLocalPolicy::ExistingPlace) {
+      places.push_back({local.place, request.point});
+      indices.push_back(i);
+    }
+  }
+  const auto observed =
+      mir_detail::verifyMirBodyWithPlaceQueries(*body, address.owner, places);
+  batch.verification = observed.verification;
+  if (!batch.verification.valid())
+    return batch;
+  for (std::size_t i = 0; i < indices.size(); ++i) {
+    const auto &fact = observed.requested[i];
+    auto &result = batch.requested[indices[i]];
+    result.place = fact.request.place;
+    result.readability = fact.readability;
+    result.reason = fact.reason;
+  }
+  const std::unordered_map<HirStatementId, SourceScopeId> statementScopes(
+      tables.statements.begin(), tables.statements.end());
+  const std::unordered_map<HirValueId, SourceScopeId> valueScopes(
+      tables.values.begin(), tables.values.end());
+  const auto scopeFor = [&](HirStatementId statement, HirValueId value) {
+    if (const auto found = statementScopes.find(statement);
+        found != statementScopes.end())
+      return found->second;
+    if (const auto found = valueScopes.find(value); found != valueScopes.end())
+      return found->second;
+    return SourceScopeId{0};
+  };
+  const auto position = [&](MirDebugPoint point) {
+    const auto &block = *body->findBlock(point.block);
+    if (point.blockEntry)
+      return std::size_t{0};
+    for (std::size_t i = 0; i < block.instructions.size(); ++i)
+      if (block.instructions[i].id == point.instruction)
+        return 2 * i + 1 + static_cast<std::size_t>(point.after);
+    return 2 * block.instructions.size() + 1;
+  };
+  for (auto &fact : batch.requested) {
+    const auto &point = fact.request.point;
+    const auto &block = *body->findBlock(point.block);
+    SourceScopeId scope = 0;
+    if (point.blockEntry) {
+      for (const auto &instruction : block.instructions)
+        if (!instruction.tombstone &&
+            (scope = scopeFor(instruction.hirStatement, instruction.hirValue)))
+          break;
+    } else if (point.instruction) {
+      for (const auto &instruction : block.instructions)
+        if (instruction.id == point.instruction) {
+          scope = scopeFor(instruction.hirStatement, instruction.hirValue);
+          break;
+        }
+    } else {
+      scope =
+          scopeFor(block.terminator.hirStatement, block.terminator.hirValue);
+    }
+    const auto &local = tables.locals[fact.request.local - 1];
+    bool visible = false;
+    for (auto ancestor = scope; ancestor;
+         ancestor = tables.scopes[ancestor - 1].parent)
+      if (ancestor == local.declaration.scope) {
+        visible = true;
+        break;
+      }
+    const bool ended = std::any_of(
+        tables.localEnds.begin(), tables.localEnds.end(), [&](const auto &end) {
+          return end.local == fact.request.local &&
+                 end.point.block == point.block &&
+                 position(end.point) <= position(point);
+        });
+    if (ended || (scope && !visible)) {
+      fact.readability = MirDebugReadability::Unavailable;
+      fact.reason = MirDebugAvailabilityReason::OutOfScope;
+    } else if (!scope &&
+               fact.readability == MirDebugReadability::DefinitelyReadable) {
+      fact.readability = MirDebugReadability::Unknown;
+      fact.reason = MirDebugAvailabilityReason::Unproven;
+    }
+  }
+  std::unordered_set<SourceLocalId> requestedLocals;
+  for (const auto &request : requests)
+    requestedLocals.insert(request.local);
+  for (const auto &end : tables.localEnds)
+    if (requestedLocals.contains(end.local))
+      batch.requiredStops.push_back(end);
+  for (const auto &stop : observed.requiredStops)
+    for (const auto id : requestedLocals)
+      if (tables.locals[id - 1].place == stop.place)
+        batch.requiredStops.push_back({id, stop.point});
+  const auto key = [](const auto &end) {
+    return std::tuple{end.local, end.point.block, end.point.instruction,
+                      end.point.after, end.point.blockEntry};
+  };
+  std::sort(batch.requiredStops.begin(), batch.requiredStops.end(),
+            [&](const auto &left, const auto &right) {
+              return key(left) < key(right);
+            });
+  batch.requiredStops.erase(
+      std::unique(batch.requiredStops.begin(), batch.requiredStops.end()),
+      batch.requiredStops.end());
   return batch;
 }
 

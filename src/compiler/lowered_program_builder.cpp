@@ -8,6 +8,7 @@
 #include "gti/lowered_program_printer.h"
 #include "gti/semantic_model.h"
 #include "lowered_program_closure.h"
+#include "mir_source_debug.h"
 #include "mir_verification_support.h"
 
 #include <algorithm>
@@ -1296,6 +1297,18 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     addIssue(build.issues, LoweredProgramIssueKind::FrontendMismatch,
              hirPlans.errors.empty() ? "semantic and HIR program plans differ"
                                      : hirPlans.errors.front());
+  }
+  if (sourceMir.sourceDebugProfile() != hir.sourceDebugProfile() ||
+      optimizedMir.sourceDebugProfile() != sourceMir.sourceDebugProfile())
+    addIssue(build.issues, LoweredProgramIssueKind::FrontendMismatch,
+             "MIR source-debug profile differs from its frontend request");
+  for (const auto address : enumerateMirBodyAddresses(sourceMir)) {
+    const auto *sourceBody = debugHirBody(hir, address);
+    const auto *mirBody = findMirBody(sourceMir, address);
+    if (sourceBody && mirBody &&
+        !mir_detail::sourceDebugMatchesHir(*sourceBody, *mirBody))
+      addIssue(build.issues, LoweredProgramIssueKind::FrontendMismatch,
+               "source MIR debug facts differ from exact accepted HIR facts");
   }
   const MirVerificationResult sourceVerification = [&] {
     if (verified.sourceMirVerified)

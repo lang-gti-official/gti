@@ -311,6 +311,8 @@ public:
       }
     }
     const auto &target = program.target();
+    output << "source-debug-profile="
+           << sourceDebugProfileName(program.sourceDebugProfile()) << '\n';
     output << "target os=" << target.os << " vendor=" << target.vendor
            << " arch=" << target.arch
            << " pointer-width=" << target.dataLayout.pointerWidthBits()
@@ -2096,6 +2098,51 @@ private:
         use(value.valueUses[index][useIndex]);
       }
       output << "]\n";
+    }
+    output << " source-debug="
+           << sourceDebugCollectionName(value.sourceDebug.collection)
+           << " tables=" << static_cast<bool>(value.sourceDebug.tables) << '\n';
+    if (value.sourceDebug.tables) {
+      const auto &tables = *value.sourceDebug.tables;
+      output << "  source-domain=";
+      placeDomain(tables.domain);
+      output << '\n';
+      const auto span = [&](const SourceSpan &source) {
+        output << std::quoted(source.source) << ':' << source.start << ':'
+               << source.end << ':' << source.line;
+      };
+      for (const auto &scope : tables.scopes) {
+        output << "  source-scope=" << scope.id << " parent=" << scope.parent
+               << " unit=" << scope.sourceUnit
+               << " expansion=" << scope.expansion << " span=";
+        span(scope.source);
+        output << '\n';
+      }
+      for (const auto &local : tables.locals) {
+        const auto &declaration = local.declaration;
+        output << "  source-local=" << declaration.id
+               << " scope=" << declaration.scope
+               << " binding=" << declaration.binding
+               << " symbol=" << declaration.symbol
+               << " name=" << std::quoted(declaration.name)
+               << " parameter=" << declaration.parameter << " type=";
+        type(declaration.type);
+        output << " span=";
+        span(declaration.declaration);
+        output << " place=" << local.place << " policy=" << number(local.policy)
+               << '\n';
+      }
+      for (const auto &[statement, scope] : tables.statements)
+        output << "  source-statement=" << statement << " scope=" << scope
+               << '\n';
+      for (const auto &[sourceValue, scope] : tables.values)
+        output << "  source-value=" << sourceValue << " scope=" << scope
+               << '\n';
+      for (const auto &end : tables.localEnds)
+        output << "  source-end=" << end.local << " block=" << end.point.block
+               << " instruction=" << end.point.instruction
+               << " after=" << end.point.after
+               << " entry=" << end.point.blockEntry << '\n';
     }
     output << "end-body\n";
   }

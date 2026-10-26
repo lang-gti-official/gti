@@ -2,6 +2,7 @@
 #include "gti/mir_effects.h"
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
+#include "mir_source_debug.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
 
@@ -102,6 +103,7 @@ public:
     }
     output.hasCallerLocation = function != nullptr && function->tracksCaller;
     output.placeDomain = source.placeDomain;
+    captureSourceDebug();
     output.returnType = std::move(returnType);
     for (const HirValue &value : source.values) {
       values.emplace(value.id, &value);
@@ -500,7 +502,67 @@ private:
   struct Scope {
     std::vector<MirPlaceId> drops;
     std::vector<MirLoanId> loans;
+    std::vector<SourceLocalId> sourceLocals;
   };
+
+  void captureSourceDebug() {
+    if (!isValidSourceDebugRecord(source.sourceDebug)) {
+      valid = false;
+      return;
+    }
+    output.sourceDebug = mir_detail::describeHirSourceDebug(source);
+  }
+
+  void registerSourceLocal(HirBindingId binding) {
+    if (!output.sourceDebug.tables || scopes.empty())
+      return;
+    for (const auto &local : output.sourceDebug.tables->locals)
+      if (local.declaration.binding == binding) {
+        auto &ids = scopes.back().sourceLocals;
+        if (std::find(ids.begin(), ids.end(), local.declaration.id) ==
+            ids.end())
+          ids.push_back(local.declaration.id);
+      }
+  }
+
+  void recordSourceLocalEnds(std::size_t keepScopes) {
+    if (!output.sourceDebug.tables || terminated())
+      return;
+    const auto *block = currentBlock();
+    if (!block)
+      return;
+    const MirDebugPoint point{
+        .block = block->id,
+        .instruction =
+            block->instructions.empty() ? 0 : block->instructions.back().id,
+        .after = !block->instructions.empty(),
+        .blockEntry = block->instructions.empty()};
+    auto &ends = output.sourceDebug.tables->localEnds;
+    for (auto depth = scopes.size(); depth > keepScopes; --depth)
+      for (const auto local : scopes[depth - 1].sourceLocals)
+        if (std::find(ends.begin(), ends.end(),
+                      MirSourceLocalEnd{local, point}) == ends.end())
+          ends.push_back({local, point});
+  }
+
+  void finishSourceDebug() {
+    if (!output.sourceDebug.tables)
+      return;
+    for (auto &local : output.sourceDebug.tables->locals) {
+      const auto found = bindingPlaces.find(local.declaration.binding);
+      if (found == bindingPlaces.end())
+        continue;
+      const auto *place = output.findPlace(found->second);
+      if (place && place->root == MirPlaceRootKind::Binding &&
+          place->binding == local.declaration.binding &&
+          place->symbol == local.declaration.symbol &&
+          place->type == local.declaration.type && place->projections.empty() &&
+          place->key && place->key->domain == output.placeDomain) {
+        local.place = place->id;
+        local.policy = MirSourceLocalPolicy::ExistingPlace;
+      }
+    }
+  }
 
   struct TemporaryDrop {
     MirDropObligationId obligation = 0;
@@ -2405,6 +2467,7 @@ private:
     rebuildMirReachability(output);
     valid = rebuildMirValueUses(output) && valid;
     valid = validateSourceProvenance() && valid;
+    finishSourceDebug();
     verification = verifyMirBody(output);
     valid = verification.valid() && valid;
   }
@@ -11834,6 +11897,8 @@ private:
       return;
     }
     const HirBinding *binding = findBinding(bindingId);
+    if (binding && !binding->info.threadLocal && !binding->info.staticStorage)
+      registerSourceLocal(bindingId);
     if (binding != nullptr &&
         binding->info.type.kind != SemanticType::Reference &&
         binding->info.traits.drop == DropKind::Lexical &&
@@ -11881,6 +11946,7 @@ private:
       }
       if (binding.info.type.kind == SemanticType::TypePack &&
           binding.info.type.concretePack) {
+        registerSourceLocal(binding.id);
         (void)placeForBinding(binding.id);
         for (const HirDropObligation &drop : source.dropObligations) {
           if (drop.kind != HirDropObligationKind::Binding ||
@@ -12164,6 +12230,7 @@ private:
   };
 
   void emitScopeExit(std::size_t keepScopes) {
+    recordSourceLocalEnds(keepScopes);
     ScopeExitState state{.scopes = scopes, .bindingLoans = &bindingLoans};
     GroupedScopeExitVisitor visitor{.self = *this};
     walkScopeExit(state, keepScopes, visitor);
@@ -12527,6 +12594,7 @@ private:
       return false;
     }
     exitSharingUsed = true;
+    recordSourceLocalEnds(0);
     ScopeExitState state{.scopes = scopes, .bindingLoans = &bindingLoans};
     SharedExitEmitter emitter{.self = *this, .plan = plan, .carrier = place};
     walkScopeExit(state, 0, emitter);

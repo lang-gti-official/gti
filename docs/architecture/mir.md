@@ -3728,9 +3728,34 @@ point does not pretend to distinguish a moved/dropped/never-initialized history
 that its current facts cannot establish. Required cuts retain consuming and
 ambiguous CFG-entry boundaries even when later reinitialization restores
 readability. Empty queries take the ordinary verifier path and allocate no
-observation tables. These transient observations are groundwork for source-local
-debug transport, not native debugger acceptance or an alternate lifetime model.
+observation tables. Block entry and the boundary before a terminator are
+distinct points, including in an empty block.
 
+Inactive lexical-debug transport now carries the requested profile into MIR
+and deep-copies collected HIR scopes, concrete local declarations, and source
+membership into `MirBody::sourceDebug`. Initializer-region IDs are flattened
+deterministically within that body. `None` allocates no table. The actual normal
+scope-exit lowering records descriptive local ends even for trivial locals;
+it does not emit fake destruction or change cleanup planning. The builder joins
+source MIR declarations and membership back to exact accepted HIR facts.
+
+`queryMirDebugAvailability` validates local/binding/type/place-domain identity
+before invoking the private canonical place query. It clips positive facts by
+known source membership and lexical ends, returns `Unproven` when membership
+cannot be established, and reports both execution and lexical required cuts.
+Neither this transient batch nor a collected table authorizes final debug
+ranges. Complete source-boundary provenance verification, final range
+construction/sealing, and native consumption remain unfinished; frontend
+activation is still off.
+
+The canonical scalar-promotion, unreachable-block and in-place dead-instruction
+mutators share source-table repair. Promotion invalidates the affected existing
+place; deleting a lexical anchor invalidates that local's value location and
+removes the dangling cut. Declarations and scopes survive as `OptimizedOut`,
+without SSA recovery or new storage. The in-place mutator journals only changed
+local policies and removed cut rows and restores them on refusal. These are
+transport and repair controls, not native debugger acceptance or an alternate
+lifetime model.
 
 The compiler-owned optimizer vocabulary gate is described in
 [Optimization](optimization.md#language-growth-conformance-gate). Body

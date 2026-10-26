@@ -2,12 +2,16 @@
 #include "gti/lowered_program.h"
 #include "gti/lowered_program_builder.h"
 #include "gti/lowered_program_printer.h"
+#include "gti/mir_lowering.h"
+#include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/source_debug.h"
 
+#include "../src/compiler/mir_source_debug.h"
 #include "../src/compiler/mir_verification_queries.h"
+#include "../src/compiler/mir_verification_support.h"
 #include "lowered_program_contract_client.h"
 
 #include <algorithm>
@@ -344,6 +348,218 @@ int main() { return parent(4); }
              "a sibling concrete instance cannot supply this body's facts");
     }
   }
+}
+
+void testMirSourceDebugTransport() {
+  const auto syntax =
+      lang::Frontend({.stopAfter = lang::FrontendPhase::Parsing})
+          .analyze("source-debug-mir.gti", R"gti(
+int probe(int input) {
+  mut int result = input;
+  { mut int local = input; local = result; result = local; 7; }
+  return result;
+}
+int main() { return probe(4); }
+)gti");
+  expect(syntax.syntaxValid, "MIR source-debug fixture parses");
+  if (!syntax.syntaxValid)
+    return;
+  lang::SemanticVisitor semantics(
+      lang::TargetInfo::host(), &syntax.sourceGraph, true, nullptr,
+      &syntax.sources, lang::RawPointerAuditMode::Off, false,
+      lang::TrustedBodyAnalysis::Complete, lang::SourceDebugProfile::LexicalV1);
+  const bool analyzed = semantics.check(syntax.program) &&
+                        semantics.applyProgramRequest(syntax.program, {});
+  for (const auto &diagnostic : semantics.errors())
+    std::cerr << "MIR source semantic: " << diagnostic.message << '\n';
+  expect(analyzed, "MIR source-debug fixture analyzes");
+  if (!analyzed)
+    return;
+  auto hir = lang::HirLowerer(lang::TargetInfo::host())
+                 .lower(syntax.program, semantics.model(), semantics);
+  expect(hir.program.valid(), "MIR source-debug fixture has verified HIR");
+  if (!hir.program.valid())
+    return;
+  auto metadata = lang::FailureMetadataBuilder().build(
+      syntax.sourceGraph, syntax.sources, hir.program, "source-debug-mir.gti");
+  expect(metadata.valid(),
+         "MIR source-debug fixture retains real failure metadata");
+  if (!metadata.valid())
+    return;
+  auto lowered = lang::MirLowerer().lower(hir.program, metadata.metadata);
+  for (const auto &error : lowered.errors)
+    std::cerr << "MIR source debug: " << error.message << '\n';
+  expect(lowered.valid() && lowered.program.sourceDebugProfile() ==
+                                lang::SourceDebugProfile::LexicalV1,
+         "MIR retains the requested source profile");
+  if (!lowered.valid())
+    return;
+  bool exercised = false;
+  for (const auto &function : hir.program.functionInstances()) {
+    if (!function.source || function.source->name().lexeme != "probe")
+      continue;
+    const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                       function.id};
+    const auto *body = lang::findMirBody(lowered.program, address);
+    expect(body && body->sourceDebug.tables &&
+               lang::mir_detail::sourceDebugMatchesHir(function.body, *body),
+           "MIR owns exact flattened source declarations and memberships");
+    if (!body || !body->sourceDebug.tables)
+      continue;
+    const auto &tables = *body->sourceDebug.tables;
+    const auto local = std::find_if(
+        tables.locals.begin(), tables.locals.end(),
+        [](const auto &row) { return row.declaration.name == "local"; });
+    expect(local != tables.locals.end() && local->place != 0,
+           "ordinary trivial local retains its existing binding place");
+    if (local == tables.locals.end() || !local->place)
+      continue;
+    std::vector<lang::MirDebugAvailabilityRequest> requests;
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Initialize &&
+            instruction.destination == local->place)
+          requests.push_back(
+              {local->declaration.id, {block.id, instruction.id, true}});
+    const auto observed =
+        lang::queryMirDebugAvailability(lowered.program, address, requests);
+    expect(!requests.empty() && observed.verification.valid() &&
+               observed.requested.front().readability ==
+                   lang::MirDebugReadability::DefinitelyReadable,
+           "source-local facade joins exact identity before canonical "
+           "availability");
+    expect(std::any_of(tables.localEnds.begin(), tables.localEnds.end(),
+                       [&](const auto &end) {
+                         return end.local == local->declaration.id &&
+                                std::find(observed.requiredStops.begin(),
+                                          observed.requiredStops.end(),
+                                          end) != observed.requiredStops.end();
+                       }),
+           "a trivial lexical scope end is a required cut without a Drop "
+           "instruction");
+    for (const auto &end : tables.localEnds)
+      if (end.local == local->declaration.id) {
+        const std::vector<lang::MirDebugAvailabilityRequest> atEnd{
+            {end.local, end.point}};
+        const auto ended =
+            lang::queryMirDebugAvailability(lowered.program, address, atEnd);
+        expect(
+            ended.verification.valid() && ended.requested.size() == 1 &&
+                ended.requested.front().readability ==
+                    lang::MirDebugReadability::Unavailable &&
+                ended.requested.front().reason ==
+                    lang::MirDebugAvailabilityReason::OutOfScope,
+            "source scope clips a still-initialized trivial execution place");
+      }
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        expect(instruction.kind != lang::MirInstructionKind::Drop,
+               "descriptive local exits do not synthesize runtime destruction");
+    auto copy = *body;
+    expect(copy == *body &&
+               copy.sourceDebug.tables.get() != body->sourceDebug.tables.get(),
+           "MIR source tables deep-copy equal content");
+    copy.sourceDebug.tables->locals[local->declaration.id - 1]
+        .declaration.type = lang::SemanticType::Bool;
+    expect(
+        !lang::verifyMirBody(copy, function.id).valid(),
+        "MIR rejects a source-local type forged against its execution place");
+    copy = *body;
+    copy.sourceDebug.tables->locals.front().declaration.name += "forged";
+    expect(!lang::mir_detail::sourceDebugMatchesHir(function.body, copy),
+           "source MIR cannot forge a declaration copied from HIR");
+    expect(lang::MirPrinter().print(copy) != lang::MirPrinter().print(*body),
+           "MIR serialization includes every source declaration field");
+    copy = *body;
+    copy.sourceDebug.tables->localEnds.front().point.block = 0;
+    expect(!lang::verifyMirBody(copy, function.id).valid(),
+           "MIR rejects foreign lexical-end points");
+    const std::vector<lang::MirDebugAvailabilityRequest> invalid{
+        {0, {body->entry, 0, false, true}}};
+    expect(!lang::queryMirDebugAvailability(lowered.program, address, invalid)
+                .verification.valid(),
+           "source-local facade rejects a forged identity");
+    auto promoted = *body;
+    const auto promotion = lang::rewriteMirScalarPlace(promoted, local->place);
+    expect(
+        promotion.has_value() &&
+            lang::verifyMirBody(promoted, function.id).valid() &&
+            promoted.sourceDebug.tables->locals[local->declaration.id - 1]
+                    .policy == lang::MirSourceLocalPolicy::OptimizedOut &&
+            promoted.sourceDebug.tables->locals[local->declaration.id - 1]
+                    .place == 0,
+        "promotion remains eligible and makes the removed storage unavailable");
+    bool deadBoundary = false;
+    // A structural mutator fixture, not frontend/native admission evidence:
+    // place a neutral unused literal at a synthetic lexical cut. Real source
+    // statement tails also own full-expression ends and must not be deleted.
+    auto deadFixture = lowered.program;
+    auto *fixtureBody = lang::findMirBody(deadFixture, address);
+    lang::MirInstruction neutral;
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions) {
+        neutral.id = std::max(neutral.id, instruction.id + 1);
+        if (instruction.operation == lang::MirOperation::Literal &&
+            instruction.result) {
+          neutral.kind = lang::MirInstructionKind::Compute;
+          neutral.operation = lang::MirOperation::Literal;
+          neutral.hirValue = instruction.hirValue;
+          neutral.literal = instruction.literal;
+          neutral.literalProvenance = instruction.literalProvenance;
+          neutral.info = instruction.info;
+        }
+      }
+    if (neutral.literal) {
+      auto &block = fixtureBody->blocks.back();
+      neutral.result = fixtureBody->values.size() + 1;
+      fixtureBody->values.push_back({.id = *neutral.result,
+                                     .sourceValue = neutral.hirValue,
+                                     .info = neutral.info,
+                                     .definitionBlock = block.id,
+                                     .definition = neutral.id});
+      block.instructions.push_back(neutral);
+      fixtureBody->sourceDebug.tables->localEnds.push_back(
+          {local->declaration.id, {block.id, neutral.id, true}});
+      expect(lang::rebuildMirValueUses(*fixtureBody),
+             "synthetic fixture rebuilds value uses");
+      const auto fixtureProof = lang::verifyMirBody(*fixtureBody, function.id);
+      for (const auto &error : fixtureProof.errors)
+        std::cerr << "synthetic debug cut: " << error.message << '\n';
+      expect(fixtureProof.valid(), "synthetic dead-mutator fixture has "
+                                   "structurally valid execution MIR");
+      auto candidate = deadFixture;
+      auto *candidateBody = lang::findMirBody(candidate, address);
+      const auto before = *candidateBody;
+      const auto repaired = lang::mir_detail::rewriteVerifiedMirDeadInstruction(
+          candidate, address, neutral.id);
+      expect(repaired.has_value() &&
+                 lang::verifyMirBody(*candidateBody, function.id).valid() &&
+                 candidateBody->sourceDebug.tables
+                         ->locals[local->declaration.id - 1]
+                         .policy == lang::MirSourceLocalPolicy::OptimizedOut,
+             "the actual dead mutator repairs a removed lexical anchor");
+      candidate = deadFixture;
+      candidateBody = lang::findMirBody(candidate, address);
+      candidateBody->sourceDebug.tables->domain.body++;
+      const auto refused = *candidateBody;
+      expect(!lang::mir_detail::rewriteVerifiedMirDeadInstruction(
+                 candidate, address, neutral.id) &&
+                 *candidateBody == refused &&
+                 lang::MirPrinter().print(*candidateBody) ==
+                     lang::MirPrinter().print(refused),
+             "refused in-place mutation restores code and source rows "
+             "byte-identically");
+      candidateBody->sourceDebug.tables->domain =
+          before.sourceDebug.tables->domain;
+      expect(*candidateBody == before,
+             "repair refusal leaves no hidden debug policy edits");
+      deadBoundary = true;
+    }
+    expect(deadBoundary,
+           "dead-mutation test constructs its structural cut fixture");
+    exercised = true;
+  }
+  expect(exercised, "MIR source-debug transport controls execute");
 }
 
 void testDebugPlaceAvailability() {
@@ -2208,6 +2424,7 @@ int main() {
   testSourceDebugRecordOwnership();
   testSemanticSourceDebugProducers();
   testInitializerSourceDebugProducers();
+  testMirSourceDebugTransport();
   testDebugPlaceAvailability();
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
