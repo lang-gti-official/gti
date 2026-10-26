@@ -1890,6 +1890,21 @@ endif()
 add_executable(gti_runtime_execution_tests runtime_execution_tests.cpp)
 target_link_libraries(gti_runtime_execution_tests PRIVATE gti_runtime)
 add_test(NAME runtime_execution_boundary COMMAND gti_runtime_execution_tests)
+add_executable(gti_llvm_thread_lifecycle_contract_tests llvm_thread_lifecycle_contract_tests.cpp)
+target_include_directories(gti_llvm_thread_lifecycle_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_thread_lifecycle_contract_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_thread_lifecycle_contracts
+         COMMAND gti_llvm_thread_lifecycle_contract_tests "${PROJECT_SOURCE_DIR}")
+set_tests_properties(llvm_thread_lifecycle_contracts PROPERTIES TIMEOUT 180)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_cthread_startup_execution
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_cthread_startup_execution_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_cthread_startup_execution PROPERTIES TIMEOUT 300)
+  gti_register_llvm_evidence_manifest(
+    llvm_cthread_startup_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_cthread_startup_execution_test.py")
+endif()
 
 add_executable(gti_llvm_clang_coexistence_smoke llvm_clang_coexistence_smoke.cpp)
 target_link_libraries(gti_llvm_clang_coexistence_smoke PRIVATE gti_llvm_backend gti_bindgen)

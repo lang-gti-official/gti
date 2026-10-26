@@ -17,6 +17,7 @@
 #include "scalar.h"
 #include "text.h"
 #include "thread_locals.h"
+#include "thread_lifecycle.h"
 
 #include <algorithm>
 #include <map>
@@ -819,6 +820,17 @@ private:
     if (!target && !lambdaTarget && !instruction.bodyTarget && !constructor)
       throw BackendUnsupportedError(
           "LLVM scalar call requires an exact direct target");
+    if (target && (target->cThreadOperation == CThreadRuntimeOperation::Begin ||
+                   target->cThreadOperation == CThreadRuntimeOperation::End)) {
+      if (!nativeCThreadLifecycleCall(session.program().mir(), input, instruction))
+        throw BackendUnsupportedError(
+            "LLVM C-thread lifecycle lost its sealed startup operation");
+      ir.CreateCall(declareRuntimeService(
+          session, target->cThreadOperation == CThreadRuntimeOperation::Begin
+                       ? RuntimeService::BeginCThreadRuntime
+                       : RuntimeService::EndCThreadRuntime));
+      return nullptr;
+    }
     if (target &&
         target->processMemoryOperation != ProcessMemoryRuntimeOperation::None) {
       std::vector<llvm::Value *> inputs;

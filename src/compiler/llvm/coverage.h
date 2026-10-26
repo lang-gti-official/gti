@@ -75,6 +75,7 @@ enum class Shape {
   CallableMetadata,
   NativeMemoryOperation,
   NativeProcessMemory,
+  NativeCThreadLifecycle,
   NativeUniqueOwnership,
   NativeSharedOwnership,
   NativeClassRawAccess,

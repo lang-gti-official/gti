@@ -10,6 +10,7 @@ llvm::Function *declareRuntimeService(Session &session,
   std::vector<llvm::Type *> parameters;
   std::string name;
   bool neverReturns = false;
+  bool noUnwind = false;
   switch (service) {
   case RuntimeService::BeginThreadLocals:
     name = "gti_rt_thread_locals_begin_v1";
@@ -54,6 +55,13 @@ llvm::Function *declareRuntimeService(Session &session,
     parameters = {ptr, ptr, llvm::Type::getInt64Ty(context)};
     result = llvm::Type::getInt32Ty(context);
     break;
+  case RuntimeService::BeginCThreadRuntime:
+  case RuntimeService::EndCThreadRuntime:
+    noUnwind = true;
+    name = service == RuntimeService::BeginCThreadRuntime
+               ? "gti_rt_cthread_begin_v1"
+               : "gti_rt_cthread_end_v1";
+    break;
   case RuntimeService::EnterFailureCleanup:
     name = "gti_rt_failure_cleanup_enter_v1";
     parameters = {ptr, ptr};
@@ -82,6 +90,8 @@ llvm::Function *declareRuntimeService(Session &session,
       signature, llvm::GlobalValue::ExternalLinkage, name, session.module());
   if (neverReturns)
     function->addFnAttr(llvm::Attribute::NoReturn);
+  if (noUnwind)
+    function->addFnAttr(llvm::Attribute::NoUnwind);
   return function;
 }
 

@@ -10,6 +10,8 @@ enum class RuntimeService {
   ThreadLocalsAttached,
   ThreadLocalsClosing,
   RegisterThreadLocal,
+  BeginCThreadRuntime,
+  EndCThreadRuntime,
   TerminateFailure,
   TerminateCleanupFailure,
   AbortAllocation,
