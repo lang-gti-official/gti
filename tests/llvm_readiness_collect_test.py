@@ -110,6 +110,12 @@ def main() -> None:
     for test, sidecar in canonical["case_contexts"].items():
         audit.require(sidecar["observed"] == "unrun", "context metadata became an execution receipt")
         for name, context in sidecar["cases"].items():
+            mismatched = deepcopy(sidecar)
+            current_profile = context["context"]["execution_profile"]
+            mismatched["cases"][name]["context"]["execution_profile"] = (
+                "concurrent" if current_profile == "single-threaded" else "single-threaded")
+            rejects(lambda: collector.validate_context_sidecar(
+                mismatched, modules[test].evidence_manifest(root)), "execution profile")
             value = canonical["members"][f"registered-llvm-evidence:{test}:{name}"]
             audit.require(value["contract"]["case_context"] == context and
                           value["contract"]["role"] == context["role"],
