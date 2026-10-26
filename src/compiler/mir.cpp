@@ -13871,6 +13871,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       if (block.terminator.value && !validOperand(*block.terminator.value)) {
         return failure(body, owner, "return operand is invalid", block.id);
       }
+      if (block.terminator.value &&
+          mir_detail::scalarReturnConversion(body, *block.terminator.value) ==
+              mir_detail::MirScalarReturnConversion::Invalid) {
+        return failure(body, owner,
+                       "scalar return lacks its permitted value conversion",
+                       block.id);
+      }
       if (block.terminator.returnLoan) {
         const MirLoan &loan = *body.findLoan(*block.terminator.returnLoan);
         if (loan.kind != MirLoanKind::Return || !loan.escapes) {

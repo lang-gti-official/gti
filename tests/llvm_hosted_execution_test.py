@@ -97,12 +97,66 @@ def text_source_rejections(gti, root, scratch, endpoints, env):
               flush=True)
 
 
+
+def scalar_return_rejections(gti, root, scratch, endpoints, env):
+    cases = (
+        ("float-narrow", "float source(double value) { return value; }", "double(1.25)"),
+        ("integer-narrow", "int32_t source(int64_t value) { return value; }", "int64_t(7)"),
+        ("signed-unsigned", "uint64_t source(int32_t value) { return value; }", "-1"),
+        ("unsigned-signed", "int64_t source(uint64_t value) { return value; }", "uint64_t(7)"),
+        ("bool-number", "int32_t source(bool value) { return value; }", "true"),
+        ("char-number", "int32_t source(char value) { return value; }", "'Q'"),
+        ("enum-number", "enum class Flag { one }; int32_t source(Flag value) { return value; }", "Flag::one"),
+        ("typed-constant-narrow", "int8_t source() { return int64_t(7); }", ""),
+        ("constexpr-local-narrow", "int8_t source() { constexpr int64_t value = 7; return value; }", ""),
+    )
+    for name, declaration, argument in cases:
+        source = scratch / f"scalar-return-{name}.gti"
+        source.write_text(declaration + f"\nint main() {{ [[discard]] source({argument}); return 0; }}\n",
+                          encoding="utf-8")
+        for index, endpoint in enumerate(endpoints):
+            directory = scratch / f"scalar-reject-{name}-{index}"
+            directory.mkdir()
+            output = directory / "program"
+            marker = b"preserved scalar return rejection\n"
+            output.write_bytes(marker)
+            command = [str(gti), str(source), "--backend", endpoint.backend,
+                       f"-{endpoint.optimization}", "-o", str(output)]
+            if endpoint.standard:
+                command += ["--std", endpoint.standard]
+            result = subprocess.run(command, cwd=root, env=env, text=True,
+                                    capture_output=True, check=False, timeout=30)
+            if (result.returncode != 65 or "GTI-S2003" not in result.stderr
+                    or "GTI-B" in result.stderr or source.name not in result.stderr
+                    or output.read_bytes() != marker):
+                raise AssertionError(f"scalar source rejection {name} {endpoint}: {result}")
+        print(f"scalar return {name}: GTI-S2003 and output preservation passed all endpoints",
+              flush=True)
+    checked = scratch / "scalar-return-checked-cast.gti"
+    checked.write_text("int8_t source(int64_t value) { return int8_t(value); }\n"
+                       "int main() { [[discard]] source(int64_t(128)); return 0; }\n",
+                       encoding="utf-8")
+    observations = []
+    for index, endpoint in enumerate(endpoints):
+        result = execute(gti, root, scratch / f"scalar-checked-cast-{index}",
+                         checked, endpoint, env)
+        if (result.error or result.returncode != 70 or result.stdout
+                or "GTI-R0006" not in result.stderr or checked.name not in result.stderr):
+            raise AssertionError(f"checked scalar return cast {endpoint}: {result}")
+        observations.append(result.observable)
+    if any(value != observations[0] for value in observations):
+        raise AssertionError(f"checked scalar return cast attribution drift: {observations}")
+    print("scalar return checked cast: original failure/site preserved at all endpoints", flush=True)
+
+
 def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selection = sys.argv[3] if len(sys.argv) > 3 else "all"
-    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments", "reference-input", "reference-return", "vector", "array", "text-return", "generated-construction", "union-construction"}:
+    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments", "reference-input", "reference-return", "vector", "array", "text-return", "generated-construction", "union-construction", "scalar-return"}:
         raise ValueError(f"unknown hosted case: {selection}")
     cases = (
+        ("llvm_hosted_scalar_return.gti", None),
+        ("llvm_hosted_scalar_return_failure.gti", "scalar return failure"),
         ("llvm_hosted_union_first_field.gti", None),
         ("llvm_hosted_union_first_field_aggregate.gti", None),
         ("llvm_hosted_union_first_field_failure.gti", "union first-field initialization failure"),
@@ -132,7 +186,7 @@ def main():
     endpoints = (
         Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
         *(Endpoint("llvm", f"O{level}") for level in
-          (range(4) if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction"}
+          (range(4) if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction", "scalar-return"}
            else (0, 3))),
     )
     env = {**os.environ, "NO_COLOR": "1"}
@@ -143,6 +197,10 @@ def main():
         selected_cases = 0
         for filename, failure in cases:
             if selection in {"status", "source-literals", "arguments"}:
+                continue
+            if selection == "scalar-return" and filename not in {
+                    "llvm_hosted_scalar_return.gti",
+                    "llvm_hosted_scalar_return_failure.gti"}:
                 continue
             if selection == "union-construction" and filename not in {
                     "llvm_hosted_union_first_field.gti",
@@ -174,6 +232,8 @@ def main():
                     "llvm_hosted_text_return_failure.gti"}:
                 continue
             if selection == "startup" and filename in {
+                    "llvm_hosted_scalar_return.gti",
+                    "llvm_hosted_scalar_return_failure.gti",
                     "llvm_hosted_union_first_field.gti",
                     "llvm_hosted_union_first_field_aggregate.gti",
                     "llvm_hosted_union_first_field_failure.gti",
@@ -224,10 +284,14 @@ def main():
                 observations.append(result.observable)
             if any(value != observations[0] for value in observations):
                 raise AssertionError(f"hosted observable drift: {filename}: {observations}")
-            levels = "O0-O3" if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction"} else "O0/O3"
+            levels = "O0-O3" if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction", "scalar-return"} else "O0/O3"
             scope = (f"LLVM {levels}; recorded C++ aggregate vocabulary gap {comparator_gaps}"
                      if comparator_gaps else f"C++20/23 O3 and LLVM {levels}")
             print(f"{filename}: uninstrumented {scope} passed", flush=True)
+        if selection == "scalar-return" and selected_cases != 2:
+            raise AssertionError(f"scalar return requires both fixtures, ran {selected_cases}")
+        if selection == "scalar-return":
+            scalar_return_rejections(gti, root, scratch, endpoints, env)
         if selection == "union-construction" and selected_cases != 3:
             raise AssertionError(f"union construction requires all three fixtures, ran {selected_cases}")
         for status in (-2147483648, -1, 0, 1, 70, 255, 256, 512, 2147483647):

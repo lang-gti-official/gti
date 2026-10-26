@@ -45,6 +45,18 @@ sealed overlapping layout and first declared field type must match the input.
 That proof grants no ordinary call target, default-constructor policy, cleanup,
 borrow, failure or precise effect authority.
 
+A passive scalar value return preserves its source operand type and declared
+body return type. The MIR-owned scalar-return query proves an exact type or
+uses the existing shared context-free initialization-conversion rule; it does
+not repeat assignability or decide literal-dependent narrowing. Semantic
+contextual typing must already give a narrowed integer literal its exact type.
+Scalar results use value/constant/copy/move carriers, with ordinary operand and
+availability checks still mandatory. Address or loan carriers cannot stand in
+for a by-value scalar. The query applies to the destination type: a reference
+return can intentionally carry a referent-typed address operand and retains its
+independent return-loan authority. Aggregate, enum, text, callable, raw and
+ownership return families receive no new authority from this scalar rule.
+
 Raw address conversion uses `Compute/Convert` with one evaluated pointer value.
 The independent `rawPointerConversion` query is shared by body verification and
 production backend admission: only typed/void or same-pointee conversion is

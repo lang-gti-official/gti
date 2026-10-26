@@ -4459,6 +4459,16 @@ now exercise real GTI scalar programs through the public backend.
 
 ### LLVM Scalar Execution
 
+Native scalar returns consume the MIR-owned return-conversion proof and the
+existing scalar representation converter. A permitted implicit initialization
+conversion occurs before either a direct ABI return or a full-width result
+outslot store. Exact returns add no conversion; non-scalar return authority
+remains independent. These context-free conversions add no failure outcome,
+while explicit checked casts keep their existing guards and source sites.
+Cleanup and failure routing stay in MIR, and a failing invocation never
+publishes a success result. Scalar-return fixtures compare runtime and existing
+constexpr results and test both direct and may-fail ABI paths.
+
 The native backend emits verified MIR scalar bodies directly, without C++
 representation helpers or a second semantic analysis. `body.cpp` owns body-local
 SSA/place materialization, edge arguments, direct calls, return publication and

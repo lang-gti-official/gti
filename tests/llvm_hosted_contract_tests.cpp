@@ -45,6 +45,9 @@ struct Case {
 };
 
 constexpr std::array cases{
+    Case{"llvm_hosted_scalar_return.gti", 321, "", 0},
+    Case{"llvm_hosted_scalar_return_failure.gti", 321, "scalar return failure",
+         13},
     Case{"llvm_hosted_union_first_field.gti", 12356, "", 0},
     Case{"llvm_hosted_union_first_field_aggregate.gti", 47, "", 0},
     Case{"llvm_hosted_union_first_field_failure.gti", 321,
@@ -886,6 +889,169 @@ int main() {
   }
 }
 
+void scalarReturnContracts() {
+  using Kind = mir_detail::MirScalarReturnConversion;
+  struct Positive {
+    const char *name;
+    const char *source;
+    Kind expected;
+  };
+  const std::array positives{
+      Positive{"float-literal", "double source() { return 1.25; }",
+               Kind::Initialization},
+      Positive{"float-value", "double source(float value) { return value; }",
+               Kind::Initialization},
+      Positive{"float-reference-value",
+               "double source(float& value) { return value; }",
+               Kind::Initialization},
+      Positive{"explicit-double", "double source() { return double(1.25); }",
+               Kind::Exact},
+      Positive{"signed-widen",
+               "int64_t source(int32_t value) { return value; }",
+               Kind::Initialization},
+      Positive{"unsigned-widen",
+               "int64_t source(uint32_t value) { return value; }",
+               Kind::Initialization},
+      Positive{"small-widen", "int16_t source(uint8_t value) { return value; }",
+               Kind::Initialization},
+      Positive{"integer-double",
+               "double source(int64_t value) { return value; }",
+               Kind::Initialization},
+      Positive{"integer-float", "float source(int32_t value) { return value; }",
+               Kind::Initialization},
+      Positive{"literal-narrow", "int8_t source() { return 7; }", Kind::Exact},
+      Positive{"bool", "bool source(bool value) { return value; }",
+               Kind::Exact},
+      Positive{"char", "char source(char value) { return value; }",
+               Kind::Exact},
+      Positive{"reference",
+               "[[borrowed_from(value)]] int32_t& source(int32_t& value) { "
+               "return value; }",
+               Kind::NotApplicable},
+      Positive{"aggregate",
+               "struct Record { int32_t value; }; Record source(Record value) "
+               "{ return value; }",
+               Kind::NotApplicable},
+      Positive{"enum",
+               "enum class Flag { one, two }; Flag source(Flag value) { return "
+               "value; }",
+               Kind::NotApplicable},
+      Positive{"raw-null", "int32_t* source() { return nullptr; }",
+               Kind::NotApplicable},
+  };
+  for (const auto &test : positives) {
+    const auto frontend = Frontend().analyze(test.name, test.source);
+    require(
+        frontend.canGenerateCode() && verifyMirProgram(frontend.mir).valid(),
+        std::string("legal scalar/non-scalar return verifies: ") + test.name);
+    bool seen = false;
+    for (const auto &hir : frontend.hir.functionInstances()) {
+      if (!hir.source || hir.source->name().lexeme != "source")
+        continue;
+      const auto *function = frontend.mir.findFunctionInstance(hir.id);
+      require(function != nullptr, "return test retains its exact function");
+      for (const auto &block : function->body.blocks) {
+        if (block.terminator.kind != MirTerminatorKind::Return ||
+            !block.terminator.value)
+          continue;
+        seen = true;
+        require(mir_detail::scalarReturnConversion(
+                    function->body, *block.terminator.value) == test.expected,
+                std::string("typed return boundary agrees with semantics: ") +
+                    test.name);
+      }
+    }
+    require(seen, "return test has an executable return");
+  }
+  const std::array negatives{
+      "float source(double value) { return value; }",
+      "int32_t source(int64_t value) { return value; }",
+      "uint64_t source(int32_t value) { return value; }",
+      "int64_t source(uint64_t value) { return value; }",
+      "int32_t source(bool value) { return value; }",
+      "int32_t source(char value) { return value; }",
+      "enum class Flag { one }; int32_t source(Flag value) { return value; }",
+      "int8_t source() { return int64_t(7); }",
+      "int8_t source() { constexpr int64_t value = 7; return value; }",
+  };
+  for (const auto source : negatives) {
+    const auto frontend =
+        Frontend().analyze("forbidden-scalar-return.gti", source);
+    require(!frontend.canGenerateCode() &&
+                std::any_of(frontend.diagnostics.begin(),
+                            frontend.diagnostics.end(),
+                            [](const auto &error) {
+                              return error.code == "GTI-S2003";
+                            }),
+            "forbidden return conversions remain semantic errors");
+  }
+  const auto frontend = Frontend().analyze("forged-scalar-return.gti",
+                                           "int8_t source() { return 7; }");
+  require(frontend.canGenerateCode(),
+          "literal narrowing was selected before MIR");
+  auto invalid = frontend.mir;
+  bool changed = false;
+  for (auto &function : MirProgramTestAccess::functions(invalid))
+    for (auto &block : function.body.blocks) {
+      if (block.terminator.kind != MirTerminatorKind::Return ||
+          !block.terminator.value)
+        continue;
+      auto &operand = *block.terminator.value;
+      if (operand.kind == MirOperandKind::Value) {
+        auto *value =
+            const_cast<MirValue *>(function.body.findValue(operand.value));
+        require(value != nullptr,
+                "contextual literal has its exact SSA result");
+        value->info.type = SemanticType::Int64;
+        bool producerChanged = false;
+        for (auto &producerBlock : function.body.blocks)
+          for (auto &producer : producerBlock.instructions)
+            if (producer.result == operand.value) {
+              producer.info.type = SemanticType::Int64;
+              producerChanged = true;
+            }
+        require(producerChanged,
+                "forged literal retains a coherent typed producer");
+      } else {
+        require(operand.kind == MirOperandKind::Constant,
+                "contextual literal has a value carrier");
+      }
+      operand.type = SemanticType::Int64;
+      require(
+          mir_detail::scalarReturnConversion(function.body, operand) ==
+              Kind::Invalid,
+          "MIR cannot invent literal-dependent narrowing even when bits fit");
+      const auto verification = verifyMirBody(function.body, function.id);
+      require(!verification.valid() &&
+                  std::any_of(
+                      verification.errors.begin(), verification.errors.end(),
+                      [](const auto &error) {
+                        return error.message.find("scalar return lacks") !=
+                               std::string::npos;
+                      }),
+              "the owning return invariant rejects the forged constant");
+      changed = true;
+    }
+  require(changed && !verifyMirProgram(invalid).valid(),
+          "forged scalar return fails whole-program verification");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, invalid, invalid, {},
+      TargetInfo::host());
+  std::vector<LoweredProgramIssue> issues;
+  require(
+      !lowered.valid() ||
+          !verifiedLoweredProgram(std::move(*lowered.program), issues),
+      "forged scalar conversion cannot cross the sealed publication boundary");
+  MirBody scalar;
+  scalar.returnType = SemanticType::Int32;
+  for (const auto kind : {MirOperandKind::Address, MirOperandKind::BorrowRead,
+                          MirOperandKind::BorrowWrite, MirOperandKind::Loan})
+    require(mir_detail::scalarReturnConversion(
+                scalar, {.kind = kind, .type = SemanticType::Int32}) ==
+                Kind::Invalid,
+            "a scalar result cannot smuggle an address/loan carrier");
+}
+
 void hostedArgumentsContract(const std::filesystem::path &repository) {
   for (const auto triple :
        {"arm64-apple-macos", "x86_64-apple-macos", "x86_64-unknown-linux-gnu",
@@ -1272,6 +1438,42 @@ void run(const std::filesystem::path &repository,
     require(factories == 1,
             "the exact scalar or passive aggregate union factory is emitted");
   }
+  if (test.fixture == "llvm_hosted_scalar_return.gti") {
+    unsigned checkedReturns = 0;
+    for (const auto &instance : frontend.hir.functionInstances()) {
+      if (!instance.source)
+        continue;
+      const auto name = instance.source->name().lexeme;
+      if (name != "widen_float" && name != "outslot_float")
+        continue;
+      const auto *function = session.abi().declareFunction(instance.id);
+      bool extended = false, published = false;
+      for (const auto &block : *function)
+        for (const auto &instruction : block) {
+          extended |= instruction.getOpcode() == llvm::Instruction::FPExt &&
+                      instruction.getType()->isDoubleTy();
+          if (name == "widen_float") {
+            if (const auto *returned =
+                    llvm::dyn_cast<llvm::ReturnInst>(&instruction))
+              published |= returned->getReturnValue() &&
+                           returned->getReturnValue()->getType()->isDoubleTy();
+            require(!llvm::isa<llvm::CallBase>(instruction),
+                    "pure scalar return adds no runtime or allocation call");
+          } else if (const auto *store =
+                         llvm::dyn_cast<llvm::StoreInst>(&instruction))
+            published |= store->getValueOperand()->getType()->isDoubleTy();
+        }
+      require(extended && published, "numeric return converts before direct or "
+                                     "full-width outslot publication");
+      require(name == "widen_float" ? function->getReturnType()->isDoubleTy()
+                                    : function->getReturnType()->isIntegerTy(1),
+              "direct and may-fail scalar returns retain their distinct ABI "
+              "contracts");
+      ++checkedReturns;
+    }
+    require(checkedReturns == 2,
+            "both scalar ABI publication paths are checked");
+  }
   auto *global = module.getGlobalVariable(
       "__gti_native_v1_g" + std::to_string(trace), true);
   require(global && global->getValueType()->isIntegerTy(32) &&
@@ -1370,7 +1572,12 @@ void run(const std::filesystem::path &repository,
   if (!linked.succeeded())
     std::cerr << linked.output;
   require(linked.succeeded(), "real hosted entry links to the runtime");
+  const auto executionStart = std::chrono::steady_clock::now();
   const auto executed = driver::invokeProcess({executable.string()});
+  const auto executionMicros =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - executionStart)
+          .count();
   if (test.failure.empty()) {
     require(executed.succeeded() && executed.output.empty(),
             "normal startup and teardown preserve their exact order");
@@ -1388,6 +1595,12 @@ void run(const std::filesystem::path &repository,
                 executed.output.find(test.failure) != std::string::npos,
             "panic containment observes cleanup and original source location");
   }
+  if (test.fixture == "llvm_hosted_scalar_return.gti")
+    std::cout << "scalar return footprint: object="
+              << std::filesystem::file_size(object)
+              << " executable=" << std::filesystem::file_size(executable)
+              << " bytes; process-wall-us=" << executionMicros
+              << "; pure widening adds one FP extension and no calls\n";
   if (test.fixture == "llvm_hosted_union_first_field.gti" ||
       test.fixture == "llvm_hosted_union_first_field_aggregate.gti")
     std::cout << "union first-field footprint: object="
@@ -1452,6 +1665,7 @@ int main(int argc, char **argv) {
     classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]),
                                    "llvm_hosted_class_pointee_reference.gti");
     sourceMetadataContract(std::filesystem::canonical(argv[1]));
+    scalarReturnContracts();
     hostedArgumentsContract(std::filesystem::canonical(argv[1]));
     for (const auto &test : cases)
       for (auto optimization :

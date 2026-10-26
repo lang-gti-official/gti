@@ -661,6 +661,26 @@ bool passiveUnionFieldConstruction(const MirProgram &program,
           input.kind == MirOperandKind::Constant);
 }
 
+MirScalarReturnConversion scalarReturnConversion(const MirBody &body,
+                                                 const MirOperand &operand) {
+  if (!isPassiveScalarValueType(body.returnType))
+    return MirScalarReturnConversion::NotApplicable;
+  switch (operand.kind) {
+  case MirOperandKind::Value:
+  case MirOperandKind::Constant:
+  case MirOperandKind::Copy:
+  case MirOperandKind::Move:
+    break;
+  default:
+    return MirScalarReturnConversion::Invalid;
+  }
+  if (operand.type == body.returnType)
+    return MirScalarReturnConversion::Exact;
+  return isImplicitScalarInitializationConversion(body.returnType, operand.type)
+             ? MirScalarReturnConversion::Initialization
+             : MirScalarReturnConversion::Invalid;
+}
+
 bool generatedUniqueConstruction(const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Call ||
       instruction.intrinsic != IntrinsicKind::AllocateUniqueOwner ||

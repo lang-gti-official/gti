@@ -1356,6 +1356,16 @@ private:
       if (input.kind == MirBodyKind::Constructor && owner)
         lifetimes.active(ir, thisAddress, owner->type, true);
       auto *value = term.value ? operand(*term.value) : nullptr;
+      if (term.value) {
+        const auto conversion =
+            mir_detail::scalarReturnConversion(input, *term.value);
+        if (conversion == mir_detail::MirScalarReturnConversion::Invalid)
+          throw std::logic_error(
+              "LLVM scalar return lost its verified conversion");
+        if (conversion == mir_detail::MirScalarReturnConversion::Initialization)
+          value =
+              scalars.convert(value, term.value->type, input.returnType, false);
+      }
       if (input.kind == MirBodyKind::HostedStartup) {
         const auto &plan = session.program().mir().hostedStartupPlan();
         const auto *operation =

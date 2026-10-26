@@ -50,6 +50,19 @@ generatedDefaultConstruction(const MirInstruction &instruction);
 passiveUnionFieldConstruction(const MirProgram &program,
                               const MirInstruction &instruction);
 
+// Only passive scalar destinations participate. NotApplicable grants no
+// reference, aggregate, text, callable or ownership-return authority. Existing
+// initialization conversion policy owns eligibility; ordinary operand and
+// availability verification remains mandatory.
+enum class MirScalarReturnConversion {
+  NotApplicable,
+  Exact,
+  Initialization,
+  Invalid
+};
+[[nodiscard]] MirScalarReturnConversion
+scalarReturnConversion(const MirBody &body, const MirOperand &operand);
+
 // Runtime representation queries have no runtime input and cannot acquire
 // ownership or borrow authority merely by naming a type.
 [[nodiscard]] bool objectLayoutQuery(const MirProgram &program,
