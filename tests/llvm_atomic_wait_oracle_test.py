@@ -46,7 +46,7 @@ def main() -> None:
                 run([args.llvm_cc, "-x", "ir", f"-{mode}", "-c",
                      str(source),
                      "-o", str(ir_object)])
-                run([args.cxx, "-std=c++20", "-O3", "-pthread",
+                run([args.cxx, "-std=c++20", "-O3", "-fno-strict-aliasing", "-pthread",
                      str(root / "tests/llvm_atomic_wait_oracle.cpp"),
                      str(c_object), str(ir_object), "-o", str(executable)])
                 undefined = run(["nm", "-u", str(executable)])

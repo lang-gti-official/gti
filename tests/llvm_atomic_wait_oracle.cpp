@@ -2,6 +2,8 @@
 // The raw scalar interface deliberately avoids std::atomic_ref's exclusive-
 // access object-lifetime contract. GCC/Clang atomic builtins and LLVM lanes
 // share the platform atomic ABI; this probe must run on each supported host.
+#include "fixtures/llvm_atomic_wait_lane_contract.h"
+
 #include <array>
 #include <atomic>
 #include <condition_variable>
@@ -62,9 +64,7 @@ void require(bool condition) {
 }
 
 void validate(const void *address, std::uint32_t width) {
-  require(address != nullptr &&
-          (width == 1 || width == 2 || width == 4 || width == 8) &&
-          reinterpret_cast<std::uintptr_t>(address) % width == 0);
+  gti_test_wait_lane::validateAddress(address, width);
 }
 
 std::size_t bucketIndex(const void *address, std::uint32_t width) {
@@ -72,20 +72,10 @@ std::size_t bucketIndex(const void *address, std::uint32_t width) {
          std::tuple_size_v<Buckets>;
 }
 
-template <typename T> T load(const void *address, std::uint32_t order) {
-  static_assert(__atomic_always_lock_free(sizeof(T), nullptr));
-  const auto *lane = static_cast<const T *>(address);
-  switch (order) {
-  case relaxed:
-    return __atomic_load_n(lane, __ATOMIC_RELAXED);
-  case acquire:
-    return __atomic_load_n(lane, __ATOMIC_ACQUIRE);
-  case sequential:
-    return __atomic_load_n(lane, __ATOMIC_SEQ_CST);
-  default:
-    std::abort();
-  }
-}
+using gti_test_wait_lane::load;
+static_assert(relaxed == gti_test_wait_lane::relaxed &&
+              acquire == gti_test_wait_lane::acquire &&
+              sequential == gti_test_wait_lane::sequential);
 
 template <typename T>
 void wait(const void *address, std::uint64_t old, std::uint32_t order) {
