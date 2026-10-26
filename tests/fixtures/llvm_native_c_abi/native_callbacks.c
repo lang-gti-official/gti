@@ -1,5 +1,9 @@
 #include <stdint.h>
 #include <stddef.h>
+#ifdef GTI_CALLBACK_HEADER
+#include "callback_surface.h"
+typedef gti_c_string_view View;
+#else
 typedef struct { uint64_t a, b; } CallbackPair;
 typedef struct { uint64_t values[3]; } CallbackLarge;
 typedef struct { double values[4]; } CallbackHfa;
@@ -11,6 +15,10 @@ typedef CallbackHfa (*HfaOperation)(CallbackHfa);
 typedef uint64_t (*ViewOperation)(View);
 typedef Scalar (*Selector)(Scalar);
 typedef struct { PairOperation pair; Scalar scalar; } CallbackTable;
+typedef struct CallbackToken CallbackToken;
+typedef CallbackToken *(*TokenOperation)(CallbackToken *);
+#endif
+struct CallbackToken { int value; };
 CallbackTable native_callback_slots;
 PairOperation native_callback_record_slot;
 int32_t native_callback_scalar(Scalar operation, int32_t value) { return operation(value); }
@@ -34,6 +42,15 @@ PairOperation native_callback_pair_identity(PairOperation operation) { return op
 static Scalar select_operation(Scalar operation) { return operation; }
 Selector native_callback_selector(void) { return select_operation; }
 CallbackPair native_callback_pair_make(void) { return (CallbackPair){17, 31}; }
+CallbackLarge native_callback_large_make(void) { return (CallbackLarge){{17, 31, 49}}; }
+CallbackHfa native_callback_hfa_make(void) { return (CallbackHfa){{1.25, 3.5, 7.75, 11.5}}; }
+int32_t native_callback_nested(Selector selector, Scalar scalar) {
+  return selector(scalar)(35) == 42;
+}
+int32_t native_callback_token(TokenOperation operation) {
+  CallbackToken token = {71};
+  return operation(&token) == &token && token.value == 71;
+}
 CallbackTable native_callback_table(PairOperation pair, Scalar scalar) {
   return (CallbackTable){pair, scalar};
 }

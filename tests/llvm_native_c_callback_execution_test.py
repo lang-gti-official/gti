@@ -85,6 +85,15 @@ def main():
 
     run([args.cc, "--version"], "cc-version")
     run([cxx, "--version"], "cxx-version")
+    header = output / "callback_surface.h"
+    run([compiler, root / SOURCE_PATHS["native_callbacks"], "--emit-native-header", "-o", header],
+        "native-header")
+    run([args.cc, "-std=c17", "-Wall", "-Wextra", "-Werror", "-fsyntax-only",
+         "-DGTI_CALLBACK_HEADER", "-I", output, "-I", root / "runtime/include",
+         fixture / "native_callbacks.c"], "native-header-c17")
+    for standard in ("c++20", "c++23"):
+        run([cxx, "-x", "c++", "-std=" + standard, "-Wall", "-Wextra", "-Werror",
+             "-fsyntax-only", "-I", root / "runtime/include", header], "native-header-" + standard)
     run([args.emitter.resolve(), root / SOURCE_PATHS["native_callbacks"],
          output / "closure.o", output / "closure.ll", 0, "--native-boundary-reachability"],
         "exact-callback-roots")

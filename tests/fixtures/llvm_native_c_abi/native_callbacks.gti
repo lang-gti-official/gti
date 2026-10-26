@@ -1,12 +1,14 @@
 [[c_abi]] struct CallbackPair { mut uint64_t a; mut uint64_t b; };
 [[c_abi]] struct CallbackLarge { mut uint64_t values[3]; };
 [[c_abi]] struct CallbackHfa { mut double values[4]; };
+[[c_opaque]] struct CallbackToken;
 using Scalar = (int32_t) -> int32_t;
 using PairOperation = (CallbackPair) -> CallbackPair;
 using LargeOperation = (CallbackLarge) -> CallbackLarge;
 using HfaOperation = (CallbackHfa) -> CallbackHfa;
 using ViewOperation = (std::string_view) -> uint64_t;
 using Selector = (Scalar) -> Scalar;
+using TokenOperation = (CallbackToken*) -> CallbackToken*;
 [[c_abi]] struct CallbackTable { mut PairOperation pair; mut Scalar scalar; };
 extern "C" {
   int32_t native_callback_unavailable(int32_t value);
@@ -20,6 +22,10 @@ extern "C" {
   PairOperation native_callback_pair_identity(PairOperation operation);
   Selector native_callback_selector();
   CallbackPair native_callback_pair_make();
+  CallbackLarge native_callback_large_make();
+  CallbackHfa native_callback_hfa_make();
+  int32_t native_callback_nested(Selector selector, Scalar scalar);
+  int32_t native_callback_token(TokenOperation operation);
   CallbackTable native_callback_table(PairOperation pair, Scalar scalar);
   int32_t native_callback_table_check(CallbackTable value);
 }
@@ -28,6 +34,8 @@ CallbackPair pair_identity(CallbackPair value) { return value; }
 CallbackLarge large_identity(CallbackLarge value) { return value; }
 CallbackHfa hfa_identity(CallbackHfa value) { return value; }
 uint64_t view_size(std::string_view value) { return uint64_t(value.size()); }
+Scalar preserve(Scalar value) { return value; }
+CallbackToken* token_identity(CallbackToken* value) { return value; }
 int32_t dormant_callback(int32_t value) { return native_callback_unavailable(value); }
 void dormant_registration() { Scalar unused = dormant_callback; }
 int main() {
@@ -36,6 +44,8 @@ int main() {
   LargeOperation large = large_identity;
   HfaOperation hfa = hfa_identity;
   ViewOperation view = view_size;
+  Selector selector = preserve;
+  TokenOperation token = token_identity;
   unsafe {
     if (native_callback_scalar(scalar, 35) != 42) return 1;
     if (scalar(35) != 42) return 2;
@@ -61,6 +71,12 @@ int main() {
     if (native_callback_table_check(global_table) != 1) return 13;
     native_callback_record_slot = nullptr;
     if (native_callback_record_slot != nullptr) return 14;
+    auto large_result = large(native_callback_large_make());
+    if (large_result.values[2] != uint64_t(49)) return 15;
+    auto hfa_result = hfa(native_callback_hfa_make());
+    if (hfa_result.values[3] != 11.5d) return 16;
+    if (native_callback_nested(selector, scalar) != 1) return 17;
+    if (native_callback_token(token) != 1) return 18;
   }
   return 0;
 }
