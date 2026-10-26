@@ -1745,6 +1745,27 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 add_executable(gti_llvm_native_c_abi_tests llvm_native_c_abi_tests.cpp)
+add_executable(gti_llvm_embedding_emitter llvm_embedding_emitter.cpp)
+target_link_libraries(gti_llvm_embedding_emitter PRIVATE gti_driver gti_llvm_backend)
+add_executable(gti_runtime_embedding_tests runtime_embedding_tests.cpp)
+target_include_directories(gti_runtime_embedding_tests PRIVATE "${PROJECT_SOURCE_DIR}/runtime/src")
+target_link_libraries(gti_runtime_embedding_tests PRIVATE gti_runtime)
+target_compile_options(gti_runtime_embedding_tests PRIVATE -UNDEBUG)
+add_test(NAME runtime_embedding_context COMMAND gti_runtime_embedding_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_embedding_execution
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_embedding_execution_test.py"
+      "$<TARGET_FILE:gti_llvm_embedding_emitter>" --runtime "$<TARGET_FILE:gti_runtime>"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-embedding-evidence")
+  gti_register_llvm_evidence_manifest(llvm_embedding_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_embedding_execution_test.py")
+  add_test(NAME llvm_embedding_cost
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_embedding_cost_test.py"
+      "$<TARGET_FILE:gti_llvm_embedding_emitter>" --runtime "$<TARGET_FILE:gti_runtime>"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-embedding-cost")
+endif()
 target_include_directories(gti_llvm_native_c_abi_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_native_c_abi_tests PRIVATE gti_llvm_backend)
 add_dependencies(gti_llvm_native_c_abi_tests gti_runtime)

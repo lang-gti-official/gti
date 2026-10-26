@@ -4,6 +4,7 @@
 #include "closure_environment.h"
 #include "constructor_field_publication.h"
 #include "coverage.h"
+#include "embedding.h"
 #include "memory_types.h"
 #include "native_c_contract.h"
 #include "parameter_packs.h"
@@ -2033,7 +2034,9 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
                       : LlvmAdmissionClosure::SealedEntryDependencies;
   Inventory inventory(plan.uses, mir, input.target());
   inventory.add(Shape::ObjectArtifact);
-  inventory.add(input.programKind());
+  inventory.add(input.programKind(),
+      input.embeddingPlan() && native_llvm::infallibleEmbeddingContract(input)
+          ? std::optional(Shape::InfallibleEmbedding) : std::nullopt);
   inventory.add(mir.executionProfile());
   for (const auto &body : input.bodies()) {
     const auto *bodyMir = findMirBody(mir, body.identity.address);
@@ -2206,7 +2209,9 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
       inventory.add(operation.failureBehavior);
     }
   if (input.embeddingPlan())
-    inventory.add(Shape::EmbeddingExports);
+    inventory.add(Shape::EmbeddingExports,
+        native_llvm::infallibleEmbeddingContract(input)
+            ? std::optional(Shape::InfallibleEmbedding) : std::nullopt);
   for (const auto &callback : mir.nativeCallbackAdapters()) {
     inventory.required = closure.contains(LoweredGeneratedItemIdentity{
         .kind = LoweredGeneratedItemKind::NativeInteropAdapter,

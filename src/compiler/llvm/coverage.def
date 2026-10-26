@@ -920,6 +920,7 @@ LLVM_COVERAGE_ENTRY(ThreadLocalPassive, 6, Pending, None, "passive literal per-t
 LLVM_COVERAGE_ENTRY(ThreadLocalDynamic, 6, Pending, None, "lazy per-thread initializer with explicit registration and drain")
 LLVM_COVERAGE_ENTRY(ProgramInitialization, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_scalar_execution", "globals"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
 LLVM_COVERAGE_ENTRY(EmbeddingExports, 11, Pending, None, "versioned export, initialization and containment adapters")
+LLVM_COVERAGE_ENTRY(InfallibleEmbedding, 11, LLVM_COVERAGE_IMPLEMENTED("llvm_embedding_execution", "infallible"), None, "sealed export roots and infallible native-unwind-free closure; module-local context, C wrappers and descriptor; no fallible transport admission")
 LLVM_COVERAGE_ENTRY(RuntimeBinding, 12, Pending, None, "exact source runtime declaration needs an explicit native binding")
 LLVM_COVERAGE_ENTRY(LibraryDeclaration, 11, Pending, None, "ABI-only declaration is not an executable definition")
 LLVM_COVERAGE_ENTRY(GeneratedDependencies, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_scalar_execution", "globals"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")

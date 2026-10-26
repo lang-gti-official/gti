@@ -601,12 +601,14 @@ target_link_libraries("gti_cpp_backend" PUBLIC gti_compiler)
 add_library(
   "gti_llvm_backend" STATIC
   "src/compiler/llvm_backend.cpp"
+  "src/compiler/llvm_embedding.cpp"
   "src/compiler/llvm/admission.cpp"
   "src/compiler/llvm/coverage.cpp"
   "src/compiler/llvm/session.cpp"
   "src/compiler/llvm/layout.cpp"
   "src/compiler/llvm/abi.cpp"
   "src/compiler/llvm/native_c_abi.cpp"
+  "src/compiler/llvm/embedding.cpp"
   "src/compiler/llvm/runtime_abi.cpp"
   "src/compiler/llvm/hosted.cpp"
   "src/compiler/llvm/reachability.cpp"
@@ -672,6 +674,7 @@ endif()
 add_library(
   "gti_runtime" STATIC
   "runtime/src/execution.cpp"
+  "runtime/src/embedding.cpp"
   "runtime/src/charconv.cpp"
   "runtime/src/chrono.cpp"
   "runtime/src/cthread.cpp"
@@ -698,6 +701,9 @@ target_include_directories(
 )
 target_include_directories("gti_runtime" SYSTEM PRIVATE ${CURL_INCLUDE_DIRS})
 target_compile_features("gti_runtime" PUBLIC cxx_std_20)
+set_target_properties(gti_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_source_files_properties(runtime/src/embedding.cpp PROPERTIES
+  COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-fvisibility=hidden>")
 target_link_libraries("gti_runtime" PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/RuntimeCharconv.cmake")
 gti_configure_runtime_charconv()
@@ -709,6 +715,7 @@ endif()
 add_library(
   "gti_driver" STATIC
   "src/driver/artifact.cpp"
+  "src/driver/embedding_library.cpp"
   "src/driver/bindgen_import.cpp"
   "src/driver/build_script.cpp"
   "src/driver/build.cpp"

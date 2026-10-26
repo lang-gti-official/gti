@@ -1,0 +1,2 @@
+extern "C" { int32_t foreign(int32_t value); }
+int32_t call(int32_t value) { unsafe { return foreign(value); } }

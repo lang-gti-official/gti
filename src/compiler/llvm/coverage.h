@@ -90,6 +90,7 @@ enum class Shape {
   NativeCScalarIndirect,
   NativeCSignature,
   NativeCCallback,
+  InfallibleEmbedding,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

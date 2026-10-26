@@ -2,6 +2,7 @@
 #include "callables.h"
 #include "constructor_field_publication.h"
 #include "failure.h"
+#include "embedding.h"
 #include "hosted.h"
 #include "lifetimes.h"
 #include "memory.h"
@@ -1724,6 +1725,8 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
   emitNativeCCallbacks(session, failures, callbacks);
   for (auto address : admission.requiredBodies())
     body(address);
+  if (session.program().embeddingPlan())
+    emitEmbedding(session, failures, *function({MirBodyKind::Module, 0}));
 }
 } // namespace
 

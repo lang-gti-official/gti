@@ -1,5 +1,6 @@
 # Backend And Native Handoff
 
+
 Status: current architecture. LLVM is the primary development backend. C++ is
 deprecated as the primary backend and maintained with bug fixes only through
 v1.0 as a comparison oracle. It remains the shipped default until LLVM passes
@@ -4245,6 +4246,48 @@ native `relaxed`, `acquire`, `release`, `acq_rel`, or `seq_cst` spelling from
 that record. It never inspects a public `std::atomic` method, order-tag source
 expression, or native overload to reconstruct semantics. Strong CAS emits both
 verified success and failure orders, including the exact nine legal pairs.
+
+## Native Infallible Embedding
+
+The LLVM embedding profile consumes the verified `LoweredEmbeddingPlan` and
+roots reachability at its selected functions plus the module initializer. The
+complete required closure must be infallible, source-defined and free of native
+unwind dependencies. Fallible bodies, native imports/indirect calls, callback
+adapters, thread-local state and retained cleanup-owning globals reject before
+object publication. An unused fallible function is not an executable root.
+This is a structural profile, not a list of recognized public function names.
+
+Generated C wrappers use the ordinary target C classifier for incoming values
+and the central private GTI ABI for exact source calls. Results publish only
+after successful invocation. Scalar, passive-record, fixed-array record-field,
+HFA and one-level record/opaque-pointer transport reuse native ABI and header
+projection. The same projection creates canonical structural signature bytes;
+SHA-256 signature identities, canonical export order and the pinned failure
+artifact identity form the module descriptor identity. No source function ID
+or private LLVM structure name enters the signature identity.
+
+`gti/embedding.h` contains ADR 026's versioned public records and lifecycle
+prototypes. Generated create code validates the host request, reserves the
+image-local context, runs verified module initialization and then publishes the
+context. The narrow runtime guard allocates no memory and invokes no user code
+while holding its atomic flag. It enforces one live context, creating-thread
+entry, recursive-entry exclusion and inactive rejection. Generated wrappers
+check required output pointers before invocation and preserve failure outputs
+on all currently supported returns. Descriptor storage is immutable and
+image-owned; destruction precedes unload, and full unload/reload resets module
+storage. GTI implementation symbols are internal, not exported ABI.
+
+The registered `runtime_embedding_context` and `llvm_embedding_execution`
+oracles cover lifecycle and real dynamic C17/C++20/C++23 host execution. This
+does not activate the dormant project-library manifest gate or claim the
+installed project workflow. Driver publication integration and fallible
+embedding remain separate prerequisites. In particular, the public ABI-v1
+failure record, observer ordering, cleanup completion and retained-state poison
+decision require the coordinator's C04 contract, including how newer failure
+records project into that public ABI. No adapter signature or private worker
+failure channel is selected here. Native exceptions must not unwind through
+LLVM frames; outbound native dependencies remain rejected by this profile
+until their reviewed firewall is available.
 
 ## Native Header Backend
 

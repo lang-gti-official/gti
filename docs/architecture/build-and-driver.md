@@ -867,6 +867,19 @@ ordinary CLI never enables this policy, so released manifests diagnose
 published. Internal tests may resolve the plan and run the ordinary frontend
 `check` path. Activation and native publication remain owned by `B-LIB-02`.
 
+The embedding SDK now separates generation from publication:
+`generateLlvmEmbedding` produces a matched native object, generated header and
+exact public-symbol list from one lowered program. `publishEmbeddingLibrary`
+in `gti_driver` links that object with the PIC runtime through the existing
+native command machinery. On macOS arm64 and Linux x86_64 it emits an explicit
+export allowlist and requires all native references to resolve. A new immutable
+generation directory containing only the library and header is atomically
+published after linking succeeds. Existing files, directories and symlinks at
+that destination reject; hosts may retain an older loaded generation while
+building another. Native failure removes private staging artifacts and leaves
+the destination absent. This SDK path does not activate the project manifest
+gate, project cache or multi-artifact build-report integration.
+
 The top-level `[build]`, selected `[profiles.<name>]` and selected
 `[targets.<name>]` tables accept `defines = ["DEBUG", "FEATURE"]`. Names must
 be ordinary GTI identifiers; all scopes use one parser that sorts and
