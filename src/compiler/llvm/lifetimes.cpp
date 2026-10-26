@@ -979,27 +979,6 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     if (selected.polymorphicCleanup)
       throw BackendUnsupportedError(
           "LLVM cleanup requires its later ownership/dispatch milestone");
-    if (selected.type.kind == SemanticType::UniqueOwner) {
-      if (selected.type.arguments.size() != 1)
-        throw std::logic_error(
-            "LLVM owner cleanup lost its exact pointee type");
-      if (containsHierarchyStorage(program, selected.type.arguments.front()))
-        throw BackendUnsupportedError(
-            "LLVM owner cleanup for hierarchy pointees requires dynamic "
-            "cleanup dispatch");
-    } else if (selected.type.kind == SemanticType::Class) {
-      const auto &owner = session.layouts().instance(selected.type);
-      if (sharedOwnerRepresentation(program, owner)) {
-        if (selected.type.arguments.size() != 1)
-          throw std::logic_error(
-              "LLVM shared cleanup lost its exact pointee type");
-        if (containsHierarchyStorage(program, selected.type.arguments.front()))
-          throw BackendUnsupportedError(
-              "LLVM shared cleanup for hierarchy pointees requires dynamic "
-              "cleanup dispatch");
-      }
-    }
-
     CleanupProof result{.recipe = &selected};
     if (selected.recursiveCleanup) {
       for (std::size_t index = ancestors.size(); index != 0; --index) {
@@ -1017,6 +996,13 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       throw std::logic_error(
           "LLVM recursive cleanup lost its exact enclosing recipe");
     }
+
+    // An indirect owner does not make its pointee's inline subobjects dynamic.
+    // Prove their exact static schedules at the child edge, including dispatch
+    // state, before publishing any helper. Recursive edges reuse that proof.
+    if (&selected != &recipe &&
+        containsHierarchyStorage(program, selected.type))
+      preflightCleanup(session, dispatch, selected, replacement);
 
     ancestors.push_back({&selected, ownerDepth});
     const bool ownsChild = selected.type.kind == SemanticType::UniqueOwner;
@@ -1040,9 +1026,8 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     return result;
   };
 
-  // Inline hierarchy state retains O10's strict non-emitting preflight,
-  // including replacement and dispatch checks. Owner handles are indirect;
-  // `prove` checks each exact pointee separately before any helper/cache use.
+  // `prove` checks static hierarchy schedules at every owned child edge, not
+  // only at the root. Dynamic-owner recipes remain independently unsupported.
   const bool inlineHierarchy = containsHierarchyStorage(program, recipe.type);
   const auto canonical = mirUniqueCleanupType(program, recipe.type);
   CleanupProof proof;

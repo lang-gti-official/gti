@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <llvm/Support/MathExtras.h>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -292,6 +293,10 @@ void Dispatch::preflightState(HirClassInstanceId activeClass) {
     const auto path = session.layouts().basePath(active.type, view.path);
     const auto physical =
         session.layouts().baseSubobject(active.type, view.location.owner.type);
+    const auto indexBits = session.dataLayout().getIndexSizeInBits(0);
+    if (!llvm::isUIntN(indexBits - 1, physical.offset))
+      throw BackendUnsupportedError(
+          "LLVM dispatch owner offset exceeds its target address-index range");
     if (!owner || view.activeClass != activeClass || path.type != owner->type ||
         path.offset != view.offset || physical != view.location.owner)
       throw std::logic_error(
@@ -380,6 +385,13 @@ llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
   return function;
 }
 
+llvm::StructType *Dispatch::tableType(std::size_t slots) const {
+  auto *offset = session.dataLayout().getIndexType(session.layouts().pointer());
+  return llvm::StructType::get(
+      session.context(),
+      {offset, llvm::ArrayType::get(session.layouts().pointer(), slots)});
+}
+
 llvm::GlobalVariable *Dispatch::table(HirClassInstanceId activeClass,
                                       HirClassInstanceId sourceView) {
   preflightState(activeClass);
@@ -397,10 +409,15 @@ llvm::GlobalVariable *Dispatch::table(HirClassInstanceId activeClass,
   std::vector<llvm::Constant *> slots;
   for (const auto &slot : view->slots)
     slots.push_back(adjustment(activeClass, view->profileOwner, slot.root));
-  auto *type = llvm::ArrayType::get(session.layouts().pointer(), slots.size());
+  auto *type = tableType(slots.size());
+  auto *offsetType = llvm::cast<llvm::IntegerType>(type->getElementType(0));
+  auto *offset = llvm::ConstantInt::getSigned(
+      offsetType, -static_cast<std::int64_t>(view->location.owner.offset));
+  auto *entries = llvm::ConstantArray::get(
+      llvm::cast<llvm::ArrayType>(type->getElementType(1)), slots);
   auto *table = new llvm::GlobalVariable(
       session.module(), type, true, llvm::GlobalValue::InternalLinkage,
-      llvm::ConstantArray::get(type, slots),
+      llvm::ConstantStruct::get(type, {offset, entries}),
       "__gti_dispatch_table_" + std::to_string(activeClass) + "_" +
           std::to_string(view->profileOwner));
   tables_.emplace(key, table);
@@ -439,6 +456,27 @@ void Dispatch::install(llvm::IRBuilder<> &ir, llvm::Value *completeObject,
                                  location.index);
     ir.CreateStore(table, address);
   }
+}
+
+llvm::Value *Dispatch::activeObject(llvm::IRBuilder<> &ir, llvm::Value *view,
+                                    const SemanticType &viewType) {
+  if (!view || view->getType() != session.layouts().pointer() ||
+      viewType.kind != SemanticType::Class)
+    throw std::invalid_argument(
+        "LLVM active-object recovery requires an exact class view address");
+  const auto location = session.layouts().dispatchLocation(viewType);
+  if (!location)
+    throw BackendUnsupportedError(
+        "LLVM active-object recovery requires a dispatch-bearing class view");
+  auto *owner = projectBase(session, ir, view, viewType, location->owner);
+  auto *field =
+      ir.CreateStructGEP(session.layouts().get(location->owner.type).storage,
+                         owner, location->index);
+  auto *table = ir.CreateLoad(session.layouts().pointer(), field);
+  auto *header = tableType(0);
+  auto *offset = ir.CreateLoad(header->getElementType(0),
+                               ir.CreateStructGEP(header, table, 0));
+  return ir.CreateGEP(ir.getInt8Ty(), owner, offset);
 }
 
 VirtualCallPlan Dispatch::planCall(const MirInstruction &instruction) {
@@ -543,8 +581,9 @@ LoadedVirtualCall Dispatch::loadCall(llvm::IRBuilder<> &ir,
       session.layouts().get(plan.location.owner.type).storage, receiver,
       plan.location.index);
   auto *table = ir.CreateLoad(session.layouts().pointer(), field);
-  auto *slot =
-      ir.CreateGEP(session.layouts().pointer(), table, ir.getInt64(plan.slot));
+  auto *entries = ir.CreateStructGEP(tableType(0), table, 1);
+  auto *slot = ir.CreateGEP(session.layouts().pointer(), entries,
+                            ir.getInt64(plan.slot));
   return {ir.CreateLoad(session.layouts().pointer(), slot), receiver};
 }
 

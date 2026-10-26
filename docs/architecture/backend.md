@@ -4518,6 +4518,20 @@ planner's provisional transport, not resolution of C04. Pure-bearing tables
 and infallible terminal targets remain explicitly gated; no failure meaning,
 null callee, trap or unreachable continuation is invented.
 
+Each immutable table has a target address-index-width signed displacement
+before its slot array. The displacement maps the physical dispatch-pointer
+owner to the installed active class, not the logical interface view or the
+pointer field itself. Slot lookup skips this fixed descriptor header; object
+layout and root ABI channels are unchanged. `Dispatch::activeObject` loads that
+displacement for an exact live class view. It does not provide a source downcast,
+grant ownership, select a destructor, or authorize deallocation. In a base
+construction/destruction state it recovers that base's active object, not the
+enclosing allocation. A future dynamic cleanup operation must capture its
+complete-object/deallocation identity before any lifecycle transition. Native
+O0/O3 probes cover all views after relocation, a nonzero physical state-base
+offset, and reinstalling the base state. This is representation groundwork;
+boxed polymorphic cleanup remains independently unimplemented.
+
 The body call path consumes the named function instance's sealed root-family
 rows and the receiver's exact concrete root identities. It loads the stable
 slot through its physical pointer owner and uses the central root ABI, including
@@ -4583,6 +4597,17 @@ Array descriptor destructor IDs summarize leaf effects, not an array-owned
 active byte. Helpers short-circuit at the first armed source destructor and use
 bounded native loops rather than code expansion per array extent. Source order,
 first/secondary-failure handling and aggregate draining are unchanged.
+
+Indirect unique/shared cleanup follows the canonical recipe rather than treating
+every hierarchy-containing pointee as dynamically typed. An ordinary record
+containing an inline polymorphic subobject has an exact static recipe. Its
+owned children receive the same non-publishing hierarchy/dispatch preflight as
+a root static object, including replacement restrictions; recursive owner edges
+reuse their already-proved ancestor. A genuinely polymorphic pointee still
+carries `polymorphicCleanup` and requires the separate dynamic-cleanup mechanism.
+Native component probes exercise real allocation/release of passive
+hierarchy-containing records, shared last-owner release and repeated empty
+cleanup. They do not grant public owner construction or dynamic deletion.
 
 Polymorphic replacement cleanup remains explicitly rejected: its invocation
 context must establish the receiver-state policy without inferring destruction
