@@ -6,6 +6,9 @@
 #include <malloc.h>
 #endif
 
+extern "C" void gti_test_cleanup_event_v1(std::uint32_t kind,
+                                          std::uint64_t address);
+
 namespace {
 constexpr std::size_t capacity = 8;
 std::array<std::uintptr_t, capacity> addresses{};
@@ -13,10 +16,12 @@ std::uint64_t releases = 0;
 std::uint32_t overflow = 0;
 
 void record(void *address) {
+  const auto identity =
+      static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(address));
+  gti_test_cleanup_event_v1(2, identity);
   const std::uint64_t index = releases++;
   if (index < addresses.size())
-    addresses[static_cast<std::size_t>(index)] =
-        reinterpret_cast<std::uintptr_t>(address);
+    addresses[static_cast<std::size_t>(index)] = identity;
   else
     overflow = 1;
 }

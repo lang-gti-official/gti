@@ -68,6 +68,24 @@ DefinedFailureOutcome failureOutcome(const MirInstruction &instruction) {
   throw std::runtime_error("failure instruction has no authorized outcome");
 }
 
+FailureSiteId failureSite(const MirInstruction &instruction,
+                          DefinedFailureOutcome outcome) {
+  for (std::size_t index = 0;
+       index < instruction.definedFailure.localOrigins.size(); ++index)
+    if (std::ranges::find(
+            instruction.definedFailure.localOrigins[index].outcomes, outcome) !=
+        instruction.definedFailure.localOrigins[index].outcomes.end())
+      return instruction.localFailureSites.at(index);
+  throw std::runtime_error("failure instruction has no authorized site");
+}
+
+enum class CleanupEventKind : std::uint32_t { Destructor = 1, Release = 2 };
+
+struct ExpectedCleanupEvent {
+  CleanupEventKind kind = CleanupEventKind::Destructor;
+  std::size_t object = 0;
+};
+
 llvm::Argument *channelArgument(llvm::Function &function,
                                 const FunctionAbi &abi) {
   if (!abi.failureDestination || *abi.failureDestination >= function.arg_size())
@@ -205,6 +223,17 @@ public:
 
   void executeSuccess(std::string_view graph,
                       const std::filesystem::path &releaseOracle) {
+    executeTracked(graph, releaseOracle, false);
+  }
+
+  void executeFirstFailure(std::string_view graph,
+                           const std::filesystem::path &releaseOracle) {
+    executeTracked(graph, releaseOracle, true);
+  }
+
+  void executeTracked(std::string_view graph,
+                      const std::filesystem::path &releaseOracle,
+                      bool failRoot) {
     const auto &node = named(session.program(), "Node");
     const auto &left = named(session.program(), "Left");
     const auto &right = named(session.program(), "Right");
@@ -220,7 +249,9 @@ public:
       throw std::invalid_argument("unknown cleanup graph");
     }
     failingOwners.clear();
-    prepareSuccessTracking(owners);
+    prepareTracking(owners);
+    if (failRoot)
+      firstFailureObject = 0;
 
     const auto recipe = mirUniqueCleanupType(
         session.program().mir(), SemanticType::uniqueOwnerOf(owners[0]->type));
@@ -230,6 +261,18 @@ public:
         recipe->aggregate.size() != 1)
       throw std::runtime_error(
           "recursive cleanup fixture lost its outer owner recipe");
+    const MirInstruction *primaryInstruction = nullptr;
+    std::optional<DefinedFailureOutcome> primaryOutcome;
+    if (failRoot) {
+      if (!owners[0]->destructor)
+        throw std::runtime_error("root cleanup has no destructor identity");
+      const auto *target = session.program().mir().findDestructorInstance(
+          *owners[0]->destructor);
+      if (!target)
+        throw std::runtime_error("root cleanup lost its destructor body");
+      primaryInstruction = &failureInstruction(*target);
+      primaryOutcome = failureOutcome(*primaryInstruction);
+    }
     auto *cleanup = lifetimes.cleanup(*recipe, true);
     observeCleanupEntry(*cleanup);
     verifyReleaseProvider();
@@ -296,12 +339,21 @@ public:
     std::vector<llvm::Value *> objectIdentities;
     for (llvm::Value *object : objects)
       objectIdentities.push_back(ir.CreatePtrToInt(object, ir.getInt64Ty()));
+    std::vector<ExpectedCleanupEvent> expectedEvents;
+    for (std::size_t index = 0; index < objects.size(); ++index)
+      expectedEvents.push_back({CleanupEventKind::Destructor, index});
+    for (const std::size_t index : releaseOrder)
+      expectedEvents.push_back({CleanupEventKind::Release, index});
 
     auto *first = ir.CreateCall(cleanup, {ownerSlot, channel, ir.getFalse()});
-    expect(first);
+    expect(failRoot ? ir.CreateNot(first) : first);
     expect(
         ir.CreateIsNull(ir.CreateLoad(session.layouts().pointer(), ownerSlot)));
-    expectSuccessTracking(ir, expect, 1);
+    expectTracking(ir, expect, 1);
+    expectChronology(ir, expect, expectedEvents, objectIdentities);
+    if (failRoot)
+      expectPrimaryFailure(ir, expect, channel, *primaryInstruction,
+                           *primaryOutcome);
     expect(ir.CreateICmpEQ(ir.CreateCall(releaseCount),
                            ir.getInt64(objects.size())));
     expect(ir.CreateICmpEQ(ir.CreateCall(releaseOverflow), ir.getInt32(0)));
@@ -314,7 +366,11 @@ public:
     expect(second);
     expect(
         ir.CreateIsNull(ir.CreateLoad(session.layouts().pointer(), ownerSlot)));
-    expectSuccessTracking(ir, expect, 2);
+    expectTracking(ir, expect, 2);
+    expectChronology(ir, expect, expectedEvents, objectIdentities);
+    if (failRoot)
+      expectPrimaryFailure(ir, expect, channel, *primaryInstruction,
+                           *primaryOutcome);
     expect(ir.CreateICmpEQ(ir.CreateCall(releaseCount),
                            ir.getInt64(objects.size())));
     expect(ir.CreateICmpEQ(ir.CreateCall(releaseOverflow), ir.getInt32(0)));
@@ -322,43 +378,45 @@ public:
       auto *released = ir.CreateCall(releaseAddress, {ir.getInt64(index)});
       expect(ir.CreateICmpEQ(released, objectIdentities[releaseOrder[index]]));
     }
-    ir.CreateRet(ir.CreateSelect(accepted, ir.getInt32(0), ir.getInt32(93)));
+    ir.CreateRet(ir.CreateSelect(accepted, ir.getInt32(0),
+                                 ir.getInt32(failRoot ? 94 : 93)));
 
     session.verify();
     const auto artifact = session.emitObject();
     if (artifact.kind != BackendArtifactKind::Object ||
         artifact.contents.empty())
-      throw std::runtime_error("cleanup success component emitted no object");
-    const auto object = scratch / (std::string(graph) + "-success.o");
+      throw std::runtime_error("cleanup tracked component emitted no object");
+    const std::string mode = failRoot ? "first-failure" : "success";
+    const auto object = scratch / (std::string(graph) + "-" + mode + ".o");
     if (driver::writeArtifact(object, artifact.contents) !=
         driver::ArtifactWriteStatus::Success)
-      throw std::runtime_error("failed to write cleanup success object");
+      throw std::runtime_error("failed to write cleanup tracked object");
     driver::NativeInputs inputs;
     inputs.finalLibraryFiles.push_back(releaseOracle);
     inputs.finalLibraryFiles.push_back(runtime);
-    const auto executable = scratch / (std::string(graph) + "-success");
+    const auto executable = scratch / (std::string(graph) + "-" + mode);
     const auto linked = driver::NativeToolchain().invoke(
         driver::NativeLinkRequest(driver::discoverNativeCompiler(), object,
                                   executable, inputs),
         {.captureSuccessfulOutput = true});
     if (!linked.succeeded())
-      throw std::runtime_error("cleanup success component link failed: " +
+      throw std::runtime_error("cleanup tracked component link failed: " +
                                linked.output);
     const auto result = driver::invokeProcess(
         {executable.string()}, {.captureSuccessfulOutput = true,
                                 .timeout = std::chrono::seconds(30),
                                 .isolateProcessGroup = true});
-    if (result.driverDiagnostic || result.timedOut || result.exitCode != 0)
+    if (result.driverDiagnostic || result.timedOut || result.exitCode != 0 ||
+        result.output.find("GTI-R0014") != std::string::npos)
       throw std::runtime_error(
-          "cleanup success component missed exact-once drain " +
+          "cleanup tracked component missed its drain contract " +
           std::string(graph) + " (exit " + std::to_string(result.exitCode) +
           "): " + result.output);
   }
 
 private:
-  void
-  prepareSuccessTracking(const std::vector<const MirClassInstance *> &owners) {
-    successTracking = true;
+  void prepareTracking(const std::vector<const MirClassInstance *> &owners) {
+    trackingEnabled = true;
     trackedOwners.clear();
     trackedAddresses.clear();
     trackedDestructorCounts.clear();
@@ -397,6 +455,62 @@ private:
     trackedCleanupInvocations = new llvm::GlobalVariable(
         session.module(), i32, false, llvm::GlobalValue::InternalLinkage,
         llvm::ConstantInt::get(i32, 0), "cleanup.success.invocations");
+
+    trackedEventCapacity = owners.size() * 2;
+    auto *i64 = llvm::Type::getInt64Ty(session.context());
+    auto *kinds = llvm::ArrayType::get(i32, trackedEventCapacity);
+    auto *addresses = llvm::ArrayType::get(i64, trackedEventCapacity);
+    trackedEventKinds = new llvm::GlobalVariable(
+        session.module(), kinds, false, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantAggregateZero::get(kinds), "cleanup.events.kinds");
+    trackedEventAddresses = new llvm::GlobalVariable(
+        session.module(), addresses, false, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantAggregateZero::get(addresses),
+        "cleanup.events.addresses");
+    trackedEventCount = new llvm::GlobalVariable(
+        session.module(), i32, false, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantInt::get(i32, 0), "cleanup.events.count");
+    trackedEventOverflow = new llvm::GlobalVariable(
+        session.module(), llvm::Type::getInt1Ty(session.context()), false,
+        llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantInt::getFalse(session.context()),
+        "cleanup.events.overflow");
+    eventRecorder = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                                {i32, i64}, false),
+        llvm::GlobalValue::ExternalLinkage, "gti_test_cleanup_event_v1",
+        session.module());
+    eventRecorder->setCallingConv(llvm::CallingConv::C);
+    llvm::IRBuilder<> eventIr(
+        llvm::BasicBlock::Create(session.context(), "entry", eventRecorder));
+    auto *count = eventIr.CreateLoad(i32, trackedEventCount);
+    eventIr.CreateStore(eventIr.CreateAdd(count, eventIr.getInt32(1)),
+                        trackedEventCount);
+    auto *record =
+        llvm::BasicBlock::Create(session.context(), "record", eventRecorder);
+    auto *overflow =
+        llvm::BasicBlock::Create(session.context(), "overflow", eventRecorder);
+    auto *done =
+        llvm::BasicBlock::Create(session.context(), "done", eventRecorder);
+    eventIr.CreateCondBr(eventIr.CreateICmpULT(
+                             count, eventIr.getInt32(static_cast<std::uint32_t>(
+                                        trackedEventCapacity))),
+                         record, overflow);
+    eventIr.SetInsertPoint(record);
+    eventIr.CreateStore(
+        eventRecorder->getArg(0),
+        eventIr.CreateInBoundsGEP(kinds, trackedEventKinds,
+                                  {eventIr.getInt32(0), count}));
+    eventIr.CreateStore(
+        eventRecorder->getArg(1),
+        eventIr.CreateInBoundsGEP(addresses, trackedEventAddresses,
+                                  {eventIr.getInt32(0), count}));
+    eventIr.CreateBr(done);
+    eventIr.SetInsertPoint(overflow);
+    eventIr.CreateStore(eventIr.getTrue(), trackedEventOverflow);
+    eventIr.CreateBr(done);
+    eventIr.SetInsertPoint(done);
+    eventIr.CreateRetVoid();
   }
 
   llvm::Function *declareOracle(std::string_view name,
@@ -457,11 +571,14 @@ private:
     throw std::runtime_error("cleanup destructor lost its receiver");
   }
 
-  void recordSuccessfulDestructor(llvm::IRBuilder<> &ir,
-                                  llvm::Function &function,
-                                  const FunctionAbi &abi,
-                                  HirClassInstanceId owner) {
+  void recordTrackedDestructor(llvm::IRBuilder<> &ir, llvm::Function &function,
+                               const FunctionAbi &abi,
+                               HirClassInstanceId owner) {
     llvm::Value *receiver = receiverArgument(function, abi);
+    ir.CreateCall(
+        eventRecorder,
+        {ir.getInt32(static_cast<std::uint32_t>(CleanupEventKind::Destructor)),
+         ir.CreatePtrToInt(receiver, ir.getInt64Ty())});
     llvm::Value *matched = ir.getFalse();
     for (std::size_t index = 0; index < trackedOwners.size(); ++index) {
       if (trackedOwners[index] != owner)
@@ -500,8 +617,8 @@ private:
   }
 
   template <typename Expect>
-  void expectSuccessTracking(llvm::IRBuilder<> &ir, const Expect &expect,
-                             std::uint32_t invocations) {
+  void expectTracking(llvm::IRBuilder<> &ir, const Expect &expect,
+                      std::uint32_t invocations) {
     for (std::size_t index = 0; index < trackedOwners.size(); ++index) {
       expect(ir.CreateICmpEQ(
           ir.CreateLoad(ir.getInt32Ty(), trackedDestructorCounts[index]),
@@ -520,6 +637,112 @@ private:
     expect(ir.CreateICmpEQ(
         ir.CreateLoad(ir.getInt32Ty(), trackedCleanupInvocations),
         ir.getInt32(invocations)));
+  }
+
+  llvm::Value *
+  chronologyMatches(llvm::IRBuilder<> &ir,
+                    const std::vector<ExpectedCleanupEvent> &expected,
+                    const std::vector<llvm::Value *> &objectIdentities) {
+    llvm::Value *matches = ir.CreateAnd(
+        ir.CreateICmpEQ(
+            ir.CreateLoad(ir.getInt32Ty(), trackedEventCount),
+            ir.getInt32(static_cast<std::uint32_t>(expected.size()))),
+        ir.CreateNot(ir.CreateLoad(ir.getInt1Ty(), trackedEventOverflow)));
+    auto *kindArray =
+        llvm::cast<llvm::ArrayType>(trackedEventKinds->getValueType());
+    auto *addressArray =
+        llvm::cast<llvm::ArrayType>(trackedEventAddresses->getValueType());
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+      if (expected[index].object >= objectIdentities.size())
+        throw std::runtime_error("cleanup event expects a foreign object");
+      auto *kindAddress = ir.CreateInBoundsGEP(
+          kindArray, trackedEventKinds,
+          {ir.getInt32(0), ir.getInt32(static_cast<std::uint32_t>(index))});
+      auto *eventAddress = ir.CreateInBoundsGEP(
+          addressArray, trackedEventAddresses,
+          {ir.getInt32(0), ir.getInt32(static_cast<std::uint32_t>(index))});
+      matches = ir.CreateAnd(
+          matches,
+          ir.CreateAnd(
+              ir.CreateICmpEQ(ir.CreateLoad(ir.getInt32Ty(), kindAddress),
+                              ir.getInt32(static_cast<std::uint32_t>(
+                                  expected[index].kind))),
+              ir.CreateICmpEQ(ir.CreateLoad(ir.getInt64Ty(), eventAddress),
+                              objectIdentities[expected[index].object])));
+    }
+    return matches;
+  }
+
+  template <typename Expect>
+  void expectChronology(llvm::IRBuilder<> &ir, const Expect &expect,
+                        const std::vector<ExpectedCleanupEvent> &expected,
+                        const std::vector<llvm::Value *> &objectIdentities) {
+    expect(chronologyMatches(ir, expected, objectIdentities));
+
+    // These controls read the runtime trace against deliberately wrong
+    // contracts. A release moved before its leaf destructor, or an omitted
+    // leaf drain, must be distinguishable from the accepted trace.
+    auto reordered = expected;
+    const std::size_t leafDestructor = trackedOwners.size() - 1;
+    const std::size_t firstRelease = trackedOwners.size();
+    std::swap(reordered[leafDestructor], reordered[firstRelease]);
+    expect(ir.CreateNot(chronologyMatches(ir, reordered, objectIdentities)));
+
+    auto omitted = expected;
+    const std::size_t leaf = trackedOwners.size() - 1;
+    omitted.erase(std::remove_if(omitted.begin(), omitted.end(),
+                                 [&](const ExpectedCleanupEvent &event) {
+                                   return event.object == leaf;
+                                 }),
+                  omitted.end());
+    expect(ir.CreateNot(chronologyMatches(ir, omitted, objectIdentities)));
+  }
+
+  template <typename Expect>
+  void expectPrimaryFailure(llvm::IRBuilder<> &ir, const Expect &expect,
+                            llvm::Value *channel,
+                            const MirInstruction &instruction,
+                            DefinedFailureOutcome outcome) {
+    auto *record =
+        ir.CreateStructGEP(session.abi().failureChannel(), channel, 0);
+    auto *type = session.abi().failureRecord();
+    expect(ir.CreateICmpEQ(
+        ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(type, record, 0)),
+        ir.getInt32(2)));
+    expect(ir.CreateICmpEQ(
+        ir.CreateLoad(ir.getInt16Ty(), ir.CreateStructGEP(type, record, 1)),
+        ir.getInt16(static_cast<unsigned>(outcome.code))));
+    expect(ir.CreateICmpEQ(
+        ir.CreateLoad(ir.getInt16Ty(), ir.CreateStructGEP(type, record, 2)),
+        ir.getInt16(static_cast<unsigned>(outcome.detail))));
+    expect(ir.CreateICmpEQ(
+        ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(type, record, 3)),
+        ir.getInt32(failureSite(instruction, outcome))));
+    expect(ir.CreateICmpEQ(
+        ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(type, record, 4)),
+        ir.getInt32(0)));
+    expect(ir.CreateICmpEQ(
+        ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(type, record, 6)),
+        ir.getInt32(0)));
+    expect(ir.CreateICmpEQ(
+        ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(type, record, 7)),
+        ir.getInt32(0)));
+    expect(ir.CreateIsNotNull(ir.CreateLoad(
+        session.layouts().pointer(),
+        ir.CreateStructGEP(session.abi().failureChannel(), channel, 1))));
+
+    const auto &identity =
+        session.program().mir().failureMetadata().artifactIdentity().bytes;
+    auto *identityType = llvm::cast<llvm::ArrayType>(type->getElementType(5));
+    auto *identityAddress = ir.CreateStructGEP(type, record, 5);
+    for (std::size_t index = 0; index < identity.size(); ++index)
+      expect(ir.CreateICmpEQ(
+          ir.CreateLoad(ir.getInt8Ty(),
+                        ir.CreateInBoundsGEP(
+                            identityType, identityAddress,
+                            {ir.getInt32(0),
+                             ir.getInt32(static_cast<std::uint32_t>(index))})),
+          ir.getInt8(identity[index])));
   }
 
   llvm::Function *destructor(MirBodyAddress address) {
@@ -541,8 +764,32 @@ private:
     abi.applyTo(*function);
     llvm::IRBuilder<> ir(
         llvm::BasicBlock::Create(session.context(), "entry", function));
-    if (successTracking)
-      recordSuccessfulDestructor(ir, *function, abi, target->owner);
+    if (trackingEnabled)
+      recordTrackedDestructor(ir, *function, abi, target->owner);
+    if (firstFailureObject &&
+        trackedOwners.at(*firstFailureObject) == target->owner) {
+      if (!abi.statusResult)
+        throw std::runtime_error(
+            "first failing destructor has no status result");
+      auto *fail =
+          llvm::BasicBlock::Create(session.context(), "fail.root", function);
+      auto *succeed = llvm::BasicBlock::Create(session.context(),
+                                               "succeed.child", function);
+      auto *expected = ir.CreateLoad(session.layouts().pointer(),
+                                     trackedAddresses.at(*firstFailureObject));
+      ir.CreateCondBr(
+          ir.CreateICmpEQ(receiverArgument(*function, abi), expected), fail,
+          succeed);
+      ir.SetInsertPoint(fail);
+      const auto &instruction = failureInstruction(*target);
+      failures.originate(ir, channelArgument(*function, abi), instruction,
+                         failureOutcome(instruction));
+      ir.CreateRet(ir.getFalse());
+      ir.SetInsertPoint(succeed);
+      ir.CreateRet(ir.getTrue());
+      destructorBodies.emplace(address.owner, function);
+      return function;
+    }
     if (failingOwners.contains(target->owner)) {
       if (!abi.statusResult)
         throw std::runtime_error("failing destructor has no status result");
@@ -636,7 +883,8 @@ private:
   std::filesystem::path scratch;
   std::set<HirClassInstanceId> failingOwners;
   std::map<HirDestructorInstanceId, llvm::Function *> destructorBodies;
-  bool successTracking = false;
+  bool trackingEnabled = false;
+  std::optional<std::size_t> firstFailureObject;
   std::vector<HirClassInstanceId> trackedOwners;
   std::vector<llvm::GlobalVariable *> trackedAddresses;
   std::vector<llvm::GlobalVariable *> trackedDestructorCounts;
@@ -645,6 +893,12 @@ private:
   llvm::GlobalVariable *trackedDestructorUnexpected = nullptr;
   llvm::GlobalVariable *trackedDestructorOverflow = nullptr;
   llvm::GlobalVariable *trackedCleanupInvocations = nullptr;
+  std::size_t trackedEventCapacity = 0;
+  llvm::GlobalVariable *trackedEventKinds = nullptr;
+  llvm::GlobalVariable *trackedEventAddresses = nullptr;
+  llvm::GlobalVariable *trackedEventCount = nullptr;
+  llvm::GlobalVariable *trackedEventOverflow = nullptr;
+  llvm::Function *eventRecorder = nullptr;
 };
 
 VerifiedLoweredProgram loadProgram(const std::filesystem::path &repository) {
@@ -703,6 +957,13 @@ int main(int argc, char **argv) {
             .executeSuccess(graph, releaseOracle);
         std::cout << graph << " cleanup: " << level
                   << " drained and released every address exactly once\n";
+        const auto firstFailureScratch =
+            base / (graph + "-first-failure-" + level);
+        std::filesystem::create_directory(firstFailureScratch);
+        NativeCleanupCase(program, optimization, runtime, firstFailureScratch)
+            .executeFirstFailure(graph, releaseOracle);
+        std::cout << graph << " cleanup: " << level
+                  << " retained one primary failure and drained all children\n";
       }
     }
     return 0;
