@@ -1452,7 +1452,8 @@ void run(const std::filesystem::path &repository,
     require(!verifyMirProgram(invalid).valid(),
             "missing hosted teardown authority fails MIR verification");
   }
-  const auto admission = planLlvmAdmission(*program);
+  const LlvmBackendOptions backendOptions{.optimization = optimization};
+  const auto admission = planLlvmAdmission(*program, backendOptions);
   if (!admission.admitted())
     std::cerr << admission.limitation() << '\n';
   require(admission.admitted(), "hosted fixture has native admission");
@@ -1470,7 +1471,7 @@ void run(const std::filesystem::path &repository,
   }
   require(matches == 1, "trace has one sealed identity");
 
-  Session session(*program, {.optimization = optimization});
+  Session session(*program, backendOptions);
   const auto returned = std::find_if(
       startup->operations.begin(), startup->operations.end(),
       [](const auto &operation) {
