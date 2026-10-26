@@ -6072,14 +6072,8 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
   // the exact owner's generated default constructor. Preserve its existing
   // explicit value-slot lifecycle just like a source-declared constructor.
   const bool generatedDefault =
-      producer != nullptr && producer->kind == MirInstructionKind::Call &&
-      !producer->functionTarget && !producer->constructorTarget &&
-      !producer->lambdaTarget && !producer->bodyTarget && !producer->receiver &&
-      !producer->callableInvocation && !producer->loan &&
-      !producer->ownership && producer->operands.empty() &&
-      producer->parameterTypes.empty() &&
-      producer->constructorKind == ConstructorKind::Ordinary &&
-      producer->intrinsic == IntrinsicKind::None;
+      producer != nullptr &&
+      mir_detail::generatedDefaultConstruction(*producer);
   if (value == nullptr || producer == nullptr || slot == nullptr ||
       (borrowedValueStage && value->id != stage.operands.front().value) ||
       (!ordinaryConstruction && !functionCall && !generatedDefault &&
@@ -17905,10 +17899,9 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
   const MirClassInstance *defaultOwner =
       value == nullptr ? nullptr
                        : uniqueClassInstanceForType(program, value->info.type);
-  // Explicit default construction uses Construct, whereas an implicit
-  // generated default can use Call. Both publish the same exact owning value.
-  // For Construct, keep publication in the final field and prove the real
-  // default initializer body independently of its private empty shell.
+  // Generated default construction publishes its exact owning value through
+  // Construct. Keep publication in the final field and prove the real default
+  // initializer body independently of its private empty shell.
   const bool generatedDefaultConstruct =
       producer != nullptr && producer->kind == MirInstructionKind::Construct &&
       producer->constructorKind == ConstructorKind::Ordinary &&
@@ -17916,9 +17909,7 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       passiveConstructorFieldInitializers(program,
                                           defaultOwner->fieldInitializers);
   const bool defaultProducer =
-      commonProducer &&
-      (producer->kind == MirInstructionKind::Call ||
-       generatedDefaultConstruct) &&
+      commonProducer && generatedDefaultConstruct &&
       !producer->functionTarget && !producer->constructorTarget &&
       !producer->receiver && producer->operands.empty() &&
       producer->definedFailure.empty() && !producer->successResultDrop &&
@@ -25901,13 +25892,15 @@ returnDefaultConstructionDefinition(const MirBody &body, MirValueId value) {
   const MirValue *record = body.findValue(value);
   const MirInstruction *definition =
       record == nullptr ? nullptr : findInstruction(body, record->definition);
-  if (definition == nullptr || definition->kind != MirInstructionKind::Call ||
+  const bool generated = definition != nullptr &&
+                         mir_detail::generatedDefaultConstruction(*definition);
+  const bool parameterDefault =
+      definition != nullptr && definition->kind == MirInstructionKind::Call &&
+      definition->intrinsic == IntrinsicKind::DefaultTypeParameterConstruction;
+  if (definition == nullptr || (!generated && !parameterDefault) ||
       definition->functionTarget || definition->constructorTarget ||
       definition->lambdaTarget || definition->bodyTarget ||
       definition->callableInvocation || definition->receiver ||
-      (definition->intrinsic != IntrinsicKind::None &&
-       definition->intrinsic !=
-           IntrinsicKind::DefaultTypeParameterConstruction) ||
       !definition->operands.empty() || !definition->callableArguments.empty() ||
       !definition->localFailureSites.empty() || !definition->result ||
       !hasUniqueReturnUse(body, value)) {

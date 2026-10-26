@@ -2045,6 +2045,10 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               producer->constructorKind == ConstructorKind::Ordinary;
           if (!producer->constructorTarget && receiverClass != nullptr) {
             exactProducer =
+                (mir_detail::generatedDefaultConstruction(*producer) &&
+                 receiverClass->defaultConstructor ==
+                     SpecialMemberStatus::Generated &&
+                 !receiverClass->generatedDefaultRequiresSchedule) ||
                 (producer->constructorKind == ConstructorKind::Copy &&
                  receiverClass->copyConstructor ==
                      SpecialMemberStatus::Generated) ||
@@ -2073,14 +2077,6 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             exactProducer = lambda != nullptr &&
                             lambda->returnType == receiverPlace->type &&
                             !producer->info.traits.containsBorrowedState;
-          }
-          if (receiverClass != nullptr &&
-              receiverClass->defaultConstructor ==
-                  SpecialMemberStatus::Generated &&
-              !receiverClass->generatedDefaultRequiresSchedule &&
-              mir_detail::generatedDefaultConstruction(*producer) &&
-              producer->info.type == receiverClass->type) {
-            exactProducer = true;
           }
         }
         const bool readObservation =
@@ -2244,6 +2240,17 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               argumentPlace != nullptr &&
               producerOwner->type == argumentPlace->type &&
               producer->constructorKind == ConstructorKind::Ordinary;
+          if (argumentPlace != nullptr &&
+              mir_detail::generatedDefaultConstruction(*producer)) {
+            const MirClassInstance *generatedOwner = nullptr;
+            for (const auto &candidate : program.classInstances())
+              if (candidate.type == argumentPlace->type)
+                generatedOwner = &candidate;
+            exactProducer = generatedOwner != nullptr &&
+                            generatedOwner->defaultConstructor ==
+                                SpecialMemberStatus::Generated &&
+                            !generatedOwner->generatedDefaultRequiresSchedule;
+          }
         } else if (producer != nullptr &&
                    producer->kind == MirInstructionKind::Call) {
           const MirFunctionInstance *target =
@@ -2260,28 +2267,13 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               published->kind == MirLoanKind::Stored && !published->entry &&
               !published->escapes &&
               published->producedBy == producer->hirValue;
-          const MirClassInstance *generatedOwner = nullptr;
-          if (argumentPlace != nullptr &&
-              mir_detail::generatedDefaultConstruction(*producer)) {
-            const auto found = std::find_if(
-                program.classInstances().begin(),
-                program.classInstances().end(), [&](const auto &candidate) {
-                  return candidate.type == argumentPlace->type;
-                });
-            if (found != program.classInstances().end())
-              generatedOwner = &*found;
-          }
           exactProducer =
               (target != nullptr && argumentPlace != nullptr &&
                target->definitionKind == MirDefinitionKind::Source &&
                target->linkage == LanguageLinkage::Gti &&
                target->returnType == argumentPlace->type &&
                (target->returnBorrowOrigin == BorrowOriginKind::None ||
-                retainedCarrier)) ||
-              (generatedOwner != nullptr &&
-               generatedOwner->defaultConstructor ==
-                   SpecialMemberStatus::Generated &&
-               !generatedOwner->generatedDefaultRequiresSchedule);
+                retainedCarrier));
         } else if (producer != nullptr && argumentPlace != nullptr &&
                    producer->kind == MirInstructionKind::Compute &&
                    producer->operation == MirOperation::PayloadConstruct &&
@@ -3520,10 +3512,11 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                        }));
       const bool transfersOwnership =
           transfersOut(instruction) || preparedOwnershipTransfer;
-      if (instruction.kind == MirInstructionKind::Call && transfersOwnership &&
+      if (instruction.kind == MirInstructionKind::Call &&
           instruction.intrinsic == IntrinsicKind::None &&
-          !instruction.functionTarget && !instruction.lambdaTarget &&
-          !instruction.nativeCalleeType) {
+          !instruction.functionTarget && !instruction.constructorTarget &&
+          !instruction.lambdaTarget && !instruction.bodyTarget &&
+          !instruction.nativeCalleeType && !instruction.callableInvocation) {
         return verificationFailure(
             body, owner, "ordinary call is missing its exact target identity",
             block.id, instruction.id);
@@ -3761,23 +3754,32 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             "unsafe construction lacks an exact constructor target", block.id,
             instruction.id);
       }
-      if (!instruction.constructorTarget && !instruction.functionTarget &&
-          (instruction.kind == MirInstructionKind::Call ||
-           instruction.kind == MirInstructionKind::Construct) &&
-          instruction.intrinsic == IntrinsicKind::None &&
-          instruction.constructorKind == ConstructorKind::Ordinary &&
-          instruction.info.type.kind == SemanticType::Class &&
-          instruction.parameterTypes.empty() && instruction.operands.empty()) {
-        const auto constructed = std::find_if(
-            program.classInstances().begin(), program.classInstances().end(),
-            [&](const MirClassInstance &candidate) {
-              return candidate.type == instruction.info.type;
-            });
-        if (constructed != program.classInstances().end() &&
-            constructed->generatedDefaultRequiresSchedule)
+      if (instruction.kind == MirInstructionKind::Construct &&
+          !instruction.constructorTarget &&
+          instruction.constructorKind == ConstructorKind::Ordinary) {
+        const MirClassInstance *constructed = nullptr;
+        bool unique = true;
+        for (const auto &candidate : program.classInstances()) {
+          if (candidate.type != instruction.info.type)
+            continue;
+          if (constructed != nullptr)
+            unique = false;
+          constructed = &candidate;
+        }
+        const bool generatedDefault =
+            mir_detail::generatedDefaultConstruction(instruction) &&
+            constructed != nullptr && unique &&
+            constructed->defaultConstructor == SpecialMemberStatus::Generated &&
+            !constructed->generatedDefaultRequiresSchedule;
+        const bool unionField =
+            mir_detail::passiveUnionFieldConstruction(program, instruction);
+        if (!generatedDefault && !unionField)
           return verificationFailure(
               body, owner,
-              "generated construction is missing its selected schedule",
+              constructed && constructed->generatedDefaultRequiresSchedule
+                  ? "generated construction is missing its selected schedule"
+                  : "generated construction lacks its exact bodyless default "
+                    "policy",
               block.id, instruction.id);
       }
       std::optional<std::size_t> inPlaceArgumentOffset;

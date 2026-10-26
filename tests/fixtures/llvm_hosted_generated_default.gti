@@ -1,0 +1,52 @@
+mut int trace = 0;
+struct Policy { int apply() { return 42; } };
+struct Defaulted {
+  Defaulted() = default;
+  int apply() { return 23; }
+};
+struct Generic<T> { T apply(T value) { return value; } };
+struct Cleanup {
+  int read() { return 7; }
+  ~Cleanup() { trace = trace * 10 + 3; }
+};
+thread_local Cleanup tls{};
+struct Scheduled {
+  Cleanup child;
+  int value = 9;
+  int read() { return this.child.read() + this.value; }
+};
+struct Explicit {
+  int value;
+  Explicit(int value) : value(value) {}
+  int read() { return this.value; }
+};
+Explicit make_explicit() { return Explicit(19); }
+Scheduled make_scheduled() { return Scheduled(); }
+Policy make_policy() { return Policy(); }
+Defaulted make_defaulted() { return Defaulted(); }
+Generic<int> make_generic() { return Generic<int>(); }
+Cleanup make_cleanup() { return Cleanup(); }
+int inspect(Cleanup& value) { return value.read(); }
+int main() {
+  [[discard]] tls.read();
+  Explicit explicit_value = make_explicit();
+  if (explicit_value.read() != 19) { return 9; }
+  Policy policy = make_policy();
+  if (policy.apply() != 42) { return 1; }
+  if (Policy().apply() != 42) { return 2; }
+  Defaulted defaulted = make_defaulted();
+  if (defaulted.apply() != 23) { return 3; }
+  Generic<int> generic = make_generic();
+  if (generic.apply(17) != 17) { return 4; }
+  if (inspect(Cleanup()) != 7) { return 5; }
+  { Cleanup local{}; }
+  {
+    Cleanup returned = make_cleanup();
+    if (returned.read() != 7) { return 6; }
+  }
+  {
+    Scheduled scheduled = make_scheduled();
+    if (scheduled.read() != 16) { return 7; }
+  }
+  return trace == 3333 ? 0 : 8;
+}

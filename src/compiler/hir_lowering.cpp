@@ -6873,6 +6873,16 @@ private:
           }
         }
       }
+      // A generated default with no selected schedule is still a concrete
+      // construction, never an ordinary call with a missing target. Preserve
+      // the semantic selection in the existing construction vocabulary.
+      if (construction->generatedDefault &&
+          construction->kind == ConstructorKind::Ordinary &&
+          value.intrinsic == IntrinsicKind::None &&
+          value.info.type.kind == SemanticType::Class &&
+          !value.constructorTarget) {
+        value.kind = kind = HirValueKind::DirectInitializer;
+      }
       if (value.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
           construction->kind == ConstructorKind::Move &&
           !value.constructorTarget &&

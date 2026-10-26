@@ -1131,7 +1131,169 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             "and shared value identity");
     }
   };
+  std::unordered_map<const HirBody *, GenericSubstitution> constructionContexts;
+  std::vector<const HirBody *> constructionBodies;
+  std::unordered_set<const HirBody *> ambiguousConstructionContexts;
+  const auto addConstructionContext = [&](const HirBody &body,
+                                          GenericSubstitution substitution) {
+    const auto [found, inserted] =
+        constructionContexts.emplace(&body, substitution);
+    if (inserted)
+      constructionBodies.push_back(&body);
+    else if (found->second.types != substitution.types ||
+             found->second.values != substitution.values) {
+      ambiguousConstructionContexts.insert(&body);
+      result.errors.emplace_back(
+          "construction body has ambiguous instance arguments");
+    }
+  };
+  const auto bindConstructionArguments =
+      [&](GenericSubstitution &substitution,
+          const std::vector<GenericParameterInfo> &parameters,
+          const std::vector<SemanticType> &types,
+          const std::vector<CompileTimeValue> &values) {
+        std::size_t typeIndex = 0, valueIndex = 0;
+        for (const auto &parameter : parameters) {
+          if (!parameter.typeArgumentPath.empty()) {
+            if (auto type = projectGenericTypeArgument(
+                    types, parameter.typeArgumentPath, parameter.id,
+                    parameter.pack))
+              if (const auto [found, inserted] =
+                      substitution.types.emplace(parameter.id, *type);
+                  !inserted && found->second != *type)
+                result.errors.emplace_back(
+                    "construction type arguments conflict");
+          } else if (parameter.pack) {
+            if (typeIndex <= types.size()) {
+              std::vector<SemanticType> elements(types.begin() + typeIndex,
+                                                 types.end());
+              const auto pack = SemanticType::concreteTypePack(
+                  parameter.id, std::move(elements));
+              if (const auto [found, inserted] =
+                      substitution.types.emplace(parameter.id, pack);
+                  !inserted && found->second != pack)
+                result.errors.emplace_back(
+                    "construction pack arguments conflict");
+              typeIndex = types.size();
+            }
+          } else if (parameter.value) {
+            if (valueIndex < values.size()) {
+              const auto &argument = values[valueIndex++];
+              if (const auto [found, inserted] =
+                      substitution.values.emplace(parameter.id, argument);
+                  !inserted && found->second != argument)
+                result.errors.emplace_back(
+                    "construction value arguments conflict");
+            }
+          } else if (typeIndex < types.size()) {
+            const auto &argument = types[typeIndex++];
+            if (const auto [found, inserted] =
+                    substitution.types.emplace(parameter.id, argument);
+                !inserted && found->second != argument)
+              result.errors.emplace_back(
+                  "construction type arguments conflict");
+          }
+        }
+      };
+  const auto constructionClassContext = [&](HirClassInstanceId identity) {
+    GenericSubstitution substitution;
+    const auto *instance =
+        identity != 0 && identity <= program.classInstances().size() &&
+                program.classInstances()[identity - 1].id == identity
+            ? &program.classInstances()[identity - 1]
+            : nullptr;
+    const auto *declaration =
+        instance ? semantics.findClassType(instance->declaration) : nullptr;
+    if (declaration)
+      bindConstructionArguments(substitution, declaration->genericParameters,
+                                instance->typeArguments,
+                                instance->valueArguments);
+    return substitution;
+  };
+  addConstructionContext(program.module(), {});
+  for (const auto &storage : program.threadLocalStorage())
+    addConstructionContext(storage.initializer, {});
+  for (const auto &owner : program.classInstances()) {
+    const auto substitution = constructionClassContext(owner.id);
+    addConstructionContext(owner.fieldInitializers, substitution);
+    addConstructionContext(owner.staticFieldInitializers, substitution);
+  }
+  for (const auto &function : program.functionInstances()) {
+    auto substitution = constructionClassContext(function.owner.value_or(0));
+    if (const auto *declaration = semantics.findFunction(function.declaration))
+      bindConstructionArguments(substitution, declaration->genericParameters,
+                                function.typeArguments,
+                                function.valueArguments);
+    addConstructionContext(function.body, std::move(substitution));
+  }
+  for (const auto &constructor : program.constructorInstances()) {
+    auto substitution = constructionClassContext(constructor.owner);
+    if (const auto *declaration =
+            constructor.source ? semantics.findConstructor(*constructor.source)
+                               : nullptr)
+      bindConstructionArguments(substitution, declaration->genericParameters,
+                                constructor.typeArguments,
+                                constructor.valueArguments);
+    addConstructionContext(constructor.body, std::move(substitution));
+  }
+  for (const auto &destructor : program.destructorInstances())
+    addConstructionContext(destructor.body,
+                           constructionClassContext(destructor.owner));
+  // Establish an acyclic exact lexical creator graph before propagating
+  // instance arguments. Every incoming context must agree; a target ID or
+  // an inferred result type cannot supply a missing or conflicting context.
+  std::vector<const HirBody *> contextNodes = constructionBodies;
+  for (const auto &lambda : program.lambdaInstances())
+    contextNodes.push_back(&lambda.body);
+  std::unordered_map<const HirBody *, std::vector<const HirBody *>>
+      contextEdges;
+  std::unordered_map<const HirBody *, std::size_t> incomingContexts;
+  for (const auto *body : contextNodes) {
+    incomingContexts.try_emplace(body, 0);
+    for (const auto &value : body->values) {
+      if (value.kind != HirValueKind::Lambda || !value.lambdaTarget)
+        continue;
+      const auto *lambda = program.findLambda(*value.lambdaTarget);
+      if (!lambda || lambda->source != exprAs<Lambda>(value.source) ||
+          lambda->type != value.info.type) {
+        result.errors.emplace_back(
+            "construction context has no exact lambda creator");
+        continue;
+      }
+      contextEdges[body].push_back(&lambda->body);
+      ++incomingContexts[&lambda->body];
+    }
+  }
+  std::vector<const HirBody *> readyContexts;
+  for (const auto *body : contextNodes)
+    if (incomingContexts.at(body) == 0)
+      readyContexts.push_back(body);
+  for (std::size_t index = 0; index < readyContexts.size(); ++index) {
+    const auto *body = readyContexts[index];
+    const auto known = constructionContexts.find(body);
+    if (known == constructionContexts.end()) {
+      result.errors.emplace_back(
+          "construction context is missing its lexical creator");
+    }
+    const bool compatible = known != constructionContexts.end() &&
+                            !ambiguousConstructionContexts.contains(body);
+    const auto inherited = compatible ? known->second : GenericSubstitution{};
+    for (const auto *child : contextEdges[body]) {
+      if (compatible)
+        addConstructionContext(*child, inherited);
+      if (--incomingContexts[child] == 0)
+        readyContexts.push_back(child);
+    }
+  }
+  if (readyContexts.size() != contextNodes.size())
+    result.errors.emplace_back(
+        "construction context contains a lambda creator cycle");
   const auto verifyGeneratedConstructionValues = [&](const HirBody &body) {
+    const auto context = constructionContexts.find(&body);
+    if (context == constructionContexts.end() ||
+        ambiguousConstructionContexts.contains(&body))
+      return;
+    const auto &substitution = context->second;
     verifyDirectInitializations(body);
     for (const auto &value : body.values) {
       if (value.intrinsic == IntrinsicKind::SourceExpressionText)
@@ -1198,15 +1360,58 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const auto *construction = value.source != nullptr
                                      ? semantics.findConstruction(*value.source)
                                      : nullptr;
-      const auto *type =
-          construction != nullptr && construction->generatedDefault
-              ? semantics.findClassType(construction->constructedType.classId)
-              : nullptr;
+      const SemanticType selectedType =
+          construction != nullptr
+              ? substituteSemanticType(construction->constructedType,
+                                       substitution, &semantics)
+              : SemanticType::Unknown;
+      const auto *type = construction != nullptr &&
+                                 construction->generatedDefault &&
+                                 construction->kind == ConstructorKind::Ordinary
+                             ? semantics.findClassType(selectedType.classId)
+                             : nullptr;
       const auto *lifecycle =
           type != nullptr && type->declaration != nullptr
               ? semantics.findClassLifecycle(*type->declaration)
               : nullptr;
-      if (lifecycle == nullptr || !lifecycle->generatedDefaultInitializers)
+      if (construction != nullptr &&
+          construction->kind == ConstructorKind::Ordinary &&
+          value.intrinsic == IntrinsicKind::None && lifecycle != nullptr &&
+          lifecycle->defaultConstructor == SpecialMemberStatus::Generated &&
+          !lifecycle->generatedDefaultInitializers) {
+        const HirClassInstance *owner = nullptr;
+        bool unique = true;
+        for (const auto &candidate : program.classInstances()) {
+          if (candidate.type != value.info.type)
+            continue;
+          if (owner != nullptr)
+            unique = false;
+          owner = &candidate;
+        }
+        const bool exactOwner = owner != nullptr && unique &&
+                                !containsUnresolvedGeneric(selectedType) &&
+                                owner->type == selectedType;
+        if (!exactOwner ||
+            owner->defaultConstructor != SpecialMemberStatus::Generated ||
+            owner->generatedDefaultRequiresSchedule ||
+            value.kind != HirValueKind::DirectInitializer ||
+            value.constructorKind != ConstructorKind::Ordinary ||
+            value.constructorTarget || value.functionTarget ||
+            value.lambdaTarget || value.receiver || value.nativeCalleeType ||
+            value.nativeCallbackAdapter || value.threadTaskAdapter ||
+            !value.scopedThreadTasks.empty() || value.callPlan ||
+            value.callableBoundary || value.callableInvocation ||
+            !value.callableArguments.empty() || !value.operands.empty() ||
+            !value.parameterTypes.empty() || !value.defaultArguments.empty() ||
+            value.info.category != ValueCategory::Value ||
+            value.info.traits != owner->traits || !value.definedFailure.empty())
+          result.errors.emplace_back(
+              "generated default value lost its exact construction selection");
+        continue;
+      }
+      if (lifecycle == nullptr ||
+          lifecycle->defaultConstructor != SpecialMemberStatus::Generated ||
+          !lifecycle->generatedDefaultInitializers)
         continue;
       const auto *target =
           value.constructorTarget
@@ -1242,18 +1447,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct
               ? FailurePropagationKind::None
               : FailurePropagationKind::Constructor;
-      // Concrete reanalysis owns generic argument substitution. The base
-      // semantic record may still be the primary's C<T>; retain its exact
-      // declaration identity and validate the concrete value/storage-to-owner
-      // relationship instead of comparing C<T> with C<int>.
-      const bool exactOwner =
-          owner != nullptr &&
-          (containsUnresolvedGeneric(construction->constructedType)
-               ? owner->type.kind == SemanticType::Class &&
-                     owner->type.classId ==
-                         construction->constructedType.classId &&
-                     !containsUnresolvedGeneric(owner->type)
-               : owner->type == construction->constructedType);
+      // Resolve the primary construction through this concrete instance's
+      // declaration-bound arguments, including exact class specializations.
+      // The selected constructor must belong to that exact resolved type.
+      const bool exactOwner = owner != nullptr &&
+                              !containsUnresolvedGeneric(selectedType) &&
+                              owner->type == selectedType;
       if (target == nullptr || !target->generatedDefault || owner == nullptr ||
           !exactOwner || !exactResult ||
           value.definedFailure.propagation != propagation)

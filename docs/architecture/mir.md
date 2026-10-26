@@ -31,6 +31,34 @@ name determines language meaning or bypasses deleted/private constructors.
 
 ## Representation
 
+Bodyless generated default construction uses an explicit ordinary `Construct`
+with zero inputs and no constructor target. Whole-program verification requires
+the unique concrete owner's generated default policy and absence of an
+initializer schedule; ordinary materialization, publication and cleanup remain
+mandatory. Temporary receiver/argument proofs and effect analysis consume that
+same construction operation. A targetless ordinary `Call` cannot stand in for
+construction; native/deferred calls retain their separate typed targets or
+invocation capabilities.
+
+The existing one-input passive-union family is proved separately: the exact concrete union,
+sealed overlapping layout and first declared field type must match the input.
+That proof grants no ordinary call target, default-constructor policy, cleanup,
+borrow, failure or precise effect authority.
+
+A passive scalar value return preserves its source operand type and declared
+body return type. The MIR-owned scalar-return query proves an exact type or
+uses the existing shared context-free initialization-conversion rule; it does
+not repeat assignability or decide literal-dependent narrowing. Semantic
+contextual typing must already give a narrowed integer literal its exact type.
+Scalar results use value/constant/copy/move carriers. A copy/move's claimed
+source type must equal its exact selected place type before choosing either an
+exact return or an initialization conversion; ordinary operand and availability
+checks remain mandatory. Address or loan carriers cannot stand in
+for a by-value scalar. The query applies to the destination type: a reference
+return can intentionally carry a referent-typed address operand and retains its
+independent return-loan authority. Aggregate, enum, text, callable, raw and
+ownership return families receive no new authority from this scalar rule.
+
 Raw address conversion uses `Compute/Convert` with one evaluated pointer value.
 The independent `rawPointerConversion` query is shared by body verification and
 production backend admission: only typed/void or same-pointee conversion is
@@ -4178,14 +4206,19 @@ input names an exact fresh class/struct producer or a passive payload-enum
 construction, and its selected parameter is read-only `T&`. Lowering
 materializes the producer's exact mutable place, emits `BorrowRead`, and
 attaches one `CallArgument` loan to the `CallInput`;
-a target-free, zero-input ordinary class `Call` can be the generated default
-producer. Body verification recognizes its exact structural shape; independent
+an explicit zero-input ordinary class `Construct` can be the bodyless generated
+default producer. Body verification recognizes its exact structural shape; independent
 program verification also requires the concrete owner's generated default
 constructor and no missing initializer schedule. This shares the receiver
 producer query and preserves all materialization, call-loan and drop checks.
 The shared invocation-target query uses that same shape and concrete lifecycle
 proof to classify this producer as executing no source body, rather than an
-unknown call that could access unrelated persistent storage. A required explicit
+unknown call that could access unrelated persistent storage. Per-instruction
+and transitive summaries retain its initialization without inventing user-code,
+runtime, allocation or escape effects. An unproven construction boundary keeps
+conservative unknown memory/call/trap and escape effects; persistent-storage
+checking cannot dismiss it merely because the instruction is a construction.
+A required explicit
 or implicit field initializer, or inherited-base initializer, instead has an
 exact concrete constructor schedule whose transitive effects remain checked.
 Missing or forged generated-constructor authority cannot suppress those effects.

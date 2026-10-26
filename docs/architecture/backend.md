@@ -1144,8 +1144,8 @@ this is not a consuming transfer. Exact source/stage/parameter identities,
 cleanup-free copyability, and same-block adjacent consumption authorize the
 representation alias. Owning or borrowed elements, intervening argument work,
 and a transfer of the retained source obligation do not enter this proof.
-Targetless `Construct` and `Call` default producers can also publish into the
-same exact prepared-parameter slot: omitted brace-default fields in designated
+Bodyless generated `Construct` producers can also publish into the same exact
+prepared-parameter slot: omitted brace-default fields in designated
 construction retain CallInput activation, consuming handoff and failure cleanup.
 These are representation proofs over resolved MIR, not source-AST replay or
 standard-library type exceptions.
@@ -4639,6 +4639,16 @@ now exercise real GTI scalar programs through the public backend.
 
 ### LLVM Scalar Execution
 
+Native scalar returns consume the MIR-owned return-conversion proof and the
+existing scalar representation converter. A permitted implicit initialization
+conversion occurs before either a direct ABI return or a full-width result
+outslot store. Exact returns add no conversion; non-scalar return authority
+remains independent. These context-free conversions add no failure outcome,
+while explicit checked casts keep their existing guards and source sites.
+Cleanup and failure routing stay in MIR, and a failing invocation never
+publishes a success result. Scalar-return fixtures compare runtime and existing
+constexpr results and test both direct and may-fail ABI paths.
+
 The native backend emits verified MIR scalar bodies directly, without C++
 representation helpers or a second semantic analysis. `body.cpp` owns body-local
 SSA/place materialization, edge arguments, direct calls, return publication and
@@ -4692,6 +4702,15 @@ TLS. Private ownership capabilities, indirect/virtual dispatch, general native
 calls and native debug information remain explicit limitations. No mixed-backend
 fallback is used. C++ stays the default.
 
+The staged owned-argument bridge derives one native C signature from target
+`int`, `char**` and `size_t` facts, keeping raw host inputs out of GTI parameter
+bindings. Its count checks and byte-view helpers match exact verified startup
+operation identities. A zero count permits a null argv without reading it;
+positive counts require the host C contract's valid, non-null, NUL-terminated
+strings. Counted views are copied by the already selected GTI constructors.
+Executable owned-argument admission remains disabled: helper/type/identity
+tests are not full argv, construction-failure or cleanup execution evidence.
+
 Hosted returns preserve GTI's portable status policy: values from 0 through 255
 are returned unchanged and every other `int32_t` result becomes status 1. This
 normalization applies only to the sealed startup `ReturnEntry`, never to an
@@ -4714,14 +4733,72 @@ The same producer proof admits a direct same-block `CallResult`-to-`Return`
 loan transfer when its complete dependencies, access, type and HIR identity
 are unchanged and the return terminator consumes that exact escaping loan.
 It does not authorize constructing a reference from a possible owner address.
+A direct borrowed argument may stage that same live result into a read-only or
+mutable reference parameter. It requires the exact unprojected loan place,
+reference type/access, source producer and explicit argument input; owned,
+temporary and receiver input forms do not enter through this proof. Normal MIR
+call-input and loan-flow verification still prove the selected consumer and
+loan lifetime. Staging forwards the result address without copying the referent
+or adding a drop obligation. The unrelated user-type fixture and malformed-input
+controls accompany the vector-clone regression. Mutable class arguments verify
+write-back to the selected second object and exact destruction. A later-argument
+panic verifies that the consumer is never entered and that local/TLS cleanup
+precedes hosted reporting through the existing C observer. This no-argument
+failure case is separate from pending owned-argv cleanup evidence.
 
-Raw primitive references may use an ordinary, independently admitted native
-class reference as their lifetime witness. The centralized
+An ordinary unsafe source reference return may also cross one immediate
+`Invoke` success edge. Its checked `CallResult` loan names a unique typed call
+result; that SSA definition must identify the exact last live call in the
+predecessor, whose normal edge targets the return block. The complete escaping
+`Return` dependency and access remain unchanged. Failure cannot enter the return
+block or publish a result. Readonly and mutable unrelated user-type relays check
+selected-owner identity, write-back and exact destruction; a panic relay checks
+original attribution and local/TLS cleanup. Load and argument staging continue
+to require their same-block producer.
+
+A direct fundamental text return has a distinct bounded witness: its source call
+publishes a `Stored` dependency and an SSA text value, then the return
+publishes that exact value with the unchanged escaping `Return` dependency.
+Only fundamental `StringView` and `CString` values enter this proof; owning values, parent-
+derived stored carriers and other borrowed-value families remain outside it.
+The direct ordinary unsafe source producer, complete owner dependencies and
+live ordering are verified. The producer is in the same block or the immediate
+`Invoke` success predecessor, where its typed SSA definition names the exact
+last live call and the failure edge cannot publish the return. The return never
+reconstructs a view from an owner address or recalculates its byte extent. Primitive-owner tests
+keep the raw data address independent, distinguish different C-string addresses
+with the same witness, and preserve embedded NUL bytes in counted text. A
+failure-capable relay also checks original panic attribution, an unentered
+consumer, and local/TLS cleanup through the existing hosted observer.
+Raw text construction uses the same exact value/dependency return proof.
+Its producer must satisfy the centralized `textAddressResultLoan` query for
+`TextViewFromAddress` or `CStringFromAddress`, including the raw character
+address, counted extent where present, ordered readonly owner witness and
+checked loan identity. Native owner representation admits passive witnesses or
+the same ordinary class boundary as raw references: a unique native class or
+struct instance without compiler capability, polymorphism, bases, union or
+foreign ABI layout. The owner address is an independent lifetime witness; no
+owner bytes are read or copied. An unrelated owning user class checks both text
+forms, selected-owner identity and exact resource destruction; source escape,
+movement and mutation and unsupported witness layouts remain rejected.
+Raw and declared-unsafe source authority cannot substitute for one another;
+both retain dedicated forgery controls. Parent-derived stored carriers and
+unsupported owner representations remain outside this return proof.
+
+Raw references to primitive or ordinary, independently represented native
+class objects may use passive or ordinary native class lifetime witnesses.
+One structural predicate covers both roles; their types and addresses remain
+independent. Polymorphic, abstract, inherited, opaque, incomplete, union and
+foreign-record class shapes do not enter through this extension. The centralized
 `rawBorrowResultLoan` verifier query supplies the exact parent, origin and access
 contract. The evaluated raw pointer supplies the physical address, even when
 the witness owns a different address. This does not prove pointer membership,
-extend the supported pointee layouts, or add runtime checks or alias promises;
+admit other pointee layouts, or add runtime checks or alias promises;
 the unsafe caller retains its alignment, initialization and lifetime obligations.
+Raw assertions and unsafe source calls share exact earlier-live-producer and
+direct-return transfer checks, but retain separate authority checks. Replacing
+one permission family with the other cannot authorize a checked loan transfer;
+the former broad passive-loan exemption is subsumed by those producer proofs.
 
 ### LLVM Places And Counted Text
 
@@ -4839,9 +4916,12 @@ The prepared ReturnResult obligation retains cleanup authority over a completed
 caller-destination object until remaining local cleanup succeeds. Failure drops
 that object before propagating, without relocating it. Passive fixed-array drop
 recipes may have no active element recipe and produce no element-cleanup walk.
-Targetless generated default construction is admitted for exact fieldless,
+Explicit MIR `Construct` admits bodyless generated defaults for exact fieldless,
 baseless objects with no required initializer schedule; it arms their own
-destructor state without inventing a constructor call.
+destructor state without inventing a constructor call. HIR preserves the
+semantic construction selection even for `Type()` syntax. Ordinary targetless
+`Call` instructions remain invalid; backends do not infer constructors from
+the result type.
 Prepared class/array arguments use the same physical storage as their sealed
 parameter-drop obligation. Fresh objects construct there before publication;
 explicit copies/moves publish their snapshot before arming cleanup. A later
@@ -4936,6 +5016,18 @@ handling. Consuming extraction selects the original payload field rather than
 moving a whole enum before each extraction. Borrowed extractions retain the
 evaluated field address and upstream loan permissions. Native unions instead
 use the sealed overlapping layout with no hidden tag or active-member guarantee.
+Their existing one-input first-field construction uses the independent verified
+passive-union proof. Native lowering consumes the exact selected field type at
+the existing final destination; its sealed union projection has offset zero.
+The ordinary typed store writes only that field's scalar or passive-copy width,
+without clearing inactive tail or padding. MIR evaluates the input once before
+publication, so a failing input does not initialize or activate the union.
+Default zero initialization and generated copy/move keep their separate paths.
+The nested passive-union first-field fixture retains an existing C++ text
+vocabulary rejection as comparator evidence. Its acceptance instead requires
+independent semantic/MIR verification, field-sized IR copy checks and actual
+native execution; supported scalar union controls still compare both backends.
+Ordinary non-passive record fields remain rejected by the language.
 
 Verified consuming patterns extract every active field exactly once, with no
 intervening user operation or failure, and transfer out the shell's cleanup

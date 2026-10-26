@@ -10953,8 +10953,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           place->root == MirPlaceRootKind::Temporary &&
           (producer->kind == MirInstructionKind::Load ||
            producer->kind == MirInstructionKind::Move);
-      // A generated zero-argument class construction has no source
-      // constructor instance. The program verifier additionally requires
+      // An explicit generated Construct has no source constructor instance.
+      // The program verifier additionally requires
       // the exact concrete owner's generated default-constructor status.
       const bool generatedDefault =
           producer != nullptr &&
@@ -13882,6 +13882,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
       if (block.terminator.value && !validOperand(*block.terminator.value)) {
         return failure(body, owner, "return operand is invalid", block.id);
+      }
+      if (block.terminator.value &&
+          mir_detail::scalarReturnConversion(body, *block.terminator.value) ==
+              mir_detail::MirScalarReturnConversion::Invalid) {
+        return failure(body, owner,
+                       "scalar return lacks its permitted value conversion",
+                       block.id);
       }
       if (block.terminator.returnLoan) {
         const MirLoan &loan = *body.findLoan(*block.terminator.returnLoan);
