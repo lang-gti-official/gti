@@ -15,11 +15,17 @@ import xml.etree.ElementTree as ET
 TESTS = {"mir_cutover_corpus_oracle", "practical_examples",
          "project_cli_workflow", "scoped_configuration_defines", "native_enum_bindgen",
          "native_typedef_bindgen", "native_union_bindgen", "native_variable_bindgen",
-         "process_resource_policy", "llvm_embedding_project"}
-NESTED = {"allocator-support", "infallible-embedding", "libc-region-provider", "native-callback-slots",
+         "process_resource_policy", "llvm_embedding_project",
+         "annotated_test_suites", "out_of_class_runtime",
+         "llvm_scalar_execution", "llvm_place_execution", "llvm_class_execution",
+         "llvm_payload_execution", "llvm_placement_execution", "llvm_dispatch_execution",
+         "llvm_native_c_indirect_execution", "llvm_native_c_aggregate_execution",
+         "llvm_native_c_storage_execution"}
+NESTED = {"allocator-support", "annotated-tests", "infallible-embedding",
+          "libc-region-provider", "llvm", "native-callback-slots",
           "native-enum-bindings", "native-union-bindings", "native-variable-bindings",
           "objective-cpp-bridge", "scoped-configuration",
-          "toy-3d-engine", "transit-planner"}
+          "toy-3d-engine", "transit-planner", "window-factory"}
 
 
 def validate_sources(paths):

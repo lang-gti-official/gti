@@ -563,6 +563,19 @@ class PreviewTests(unittest.TestCase):
             validate_results(result, {"example"})
         self.assertIn("objective_cpp_bridge", required_tests("darwin"))
         self.assertNotIn("objective_cpp_bridge", required_tests("linux"))
+        self.assertTrue({"annotated-tests", "llvm", "window-factory"} <= NESTED)
+        owners = {"annotated_test_suites", "out_of_class_runtime",
+                  "llvm_scalar_execution", "llvm_place_execution", "llvm_class_execution",
+                  "llvm_payload_execution", "llvm_placement_execution", "llvm_dispatch_execution",
+                  "llvm_native_c_indirect_execution", "llvm_native_c_aggregate_execution",
+                  "llvm_native_c_storage_execution"}
+        for platform in ("darwin", "linux"):
+            required = required_tests(platform)
+            self.assertTrue(owners <= required)
+            for missing in owners:
+                with self.assertRaises(ValueError):
+                    validate_inventory({"tests": [{"name": name, "properties": []}
+                                                  for name in required - {missing}]}, required)
 
     def test_preview_installer_pins_source_and_preserves_dirty_primary(self):
         self.feature()

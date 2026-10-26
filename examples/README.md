@@ -68,8 +68,9 @@ locals while preserving the complete object's interface views. Build with
 `llvm_dispatch_execution` owns its native O0/O3 checks; dedicated transfer
 fixtures additionally run O1/O2. Owning polymorphism, general value transport,
 replacement and destructor-observed virtual phases remain pending. This
-bounded profile is outside the numbered full-language census and is not yet
-included by the shared preview example collector.
+bounded profile is outside the numbered full-language census. The shared
+preview collector requires its owning execution gate, along with the other
+`llvm/` example gates; registration does not certify pending language shapes.
 
 [`llvm/immovable-placement.gti`](llvm/immovable-placement.gti) demonstrates
 deleted-copy/deleted-move objects constructed directly through fresh return

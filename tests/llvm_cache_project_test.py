@@ -186,15 +186,41 @@ def main():
             'manifest-version = 1\n[package]\nname = "cache-dependency"\n'
             'version = "1.0.0"\n[package.build-script]\n'
             'source = "build.gti"\ninputs = []\n', encoding="utf-8")
-        (dependency / "build.gti").write_text(
+        script = dependency / "build.gti"
+        hosted_script = (
             '#include <std/build>\n#include <std/string>\n#include <std/vector>\n'
             'int main(int argc, std::vector<std::string> argv) {\n'
             '  mut auto context = std::build::context_from_args(argv);\n'
             '  mut auto outputs = std::build::outputs();\n'
-            '  return outputs.publish(context);\n}\n', encoding="utf-8")
+            '  return outputs.publish(context);\n}\n')
+        script.write_text(hosted_script, encoding="utf-8")
+        # Hosted argv is supported on this composition. Execute the unchanged
+        # former rejection and prove its script link remains native LLVM.
+        command_start = len(log.read_text().splitlines())
+        hosted = invoke("build", "app", "--backend", "llvm", "--cxx", wrapper, "--verbose")
+        assert "GTI-B0003" not in hosted.stderr, hosted.stderr
+        run([output], project, env=environment)
+        assert "cache_script_marker" not in run(["nm", output], project, env=environment).stdout
+        preserved = output.read_bytes()
+        native_commands = [json.loads(line) for line in log.read_text().splitlines()]
+        assert all(not any(value.endswith(".gti.cpp") for value in command)
+                   for command in native_commands)
+        linked_inputs = {value for command in native_commands[command_start:]
+                         for value in command if value.endswith(".gti.o")}
+        assert len(linked_inputs) == 2, ("expected native script and application links", linked_inputs)
+        # Keep a real backend boundary in the script path: replacing a live
+        # polymorphic object is not the supported fresh/scalar dispatch shape.
+        replacement = (
+            "class Owner { public: virtual int read() { return 0; } };\n"
+            "unsafe int replace_owner() { mut Owner value{}; Owner other{}; "
+            "value = other; return 0; }\n")
+        script.write_text(replacement + hosted_script.replace(
+            "  mut auto context", "  unsafe { [[discard]] replace_owner(); }\n  mut auto context"),
+            encoding="utf-8")
         unsupported_script = invoke("build", "app", "--backend", "llvm", expected=65)
         assert "GTI-B0003" in unsupported_script.stderr, unsupported_script.stderr
         assert output.read_bytes() == preserved
+        script.write_text(hosted_script, encoding="utf-8")
         dependency_manifest.write_text(old_dependency_manifest, encoding="utf-8")
         (project / "src/main.gti").write_text(
             'extern "C" { int32_t cache_native_value(); }\n'
@@ -211,6 +237,12 @@ def main():
         (project / "src/main.gti").write_text(
             "class Dynamic { public: virtual int value() { return 1; } }; "
             "int main() { Dynamic value{}; return value.value(); }\n",
+            encoding="utf-8")
+        invoke("build", "app", "--cxx", wrapper)
+        run([output], project, expected=1, env=environment)
+        preserved = output.read_bytes()
+        (project / "src/main.gti").write_text(
+            replacement + "int main() { unsafe { return replace_owner(); } }\n",
             encoding="utf-8")
         rejected = invoke("build", "app", "--cxx", wrapper, expected=65)
         assert "GTI-B0003" in rejected.stderr, rejected.stderr
