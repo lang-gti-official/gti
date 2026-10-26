@@ -607,6 +607,7 @@ add_library(
   "src/compiler/llvm/session.cpp"
   "src/compiler/llvm/layout.cpp"
   "src/compiler/llvm/abi.cpp"
+  "src/compiler/llvm/dispatch.cpp"
   "src/compiler/llvm/native_c_abi.cpp"
   "src/compiler/llvm/embedding.cpp"
   "src/compiler/llvm/runtime_abi.cpp"
@@ -625,6 +626,7 @@ add_library(
   "src/compiler/llvm/lifetimes.cpp"
   "src/compiler/llvm/memory.cpp"
   "src/compiler/llvm/thread_locals.cpp"
+  "src/compiler/llvm/thread_lifecycle.cpp"
   "src/compiler/llvm/text.cpp"
 )
 file(

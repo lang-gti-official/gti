@@ -14,6 +14,34 @@ bool Reachability::contains(LoweredGeneratedItemIdentity identity) const {
          generated.end();
 }
 
+std::vector<MirBodyAddress>
+dispatchSourceBodies(const LoweredProgram &program,
+                     HirClassInstanceId activeClass) {
+  const auto *active = program.mir().findClassInstance(activeClass);
+  if (!active)
+    throw std::logic_error("LLVM dispatch demand has no sealed active class");
+  std::vector<MirBodyAddress> result;
+  for (const auto &selection : active->virtualDispatch) {
+    const auto *target = program.mir().findFunctionInstance(selection.target);
+    if (!target)
+      throw std::logic_error("LLVM dispatch demand lost its selected target");
+    // Unsupported pure/declaration/runtime targets retain their independent
+    // representation/admission gates; they never acquire fabricated bodies.
+    if (target->pureVirtual ||
+        target->definitionKind != MirDefinitionKind::Source)
+      continue;
+    const MirBodyAddress address{MirBodyKind::Function, target->id};
+    const auto *body = program.findBody(address);
+    if (!body || body->role != LoweredBodyRole::SourceExecutable ||
+        !findMirBody(program.mir(), address))
+      throw std::logic_error(
+          "LLVM selected source dispatch target has no sealed executable body");
+    if (std::find(result.begin(), result.end(), address) == result.end())
+      result.push_back(address);
+  }
+  return result;
+}
+
 Reachability reachableProgram(const LoweredProgram &program) {
   Reachability result;
   const auto &mir = program.mir();
@@ -25,6 +53,10 @@ Reachability reachableProgram(const LoweredProgram &program) {
     if (!result.contains(identity))
       result.generated.push_back(identity);
   };
+  const auto active = [&](HirClassInstanceId owner) {
+    for (const auto target : dispatchSourceBodies(program, owner))
+      body(target);
+  };
   const auto cleanup = [&](const MirDropType &root) {
     std::vector<const MirDropType *> pending{&root};
     while (!pending.empty()) {
@@ -34,6 +66,8 @@ Reachability reachableProgram(const LoweredProgram &program) {
         body({MirBodyKind::Destructor, *recipe.destructor});
       if (recipe.polymorphicCleanup)
         result.conservative = true;
+      else if (recipe.type.kind == SemanticType::Class && recipe.classInstance)
+        active(*recipe.classInstance);
       for (const auto &child : recipe.aggregate)
         pending.push_back(&child);
     }
@@ -62,6 +96,14 @@ Reachability reachableProgram(const LoweredProgram &program) {
       const auto *input = findMirBody(mir, address);
       if (!row || !input)
         throw std::logic_error("LLVM dependency has no sealed body");
+      if (address.kind == MirBodyKind::Constructor) {
+        const auto *constructor = mir.findConstructorInstance(address.owner);
+        if (!constructor)
+          throw std::logic_error(
+              "LLVM required constructor has no sealed instance");
+        if (constructor->dispatchState)
+          active(constructor->dispatchState->activeClass);
+      }
       for (auto identity : row->requiredGeneratedItems)
         generated(identity);
       for (const auto &obligation : input->dropObligations)
@@ -77,6 +119,86 @@ Reachability reachableProgram(const LoweredProgram &program) {
                   *instruction.functionPointerFunctionTarget});
           if (instruction.constructorTarget)
             body({MirBodyKind::Constructor, *instruction.constructorTarget});
+          const bool generatedCopy =
+              (instruction.kind == MirInstructionKind::Load &&
+               instruction.operands.size() == 1 &&
+               instruction.operands.front().kind == MirOperandKind::Copy) ||
+              (instruction.kind == MirInstructionKind::Construct &&
+               !instruction.constructorTarget &&
+               instruction.constructorKind == ConstructorKind::Copy);
+          const bool generatedMove =
+              (instruction.kind == MirInstructionKind::Move &&
+               instruction.operands.size() == 1 &&
+               instruction.operands.front().kind == MirOperandKind::Move) ||
+              (instruction.kind == MirInstructionKind::Construct &&
+               !instruction.constructorTarget &&
+               instruction.constructorKind == ConstructorKind::Move);
+          if (instruction.info.type.kind == SemanticType::Class &&
+              (generatedCopy || generatedMove)) {
+            const MirClassInstance *object = nullptr;
+            for (const auto &candidate : mir.classInstances())
+              if (candidate.type == instruction.info.type) {
+                if (object)
+                  throw std::logic_error(
+                      "LLVM transfer demand has ambiguous class identity");
+                object = &candidate;
+              }
+            if (!object)
+              throw std::logic_error(
+                  "LLVM transfer demand has no sealed class");
+            const auto status = generatedCopy ? object->copyConstructor
+                                              : object->moveConstructor;
+            if (status == SpecialMemberStatus::Generated)
+              active(object->id);
+            // Demand is not admission: nested, by-value, replacement and
+            // uncertain source-obligation transfers retain their own gates.
+          }
+          if (!instruction.constructorTarget &&
+              instruction.constructorKind == ConstructorKind::Ordinary &&
+              instruction.operands.empty() &&
+              instruction.parameterTypes.empty() &&
+              instruction.info.type.kind == SemanticType::Class &&
+              (instruction.kind == MirInstructionKind::Construct ||
+               instruction.kind == MirInstructionKind::InitializeBase)) {
+            const MirClassInstance *object = nullptr;
+            for (const auto &candidate : mir.classInstances())
+              if (candidate.type == instruction.info.type) {
+                if (object)
+                  throw std::logic_error(
+                      "LLVM generated default has ambiguous class identity");
+                object = &candidate;
+              }
+            if (!object)
+              throw std::logic_error(
+                  "LLVM generated default has no sealed class");
+            if (object->defaultConstructor == SpecialMemberStatus::Generated &&
+                !object->generatedDefaultRequiresSchedule) {
+              if (instruction.kind == MirInstructionKind::InitializeBase) {
+                const auto *constructor =
+                    address.kind == MirBodyKind::Constructor
+                        ? mir.findConstructorInstance(address.owner)
+                        : nullptr;
+                if (!constructor || instruction.constructorInitializer == 0 ||
+                    instruction.constructorInitializer >
+                        constructor->initializers.size())
+                  throw std::logic_error(
+                      "LLVM generated base demand lost its source stage");
+                const auto &initializer =
+                    constructor
+                        ->initializers[instruction.constructorInitializer - 1];
+                if (initializer.kind !=
+                        ConstructorInitializerTargetKind::Base ||
+                    initializer.base != object->id ||
+                    initializer.targetType != object->type ||
+                    !initializer.generatedDefault ||
+                    initializer.constructorTarget ||
+                    !initializer.arguments.empty())
+                  throw std::logic_error(
+                      "LLVM generated base demand lost its selected identity");
+              }
+              active(object->id);
+            }
+          }
           if (instruction.lambdaTarget)
             body({MirBodyKind::Lambda, *instruction.lambdaTarget});
           if (instruction.functionPointerLambdaTarget)

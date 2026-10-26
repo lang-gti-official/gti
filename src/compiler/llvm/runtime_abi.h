@@ -10,11 +10,16 @@ enum class RuntimeService {
   ThreadLocalsAttached,
   ThreadLocalsClosing,
   RegisterThreadLocal,
+  BeginCThreadRuntime,
+  EndCThreadRuntime,
   TerminateFailure,
   TerminateCleanupFailure,
   AbortAllocation,
   ValidateFailure,
   CapturePanic,
+  EnterFailureCleanup,
+  LeaveFailureCleanup,
+  CheckFailureCleanup,
 };
 
 // Only real C symbols with explicitly modeled signatures enter the module.

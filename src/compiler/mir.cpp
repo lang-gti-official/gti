@@ -48,6 +48,7 @@ stagedPayloadConstruction(const MirInstruction &instruction) {
 [[nodiscard]] bool orderedInvocation(const MirInstruction &instruction) {
   return instruction.kind == MirInstructionKind::Call ||
          instruction.kind == MirInstructionKind::Construct ||
+         instruction.kind == MirInstructionKind::InitializeBase ||
          stagedPayloadConstruction(instruction);
 }
 } // namespace
@@ -10353,6 +10354,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
          (!instruction.functionTarget && !instruction.constructorTarget)))
       return false;
     const bool callInput = instruction.kind == MirInstructionKind::CallInput;
+    const bool baseCallInput =
+        callInput && body.kind == MirBodyKind::Constructor &&
+        instruction.constructorInitializer != 0 && instruction.callSite == 0 &&
+        instruction.callInputRole == MirCallInputRole::Argument;
     const bool targetlessBorrowProbe =
         instruction.kind == MirInstructionKind::Call &&
         instruction.parameterTypes.empty() && instruction.lifecycle.empty() &&
@@ -10409,7 +10414,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         (instruction.constructorInitializer != 0 &&
          (body.kind != MirBodyKind::Constructor ||
           (instruction.kind != MirInstructionKind::Initialize &&
-           instruction.kind != MirInstructionKind::InitializeBase))) ||
+           instruction.kind != MirInstructionKind::InitializeBase &&
+           !baseCallInput))) ||
         (instruction.synchronization.kind !=
              SynchronizationOperationKind::None &&
          instruction.kind != MirInstructionKind::Call) ||
@@ -10419,7 +10425,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
          instruction.kind != MirInstructionKind::InitializeBase &&
          !instruction.parameterTypes.empty()) ||
         (callInput != instruction.callInputRole.has_value()) ||
-        (callInput && instruction.callSite == 0) ||
+        (callInput && instruction.callSite == 0 && !baseCallInput) ||
         (!callInput && instruction.defaultArgument) ||
         (instruction.defaultArgument &&
          instruction.callInputRole != MirCallInputRole::Argument) ||
@@ -10947,8 +10953,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           place->root == MirPlaceRootKind::Temporary &&
           (producer->kind == MirInstructionKind::Load ||
            producer->kind == MirInstructionKind::Move);
-      // A generated zero-argument class construction has no source
-      // constructor instance. The program verifier additionally requires
+      // An explicit generated Construct has no source constructor instance.
+      // The program verifier additionally requires
       // the exact concrete owner's generated default-constructor status.
       const bool generatedDefault =
           producer != nullptr &&
@@ -11578,7 +11584,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  [](const MirOperand &operand, const SemanticType &type) {
                    return operand.type == type &&
                           (operand.kind == MirOperandKind::Value ||
-                           operand.kind == MirOperandKind::Constant);
+                           operand.kind == MirOperandKind::Constant ||
+                           (type.kind == SemanticType::Reference &&
+                            type.arguments.size() == 1 &&
+                            ((operand.kind == MirOperandKind::BorrowRead &&
+                              type.referenceAccess == AccessMode::ReadOnly) ||
+                             (operand.kind == MirOperandKind::BorrowWrite &&
+                              type.referenceAccess == AccessMode::Mutable))));
                  }) &&
              !instruction.loan && !instruction.functionTarget &&
              !instruction.bodyTarget && !instruction.lambdaTarget &&
@@ -13871,6 +13883,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       if (block.terminator.value && !validOperand(*block.terminator.value)) {
         return failure(body, owner, "return operand is invalid", block.id);
       }
+      if (block.terminator.value &&
+          mir_detail::scalarReturnConversion(body, *block.terminator.value) ==
+              mir_detail::MirScalarReturnConversion::Invalid) {
+        return failure(body, owner,
+                       "scalar return lacks its permitted value conversion",
+                       block.id);
+      }
       if (block.terminator.returnLoan) {
         const MirLoan &loan = *body.findLoan(*block.terminator.returnLoan);
         if (loan.kind != MirLoanKind::Return || !loan.escapes) {
@@ -14760,6 +14779,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const bool callLike =
           invocation != nullptr && orderedInvocation(*invocation);
       if (!callLike || invocation->callSite != instruction.callSite ||
+          (invocation->kind == MirInstructionKind::InitializeBase &&
+           (receiverUse || instruction.constructorInitializer !=
+                               invocation->constructorInitializer)) ||
           ((invocation->kind == MirInstructionKind::Construct ||
             stagedPayloadConstruction(*invocation)) &&
            receiverUse) ||
@@ -15767,6 +15789,36 @@ bool mirDropFollowsDefiniteMove(const MirBody &body,
     current = predecessor;
   }
   return state == MirDefiniteMoveState::Moved;
+}
+
+bool isMirDeclarationOnlyFieldInitialization(
+    const MirClassInstance &owner, const MirBody &body,
+    const MirInstruction &instruction) {
+  if (&body != &owner.fieldInitializers ||
+      body.kind != MirBodyKind::FieldInitializers ||
+      instruction.kind != MirInstructionKind::Initialize ||
+      instruction.tombstone || !instruction.destination || instruction.result ||
+      instruction.hirStatement == 0 || instruction.hirValue != 0 ||
+      instruction.constructorInitializer != 0 ||
+      !instruction.operands.empty() || instruction.loan ||
+      !instruction.definedFailure.empty() || !instruction.lifecycle.empty() ||
+      instruction.ownership || instruction.preparedParameterDrop ||
+      instruction.successResultDrop || instruction.receiver ||
+      instruction.operation != MirOperation::None)
+    return false;
+  const auto *place = body.findPlace(*instruction.destination);
+  if (!place || place->root != MirPlaceRootKind::Binding ||
+      !place->projections.empty() || place->type != instruction.info.type ||
+      place->access != instruction.info.access ||
+      instruction.info.category != ValueCategory::Place)
+    return false;
+  return std::any_of(owner.declaredFields.begin(), owner.declaredFields.end(),
+                     [&](const auto &field) {
+                       return field.field == place->binding &&
+                              field.symbol == place->symbol &&
+                              field.type == place->type &&
+                              field.access == place->access;
+                     });
 }
 
 bool mirDropFollowsDefiniteMove(const MirBody &body, const MirBlock &block,

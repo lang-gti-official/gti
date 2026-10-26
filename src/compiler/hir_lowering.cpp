@@ -1596,6 +1596,94 @@ private:
         processDestructor(processedDestructors++);
       }
     }
+    if (!discoveryLimitReached)
+      publishVirtualDispatch();
+  }
+
+  // Selection was completed by semantic inherited-member resolution. This
+  // step only substitutes its owner and binds already-discovered identities.
+  void publishVirtualDispatch() {
+    std::unordered_map<HirClassInstanceId,
+                       std::unordered_map<FunctionId, HirFunctionInstanceId>>
+        functions;
+    for (const auto &function : output.program.functions)
+      if (function.owner && function.virtualMethod) {
+        const auto [entry, inserted] = functions[*function.owner].emplace(
+            function.declaration, function.id);
+        if (!inserted)
+          entry->second = 0;
+      }
+    for (auto &owner : output.program.classes) {
+      owner.virtualDispatch.clear();
+      const auto *declaration = baseModel->findClassType(owner.declaration);
+      if (!declaration) {
+        lifecycleValid = false;
+        continue;
+      }
+      const auto substitution = classSubstitution(
+          *declaration, owner.typeArguments, owner.valueArguments);
+      const auto pathTo = [&](const auto &self, HirClassInstanceId current,
+                              const auto &matches,
+                              std::vector<HirClassInstanceId> &path,
+                              std::unordered_set<HirClassInstanceId> &seen)
+          -> const HirClassInstance * {
+        if (current == 0 || current > output.program.classes.size() ||
+            !seen.insert(current).second)
+          return nullptr;
+        const auto &candidate = output.program.classes[current - 1];
+        if (matches(candidate))
+          return &candidate;
+        for (const auto &base : candidate.bases) {
+          path.push_back(base.instance);
+          if (const auto *found =
+                  self(self, base.instance, matches, path, seen))
+            return found;
+          path.pop_back();
+        }
+        return nullptr;
+      };
+      const auto concreteFunction = [&](FunctionId id,
+                                        HirClassInstanceId selectedOwner) {
+        const auto found = functions.find(selectedOwner);
+        if (found == functions.end())
+          return HirFunctionInstanceId{0};
+        const auto selected = found->second.find(id);
+        return selected == found->second.end() ? HirFunctionInstanceId{0}
+                                               : selected->second;
+      };
+      for (const auto &selected : declaration->virtualDispatch) {
+        const auto *root = baseModel->findFunction(selected.root);
+        const auto targetType = substitute(selected.targetOwner, substitution);
+        HirVirtualDispatch row;
+        std::unordered_set<HirClassInstanceId> seen;
+        const auto *rootOwner =
+            root ? pathTo(
+                       pathTo, owner.id,
+                       [&](const auto &candidate) {
+                         return candidate.declaration == root->ownerClass;
+                       },
+                       row.rootPath, seen)
+                 : nullptr;
+        seen.clear();
+        const auto *targetOwner = pathTo(
+            pathTo, owner.id,
+            [&](const auto &candidate) { return candidate.type == targetType; },
+            row.targetPath, seen);
+        if (!rootOwner || !targetOwner) {
+          lifecycleValid = false;
+          continue;
+        }
+        row.rootOwner = rootOwner->id;
+        row.targetOwner = targetOwner->id;
+        row.root = concreteFunction(selected.root, row.rootOwner);
+        row.target = concreteFunction(selected.target, row.targetOwner);
+        if (!row.root || !row.target) {
+          lifecycleValid = false;
+          continue;
+        }
+        owner.virtualDispatch.push_back(std::move(row));
+      }
+    }
   }
 
   [[nodiscard]] const HirClassInstance *
@@ -6784,6 +6872,16 @@ private:
             }
           }
         }
+      }
+      // A generated default with no selected schedule is still a concrete
+      // construction, never an ordinary call with a missing target. Preserve
+      // the semantic selection in the existing construction vocabulary.
+      if (construction->generatedDefault &&
+          construction->kind == ConstructorKind::Ordinary &&
+          value.intrinsic == IntrinsicKind::None &&
+          value.info.type.kind == SemanticType::Class &&
+          !value.constructorTarget) {
+        value.kind = kind = HirValueKind::DirectInitializer;
       }
       if (value.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
           construction->kind == ConstructorKind::Move &&

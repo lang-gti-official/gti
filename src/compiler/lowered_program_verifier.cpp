@@ -445,6 +445,14 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
         (payload->unionLayout && payload->kind != ClassKind::Union)) {
       return invalid("class declaration payload is unresolved or incoherent");
     }
+    std::unordered_set<FunctionId> roots;
+    for (const auto &selected : payload->virtualDispatch)
+      if (!selected.root || !selected.target ||
+          !roots.insert(selected.root).second ||
+          selected.targetOwner.kind != SemanticType::Class ||
+          !resolvedType(selected.targetOwner))
+        return invalid("class declaration has an invalid virtual dispatch "
+                       "selection");
     break;
   }
   case LoweredDeclarationKind::Enum: {
@@ -1077,6 +1085,27 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
       }
       return type;
     };
+    if (owner->virtualDispatch.size() != instance.virtualDispatch.size())
+      addIssue(issues, LoweredProgramIssueKind::InvalidInstanceInventory,
+               "lowered semantic dispatch inventory differs from MIR");
+    for (std::size_t slot = 0; slot < instance.virtualDispatch.size(); ++slot) {
+      const auto &dispatch = instance.virtualDispatch[slot];
+      const auto *root = program.mir_.findFunctionInstance(dispatch.root);
+      const auto *target = program.mir_.findFunctionInstance(dispatch.target);
+      const auto *targetOwner =
+          program.mir_.findClassInstance(dispatch.targetOwner);
+      const auto *selected = slot < owner->virtualDispatch.size()
+                                 ? &owner->virtualDispatch[slot]
+                                 : nullptr;
+      if (!selected || !root || !target || !targetOwner ||
+          selected->root != root->declaration ||
+          selected->target != target->declaration ||
+          resolveExact(resolveExact, substituteSemanticType(
+                                         selected->targetOwner,
+                                         substitution)) != targetOwner->type)
+        addIssue(issues, LoweredProgramIssueKind::InvalidInstanceInventory,
+                 "lowered dispatch differs from its exact semantic selection");
+    }
     std::size_t aliasIndex = 0;
     for (const auto &row : program.declarations()) {
       const auto *primary =
@@ -1258,6 +1287,7 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         instance.declaration != mir.declaration ||
         instance.typeArguments != mir.type.arguments ||
         instance.valueArguments != mir.type.valueArguments ||
+        instance.virtualDispatch != mir.virtualDispatch ||
         !resolvedTypes(instance.typeArguments) ||
         !resolvedValues(instance.valueArguments) ||
         !classDeclarations.contains(instance.declaration)) {
@@ -1337,6 +1367,7 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         instance.typeArguments != mir.typeArguments ||
         instance.valueArguments != mir.valueArguments || instance.owner == 0 ||
         instance.parameterTypes != mir.parameterTypes ||
+        instance.dispatchState != mir.dispatchState ||
         mir.constexprConstructor !=
             (declaration != nullptr && declaration->constexprConstructor) ||
         mir.requiresUnsafe !=

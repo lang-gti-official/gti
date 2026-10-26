@@ -1,0 +1,6 @@
+struct Owner {
+  int value;
+  Owner(int input) : value(input + 1) {}
+  ~Owner() {}
+};
+int sample(int input) { Owner value{input}; return input + 1; }

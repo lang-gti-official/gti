@@ -1,0 +1,132 @@
+{
+  "schema": "gti.llvm.readiness-baseline/v1",
+  "provenance": {
+    "frozen_commit": "3cc3b3dc1b39b9cf55f04d1ddae7d533bde2b86d",
+    "version": "0.473.0",
+    "reconciled_through": "d3585a07db6a6de699c0e8ca6540cb45b1d95498"
+  },
+  "providers": [
+    {
+      "id": "shipped-examples",
+      "kind": "source-census",
+      "manifest": "tests/mir_census_baseline.json",
+      "member_count": 173,
+      "inventory_sha256": "8f73c7397795feb10db3d7ab46c72c3a160bd11bcf56b0bf9d59226e260f76cc"
+    },
+    {
+      "id": "registered-llvm-evidence",
+      "kind": "registered-evidence-manifests",
+      "member_count": 217,
+      "inventory_sha256": "8539b07db184b85246467d12bd0192a9460ef4f0b77e87e9faeb27f9c0a9b9d9"
+    },
+    {
+      "id": "stdlib-surface",
+      "kind": "source-backed-surface-manifest",
+      "manifest": "tests/stdlib_surface_manifest.json",
+      "member_count": 188,
+      "inventory_sha256": "65bf8b2a382f75222303772658fb4f8b3bc1691d416449e636ba30e9fcccbd07"
+    }
+  ],
+  "family_obligations": [
+    {
+      "id": "implemented-ledger-rows",
+      "kind": "registered-positive-and-boundary-evidence"
+    },
+    {
+      "id": "conditional-required-uses",
+      "kind": "admission-plan-implemented-shape-witness"
+    },
+    {
+      "id": "verified-nonexecuting-producer-absence",
+      "kind": "producer-and-executable-absence-evidence"
+    },
+    {
+      "id": "general-language-coverage",
+      "kind": "reviewed-campaign-signoff"
+    }
+  ],
+  "targets": [
+    {
+      "id": "macos-arm64-single-threaded",
+      "os": "macos",
+      "vendor": "apple",
+      "arch": "arm64",
+      "endianness": "little",
+      "pointer_width_bits": 64,
+      "execution_profile": "single-threaded",
+      "threads": false
+    },
+    {
+      "id": "macos-arm64-concurrent",
+      "os": "macos",
+      "vendor": "apple",
+      "arch": "arm64",
+      "endianness": "little",
+      "pointer_width_bits": 64,
+      "execution_profile": "concurrent",
+      "threads": true
+    },
+    {
+      "id": "linux-x86_64-single-threaded",
+      "os": "linux",
+      "vendor": "unknown",
+      "arch": "x86_64",
+      "endianness": "little",
+      "pointer_width_bits": 64,
+      "execution_profile": "single-threaded",
+      "threads": false
+    },
+    {
+      "id": "linux-x86_64-concurrent",
+      "os": "linux",
+      "vendor": "unknown",
+      "arch": "x86_64",
+      "endianness": "little",
+      "pointer_width_bits": 64,
+      "execution_profile": "concurrent",
+      "threads": true
+    }
+  ],
+  "gates": [
+    {
+      "id": "compiler-behavioral-regressions",
+      "targets": ["macos-arm64-single-threaded", "macos-arm64-concurrent", "linux-x86_64-single-threaded", "linux-x86_64-concurrent"]
+    },
+    {
+      "id": "cross-family-interactions",
+      "targets": ["macos-arm64-single-threaded", "macos-arm64-concurrent", "linux-x86_64-single-threaded", "linux-x86_64-concurrent"]
+    },
+    {
+      "id": "general-family-coverage",
+      "targets": ["macos-arm64-single-threaded", "macos-arm64-concurrent", "linux-x86_64-single-threaded", "linux-x86_64-concurrent"]
+    },
+    {
+      "id": "historical-bug-probes",
+      "targets": ["macos-arm64-single-threaded", "macos-arm64-concurrent", "linux-x86_64-single-threaded", "linux-x86_64-concurrent"]
+    },
+    {
+      "id": "installed-package",
+      "targets": ["macos-arm64-single-threaded", "linux-x86_64-single-threaded"]
+    },
+    {
+      "id": "native-embedding-oracles",
+      "targets": ["macos-arm64-single-threaded", "macos-arm64-concurrent", "linux-x86_64-single-threaded", "linux-x86_64-concurrent"]
+    },
+    {
+      "id": "optimized-workloads",
+      "targets": ["macos-arm64-single-threaded", "macos-arm64-concurrent", "linux-x86_64-single-threaded", "linux-x86_64-concurrent"]
+    },
+    {
+      "id": "runtime-sanitizers",
+      "targets": ["macos-arm64-single-threaded", "macos-arm64-concurrent", "linux-x86_64-single-threaded", "linux-x86_64-concurrent"]
+    },
+    {
+      "id": "shipped-examples",
+      "targets": ["macos-arm64-single-threaded", "macos-arm64-concurrent", "linux-x86_64-single-threaded", "linux-x86_64-concurrent"]
+    },
+    {
+      "id": "stdlib-surface",
+      "targets": ["macos-arm64-single-threaded", "macos-arm64-concurrent", "linux-x86_64-single-threaded", "linux-x86_64-concurrent"]
+    }
+  ]
+}

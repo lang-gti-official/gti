@@ -26,7 +26,7 @@ POLICIES = {
     "random.h": ("call-bounded output buffers", "explicit status", "none"),
     "runtime.h": ("borrowed buffers and explicit descriptor/process/socket handles", "status/count or documented terminal contract", "none"),
     "runtime_execution.h": ("attached TLS lifetime; borrowed failure records", "contract violation terminates; cleanup uses failure ABI", "registered TLS cleanup; no unwind across C"),
-    "runtime_failure.h": ("call-bounded records and pinned descriptors", "report status or terminal exit/abort", "observer containment; no unwind"),
+    "runtime_failure.h": ("call/scope-bounded records and pinned descriptors", "report status or terminal exit/abort; legacy managed handoff may unwind", "observer containment; managed boundary required"),
     "runtime_thread.h": ("explicit task/state/stop/synchronization authority", "status and copied failure records", "task callbacks with versioned failure protocol"),
 }
 

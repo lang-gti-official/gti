@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace lang::native_llvm {
 
@@ -244,7 +245,7 @@ TypeLayout Layouts::record(const SemanticType &type) {
   }
   const bool vacant =
       uninitializedStorageRepresentation(session.program().mir(), instance);
-  if (instance.cOpaqueHandle || instance.polymorphic ||
+  if (instance.cOpaqueHandle ||
       (instance.compilerCapability != CompilerCapabilityTypeKind::None &&
        !vacant))
     throw BackendUnsupportedError(
@@ -261,6 +262,8 @@ TypeLayout Layouts::record(const SemanticType &type) {
       fields.push_back(get(field.type).storage);
     if (instance.requiresActiveDropState)
       fields.push_back(llvm::Type::getInt8Ty(session.context()));
+    if (dispatchIndex(type))
+      fields.push_back(pointer());
     if (instance.unionLayout) {
       const auto &expected = *instance.unionLayout;
       llvm::Type *anchor = llvm::Type::getInt8Ty(session.context());
@@ -427,6 +430,160 @@ std::optional<unsigned> Layouts::activeIndex(const SemanticType &type) const {
     return {};
   return static_cast<unsigned>(owner.bases.size() +
                                owner.declaredFields.size());
+}
+
+std::optional<unsigned> Layouts::dispatchIndex(const SemanticType &type) const {
+  const auto &owner = instance(type);
+  if (!owner.polymorphic)
+    return {};
+  if (const auto *base = primaryBase(type);
+      base && instance(base->type).polymorphic)
+    return {};
+  return static_cast<unsigned>(owner.bases.size() +
+                               owner.declaredFields.size() +
+                               (owner.requiresActiveDropState ? 1 : 0));
+}
+
+const HirBaseInstance *Layouts::primaryBase(const SemanticType &type) const {
+  const HirBaseInstance *selected = nullptr;
+  for (const auto &base : instance(type).bases) {
+    const auto &concrete = instance(base.type);
+    if (concrete.id != base.instance ||
+        base.interface != (concrete.kind == ClassKind::Interface))
+      throw std::logic_error(
+          "LLVM primary chain lost its sealed base identity");
+    if (!base.interface) {
+      if (selected)
+        throw std::logic_error("LLVM primary chain has multiple state bases");
+      selected = &base;
+    }
+  }
+  return selected;
+}
+
+std::optional<DispatchLocation>
+Layouts::dispatchLocation(const SemanticType &type) {
+  if (!instance(type).polymorphic)
+    return {};
+  auto selected = type;
+  std::vector<HirClassInstanceId> path;
+  std::unordered_set<HirClassInstanceId> seen;
+  while (seen.insert(instance(selected).id).second) {
+    if (const auto index = dispatchIndex(selected))
+      return DispatchLocation{basePath(type, path), *index};
+    const auto *base = primaryBase(selected);
+    if (!base || !instance(base->type).polymorphic)
+      throw std::logic_error(
+          "LLVM dispatch pointer has no sealed primary owner");
+    path.push_back(base->instance);
+    selected = base->type;
+  }
+  throw std::logic_error("LLVM dispatch primary chain is cyclic");
+}
+
+BaseSubobjectLayout
+Layouts::basePath(const SemanticType &type,
+                  std::span<const HirClassInstanceId> path) {
+  BaseSubobjectLayout result{.type = type};
+  std::unordered_set<HirClassInstanceId> seen{instance(type).id};
+  for (const auto id : path) {
+    const auto &owner = instance(result.type);
+    const HirBaseInstance *selected = nullptr;
+    unsigned index = 0;
+    for (unsigned candidate = 0; candidate < owner.bases.size(); ++candidate)
+      if (owner.bases[candidate].instance == id) {
+        if (selected)
+          throw std::logic_error(
+              "LLVM base path has ambiguous direct identity");
+        selected = &owner.bases[candidate];
+        index = candidate;
+      }
+    if (!selected || !seen.insert(id).second ||
+        instance(selected->type).id != id)
+      throw std::logic_error("LLVM base path lost its sealed direct identity");
+    const auto parent = get(result.type);
+    const auto offset = parent.fieldOffsets.at(index);
+    constexpr auto limit =
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    if (offset > limit || result.offset > limit - offset)
+      throw BackendUnsupportedError(
+          "LLVM base adjustment exceeds target range");
+    result.offset += offset;
+    result.indices.push_back(index);
+    result.type = selected->type;
+  }
+  return result;
+}
+
+BaseSubobjectLayout Layouts::findSubobject(const SemanticType &source,
+                                           HirClassInstanceId target,
+                                           SymbolId field) {
+  const auto matches = [&](const MirClassInstance &owner) {
+    return field != 0           ? std::count_if(owner.declaredFields.begin(),
+                                                owner.declaredFields.end(),
+                                                [&](const auto &candidate) {
+                                        return candidate.symbol == field;
+                                                })
+           : owner.id == target ? 1
+                                : 0;
+  };
+  const auto &root = instance(source);
+  // The ordinary non-inherited record path needs no traversal containers.
+  if (root.bases.empty()) {
+    if (matches(root) != 1)
+      throw std::logic_error(
+          "LLVM physical subobject identity is missing or ambiguous");
+    return {.type = source};
+  }
+  std::unordered_set<HirClassInstanceId> seen;
+  std::vector<HirClassInstanceId> path;
+  std::optional<std::vector<HirClassInstanceId>> selected;
+  const auto visit = [&](const auto &self, const SemanticType &type) -> void {
+    const auto &owner = instance(type);
+    if (!seen.insert(owner.id).second)
+      throw std::logic_error("LLVM physical subobject identity is repeated");
+    const auto count = matches(owner);
+    if (count > 1 || (count == 1 && selected))
+      throw std::logic_error("LLVM physical subobject identity is ambiguous");
+    if (count == 1)
+      selected = path;
+    for (const auto &base : owner.bases) {
+      if (instance(base.type).id != base.instance)
+        throw std::logic_error("LLVM physical base identity is not sealed");
+      path.push_back(base.instance);
+      self(self, base.type);
+      path.pop_back();
+    }
+  };
+  visit(visit, source);
+  if (!selected)
+    throw std::logic_error("LLVM physical subobject identity is missing");
+  return basePath(source, *selected);
+}
+
+BaseSubobjectLayout Layouts::baseSubobject(const SemanticType &source,
+                                           const SemanticType &target) {
+  return findSubobject(source, instance(target).id, 0);
+}
+
+FieldSubobjectLayout Layouts::fieldSubobject(const SemanticType &source,
+                                             SymbolId field) {
+  if (field == 0)
+    throw std::logic_error("LLVM field projection has no sealed identity");
+  auto owner = findSubobject(source, 0, field);
+  const auto &instance = this->instance(owner.type);
+  const auto index = fieldIndex(owner.type, field);
+  const auto offset = get(owner.type).fieldOffsets.at(index);
+  constexpr auto limit =
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  if (offset > limit || owner.offset > limit - offset)
+    throw BackendUnsupportedError("LLVM field adjustment exceeds target range");
+  FieldSubobjectLayout result{
+      .owner = owner,
+      .index = index,
+      .type = instance.declaredFields.at(index - instance.bases.size()).type,
+      .offset = owner.offset + offset};
+  return result;
 }
 
 } // namespace lang::native_llvm

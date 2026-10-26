@@ -10794,6 +10794,39 @@ unwind strategy is relevant precedent, not GTI's acceptance rule; see the
 [Rust panic reference](https://doc.rust-lang.org/stable/reference/panic.html)
 and [LLVM exception-handling model](https://www.llvm.org/docs/ExceptionHandling.html).
 
+**MIR-derived evaluation staging (not production admission):** the opt-in
+`GTI_BUILD_LLVM_C04_EVALUATION` targets build separate status and native-unwind
+backend copies against the same frontend and sealed MIR. Their structural
+profile accepts a closed scalar static-call graph, scalar-reference parameters,
+and local ordinary classes with scalar/reference fields. Constructor and
+destructor bodies must have no executable MIR failure edge; their conservative
+declaration-level may-fail flag alone is not an infallibility proof. Owning
+fields, hierarchy, global initialization, native imports and adapters remain
+outside this experiment. Both candidates use the central ABI planner, the same
+verified MIR lifecycle/drop schedules and fixed `noinline` call boundaries.
+Native invokes enter cleanup-only landing pads, follow the MIR failure edge,
+then resume the original exception after cleanup. A test-owned C++ marker and
+thread-local failure channel retain the original record until the outer catch;
+the successful path does not consult that carrier. This edge is explicitly
+unwind-permitted and is not a production runtime C service. It uses the platform
+C++ personality/unwinder without reading a C++ exception object's layout.
+Experimental symbols and module flags distinguish the artifacts.
+
+This staging replaces hand-built traces for the first comparison, not the
+remaining C04 obligations. The harness checks identical sealed-program input,
+direct/indirect root calls at O0/O3, original failure reporting, exactly-once
+cleanup in three frames, repeated and alternating failure/success entry, and
+structural rejections without overwriting existing objects. It does not validate
+fallible lifecycle bodies, constructor rollback, nested destructor failures,
+owning-field/parameter transfer, callbacks, user TLS, workers, foreign/forced
+unwind, carrier OOM, or artifact unloading. Native-carrier/runtime sanitizer runs do not instrument
+the generated LLVM object. No transport selection or production speedup follows
+from these checks. Next, extend real MIR cleanup to fallible lifecycle and
+ownership transfer, then worker containment before the representative
+platform/cost comparison and ADR decision.
+Remove or replace these opt-in evaluation hooks once that decision is implemented;
+they are not a permanent second production backend or CLI transport option.
+
 ##### LLVM-C05: Dynamic Calls Use Planned Adapters
 
 For erased GTI callables, use a planned code/environment invocation boundary;
@@ -11503,6 +11536,19 @@ execution remains an integration gate rather than component evidence.
 
 ### O-LLVM-10: Inheritance, Interfaces And Polymorphism
 
+- **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
+  has a dedicated public native execution gate and runnable example. It is not
+  milestone completion: generated scalar-hierarchy copies/moves now have exact
+  fresh-local producer/publication guards and public execution/rejection checks;
+  general transfer, owning/replacement, pure active states, exact optimized cost
+  evidence and combined O14/O16 source/evidence identities remain open. The loop
+  fixture checks results, not retained dispatch or allocations.
+- **Lifecycle authority prerequisite:** existing cleanup order and typed
+  destructor ownership do not specify destructor-observed virtual active state.
+  `DestructorDispatchObservation` conservatively gates direct/transitive
+  observations pending an approved backend-neutral phase contract; no C++ trace
+  or private LLVM helper establishes that rule. Independent constructor-state,
+  borrowed dispatch and numeric cleanup-order cases proceed.
 - **Unlock:** existing abstract/interface hierarchies and polymorphic owners.
 - **Deliver:** base subobjects, base-constructor/rollback order, verified method
   targets, dispatch tables, receiver/base adjustments, upcasts and dynamic

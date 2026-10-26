@@ -1065,6 +1065,17 @@ struct UnionLayout {
   friend bool operator==(const UnionLayout &, const UnionLayout &) = default;
 };
 
+// Final member selection, published after inherited-member resolution. The
+// target owner may be an instantiated base of the class being described.
+struct ClassVirtualDispatch {
+  FunctionId root = 0;
+  FunctionId target = 0;
+  SemanticType targetOwner = SemanticType::Unknown;
+
+  friend bool operator==(const ClassVirtualDispatch &,
+                         const ClassVirtualDispatch &) = default;
+};
+
 struct ClassTypeInfo {
   ClassId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -1095,6 +1106,7 @@ struct ClassTypeInfo {
   bool mutexGuardBorrowCarrier = false;
   ClassKind kind = ClassKind::Class;
   std::vector<ClassBaseTypeInfo> bases;
+  std::vector<ClassVirtualDispatch> virtualDispatch;
   bool abstract = false;
   bool polymorphic = false;
   bool cAbiRecord = false;

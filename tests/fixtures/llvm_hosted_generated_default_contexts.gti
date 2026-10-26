@@ -1,0 +1,38 @@
+namespace construction {
+struct Token<T> { int number() { return 1; } };
+}
+struct construction::Token<int> { int number() { return 2; } };
+struct construction::Token<char> { int number() { return 3; } };
+construction::Token<T> make_token<T>() { return construction::Token<T>(); }
+struct Factory<T> {
+  construction::Token<T> make() { return construction::Token<T>(); }
+};
+struct ConstructorContext<T> {
+  construction::Token<T> token;
+  ConstructorContext() : token(construction::Token<T>()) {}
+  int number() { return this.token.number(); }
+};
+int nested_token<T>() {
+  auto outer = []() -> int {
+    auto inner = []() -> int {
+      construction::Token<T> token = construction::Token<T>();
+      return token.number();
+    };
+    return inner();
+  };
+  return outer();
+}
+int main() {
+  construction::Token<int> integer = make_token<int>();
+  construction::Token<char> character = make_token<char>();
+  if (integer.number() != 2) { return 1; }
+  if (character.number() != 3) { return 2; }
+  Factory<int> factory = Factory<int>();
+  construction::Token<int> member = factory.make();
+  if (member.number() != 2) { return 3; }
+  ConstructorContext<char> constructed{};
+  if (constructed.number() != 3) { return 4; }
+  if (nested_token<int>() != 2) { return 5; }
+  if (nested_token<char>() != 3) { return 6; }
+  return 0;
+}

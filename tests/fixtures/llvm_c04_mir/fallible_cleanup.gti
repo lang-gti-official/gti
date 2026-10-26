@@ -1,0 +1,5 @@
+struct Owner {
+  mut int value = 2147483647;
+  ~Owner() { value = value + 1; }
+};
+int sample(int input) { Owner value{}; return input + 1; }

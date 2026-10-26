@@ -1,0 +1,14 @@
+#include <std/cthread>
+#include <std/panic>
+
+thread_local mut int initialized = 0;
+class Local {
+public:
+  Local() { initialized += 1; }
+  ~Local() {
+    if (initialized != 1) { std::panic("incorrect lifecycle/TLS schedule"); }
+  }
+  int read() { return initialized; }
+};
+thread_local Local local{};
+int main() { return local.read() == 1 && local.read() == 1 ? 0 : 1; }

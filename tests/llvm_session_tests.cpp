@@ -5,6 +5,7 @@
 #include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/llvm_backend.h"
 #include "gti/mir_verifier.h"
 #include "gti/runtime_execution.h"
 #include "gti/runtime_failure.h"
@@ -15,6 +16,7 @@
 #include <llvm/IR/GlobalAlias.h>
 #include <llvm/IR/IRBuilder.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -648,6 +650,200 @@ int main(void) {
                .c_str());
   }
 }
+void testConservativeClassObject() {
+  const auto frontend = Frontend().analyze("llvm-rootless-class-object.gti", R"(
+class Value {
+  int data;
+public:
+  Value(int input) : data(input) {}
+  int read() { return this.data; }
+};
+int inspect(int input) { Value value{input}; return value.read(); }
+)");
+  expect(frontend.canGenerateCode(),
+         "rootless object consumer source verifies");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(lowered, issues);
+  if (!input)
+    throw std::runtime_error("rootless object consumer lost its source seal");
+  const auto admission = planLlvmAdmission(*input);
+  expect(admission.admitted() &&
+             admission.closure() == LlvmAdmissionClosure::AllExecutableBodies,
+         "real public object source keeps its complete conservative inventory");
+  Session proof(*input, {});
+  const auto target = std::find_if(
+      proof.program().mir().functionInstances().begin(),
+      proof.program().mir().functionInstances().end(),
+      [&](const auto &function) {
+        const auto *declaration =
+            proof.program().findFunctionDeclaration(function.declaration);
+        return declaration && declaration->qualifiedName == "inspect";
+      });
+  if (target == proof.program().mir().functionInstances().end())
+    throw std::runtime_error(
+        "rootless object consumer lost its selected GTI target");
+  const auto domain = constantIntegerDomain(SemanticType::Int32);
+  const bool sourceSignature =
+      target->returnType == SemanticType::Int32 &&
+      target->parameterTypes ==
+          std::vector<SemanticType>{SemanticType::Int32} &&
+      !target->mayRaiseDefinedFailure && !target->tracksCaller &&
+      !target->owner && !target->neverReturns && domain &&
+      domain->width == 32 && domain->signedValue &&
+      proof.layouts().get(SemanticType::Int32).size == 4;
+  expect(sourceSignature, "consumer target is independently proven infallible "
+                          "signed int32 -> int32");
+  if (!sourceSignature)
+    return; // Never strip a failure/caller/receiver channel to obtain C
+            // compatibility.
+  const auto gti = proof.abi().gti(target->returnType, target->parameterTypes,
+                                   target->mayRaiseDefinedFailure, false,
+                                   target->tracksCaller);
+  const auto nativeC =
+      proof.abi().nativeC(target->returnType, target->parameterTypes);
+  auto *function = proof.abi().declareFunction(target->id);
+  auto *cDeclaration =
+      llvm::Function::Create(nativeC.type, llvm::GlobalValue::ExternalLinkage,
+                             "consumer.signature.proof", proof.module());
+  nativeC.applyTo(*cDeclaration);
+  const bool compatible =
+      gti == nativeC && !gti.statusResult && !gti.resultDestination &&
+      !gti.failureDestination && gti.parameters.size() == 1 &&
+      gti.parameters[0].channel == AbiChannel::Argument &&
+      gti.parameters[0].sourceIndex == 0 && !gti.parameters[0].indirect &&
+      gti.type->getReturnType()->isIntegerTy(32) &&
+      gti.type->getParamType(0)->isIntegerTy(32) &&
+      function->getCallingConv() == llvm::CallingConv::C &&
+      function->getCallingConv() == cDeclaration->getCallingConv() &&
+      function->getFunctionType() == cDeclaration->getFunctionType() &&
+      function->getAttributes() == cDeclaration->getAttributes();
+  expect(compatible, "central GTI/C plans agree on complete physical channels, "
+                     "attributes, extensions and calling convention");
+  cDeclaration->eraseFromParent();
+  if (!compatible)
+    return;
+  const std::string symbol = function->getName().str();
+  // This tests one planner-proved scalar compatibility, not a stable GTI C
+  // export or Library/Embedding ABI. Actual bytes come from public generate.
+  namespace fs = std::filesystem;
+  const auto root =
+      fs::temp_directory_path() /
+      ("gti-rootless-object-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directory(root);
+  struct Cleanup {
+    fs::path root;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(root, ignored);
+    }
+  } cleanup{root};
+  const auto consumer = root / "consumer.c";
+  expect(driver::writeArtifact(
+             consumer, "#include <stdint.h>\nextern int32_t " + symbol +
+                           "(int32_t);\nint main(void) { if (" + symbol +
+                           "(25) != 25) return 1; if (" + symbol +
+                           "(-7) != -7) return 2; return 0; }\n") ==
+             driver::ArtifactWriteStatus::Success,
+         "write planner-proved rootless object consumer");
+  driver::NativeToolchain toolchain;
+  const auto compiled = driver::invokeProcess(
+      toolchain.command(driver::NativeCCompileRequest(
+          driver::discoverCCompiler(), consumer, root / "consumer.o",
+          driver::CStandard::C17, OptimizationLevel::O2, {}, {})),
+      {.timeout = std::chrono::seconds(30), .isolateProcessGroup = true});
+  if (!compiled.succeeded())
+    std::cerr << compiled.output;
+  expect(compiled.succeeded(), "compile the bounded C17 object consumer");
+  if (!compiled.succeeded())
+    return;
+  fs::path published;
+  std::string previous;
+  for (const auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
+    const auto object = LlvmBackend({.optimization = level}).generate(lowered);
+    published = root / (level == LlvmCodegenOptimization::None ? "source-O0.o"
+                                                               : "source-O3.o");
+    expect(object.kind == BackendArtifactKind::Object &&
+               driver::writeArtifact(published, object.contents) ==
+                   driver::ArtifactWriteStatus::Success,
+           "publish the actual public backend's ordinary-class object");
+    driver::NativeInputs inputs;
+    inputs.libraryFiles.push_back(root / "consumer.o");
+    const auto executable =
+        root / (level == LlvmCodegenOptimization::None ? "run-O0" : "run-O3");
+    const auto linked = driver::invokeProcess(
+        toolchain.command(driver::NativeLinkRequest(
+            driver::discoverNativeCompiler(), published, executable, inputs)),
+        {.timeout = std::chrono::seconds(30), .isolateProcessGroup = true});
+    if (!linked.succeeded())
+      std::cerr << linked.output;
+    expect(linked.succeeded(),
+           "link the unmodified public ordinary-class object");
+    if (linked.succeeded()) {
+      const auto run = driver::invokeProcess(
+          {executable.string()}, {.captureSuccessfulOutput = true,
+                                  .timeout = std::chrono::seconds(30),
+                                  .isolateProcessGroup = true});
+      if (!run.succeeded())
+        std::cerr << run.output;
+      expect(run.succeeded() && run.output.empty(),
+             "O0/O3 execute actual constructor/getter observations 25 and -7");
+    }
+    previous = object.contents;
+  }
+  const auto unsupported =
+      Frontend().analyze("llvm-rootless-pending-payload.gti", R"(
+enum class Choice { empty, held(int value) };
+class Value {
+  Choice data;
+public:
+  Value(int input) : data(Choice::held(input)) {}
+  int read() { return 0; }
+};
+int inspect(int input) { Value value{input}; return value.read(); }
+)");
+  expect(unsupported.canGenerateCode(),
+         "negative object source has valid class storage and payload syntax");
+  if (unsupported.canGenerateCode()) {
+    const auto bad =
+        gti_test::lowerProgram(unsupported, unsupported.mir, unsupported.mir);
+    std::vector<LoweredProgramIssue> badIssues;
+    const auto badVerified = verifiedLoweredProgram(bad, badIssues);
+    expect(badVerified.has_value(),
+           "pending payload negative retains its verified lowered snapshot");
+    if (!badVerified)
+      return;
+    const auto badAdmission = planLlvmAdmission(*badVerified);
+    expect(!badAdmission.admitted() &&
+               std::any_of(badAdmission.requirements().begin(),
+                           badAdmission.requirements().end(),
+                           [](const auto &use) {
+                             return use.required &&
+                                    use.entry->key() == "Shape.PayloadEnum" &&
+                                    !use.implementedShape;
+                           }),
+           "payload generation remains blocked by its exact pending coverage "
+           "requirement");
+    rejects<BackendUnsupportedError>(
+        [&] {
+          const auto object = LlvmBackend().generate(bad);
+          static_cast<void>(driver::writeArtifact(published, object.contents));
+        },
+        "pending payload generation rejects before replacing an existing "
+        "object");
+    std::ifstream stream(published, std::ios::binary);
+    const std::string retained{std::istreambuf_iterator<char>(stream), {}};
+    expect(retained == previous,
+           "a rejected required body leaves previous artifact bytes unchanged");
+  }
+}
+
 // Real source -> verified lowered bodies -> private native body component.
 // Admission is tested separately; this does not grant a public coverage row.
 void testClassBodyComponent() {
@@ -797,7 +993,7 @@ int main() {
         LlvmCodegenOptimization::Default,
         LlvmCodegenOptimization::Aggressive}) {
     Session session(*program, {.optimization = level});
-    const auto admission = planLlvmAdmission(*program);
+    const auto admission = planLlvmAdmission(*program, session.options());
     expect(admission.admitted(), "real class component has public admission");
     lowerScalarProgram(session, admission);
     auto *registration = llvm::StructType::getTypeByName(
@@ -1024,8 +1220,9 @@ int main() { Pair value = create<Pair>(20, 22); return value.sum() == 42 ? 0 : 1
     for (const auto level :
          {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
       try {
-        Session session(*program, {.optimization = level});
-        const auto admission = planLlvmAdmission(*program);
+        const LlvmBackendOptions options{.optimization = level};
+        const auto admission = planLlvmAdmission(*program, options);
+        Session session(*program, options);
         expect(admission.admitted(),
                "concrete pack aliases have native admission");
         lowerScalarProgram(session, admission);
@@ -1215,8 +1412,9 @@ void gti_rt_posix_free_v1(void *address) {
     return;
   for (const auto level :
        {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
-    Session session(*program, {.optimization = level});
-    const auto admission = planLlvmAdmission(*program);
+    const LlvmBackendOptions options{.optimization = level};
+    const auto admission = planLlvmAdmission(*program, options);
+    Session session(*program, options);
     expect(admission.admitted(),
            "combined O7/O8 scalar-owner payload admission");
     if (!admission.admitted()) {
@@ -1344,6 +1542,7 @@ int main(int argc, char **argv) {
     testInvalidModule(input);
     testDiagnostics(input);
     testObjectHandoff(input);
+    testConservativeClassObject();
     testClassBodyComponent();
     testConcretePackAliases();
     testExecutionCAbi();
