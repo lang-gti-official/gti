@@ -101,6 +101,12 @@ def main():
             for line in ir.read_text().splitlines():
                 if line.startswith("@native_") and (" = external global " not in line or ", align " not in line):
                     raise RuntimeError("foreign storage became initialized/constant/unaligned GTI data")
+    for name in PREREQUISITES:
+        if args.focus == "independent":
+            continue
+        run([emitter, fixture / (name + ".gti"), output / (name + "-contracts.o"),
+             output / (name + "-contracts.ll"), 0, "--storage-contracts"],
+            name + "-contracts")
     sources = tuple(name for name in SOURCE_PATHS
                     if (args.focus != "independent" or name not in PREREQUISITES) and
                     (args.focus != "prerequisites" or name in PREREQUISITES))
@@ -163,6 +169,17 @@ def main():
                     raise RuntimeError("native storage execution differs from supported C++ control")
                 executions += 1
     if args.focus != "prerequisites":
+        for name in ("reject_native_storage_opaque_value", "reject_native_storage_opaque_dereference"):
+            for backend in ("llvm", "cpp"):
+                for level in (0, 3):
+                    binary = output / f"{name}-{backend}-O{level}"
+                    sentinel = b"existing opaque boundary artifact\n"
+                    binary.write_bytes(sentinel)
+                    result = run([compiler, fixture / (name + ".gti"), "--backend", backend,
+                                  f"-O{level}", "-o", binary], binary.name, 65)
+                    if b"GTI-S2065" not in result.stderr or binary.read_bytes() != sentinel:
+                        raise RuntimeError("pointer referent witness admitted an opaque object operation")
+                    negatives += 1
         for name in ("reject_native_storage_function_field", "reject_native_storage_aggregate_function"):
             for standard in ("c++20", "c++23"):
                 binary = output / f"{name}-{standard}"
@@ -172,13 +189,12 @@ def main():
                 controls += 1
             for level in range(4):
                 binary = output / f"{name}-O{level}"
-                sentinel = b"existing storage artifact\n"
-                binary.write_bytes(sentinel)
-                result = run([compiler, fixture / (name + ".gti"), "--backend", "llvm", f"-O{level}",
-                              "-o", binary], binary.name, 65)
-                if b"GTI-B0003" not in result.stderr or binary.read_bytes() != sentinel:
-                    raise RuntimeError("closed foreign storage shape published an artifact")
-                negatives += 1
+                run([compiler, fixture / (name + ".gti"), "--backend", "llvm", f"-O{level}",
+                     "-o", binary], "build-" + binary.name)
+                result = run([binary], "run-" + binary.name)
+                if result.stdout or result.stderr:
+                    raise RuntimeError("dormant native signature storage produced output")
+                executions += 1
         for backend in ("llvm", "cpp"):
             for level in (0, 3):
                 name = f"pointer-permission-{backend}-O{level}"

@@ -210,13 +210,15 @@ Reachability reachableProgram(const LoweredProgram &program) {
             cleanup(*instruction.elementCleanup);
           if (instruction.replacementCleanup)
             cleanup(*instruction.replacementCleanup);
-          const bool scalarNativeCall = nativeCScalarIndirectCallContract(
+          const bool nativeCall = nativeCIndirectCallContract(
+              mir, program.target(), *input, instruction);
+          const bool callback = nativeCCallbackStageContract(
               mir, program.target(), *input, instruction);
           if (instruction.dispatch == CallDispatch::Virtual ||
-              (instruction.nativeCalleeType && !scalarNativeCall) ||
+              (instruction.nativeCalleeType && !nativeCall) ||
               (instruction.callableInvocation && !instruction.lambdaTarget &&
-               !instruction.functionTarget && !scalarNativeCall) ||
-              instruction.nativeCallbackAdapter ||
+               !instruction.functionTarget && !nativeCall) ||
+              (instruction.nativeCallbackAdapter && !callback) ||
               instruction.threadTaskAdapter ||
               !instruction.scopedThreadTasks.empty())
             result.conservative = true;

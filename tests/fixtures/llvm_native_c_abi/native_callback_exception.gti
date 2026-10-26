@@ -1,0 +1,10 @@
+using Operation = (int32_t) -> int32_t;
+extern "C" {
+  int32_t native_callback_exception_invoke(Operation operation);
+  int32_t native_callback_throw(int32_t value);
+}
+int32_t throwing(int32_t value) { return native_callback_throw(value); }
+int main() {
+  Operation operation = throwing;
+  unsafe { return native_callback_exception_invoke(operation); }
+}

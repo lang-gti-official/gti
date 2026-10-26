@@ -125,8 +125,13 @@ def main():
                     if result.stdout != expected or result.stderr:
                         raise RuntimeError(f"source counted stdout mismatch: {name}")
     if args.compiler:
-        for source in ("reject_native_record_function_field", "reject_native_record_function_input",
-                       "reject_native_storage_function_field", "reject_native_indirect"):
+        # Recursive native signatures now have positive execution in their
+        # owning oracles. Counted input still grants no result/owner/adapter
+        # eligibility beyond the canonical semantic boundary.
+        for source, code in (("reject_native_record_mutable_view", b"GTI-S2054"),
+                             ("reject_native_record_view_return", b"GTI-S2054"),
+                             ("reject_native_callback_lambda", b"GTI-S2003"),
+                             ("reject_native_storage_opaque_value", b"GTI-S2065")):
             for level in (0, 3):
                 destination = output / f"{source}-O{level}"
                 sentinel = b"existing native artifact\n"
@@ -134,7 +139,7 @@ def main():
                 result = run([args.compiler.resolve(), fixture / f"{source}.gti",
                               "--backend", "llvm", f"-O{level}", "-o", destination],
                              destination.name, expected=65)
-                if b"GTI-B0003" not in result.stderr or destination.read_bytes() != sentinel:
+                if code not in result.stderr or destination.read_bytes() != sentinel:
                     raise RuntimeError(f"unsupported native boundary published an artifact: {source}")
     scope = ("production GTI source" if args.compiler else
              "real-source preflight, public admission unchanged" if args.preflight else

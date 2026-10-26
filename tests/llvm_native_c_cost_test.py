@@ -22,25 +22,30 @@ def main():
     family.add_argument("--indirect", action="store_true")
     family.add_argument("--aggregate", action="store_true")
     family.add_argument("--storage", action="store_true")
+    family.add_argument("--callback", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     fixture = root / "tests/fixtures/llvm_native_c_abi"
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    stem = ("storage_cost" if args.storage else
+    stem = ("callback_cost" if args.callback else
+            "storage_cost" if args.storage else
             "aggregate_cost" if args.aggregate else
             "indirect_cost" if args.indirect else "direct_cost")
     report = {"head": subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip(),
         "platform": platform.platform(), "cc": args.cc,
-        "family": ("foreign-storage" if args.storage else
+        "family": ("native-callback" if args.callback else
+                   "foreign-storage" if args.storage else
                    "passive-aggregate" if args.aggregate else
                    "scalar-indirect" if args.indirect else "direct"),
-        "calls_per_process": (20000001 if args.storage else
+        "calls_per_process": (20000001 if args.storage or args.callback else
                               40000003 if args.aggregate else
                               40000002 if args.indirect else 40000001),
         "measured": args.measure,
-        "measurement": "whole process including startup; same C oracle and checked additions",
+        "measurement": ("whole process including startup; same C caller and exact uint64 XOR callback"
+                        if args.callback else
+                        "whole process including startup; same C oracle and checked additions"),
         "records": {}, "steps": []}
 
     def save():
@@ -78,7 +83,8 @@ def main():
     host = output / "host.o"
     run([args.cc, "-std=c17", "-O3", "-Wall", "-Wextra", "-Werror",
          "-I", root / "runtime/include", "-c",
-         fixture / ("storage_cost.c" if args.storage else
+         fixture / ("callback_cost.c" if args.callback else
+                    "storage_cost.c" if args.storage else
                     "aggregate_cost.c" if args.aggregate else "direct_cost.c"), "-o", host], "host")
     native, baseline = output / "native", output / "baseline"
     run([args.compiler.resolve(), fixture / (stem + ".gti"), "--backend", "llvm",

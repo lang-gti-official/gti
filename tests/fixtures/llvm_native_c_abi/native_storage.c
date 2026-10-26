@@ -6,6 +6,8 @@ typedef struct { int32_t count; double weight; } StorageCell;
 typedef union { uint64_t number; double real; } StorageBits;
 typedef struct { StorageCell cells[2]; StorageBits bits; } StorageState;
 typedef struct StorageToken { int32_t value; } StorageToken;
+typedef struct { StorageToken *token; } StorageTokenSlot;
+typedef struct { StorageBits elements[2]; } StorageUnions;
 int32_t native_counter;
 int32_t native_external_epoch;
 const int32_t native_limit = 17;
@@ -17,6 +19,7 @@ int32_t *native_pointer;
 static StorageToken token = {123};
 StorageToken *native_token;
 StorageState native_state;
+StorageUnions native_unions;
 static int32_t original(int32_t value) { printf("entered-original:%d\n", value); return value + 11; }
 static int32_t replaced(int32_t value) { printf("entered-replaced:%d\n", value); return value + 29; }
 NativeOperation native_operation;
@@ -25,6 +28,7 @@ void native_storage_reset(void) {
   native_scale = 1; native_pointer = &target; native_token = &token;
   native_operation = original;
   native_state = (StorageState){{{4, 1.25}, {5, 2.5}}, {.number = 6}};
+  native_unions = (StorageUnions){{{.number = 7}, {.number = 9}}};
 }
 void native_storage_bump(void) { native_counter += 5; }
 int32_t native_storage_check(int32_t *address) {
@@ -36,6 +40,17 @@ int32_t native_storage_swap(int32_t value) {
 StorageCell native_storage_cell(int32_t value) { return (StorageCell){value, 3.5}; }
 StorageBits native_storage_bits(uint64_t value) { return (StorageBits){.number = value}; }
 int32_t native_storage_token(StorageToken *value) { return value == &token && value->value == 123; }
+StorageToken *native_storage_get_token(void) { return &token; }
+void native_storage_token_out(StorageToken **result) { *result = &token; }
+StorageTokenSlot native_storage_token_slot_make(StorageToken *value) {
+  return (StorageTokenSlot){value};
+}
+StorageTokenSlot native_storage_token_slot(StorageTokenSlot value) { return value; }
+int32_t native_storage_union_index(void) { return 1; }
+int32_t native_storage_union_verify(void) {
+  return native_state.bits.number == 51 && native_unions.elements[0].number == 7 &&
+         native_unions.elements[1].number == 93;
+}
 int32_t native_storage_zero(void) { puts("zero"); return 0; }
 void native_storage_cleanup(void) { puts("storage-cleanup"); }
 int32_t native_storage_verify(void) {

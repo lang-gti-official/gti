@@ -91,9 +91,12 @@ enum class Shape {
   NativeCCountedInput,
   NativeCAggregateImport,
   NativeCStorage,
+  NativeCOpaquePointerReferent,
   NativeCFunctionValue,
   NativeCFunctionImport,
   NativeCScalarIndirect,
+  NativeCSignature,
+  NativeCCallback,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

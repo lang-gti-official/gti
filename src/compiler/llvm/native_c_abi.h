@@ -107,6 +107,9 @@ void declareNativeCStorage(Session &session,
 
 // Consume sealed, capture-free callback rows, never GTI callable storage.
 void emitNativeCCallbacks(Session &session, Failures &failures);
+void emitNativeCCallbacks(
+    Session &session, Failures &failures,
+    std::span<const MirNativeCallbackAdapterId> required);
 [[nodiscard]] llvm::Value *
 nativeCCallbackAddress(Session &session, llvm::IRBuilder<> &ir,
                        MirNativeCallbackAdapterId identity);

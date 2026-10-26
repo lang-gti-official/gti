@@ -108,8 +108,8 @@ def main():
     run([args.cxx, "--version"], "cxx-version")
     root_checks = (
             ("native_indirect_roots", "--reachability"),
-            ("reject_native_indirect", "--conservative-reachability"),
-            ("reject_native_indirect_callback", "--conservative-reachability"))
+            ("reject_native_indirect", "--native-boundary-reachability"),
+            ("reject_native_indirect_callback", "--native-boundary-reachability"))
     if args.focus == "example":
         root_checks = ()
     for source, mode in root_checks:
@@ -170,30 +170,22 @@ def main():
         controls += 1
         if result.stdout or result.stderr:
             raise RuntimeError("supported aggregate C++ comparator output mismatch")
-    rejected_sources = ("reject_native_indirect_required", "reject_native_indirect_callback")
+    promoted_sources = ("reject_native_indirect_required", "reject_native_indirect_callback")
     if not args.focus:
-        rejected_sources = ("reject_native_indirect", *rejected_sources)
+        promoted_sources = ("reject_native_indirect", *promoted_sources)
     elif args.focus == "example":
-        rejected_sources = ()
-    for source in rejected_sources:
+        promoted_sources = ()
+    for source in promoted_sources:
         for level in (0, 3):
             destination = output / f"{source}-O{level}"
-            sentinel = b"existing native artifact\n"
-            destination.write_bytes(sentinel)
-            result = run([compiler, fixture / (source + ".gti"), "--backend", "llvm",
-                          f"-O{level}", "-o", destination], destination.name, 65)
-            if b"GTI-B0003" not in result.stderr or destination.read_bytes() != sentinel:
-                raise RuntimeError("unsupported required native boundary replaced an artifact")
-            if source == "reject_native_indirect_required":
-                if (b"UnsafeOperationKind.ForeignPointerCall (O-LLVM-05)" not in result.stderr or
-                        b"reject_native_indirect_required.gti:6:9:" not in result.stderr or
-                        b"dormant_unsupported" not in result.stderr):
-                    raise RuntimeError("required body must reject at its unchanged function-field import")
-            if source == "reject_native_indirect_callback":
-                if (b"MirOperation.NativeCallback (O-LLVM-11)" not in result.stderr or
-                        b"reject_native_indirect_callback.gti:4:5:" not in result.stderr):
-                    raise RuntimeError("source-created callback must retain its original pending boundary")
-            negatives += 1
+            run([compiler, fixture / (source + ".gti"), "--backend", "llvm",
+                 f"-O{level}", "-o", destination, "--", *objects], "build-" + destination.name)
+            result = run([destination], "run-" + destination.name,
+                         2 if source == "reject_native_indirect_callback" else 0)
+            expected = b"mark:99\n" if source == "reject_native_indirect_required" else b""
+            if result.stdout != expected or result.stderr:
+                raise RuntimeError("promoted native signature/callback execution mismatch")
+            executions += 1
     rejections = (
         ("reject_native_indirect_unsafe", b"GTI-S2055", b":6:21:"),
         ("reject_native_indirect_signature", b"GTI-S2003", b":5:46:"),
