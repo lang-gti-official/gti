@@ -1,5 +1,7 @@
 #include "session.h"
 #include "abi.h"
+#include "debug_info.h"
+#include "instrumentation.h"
 
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/DiagnosticInfo.h>
@@ -76,6 +78,22 @@ llvm::OptimizationLevel pipelineLevel(LlvmCodegenOptimization level) {
     return llvm::OptimizationLevel::O3;
   }
   throw std::invalid_argument("invalid LLVM optimization policy");
+}
+
+InstrumentationMode diagnosticMode(LlvmInstrumentationMode mode) {
+  switch (mode) {
+  case LlvmInstrumentationMode::None:
+    return InstrumentationMode::None;
+  case LlvmInstrumentationMode::Address:
+    return InstrumentationMode::Address;
+  case LlvmInstrumentationMode::UndefinedMemory:
+    return InstrumentationMode::UndefinedMemory;
+  case LlvmInstrumentationMode::AddressAndUndefinedMemory:
+    return InstrumentationMode::AddressAndUndefinedMemory;
+  case LlvmInstrumentationMode::Thread:
+    return InstrumentationMode::Thread;
+  }
+  throw std::invalid_argument("invalid LLVM instrumentation policy");
 }
 
 } // namespace
@@ -170,6 +188,9 @@ Session::Session(VerifiedLoweredProgram program, LlvmBackendOptions options)
                         executionAbiVersion);
   layouts_ = std::unique_ptr<Layouts>(new Layouts(*this));
   abi_ = std::unique_ptr<Abi>(new Abi(*this, *layouts_));
+  static_cast<void>(diagnosticMode(options_.instrumentation));
+  if (options_.debugInfo)
+    debugInfo_ = std::make_unique<DebugInfo>(*this);
 }
 
 Session::~Session() = default;
@@ -239,6 +260,8 @@ BackendArtifact Session::emitObject() {
       throw BackendUnsupportedError(
           "LLVM object emission requires every planned GTI body to be defined");
   }
+  if (debugInfo_)
+    debugInfo_->finalize();
   verify();
   emissionStarted_ = true;
   // A sealed hosted entry and no embedding plan delimit the existing private
@@ -277,6 +300,11 @@ BackendArtifact Session::emitObject() {
       function->setLinkage(llvm::GlobalValue::InternalLinkage);
     }
   }
+  const auto mode = diagnosticMode(options_.instrumentation);
+  if (instrumentsUndefinedMemory(mode)) {
+    instrumentUndefinedMemory(module_);
+    verify();
+  }
   llvm::LoopAnalysisManager loops;
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager cgscc;
@@ -292,6 +320,10 @@ BackendArtifact Session::emitObject() {
                       ? builder.buildO0DefaultPipeline(level)
                       : builder.buildPerModuleDefaultPipeline(level);
   pipeline.run(module_, modules);
+  if (instrumentsAddress(mode))
+    instrumentAddress(module_, modules);
+  if (instrumentsThread(mode))
+    instrumentThread(module_, modules);
   verify();
   llvm::SmallVector<char, 0> bytes;
   llvm::raw_svector_ostream stream(bytes);

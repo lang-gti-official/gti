@@ -4,6 +4,7 @@
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
+#include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/Instrumentation/AddressSanitizer.h>
 #include <llvm/Transforms/Instrumentation/ThreadSanitizer.h>
 
@@ -161,7 +162,7 @@ void instrumentAddress(llvm::Module &module,
 void instrumentThread(llvm::Module &module,
                       llvm::ModuleAnalysisManager &analyses) {
   const auto &layout = module.getDataLayout();
-  const auto &triple = module.getTargetTriple();
+  const llvm::Triple triple(module.getTargetTriple());
   if (layout.isDefault() || layout.isNonIntegralAddressSpace(0) ||
       layout.getPointerSizeInBits(0) != 64 ||
       !(triple.isOSDarwin() || triple.isOSLinux()) ||

@@ -14,6 +14,7 @@ namespace lang::native_llvm {
 
 class Layouts;
 class Abi;
+class DebugInfo;
 
 // Private, invalidatable whole-program ABI, not an external GTI ABI promise.
 inline constexpr unsigned executionAbiVersion = 1;
@@ -33,6 +34,7 @@ public:
   [[nodiscard]] llvm::Module &module() { return module_; }
   [[nodiscard]] Layouts &layouts() { return *layouts_; }
   [[nodiscard]] Abi &abi() { return *abi_; }
+  [[nodiscard]] DebugInfo *debugInfo() { return debugInfo_.get(); }
   [[nodiscard]] const llvm::DataLayout &dataLayout() const;
   [[nodiscard]] LlvmBackendOptions options() const { return options_; }
   [[nodiscard]] const std::vector<std::string> &diagnostics() const {
@@ -63,6 +65,7 @@ private:
   llvm::Module module_;
   std::unique_ptr<Layouts> layouts_;
   std::unique_ptr<Abi> abi_;
+  std::unique_ptr<DebugInfo> debugInfo_;
   std::vector<std::pair<HirFunctionInstanceId, llvm::Function *>>
       sourceDefinitions_;
 };

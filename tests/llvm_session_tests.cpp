@@ -273,6 +273,21 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
   rejects<BackendUnsupportedError>(
       [&] { Session invalid(input, {.debugInfo = true}); },
       "debug requests do not silently lose debug metadata");
+  expect(session.debugInfo() == nullptr,
+         "default sessions do not allocate a source debug consumer");
+  for (const auto mode : {LlvmInstrumentationMode::Address,
+                          LlvmInstrumentationMode::UndefinedMemory,
+                          LlvmInstrumentationMode::AddressAndUndefinedMemory,
+                          LlvmInstrumentationMode::Thread})
+    rejects<BackendUnsupportedError>(
+        [&] { Session invalid(input, {.instrumentation = mode}); },
+        "instrumentation stays gated until coherent runtime activation");
+  rejects<std::invalid_argument>(
+      [&] {
+        Session invalid(input, {.instrumentation =
+                                    static_cast<LlvmInstrumentationMode>(99)});
+      },
+      "invalid instrumentation identity rejects");
   rejects<std::invalid_argument>(
       [&] {
         Session invalid(
