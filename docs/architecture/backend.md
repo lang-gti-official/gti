@@ -4556,6 +4556,16 @@ panic verifies that the consumer is never entered and that local/TLS cleanup
 precedes hosted reporting through the existing C observer. This no-argument
 failure case is separate from pending owned-argv cleanup evidence.
 
+An ordinary unsafe source reference return may also cross one immediate
+`Invoke` success edge. Its checked `CallResult` loan names a unique typed call
+result; that SSA definition must identify the exact last live call in the
+predecessor, whose normal edge targets the return block. The complete escaping
+`Return` dependency and access remain unchanged. Failure cannot enter the return
+block or publish a result. Readonly and mutable unrelated user-type relays check
+selected-owner identity, write-back and exact destruction; a panic relay checks
+original attribution and local/TLS cleanup. Load and argument staging continue
+to require their same-block producer.
+
 A direct fundamental text return has a distinct bounded witness: its source call
 publishes a `Stored` dependency and an SSA text value, then the return
 publishes that exact value with the unchanged escaping `Return` dependency.
@@ -4570,14 +4580,20 @@ keep the raw data address independent, distinguish different C-string addresses
 with the same witness, and preserve embedded NUL bytes in counted text. A
 failure-capable relay also checks original panic attribution, an unentered
 consumer, and local/TLS cleanup through the existing hosted observer.
-Raw text construction uses the same exact value/dependency return
-proof, but requires the verified `TextViewFromAddress` or `CStringFromAddress`
-producer and its existing
-passive-owner structural contract. Raw and declared-unsafe source authority
-cannot substitute for one another; both have dedicated forgery controls.
-This return witness does not widen the separate text-from-address owner
-representation predicate; capability/class-owner closure still needs its own
-structural evidence.
+Raw text construction uses the same exact value/dependency return proof.
+Its producer must satisfy the centralized `textAddressResultLoan` query for
+`TextViewFromAddress` or `CStringFromAddress`, including the raw character
+address, counted extent where present, ordered readonly owner witness and
+checked loan identity. Native owner representation admits passive witnesses or
+the same ordinary class boundary as raw references: a unique native class or
+struct instance without compiler capability, polymorphism, bases, union or
+foreign ABI layout. The owner address is an independent lifetime witness; no
+owner bytes are read or copied. An unrelated owning user class checks both text
+forms, selected-owner identity and exact resource destruction; source escape,
+movement and mutation and unsupported witness layouts remain rejected.
+Raw and declared-unsafe source authority cannot substitute for one another;
+both retain dedicated forgery controls. Parent-derived stored carriers and
+unsupported owner representations remain outside this return proof.
 
 Raw references to primitive or ordinary, independently represented native
 class objects may use passive or ordinary native class lifetime witnesses.

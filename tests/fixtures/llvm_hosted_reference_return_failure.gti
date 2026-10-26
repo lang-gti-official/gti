@@ -1,0 +1,27 @@
+#include <std/panic>
+mut int trace = 0;
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  int read() { return this.value; }
+  ~Marker() { trace = trace * 10 + this.value; }
+};
+thread_local Marker early{1};
+thread_local Marker late{2};
+unsafe int& checked_reference(int& owner, bool fail) {
+  if (fail) { std::panic("reference return failure"); }
+  return owner;
+}
+int& relay_reference(int& owner, bool fail) {
+  unsafe { return checked_reference(owner, fail); }
+}
+int main() {
+  [[discard]] early.read();
+  [[discard]] late.read();
+  Marker local{3};
+  int owner = 22;
+  int& result = relay_reference(owner, true);
+  trace = 9999;
+  return result;
+}

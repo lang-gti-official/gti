@@ -99,7 +99,7 @@ def text_source_rejections(gti, root, scratch, endpoints, env):
 def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selection = sys.argv[3] if len(sys.argv) > 3 else "all"
-    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments", "reference-input", "vector", "array", "text-return"}:
+    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments", "reference-input", "reference-return", "vector", "array", "text-return"}:
         raise ValueError(f"unknown hosted case: {selection}")
     cases = (
         ("llvm_hosted_success.gti", None),
@@ -110,17 +110,23 @@ def main():
         ("llvm_hosted_unsafe_reference_return.gti", None),
         ("llvm_hosted_unsafe_reference_input.gti", None),
         ("llvm_hosted_reference_input_failure.gti", "borrowed argument failure"),
+        ("llvm_hosted_unsafe_reference_invoke_readonly.gti", None),
+        ("llvm_hosted_unsafe_reference_invoke_mutable.gti", None),
+        ("llvm_hosted_reference_return_failure.gti", "reference return failure"),
         ("llvm_hosted_class_owner_reference.gti", None),
         ("llvm_hosted_class_pointee_reference.gti", None),
         ("stdlib_surface_vector.gti", None),
         ("stdlib_surface_array.gti", None),
         ("llvm_hosted_unsafe_text_return.gti", None),
         ("llvm_hosted_unsafe_cstring_return.gti", None),
+        ("llvm_hosted_class_owner_text_return.gti", None),
         ("llvm_hosted_text_return_failure.gti", "counted text failure"),
     )
     endpoints = (
         Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
-        Endpoint("llvm", "O0"), Endpoint("llvm", "O3"),
+        *(Endpoint("llvm", f"O{level}") for level in
+          (range(4) if selection in {"all", "reference-return", "text-return"}
+           else (0, 3))),
     )
     env = {**os.environ, "NO_COLOR": "1"}
     with tempfile.TemporaryDirectory(prefix="gti-llvm-hosted-cli-") as temporary:
@@ -134,6 +140,11 @@ def main():
                     "llvm_hosted_unsafe_reference_input.gti",
                     "llvm_hosted_reference_input_failure.gti"}:
                 continue
+            if selection == "reference-return" and filename not in {
+                    "llvm_hosted_unsafe_reference_invoke_readonly.gti",
+                    "llvm_hosted_unsafe_reference_invoke_mutable.gti",
+                    "llvm_hosted_reference_return_failure.gti"}:
+                continue
             if selection == "vector" and filename != "stdlib_surface_vector.gti":
                 continue
             if selection == "array" and filename != "stdlib_surface_array.gti":
@@ -141,12 +152,17 @@ def main():
             if selection == "text-return" and filename not in {
                     "llvm_hosted_unsafe_text_return.gti",
                     "llvm_hosted_unsafe_cstring_return.gti",
+                    "llvm_hosted_class_owner_text_return.gti",
                     "llvm_hosted_text_return_failure.gti"}:
                 continue
             if selection == "startup" and filename in {
+                    "llvm_hosted_unsafe_reference_invoke_readonly.gti",
+                    "llvm_hosted_unsafe_reference_invoke_mutable.gti",
+                    "llvm_hosted_reference_return_failure.gti",
                     "stdlib_surface_source_location.gti", "stdlib_surface_vector.gti",
                     "stdlib_surface_array.gti", "llvm_hosted_unsafe_text_return.gti",
                     "llvm_hosted_unsafe_cstring_return.gti",
+                    "llvm_hosted_class_owner_text_return.gti",
                     "llvm_hosted_text_return_failure.gti"}:
                 continue
             if selection == "source-location" and filename != "stdlib_surface_source_location.gti":
@@ -167,7 +183,8 @@ def main():
                 observations.append(result.observable)
             if any(value != observations[0] for value in observations):
                 raise AssertionError(f"hosted observable drift: {filename}: {observations}")
-            print(f"{filename}: uninstrumented C++20/23 O3 and LLVM O0/O3 passed",
+            levels = "O0-O3" if selection in {"all", "reference-return", "text-return"} else "O0/O3"
+            print(f"{filename}: uninstrumented C++20/23 O3 and LLVM {levels} passed",
                   flush=True)
         for status in (-2147483648, -1, 0, 1, 70, 255, 256, 512, 2147483647):
             if selection not in {"all", "status"}:

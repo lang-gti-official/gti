@@ -51,6 +51,8 @@ constexpr std::array cases{
          "borrowed argument failure", 18},
     Case{"llvm_hosted_text_return_failure.gti", 321, "counted text failure",
          14},
+    Case{"llvm_hosted_reference_return_failure.gti", 321,
+         "reference return failure", 13},
 };
 
 void require(bool value, std::string_view message) {
@@ -227,13 +229,15 @@ void unsafeReferenceLoadContract(const std::filesystem::path &repository,
 void unsafeReferenceReturnContract(
     const std::filesystem::path &repository, bool countedText = false,
     bool rawText = false,
-    const SemanticType &borrowedType = SemanticType::StringView) {
+    const SemanticType &borrowedType = SemanticType::StringView,
+    const char *fixture = nullptr, bool fallibleReference = false) {
   FrontendOptions options;
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = true;
   const auto frontend = Frontend(options).analyze(
       repository /
-          (countedText
+          (fixture ? fixture
+           : countedText
                ? (borrowedType == SemanticType::CString
                       ? "tests/fixtures/llvm_hosted_unsafe_cstring_return.gti"
                       : "tests/fixtures/llvm_hosted_unsafe_text_return.gti")
@@ -283,8 +287,9 @@ void unsafeReferenceReturnContract(
       [](auto &, auto &, auto &, auto &, auto &, auto &from, auto &to) {
         to.parent = from.id;
       },
-      [](auto &, auto &, auto &, auto &, auto &, auto &, auto &to) {
-        to.access = AccessMode::Mutable;
+      [](auto &, auto &, auto &, auto &, auto &, auto &from, auto &to) {
+        to.access = from.access == AccessMode::ReadOnly ? AccessMode::Mutable
+                                                        : AccessMode::ReadOnly;
       },
       [](auto &, auto &, auto &, auto &, auto &, auto &, auto &to) {
         to.producedBy = 0;
@@ -339,27 +344,28 @@ void unsafeReferenceReturnContract(
         std::swap(stage, *ended);
       },
   };
+  if (fallibleReference ||
+      (countedText && !rawText && borrowedType == SemanticType::StringView)) {
+    mutations.push_back(
+        [](auto &, auto &body, auto &, auto &, auto &call, auto &, auto &) {
+          auto &previous =
+              body.blocks[body.findValue(*call.result)->definitionBlock - 1];
+          previous.terminator.target = previous.terminator.elseTarget;
+        });
+    mutations.push_back(
+        [](auto &, auto &body, auto &, auto &, auto &call, auto &, auto &) {
+          auto &previous =
+              body.blocks[body.findValue(*call.result)->definitionBlock - 1];
+          std::swap(previous.terminator.target, previous.terminator.elseTarget);
+        });
+    mutations.push_back([](auto &, auto &body, auto &block, auto &, auto &call,
+                           auto &, auto &) {
+      body.values[*call.result - 1].definitionBlock = block.id;
+    });
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &call, auto &,
+                           auto &) { call.tombstone = true; });
+  }
   if (countedText) {
-    if (!rawText && borrowedType == SemanticType::StringView) {
-      mutations.push_back(
-          [](auto &, auto &body, auto &, auto &, auto &call, auto &, auto &) {
-            auto &previous =
-                body.blocks[body.findValue(*call.result)->definitionBlock - 1];
-            previous.terminator.target = previous.terminator.elseTarget;
-          });
-      mutations.push_back([](auto &, auto &body, auto &, auto &, auto &call,
-                             auto &, auto &) {
-        auto &previous =
-            body.blocks[body.findValue(*call.result)->definitionBlock - 1];
-        std::swap(previous.terminator.target, previous.terminator.elseTarget);
-      });
-      mutations.push_back([](auto &, auto &body, auto &block, auto &,
-                             auto &call, auto &, auto &) {
-        body.values[*call.result - 1].definitionBlock = block.id;
-      });
-      mutations.push_back([](auto &, auto &, auto &, auto &, auto &call, auto &,
-                             auto &) { call.tombstone = true; });
-    }
     mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &from,
                            auto &) { from.kind = MirLoanKind::CallResult; });
     mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &from,
@@ -728,6 +734,148 @@ int main() {
       issues);
   require(pendingReferent && !planLlvmAdmission(*pendingReferent).admitted(),
           "ordinary witness does not admit an unsupported referent layout");
+}
+
+void classOwnerTextContract(const std::filesystem::path &repository) {
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto analyze = [&](const std::filesystem::path &path,
+                           std::optional<std::string> source = {}) {
+    return Frontend(options).analyze(path, std::move(source),
+                                     {repository / "stdlib/prelude.gti"}, {},
+                                     {repository / "stdlib"});
+  };
+  const auto frontend = analyze(
+      repository / "tests/fixtures/llvm_hosted_class_owner_text_return.gti");
+  require(frontend.canGenerateCode(), "class text witness is valid GTI");
+  std::vector<LoweredProgramIssue> issues;
+  const auto program = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  require(program && planLlvmAdmission(*program).admitted(),
+          "text assertions share the ordinary native class witness boundary");
+  std::array<bool, 2> seen{};
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        const bool counted =
+            stage.intrinsic == IntrinsicKind::TextViewFromAddress;
+        if (!counted && stage.intrinsic != IntrinsicKind::CStringFromAddress)
+          continue;
+        const std::size_t witness = counted ? 2 : 1;
+        seen[counted] = true;
+        const auto *loan =
+            mir_detail::textAddressResultLoan(function.body, stage);
+        require(loan &&
+                    stage.parameterTypes[witness].kind ==
+                        SemanticType::Reference &&
+                    stage.parameterTypes[witness].arguments.size() == 1 &&
+                    stage.parameterTypes[witness].arguments.front().kind ==
+                        SemanticType::Class,
+                "raw text has an exact readonly ordinary-class witness");
+        for (unsigned mutation = 0; mutation != 8; ++mutation) {
+          auto invalidBody = function.body;
+          auto invalid = stage;
+          auto &invalidLoan = invalidBody.loans[loan->id - 1];
+          switch (mutation) {
+          case 0:
+            invalidLoan.source = 0;
+            break;
+          case 1:
+            invalidLoan.producedBy = 0;
+            break;
+          case 2:
+            invalid.info.access = AccessMode::Mutable;
+            break;
+          case 3:
+            invalid.borrowArgument = 0;
+            break;
+          case 4:
+            invalid.parameterTypes[witness].referenceAccess =
+                AccessMode::Mutable;
+            break;
+          case 5:
+            invalid.operands[witness].value = 0;
+            break;
+          case 6:
+            invalid.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeCall;
+            break;
+          case 7:
+            invalid.rawMemoryAccess = true;
+            break;
+          }
+          require(
+              !mir_detail::textAddressResultLoan(invalidBody, invalid),
+              "forged owner identity, access, input or raw authority rejects");
+        }
+      }
+  require(seen[0] && seen[1], "both fundamental text construction proofs run");
+  const std::string owner = R"(
+#include <std/memory>
+#include <std/string_view>
+struct Owner {
+  mut int tag = 22;
+  std::unique_ptr<int> token;
+  Owner() : token(std::make_unique<int>(5)) {}
+};
+)";
+  for (const bool counted : {false, true}) {
+    const std::string type = counted ? "std::string_view" : "c_string";
+    const std::string construct =
+        counted ? "std::assume_string_view(&bytes[std::size_t(0)], "
+                  "std::size_t(3), owner)"
+                : "std::assume_c_string(&bytes[std::size_t(0)], owner)";
+    const std::string use =
+        counted ? "int(result.size())" : "(result == nullptr ? 0 : 1)";
+    const std::array badBodies{
+        type +
+            " escape() { Owner owner{}; char bytes[3] = {'a', '\\0', 'b'}; "
+            "unsafe { return " +
+            construct + "; } } int main() { return 0; }",
+        "int main() { mut Owner owner{}; char bytes[3] = {'a', '\\0', 'b'}; " +
+            type + " result = unsafe { " + construct +
+            " }; owner.tag = 23; return " + use + "; }",
+        "void consume(Owner value) {} int main() { mut Owner owner{}; char "
+        "bytes[3] = {'a', '\\0', 'b'}; " +
+            type + " result = unsafe { " + construct +
+            " }; consume(std::move(owner)); return " + use + "; }",
+    };
+    for (std::size_t index = 0; index < badBodies.size(); ++index) {
+      const auto invalid =
+          analyze("invalid-text-owner-loan.gti", owner + badBodies[index]);
+      require(!invalid.canGenerateCode() &&
+                  std::any_of(
+                      invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                      [index](const auto &diagnostic) {
+                        return diagnostic.phase == DiagnosticPhase::Semantics &&
+                               diagnostic.code ==
+                                   (index == 0 ? "GTI-S2045" : "GTI-S2017");
+                      }),
+              "text cannot escape, mutate or move its ordinary class witness");
+    }
+    const auto unsupported =
+        analyze("unsupported-text-owner-layout.gti", std::string(R"(
+#include <std/memory>
+#include <std/string_view>
+struct Owner {
+  int tag = 22;
+  virtual int observe() { return this.tag; }
+  ~Owner() {}
+};
+int main() {
+  Owner owner{};
+  char bytes[3] = {'a', '\0', 'b'};
+)") + type + " result = unsafe { " + construct + " }; return " +
+                                                         use + "; }");
+    require(unsupported.canGenerateCode(),
+            "unsupported text witness layout is valid source");
+    const auto pending = verifiedLoweredProgram(
+        gti_test::lowerProgram(unsupported, unsupported.mir, unsupported.mir),
+        issues);
+    require(
+        pending && !planLlvmAdmission(*pending).admitted(),
+        "text construction does not admit unsupported class witness layouts");
+  }
 }
 
 void hostedArgumentsContract(const std::filesystem::path &repository) {
@@ -1163,6 +1311,22 @@ int main(int argc, char **argv) {
                                   false, SemanticType::CString);
     unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]), true,
                                   true, SemanticType::CString);
+    for (const bool raw : {false, true}) {
+      unsafeReferenceReturnContract(
+          std::filesystem::canonical(argv[1]), true, raw,
+          SemanticType::StringView,
+          "tests/fixtures/llvm_hosted_class_owner_text_return.gti");
+      unsafeReferenceReturnContract(
+          std::filesystem::canonical(argv[1]), true, raw, SemanticType::CString,
+          "tests/fixtures/llvm_hosted_class_owner_text_return.gti");
+    }
+    for (const auto fixture :
+         {"tests/fixtures/llvm_hosted_unsafe_reference_invoke_readonly.gti",
+          "tests/fixtures/llvm_hosted_unsafe_reference_invoke_mutable.gti"})
+      unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]), false,
+                                    false, SemanticType::StringView, fixture,
+                                    true);
+    classOwnerTextContract(std::filesystem::canonical(argv[1]));
     classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]),
                                    "llvm_hosted_class_owner_reference.gti");
     classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]),
