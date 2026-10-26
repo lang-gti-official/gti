@@ -3716,14 +3716,20 @@ destruction is not a substitute for releasing checked ownership resources.
 
 The private `verifyMirBodyWithPlaceQueries` entry observes the same body verifier
 used by ordinary validation. It does not accept a cached proof or mutate MIR.
-Its first existing-storage profile covers direct integer/bool/char scalar roots
-whose initialization and ownership are both represented by the current
-canonical transfers. Unsupported storage and explicit scalar lifetime drops
-remain `Unknown`, with an `Unproven` reason.
+Its existing-storage profile covers direct integer/bool/char scalar roots and
+direct non-borrowed-state owned roots with one exact binding/value-drop obligation.
+The canonical scalar-initialization or lifecycle transfer supplies initialization;
+ownership and the ordinary loan verifier's read-access check supply the other
+required facts. Unsupported storage remains `Unknown`, with an `Unproven` reason.
 
 Scalar worklist solving and stable-state observation replay share one transfer
 implementation. Ownership observations run only during the existing stable
-validation replay. A requested readable point requires both proofs; an inactive
+validation replay. Lifecycle observations use its existing stable replay, never
+the path-refined exception used for a consuming operation. Borrow observations
+reuse the ordinary read-access check and replace a block's observations when its
+joined entry changes; cuts are reconsidered only after actual loan-state writes.
+Neither observation changes a transfer or grants a verifier exception.
+A requested readable point requires all applicable proofs; an inactive
 point does not pretend to distinguish a moved/dropped/never-initialized history
 that its current facts cannot establish. Required cuts retain consuming and
 ambiguous CFG-entry boundaries even when later reinitialization restores

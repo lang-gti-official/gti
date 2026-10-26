@@ -4409,6 +4409,13 @@ place-bearing edge transport. Ranges are block-local and end at lexical or
 value replacement boundaries; there is no invented cross-block value merge.
 Expanded pack elements, receivers, broader optimized representations and the
 full two-host failure/callback debugger matrix remain open.
+Managed Linux debugger checks stage distribution LLDB22 and its missing
+dependencies under the run's build directory, retaining package and loaded-file
+hashes without installing host packages. LLDB21 reaches source breakpoints but
+does not resolve this private-language compilation unit's locals; the same
+unchanged binary exposes them with LLDB22. This compatibility check is distinct
+from the complete exact-source O0/O3 debugger gates. GTI does not relabel its
+DWARF language as C/C++ to accommodate an older debugger.
 
 The typed diagnostic pipeline places bounded load/store null/alignment checks
 before optimization, and stock Address or Thread instrumentation after it.

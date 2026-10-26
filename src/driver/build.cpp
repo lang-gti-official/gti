@@ -3319,7 +3319,8 @@ resolveLlvmNativeRuntimeImpl(const std::string &compiler,
            *relative.begin() != "..";
   };
   if (!std::filesystem::is_directory(plan.resourceDirectory) ||
-      !std::filesystem::is_directory(plan.runtimeDirectory) ||
+      (producerTarget->os == "macos" &&
+       !std::filesystem::is_directory(plan.runtimeDirectory)) ||
       !below(plan.resourceDirectory, plan.runtimeDirectory))
     return fail("selected compiler-rt directory is unavailable or outside "
                 "Clang's resource root");
@@ -3466,6 +3467,30 @@ resolveLlvmNativeRuntimeImpl(const std::string &compiler,
     return fail(
         "cannot establish exact Clang frontend and linker command identity");
   plan.linkTrace = linkers.front();
+  if (producerTarget->os == "linux") {
+    // Some distribution Clang drivers report a nonexistent per-target runtime
+    // directory while selecting the installed compiler-rt layout at link time.
+    // The driver's concrete link plan, not a guessed directory name, owns that
+    // choice. Retain one exact resource-contained root for hashing and checks.
+    std::set<std::filesystem::path> selectedRuntimeRoots;
+    const auto resourceLibraries = plan.resourceDirectory / "lib";
+    for (const auto &argument : plan.linkTrace) {
+      const std::filesystem::path path(argument);
+      if (!path.is_absolute() || !std::filesystem::is_regular_file(path))
+        continue;
+      const auto canonical = std::filesystem::weakly_canonical(path);
+      if (below(resourceLibraries, path)) {
+        if (!below(resourceLibraries, canonical))
+          return fail(
+              "selected compiler-rt link escapes Clang's resource root");
+        selectedRuntimeRoots.insert(canonical.parent_path());
+      }
+    }
+    if (selectedRuntimeRoots.size() != 1)
+      return fail("Clang's native link plan requires one exact installed "
+                  "compiler-rt directory");
+    plan.runtimeDirectory = *selectedRuntimeRoots.begin();
+  }
   const auto frontend =
       std::filesystem::weakly_canonical(compilers.front().front());
   if (!std::filesystem::equivalent(plan.compilerExecutable, frontend))

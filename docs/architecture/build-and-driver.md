@@ -2177,7 +2177,11 @@ For a non-None request the driver resolves matching upstream Clang and compiler-
 before source loading, cache restoration or publication. It records the selected
 compiler and implementation files, reported flat default configuration, resource
 and runtime roots, exact runtime files, native link plan and SDK library/settings
-identity. It replays that identified configuration explicitly; a different Clang
+identity. On Linux the actual Clang link plan determines one installed runtime
+directory beneath its resource library root; distributions may report a missing
+per-target directory while selecting an installed alternate layout. Multiple
+runtime roots or links escaping the resource tree reject rather than guessing.
+It replays that identified configuration explicitly; a different Clang
 version, opaque configuration/dependency graph, or unavailable runtime rejects.
 Native preprocessing, C/C++ object compilation and final linking consume the same
 resolved arguments. Bounded UndefinedMemory compiles native providers with only

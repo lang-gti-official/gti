@@ -18,7 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--evidence", required=True, type=Path)
-    parser.add_argument("--package", default="lldb-21")
+    parser.add_argument("--package", default="lldb-22")
     args = parser.parse_args()
     root = args.root.resolve()
     evidence = args.evidence.resolve()

@@ -869,6 +869,136 @@ int main() { return probe(4, true); }
   }
 }
 
+void testDebugLifetimeAndBorrowAvailability() {
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("debug-lifetime-availability.gti", R"gti(
+#include <std/memory>
+class Owned {
+public:
+  mut int value = 3;
+  ~Owned() { this.value = 0; }
+};
+void lifetime() {
+  Owned first{};
+  Owned second = std::move(first);
+}
+int borrowing() {
+  mut int local = 4;
+  { mut int& alias = local; alias += 1; }
+  return local;
+}
+int main() { lifetime(); return borrowing() - 5; }
+)gti",
+                   {library / "prelude.gti"}, {}, {library});
+  expect(frontend.canGenerateCode(),
+         "lifetime/borrow observation fixture lowers");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  using Query = lang::mir_detail::MirExistingPlaceQuery;
+  using State = lang::mir_detail::MirDebugReadability;
+  bool sawLifetime = false;
+  bool sawBorrow = false;
+  for (const auto &hir : frontend.hir.functionInstances()) {
+    if (!hir.source || (hir.source->name().lexeme != "lifetime" &&
+                        hir.source->name().lexeme != "borrowing"))
+      continue;
+    const bool lifetime = hir.source->name().lexeme == "lifetime";
+    const auto *function = frontend.mir.findFunctionInstance(hir.id);
+    const auto &body = function->body;
+    lang::MirPlaceId selected = 0;
+    for (const auto &place : body.places) {
+      const auto *symbol =
+          frontend.semantics.database().findSymbol(place.symbol);
+      if (place.root == lang::MirPlaceRootKind::Binding &&
+          place.projections.empty() && symbol &&
+          symbol->name == (lifetime ? "first" : "local"))
+        selected = place.id;
+    }
+    expect(selected != 0, "availability selects the exact source binding");
+    if (!selected)
+      continue;
+    std::vector<Query> requests;
+    std::vector<State> expected;
+    std::vector<Query> cuts;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto append = [&](bool after, State state) {
+          requests.push_back({selected, {block.id, instruction.id, after}});
+          expected.push_back(state);
+        };
+        if (lifetime) {
+          for (const auto &event : instruction.lifecycle) {
+            const auto *source = body.findDropObligation(event.source);
+            const auto *target = body.findDropObligation(event.target);
+            if ((event.kind == lang::MirLifecycleEventKind::Initialize ||
+                 event.kind == lang::MirLifecycleEventKind::Reparent) &&
+                target && target->place == selected) {
+              append(false, State::Unavailable);
+              append(true, State::DefinitelyReadable);
+              sawLifetime = true;
+            }
+            if (event.kind == lang::MirLifecycleEventKind::Move && source &&
+                source->place == selected) {
+              append(false, State::DefinitelyReadable);
+              append(true, State::Unavailable);
+              cuts.push_back(requests.back());
+            }
+          }
+        } else if (instruction.loan) {
+          const auto *loan = body.findLoan(*instruction.loan);
+          const auto *origin = loan ? body.findPlace(loan->source) : nullptr;
+          if (!loan || loan->access != lang::AccessMode::Mutable || !origin ||
+              origin->key != body.findPlace(selected)->key)
+            continue;
+          if (instruction.kind == lang::MirInstructionKind::Borrow) {
+            append(false, State::DefinitelyReadable);
+            append(true, State::Unavailable);
+            cuts.push_back(requests.back());
+            sawBorrow = true;
+          } else if (instruction.kind == lang::MirInstructionKind::EndBorrow) {
+            append(false, State::Unavailable);
+            append(true, State::DefinitelyReadable);
+          }
+        }
+      }
+    expect(requests.size() >= 4 && !cuts.empty(),
+           "queries cover both availability transitions and interior cuts");
+    const auto result = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+        body, function->id, requests);
+    expect(result.verification.valid() &&
+               result.requested.size() == expected.size(),
+           "observations preserve the ordinary verifier result");
+    for (std::size_t i = 0; i < result.requested.size(); ++i)
+      expect(result.requested[i].readability == expected[i],
+             "canonical lifecycle and loan states determine availability");
+    for (const auto &cut : cuts)
+      expect(std::find(result.requiredStops.begin(), result.requiredStops.end(),
+                       cut) != result.requiredStops.end(),
+             "inactive lifetime or exclusive borrowing cuts a source range");
+    auto forged = body;
+    if (lifetime && !forged.dropObligations.empty())
+      forged.dropObligations.front().place = 0;
+    else if (!forged.loans.empty())
+      forged.loans.front().source = 0;
+    const auto rejected = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+        forged, function->id, requests);
+    expect(!rejected.verification.valid() && rejected.requiredStops.empty() &&
+               std::all_of(rejected.requested.begin(), rejected.requested.end(),
+                           [](const auto &fact) {
+                             return fact.readability == State::Unknown;
+                           }),
+           "forged lifecycle/borrow identities cannot mint availability");
+  }
+  expect(sawLifetime && sawBorrow, "both canonical authorities are exercised");
+}
+
 void testInitializerSourceDebugProducers() {
   const auto syntax =
       lang::Frontend({.stopAfter = lang::FrontendPhase::Parsing})
@@ -2785,6 +2915,7 @@ int main() {
   testFrontendSourceDebugProfile();
   testMirSourceDebugTransport();
   testDebugPlaceAvailability();
+  testDebugLifetimeAndBorrowAvailability();
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();

@@ -123,7 +123,7 @@ def main():
             assert re.search(r"\blocal = 10\b", transcript)
         else:
             for name in ("input", "local"):
-                assert re.search(rf"\b{name} = (4\b|<variable not available>)", transcript), transcript
+                assert re.search(rf"\b{name} = 4\b", transcript), transcript
             assert re.search(r"frame #\d+.*(?:\[inlined\].*inspect|inspect.*\[inlined\])", transcript), transcript
         assert re.search(r"frame #\d+.*inspect", transcript)
         assert re.search(r"frame #\d+.*main", transcript)

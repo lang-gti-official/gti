@@ -274,6 +274,17 @@ int release_count(void) { return released; }
                    !first.nativeInstrumentation->runtimeFiles.empty()),
               "generated instrumented build must retain its resolved runtime "
               "identity");
+      if (first.nativeInstrumentation) {
+        const auto &runtime = *first.nativeInstrumentation;
+        require(std::filesystem::is_directory(runtime.runtimeDirectory),
+                "resolved runtime directory must be installed, not a missing "
+                "per-target directory reported by Clang");
+        for (const auto &file : runtime.runtimeFiles)
+          require(std::filesystem::is_regular_file(file) &&
+                      file.parent_path() == runtime.runtimeDirectory,
+                  "runtime identity must bind files in the actual selected "
+                  "link-plan directory");
+      }
       execute({});
       const auto representation = read(object);
       std::filesystem::remove(output);
