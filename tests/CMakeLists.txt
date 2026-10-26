@@ -1792,6 +1792,22 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(llvm_native_c_aggregate_execution PROPERTIES TIMEOUT 1200)
   gti_register_llvm_evidence_manifest(llvm_native_c_aggregate_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_aggregate_oracle_test.py")
+  add_test(NAME llvm_native_c_storage_execution
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_storage_oracle_test.py"
+      "$<TARGET_FILE:gti>" --emitter "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-storage-evidence")
+  set_tests_properties(llvm_native_c_storage_execution PROPERTIES TIMEOUT 1200)
+  gti_register_llvm_evidence_manifest(llvm_native_c_storage_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_storage_oracle_test.py")
+  add_test(NAME llvm_native_c_storage_cost
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_cost_test.py"
+      "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --cc "${CMAKE_C_COMPILER}" --storage
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-storage-cost")
+  set_tests_properties(llvm_native_c_storage_cost PROPERTIES TIMEOUT 180)
   add_test(NAME llvm_native_c_indirect_cost
     COMMAND "${Python3_EXECUTABLE}"
       "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_cost_test.py"

@@ -21,19 +21,23 @@ def main():
     family = parser.add_mutually_exclusive_group()
     family.add_argument("--indirect", action="store_true")
     family.add_argument("--aggregate", action="store_true")
+    family.add_argument("--storage", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     fixture = root / "tests/fixtures/llvm_native_c_abi"
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    stem = ("aggregate_cost" if args.aggregate else
+    stem = ("storage_cost" if args.storage else
+            "aggregate_cost" if args.aggregate else
             "indirect_cost" if args.indirect else "direct_cost")
     report = {"head": subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip(),
         "platform": platform.platform(), "cc": args.cc,
-        "family": ("passive-aggregate" if args.aggregate else
+        "family": ("foreign-storage" if args.storage else
+                   "passive-aggregate" if args.aggregate else
                    "scalar-indirect" if args.indirect else "direct"),
-        "calls_per_process": (40000003 if args.aggregate else
+        "calls_per_process": (20000001 if args.storage else
+                              40000003 if args.aggregate else
                               40000002 if args.indirect else 40000001),
         "measured": args.measure,
         "measurement": "whole process including startup; same C oracle and checked additions",
@@ -74,7 +78,8 @@ def main():
     host = output / "host.o"
     run([args.cc, "-std=c17", "-O3", "-Wall", "-Wextra", "-Werror",
          "-I", root / "runtime/include", "-c",
-         fixture / ("aggregate_cost.c" if args.aggregate else "direct_cost.c"), "-o", host], "host")
+         fixture / ("storage_cost.c" if args.storage else
+                    "aggregate_cost.c" if args.aggregate else "direct_cost.c"), "-o", host], "host")
     native, baseline = output / "native", output / "baseline"
     run([args.compiler.resolve(), fixture / (stem + ".gti"), "--backend", "llvm",
          "-O3", "-o", native, "--", host], "build-native", measured_build=True)
@@ -118,7 +123,7 @@ def main():
         report["material_regression_threshold"] = 1.25
         save()
         if ratio > 1.25:
-            raise RuntimeError(f"material direct-call runtime cost requires investigation: {ratio:.3f}")
+            raise RuntimeError(f"material {report['family']} runtime cost requires investigation: {ratio:.3f}")
     save()
     print(f"PASS: {report['family']} C cost {'measurement' if args.measure else 'correctness only'}; {output / 'cost.json'}")
 

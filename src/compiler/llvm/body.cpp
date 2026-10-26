@@ -1700,6 +1700,7 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     global->setAlignment(llvm::Align(layout.alignment));
     globals.emplace(step.symbol, global);
   }
+  declareNativeCStorage(session, globals);
   for (auto address : admission.requiredBodies())
     static_cast<void>(function(address));
   for (auto address : admission.requiredBodies())

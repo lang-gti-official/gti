@@ -83,6 +83,7 @@ enum class Shape {
   NativeCScalarValue,
   NativeCCountedInput,
   NativeCAggregateImport,
+  NativeCStorage,
   NativeCFunctionValue,
   NativeCFunctionImport,
   NativeCScalarIndirect,

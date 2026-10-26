@@ -1022,11 +1022,172 @@ void checkNativeReachability(Session &session, bool conservative) {
           "root controls must exercise source-C and malformed call fallbacks");
 }
 
+void checkStorageImports(Session &session,
+                         const VerifiedLoweredProgram &input) {
+  const auto &program = session.program().mir();
+  const auto &target = session.program().target();
+  std::map<SymbolId, llvm::GlobalVariable *> globals;
+  declareNativeCStorage(session, globals);
+  for (const auto &storage : program.foreignStorageDeclarations()) {
+    require(nativeCStorageImportContract(program, target, storage),
+            "public storage requires its exact bounded import witness");
+    auto forged = storage;
+    forged.externalSymbol += "_forged";
+    require(!nativeCStorageImportContract(program, target, forged),
+            "forged foreign storage name must reject");
+    forged = storage;
+    forged.type = SemanticType::StringView;
+    require(!nativeCStorageImportContract(program, target, forged),
+            "forged foreign storage type must reject");
+    auto *global = globals.at(storage.symbol);
+    require(!global->isConstant() && !global->hasInitializer() &&
+                global->hasExternalLinkage() &&
+                global->getAlign() ==
+                    session.layouts().get(storage.type).alignment,
+            "foreign storage is external nonconstant aligned data, never GTI "
+            "init/drop");
+  }
+  rejects<std::logic_error>([&] { declareNativeCStorage(session, globals); });
+  require(!program.foreignStorageDeclarations().empty(),
+          "missing foreign storage control");
+  Session collision(input, session.options());
+  static_cast<void>(llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(collision.context()),
+                              false),
+      llvm::GlobalValue::ExternalLinkage,
+      program.foreignStorageDeclarations().front().externalSymbol,
+      collision.module()));
+  std::map<SymbolId, llvm::GlobalVariable *> conflicting;
+  rejects<std::logic_error>(
+      [&] { declareNativeCStorage(collision, conflicting); });
+  unsigned loads = 0, assigns = 0, modifies = 0;
+  for (const auto &function : program.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.unsafeOperation != UnsafeOperationKind::ForeignStorage ||
+            stage.kind == MirInstructionKind::Lifecycle)
+          continue;
+        std::cout << "storage stage " << function.id << '/' << block.id << '/'
+                  << stage.id << " kind=" << static_cast<unsigned>(stage.kind)
+                  << " witness="
+                  << nativeCStorageAccessContract(program, target,
+                                                  function.body, stage)
+                  << '\n';
+        require(
+            nativeCStorageAccessContract(program, target, function.body, stage),
+            "actual foreign storage stage must retain exact structural proof");
+        if (loads == 0 && assigns == 0) {
+          const auto malformed = [&](auto change) {
+            auto body = function.body;
+            MirInstruction *selected = nullptr;
+            for (auto &block : body.blocks)
+              for (auto &candidate : block.instructions)
+                if (candidate.id == stage.id)
+                  selected = &candidate;
+            require(selected != nullptr, "missing cloned storage stage");
+            change(body, *selected);
+            require(
+                !nativeCStorageAccessContract(program, target, body, *selected),
+                "forged or mixed storage stage cannot acquire raw permission");
+          };
+          malformed([](auto &, auto &value) {
+            value.unsafeOperation = UnsafeOperationKind::RawDereference;
+          });
+          malformed([](auto &, auto &value) {
+            value.kind = MirInstructionKind::Call;
+          });
+          malformed([](auto &, auto &value) {
+            value.intrinsic = IntrinsicKind::ObjectDestroy;
+          });
+          malformed([](auto &, auto &value) { value.functionTarget = 1; });
+          malformed([](auto &, auto &value) { value.rawMemoryAccess = false; });
+          malformed([](auto &, auto &value) {
+            value.receiver = value.operands.front();
+          });
+          malformed([](auto &body, auto &value) {
+            auto extra = body.places.front();
+            extra.id = body.places.size() + 1;
+            extra.root = MirPlaceRootKind::Value;
+            extra.foreignStorage = false;
+            extra.capture = 0;
+            extra.type = SemanticType::Int32;
+            extra.projections = {{.kind = MirProjectionKind::RawDereference}};
+            body.places.push_back(extra);
+            value.operands.push_back({.kind = MirOperandKind::Copy,
+                                      .place = extra.id,
+                                      .type = extra.type});
+          });
+          malformed([](auto &body, auto &value) {
+            auto extra = body.places.front();
+            extra.id = body.places.size() + 1;
+            extra.root = MirPlaceRootKind::Symbol;
+            extra.foreignStorage = true;
+            extra.symbol = 0;
+            extra.capture = 0;
+            extra.type = SemanticType::Int32;
+            extra.projections.clear();
+            body.places.push_back(extra);
+            value.operands.push_back({.kind = MirOperandKind::Copy,
+                                      .place = extra.id,
+                                      .type = extra.type});
+          });
+          malformed([](auto &, auto &value) {
+            value.operands.push_back({.kind = MirOperandKind::Value,
+                                      .type = SemanticType::StringView});
+          });
+          for (const auto &place : function.body.places)
+            if (place.foreignStorage) {
+              require(
+                  nativeCStoragePlaceContract(program, target, function.body,
+                                              place),
+                  "actual foreign place must bind canonical root and storage");
+              auto forged = place;
+              forged.symbol = 0;
+              require(!nativeCStoragePlaceContract(program, target,
+                                                   function.body, forged),
+                      "forged storage symbol cannot acquire a place witness");
+              forged = place;
+              forged.capture = 1;
+              require(!nativeCStoragePlaceContract(program, target,
+                                                   function.body, forged),
+                      "foreign storage cannot grant capture policy");
+              forged = place;
+              forged.type = SemanticType::StringView;
+              require(!nativeCStoragePlaceContract(program, target,
+                                                   function.body, forged),
+                      "forged storage type cannot acquire a place witness");
+              forged = place;
+              forged.projections.push_back(
+                  {.kind = MirProjectionKind::Field, .field = 0});
+              require(!nativeCStoragePlaceContract(program, target,
+                                                   function.body, forged),
+                      "forged projection cannot acquire a place witness");
+            }
+        }
+        loads += stage.kind == MirInstructionKind::Load;
+        assigns += stage.kind == MirInstructionKind::Assign;
+        modifies += stage.kind == MirInstructionKind::Modify;
+      }
+  const auto admission = planLlvmAdmission(input, session.options());
+  for (const auto &use : admission.requirements())
+    if (use.required && use.entry->state == LlvmCoverageState::Pending &&
+        (!use.implementedShape ||
+         use.implementedShape->state != LlvmCoverageState::Implemented))
+      std::cout << "remaining " << use.entry->key() << " block=" << use.block
+                << " instruction=" << use.instruction << '\n';
+  require(loads && assigns,
+          "storage fixture needs actual verified loads and assignments");
+  std::cout << "storage counts " << loads << '/' << assigns << '/' << modifies
+            << '\n';
+}
+
 int main(int argc, char **argv) {
   try {
     const bool contracts = argc == 6 && std::string(argv[5]) == "--contracts";
     const bool preflight =
         argc == 6 && std::string(argv[5]) == "--source-preflight";
+    const bool storageContracts =
+        argc == 6 && std::string(argv[5]) == "--storage-contracts";
     const bool storage = argc == 6 && std::string(argv[5]) == "--storage";
     const bool text = argc == 6 && std::string(argv[5]) == "--text-contracts";
     const bool aggregates =
@@ -1037,10 +1198,11 @@ int main(int argc, char **argv) {
         argc == 6 && std::string(argv[5]) == "--conservative-reachability";
     const bool concurrent =
         argc == 6 && std::string(argv[5]) == "--thread-callbacks";
-    require(argc == 5 || (argc == 6 &&
-                          (std::string(argv[5]) == "--callbacks" ||
-                           concurrent || contracts || preflight || storage ||
-                           text || aggregates || reachability || conservative)),
+    require(argc == 5 ||
+                (argc == 6 &&
+                 (std::string(argv[5]) == "--callbacks" || concurrent ||
+                  contracts || preflight || storage || text || aggregates ||
+                  reachability || conservative || storageContracts)),
             "usage: test fixture.gti output.o output.ll O[0-3] "
             "[--callbacks|--thread-callbacks]");
     const auto input = fixture(argv[1], concurrent, argc == 6);
@@ -1055,7 +1217,9 @@ int main(int argc, char **argv) {
       std::cout << "PASS: exact native call dependency roots\n";
       return 0;
     }
-    if (aggregates) {
+    if (storageContracts) {
+      checkStorageImports(session, input);
+    } else if (aggregates) {
       checkAggregateImports(session);
       emitSourcePreflight(session, input);
     } else if (text) {

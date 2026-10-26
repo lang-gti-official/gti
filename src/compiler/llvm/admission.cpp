@@ -1429,7 +1429,11 @@ public:
                 ? std::optional(Shape::PassiveReference)
                 : placeClassShape(place));
       if (place.foreignStorage)
-        add(Shape::NativeCall);
+        add(Shape::NativeCall,
+            native_llvm::nativeCStoragePlaceContract(program, nativeTarget, mir,
+                                                    place)
+                ? std::optional(Shape::NativeCStorage)
+                : std::nullopt);
     }
     for (const auto &loan : mir.loans) {
       const auto *origin = mir.findPlace(loan.source);
@@ -1720,9 +1724,13 @@ public:
         for (const auto &operand : stage.operands)
           if (const auto *place = mir.findPlace(operand.place))
             rawAccess |= primitiveRawAccess(mir, *place);
+        const bool nativeStorage =
+            native_llvm::nativeCStorageAccessContract(program, nativeTarget,
+                                                      mir, stage);
         if (stage.rawMemoryAccess)
           add(Shape::RawMemory,
-              extendedRaw
+              nativeStorage ? std::optional(Shape::NativeCStorage)
+              : extendedRaw
                   ? (validRaw ? std::optional(Shape::NativeClassRawAccess)
                               : std::nullopt)
               : rawAccess ? std::optional(Shape::PrimitiveRawAccess)
@@ -1754,7 +1762,10 @@ public:
               callee->requiresUnsafe &&
               stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall;
           add(stage.unsafeOperation,
-              stage.unsafeOperation == UnsafeOperationKind::UnionMember
+              stage.unsafeOperation == UnsafeOperationKind::ForeignStorage &&
+                      nativeStorage
+                  ? std::optional(Shape::NativeCStorage)
+              : stage.unsafeOperation == UnsafeOperationKind::UnionMember
                   ? classShape(stage.info.type).has_value() ? classShape(stage.info.type)
                     : [&]() -> std::optional<Shape> {
                         if (stage.destination)
@@ -2107,7 +2118,11 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   inventory.required = true;
   for (const auto &storage : mir.foreignStorageDeclarations()) {
     inventory.type(storage.type);
-    inventory.add(Shape::NativeCall);
+    inventory.add(
+        Shape::NativeCall,
+        native_llvm::nativeCStorageImportContract(mir, input.target(), storage)
+            ? std::optional(Shape::NativeCStorage)
+            : std::nullopt);
   }
   for (const auto &payload : mir.payloadEnums()) {
     inventory.required = closure.conservative;

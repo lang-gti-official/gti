@@ -169,6 +169,30 @@ bool scalarBoundaryType(const SemanticType &type) {
     return false;
   }
 }
+
+// Structural family shared by passive C imports and foreign object storage.
+// Canonical layout, field identities and target validity are checked
+// separately.
+bool passiveNativeCStorageType(const MirProgram &program,
+                               const SemanticType &type, unsigned depth = 0) {
+  if (depth > 256)
+    return false;
+  if (type.kind == SemanticType::Class) {
+    for (const auto &record : program.classInstances())
+      if (record.type == type)
+        return std::all_of(record.declaredFields.begin(),
+                           record.declaredFields.end(), [&](const auto &field) {
+                             return passiveNativeCStorageType(
+                                 program, field.type, depth + 1);
+                           });
+    return false;
+  }
+  if (type.kind == SemanticType::Array)
+    return type.arguments.size() == 1 &&
+           passiveNativeCStorageType(program, type.arguments[0], depth + 1);
+  return scalarBoundaryType(type) && type.kind != SemanticType::Void &&
+         type.kind != SemanticType::CString;
+}
 } // namespace
 
 bool nativeCScalarImportContract(const MirProgram &program,
@@ -205,26 +229,6 @@ bool nativeCAggregateImportContract(const MirProgram &program,
   // The canonical value contract owns layout/identity/target validity. This
   // profile only bounds the already verified representation family. Existing
   // immutable counted inputs compose; native function fields remain excluded.
-  const auto storage = [&](const auto &self, const SemanticType &type,
-                           unsigned depth) -> bool {
-    if (depth > 256)
-      return false;
-    if (type.kind == SemanticType::Class) {
-      for (const auto &record : program.classInstances())
-        if (record.type == type)
-          return std::all_of(record.declaredFields.begin(),
-                             record.declaredFields.end(),
-                             [&](const auto &field) {
-                               return self(self, field.type, depth + 1);
-                             });
-      return false;
-    }
-    if (type.kind == SemanticType::Array)
-      return type.arguments.size() == 1 &&
-             self(self, type.arguments[0], depth + 1);
-    return scalarBoundaryType(type) && type.kind != SemanticType::Void &&
-           type.kind != SemanticType::CString;
-  };
   bool aggregate = false;
   const auto boundary = [&](const SemanticType &type, bool input) {
     if (input && type.kind == SemanticType::StringView)
@@ -234,7 +238,7 @@ bool nativeCAggregateImportContract(const MirProgram &program,
     if (type.kind != SemanticType::Class)
       return false;
     aggregate = true;
-    return storage(storage, type, 0);
+    return passiveNativeCStorageType(program, type);
   };
   return boundary(function.returnType, false) &&
          std::all_of(function.parameterTypes.begin(),
@@ -383,6 +387,88 @@ bool nativeCStorageContract(const MirProgram &program, const TargetInfo &target,
          storage.type.kind != SemanticType::Array &&
          nativeCValueContract(program, target, storage.type,
                               NativeCValueRole::Storage);
+}
+
+bool nativeCStorageImportContract(const MirProgram &program,
+                                  const TargetInfo &target,
+                                  const ForeignStorageInfo &storage) {
+  return nativeCStorageContract(program, target, storage) &&
+         (nativeCScalarFunctionValueContract(program, target, storage.type) ||
+          passiveNativeCStorageType(program, storage.type));
+}
+
+bool nativeCStoragePlaceContract(const MirProgram &program,
+                                 const TargetInfo &target, const MirBody &body,
+                                 const MirPlace &place) {
+  const auto *selected = body.findPlace(place.id);
+  const auto *storage = program.findForeignStorage(place.symbol);
+  if (!selected || *selected != place || !place.foreignStorage ||
+      place.root != MirPlaceRootKind::Symbol || place.capture != 0 ||
+      !storage || !nativeCStorageImportContract(program, target, *storage) ||
+      !std::all_of(place.projections.begin(), place.projections.end(),
+                   [](const auto &projection) {
+                     return projection.kind == MirProjectionKind::Field ||
+                            projection.kind == MirProjectionKind::Index;
+                   }))
+    return false;
+  return std::any_of(
+      body.places.begin(), body.places.end(), [&](const auto &root) {
+        return root.foreignStorage && root.root == MirPlaceRootKind::Symbol &&
+               root.symbol == storage->symbol && root.capture == 0 &&
+               root.projections.empty() && root.type == storage->type;
+      });
+}
+
+bool nativeCStorageAccessContract(const MirProgram &program,
+                                  const TargetInfo &target, const MirBody &body,
+                                  const MirInstruction &instruction) {
+  if (instruction.tombstone ||
+      instruction.unsafeOperation != UnsafeOperationKind::ForeignStorage ||
+      !instruction.rawMemoryAccess || instruction.receiver ||
+      instruction.intrinsic != IntrinsicKind::None ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.nativeCallbackAdapter ||
+      instruction.threadTaskAdapter ||
+      (instruction.kind != MirInstructionKind::Load &&
+       instruction.kind != MirInstructionKind::Assign &&
+       instruction.kind != MirInstructionKind::Modify))
+    return false;
+  bool selected = false;
+  for (const auto &block : body.blocks)
+    for (const auto &candidate : block.instructions)
+      if (candidate.id == instruction.id)
+        selected = candidate == instruction;
+  if (!selected)
+    return false;
+  bool foreign = false;
+  const auto place = [&](MirPlaceId id) {
+    const auto *value = body.findPlace(id);
+    if (!value || value->capture != 0)
+      return false;
+    if (value->foreignStorage) {
+      foreign = true;
+      return nativeCStoragePlaceContract(program, target, body, *value);
+    }
+    // A valid foreign object never authorizes a second raw access. Ordinary
+    // local sources/destinations retain their independently verified policy.
+    return std::all_of(value->projections.begin(), value->projections.end(),
+                       [](const auto &projection) {
+                         return projection.kind == MirProjectionKind::Field ||
+                                projection.kind == MirProjectionKind::Index;
+                       });
+  };
+  if (instruction.destination && !place(*instruction.destination))
+    return false;
+  for (const auto &operand : instruction.operands) {
+    if (operand.place && !place(operand.place))
+      return false;
+    if (!nativeCValueContract(program, target, operand.type,
+                              NativeCValueRole::Storage) ||
+        !(nativeCScalarFunctionValueContract(program, target, operand.type) ||
+          passiveNativeCStorageType(program, operand.type)))
+      return false;
+  }
+  return foreign;
 }
 
 namespace {

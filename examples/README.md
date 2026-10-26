@@ -1,5 +1,21 @@
 # GTI examples
 
+[`llvm/native-c-storage.gti`](llvm/native-c-storage.gti) reads and updates
+native library globals, then shows that a loaded native function pointer stays
+selected while argument evaluation replaces the library's next function.
+Its ordinary wrapper runs cleanup once. Build from the repository root:
+
+```sh
+cc -std=c17 -O3 -c examples/llvm/native-c-storage-native/state.c -o /tmp/native-state.o
+gti examples/llvm/native-c-storage.gti --backend llvm -O3 -o /tmp/native-state -- /tmp/native-state.o
+/tmp/native-state
+```
+
+It prints `native-state:13,31` and `cleanup`, one per line. The registered
+`llvm_native_c_storage_execution` harness uses this actual example at LLVM
+O0-O3 against C O0/O3 and supported C++20/23 controls. Like other bounded LLVM
+examples, it is outside the numbered full-language census.
+
 [`llvm/native-c-record-values.gti`](llvm/native-c-record-values.gti) receives
 passive C records from native factories, copies and returns them through
 ordinary GTI functions, and passes a fixed-array record back to C. It checks

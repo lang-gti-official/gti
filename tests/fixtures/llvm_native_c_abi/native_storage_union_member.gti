@@ -1,0 +1,9 @@
+[[c_abi]] struct StorageCell { mut int32_t count; mut double weight; };
+[[c_abi]] union StorageBits { mut uint64_t number; mut double real; };
+[[c_abi]] struct StorageState { mut StorageCell cells[2]; mut StorageBits bits; };
+extern "C" { mut StorageState native_state; void native_storage_reset(); }
+int main() {
+  native_storage_reset();
+  unsafe { if (native_state.bits.number != uint64_t(6)) return 1; }
+  return 0;
+}

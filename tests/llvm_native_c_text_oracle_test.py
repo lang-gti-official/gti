@@ -126,7 +126,7 @@ def main():
                         raise RuntimeError(f"source counted stdout mismatch: {name}")
     if args.compiler:
         for source in ("reject_native_record_function_field", "reject_native_record_function_input",
-                       "reject_foreign_storage", "reject_native_indirect"):
+                       "reject_native_storage_function_field", "reject_native_indirect"):
             for level in (0, 3):
                 destination = output / f"{source}-O{level}"
                 sentinel = b"existing native artifact\n"

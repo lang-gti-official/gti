@@ -58,4 +58,20 @@ nativeCIndirectCallContract(const MirProgram &program, const TargetInfo &target,
                                           const TargetInfo &target,
                                           const ForeignStorageInfo &storage);
 
+// Public storage admission bounds the general representation helper. Place and
+// access witnesses consume exact same-body rows and never grant raw-pointee
+// access, capture policy or a different unsafe effect.
+[[nodiscard]] bool
+nativeCStorageImportContract(const MirProgram &program,
+                             const TargetInfo &target,
+                             const ForeignStorageInfo &storage);
+[[nodiscard]] bool nativeCStoragePlaceContract(const MirProgram &program,
+                                               const TargetInfo &target,
+                                               const MirBody &body,
+                                               const MirPlace &place);
+[[nodiscard]] bool
+nativeCStorageAccessContract(const MirProgram &program,
+                             const TargetInfo &target, const MirBody &body,
+                             const MirInstruction &instruction);
+
 } // namespace lang::native_llvm
