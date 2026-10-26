@@ -4822,6 +4822,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         const MirLoanId parent = body.loans[loan - 1].parent;
         if (parent != 0) {
           MirLoanId selectedAlias = 0;
+          bool calleePublishedDependency = false;
           const auto operandFromParent = [&](const MirOperand &operand) {
             // A shared reference that a call published from the declared
             // parent carries that parent's authority; reading through it
@@ -5145,18 +5146,54 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
             // with the carrier shell cannot establish this ancestry.
             const auto &dependency = body.loans[parent - 1];
             const auto &result = body.loans[loan - 1];
+            const auto *stage = callInputDefinition(operand);
+            // A callee's verified construction may grant result exclusion
+            // independently of its shared input address. The parent retains
+            // that input's actual permission and lifetime; program contracts
+            // separately bind the result to the exact callee/constructor.
+            const bool publishedDependency =
+                dependency.access == AccessMode::ReadOnly &&
+                result.kind == MirLoanKind::Stored && result.lifecycleBound &&
+                !result.entry && !result.escapes && !result.twoPhase &&
+                result.access == AccessMode::Mutable &&
+                result.additionalDependencies.empty() &&
+                result.designatedFields.empty() &&
+                instruction.borrowAccess == result.access &&
+                instruction.hirValue == result.producedBy &&
+                instruction.result &&
+                instruction.info.traits.containsBorrowedState &&
+                instruction.borrowArguments.empty() &&
+                instruction.borrowFields.empty() &&
+                ((instruction.kind == MirInstructionKind::Call &&
+                  instruction.intrinsic == IntrinsicKind::None &&
+                  instruction.functionTarget) ||
+                 (instruction.kind == MirInstructionKind::Construct &&
+                  instruction.constructorTarget)) &&
+                stage && stage->callSite == instruction.callSite &&
+                stage->callInputKind == HirCallInputKind::ReadBorrow &&
+                resolved->kind == MirOperandKind::BorrowRead &&
+                ((instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+                  stage->callInputRole == MirCallInputRole::Receiver &&
+                  stage->callInputIndex == 0) ||
+                 (instruction.borrowOrigin == BorrowOriginKind::Argument &&
+                  stage->callInputRole == MirCallInputRole::Argument &&
+                  stage->callInputIndex == instruction.borrowArgument));
+            const AccessMode inputAccess =
+                publishedDependency ? AccessMode::ReadOnly : result.access;
             if ((resolved->kind == MirOperandKind::BorrowRead ||
                  resolved->kind == MirOperandKind::BorrowWrite) &&
-                (result.access == AccessMode::ReadOnly ||
+                (inputAccess == AccessMode::ReadOnly ||
                  resolved->kind == MirOperandKind::BorrowWrite) &&
                 abstractStoredEntry(body, dependency) &&
                 active[parent - 1] == MirLoanFlowState::Active &&
                 sameCanonicalPlace(operandPlace,
                                    canonicalPlace(body, result.source,
                                                   bindingLoans, active)) &&
-                loanPermitsPlace(body, dependency, operandPlace, result.access,
-                                 bindingLoans, active))
+                loanPermitsPlace(body, dependency, operandPlace, inputAccess,
+                                 bindingLoans, active)) {
+              calleePublishedDependency = publishedDependency;
               return true;
+            }
             if (mappedAliasDependency(operandPlace.throughLoan))
               return true;
             if (place != nullptr && place->root == MirPlaceRootKind::Binding) {
@@ -5363,11 +5400,14 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           const MirCanonicalPlace childPlace = canonicalPlace(
               body, body.loans[loan - 1].source, bindingLoans, active);
           const bool fieldMapped = fieldMappedLoans.contains(loan);
+          const AccessMode parentPermission = calleePublishedDependency
+                                                  ? AccessMode::ReadOnly
+                                                  : body.loans[loan - 1].access;
           if (fieldMapped
                   ? !loanPermitsPlace(body, body.loans[parent - 1], childPlace,
-                                      body.loans[loan - 1].access, bindingLoans,
-                                      active)
-                  : (body.loans[parent - 1].access != AccessMode::Mutable &&
+                                      parentPermission, bindingLoans, active)
+                  : (!calleePublishedDependency &&
+                     body.loans[parent - 1].access != AccessMode::Mutable &&
                      body.loans[loan - 1].access != AccessMode::ReadOnly)) {
             return failure(body, owner,
                            "derived loan " + std::to_string(loan) +

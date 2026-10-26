@@ -45,6 +45,34 @@ int main() {
 """
 
 
+STORED_FAILURE = """#include <std/mutex>
+class Payload {
+  int32_t id;
+public:
+  Payload(int32_t id) : id(id) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() { std::println(this.id); }
+};
+class User {
+  std::mutex<Payload>& owner;
+public:
+  User(std::mutex<Payload>& owner) : owner(owner) {}
+  void fail() {
+    auto guard = this.owner.lock();
+    int32_t zero = 0;
+    int32_t failed = 12 / zero;
+  }
+};
+int main() {
+  std::mutex<Payload> owner{Payload(7)};
+  User user{owner};
+  user.fail();
+  return 0;
+}
+"""
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)
@@ -63,12 +91,19 @@ def main() -> None:
         primary, secondary = work / "primary.gti", work / "secondary.gti"
         primary.write_text(FAILURE.replace("DIVISOR", "1"))
         secondary.write_text(FAILURE.replace("DIVISOR", "0"))
+        stored_failure = work / "stored-failure.gti"
+        stored_failure.write_text(STORED_FAILURE)
+        stored_line = STORED_FAILURE.splitlines().index("    int32_t failed = 12 / zero;") + 1
         body_line = FAILURE.splitlines().index("  return 12 / zero;") + 1
         cleanup_line = FAILURE.splitlines().index(
             "    std::println(12 / this.divisor);") + 1
         cases = (
             (root / "tests/fixtures/llvm_mutex_owner_lifetime.gti", (0, "", "")),
             (scalar, (0, "", "")),
+            (root / "tests/fixtures/mutex_stored_receiver.gti", (0, "7\n7\n7\n", "")),
+            (stored_failure, (70, "7\n",
+                              f"stored-failure.gti:{stored_line}: runtime error[GTI-R0002]: "
+                              "division_by_zero in integer_division\n")),
             (primary, (70, "7\n12\n3\n12\n",
                        f"primary.gti:{body_line}: runtime error[GTI-R0002]: "
                        "division_by_zero in integer_division\n")),
@@ -98,7 +133,7 @@ def main() -> None:
                     if actual != expected:
                         raise AssertionError(f"{source.name} {standard} {mode}: "
                                              f"{actual!r} != {expected!r}")
-                print(f"mutex moved cleanup: {standard}/{mode} four cases passed", flush=True)
+                print(f"mutex lifetime cleanup: {standard}/{mode} {len(cases)} cases passed", flush=True)
 
 
 if __name__ == "__main__":

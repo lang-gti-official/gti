@@ -942,6 +942,328 @@ void testVerifierMutations() {
          "guard-read body with no synchronization operation");
 }
 
+void testStoredReceiverPublication() {
+  const std::string source = R"gti(
+#include <std/mutex>
+class User {
+  std::mutex<int32_t>& owner;
+public:
+  User(std::mutex<int32_t>& owner) : owner(owner) {}
+  void use() { auto guard = this.owner.lock(); }
+};
+int main() {
+  std::mutex<int32_t> owner{7};
+  User user{owner};
+  user.use();
+  return 0;
+}
+)gti";
+  const auto frontend = analyze("mutex-stored-receiver.gti", source);
+  if (!frontend.canGenerateCode())
+    printDiagnostics(frontend);
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "a stored shared receiver preserves lifetime and callee exclusion");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::HirFunctionInstanceId functionId = 0;
+  for (const auto &function : frontend.hir.functionInstances())
+    if (function.source && function.source->name().lexeme == "use")
+      functionId = function.id;
+  const auto *function = frontend.mir.findFunctionInstance(functionId);
+  lang::MirLoanId child = 0, parent = 0;
+  lang::MirInstructionId publication = 0, input = 0;
+  if (function)
+    for (const auto &loan : function->body.loans)
+      if (loan.kind == lang::MirLoanKind::Stored && loan.lifecycleBound &&
+          loan.access == lang::AccessMode::Mutable && loan.parent != 0) {
+        child = loan.id;
+        parent = loan.parent;
+      }
+  if (function)
+    for (const auto &block : function->body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.loan == child && instruction.receiver &&
+            instruction.receiver->kind == lang::MirOperandKind::Value) {
+          publication = instruction.id;
+          const auto *value =
+              function->body.findValue(instruction.receiver->value);
+          input = value ? value->definition : 0;
+        }
+  expect(function && child && parent && publication && input,
+         "stored receiver exercises exact shared entry and staged publication");
+  if (!function || !child || !parent || !publication || !input)
+    return;
+  expect(function->body.findLoan(parent)->entry &&
+             function->body.findLoan(parent)->access ==
+                 lang::AccessMode::ReadOnly,
+         "the lifetime parent remains readonly");
+  const auto find = [](lang::MirBody &body, lang::MirInstructionId id) {
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == id)
+          return &instruction;
+    return static_cast<lang::MirInstruction *>(nullptr);
+  };
+  for (int mutation = 0; mutation != 18; ++mutation) {
+    auto malformed = frontend.mir;
+    auto &changed = const_cast<lang::MirFunctionInstance &>(
+        *malformed.findFunctionInstance(functionId));
+    auto &result = const_cast<lang::MirLoan &>(*changed.body.findLoan(child));
+    auto &ancestor =
+        const_cast<lang::MirLoan &>(*changed.body.findLoan(parent));
+    auto &call = *find(changed.body, publication);
+    auto &stage = *find(changed.body, input);
+    switch (mutation) {
+    case 0:
+      result.parent = 0;
+      break;
+    case 1:
+      result.parent = child;
+      break;
+    case 2:
+      result.source = ancestor.source;
+      break;
+    case 3:
+      result.access = lang::AccessMode::ReadOnly;
+      break;
+    case 4:
+      result.lifecycleBound = false;
+      break;
+    case 5:
+      call.functionTarget.reset();
+      break;
+    case 6:
+      call.borrowAccess = lang::AccessMode::ReadOnly;
+      break;
+    case 7:
+      stage.callInputRole = lang::MirCallInputRole::Argument;
+      break;
+    case 8:
+      stage.callInputIndex = 1;
+      break;
+    case 9:
+      stage.callSite = 0;
+      break;
+    case 10:
+      stage.operands.front().kind = lang::MirOperandKind::BorrowWrite;
+      break;
+    case 11:
+      for (auto &block : changed.body.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+              instruction.loan == child)
+            instruction.loan = parent;
+      break;
+    case 12:
+      ancestor.entry = false;
+      break;
+    case 13:
+      ancestor.access = lang::AccessMode::Mutable;
+      break;
+    case 14:
+      result.producedBy = 0;
+      break;
+    case 15:
+      stage.operands.front().place = ancestor.source;
+      break;
+    case 16:
+      for (auto &type : const_cast<std::vector<lang::MirClassInstance> &>(
+               malformed.classInstances()))
+        type.mutexGuardBorrowCarrier = false;
+      break;
+    case 17: {
+      auto &callee = const_cast<lang::MirFunctionInstance &>(
+          *malformed.findFunctionInstance(*call.functionTarget));
+      callee.returnBorrowAccess = lang::AccessMode::ReadOnly;
+      for (auto &loan : callee.body.loans)
+        if (loan.kind == lang::MirLoanKind::Return)
+          loan.access = lang::AccessMode::ReadOnly;
+      call.borrowAccess = result.access = lang::AccessMode::ReadOnly;
+      break;
+    }
+    }
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "stored publication rejects forged "
+           "parent/input/target/access/endpoint/capability " +
+               std::to_string(mutation));
+  }
+  for (const auto &conflict :
+       {std::string("auto guard = this.owner.lock(); see(this.owner);"),
+        std::string("auto guard = this.owner.lock(); auto second = "
+                    "this.owner.lock();")}) {
+    auto invalid = source;
+    const auto position = invalid.find("auto guard = this.owner.lock();");
+    invalid.replace(position,
+                    std::string("auto guard = this.owner.lock();").size(),
+                    conflict);
+    const auto declaration = invalid.find("class User");
+    invalid.insert(declaration, "void see(std::mutex<int32_t>& value) {}\n");
+    const auto rejected = analyze("mutex-ancestor-conflict.gti", invalid);
+    bool exactConflict = false;
+    for (const auto &body : rejected.mir.functionInstances())
+      for (const auto &error : lang::verifyMirBody(body.body, body.id).errors)
+        exactConflict |=
+            error.message.find("conflicts with active mutable loan") !=
+            std::string::npos;
+    // This tests the MIR firewall. The separate source-diagnostic frontier
+    // records that these invalid sources still reach B0001, not a public rule.
+    expect(rejected.semanticValid && rejected.hirValid && !rejected.mirValid &&
+               exactConflict,
+           "readonly ancestor use/publication cannot bypass its live exclusive "
+           "child");
+  }
+  const auto nested = analyze("mutex-nested-receiver.gti", R"gti(
+#include <std/mutex>
+class Holder {
+public:
+  std::mutex<int32_t>& owner;
+  Holder(std::mutex<int32_t>& owner) : owner(owner) {}
+};
+class User {
+  Holder& holder;
+public:
+  User(Holder& holder) : holder(holder) {}
+  void use() { auto guard = this.holder.owner.lock(); }
+};
+int main() {
+  std::mutex<int32_t> owner{7};
+  Holder holder{owner};
+  User user{holder};
+  user.use();
+  return 0;
+}
+)gti");
+  if (!nested.canGenerateCode())
+    printDiagnostics(nested);
+  expect(nested.canGenerateCode() && lang::verifyMirProgram(nested.mir).valid(),
+         "nested stored receiver paths preserve exact lifetime ancestry");
+  auto mutableCarrier = analyze("ordinary-exclusive-carrier.gti", R"gti(
+class Lease {
+  mut int& value;
+public:
+  Lease(mut int& value) : value(value) {}
+  void apply() mut { this.value += 1; }
+  ~Lease() { this.value += 1; }
+};
+class Holder {
+  mut int& value;
+public:
+  Holder(mut int& value) : value(value) {}
+  void apply() mut { mut Lease lease{this.value}; lease.apply(); }
+};
+int main() {
+  mut int value = 7;
+  { mut Holder holder{value}; holder.apply(); }
+  return value - 9;
+}
+)gti");
+  expect(mutableCarrier.canGenerateCode() &&
+             lang::verifyMirProgram(mutableCarrier.mir).valid(),
+         "unrelated mutable stored-reference construction remains valid");
+}
+
+void testStoredPublicationRecursion() {
+  const auto frontend = analyze("mutex-recursive-publication.gti", R"gti(
+#include <std/mutex>
+class Owner {
+  std::mutex<int32_t> value{7};
+public:
+  Owner() {}
+  std::mutex_guard<int32_t> grounded(bool ignored) { return this.value.lock(); }
+  std::mutex_guard<int32_t> left(bool again) {
+    if (again) { return this.right(false); }
+    return this.grounded(false);
+  }
+  std::mutex_guard<int32_t> right(bool again) {
+    if (again) { return this.left(false); }
+    return this.grounded(false);
+  }
+};
+int main() {
+  Owner owner{};
+  { auto guard = owner.left(true); }
+  { auto guard = owner.right(true); }
+  return 0;
+}
+)gti");
+  if (!frontend.canGenerateCode())
+    printDiagnostics(frontend);
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "finite recursive guard returns preserve their checked construction "
+         "base");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::HirFunctionInstanceId left = 0, right = 0, grounded = 0;
+  for (const auto &function : frontend.hir.functionInstances()) {
+    if (!function.source)
+      continue;
+    const auto &name = function.source->name().lexeme;
+    if (name == "left")
+      left = function.id;
+    if (name == "right")
+      right = function.id;
+    if (name == "grounded")
+      grounded = function.id;
+  }
+  expect(left && right && grounded,
+         "recursive publication fixture has exact targets");
+  if (!left || !right || !grounded)
+    return;
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto changed = frontend.mir;
+    unsigned edits = 0;
+    for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+             changed.functionInstances())) {
+      if (function.id != left && function.id != right)
+        continue;
+      for (auto &block : function.body.blocks)
+        for (auto &instruction : block.instructions) {
+          if (instruction.functionTarget != grounded ||
+              (mutation == 2 && function.id != left))
+            continue;
+          if (mutation == 2)
+            instruction.borrowAccess = lang::AccessMode::ReadOnly;
+          else
+            instruction.functionTarget = mutation == 0         ? function.id
+                                         : function.id == left ? right
+                                                               : left;
+          ++edits;
+        }
+    }
+    expect(edits == (mutation == 2 ? 1U : 2U),
+           "recursive publication mutation reaches exact exits");
+    expect(lang::verifyMirProgram(changed).valid() == (mutation != 2),
+           "legal relay-only cycles stay valid but one forged finite exit "
+           "rejects");
+  }
+  const auto denied = analyze("ordinary-readonly-publication.gti", R"gti(
+class Lease {
+  mut int& value;
+public:
+  Lease(mut int& value) : value(value) {}
+  ~Lease() {}
+};
+class Holder {
+  int& value;
+public:
+  Holder(int& value) : value(value) {}
+  void use() { Lease lease{this.value}; }
+};
+int main() {
+  int value = 7;
+  Holder holder{value};
+  holder.use();
+  return 0;
+}
+)gti");
+  expect(!denied.canGenerateCode() &&
+             (hasCode(denied, "GTI-S2012") || hasCode(denied, "GTI-S2045")),
+         "ordinary readonly inputs gain no mutable reference authority");
+}
+
 } // namespace
 
 int main() {
@@ -954,5 +1276,7 @@ int main() {
   testSemanticBoundaries();
   testPayloadConcurrencyCapabilities();
   testVerifierMutations();
+  testStoredReceiverPublication();
+  testStoredPublicationRecursion();
   return failures == 0 ? 0 : 1;
 }
