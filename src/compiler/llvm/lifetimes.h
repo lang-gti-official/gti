@@ -33,6 +33,12 @@ public:
   void freshTransfer(llvm::IRBuilder<> &ir, llvm::Value *destination,
                      llvm::Value *source, const MirBody &body,
                      const MirInstruction &instruction);
+  // Representation mechanism for an already-authorized generated relocation
+  // into fresh storage. This is not source move/copy admission. Inert records
+  // and arrays rebuild destination dispatch state without source callbacks.
+  static void preflightInertRelocation(Session &session, Dispatch &dispatch,
+                                       const SemanticType &type);
+  [[nodiscard]] llvm::Function *inertRelocation(const SemanticType &type);
   void active(llvm::IRBuilder<> &ir, llvm::Value *address,
               const SemanticType &type, bool value);
   void moved(llvm::IRBuilder<> &ir, llvm::Value *address,
@@ -50,6 +56,7 @@ private:
   FindBody findBody;
   std::vector<std::pair<MirDropType, llvm::Function *>> cleanups;
   std::map<llvm::Type *, llvm::Function *> moves;
+  std::vector<std::pair<SemanticType, llvm::Function *>> inertRelocations;
   std::vector<std::pair<MirDropType, llvm::Function *>> observations;
   [[nodiscard]] llvm::Function *cleanupObservation(const MirDropType &recipe);
   [[nodiscard]] bool needsMoveState(const SemanticType &type) const;
