@@ -23,6 +23,23 @@ HOSTED_CASES = {
     "unsafe-reference-load": ("llvm_hosted_unsafe_reference_load.gti", None),
     "unsafe-reference-return": ("llvm_hosted_unsafe_reference_return.gti", None),
     "class-owner-reference": ("llvm_hosted_class_owner_reference.gti", None),
+    "unsafe-reference-input": ("llvm_hosted_unsafe_reference_input.gti", None),
+    "reference-input-failure": ("llvm_hosted_reference_input_failure.gti",
+                                "borrowed argument failure"),
+    "unsafe-reference-invoke-readonly": (
+        "llvm_hosted_unsafe_reference_invoke_readonly.gti", None),
+    "unsafe-reference-invoke-mutable": (
+        "llvm_hosted_unsafe_reference_invoke_mutable.gti", None),
+    "reference-return-failure": ("llvm_hosted_reference_return_failure.gti",
+                                 "reference return failure"),
+    "class-pointee-reference": ("llvm_hosted_class_pointee_reference.gti", None),
+    "vector": ("stdlib_surface_vector.gti", None),
+    "array": ("stdlib_surface_array.gti", None),
+    "unsafe-text-return": ("llvm_hosted_unsafe_text_return.gti", None),
+    "unsafe-cstring-return": ("llvm_hosted_unsafe_cstring_return.gti", None),
+    "class-owner-text-return": ("llvm_hosted_class_owner_text_return.gti", None),
+    "text-return-failure": ("llvm_hosted_text_return_failure.gti",
+                            "counted text failure"),
 }
 
 
@@ -107,17 +124,49 @@ def arguments(gti, root, scratch, endpoints, env):
           flush=True)
 
 
+def text_source_rejections(gti, root, scratch, endpoints, env):
+    cases = (
+        ("llvm_hosted_unsafe_text_escape.gti", "GTI-S2045", 5),
+        ("llvm_hosted_unsafe_text_owner_write.gti", "GTI-S2017", 15),
+        ("llvm_hosted_unsafe_cstring_escape.gti", "GTI-S2045", 5),
+        ("llvm_hosted_unsafe_cstring_owner_write.gti", "GTI-S2017", 12),
+    )
+    for filename, code, line in cases:
+        source = root / "tests/fixtures" / filename
+        for index, endpoint in enumerate(endpoints):
+            directory = scratch / f"text-rejection-{filename}-{index}"
+            directory.mkdir()
+            output = directory / "program"
+            marker = b"preserved hosted text rejection\n"
+            output.write_bytes(marker)
+            command = [str(gti), str(source), "--backend", endpoint.backend,
+                       f"-{endpoint.optimization}", "-o", str(output)]
+            if endpoint.standard:
+                command += ["--std", endpoint.standard]
+            built = subprocess.run(command, cwd=root, env=env, text=True,
+                                   capture_output=True, check=False, timeout=30)
+            if (built.returncode != 65 or code not in built.stderr
+                    or f"{filename}:{line}:" not in built.stderr
+                    or "GTI-B0001" in built.stderr or "GTI-B0003" in built.stderr
+                    or output.read_bytes() != marker):
+                raise AssertionError(f"text lifetime rejection {endpoint}: {built}")
+        print(f"{filename}: {code} and output preservation passed all endpoints",
+              flush=True)
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
         list_evidence(Path(sys.argv[2]).resolve())
         return
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selection = sys.argv[3] if len(sys.argv) > 3 else "all"
-    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments"}:
+    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments", "reference-input", "reference-return", "vector", "array", "text-return"}:
         raise ValueError(f"unknown hosted case: {selection}")
     endpoints = (
         Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
-        Endpoint("llvm", "O0"), Endpoint("llvm", "O3"),
+        *(Endpoint("llvm", f"O{level}") for level in
+          (range(4) if selection in {"all", "reference-return", "text-return"}
+           else (0, 3))),
     )
     env = {**os.environ, "NO_COLOR": "1"}
     with tempfile.TemporaryDirectory(prefix="gti-llvm-hosted-cli-") as temporary:
@@ -127,7 +176,34 @@ def main():
         for name, (filename, failure) in HOSTED_CASES.items():
             if selection in {"status", "source-literals", "arguments"}:
                 continue
-            if selection == "startup" and name == "source-location":
+            if selection == "reference-input" and filename not in {
+                    "llvm_hosted_unsafe_reference_input.gti",
+                    "llvm_hosted_reference_input_failure.gti"}:
+                continue
+            if selection == "reference-return" and filename not in {
+                    "llvm_hosted_unsafe_reference_invoke_readonly.gti",
+                    "llvm_hosted_unsafe_reference_invoke_mutable.gti",
+                    "llvm_hosted_reference_return_failure.gti"}:
+                continue
+            if selection == "vector" and filename != "stdlib_surface_vector.gti":
+                continue
+            if selection == "array" and filename != "stdlib_surface_array.gti":
+                continue
+            if selection == "text-return" and filename not in {
+                    "llvm_hosted_unsafe_text_return.gti",
+                    "llvm_hosted_unsafe_cstring_return.gti",
+                    "llvm_hosted_class_owner_text_return.gti",
+                    "llvm_hosted_text_return_failure.gti"}:
+                continue
+            if selection == "startup" and filename in {
+                    "llvm_hosted_unsafe_reference_invoke_readonly.gti",
+                    "llvm_hosted_unsafe_reference_invoke_mutable.gti",
+                    "llvm_hosted_reference_return_failure.gti",
+                    "stdlib_surface_source_location.gti", "stdlib_surface_vector.gti",
+                    "stdlib_surface_array.gti", "llvm_hosted_unsafe_text_return.gti",
+                    "llvm_hosted_unsafe_cstring_return.gti",
+                    "llvm_hosted_class_owner_text_return.gti",
+                    "llvm_hosted_text_return_failure.gti"}:
                 continue
             if selection == "source-location" and name != "source-location":
                 continue
@@ -147,7 +223,8 @@ def main():
                 observations.append(result.observable)
             if any(value != observations[0] for value in observations):
                 raise AssertionError(f"hosted observable drift: {filename}: {observations}")
-            print(f"{filename}: uninstrumented C++20/23 O3 and LLVM O0/O3 passed",
+            levels = "O0-O3" if selection in {"all", "reference-return", "text-return"} else "O0/O3"
+            print(f"{filename}: uninstrumented C++20/23 O3 and LLVM {levels} passed",
                   flush=True)
         for status in (-2147483648, -1, 0, 1, 70, 255, 256, 512, 2147483647):
             if selection not in {"all", "status"}:
@@ -166,6 +243,8 @@ def main():
                     raise AssertionError(f"portable exit {status} {endpoint}: {result}")
             print(f"portable exit {status}: preserved GTI function result and status {expected}",
                   flush=True)
+        if selection in {"all", "text-return"}:
+            text_source_rejections(gti, root, scratch, endpoints, env)
         if selection in {"all", "arguments"}:
             arguments(gti, root, scratch, endpoints, env)
 

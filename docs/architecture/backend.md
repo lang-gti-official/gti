@@ -4512,6 +4512,15 @@ TLS. Private ownership capabilities, indirect/virtual dispatch, general native
 calls and native debug information remain explicit limitations. No mixed-backend
 fallback is used. C++ stays the default.
 
+The staged owned-argument bridge derives one native C signature from target
+`int`, `char**` and `size_t` facts, keeping raw host inputs out of GTI parameter
+bindings. Its count checks and byte-view helpers match exact verified startup
+operation identities. A zero count permits a null argv without reading it;
+positive counts require the host C contract's valid, non-null, NUL-terminated
+strings. Counted views are copied by the already selected GTI constructors.
+Executable owned-argument admission remains disabled: helper/type/identity
+tests are not full argv, construction-failure or cleanup execution evidence.
+
 Hosted returns preserve GTI's portable status policy: values from 0 through 255
 are returned unchanged and every other `int32_t` result becomes status 1. This
 normalization applies only to the sealed startup `ReturnEntry`, never to an
@@ -4534,14 +4543,72 @@ The same producer proof admits a direct same-block `CallResult`-to-`Return`
 loan transfer when its complete dependencies, access, type and HIR identity
 are unchanged and the return terminator consumes that exact escaping loan.
 It does not authorize constructing a reference from a possible owner address.
+A direct borrowed argument may stage that same live result into a read-only or
+mutable reference parameter. It requires the exact unprojected loan place,
+reference type/access, source producer and explicit argument input; owned,
+temporary and receiver input forms do not enter through this proof. Normal MIR
+call-input and loan-flow verification still prove the selected consumer and
+loan lifetime. Staging forwards the result address without copying the referent
+or adding a drop obligation. The unrelated user-type fixture and malformed-input
+controls accompany the vector-clone regression. Mutable class arguments verify
+write-back to the selected second object and exact destruction. A later-argument
+panic verifies that the consumer is never entered and that local/TLS cleanup
+precedes hosted reporting through the existing C observer. This no-argument
+failure case is separate from pending owned-argv cleanup evidence.
 
-Raw primitive references may use an ordinary, independently admitted native
-class reference as their lifetime witness. The centralized
+An ordinary unsafe source reference return may also cross one immediate
+`Invoke` success edge. Its checked `CallResult` loan names a unique typed call
+result; that SSA definition must identify the exact last live call in the
+predecessor, whose normal edge targets the return block. The complete escaping
+`Return` dependency and access remain unchanged. Failure cannot enter the return
+block or publish a result. Readonly and mutable unrelated user-type relays check
+selected-owner identity, write-back and exact destruction; a panic relay checks
+original attribution and local/TLS cleanup. Load and argument staging continue
+to require their same-block producer.
+
+A direct fundamental text return has a distinct bounded witness: its source call
+publishes a `Stored` dependency and an SSA text value, then the return
+publishes that exact value with the unchanged escaping `Return` dependency.
+Only fundamental `StringView` and `CString` values enter this proof; owning values, parent-
+derived stored carriers and other borrowed-value families remain outside it.
+The direct ordinary unsafe source producer, complete owner dependencies and
+live ordering are verified. The producer is in the same block or the immediate
+`Invoke` success predecessor, where its typed SSA definition names the exact
+last live call and the failure edge cannot publish the return. The return never
+reconstructs a view from an owner address or recalculates its byte extent. Primitive-owner tests
+keep the raw data address independent, distinguish different C-string addresses
+with the same witness, and preserve embedded NUL bytes in counted text. A
+failure-capable relay also checks original panic attribution, an unentered
+consumer, and local/TLS cleanup through the existing hosted observer.
+Raw text construction uses the same exact value/dependency return proof.
+Its producer must satisfy the centralized `textAddressResultLoan` query for
+`TextViewFromAddress` or `CStringFromAddress`, including the raw character
+address, counted extent where present, ordered readonly owner witness and
+checked loan identity. Native owner representation admits passive witnesses or
+the same ordinary class boundary as raw references: a unique native class or
+struct instance without compiler capability, polymorphism, bases, union or
+foreign ABI layout. The owner address is an independent lifetime witness; no
+owner bytes are read or copied. An unrelated owning user class checks both text
+forms, selected-owner identity and exact resource destruction; source escape,
+movement and mutation and unsupported witness layouts remain rejected.
+Raw and declared-unsafe source authority cannot substitute for one another;
+both retain dedicated forgery controls. Parent-derived stored carriers and
+unsupported owner representations remain outside this return proof.
+
+Raw references to primitive or ordinary, independently represented native
+class objects may use passive or ordinary native class lifetime witnesses.
+One structural predicate covers both roles; their types and addresses remain
+independent. Polymorphic, abstract, inherited, opaque, incomplete, union and
+foreign-record class shapes do not enter through this extension. The centralized
 `rawBorrowResultLoan` verifier query supplies the exact parent, origin and access
 contract. The evaluated raw pointer supplies the physical address, even when
 the witness owns a different address. This does not prove pointer membership,
-extend the supported pointee layouts, or add runtime checks or alias promises;
+admit other pointee layouts, or add runtime checks or alias promises;
 the unsafe caller retains its alignment, initialization and lifetime obligations.
+Raw assertions and unsafe source calls share exact earlier-live-producer and
+direct-return transfer checks, but retain separate authority checks. Replacing
+one permission family with the other cannot authorize a checked loan transfer;
+the former broad passive-loan exemption is subsumed by those producer proofs.
 
 ### LLVM Places And Counted Text
 

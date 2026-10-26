@@ -17,9 +17,11 @@
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace lang {
 struct MirProgramTestAccess {
@@ -45,6 +47,12 @@ constexpr std::array cases{
     Case{"llvm_hosted_success.gti", 12354, "", 0},
     Case{"llvm_hosted_startup_failure.gti", 321, "hosted startup failure", 16},
     Case{"llvm_hosted_entry_failure.gti", 321, "hosted entry failure", 16},
+    Case{"llvm_hosted_reference_input_failure.gti", 321,
+         "borrowed argument failure", 18},
+    Case{"llvm_hosted_text_return_failure.gti", 321, "counted text failure",
+         14},
+    Case{"llvm_hosted_reference_return_failure.gti", 321,
+         "reference return failure", 13},
 };
 
 void require(bool value, std::string_view message) {
@@ -52,12 +60,15 @@ void require(bool value, std::string_view message) {
     throw std::runtime_error(std::string(message));
 }
 
-void unsafeReferenceLoadContract(const std::filesystem::path &repository) {
+void unsafeReferenceLoadContract(const std::filesystem::path &repository,
+                                 bool callInput = false) {
   FrontendOptions options;
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = true;
   const auto frontend = Frontend(options).analyze(
-      repository / "tests/fixtures/llvm_hosted_unsafe_reference_load.gti",
+      repository /
+          (callInput ? "tests/fixtures/llvm_hosted_unsafe_reference_input.gti"
+                     : "tests/fixtures/llvm_hosted_unsafe_reference_load.gti"),
       std::nullopt, {repository / "stdlib/prelude.gti"}, {},
       {repository / "stdlib"});
   require(frontend.canGenerateCode(), "unrelated unsafe helper is valid GTI");
@@ -72,10 +83,18 @@ void unsafeReferenceLoadContract(const std::filesystem::path &repository) {
   for (const auto &function : frontend.mir.functionInstances())
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions)
-        if (instruction.kind == MirInstructionKind::Load &&
+        if (instruction.kind == (callInput ? MirInstructionKind::CallInput
+                                           : MirInstructionKind::Load) &&
             instruction.unsafeOperation ==
-                UnsafeOperationKind::DeclaredUnsafeCall) {
-          require(owner == 0, "regression isolates exactly one result load");
+                UnsafeOperationKind::DeclaredUnsafeCall &&
+            (!callInput ||
+             (instruction.callInputKind == HirCallInputKind::ReadBorrow &&
+              instruction.info.type.kind == SemanticType::Reference &&
+              instruction.info.type.arguments.size() == 1 &&
+              instruction.info.type.arguments.front() ==
+                  SemanticType::Int32))) {
+          require(owner == 0, "regression isolates exactly one selected result "
+                              "materialization");
           owner = function.id;
           blockId = block.id;
           loadId = instruction.id;
@@ -85,7 +104,7 @@ void unsafeReferenceLoadContract(const std::filesystem::path &repository) {
   using Mutation =
       std::function<void(MirProgram &, MirBlock &, MirInstruction &,
                          MirInstruction &, MirPlace &, MirLoan &)>;
-  const std::array<Mutation, 16> mutations{
+  std::vector<Mutation> mutations{
       [](auto &, auto &, auto &, auto &, auto &place, auto &) {
         place.loan = 0;
       },
@@ -146,6 +165,38 @@ void unsafeReferenceLoadContract(const std::filesystem::path &repository) {
         std::swap(load, *ended);
       },
   };
+  if (callInput) {
+    mutations.push_back([](auto &, auto &, auto &input, auto &, auto &,
+                           auto &) { input.operands.front().loan = 0; });
+    mutations.push_back(
+        [](auto &, auto &, auto &input, auto &, auto &, auto &) {
+          input.callInputRole = MirCallInputRole::Receiver;
+        });
+    mutations.push_back(
+        [](auto &, auto &, auto &input, auto &, auto &, auto &) {
+          input.callInputKind = HirCallInputKind::CopyValue;
+        });
+    mutations.push_back([](auto &, auto &, auto &input, auto &, auto &,
+                           auto &) { input.callSite = 0; });
+    mutations.push_back([](auto &, auto &, auto &input, auto &, auto &,
+                           auto &) { input.defaultArgument = true; });
+    mutations.push_back(
+        [](auto &, auto &, auto &input, auto &, auto &, auto &) {
+          input.info.type.referenceAccess = AccessMode::Mutable;
+        });
+    mutations.push_back(
+        [](auto &, auto &, auto &input, auto &, auto &, auto &) {
+          input.operands.front().type = SemanticType::Int64;
+        });
+    mutations.push_back([](auto &, auto &, auto &input, auto &, auto &,
+                           auto &) { input.result.reset(); });
+    mutations.push_back([](auto &, auto &, auto &, auto &call, auto &, auto &) {
+      call.tombstone = true;
+    });
+    mutations.push_back([](auto &, auto &, auto &, auto &call, auto &, auto &) {
+      call.unsafeOperation = UnsafeOperationKind::RawDereference;
+    });
+  }
   for (std::size_t index = 0; index < mutations.size(); ++index) {
     auto invalid = frontend.mir;
     auto &body = MirProgramTestAccess::functions(invalid)[owner - 1].body;
@@ -175,12 +226,22 @@ void unsafeReferenceLoadContract(const std::filesystem::path &repository) {
   }
 }
 
-void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
+void unsafeReferenceReturnContract(
+    const std::filesystem::path &repository, bool countedText = false,
+    bool rawText = false,
+    const SemanticType &borrowedType = SemanticType::StringView,
+    const char *fixture = nullptr, bool fallibleReference = false) {
   FrontendOptions options;
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = true;
   const auto frontend = Frontend(options).analyze(
-      repository / "tests/fixtures/llvm_hosted_unsafe_reference_return.gti",
+      repository /
+          (fixture ? fixture
+           : countedText
+               ? (borrowedType == SemanticType::CString
+                      ? "tests/fixtures/llvm_hosted_unsafe_cstring_return.gti"
+                      : "tests/fixtures/llvm_hosted_unsafe_text_return.gti")
+               : "tests/fixtures/llvm_hosted_unsafe_reference_return.gti"),
       std::nullopt, {repository / "stdlib/prelude.gti"}, {},
       {repository / "stdlib"});
   require(frontend.canGenerateCode(), "unsafe reference relay is valid GTI");
@@ -192,68 +253,86 @@ void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
   std::size_t owner = 0;
   MirBlockId blockId = 0;
   MirInstructionId transferId = 0;
-  for (const auto &function : frontend.mir.functionInstances())
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (countedText && !rawText && function.requiresUnsafe)
+      continue;
     for (const auto &block : function.body.blocks)
       for (const auto &stage : block.instructions)
         if (stage.kind == MirInstructionKind::Borrow &&
-            stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall) {
+            stage.unsafeOperation ==
+                (rawText ? UnsafeOperationKind::RawDereference
+                         : UnsafeOperationKind::DeclaredUnsafeCall) &&
+            (!countedText || stage.info.type == borrowedType)) {
           require(owner == 0, "relay isolates one repeated unsafe marker");
           owner = function.id;
           blockId = block.id;
           transferId = stage.id;
         }
+  }
   require(owner != 0, "relay has a genuine checked return transfer");
-  using Mutation = std::function<void(MirBody &, MirBlock &, MirInstruction &,
-                                      MirInstruction &, MirLoan &, MirLoan &)>;
-  const std::array<Mutation, 17> mutations{
-      [](auto &, auto &, auto &, auto &, auto &, auto &to) { to.source = 0; },
-      [](auto &, auto &, auto &, auto &, auto &from, auto &to) {
+  using Mutation =
+      std::function<void(MirProgram &, MirBody &, MirBlock &, MirInstruction &,
+                         MirInstruction &, MirLoan &, MirLoan &)>;
+  std::vector<Mutation> mutations{
+      [](auto &, auto &, auto &, auto &, auto &, auto &, auto &to) {
+        to.source = 0;
+      },
+      [](auto &, auto &, auto &, auto &, auto &, auto &from, auto &to) {
         to.additionalDependencies.push_back(
             {.source = from.source, .access = AccessMode::Mutable});
       },
-      [](auto &, auto &, auto &, auto &, auto &, auto &to) {
+      [](auto &, auto &, auto &, auto &, auto &, auto &, auto &to) {
         to.escapes = false;
       },
-      [](auto &, auto &, auto &, auto &, auto &from, auto &to) {
+      [](auto &, auto &, auto &, auto &, auto &, auto &from, auto &to) {
         to.parent = from.id;
       },
-      [](auto &, auto &, auto &, auto &, auto &, auto &to) {
-        to.access = AccessMode::Mutable;
+      [](auto &, auto &, auto &, auto &, auto &, auto &from, auto &to) {
+        to.access = from.access == AccessMode::ReadOnly ? AccessMode::Mutable
+                                                        : AccessMode::ReadOnly;
       },
-      [](auto &, auto &, auto &, auto &, auto &, auto &to) {
+      [](auto &, auto &, auto &, auto &, auto &, auto &, auto &to) {
         to.producedBy = 0;
       },
-      [](auto &, auto &, auto &, auto &, auto &, auto &to) {
+      [](auto &, auto &, auto &, auto &, auto &, auto &, auto &to) {
         to.designatedFields = {1};
       },
-      [](auto &, auto &, auto &stage, auto &, auto &from, auto &) {
+      [](auto &, auto &, auto &, auto &stage, auto &, auto &from, auto &) {
         stage.operands.front().place = from.source;
       },
-      [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
+      [](auto &, auto &, auto &, auto &stage, auto &, auto &, auto &) {
         stage.operands.front().loan = 0;
       },
-      [](auto &, auto &block, auto &, auto &, auto &from, auto &) {
+      [](auto &, auto &, auto &block, auto &, auto &, auto &from, auto &) {
         block.terminator.returnLoan = from.id;
       },
-      [](auto &, auto &block, auto &, auto &, auto &from, auto &) {
+      [](auto &, auto &, auto &block, auto &, auto &, auto &from, auto &) {
         block.terminator.value->loan = from.id;
       },
-      [](auto &, auto &, auto &, auto &call, auto &, auto &) {
-        call.functionTarget.reset();
+      [rawText](auto &, auto &, auto &, auto &, auto &call, auto &, auto &) {
+        if (rawText)
+          call.intrinsic = IntrinsicKind::None;
+        else
+          call.functionTarget.reset();
       },
-      [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
+      [](auto &, auto &, auto &, auto &stage, auto &, auto &, auto &) {
         stage.rawMemoryAccess = true;
       },
-      [](auto &, auto &, auto &stage, auto &, auto &, auto &) {
+      [rawText](auto &, auto &, auto &, auto &stage, auto &, auto &, auto &) {
+        stage.unsafeOperation = rawText
+                                    ? UnsafeOperationKind::DeclaredUnsafeCall
+                                    : UnsafeOperationKind::RawDereference;
+      },
+      [](auto &, auto &, auto &, auto &stage, auto &, auto &, auto &) {
         stage.info.type = SemanticType::Char;
       },
-      [](auto &, auto &, auto &, auto &call, auto &, auto &) {
+      [](auto &, auto &, auto &, auto &, auto &call, auto &, auto &) {
         ++call.hirValue;
       },
-      [](auto &, auto &, auto &stage, auto &call, auto &, auto &) {
+      [](auto &, auto &, auto &, auto &stage, auto &call, auto &, auto &) {
         std::swap(stage, call);
       },
-      [](auto &, auto &block, auto &stage, auto &, auto &from, auto &) {
+      [](auto &, auto &, auto &block, auto &stage, auto &, auto &from, auto &) {
         const auto ended = std::find_if(
             block.instructions.begin(), block.instructions.end(),
             [&](const auto &candidate) {
@@ -265,6 +344,63 @@ void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
         std::swap(stage, *ended);
       },
   };
+  if (fallibleReference ||
+      (countedText && !rawText && borrowedType == SemanticType::StringView)) {
+    mutations.push_back(
+        [](auto &, auto &body, auto &, auto &, auto &call, auto &, auto &) {
+          auto &previous =
+              body.blocks[body.findValue(*call.result)->definitionBlock - 1];
+          previous.terminator.target = previous.terminator.elseTarget;
+        });
+    mutations.push_back(
+        [](auto &, auto &body, auto &, auto &, auto &call, auto &, auto &) {
+          auto &previous =
+              body.blocks[body.findValue(*call.result)->definitionBlock - 1];
+          std::swap(previous.terminator.target, previous.terminator.elseTarget);
+        });
+    mutations.push_back([](auto &, auto &body, auto &block, auto &, auto &call,
+                           auto &, auto &) {
+      body.values[*call.result - 1].definitionBlock = block.id;
+    });
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &call, auto &,
+                           auto &) { call.tombstone = true; });
+  }
+  if (countedText) {
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &from,
+                           auto &) { from.kind = MirLoanKind::CallResult; });
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &from,
+                           auto &) { from.escapes = true; });
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &from,
+                           auto &to) { from.parent = to.id; });
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &from,
+                           auto &) { from.lifecycleBound = true; });
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &from,
+                           auto &) { from.carriers.push_back(1); });
+    mutations.push_back(
+        [](auto &, auto &, auto &, auto &, auto &call, auto &, auto &) {
+          call.info.category = ValueCategory::Place;
+        });
+    mutations.push_back([](auto &, auto &, auto &block, auto &, auto &, auto &,
+                           auto &) { block.terminator.value->value = 0; });
+    mutations.push_back([rawText](auto &mir, auto &, auto &, auto &, auto &call,
+                                  auto &, auto &) {
+      if (rawText)
+        call.functionTarget = 1;
+      else
+        MirProgramTestAccess::functions(mir)[*call.functionTarget - 1]
+            .requiresUnsafe = false;
+    });
+    mutations.push_back([rawText](auto &mir, auto &, auto &, auto &, auto &call,
+                                  auto &, auto &) {
+      if (rawText)
+        call.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeCall;
+      else
+        MirProgramTestAccess::functions(mir)[*call.functionTarget - 1].linkage =
+            LanguageLinkage::C;
+    });
+    mutations.push_back([](auto &, auto &, auto &, auto &, auto &, auto &,
+                           auto &to) { to.carriers.push_back(1); });
+  }
   for (const auto &mutate : mutations) {
     auto invalid = frontend.mir;
     auto &body = MirProgramTestAccess::functions(invalid)[owner - 1].body;
@@ -274,13 +410,16 @@ void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
         [&](const auto &stage) { return stage.id == transferId; });
     auto &from = body.loans[transfer.operands.front().loan - 1];
     auto &to = body.loans[*transfer.loan - 1];
-    auto &call =
-        *std::find_if(block.instructions.begin(), block.instructions.end(),
-                      [&](const auto &stage) {
-                        return stage.kind == MirInstructionKind::Call &&
-                               stage.loan == from.id;
-                      });
-    mutate(body, block, transfer, call, from, to);
+    MirInstruction *producer = nullptr;
+    for (auto &candidate : body.blocks)
+      for (auto &stage : candidate.instructions)
+        if (stage.kind == MirInstructionKind::Call && stage.loan == from.id) {
+          require(!producer, "return witness has one exact call producer");
+          producer = &stage;
+        }
+    require(producer, "return witness retains its call producer");
+    auto &call = *producer;
+    mutate(invalid, body, block, transfer, call, from, to);
     auto built = LoweredProgramBuilder().build(
         frontend.program, frontend.semantics, frontend.hir, invalid, invalid,
         {}, TargetInfo::host(), true);
@@ -293,7 +432,8 @@ void unsafeReferenceReturnContract(const std::filesystem::path &repository) {
   }
 }
 
-void classOwnerRawReferenceContract(const std::filesystem::path &repository) {
+void classOwnerRawReferenceContract(const std::filesystem::path &repository,
+                                    std::string_view fixture) {
   FrontendOptions options;
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = true;
@@ -303,8 +443,7 @@ void classOwnerRawReferenceContract(const std::filesystem::path &repository) {
                                      {repository / "stdlib/prelude.gti"}, {},
                                      {repository / "stdlib"});
   };
-  const auto frontend = analyze(
-      repository / "tests/fixtures/llvm_hosted_class_owner_reference.gti");
+  const auto frontend = analyze(repository / "tests/fixtures" / fixture);
   require(frontend.canGenerateCode(), "owning class witness is valid GTI");
   std::vector<LoweredProgramIssue> issues;
   const auto program = verifiedLoweredProgram(
@@ -328,7 +467,7 @@ void classOwnerRawReferenceContract(const std::filesystem::path &repository) {
                     formal.arguments.front().kind == SemanticType::Class,
                 "raw reference is tied to an ordinary class witness");
         seen[stage.intrinsic == IntrinsicKind::RawBorrowMut] = true;
-        for (unsigned mutation = 0; mutation != 5; ++mutation) {
+        for (unsigned mutation = 0; mutation != 9; ++mutation) {
           auto invalidBody = function.body;
           auto invalid = stage;
           auto &invalidLoan = invalidBody.loans[loan->id - 1];
@@ -353,9 +492,116 @@ void classOwnerRawReferenceContract(const std::filesystem::path &repository) {
           case 4:
             invalid.operands[0].value = 0;
             break;
+          case 5:
+            invalid.info.type = stage.info.type.kind == SemanticType::Class
+                                    ? SemanticType::Int32
+                                    : SemanticType::Char;
+            break;
+          case 6:
+            invalid.operands[0].type = SemanticType::rawPointerTo(
+                SemanticType::Void, stage.operands[0].type.pointerAccess);
+            break;
+          case 7:
+            invalid.borrowAccess = loan->access == AccessMode::Mutable
+                                       ? AccessMode::ReadOnly
+                                       : AccessMode::Mutable;
+            break;
+          case 8:
+            invalid.parameterTypes[0] =
+                SemanticType::rawPointerTo(SemanticType::Char);
+            break;
           }
           require(!mir_detail::rawBorrowResultLoan(invalidBody, invalid),
                   "forged parent/source/access/formal/address loses its proof");
+        }
+        const auto transfer = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &candidate) {
+              return candidate.kind == MirInstructionKind::Borrow &&
+                     candidate.operands.size() == 1 &&
+                     candidate.operands.front().kind == MirOperandKind::Loan &&
+                     candidate.operands.front().loan == loan->id;
+            });
+        require(transfer != block.instructions.end(),
+                "raw assertion has a real checked return publication");
+        for (unsigned mutation = 0; mutation != 12; ++mutation) {
+          auto invalidMir = frontend.mir;
+          auto &invalidBody =
+              MirProgramTestAccess::functions(invalidMir)[function.id - 1].body;
+          auto &invalidBlock = invalidBody.blocks[block.id - 1];
+          auto &producer = *std::find_if(
+              invalidBlock.instructions.begin(),
+              invalidBlock.instructions.end(),
+              [&](const auto &candidate) { return candidate.id == stage.id; });
+          auto &publication = *std::find_if(
+              invalidBlock.instructions.begin(),
+              invalidBlock.instructions.end(), [&](const auto &candidate) {
+                return candidate.id == transfer->id;
+              });
+          auto &returned = invalidBody.loans[*publication.loan - 1];
+          switch (mutation) {
+          case 0:
+            publication.unsafeOperation =
+                UnsafeOperationKind::DeclaredUnsafeCall;
+            break;
+          case 1:
+            producer.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeCall;
+            break;
+          case 2:
+            producer.intrinsic = IntrinsicKind::RestoreReference;
+            break;
+          case 3:
+            publication.operands.front().loan = 0;
+            break;
+          case 4: {
+            const auto ended = std::find_if(
+                invalidBlock.instructions.begin(),
+                invalidBlock.instructions.end(), [&](const auto &candidate) {
+                  return candidate.kind == MirInstructionKind::EndBorrow &&
+                         candidate.loan == loan->id;
+                });
+            require(ended != invalidBlock.instructions.end(),
+                    "raw return source has an explicit endpoint");
+            std::swap(publication, *ended);
+            break;
+          }
+          case 5:
+            std::swap(producer, publication);
+            break;
+          case 6:
+            returned.source = 0;
+            break;
+          case 7:
+            returned.access = loan->access == AccessMode::Mutable
+                                  ? AccessMode::ReadOnly
+                                  : AccessMode::Mutable;
+            break;
+          case 8:
+            returned.additionalDependencies.push_back(
+                {.source = loan->source, .access = loan->access});
+            break;
+          case 9:
+            invalidBlock.terminator.returnLoan = loan->id;
+            break;
+          case 10:
+            ++producer.hirValue;
+            break;
+          case 11:
+            producer.loan = returned.id;
+            break;
+          }
+          auto built = LoweredProgramBuilder().build(
+              frontend.program, frontend.semantics, frontend.hir, invalidMir,
+              invalidMir, {}, TargetInfo::host(), true);
+          bool rejected = !built.valid();
+          if (built.valid()) {
+            auto verified =
+                verifiedLoweredProgram(std::move(*built.program), issues);
+            rejected = !verified || !planLlvmAdmission(*verified).admitted();
+          }
+          require(
+              rejected,
+              "raw/source authority substitution or forged return is rejected");
         }
       }
   require(seen[0] && seen[1], "both class-witness access modes are exercised");
@@ -400,6 +646,51 @@ struct Owner {
                         }),
         "owner death, movement and overlapping mutation remain rejected");
   }
+  const std::string nestedOwner = R"(
+#include <std/memory>
+struct Referent {
+  mut int value = 7;
+  std::unique_ptr<int> token;
+  Referent() : token(std::make_unique<int>(5)) {}
+};
+struct Owner {
+  mut Referent item;
+  Owner() : item(Referent()) {}
+};
+)";
+  const std::array badClassBodies{
+      R"(Referent& escape() {
+           mut Owner owner{};
+           unsafe { return std::assume_ref(&owner.item, owner); }
+         }
+         int main() { return 0; })",
+      R"(void consume(Owner value) {}
+         int main() {
+           mut Owner owner{};
+           Referent& read = unsafe { std::assume_ref(&owner.item, owner) };
+           consume(std::move(owner));
+           return read.value;
+         })",
+      R"(int main() {
+           mut Owner owner{};
+           mut Referent& first = unsafe { std::assume_mut(&owner.item, owner) };
+           mut Referent& second = unsafe { std::assume_mut(&owner.item, owner) };
+           first.value = 1;
+           second.value = 2;
+           return 0;
+         })",
+  };
+  for (const auto body : badClassBodies) {
+    const auto invalid =
+        analyze("invalid-class-referent-loan.gti", nestedOwner + body);
+    require(
+        !invalid.canGenerateCode() &&
+            std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.phase == DiagnosticPhase::Semantics;
+                        }),
+        "class referent cannot outlive, move or overlap its owner loan");
+  }
   const auto unsupported = analyze("unsupported-owner-layout.gti", R"(
 #include <std/memory>
 struct Owner {
@@ -419,6 +710,297 @@ int main() {
       issues);
   require(pending && !planLlvmAdmission(*pending).admitted(),
           "primitive pointee does not admit an unsupported owner layout");
+  const auto unsupportedReferent =
+      analyze("unsupported-referent-layout.gti", R"(
+#include <std/memory>
+struct Referent {
+  int value = 7;
+  virtual int observe() { return this.value; }
+  ~Referent() {}
+};
+struct Owner { int marker = 11; };
+int main() {
+  Referent referent{};
+  Owner owner{};
+  Referent& read = unsafe { std::assume_ref(&referent, owner) };
+  return read.value == 7 ? 0 : 1;
+}
+)");
+  require(unsupportedReferent.canGenerateCode(),
+          "unsupported referent layout is valid source");
+  const auto pendingReferent = verifiedLoweredProgram(
+      gti_test::lowerProgram(unsupportedReferent, unsupportedReferent.mir,
+                             unsupportedReferent.mir),
+      issues);
+  require(pendingReferent && !planLlvmAdmission(*pendingReferent).admitted(),
+          "ordinary witness does not admit an unsupported referent layout");
+}
+
+void classOwnerTextContract(const std::filesystem::path &repository) {
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto analyze = [&](const std::filesystem::path &path,
+                           std::optional<std::string> source = {}) {
+    return Frontend(options).analyze(path, std::move(source),
+                                     {repository / "stdlib/prelude.gti"}, {},
+                                     {repository / "stdlib"});
+  };
+  const auto frontend = analyze(
+      repository / "tests/fixtures/llvm_hosted_class_owner_text_return.gti");
+  require(frontend.canGenerateCode(), "class text witness is valid GTI");
+  std::vector<LoweredProgramIssue> issues;
+  const auto program = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  require(program && planLlvmAdmission(*program).admitted(),
+          "text assertions share the ordinary native class witness boundary");
+  std::array<bool, 2> seen{};
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        const bool counted =
+            stage.intrinsic == IntrinsicKind::TextViewFromAddress;
+        if (!counted && stage.intrinsic != IntrinsicKind::CStringFromAddress)
+          continue;
+        const std::size_t witness = counted ? 2 : 1;
+        seen[counted] = true;
+        const auto *loan =
+            mir_detail::textAddressResultLoan(function.body, stage);
+        require(loan &&
+                    stage.parameterTypes[witness].kind ==
+                        SemanticType::Reference &&
+                    stage.parameterTypes[witness].arguments.size() == 1 &&
+                    stage.parameterTypes[witness].arguments.front().kind ==
+                        SemanticType::Class,
+                "raw text has an exact readonly ordinary-class witness");
+        for (unsigned mutation = 0; mutation != 8; ++mutation) {
+          auto invalidBody = function.body;
+          auto invalid = stage;
+          auto &invalidLoan = invalidBody.loans[loan->id - 1];
+          switch (mutation) {
+          case 0:
+            invalidLoan.source = 0;
+            break;
+          case 1:
+            invalidLoan.producedBy = 0;
+            break;
+          case 2:
+            invalid.info.access = AccessMode::Mutable;
+            break;
+          case 3:
+            invalid.borrowArgument = 0;
+            break;
+          case 4:
+            invalid.parameterTypes[witness].referenceAccess =
+                AccessMode::Mutable;
+            break;
+          case 5:
+            invalid.operands[witness].value = 0;
+            break;
+          case 6:
+            invalid.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeCall;
+            break;
+          case 7:
+            invalid.rawMemoryAccess = true;
+            break;
+          }
+          require(
+              !mir_detail::textAddressResultLoan(invalidBody, invalid),
+              "forged owner identity, access, input or raw authority rejects");
+        }
+      }
+  require(seen[0] && seen[1], "both fundamental text construction proofs run");
+  const std::string owner = R"(
+#include <std/memory>
+#include <std/string_view>
+struct Owner {
+  mut int tag = 22;
+  std::unique_ptr<int> token;
+  Owner() : token(std::make_unique<int>(5)) {}
+};
+)";
+  for (const bool counted : {false, true}) {
+    const std::string type = counted ? "std::string_view" : "c_string";
+    const std::string construct =
+        counted ? "std::assume_string_view(&bytes[std::size_t(0)], "
+                  "std::size_t(3), owner)"
+                : "std::assume_c_string(&bytes[std::size_t(0)], owner)";
+    const std::string use =
+        counted ? "int(result.size())" : "(result == nullptr ? 0 : 1)";
+    const std::array badBodies{
+        type +
+            " escape() { Owner owner{}; char bytes[3] = {'a', '\\0', 'b'}; "
+            "unsafe { return " +
+            construct + "; } } int main() { return 0; }",
+        "int main() { mut Owner owner{}; char bytes[3] = {'a', '\\0', 'b'}; " +
+            type + " result = unsafe { " + construct +
+            " }; owner.tag = 23; return " + use + "; }",
+        "void consume(Owner value) {} int main() { mut Owner owner{}; char "
+        "bytes[3] = {'a', '\\0', 'b'}; " +
+            type + " result = unsafe { " + construct +
+            " }; consume(std::move(owner)); return " + use + "; }",
+    };
+    for (std::size_t index = 0; index < badBodies.size(); ++index) {
+      const auto invalid =
+          analyze("invalid-text-owner-loan.gti", owner + badBodies[index]);
+      require(!invalid.canGenerateCode() &&
+                  std::any_of(
+                      invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                      [index](const auto &diagnostic) {
+                        return diagnostic.phase == DiagnosticPhase::Semantics &&
+                               diagnostic.code ==
+                                   (index == 0 ? "GTI-S2045" : "GTI-S2017");
+                      }),
+              "text cannot escape, mutate or move its ordinary class witness");
+    }
+    const auto unsupported =
+        analyze("unsupported-text-owner-layout.gti", std::string(R"(
+#include <std/memory>
+#include <std/string_view>
+struct Owner {
+  int tag = 22;
+  virtual int observe() { return this.tag; }
+  ~Owner() {}
+};
+int main() {
+  Owner owner{};
+  char bytes[3] = {'a', '\0', 'b'};
+)") + type + " result = unsafe { " + construct + " }; return " +
+                                                         use + "; }");
+    require(unsupported.canGenerateCode(),
+            "unsupported text witness layout is valid source");
+    const auto pending = verifiedLoweredProgram(
+        gti_test::lowerProgram(unsupported, unsupported.mir, unsupported.mir),
+        issues);
+    require(
+        pending && !planLlvmAdmission(*pending).admitted(),
+        "text construction does not admit unsupported class witness layouts");
+  }
+}
+
+void hostedArgumentsContract(const std::filesystem::path &repository) {
+  for (const auto triple :
+       {"arm64-apple-macos", "x86_64-apple-macos", "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu"}) {
+    const auto target = parseTargetTriple(triple);
+    require(target.has_value(), "hosted ABI test names an accepted target");
+    const auto parameters = hostedNativeParameters(*target);
+    require(parameters && parameters->front() == SemanticType::Int32 &&
+                parameters->back().kind == SemanticType::RawPointer &&
+                parameters->back().arguments.size() == 1 &&
+                parameters->back().arguments.front().kind ==
+                    SemanticType::RawPointer,
+            "hosted argc and argv derive from exact target C declarations");
+  }
+  auto unsupported = TargetInfo::host();
+  unsupported.arch = "unsupported";
+  require(!hostedNativeParameters(unsupported),
+          "unsupported target cannot guess a hosted native ABI");
+  llvm::LLVMContext context;
+  llvm::IRBuilder<> ir(context);
+  const auto low = std::int64_t(std::numeric_limits<std::int32_t>::min());
+  const auto high = std::int64_t(std::numeric_limits<std::int32_t>::max());
+  for (const auto count :
+       {std::numeric_limits<std::int64_t>::min(), low - 1, low,
+        std::int64_t(-1), std::int64_t(0), high, high + 1,
+        std::numeric_limits<std::int64_t>::max()}) {
+    const auto *outside = llvm::dyn_cast<llvm::ConstantInt>(
+        hostedCountOutOfRange(ir, ir.getInt64(count)));
+    require(outside && outside->isOne() == (count < low || count > high),
+            "count narrowing checks the entire sealed Int64 domain");
+  }
+  bool wrongWidth = false;
+  try {
+    static_cast<void>(hostedCountOutOfRange(ir, ir.getInt32(0)));
+  } catch (const std::logic_error &) {
+    wrongWidth = true;
+  }
+  require(wrongWidth,
+          "a native-width count cannot impersonate the stabilized count");
+
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      repository / "tests/fixtures/llvm_hosted_arguments.gti", std::nullopt,
+      {repository / "stdlib/prelude.gti"}, {}, {repository / "stdlib"});
+  require(frontend.canGenerateCode() && verifyMirProgram(frontend.mir).valid(),
+          "hosted arguments have a real verified source startup plan");
+  const auto &body = *frontend.mir.hostedStartup();
+  std::array<bool, 3> seen{};
+  for (const auto &block : body.blocks)
+    for (const auto &stage : block.instructions) {
+      const auto *operation =
+          hostedArgumentOperation(frontend.mir, body, block, stage);
+      if (!operation)
+        continue;
+      const auto index =
+          operation->kind ==
+                  MirHostedStartupOperationKind::ValidateArgumentCount
+              ? 0
+          : operation->kind ==
+                  MirHostedStartupOperationKind::ConvertArgumentCount
+              ? 1
+              : 2;
+      seen[index] = true;
+      auto detached = stage;
+      bool rejected = false;
+      try {
+        static_cast<void>(
+            hostedArgumentOperation(frontend.mir, body, block, detached));
+      } catch (const std::logic_error &) {
+        rejected = true;
+      }
+      require(
+          rejected,
+          "copied stage identities cannot impersonate the sealed instruction");
+      for (unsigned mutation = 0; mutation != 6; ++mutation) {
+        auto invalid = frontend.mir;
+        auto &plan = *MirProgramTestAccess::hostedPlan(invalid);
+        auto &invalidBody = *const_cast<MirBody *>(invalid.hostedStartup());
+        auto &invalidBlock = invalidBody.blocks[block.id - 1];
+        auto &invalidStage = *std::find_if(
+            invalidBlock.instructions.begin(), invalidBlock.instructions.end(),
+            [&](const auto &candidate) { return candidate.id == stage.id; });
+        auto &invalidOperation = plan.operations[operation->id - 1];
+        switch (mutation) {
+        case 0:
+          ++invalidOperation.block;
+          break;
+        case 1:
+          ++invalidOperation.instruction;
+          break;
+        case 2:
+          invalidOperation.value = 0;
+          break;
+        case 3:
+          if (invalidStage.operands.empty())
+            invalidStage.info.type = SemanticType::Int32;
+          else
+            invalidStage.operands.front().value = 0;
+          break;
+        case 4:
+          if (!invalidStage.localFailureSites.empty())
+            invalidStage.localFailureSites.front() = 0;
+          else
+            invalidOperation.failureBehavior =
+                MirHostedStartupFailureBehavior::Detect;
+          break;
+        case 5:
+          if (invalidBlock.terminator.kind == MirTerminatorKind::Invoke)
+            invalidBlock.terminator.elseTarget = invalidBlock.terminator.target;
+          else
+            invalidBlock.terminator.target = 0;
+          break;
+        }
+        require(
+            !verifyMirProgram(invalid).valid(),
+            "malformed hosted identity, site or edge cannot cross MIR sealing");
+      }
+    }
+  require(seen[0] && seen[1] && seen[2],
+          "count validation/conversion and argument view have real producer "
+          "contracts");
 }
 
 void sourceMetadataContract(const std::filesystem::path &repository) {
@@ -720,9 +1302,37 @@ int main(int argc, char **argv) {
   } cleanup{scratch};
   try {
     unsafeReferenceLoadContract(std::filesystem::canonical(argv[1]));
+    unsafeReferenceLoadContract(std::filesystem::canonical(argv[1]), true);
     unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]));
-    classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]));
+    unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]), true);
+    unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]), true,
+                                  true);
+    unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]), true,
+                                  false, SemanticType::CString);
+    unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]), true,
+                                  true, SemanticType::CString);
+    for (const bool raw : {false, true}) {
+      unsafeReferenceReturnContract(
+          std::filesystem::canonical(argv[1]), true, raw,
+          SemanticType::StringView,
+          "tests/fixtures/llvm_hosted_class_owner_text_return.gti");
+      unsafeReferenceReturnContract(
+          std::filesystem::canonical(argv[1]), true, raw, SemanticType::CString,
+          "tests/fixtures/llvm_hosted_class_owner_text_return.gti");
+    }
+    for (const auto fixture :
+         {"tests/fixtures/llvm_hosted_unsafe_reference_invoke_readonly.gti",
+          "tests/fixtures/llvm_hosted_unsafe_reference_invoke_mutable.gti"})
+      unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]), false,
+                                    false, SemanticType::StringView, fixture,
+                                    true);
+    classOwnerTextContract(std::filesystem::canonical(argv[1]));
+    classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]),
+                                   "llvm_hosted_class_owner_reference.gti");
+    classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]),
+                                   "llvm_hosted_class_pointee_reference.gti");
     sourceMetadataContract(std::filesystem::canonical(argv[1]));
+    hostedArgumentsContract(std::filesystem::canonical(argv[1]));
     for (const auto &test : cases)
       for (auto optimization :
            {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive})

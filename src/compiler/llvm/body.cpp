@@ -165,6 +165,7 @@ private:
   std::map<MirValueId, llvm::Value *> temporaries;
   llvm::Value *returnDestination = nullptr, *failureDestination = nullptr;
   llvm::Value *callerSite = nullptr, *callerArtifact = nullptr;
+  llvm::Value *nativeArgumentCount = nullptr, *nativeArguments = nullptr;
   const MirBlock *current = nullptr;
   const MirInstruction *stage = nullptr;
 
@@ -884,8 +885,30 @@ private:
         published.matched() ? publicationAddress(*published.initializer)
                             : nullptr;
     llvm::Value *result = nullptr;
+    const auto *hosted =
+        input.kind == MirBodyKind::HostedStartup
+            ? hostedArgumentOperation(session.program().mir(), input, *current,
+                                      instruction)
+            : nullptr;
     switch (instruction.kind) {
     case MirInstructionKind::Compute: {
+      if (hosted) {
+        auto *source = operand(instruction.operands.at(0));
+        if (hosted->kind ==
+            MirHostedStartupOperationKind::ConvertArgumentCount) {
+          guard(hostedCountOutOfRange(ir, source),
+                {DefinedFailureCode::NumericConversionOutOfRange,
+                 DefinedFailureDetail::HostedArgumentCount});
+          result = ir.CreateTrunc(source, ir.getInt32Ty());
+        } else if (hosted->kind ==
+                   MirHostedStartupOperationKind::ReadArgumentView) {
+          result = hostedArgumentView(session, ir, nativeArguments, source);
+        } else {
+          throw std::logic_error(
+              "LLVM hosted compute has the wrong sealed role");
+        }
+        break;
+      }
       if (instruction.operation == MirOperation::FunctionItem) {
         result = ir.getInt8(0);
         break;
@@ -1069,6 +1092,19 @@ private:
     case MirInstructionKind::Load:
     case MirInstructionKind::CallInput:
     case MirInstructionKind::Move:
+      if (hosted) {
+        if (hosted->kind !=
+                MirHostedStartupOperationKind::ValidateArgumentCount ||
+            !nativeArgumentCount ||
+            !nativeArgumentCount->getType()->isIntegerTy(32))
+          throw std::logic_error(
+              "LLVM hosted count has no native C Int32 argument");
+        result = ir.CreateSExt(nativeArgumentCount, ir.getInt64Ty());
+        guard(ir.CreateICmpSLT(result, ir.getInt64(0)),
+              {DefinedFailureCode::HostedRuntimeContractFailure,
+               DefinedFailureDetail::NegativeArgumentCount});
+        break;
+      }
       result = operand(instruction.operands.at(0), publishedAddress);
       if (instruction.kind == MirInstructionKind::CallInput &&
           instruction.info.type == SemanticType::CString &&
@@ -1404,12 +1440,18 @@ private:
             header.CreatePHI(session.layouts().get(parameter.type).value, 0);
     }
     memory.allocate(globals);
-    if (parameters.size() != static_cast<std::size_t>(std::count_if(
-                                 abi.parameters.begin(), abi.parameters.end(),
-                                 [](const auto &parameter) {
-                                   return parameter.channel ==
-                                          AbiChannel::Argument;
-                                 })))
+    if (input.kind == MirBodyKind::HostedStartup &&
+        function.getFunctionType() != abi.type)
+      throw std::logic_error(
+          "LLVM hosted declaration/body native ABI disagrees");
+    if (input.kind == MirBodyKind::HostedStartup
+            ? !parameters.empty()
+            : parameters.size() !=
+                  static_cast<std::size_t>(std::count_if(
+                      abi.parameters.begin(), abi.parameters.end(),
+                      [](const auto &parameter) {
+                        return parameter.channel == AbiChannel::Argument;
+                      })))
       throw std::logic_error(
           "LLVM incoming ABI arguments differ from sealed parameter bindings");
     for (std::size_t index = 0; index < abi.parameters.size(); ++index) {
@@ -1429,6 +1471,18 @@ private:
         callerArtifact = argument;
         break;
       case AbiChannel::Argument:
+        if (input.kind == MirBodyKind::HostedStartup) {
+          if (parameter.sourceIndex == 0 &&
+              argument->getType()->isIntegerTy(32))
+            nativeArgumentCount = argument;
+          else if (parameter.sourceIndex == 1 &&
+                   argument->getType()->isPointerTy())
+            nativeArguments = argument;
+          else
+            throw std::logic_error(
+                "LLVM hosted arguments differ from the native C plan");
+          break;
+        }
         if (parameter.sourceIndex >= parameters.size())
           throw std::logic_error(
               "LLVM ABI argument exceeds its exact parameter map");
@@ -1443,6 +1497,12 @@ private:
         break;
       }
     }
+    if (input.kind == MirBodyKind::HostedStartup &&
+        session.program().mir().hostedStartupPlan()->kind ==
+            ProgramEntryKind::OwnedArguments &&
+        (!nativeArgumentCount || !nativeArguments))
+      throw std::logic_error(
+          "LLVM hosted arguments were not supplied by the native entry");
     for (const auto &record : input.failureRecords)
       channels.at(record.id) = ir.CreateAlloca(session.abi().failureChannel());
     // A constructor's entry Stored loans are the sealed field-publication
@@ -1519,6 +1579,8 @@ const MirClassInstance *Bodies::owner(MirBodyAddress address) {
 }
 FunctionAbi Bodies::signature(MirBodyAddress address) {
   const auto &program = session.program().mir();
+  if (address.kind == MirBodyKind::HostedStartup)
+    return hostedEntryAbi(session);
   if (address.kind == MirBodyKind::Function) {
     const auto &target = *program.findFunctionInstance(address.owner);
     return session.abi().gti(target.returnType, target.parameterTypes,
@@ -1555,15 +1617,11 @@ llvm::Function *Bodies::function(MirBodyAddress address) {
   if (address.kind == MirBodyKind::Function)
     output = session.abi().declareFunction(address.owner);
   else if (address.kind == MirBodyKind::HostedStartup) {
-    if (!session.program().mir().hostedStartupPlan() ||
-        session.program().mir().hostedStartupPlan()->kind !=
-            ProgramEntryKind::NoArguments)
-      throw BackendUnsupportedError(
-          "LLVM hosted argument construction is pending O-LLVM-12");
-    output = llvm::Function::Create(
-        llvm::FunctionType::get(llvm::Type::getInt32Ty(session.context()),
-                                false),
-        llvm::GlobalValue::ExternalLinkage, "main", session.module());
+    const auto plan = hostedEntryAbi(session);
+    output =
+        llvm::Function::Create(plan.type, llvm::GlobalValue::ExternalLinkage,
+                               "main", session.module());
+    plan.applyTo(*output);
     session.requireDefinition(*output);
   } else if (address.kind == MirBodyKind::Module ||
              address.kind == MirBodyKind::Lambda ||
