@@ -1,5 +1,7 @@
 #pragma once
 
+#include "generated.h"
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
