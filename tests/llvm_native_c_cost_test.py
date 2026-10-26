@@ -43,7 +43,9 @@ def main():
                               40000003 if args.aggregate else
                               40000002 if args.indirect else 40000001),
         "measured": args.measure,
-        "measurement": "whole process including startup; same C oracle and checked additions",
+        "measurement": ("whole process including startup; same C caller and exact uint64 XOR callback"
+                        if args.callback else
+                        "whole process including startup; same C oracle and checked additions"),
         "records": {}, "steps": []}
 
     def save():
