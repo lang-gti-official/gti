@@ -8,6 +8,7 @@
 
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/Support/SHA256.h>
+#include <llvm/Support/raw_ostream.h>
 
 namespace lang::native_llvm {
 
@@ -140,6 +141,15 @@ void emitEmbedding(Session &session, Failures &failures,
   auto *exportType =
       llvm::StructType::get(session.abi().textView(), identityType);
   std::string moduleIdentity = "gti-embedding-module-v1;";
+  // Failure metadata identifies detector sites, not infallible instructions.
+  // Bind the descriptor to the emitted closure before adding the descriptor
+  // itself, avoiding a self-referential object hash.
+  std::string code;
+  llvm::raw_string_ostream codeStream(code);
+  session.module().print(codeStream, nullptr);
+  moduleIdentity +=
+      std::to_string(static_cast<int>(session.options().optimization)) + ':' +
+      std::to_string(session.options().debugInfo) + ':' + code;
   const auto &artifactId =
       program.mir().failureMetadata().artifactIdentity().bytes;
   moduleIdentity.append(reinterpret_cast<const char *>(artifactId.data()),

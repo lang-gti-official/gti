@@ -4262,8 +4262,10 @@ and the central private GTI ABI for exact source calls. Results publish only
 after successful invocation. Scalar, passive-record, fixed-array record-field,
 HFA and one-level record/opaque-pointer transport reuse native ABI and header
 projection. The same projection creates canonical structural signature bytes;
-SHA-256 signature identities, canonical export order and the pinned failure
-artifact identity form the module descriptor identity. No source function ID
+SHA-256 signature identities, canonical export order, emitted closure/codegen
+policy and the pinned failure artifact identity form the module descriptor
+identity. Infallible body changes therefore change module identity even when
+failure-site metadata is unchanged. No source function ID
 or private LLVM structure name enters the signature identity.
 
 `gti/embedding.h` contains ADR 026's versioned public records and lifecycle

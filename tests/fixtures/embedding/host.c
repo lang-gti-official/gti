@@ -31,7 +31,7 @@ static void *wrong_thread(void *unused) {
 }
 
 int main(int argc, char **argv) {
-  assert(argc == 2);
+  assert(argc == 2 || argc == 3);
   uint8_t identity[32];
   for (int cycle = 0; cycle < 3; ++cycle) {
     void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
@@ -100,6 +100,14 @@ int main(int argc, char **argv) {
            descriptor->struct_size == sizeof *descriptor);
     assert(descriptor->reserved == 0 && descriptor->export_count == 18);
     assert(descriptor->failure_artifact && descriptor->exports);
+    if (argc == 3) {
+      assert(strcmp(argv[2], "--identity") == 0);
+      for (unsigned i = 0; i != 32; ++i)
+        printf("%02x", descriptor->module_identity[i]);
+      puts("");
+      assert(dlclose(library) == 0);
+      return 0;
+    }
     if (!cycle)
       memcpy(identity, descriptor->module_identity, 32);
     else

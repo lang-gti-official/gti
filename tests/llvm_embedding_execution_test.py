@@ -122,6 +122,19 @@ def main():
                  fixture / "host.c", "-pthread", *([] if sys.platform == "darwin" else ["-ldl"]),
                  "-o", host], f"host-O{level}-{standard}")
             run([host, library], f"execute-O{level}-{standard}")
+        if level == 0:
+            changed_source = directory / "identity.gti"
+            original_text = (root / SOURCE).read_text()
+            assert "value ^ 91" in original_text
+            identities = []
+            for constant in ("91", "90"):
+                changed_source.write_text(original_text.replace("value ^ 91", "value ^ " + constant))
+                changed_stem = directory / ("identity-" + constant)
+                run([emitter, changed_source, changed_stem, level, args.cxx, args.runtime.resolve(),
+                     *(f"{name}=embed_{name}" for name in EXPORTS)], "identity-generate-" + constant)
+                changed_library = directory / ("identity-" + constant + "-generation") / library.name
+                identities.append(run([host, changed_library, "--identity"], "identity-observe-" + constant).stdout)
+            assert identities[0] != identities[1], "infallible code mutation did not change module identity"
     for name, selected in (("reject_fallible", "divide"), ("reject_native", "call")):
         stem = output / name
         stem.with_suffix(".o").write_bytes(b"preserved object")
