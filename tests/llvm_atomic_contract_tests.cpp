@@ -9,6 +9,7 @@
 
 #include <llvm/Object/ObjectFile.h>
 #include <llvm/Support/Error.h>
+#include <llvm/Support/raw_ostream.h>
 
 namespace {
 using namespace lang;
@@ -20,6 +21,121 @@ void expect(bool condition, std::string_view message) {
     ++failures;
     std::cerr << "FAIL: " << message << '\n';
   }
+}
+
+// Test-only C-shaped lanes for the parking oracle. These use the real atomic
+// emitter and exact source-verified MIR plans; they are not GTI body wrappers,
+// a production foreign-object ABI, or admission of AtomicWait/AtomicNotify.
+void emitWaitLanes(const std::filesystem::path &root,
+                   const std::filesystem::path &output) {
+  FrontendOptions options;
+  options.target.executionProfile = ExecutionProfile::Concurrent;
+  options.target.runtimeCapabilities.threads = true;
+  options.requireEntryPoint = true;
+  options.requireFunctionDefinitions = true;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      root / "tests/fixtures/llvm_atomic_wait_lanes.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    throw std::runtime_error("wait lane fixture must reach verified MIR");
+  }
+  std::vector<LoweredProgramIssue> issues;
+  auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir,
+                             options.target),
+      issues);
+  if (!input)
+    throw std::runtime_error("wait lane fixture must seal before emission");
+  const auto admission = planLlvmAdmission(*input);
+  if (!admission.admitted())
+    throw std::runtime_error(admission.limitation());
+  Session session(*input, {});
+  const auto &program = input->program().mir();
+  struct Plan {
+    const MirBody *body = nullptr;
+    const MirInstruction *instruction = nullptr;
+  };
+  std::array<Plan, 4> loads{}, stores{};
+  for (const auto &owner : program.functionInstances())
+    for (const auto &block : owner.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const bool load = instruction.intrinsic == IntrinsicKind::AtomicLoad;
+        const bool store = instruction.intrinsic == IntrinsicKind::AtomicStore;
+        if ((!load && !store) ||
+            !nativeAtomicCall(program, owner.body, instruction))
+          continue;
+        if (instruction.synchronization.order !=
+            (load ? AtomicMemoryOrder::Acquire : AtomicMemoryOrder::Release))
+          continue;
+        const auto element = nativeAtomicElement(
+            program, instruction.operands[0].type.arguments[0]);
+        unsigned index = 0;
+        switch (element->kind) {
+        case SemanticType::UInt8:
+          index = 0;
+          break;
+        case SemanticType::UInt16:
+          index = 1;
+          break;
+        case SemanticType::UInt32:
+          index = 2;
+          break;
+        case SemanticType::UInt64:
+          index = 3;
+          break;
+        default:
+          continue;
+        }
+        (load ? loads : stores)[index] = {&owner.body, &instruction};
+      }
+  for (unsigned index = 0; index < loads.size(); ++index) {
+    if (!loads[index].body || !stores[index].body)
+      throw std::runtime_error(
+          "wait lanes need all four exact load/store plans");
+    const auto bits = 8U << index;
+    for (const bool load : {false, true}) {
+      auto *word = llvm::Type::getInt64Ty(session.context());
+      auto *pointer = session.layouts().pointer();
+      const std::vector<llvm::Type *> parameters =
+          load ? std::vector<llvm::Type *>{pointer}
+               : std::vector<llvm::Type *>{pointer, word};
+      auto *type = llvm::FunctionType::get(
+          load ? word : llvm::Type::getVoidTy(session.context()), parameters,
+          false);
+      auto *function = llvm::Function::Create(
+          type, llvm::GlobalValue::ExternalLinkage,
+          std::string("gti_test_llvm_") + (load ? "load" : "store") +
+              std::to_string(bits),
+          session.module());
+      llvm::IRBuilder<> ir(
+          llvm::BasicBlock::Create(session.context(), "entry", function));
+      Atomics atomics(session, ir);
+      const auto &plan = (load ? loads : stores)[index];
+      std::vector<llvm::Value *> operands{function->getArg(0)};
+      if (!load)
+        operands.push_back(ir.CreateTruncOrBitCast(
+            function->getArg(1),
+            llvm::IntegerType::get(session.context(), bits)));
+      auto *result = atomics.emit(*plan.body, *plan.instruction, operands);
+      if (load)
+        ir.CreateRet(ir.CreateZExtOrBitCast(result, word));
+      else
+        ir.CreateRetVoid();
+    }
+  }
+  session.verify();
+  std::error_code error;
+  llvm::raw_fd_ostream stream(output.string(), error);
+  if (error)
+    throw std::runtime_error(error.message());
+  session.module().print(stream, nullptr);
+  stream.close();
+  if (stream.has_error())
+    throw std::runtime_error("could not write test-only wait lane IR");
 }
 
 void check(const std::filesystem::path &root) {
@@ -259,10 +375,15 @@ void check(const std::filesystem::path &root) {
 } // namespace
 
 int main(int argc, char **argv) {
-  if (argc != 2)
+  if (argc != 2 &&
+      !(argc == 4 && std::string_view(argv[2]) == "--emit-wait-lanes"))
     return 2;
   try {
-    check(std::filesystem::path(argv[1]));
+    if (argc == 4)
+      emitWaitLanes(std::filesystem::path(argv[1]),
+                    std::filesystem::path(argv[3]));
+    else
+      check(std::filesystem::path(argv[1]));
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;
