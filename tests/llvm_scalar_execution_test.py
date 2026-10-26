@@ -2,12 +2,14 @@
 """Execute real lowered GTI at native O0/O3 against the production oracle."""
 
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from llvm_evidence_manifest import build_manifest
 
 
 SCALARS = r'''
@@ -67,6 +69,25 @@ int main() {
   if (!(int64_t(-1) < uint32_t(1)) || !(uint32_t(1) > int64_t(-1))
       || int16_t(-1) + uint16_t(1) != 0 || double(1.5) + float(0.5) != 2.0d) { return 9; }
   return 0;
+}
+'''
+
+COVERAGE_CONSTRUCTIONS = r'''
+#include <std/numeric>
+
+using Index = uint8_t;
+mut int implicit_zero;
+
+T convert<std::numeric T>(int value) { return T(value); }
+T default_value<std::default_initializable T>() { return T(); }
+
+int main() {
+  mut int value = 2;
+  int sequenced = (value += 1, +value);
+  Index alias = Index(sequenced);
+  uint8_t converted = convert<uint8_t>(sequenced);
+  uint8_t zero = default_value<uint8_t>();
+  return int(alias) + int(converted) + int(zero) + implicit_zero - 6;
 }
 '''
 
@@ -133,19 +154,17 @@ int main() { require(false); return 0; }
     return cases
 
 
-def main() -> None:
-    gti = Path(sys.argv[1]).resolve()
-    root = Path(sys.argv[2]).resolve()
-    env = os.environ.copy()
-    successes = {'scalars': SCALARS, 'widths': widths(),
-                 'shipped-example': (root / 'examples/llvm/scalar-control-flow.gti').read_text(),
-                 'globals': '''
+def successes(root: Path) -> dict[str, str]:
+    return {'scalars': SCALARS, 'widths': widths(),
+            'coverage-constructions': COVERAGE_CONSTRUCTIONS,
+            'shipped-example': (root / 'examples/llvm/scalar-control-flow.gti').read_text(),
+            'globals': '''
 int initialize() { return 3; }
 mut int value = initialize();
 bool enabled = true;
 int main() { value += 1; if (!enabled) { return 1; } return value - 4; }
 ''',
-                 'dormant-owner': '''
+            'dormant-owner': '''
 class Unused { public: Unused() {} ~Unused() {} };
 int unused() { Unused value{}; return 1; }
 int main() { return 0; }
@@ -160,9 +179,66 @@ int main() {
   return 0;
 }
 '''}
+
+
+def rejections() -> dict[str, str]:
+    return {
+        'polymorphic-owner': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }',
+        'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; return data[0].read(); }',
+        'polymorphic-tls': 'class Owner { public: virtual int read() { return 0; } }; thread_local Owner value{}; int main() { return value.read(); }',
+    }
+
+
+def evidence_cases(root: Path) -> dict[str, str]:
+    return {**successes(root),
+            **{name: source for name, (source, _) in failures().items()}}
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    cases = evidence_cases(root)
+    panic = ('panic', 'empty-panic', 'truncated-panic', 'assertion')
+    profiles = {
+        'scalars': ('scalars',),
+        'widths': ('widths',),
+        'globals': ('globals',),
+        'numeric-intrinsics': ('numeric-intrinsics',),
+        'coverage-constructions': ('coverage-constructions',),
+        'defined-failures': tuple(failures()),
+        'panic-failures': panic,
+    }
+    assert all(case in cases for profile in profiles.values() for case in profile)
+    return profiles
+
+
+def evidence_manifest(root: Path) -> dict:
+    return build_manifest(
+        'llvm_scalar_execution', evidence_cases(root), evidence_profiles(root),
+        {'shipped-example': 'examples/llvm/scalar-control-flow.gti'})
+
+
+def list_evidence(root: Path) -> None:
+    print(json.dumps(evidence_manifest(root), sort_keys=True))
+
+
+def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == '--list-evidence':
+        list_evidence(Path(sys.argv[2]).resolve())
+        return
+    gti = Path(sys.argv[1]).resolve()
+    root = Path(sys.argv[2]).resolve()
+    selection = sys.argv[3] if len(sys.argv) > 3 else None
+    env = os.environ.copy()
+    success_cases = successes(root)
+    failure_cases = failures()
+    rejection_cases = rejections()
+    if (selection and selection not in success_cases and
+            selection not in failure_cases and selection not in rejection_cases):
+        raise ValueError(f'unknown scalar execution case: {selection}')
     with tempfile.TemporaryDirectory(prefix='gti-llvm-scalars-') as temporary:
         work = Path(temporary)
-        for name, source_text in successes.items():
+        for name, source_text in success_cases.items():
+            if selection and selection != name:
+                continue
             source = work / f'{name}.gti'
             source.write_text(source_text)
             results = []
@@ -173,7 +249,9 @@ int main() {
                     raise AssertionError(f'{name} {endpoint}: {result}')
                 results.append(result.observable)
             assert results[0] == results[1] == results[2]
-        for name, (source_text, diagnostic) in failures().items():
+        for name, (source_text, diagnostic) in failure_cases.items():
+            if selection and selection != name:
+                continue
             source = work / f'{name}.gti'
             source.write_text(source_text)
             results = []
@@ -185,9 +263,9 @@ int main() {
                 results.append(result.observable)
             if not results[0] == results[1] == results[2]:
                 raise AssertionError(f'{name}: source/failure attribution drift: {results}')
-        for name, text in {'polymorphic-owner': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }',
-                           'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; return data[0].read(); }',
-                           'polymorphic-tls': 'class Owner { public: virtual int read() { return 0; } }; thread_local Owner value{}; int main() { return value.read(); }'}.items():
+        for name, text in rejection_cases.items():
+            if selection and selection != name:
+                continue
             source = work / f'reject-{name}.gti'
             source.write_text(text)
             output = work / f'reject-{name}'

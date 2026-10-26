@@ -1,0 +1,27 @@
+// A closed sum has one active alternative; a pattern can borrow its payload.
+enum Message<T> { empty, item(T value), pair(T first, T second) };
+union Overlay { mut uint64_t bits; mut double value; };
+
+int sum(Message<int>& message) {
+  switch (message) {
+  case Message<int>::empty: return 0;
+  case Message<int>::item(auto& value): return value;
+  case Message<int>::pair(auto& first, auto& second): return first + second;
+  }
+}
+
+int main() {
+  mut Overlay overlay{};
+  unsafe {
+    overlay.value = 1.0;
+    if (overlay.bits != uint64_t(4607182418800017408)) { return 3; }
+  }
+  mut Message<int> message = Message<int>::item(41);
+  switch (message) {
+  case Message<int>::item(mut auto& value):
+    value += 1;
+    break;
+  default: return 1;
+  }
+  return sum(message) == 42 ? 0 : 2;
+}

@@ -2454,7 +2454,10 @@ public:
       ::gti_failure_record_v2 *record, bool unwinding,
       Cleanup &&cleanup) {
     if (!value_.has_value()) {
-      std::terminate();
+      // Moving retires the payload, not the engaged native mutex shell. Its
+      // later MIR drop must still destroy that shell, without a second T drop
+      // or any change to an incoming primary/cleanup failure record.
+      return true;
     }
     bool success = false;
     try {

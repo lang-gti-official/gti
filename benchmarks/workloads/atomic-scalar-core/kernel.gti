@@ -1,0 +1,32 @@
+#include <std/atomic>
+
+int atomic_core() {
+  std::atomic<uint32_t> value{uint32_t(0)};
+  for (mut uint32_t index = 0; index < 20000000; index++) {
+    uint32_t input = index + 1;
+    value.store(input, std::memory_order_relaxed());
+    if (value.load(std::memory_order_relaxed()) != input) {
+      return 1;
+    }
+    uint32_t exchanged = value.exchange(input + 1, std::memory_order_acq_rel());
+    if (exchanged != input) {
+      return 2;
+    }
+    auto changed = value.compare_exchange_strong(
+        input + 1, input + 2, std::memory_order_acq_rel(),
+        std::memory_order_acquire());
+    if (!changed.exchanged() || changed.observed() != input + 1) {
+      return 3;
+    }
+    auto rejected = value.compare_exchange_strong(
+        input + 1, input + 3, std::memory_order_relaxed(),
+        std::memory_order_relaxed());
+    if (rejected.exchanged() || rejected.observed() != input + 2) {
+      return 4;
+    }
+  }
+  if (value.load() != 20000002) {
+    return 5;
+  }
+  return 0;
+}

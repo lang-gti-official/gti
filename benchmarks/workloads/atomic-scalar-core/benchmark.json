@@ -1,0 +1,11 @@
+{
+  "schema": 2,
+  "name": "atomic-scalar-core",
+  "description": "Five checked scalar atomic operations per iteration, including successful and failed strong compare-exchange",
+  "work_units": 20000000,
+  "minimum_sample_seconds": 0.10,
+  "variants": [
+    {"name": "gti", "kind": "gti", "source": "main.gti", "execution_profile": "concurrent"},
+    {"name": "cpp-semantic", "kind": "cpp", "source": "semantic.cpp", "execution_profile": null}
+  ]
+}

@@ -3,10 +3,11 @@
 
 namespace lang::native_llvm {
 
-Placement::Placement(const MirBody &body) {
+Placement::Placement(const MirProgram &program, const MirBody &body) {
   for (const auto &block : body.blocks)
     for (const auto &stage : block.instructions)
-      if (!stage.tombstone && stage.result && addressValue(stage.info.type))
+      if (!stage.tombstone && stage.result &&
+          addressValue(program, stage.info.type))
         producers.emplace(*stage.result, &stage);
   for (const auto &block : body.blocks) {
     for (const auto &stage : block.instructions) {
@@ -17,16 +18,23 @@ Placement::Placement(const MirBody &body) {
           stage.destination && stage.operands.size() == 1 &&
           stage.operands[0].kind == MirOperandKind::Value) {
         const auto *place = body.findPlace(*stage.destination);
-        if (place && addressValue(place->type) &&
+        if (place && addressValue(program, place->type) &&
             place->type == stage.operands[0].type)
           bind(stage.operands[0].value, {.place = *stage.destination});
       }
       if (stage.operation == MirOperation::Aggregate && stage.result &&
-          addressValue(stage.info.type))
+          addressValue(program, stage.info.type))
         for (std::size_t index = 0; index < stage.operands.size(); ++index)
           if (stage.operands[index].kind == MirOperandKind::Value)
             bind(stage.operands[index].value,
                  {.aggregate = *stage.result, .element = index});
+      if (stage.operation == MirOperation::PayloadConstruct && stage.result &&
+          stage.enumVariant)
+        for (std::size_t index = 0; index < stage.operands.size(); ++index)
+          if (stage.operands[index].kind == MirOperandKind::Value)
+            bind(stage.operands[index].value, {.aggregate = *stage.result,
+                                               .element = index,
+                                               .variant = stage.enumVariant});
     }
     const auto &term = block.terminator;
     if (term.kind == MirTerminatorKind::Return && term.value &&
@@ -49,7 +57,10 @@ bool Placement::fresh(MirValueId value) const {
          (stage.kind == MirInstructionKind::Call && !stage.loan &&
           stage.intrinsic == IntrinsicKind::None) ||
          (stage.kind == MirInstructionKind::Compute &&
-          stage.operation == MirOperation::Aggregate);
+          (stage.operation == MirOperation::Aggregate ||
+           stage.operation == MirOperation::PayloadConstruct ||
+           stage.operation == MirOperation::EnumConstant ||
+           stage.operation == MirOperation::Closure));
 }
 
 void Placement::bind(MirValueId value, Target target) {

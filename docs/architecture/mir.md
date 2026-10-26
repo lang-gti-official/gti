@@ -680,6 +680,23 @@ field publication must agree; matching forged call/field metadata cannot invent
 or erase the original owner authority. Each local value copy attached to an entry requires
 an independently proven, dominating same-type initialization; merely adding a
 binding to the carrier list grants no authority.
+A lifecycle-bound stored result may obtain exclusive owner dependency from
+its verified callee while accepting a shared address. Its incoming carrier
+parent supplies the selected address permission and lifetime; it does not
+supply mutable referent permission. For this sole-origin publication, body
+verification retains the exact staged input, live parent, source containment,
+Mutable result exclusion and cleanup endpoint. Program verification reconstructs
+the parent from independently checked stored entry paths and binds publication
+to the exact callee/constructor contract. Clearing that parent, changing the
+input/target/access, or using the readonly ancestor while the exclusive child
+is live remains invalid. Ordinary reborrows retain their existing permission
+rule. Every finite normal return and constructor publication is checked,
+including the structural trusted capability construction base; legal recursive
+relays require no termination proof or new certificate subsystem.
+Some invalid ancestor uses through stored readonly receivers still reach the
+MIR safety firewall instead of a semantic source diagnostic; that diagnostic
+frontier remains pending and is not satisfactory user-facing rejection.
+
 Checked references to primitive text views use the same two-dependency model.
 Their abstract `Stored` entry has no nominal field path: it represents the
 opaque caller-owned text and grants read-only access only. Semantic analysis
@@ -1038,6 +1055,19 @@ Canonical checked-place forwarding does not cross `RawDereference` or
 the pointer; a read-only carrier shell therefore does not make the raw pointee
 read-only. Ordinary pointer type/access and lexical unsafe obligations remain
 separate from checked loan ancestry.
+
+Program verification independently resolves Value-rooted raw class field
+projections through the exact MIR class catalog and checks their final type.
+It reuses the ordinary field/base/array/reference projection query; a missing
+root, invalid selected field, or contradictory final type rejects the owning
+body/place before lowered sealing. Native admission retains its independent
+supported-layout and final-type checks. This program-level check does not yet
+extend through Lambda capture-field selectors, whose exact environment identity
+requires a separate proof; it does not declare those paths universally valid.
+Class projection prefixes are still checked before that boundary, and each
+independently materialized prefix place retains its own final-type check. This
+is the current verification coverage, not a permanent source-language exception.
+
 Program v74/body v64 serialize signature receiver capability in semantic type
 metadata. Read-only, mutable, and consuming signatures cannot share a serialized
 identity. The lowered declaration seal includes the same field in

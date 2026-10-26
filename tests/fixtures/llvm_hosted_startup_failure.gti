@@ -1,0 +1,19 @@
+#include <std/panic>
+mut int trace = 0;
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  int read() { return this.value; }
+  ~Marker() { trace = trace * 10 + this.value; }
+};
+thread_local Marker early{1};
+thread_local Marker late{2};
+int initialize() {
+  [[discard]] early.read();
+  [[discard]] late.read();
+  Marker local{3};
+  std::panic("hosted startup failure");
+}
+int value = initialize();
+int main() { return 99; }
