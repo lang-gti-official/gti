@@ -257,10 +257,10 @@ void runChecks(const std::filesystem::path &self) {
   execute(17);
   auto retainedPolicy = Policy{};
   retainedPolicy.keep = true;
-  const auto retained = build(retainedPolicy);
-  checkBuild(retained);
+  const auto retainedForRejection = build(retainedPolicy);
+  checkBuild(retainedForRejection);
   require(
-      retained.cache.status == BuildCacheStatus::Hit &&
+      retainedForRejection.cache.status == BuildCacheStatus::Hit &&
           read(representation) == object,
       "rejection control must begin with a genuinely retained native object");
   for (const auto &[mode, spelling] : modes) {
