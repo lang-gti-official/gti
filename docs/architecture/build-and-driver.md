@@ -874,10 +874,11 @@ in `gti_driver` links that object with the PIC runtime through the existing
 native command machinery. On macOS arm64 and Linux x86_64 it emits an explicit
 export allowlist and requires all native references to resolve. A new immutable
 generation directory containing only the library and header is atomically
-published after linking succeeds. Existing files, directories and symlinks at
-that destination reject; hosts may retain an older loaded generation while
-building another. Native failure removes private staging artifacts and leaves
-the destination absent. This SDK path does not activate the project manifest
+published after linking succeeds. Publication uses an exclusive rename, so an
+existing destination also rejects when it was created while the linker ran.
+Hosts may retain an older loaded generation while building another. Native
+failure removes private staging artifacts without replacing an existing
+destination. This SDK path does not activate the project manifest
 gate, project cache or multi-artifact build-report integration.
 
 The top-level `[build]`, selected `[profiles.<name>]` and selected

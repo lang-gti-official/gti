@@ -4281,7 +4281,12 @@ storage. GTI implementation symbols are internal, not exported ABI.
 
 The registered `runtime_embedding_context` and `llvm_embedding_execution`
 oracles cover lifecycle and real dynamic C17/C++20/C++23 host execution. This
-does not activate the dormant project-library manifest gate or claim the
+execution provider binds its exact library/export `ProgramRequest` into the
+schema-2 evidence manifest and its case-context setup. The coverage probe uses
+that request when producing admission witnesses; executable defaults or changed
+export lists are not interchangeable evidence. Mutation controls reject omitted
+and changed requests while preserving execution-profile and source identities.
+This does not activate the dormant project-library manifest gate or claim the
 installed project workflow. Driver publication integration and fallible
 embedding remain separate prerequisites. In particular, the public ABI-v1
 failure record, observer ordering, cleanup completion and retained-state poison
