@@ -1960,6 +1960,12 @@ if(Python3_Interpreter_FOUND)
       --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
       --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-callback-execution-evidence")
   set_tests_properties(llvm_native_c_callback_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_native_c_outbound_boundary
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_outbound_boundary_test.py"
+      "$<TARGET_FILE:gti>" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-outbound-boundary-evidence")
+  set_tests_properties(llvm_native_c_outbound_boundary PROPERTIES TIMEOUT 1200)
   add_test(NAME llvm_native_c_confined_execution
     COMMAND "${Python3_EXECUTABLE}"
       "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_confined_execution_test.py"

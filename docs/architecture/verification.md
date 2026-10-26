@@ -10102,6 +10102,18 @@ ownership or entry-signature inference.
 
 ### Native LLVM Admission Gates
 
+`llvm_native_c_outbound_boundary` checks direct and function-pointer C calls
+through real source callbacks at LLVM O0-O3 with C++20/23 controls and native
+helpers at O0/O3. Normal and explicitly translated C results preserve reverse
+GTI cleanup; a translated zero followed by GTI division failure preserves
+cleanup, source attribution and callback terminal containment. A native shim
+that catches and terminates is a distinct negative control. A deliberately
+escaping C++ exception is labeled contract-violating fault injection: the test
+records observed GTI cleanup, but neither promises it nor credits this case to
+production coverage. No exception becomes a GTI failure record. These probes
+do not validate either private C04 transport, select a foreign firewall policy,
+or satisfy generated-code sanitizer gates.
+
 The registered evidence inventory reconciled through `d3585a07d` contains 217
 source cases. It retains every case identity from the prior 143-case inventory
 and adds two class cases, 21 hosted cases, 32 native-interop cases and 17

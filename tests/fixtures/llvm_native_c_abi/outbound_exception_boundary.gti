@@ -1,0 +1,40 @@
+using Operation = (int32_t) -> int32_t;
+extern "C" {
+  int32_t native_boundary_call(int32_t mode);
+  Operation native_boundary_select();
+  void native_boundary_cleanup(int32_t id);
+  int32_t native_boundary_host(Operation direct, Operation indirect);
+}
+struct Guard {
+  int32_t id;
+  Guard(int32_t value) : id(value) {}
+  ~Guard() { native_boundary_cleanup(id); }
+};
+int32_t direct_leaf(int32_t mode) {
+  Guard guard{2};
+  int32_t result = native_boundary_call(mode);
+  if (mode == 4) { return 100 / result; }
+  return result;
+}
+int32_t indirect_leaf(int32_t mode) {
+  Guard guard{2};
+  unsafe {
+    Operation operation = native_boundary_select();
+    int32_t result = operation(mode);
+    if (mode == 4) { return 100 / result; }
+    return result;
+  }
+}
+int32_t direct(int32_t mode) {
+  Guard guard{1};
+  return direct_leaf(mode);
+}
+int32_t indirect(int32_t mode) {
+  Guard guard{1};
+  return indirect_leaf(mode);
+}
+int main() {
+  Operation direct_callback = direct;
+  Operation indirect_callback = indirect;
+  unsafe { return native_boundary_host(direct_callback, indirect_callback); }
+}
