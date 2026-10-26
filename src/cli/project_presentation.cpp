@@ -344,6 +344,8 @@ void writeProjectMetadata(std::ostream &stream,
     stream << ", \"optimization\": " << optimizationNumber(profile.optimization)
            << ", \"cppStandard\": ";
     writeJsonString(stream, cppStandardName(profile.cppStandard));
+    stream << ", \"backend\": ";
+    writeJsonString(stream, backendKindName(profile.backend));
     stream << ", \"executionProfile\": ";
     writeJsonString(stream, executionProfileName(profile.executionProfile));
     stream << ", \"rawPointerAudit\": ";
@@ -383,6 +385,15 @@ void writeProjectMetadata(std::ostream &stream,
       writeJsonString(stream, plan == nullptr ? std::string_view{}
                                               : plan->output().string());
       stream << ", \"generatedCpp\": ";
+      writeJsonString(stream,
+                      plan == nullptr || plan->backend() != BackendKind::Cpp
+                          ? std::string_view{}
+                          : plan->generatedSource().string());
+      stream << ", \"backend\": ";
+      writeJsonString(stream, plan == nullptr
+                                  ? std::string_view{}
+                                  : backendKindName(plan->backend()));
+      stream << ", \"generatedArtifact\": ";
       writeJsonString(stream, plan == nullptr
                                   ? std::string_view{}
                                   : plan->generatedSource().string());

@@ -78,6 +78,8 @@ llvm::OptimizationLevel pipelineLevel(LlvmCodegenOptimization level) {
   throw std::invalid_argument("invalid LLVM optimization policy");
 }
 
+} // namespace
+
 std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
                                                  LlvmBackendOptions options) {
   const auto host = TargetInfo::host();
@@ -87,24 +89,30 @@ std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
         (target.os == "linux" && target.arch == "x86_64")))
     throw BackendUnsupportedError("LLVM native emission requires a supported "
                                   "macOS arm64 or Linux x86_64 host target");
+  static_cast<void>(llvmInstrumentationModeName(options.instrumentation));
+  if (options.instrumentation != LlvmInstrumentationMode::None)
+    throw BackendUnsupportedError(
+        "LLVM diagnostic instrumentation requires coherent pipeline and "
+        "matching native runtime support (O-LLVM-14/15)");
   if (options.debugInfo)
     throw BackendUnsupportedError(
         "LLVM debug metadata emission is not implemented yet (O-LLVM-14)");
   initializeTarget();
   const llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
+#if LLVM_VERSION_MAJOR >= 21
+  const auto &machineTriple = triple;
+#else
+  const auto machineTriple = triple.str();
+#endif
   std::string error;
-  const auto *registered = llvm::TargetRegistry::lookupTarget(triple, error);
+  const auto *registered =
+      llvm::TargetRegistry::lookupTarget(machineTriple, error);
   if (!registered)
     throw std::runtime_error("LLVM target lookup failed: " + error);
   llvm::TargetOptions targetOptions;
   targetOptions.AllowFPOpFusion = llvm::FPOpFusion::Strict;
   // No fast-math flags or function attributes are supplied. LLVM 23 removed
   // older target-wide fast-math toggles in favor of those per-operation facts.
-#if LLVM_VERSION_MAJOR >= 21
-  const auto &machineTriple = triple;
-#else
-  const auto machineTriple = triple.str();
-#endif
   std::unique_ptr<llvm::TargetMachine> machine(registered->createTargetMachine(
       machineTriple, "generic", "", targetOptions, llvm::Reloc::PIC_,
       std::nullopt, codegenLevel(options.optimization)));
@@ -112,8 +120,6 @@ std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
     throw std::runtime_error("LLVM target machine construction failed");
   return machine;
 }
-
-} // namespace
 
 void verifyTargetLayout(const TargetInfo &target,
                         const llvm::DataLayout &layout,

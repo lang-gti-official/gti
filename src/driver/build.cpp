@@ -2,6 +2,7 @@
 
 #include "build_source_identity.h"
 #include "gti/build_identity_config.h"
+#include "gti/llvm_backend.h"
 #include "sha256.h"
 
 #include <algorithm>
@@ -101,6 +102,52 @@ publishDebugBundle(const std::filesystem::path &staged,
 }
 
 constexpr std::string_view cacheSchema = "gti-build-cache-v4";
+constexpr std::string_view objectCacheSchema = "gti-build-cache-v5";
+
+bool nativeObjectCache(const ExecutableBuildRequest &request) {
+  return request.compilation().backend() == BackendKind::Llvm;
+}
+
+bool darwinDeploymentArgument(std::string_view argument) {
+  const auto changesDeployment = [](std::string_view component) {
+    const auto option = component.substr(0, component.find('='));
+    return (option.starts_with("-m") && option.ends_with("-version-min")) ||
+           option == "-macosx_version_min" || option == "-macos_version_min" ||
+           option == "-iphoneos_version_min" ||
+           option == "-ios_simulator_version_min" ||
+           option == "-tvos_version_min" ||
+           option == "-tvos_simulator_version_min" ||
+           option == "-watchos_version_min" ||
+           option == "-watchos_simulator_version_min" ||
+           option == "-mtargetos" || option == "-platform_version" ||
+           option == "-sdk_version" || option == "-target-sdk-version" ||
+           option == "-darwin-target-variant" ||
+           option == "-darwin-target-variant-triple" ||
+           option == "-darwin-target-variant-sdk-version";
+  };
+  if (argument.starts_with("-Xlinker="))
+    return changesDeployment(
+        argument.substr(std::string_view("-Xlinker=").size()));
+  if (!argument.starts_with("-Wl,"))
+    return changesDeployment(argument);
+  argument.remove_prefix(std::string_view("-Wl,").size());
+  while (true) {
+    const auto separator = argument.find(',');
+    if (changesDeployment(argument.substr(0, separator)))
+      return true;
+    if (separator == std::string_view::npos)
+      return false;
+    argument.remove_prefix(separator + 1);
+  }
+}
+
+std::string_view buildCacheSchema(const ExecutableBuildRequest &request) {
+  return nativeObjectCache(request) ? objectCacheSchema : cacheSchema;
+}
+
+std::string_view cacheRepresentationFile(bool object) {
+  return object ? "artifact.o" : "generated.cpp";
+}
 using detail::IdentityBuilder;
 
 struct FileDigest {
@@ -1280,9 +1327,44 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                                          std::string &errorMessage,
                                          std::string &policyBypassDetail) {
   IdentityBuilder identity;
-  identity.add("cache.schema", cacheSchema);
+  identity.add("cache.schema", buildCacheSchema(request));
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
+  if (nativeObjectCache(request)) {
+    const LlvmBackendOptions options =
+        llvmBackendOptions(request.compilation());
+    const auto backend = queryLlvmBackendIdentity(
+        request.compilation().target(), options, errorMessage);
+    if (!backend || backend->schema.empty() || backend->llvmVersion.empty() ||
+        backend->triple.empty() || backend->dataLayout.empty() ||
+        backend->cpu.empty() || backend->privateAbi == 0 ||
+        backend->instrumentation.empty() ||
+        backend->debugInfo != options.debugInfo ||
+        backend->instrumentation !=
+            llvmInstrumentationModeName(options.instrumentation)) {
+      if (errorMessage.empty())
+        errorMessage = "incomplete LLVM backend identity";
+      return std::nullopt;
+    }
+    // CMake requires a static LLVM closure. The containing executable's bytes
+    // identify the actual GTI + LLVM implementation, including dirty builds.
+    if (!addFileIdentity(identity, "llvm.compiler-image",
+                         backend->compilerExecutable, false, errorMessage))
+      return std::nullopt;
+    identity.add("llvm.schema", backend->schema);
+    identity.add("llvm.version", backend->llvmVersion);
+    identity.add("llvm.private-abi", backend->privateAbi);
+    identity.add("llvm.triple", backend->triple);
+    identity.add("llvm.data-layout", backend->dataLayout);
+    identity.add("llvm.cpu", backend->cpu);
+    identity.add("llvm.features", backend->features);
+    identity.add("llvm.relocation", backend->relocation);
+    identity.add("llvm.code-model", backend->codeModel);
+    identity.add("llvm.codegen-optimization", backend->codegenOptimization);
+    identity.add("llvm.debug-info",
+                 static_cast<std::uint64_t>(backend->debugInfo));
+    identity.add("llvm.instrumentation", backend->instrumentation);
+  }
   addNativeEnvironmentIdentity(identity);
   identity.add("backend.kind",
                static_cast<std::uint64_t>(request.compilation().backend()));
@@ -1654,6 +1736,7 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
 
 struct CacheMetadata {
   std::string key;
+  bool object = false;
   FileDigest generated;
   FileDigest executable;
   std::uint32_t executablePermissions = 0;
@@ -1754,7 +1837,7 @@ bool validDigest(std::string_view digest) {
 }
 
 std::optional<CacheMetadata>
-readCacheMetadata(const std::filesystem::path &path,
+readCacheMetadata(const std::filesystem::path &path, bool object,
                   std::string &errorMessage) {
   std::ifstream input(path, std::ios::binary);
   if (!input) {
@@ -1764,15 +1847,28 @@ readCacheMetadata(const std::filesystem::path &path,
 
   std::string schema;
   CacheMetadata metadata;
+  metadata.object = object;
+  if (object) {
+    std::string label, kind, extension;
+    if (!(input >> schema >> metadata.key >> label >> kind >> extension) ||
+        schema != objectCacheSchema || label != "artifact" ||
+        kind != "object" || extension != ".o") {
+      errorMessage = "metadata has an invalid native artifact schema";
+      return std::nullopt;
+    }
+  } else if (!(input >> schema >> metadata.key) || schema != cacheSchema) {
+    errorMessage = "metadata has an invalid source artifact schema";
+    return std::nullopt;
+  }
   std::string generatedLabel;
   std::string executableLabel;
   std::string symbolsLabel;
   std::string symbolsHash;
-  if (!(input >> schema >> metadata.key >> generatedLabel >>
-        metadata.generated.hash >> metadata.generated.size >> executableLabel >>
+  if (!(input >> generatedLabel >> metadata.generated.hash >>
+        metadata.generated.size >> executableLabel >>
         metadata.executable.hash >> metadata.executable.size >>
         metadata.executablePermissions >> symbolsLabel >> symbolsHash) ||
-      schema != cacheSchema || generatedLabel != "generated" ||
+      generatedLabel != (object ? "representation" : "generated") ||
       executableLabel != "executable" || symbolsLabel != "symbols" ||
       !validDigest(metadata.key) || !validDigest(metadata.generated.hash) ||
       !validDigest(metadata.executable.hash)) {
@@ -1825,7 +1921,9 @@ readCacheMetadata(const std::filesystem::path &path,
 
 std::string renderCacheMetadata(const CacheMetadata &metadata) {
   std::string text =
-      std::string(cacheSchema) + "\n" + metadata.key + "\n" + "generated " +
+      std::string(metadata.object ? objectCacheSchema : cacheSchema) + "\n" +
+      metadata.key + "\n" +
+      (metadata.object ? "artifact object .o\nrepresentation " : "generated ") +
       metadata.generated.hash + " " + std::to_string(metadata.generated.size) +
       "\n" + "executable " + metadata.executable.hash + " " +
       std::to_string(metadata.executable.size) + " " +
@@ -1879,9 +1977,10 @@ std::optional<std::string> readTextFile(const std::filesystem::path &path,
 }
 
 CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
-                                   std::string_view expectedKey) {
+                                   std::string_view expectedKey, bool object) {
   const std::filesystem::path metadataPath = entry / "metadata";
-  const std::filesystem::path generatedPath = entry / "generated.cpp";
+  const std::filesystem::path generatedPath =
+      entry / cacheRepresentationFile(object);
   const std::filesystem::path executablePath = entry / "executable";
   std::error_code error;
   const bool entryExists = std::filesystem::exists(entry, error);
@@ -1895,8 +1994,19 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
   }
 
   std::string detail;
+  if (object) {
+    for (const auto &path : {metadataPath, generatedPath, executablePath}) {
+      error.clear();
+      if (!std::filesystem::is_regular_file(
+              std::filesystem::symlink_status(path, error)) ||
+          error) {
+        return {.status = CacheLookupStatus::Corrupt,
+                .detail = "native cache payload is not a regular file"};
+      }
+    }
+  }
   const std::optional<CacheMetadata> metadata =
-      readCacheMetadata(metadataPath, detail);
+      readCacheMetadata(metadataPath, object, detail);
   if (!metadata) {
     return {.status = CacheLookupStatus::Corrupt, .detail = std::move(detail)};
   }
@@ -2047,7 +2157,7 @@ ArtifactPublishResult copyFileAtomically(
 
 bool storeCacheEntry(const ExecutableBuildRequest &request,
                      const std::filesystem::path &entry, std::string_view key,
-                     std::string_view generated,
+                     const BackendArtifact &artifact,
                      const std::vector<std::string> &testCases,
                      std::string &errorMessage) {
   if (!request.managedOutput()) {
@@ -2061,7 +2171,16 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
     return false;
   }
 
-  const std::filesystem::path generatedPath = entry / "generated.cpp";
+  const bool object = nativeObjectCache(request);
+  if (artifact.kind != (object ? BackendArtifactKind::Object
+                               : BackendArtifactKind::Source) ||
+      artifact.extension != (object ? ".o" : ".cpp")) {
+    errorMessage = "backend artifact does not match the cache schema";
+    return false;
+  }
+  const std::string_view generated = artifact.contents;
+  const std::filesystem::path generatedPath =
+      entry / cacheRepresentationFile(object);
   const std::filesystem::path executablePath = entry / "executable";
   const FileDigest generatedDigest{.hash = digestText(generated),
                                    .size = generated.size()};
@@ -2089,6 +2208,7 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
   }
 
   CacheMetadata metadata{.key = std::string(key),
+                         .object = object,
                          .generated = generatedDigest,
                          .executable = *executableDigest,
                          .executablePermissions =
@@ -2297,9 +2417,9 @@ std::optional<std::string>
 nativeCacheBypassDetail(const ExecutableBuildRequest &request,
                         NativeLinkIdentityPlan &plan) {
   plan = {};
-  if (request.compilation().backend() != BackendKind::Cpp) {
-    return "native-object backend artifacts are not yet represented by the "
-           "build cache format";
+  if (request.compilation().backend() != BackendKind::Cpp &&
+      request.compilation().backend() != BackendKind::Llvm) {
+    return "unknown backend artifact identity";
   }
   const NativeInputs &inputs = request.nativeInputs();
   if (!inputs.compilerArguments.empty() || !inputs.cCompilerArguments.empty() ||
@@ -2992,6 +3112,36 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
                                       ProgressObserver *progress) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
+  if (nativeObjectCache(request)) {
+    const auto configured = [](const char *name) {
+      const char *value = std::getenv(name);
+      return value != nullptr && *value != '\0';
+    };
+    const auto &policy = request.nativeInputs().targetPolicy;
+    const auto hasDeploymentArgument = [](const auto &arguments) {
+      return std::any_of(arguments.begin(), arguments.end(),
+                         darwinDeploymentArgument);
+    };
+    const bool darwinPolicy =
+        request.compilation().target().os == "macos" &&
+        (configured("MACOSX_DEPLOYMENT_TARGET") || configured("SDKROOT") ||
+         configured("DEVELOPER_DIR") ||
+         hasDeploymentArgument(request.nativeInputs().linkerArguments) ||
+         hasDeploymentArgument(request.nativeInputs().trailingArguments));
+    if (!policy.triple.empty() || !policy.sysroot.empty() || darwinPolicy) {
+      result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
+      result.driverDiagnostic =
+          "gti: explicit LLVM native target, sysroot or deployment policy "
+          "requires coordinated backend target options and a matching "
+          "target-built runtime; the current profile supports implicit host "
+          "policy only";
+      if (request.cache()) {
+        result.cache.status = BuildCacheStatus::Bypassed;
+        result.cache.detail = "LLVM native target/runtime identity unavailable";
+      }
+      return result;
+    }
+  }
   const auto hasObjectiveCpp = [](const auto &sources) {
     return std::any_of(sources.begin(), sources.end(), [](const auto &source) {
       return source.extension() == ".mm";
@@ -3198,7 +3348,9 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = "cache requires a managed project output policy";
     } else {
-      const std::filesystem::path versionRoot = request.cache()->root / "v4";
+      const bool object = nativeObjectCache(request);
+      const std::filesystem::path versionRoot =
+          request.cache()->root / (object ? "v5" : "v4");
       const std::filesystem::path cacheProbe = versionRoot / "probe/metadata";
       if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
               *request.managedOutput(), cacheProbe, false)) {
@@ -3229,7 +3381,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
           return result;
         }
 
-        const CacheLookupResult lookup = lookupCacheEntry(*cacheEntry, *key);
+        const CacheLookupResult lookup =
+            lookupCacheEntry(*cacheEntry, *key, object);
         if (lookup.status == CacheLookupStatus::Hit) {
           cacheProgress.update("hit; restoring executable");
           result.cache.status = BuildCacheStatus::Hit;
@@ -3250,9 +3403,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
           result.compilation.diagnostics =
               std::move(compilationInputs.diagnostics);
           result.compilation.artifact =
-              BackendArtifact{.kind = BackendArtifactKind::Source,
+              BackendArtifact{.kind = object ? BackendArtifactKind::Object
+                                             : BackendArtifactKind::Source,
                               .contents = lookup.generated,
-                              .extension = ".cpp"};
+                              .extension = object ? ".o" : ".cpp"};
           if (request.keepGeneratedSource()) {
             std::string writeError;
             if (!publishTextAtomically(request.generatedSource(),
@@ -3754,7 +3908,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   if (cacheEntry && !result.cache.key.empty()) {
     std::string cacheStoreError;
     if (storeCacheEntry(request, *cacheEntry, result.cache.key,
-                        result.compilation.artifact->contents,
+                        *result.compilation.artifact,
                         result.compilation.testCases, cacheStoreError)) {
       if (corruptCacheEntry) {
         result.cache.status = BuildCacheStatus::RecoveredCorruption;

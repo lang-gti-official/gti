@@ -796,12 +796,27 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
                  {"optimization", "cpp-standard", "execution-profile",
                   "raw-pointer-audit", "raw-pointer-audit-library-findings",
                   "disabled-warnings", "dependency-warnings", "keep-cpp",
-                  "debug-info", "native", "defines"},
+                  "debug-info", "native", "defines", "backend"},
                  "profile", sourceName, source, diagnostics);
   if (table.contains("defines"))
     profile.defines =
         parseConfigurationDefines(table, "Profile", sourceName, source,
                                   diagnostics, profile.defineDeclarations);
+
+  if (const toml::node *backend = table.get("backend")) {
+    const auto value = backend->value<std::string>();
+    if (!value) {
+      diagnostics.push_back(
+          buildDiagnostic("GTI-B1004", sourceSpan(sourceName, source, *backend),
+                          "Profile field 'backend' must be a string."));
+    } else if (const auto selected = parseBackendKind(*value)) {
+      profile.backend = *selected;
+    } else {
+      diagnostics.push_back(
+          buildDiagnostic("GTI-B1005", sourceSpan(sourceName, source, *backend),
+                          "Profile backend must be 'cpp' or 'llvm'."));
+    }
+  }
 
   if (const toml::node *optimization = table.get("optimization")) {
     const std::optional<std::int64_t> value =

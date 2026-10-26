@@ -314,6 +314,11 @@ available. Stable macOS publication is manual and is not a completed automated
 platform check. Nightly asset pruning intentionally removes archives outside
 its current Linux build rather than retaining misleading old macOS binaries.
 
+Release archives explicitly use GNU tar format so macOS extended attributes do
+not become AppleDouble companion files after extraction. This preserves the
+installed runtime-header tree's content identity for relocated native cache
+entries; the cache still hashes every real file in that tree.
+
 Stable versions describe user-visible toolchain behavior. Internal compiler or
 runtime work, tests, and documentation alone retain `VERSION` and reach users
 through nightly. `scripts/check_release_version.py` conservatively identifies
@@ -499,11 +504,12 @@ Externally supplied native entry points are not a GTI executable contract.
 
 Direct mode accepts one entry `.gti` source and remains manifest-independent.
 Its source graph produces one whole-program backend artifact and, for the
-production C++ backend, one native compiler invocation. `--backend cpp|llvm`
+default C++ backend, one native compiler invocation. `--backend cpp|llvm`
 selects the immutable executable backend; omission remains `cpp`. The LLVM
-choice currently reaches the verified `LoweredProgram` boundary and reports
-`GTI-B0003` because executable lowering is not implemented. It creates no
-artifact. `--std` and `--keep-cpp` are C++-only, and explicit emit modes keep
+choice emits native objects for the admitted profile documented in
+[backend architecture](backend.md#llvm-scalar-execution). Unsupported required
+shapes report `GTI-B0003` before publication, without a C++ fallback.
+`--std` and `--keep-cpp` are C++-only, and explicit emit modes keep
 their dedicated backend entry points rather than accepting `--backend`.
 Repeatable `-D NAME` options seed valueless GTI configuration flags
 for the invocation. Repeatable `-Wno-<group>` options (or the equivalent
@@ -518,11 +524,9 @@ selected C++ standard and generated-source floating-point policy before
 linking. Backend object artifacts instead enter `NativeLinkRequest`: the
 driver publishes the opaque bytes atomically, then links them with the same
 target policy, declared native objects, ordered libraries/frameworks, and GTI
-runtime without adding source-language or code-generation flags. This object
-path is infrastructure for the LLVM backend and has no producer yet. Until the
-cache schema records binary artifact kind and extension, non-C++ executable
-requests bypass whole-program cache reuse rather than misclassifying object
-bytes as generated C++.
+runtime without adding source-language or code-generation flags. The LLVM
+backend produces these binary artifacts directly. Project requests use the
+backend-aware object cache described below; direct requests remain uncached.
 The shared native-argument policy rejects response files and recognized option
 families that replace driver-owned output, executable build mode,
 language/optimization, target, sysroot, or data layout. Raw Clang cc1/driver
@@ -615,7 +619,7 @@ accept `-g` / `--debug-info`. `--no-debug-info` disables it; the last explicit
 selection wins. Profiles accept the Boolean `debug-info` field, defaulting to
 false in both built-in profiles. A CLI override wins over the profile. Debug
 info is independent of optimization: use `-O0` for predictable breakpoints.
-Metadata schema 14 reports `debugInfo` in each profile and resolved output plan.
+Metadata schema 15 reports `debugInfo` in each profile and resolved output plan.
 Analysis-only `check` and MIR/native-header emission do not enable debug
 output. Direct `--emit-cpp -g` emits mappings for a separately invoked native
 compiler, which must also receive `-g`.
@@ -678,6 +682,25 @@ Syntax, ownership, LSP analysis, and runtime behavior are unchanged.
 
 ## Project Mode
 
+`build`, `run`, `test`, and `install` accept `--backend cpp|llvm`. Each profile
+may set `backend = "cpp"|"llvm"`; omission preserves the shipped `cpp` default,
+and an explicit command-line choice overrides the selected profile. The
+immutable build plan carries that choice into the same executable driver used
+by direct mode, including parallel `--all` children. LLVM intermediates use
+`.gti.o`, never `.gti.cpp`. C++ retention and an explicit `--std` are rejected
+for an effective LLVM plan. Backend selection is not a frontend analysis policy;
+`check` and emit-only commands do not accept the executable-backend override.
+
+Metadata schema 15 exposes profile/output `backend` and output
+`generatedArtifact`; the compatibility `generatedCpp` field is empty for LLVM.
+Native C/C++ dependency objects and consumer-approved package build commands
+still join the normal native link and cache identity. GTI-authored host build
+programs use the effective backend too: an unsupported LLVM build program
+rejects rather than silently generating C++. LLVM host-program compilation uses
+the exact executable cache, but its execution conservatively bypasses the older
+script-output state cache, which does not identify transitive GTI/backend/runtime
+inputs. Command build programs retain their existing declared-input contract.
+
 ### Raw pointer audit policy
 
 Direct compilation and project `build`, `check`, `run`, `test`, and `verify`
@@ -720,7 +743,7 @@ The immutable `CompilationRequest`, resolved profile/plan and read-only
 model and executable cache identity; an `off` artifact cannot satisfy a
 `strict` request. Unchanged-policy cache hits keep the existing no-warning-
 replay contract; use `check` or `--no-cache` for fresh diagnostics. Metadata
-schema 14 includes the additive `rawPointerAudit` field on profiles and plans.
+schema 15 includes the additive `rawPointerAudit` field on profiles and plans.
 Build-report schema 2 includes `raw_pointer_audit` (older reports imply `off`)
 and the additive boolean `raw_pointer_audit_library_findings` (older reports
 imply `false`); `verify` replays that policy unless explicitly overridden and
@@ -889,7 +912,7 @@ and declared sets participate in frontend/build cache identities, and immutable
 compilation requests preserve them through build, check and editor completion.
 The effective set is immutable in every
 `ProjectBuildPlan`, participates in its model identity, and is passed through
-the shared frontend request. Metadata schema 14 reports that effective `defines`
+the shared frontend request. Metadata schema 15 reports that effective `defines`
 array beside each target/profile output plan.
 Editor profile selection uses these same facts: `gti_lsp` consumes the named
 profile selected by `settings.gti.profile`/initialization options, or the normal
@@ -2113,6 +2136,39 @@ not discard a successfully published program. Deleting only `build/gti/cache`
 does not modify sources or published target artifacts; `gti clean` deliberately
 removes the entire validated `build/gti` subtree, including both.
 
+Native-object storage has a separate schema-v5 representation under
+`build/gti/cache/v5/<sha256>/`, marked `gti-build-cache-v5`. Its metadata
+requires `artifact object .o`, and `artifact.o` preserves opaque binary bytes,
+including NULs, rather than labeling them generated C++. Lookup verifies the
+object and executable digests, permissions and test catalog before restoration;
+native metadata and payload leaves must be regular files, not symlinks. A
+restored backend result retains object kind and `.o` extension. C++ continues
+to use the unchanged v4 identity and metadata format.
+
+LLVM reuse additionally consumes a producer-owned query of the same target
+machine factory used for object emission: resolved triple, data layout, CPU,
+features, relocation/code model, code-generation optimization and private
+execution ABI revision. The key includes the backend identity schema and LLVM
+version plus the exact containing compiler executable's content; the build
+requires the LLVM backend closure to be statically linked, so those bytes also
+identify the actual LLVM implementation, including dirty builds. Existing
+source/dependency, runtime-content, native-toolchain and debug/policy inputs
+remain part of the key. An unavailable required identity bypasses; no CPU,
+feature, relocation or ABI fact is guessed. Unsupported LLVM debug requests
+remain rejected until source-debug production is implemented by O-LLVM-15.
+
+Object identity schema `gti-llvm-object-identity-v2` additionally records the
+actual debug boolean and stable diagnostic instrumentation spelling. The
+LLVM-free API exposes None, Address, UndefinedMemory,
+AddressAndUndefinedMemory and Thread; UndefinedMemory denotes only original
+generated load/store null/alignment checks, not complete UBSan. Immutable driver
+requests select these policies through `withLlvmInstrumentation`, after explicit
+LLVM backend selection. Object generation and cache identity use one options
+mapping. Non-None modes currently reject until coherent pipeline and matching
+native runtime support are wired; unknown values and C++ combinations reject.
+The default None policy retains current execution. No CLI or manifest selector
+is exposed by this typed API checkpoint, and binary cache payload v5 is unchanged.
+
 Three narrowings hold by an exact-identity argument, stated here because each
 one moved an input out of the bypass list.
 
@@ -2197,7 +2253,7 @@ the cache key; changing either forces frontend analysis under the new policy.
 Cache hits retain the existing contract: they restore artifacts without running
 semantic analysis or replaying its advisory warnings. Use `gti check` or
 `--no-cache` to request fresh diagnostics without relying on artifact reuse.
-Metadata schema 14 publishes the profile fields for every profile plus the
+Metadata schema 15 publishes the profile fields for every profile plus the
 selected workspace and sorted package/dependency graph. The execution profile
 selects static language policy
 only; the independently selected runtime profile derives the target/runtime
@@ -2238,7 +2294,7 @@ read-only `ProjectFacts` and applies the same primary-source classifier when
 publishing frontend diagnostics. A dependency opened as its own project is its
 selected package, not a globally muted directory. Manifest changes invalidate
 editor snapshots. Direct compilation stays manifest-independent and keeps
-dependency warnings enabled by default. Metadata schema 14 reports
+dependency warnings enabled by default. Metadata schema 15 reports
 `dependencyWarnings` on both profiles and resolved output plans.
 
 Arguments after `gti run --` are passed as exact program arguments and become
@@ -2262,7 +2318,8 @@ development escape hatch for running possibly stale output.
 ## Current Limits
 
 The executable cache is whole-program and workspace-local. It does not yet
-persist individual parsed units, HIR/MIR bodies, native objects, or remote/shared
+persist individual parsed units, HIR/MIR bodies, independently reusable native
+objects, or remote/shared
 artifacts. The separate in-process frontend cache used by editor analysis is
 not a project executable-cache entry.
 Git dependencies support pinned full revisions only; mutable branch/tag
@@ -2280,11 +2337,23 @@ installs from a local project (not a registry or Git source), and installs one
 target per invocation.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
-Project manifests and project subcommands continue to select the production
-C++ backend. Native LLVM objects are available in direct mode for the admitted
-scalar profile. Native-backend project configuration still requires a manifest
-selection and artifact-kind-aware project cache contract; direct selection is
-the current public LLVM surface.
+Project and direct LLVM selection share the currently admitted executable
+profile; they do not imply full-language backend promotion. Source-level native
+C calls, generated embedding wrappers, automatic test dispatchers and further
+families retain their owning backend admission gates. Debug companion production
+depends on O-LLVM-15; this driver change does not implement debug metadata.
+LLVM cross-target admission remains host-only pending initialized target,
+runtime/sysroot and execution evidence. LLVM executable requests reject explicit
+native target/sysroot policies and, on Darwin, `MACOSX_DEPLOYMENT_TARGET`,
+`SDKROOT` or `DEVELOPER_DIR` overrides before cache lookup or publication until
+the backend factory and runtime artifacts share a verified policy. Recognized
+Darwin deployment options in final native-link arguments are rejected too,
+including compiler minimum-version/target-OS options and linker forwarding
+through `-Wl,` or `-Xlinker=`. A cache bypass alone would not make those
+inconsistent objects safe to publish. This avoids
+publishing a lower-deployment executable containing newer-deployment objects.
+System-LLVM installed evidence does not
+substitute for the pinned bundled-LLVM packaging gate.
 The LSP consumes the driver-published project facts for host-target analysis and
 supports a named editor profile, with source-based target inference. Explicit
 editor selection of another workspace package, target, or cross target is not
