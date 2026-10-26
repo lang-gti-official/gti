@@ -847,8 +847,6 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
         "__gti_native_cleanup_" + std::to_string(cleanups.size()),
         session.module());
 #if defined(GTI_LLVM_C04_NATIVE_UNWIND)
-    // The evaluation profile permits no owned child recipes here. A source
-    // destructor can unwind through this frame to its owning MIR Drop edge.
     function->setUWTableKind(llvm::UWTableKind::Sync);
 #endif
     cleanups.emplace_back(recipe, function);
@@ -862,6 +860,11 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     llvm::Value *cleanupToken = nullptr;
     auto *scratch = ir.CreateAlloca(session.abi().failureChannel());
     ir.CreateStore(ir.getFalse(), failed);
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+    auto *unwindType =
+        llvm::StructType::get(session.context(), {pointer, ir.getInt32Ty()});
+    llvm::AllocaInst *unwindState = nullptr;
+#endif
     const bool unique = recipe.type.kind == SemanticType::UniqueOwner;
     const bool shared =
         recipe.type.kind == SemanticType::Class &&
@@ -965,13 +968,52 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
           llvm::BasicBlock::Create(session.context(), "stop", function);
       ir.CreateCondBr(duringFailure, stop, resume);
       ir.SetInsertPoint(stop);
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+      ir.CreateResume(ir.CreateLoad(unwindType, unwindState));
+#else
       ir.CreateRet(ir.getFalse());
+#endif
       ir.SetInsertPoint(resume);
       ir.CreateStore(failures.enterCleanup(ir, output), cleanupToken);
       ir.CreateStore(ir.getTrue(), failed);
       ir.CreateBr(next);
       ir.SetInsertPoint(next);
     };
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+    // A native exception must not skip the remaining verified child recipes.
+    // Convert only this helper's unwind edge into the existing cleanup state;
+    // after the schedule drains, resume the original token, never swallow it.
+    const auto evaluationCall = [&](llvm::Function *callee,
+                                    llvm::ArrayRef<llvm::Value *> arguments) {
+      if (!unwindState) {
+        auto personality = session.module().getOrInsertFunction(
+            "__gxx_personality_v0",
+            llvm::FunctionType::get(ir.getInt32Ty(), true));
+        function->setPersonalityFn(
+            llvm::cast<llvm::Constant>(personality.getCallee()));
+        llvm::IRBuilder<> entry(&function->getEntryBlock(),
+                                function->getEntryBlock().begin());
+        unwindState = entry.CreateAlloca(unwindType, nullptr, "c04.unwind");
+      }
+      auto *next = llvm::BasicBlock::Create(session.context(),
+                                            "c04.cleanup.next", function);
+      auto *unwind = llvm::BasicBlock::Create(session.context(),
+                                              "c04.cleanup.unwind", function);
+      auto *call = ir.CreateInvoke(callee, next, unwind, arguments);
+      ir.SetInsertPoint(unwind);
+      auto *landing = ir.CreateLandingPad(unwindType, 0);
+      landing->setCleanup(true);
+      ir.CreateStore(landing, unwindState);
+      auto transfer = session.module().getOrInsertFunction(
+          "__gti_c04_evaluate_current",
+          llvm::FunctionType::get(ir.getVoidTy(), {pointer}, false));
+      ir.CreateCall(transfer, {scratch})->setDoesNotThrow();
+      observe(ir.getFalse());
+      ir.CreateBr(next);
+      ir.SetInsertPoint(next);
+      return call;
+    };
+#endif
     const auto child = [&](const MirDropType &selected, llvm::Value *where) {
       const auto edge =
           std::find_if(recipe.aggregate.begin(), recipe.aggregate.end(),
@@ -984,10 +1026,15 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
             "LLVM cleanup emission lost its validated child edge");
       const auto index =
           static_cast<std::size_t>(edge - recipe.aggregate.begin());
-      observe(ir.CreateCall(
-          self(self, selectedProof.aggregate[index]),
-          {where, scratch,
-           ir.CreateOr(duringFailure, ir.CreateLoad(ir.getInt1Ty(), failed))}));
+      auto *target = self(self, selectedProof.aggregate[index]);
+      const std::vector<llvm::Value *> arguments{
+          where, scratch,
+          ir.CreateOr(duringFailure, ir.CreateLoad(ir.getInt1Ty(), failed))};
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+      evaluationCall(target, arguments);
+#else
+      observe(ir.CreateCall(target, arguments));
+#endif
     };
     if (shared) {
       child(recipe.aggregate[0], sharedPointee);
@@ -1107,8 +1154,12 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
         if (abi.failureDestination)
           arguments.push_back(scratch);
         arguments.push_back(address);
-        auto *status = ir.CreateCall(
-            findBody({MirBodyKind::Destructor, target->id}), arguments);
+        auto *callee = findBody({MirBodyKind::Destructor, target->id});
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+        auto *status = evaluationCall(callee, arguments);
+#else
+        auto *status = ir.CreateCall(callee, arguments);
+#endif
         abi.applyTo(*status);
         if (abi.statusResult)
           observe(status);
@@ -1147,16 +1198,22 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     if (cleanupToken) {
       auto *failedResult = ir.CreateLoad(ir.getInt1Ty(), failed);
       auto *leave = llvm::BasicBlock::Create(session.context(),
-                                           "cleanup.context.leave", function);
+                                             "cleanup.context.leave", function);
       auto *result = llvm::BasicBlock::Create(session.context(),
-                                            "cleanup.result", function);
+                                              "cleanup.result", function);
       ir.CreateCondBr(failedResult, leave, result);
       ir.SetInsertPoint(leave);
       failures.leaveCleanup(
           ir, ir.CreateLoad(session.layouts().pointer(), cleanupToken));
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+      ir.CreateResume(ir.CreateLoad(unwindType, unwindState));
+      ir.SetInsertPoint(result);
+      ir.CreateRet(ir.getTrue());
+#else
       ir.CreateBr(result);
       ir.SetInsertPoint(result);
       ir.CreateRet(ir.CreateNot(failedResult));
+#endif
     } else {
       ir.CreateRet(ir.getTrue());
     }

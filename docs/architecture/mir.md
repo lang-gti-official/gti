@@ -4195,6 +4195,12 @@ published loans separately from ordinary scope loans and retires them only
 after armed subobject obligations are inactive. Independent verification rejects
 early retirement, missing failure retirement, and retirement on the successful
 constructor path, which must export the dependency to its caller.
+Non-lifecycle-bound constructor entry loans also remain live until rollback
+finishes. A later initializer can publish such a reference into a field and
+change its final loan classification after earlier failure edges were built.
+Those edges retire entry capabilities together with published dependencies,
+child-first after subobject cleanup, rather than ending them before rollback
+based on an incomplete publication inventory.
 
 A read-only operator on an eligible stable-dependency borrowed-class prvalue uses
 the same explicit `ReadTemporaryBorrow` schedule as an ordinary method. Other

@@ -40,24 +40,29 @@ void validateC04Evaluation(const Session &session,
       !session.program().mir().programInitializationPlan().steps.empty())
     reject("empty/duplicate selection or program initialization");
   const auto &program = session.program().mir();
+  const auto knownClass = [&](const SemanticType &type) {
+    return std::any_of(
+        program.classInstances().begin(), program.classInstances().end(),
+        [&](const auto &instance) { return instance.type == type; });
+  };
   std::set<HirClassInstanceId> classes;
   for (const auto &instance : program.classInstances()) {
     if (instance.compilerCapability != CompilerCapabilityTypeKind::None ||
         instance.polymorphic || instance.abstract || instance.cAbiRecord ||
         instance.cOpaqueHandle || instance.unionLayout ||
         !instance.bases.empty() || !instance.structuralBases.empty() ||
-        !instance.virtualDispatch.empty() || !instance.fieldDropOrder.empty() ||
-        !std::all_of(
-            instance.declaredFields.begin(), instance.declaredFields.end(),
-            [](const auto &field) { return scalarOrReference(field.type); }))
-      reject("class outside ordinary scalar/reference-field cleanup profile");
+        !instance.virtualDispatch.empty() ||
+        !std::all_of(instance.declaredFields.begin(),
+                     instance.declaredFields.end(), [&](const auto &field) {
+                       return scalarOrReference(field.type) ||
+                              knownClass(field.type);
+                     }))
+      reject("class outside ordinary scalar/reference/record-field cleanup "
+             "profile");
     classes.insert(instance.id);
   }
   const auto localType = [&](const SemanticType &type) {
-    return scalarOrReference(type) ||
-           std::any_of(
-               program.classInstances().begin(), program.classInstances().end(),
-               [&](const auto &instance) { return instance.type == type; });
+    return scalarOrReference(type) || knownClass(type);
   };
   for (auto id : selected) {
     const auto *function = session.program().mir().findFunctionInstance(id);
@@ -130,10 +135,19 @@ void validateC04Evaluation(const Session &session,
           reject("non-scalar instruction facts");
         switch (instruction.kind) {
         case MirInstructionKind::Lifecycle:
-          for (const auto &event : instruction.lifecycle)
+          for (const auto &event : instruction.lifecycle) {
+            const auto *source = body.findDropObligation(event.source);
+            const bool constructorPublication =
+                address.kind == MirBodyKind::Constructor &&
+                term == MirTerminatorKind::Return && source &&
+                source->kind == MirDropObligationKind::ConstructionRollback &&
+                event.target == 0 && !event.conditional &&
+                !event.failureCleanup;
             if (event.kind == MirLifecycleEventKind::Replace ||
-                event.kind == MirLifecycleEventKind::TransferOut)
+                (event.kind == MirLifecycleEventKind::TransferOut &&
+                 !constructorPublication))
               reject("replacement or escaping owner lifecycle");
+          }
           break;
         case MirInstructionKind::Borrow:
         case MirInstructionKind::ActivateBorrow:

@@ -103,7 +103,13 @@ int main(int argc, char **argv) {
 #else
         1;
 #endif
-    if (slots[0] != leafDrops || slots[1] != 1 || slots[2] != 1)
+    const auto ownerDrops =
+#if GTI_C04_OWNED_ROLLBACK
+        failing ? 0 : 1;
+#else
+        1;
+#endif
+    if (slots[0] != leafDrops || slots[1] != 1 || slots[2] != ownerDrops)
       return 6;
 #endif
     if (succeeded == failing || (!failing && value != input + 1))

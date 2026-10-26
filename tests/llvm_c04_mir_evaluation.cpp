@@ -2,6 +2,7 @@
 #include "../src/compiler/llvm/body.h"
 #include "cpp_backend_test_support.h"
 #include "gti/lowered_program_printer.h"
+#include "gti/mir_printer.h"
 #include "gti/runtime_failure.h"
 
 #include <llvm/Support/raw_ostream.h>
@@ -42,6 +43,8 @@ int main(int argc, char **argv) {
     const std::string text(std::istreambuf_iterator<char>{stream}, {});
     const auto frontend = Frontend().analyze(source.filename().string(), text);
     if (!frontend.canGenerateCode()) {
+      if (!frontend.mirValid)
+        write(prefix + ".invalid-mir", MirPrinter().print(frontend.mir));
       for (const auto &diagnostic : frontend.diagnostics)
         std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
       return 65;

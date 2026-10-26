@@ -10798,9 +10798,9 @@ and [LLVM exception-handling model](https://www.llvm.org/docs/ExceptionHandling.
 `GTI_BUILD_LLVM_C04_EVALUATION` targets build separate status and native-unwind
 backend copies against the same frontend and sealed MIR. Their structural
 profile accepts a closed scalar static-call graph, scalar-reference parameters,
-and local ordinary classes with scalar/reference fields, including fallible
-source constructors and destructors. Owning fields, hierarchy, global
-initialization, native imports and adapters remain
+and local ordinary classes with scalar/reference/ordinary-record fields,
+including fallible source constructors and destructors. Arrays, private owner
+representations, hierarchy, global initialization, native imports and adapters remain
 outside this experiment. Both candidates use the central ABI planner, the same
 verified MIR lifecycle/drop schedules and fixed `noinline` call boundaries.
 Native invokes enter cleanup-only landing pads, follow the MIR failure edge,
@@ -10810,10 +10810,13 @@ the successful path does not consult that carrier. This edge is explicitly
 unwind-permitted and is not a production runtime C service. It uses the platform
 C++ personality/unwinder without reading a C++ exception object's layout.
 Experimental symbols and module flags distinguish the artifacts.
-Generated leaf-class cleanup helpers retain unwind tables and unwind to the
-owning MIR `Drop` edge. The scalar/reference-field restriction matters here:
-these helpers have no owned child recipes left to drain. Admitting owning fields
-requires native helper cleanup continuations, not just widening this predicate.
+Generated cleanup helpers invoke the selected source destructor and exact
+verified child recipes. A cleanup landing pad records the original unwind
+token, enters the existing failure-cleanup context, and drains remaining child
+recipes before leaving that context and resuming the original token. A second
+failure terminates instead of continuing cleanup. Constructor return may publish
+its armed subobject obligations; unrelated escaping ownership and replacement
+remain outside this profile. No cleanup recipe is fabricated by the experiment.
 
 This staging replaces hand-built traces for the first comparison, not the
 remaining C04 obligations. The harness checks identical sealed-program input,
@@ -10823,12 +10826,17 @@ non-destruction of a failed construction, and immediate terminal cleanup failure
 in an outer frame while the original failure is already propagating. A mapped
 test observation buffer verifies that later destructors did not run after that
 secondary failure. Repeated and alternating failure/success entry and structural
-rejections preserve their checks. It does not validate owning-field rollback,
-owning-field/parameter transfer, callbacks, user TLS, workers, foreign/forced
+rejections preserve their checks. Ordinary owned-record cases additionally
+exercise partial-construction rollback, remaining fields after a source destructor
+or child destructor fails, and terminal failure while draining those fields.
+The evaluation exposed and repaired constructor entry-reference retirement
+before rollback when a later initializer publishes that reference; independent
+MIR mutation checks retain rejection of early dependency retirement.
+It does not validate owning parameter transfer, replacement, callbacks, user TLS, workers, foreign/forced
 unwind, carrier OOM, or artifact unloading. Native-carrier/runtime sanitizer runs do not instrument
 the generated LLVM object. No transport selection or production speedup follows
-from these checks. Next, extend real MIR cleanup to owned subobject rollback and
-ownership transfer, then worker containment before the representative
+from these checks. Next, extend real MIR cleanup to ownership transfer and
+worker containment before the representative
 platform/cost comparison and ADR decision.
 Remove or replace these opt-in evaluation hooks once that decision is implemented;
 they are not a permanent second production backend or CLI transport option.

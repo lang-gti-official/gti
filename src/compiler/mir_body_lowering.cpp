@@ -2750,9 +2750,11 @@ private:
                                return loan != nullptr && loan->lifecycleBound;
                              });
         });
+    std::vector<MirLoanId> deferredConstructorLoans;
     if (output.kind == MirBodyKind::Constructor ||
         output.kind == MirBodyKind::FieldInitializers || !hasLifecycleLoans) {
-      emitOrderedFailureDrain(consumedDrops, failureEndedLoans);
+      emitOrderedFailureDrain(consumedDrops, failureEndedLoans,
+                              deferredConstructorLoans);
     } else {
       const auto retained = retainedReborrowAncestors();
       for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
@@ -2800,7 +2802,11 @@ private:
     // normal local scope. Successful completion exports those dependencies;
     // failed construction exports nothing. Keep them through subobject
     // rollback, then retire every published capability before propagation.
-    for (const auto loan : childFirstMirLoans(constructorPublishedLoans)) {
+    auto constructorFailureLoans = constructorPublishedLoans;
+    constructorFailureLoans.insert(constructorFailureLoans.end(),
+                                   deferredConstructorLoans.begin(),
+                                   deferredConstructorLoans.end());
+    for (const auto loan : childFirstMirLoans(constructorFailureLoans)) {
       if (!containsLoan(failureEndedLoans, loan)) {
         (void)appendInstruction(
             {.kind = MirInstructionKind::EndBorrow, .loan = loan});
@@ -2828,13 +2834,24 @@ private:
   // established scope/loan schedule above.
   void
   emitOrderedFailureDrain(const std::vector<MirDropObligationId> &consumedDrops,
-                          const std::vector<MirLoanId> &endedLoans) {
+                          const std::vector<MirLoanId> &endedLoans,
+                          std::vector<MirLoanId> &deferredConstructorLoans) {
     const auto retained = temporaryCarrierLoans(consumedDrops);
     auto allEnded = endedLoans;
     for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
       for (auto loan = scope->loans.rbegin(); loan != scope->loans.rend();
            ++loan) {
         const MirLoan *record = output.findLoan(*loan);
+        // A later initializer can publish an entry reference into a field,
+        // changing its final loan record after this failure edge was built.
+        // Keep constructor entry capabilities through rollback on every edge,
+        // then retire them child-first with the published dependencies.
+        if (output.kind == MirBodyKind::Constructor && record &&
+            record->entry && !record->lifecycleBound &&
+            !containsLoan(allEnded, *loan)) {
+          deferredConstructorLoans.push_back(*loan);
+          continue;
+        }
         if (!containsLoan(allEnded, *loan) && !retained.contains(*loan) &&
             !containsLoan(constructorPublishedLoans, *loan) &&
             (record == nullptr || !record->lifecycleBound)) {
@@ -2916,6 +2933,8 @@ private:
       retired.push_back(entry.obligation);
       for (const auto loan : retiringTemporaryCarrierLoans(
                entry.obligation, retired, allEnded, true)) {
+        if (containsLoan(deferredConstructorLoans, loan))
+          continue;
         (void)appendInstruction(
             {.kind = MirInstructionKind::EndBorrow, .loan = loan});
         allEnded.push_back(loan);

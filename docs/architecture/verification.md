@@ -10146,8 +10146,10 @@ alternating failures. Fallible lifecycle cases check remaining local cleanup,
 non-destruction after a failed constructor, original primary/secondary source
 locations, and terminal stopping before later destructors. The last check uses
 a mapped parent-observable buffer rather than relying on normal process exit.
-Owning/raw fields remain rejected before object publication. These are not full
-owning-subobject cleanup, worker or performance
+Ordinary owned-record fields exercise constructor rollback, cleanup of remaining
+fields after either the containing destructor or one child fails, and terminal
+failure during that drain. Raw/array fields remain rejected before object
+publication. These are not arbitrary ownership transfer, worker or performance
 acceptance and must not substitute for existing backend gates. Retained IR is
 the verified pre-object-emission module: target emission may rewrite `resume`
 into platform unwind-runtime calls. Hash receipts are also printed into the step
