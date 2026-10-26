@@ -1672,6 +1672,28 @@ add_executable("gti_llvm_admission_tests"
 target_link_libraries("gti_llvm_admission_tests" PRIVATE gti_llvm_backend)
 add_test(NAME llvm_admission COMMAND gti_llvm_admission_tests)
 
+
+# O15 SIMD uses the same verified MIR capability and private static LLVM closure
+# as production Body emission. The SDK tools must match the configured LLVM.
+add_executable(gti_llvm_simd_lowering_tests llvm_simd_lowering_tests.cpp)
+target_include_directories(gti_llvm_simd_lowering_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_simd_lowering_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_simd_lowering
+         COMMAND gti_llvm_simd_lowering_tests "${CMAKE_CURRENT_BINARY_DIR}/llvm-simd-component.ll")
+if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_simd_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_simd_execution_test.py"
+                   --emitter "$<TARGET_FILE:gti_llvm_simd_lowering_tests>"
+                   --clang "${LLVM_TOOLS_BINARY_DIR}/clang++" --opt "${LLVM_TOOLS_BINARY_DIR}/opt"
+                   --output-root "${CMAKE_BINARY_DIR}/Testing/llvm-simd-execution")
+  set_tests_properties(llvm_simd_execution PROPERTIES TIMEOUT 1200 PROCESSORS 1)
+  add_test(NAME llvm_simd_source
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_simd_source_test.py"
+                   --gti "$<TARGET_FILE:gti>" --gti-build-cache "${CMAKE_BINARY_DIR}/CMakeCache.txt"
+                   --output-root "${CMAKE_BINARY_DIR}/Testing/llvm-simd-source")
+  set_tests_properties(llvm_simd_source PROPERTIES TIMEOUT 1200 PROCESSORS 1)
+endif()
+
 add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
 target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)

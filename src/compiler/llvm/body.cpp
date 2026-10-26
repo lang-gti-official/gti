@@ -5,10 +5,12 @@
 #include "places.h"
 #include "runtime_abi.h"
 #include "scalar.h"
+#include "simd.h"
 #include "text.h"
 #include "thread_locals.h"
 
 #include <algorithm>
+#include <array>
 #include <map>
 #include <set>
 #include <tuple>
@@ -276,6 +278,20 @@ private:
         return operand(instruction.operands.at(0));
       default:
         break;
+      }
+      if (simdIntrinsic(instruction.intrinsic)) {
+        const std::array addresses{memory.selected(instruction.operands.at(0)),
+                                   memory.selected(instruction.operands.at(1)),
+                                   memory.selected(instruction.operands.at(2))};
+        const std::array arrays{
+            session.layouts().get(
+                instruction.parameterTypes.at(0).arguments.at(0)),
+            session.layouts().get(
+                instruction.parameterTypes.at(1).arguments.at(0)),
+            session.layouts().get(
+                instruction.parameterTypes.at(2).arguments.at(0))};
+        emitSimd(ir, instruction, addresses, arrays);
+        return nullptr;
       }
       if (instruction.intrinsic ==
               IntrinsicKind::NumericTypeParameterConversion ||

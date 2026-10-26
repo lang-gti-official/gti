@@ -15,18 +15,22 @@ import platform
 import shutil
 import struct
 import subprocess
+import uuid
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--emitter", required=True, type=Path)
-    parser.add_argument("--output", required=True, type=Path)
+    outputs = parser.add_mutually_exclusive_group(required=True)
+    outputs.add_argument("--output", type=Path)
+    outputs.add_argument("--output-root", type=Path)
     parser.add_argument("--clang", default="clang++")
     parser.add_argument("--opt", default="opt")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    output = args.output.resolve()
-    assert not output.exists() and not output.is_relative_to(root)
+    output = (args.output if args.output else args.output_root / uuid.uuid4().hex).resolve()
+    assert not output.exists()
+    assert args.output_root or not output.is_relative_to(root)
     output.mkdir(parents=True)
     commands = []
 
@@ -40,6 +44,7 @@ def main():
         return result
 
     count = 0
+    status = "failed"
     try:
         ir = output / "simd.ll"
         run([args.emitter.resolve(), ir])
@@ -95,9 +100,11 @@ def main():
                                     assert struct.pack(format_code, actual) == struct.pack(format_code, expected), (
                                         suffix, lanes, operation, shift, lane, actual, expected)
                             count += 1
-        print(f"PASS: {count} strict SIMD execution cases, including explicit scalarization")
+        assert count == 7776, f"incomplete SIMD matrix: {count}"
+        status = "passed"
+        print(f"PASS: {count} strict SIMD execution cases; evidence {output}")
     finally:
-        (output / "manifest.json").write_text(json.dumps({"cases": count, "commands": commands}, indent=2) + "\n")
+        (output / "manifest.json").write_text(json.dumps({"status": status, "cases": count, "commands": commands}, indent=2) + "\n")
 
 
 if __name__ == "__main__":
