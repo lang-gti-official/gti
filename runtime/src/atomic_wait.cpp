@@ -44,7 +44,7 @@ void ensureInitialized() noexcept {
 }
 
 #if defined(__GNUC__)
-[[gnu::cold]]
+[[gnu::cold, gnu::noinline]]
 #endif
 void notifyRegistered(Bucket &bucket) noexcept {
 #if !defined(__x86_64__)
