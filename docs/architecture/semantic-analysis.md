@@ -3267,6 +3267,18 @@ Semantics chooses all proven endpoints and reports invalidation conflicts. HIR
 and MIR preserve those choices; they do not recompute liveness from emitted
 C++ references.
 
+A checked ordinary call or constructor can publish a sole-origin,
+lifecycle-bound stored value with mutable exclusion even when its selected
+input is a shared stored reference. The input's abstract entry loan supplies
+the address and lifetime; it remains read-only. The result receives a distinct
+mutable child at the exact external projection, without claiming that the
+referent occupies the carrier's physical storage. This bounded publication
+requires the checked result summary and an unconditional single dependency;
+it does not permit ordinary read-only reference upgrades. While the result is
+live, overlapping ancestor reads and second publications report `GTI-S2017`.
+Disjoint stored projections remain independent, and destruction of the result
+ends its exclusion even if the result was never read.
+
 An unretained global-origin call loan is a temporary and receives the ordinary
 full-expression endpoint. Retaining a mutable result creates a symbol-rooted
 lexical loan that is deliberately not shortened by local last-use planning;

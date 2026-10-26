@@ -313,6 +313,11 @@ related spans, and what intentional alternatives remain through hints:
   boundary. Advice distinguishes completing those uses from ending a
   resource-bound carrier's scope: a mutex guard remains live until destruction,
   not merely its last read. No edit automatically reorders effects.
+  This also covers a checked exclusive stored result whose abstract lifetime
+  parent is a shared stored reference. An overlapping ancestor read or second
+  publication reports one semantic diagnostic at the conflicting access, with
+  the first result publication as its related origin. Ending the result's
+  scope restores access; leaving an unused result alive does not.
 - Read-only field writes, fixed-array writes, and mutable method calls relate
   the restricting declaration when it is provable through ordinary named places.
   Hints distinguish an immutable owner, a read-only reference requiring exclusive

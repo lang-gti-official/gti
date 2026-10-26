@@ -11171,7 +11171,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                 return pending.statement == loanFlow.currentStatement &&
                        pending.region == loanFlow.currentRegion &&
                        pending.order == loanFlow.currentOrder &&
-                       pending.diagnostic.span == tokenSpan(token) &&
+                       pending.diagnostic.primary == tokenSpan(token) &&
                        std::find(pending.loans.begin(), pending.loans.end(),
                                  conflict) != pending.loans.end();
               });

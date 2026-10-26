@@ -1322,6 +1322,54 @@ int main() {
   expect(mutableCarrier.canGenerateCode() &&
              lang::verifyMirProgram(mutableCarrier.mir).valid(),
          "unrelated mutable stored-reference construction remains valid");
+  const auto disjoint = analyze("disjoint-stored-exclusion.gti", R"gti(
+#include <std/mutex>
+void see(std::mutex<int32_t>& value) {}
+class User {
+  std::mutex<int32_t>& left;
+  std::mutex<int32_t>& right;
+public:
+  User(std::mutex<int32_t>& left, std::mutex<int32_t>& right)
+      : left(left), right(right) {}
+  void use() {
+    auto guard = this.left.lock();
+    see(this.right);
+  }
+};
+int main() { return 0; }
+)gti");
+  if (!disjoint.canGenerateCode())
+    printDiagnostics(disjoint);
+  expect(disjoint.canGenerateCode() &&
+             lang::verifyMirProgram(disjoint.mir).valid(),
+         "exclusive external permission does not freeze a disjoint stored field");
+  const auto sharedCarrier = analyze("ordinary-shared-carrier.gti", R"gti(
+class Lease {
+  int& value;
+public:
+  Lease(int& value) : value(value) {}
+  int get() { return this.value; }
+  ~Lease() {}
+};
+class Holder {
+  int& value;
+public:
+  Holder(int& value) : value(value) {}
+  int get() {
+    Lease first{this.value};
+    Lease second{this.value};
+    return first.get() + second.get();
+  }
+};
+int main() {
+  int value = 7;
+  Holder holder{value};
+  return holder.get() - 14;
+}
+)gti");
+  expect(sharedCarrier.canGenerateCode() &&
+             lang::verifyMirProgram(sharedCarrier.mir).valid(),
+         "unrelated shared carriers retain overlapping read permission");
 }
 
 void testStoredPublicationRecursion() {
