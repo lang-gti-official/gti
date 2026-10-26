@@ -354,6 +354,8 @@ Lifetimes::preflightFreshTransfer(Session &session, Dispatch &dispatch,
   // dispatch metadata, including when its source is a derived base view.
   if (owner.polymorphic)
     dispatch.preflightState(owner.id);
+  if (transfer.kind == ConstructorKind::Move)
+    preflightGeneratedRelocation(session, dispatch, owner.type);
   const auto preflight = [&](const auto &self,
                              const MirClassInstance &object) -> void {
     static_cast<void>(session.layouts().get(object.type));
@@ -374,6 +376,12 @@ Lifetimes::preflightFreshTransfer(Session &session, Dispatch &dispatch,
       static_cast<void>(
           session.layouts().fieldIndex(object.type, field.symbol));
       static_cast<void>(session.layouts().get(field.type));
+      if (field.type.kind == SemanticType::Class) {
+        const auto &child = session.layouts().instance(field.type);
+        if (child.polymorphic)
+          dispatch.preflightState(child.id);
+        self(self, child);
+      }
     }
   };
   preflight(preflight, owner);
@@ -398,45 +406,43 @@ void Lifetimes::freshTransfer(llvm::IRBuilder<> &ir, llvm::Value *destination,
       preflightFreshTransfer(session, dispatch, body, instruction);
   const auto &owner =
       *session.program().mir().findClassInstance(transfer.owner);
-  // Generated scalar transfer has no source callback or runtime failure point.
+  if (transfer.kind == ConstructorKind::Move) {
+    // The exact fresh-local MIR publication grants this relocation. Reuse the
+    // typed emitter that rebuilds nested headers and transfers active flags;
+    // never materialize the move as a raw aggregate load/store.
+    ir.CreateCall(generatedRelocation(owner.type), {destination, source});
+    return;
+  }
+  // Generated inert copy has no source callback or runtime failure point.
   // Copy logical fields only. Even a byte-identical static layout does not
   // authorize transporting source vptrs, padding, or active-state bytes.
   const auto copy = [&](const auto &self, const MirClassInstance &object,
-                        llvm::Value *from, llvm::Value *to) -> void {
+                        llvm::Value *from, llvm::Value *to, bool base) -> void {
     const auto storage = session.layouts().get(object.type).storage;
     for (const auto &base : object.bases) {
       const auto index =
           session.layouts().baseIndex(object.type, base.instance);
       self(self, *session.program().mir().findClassInstance(base.instance),
            ir.CreateStructGEP(storage, from, index),
-           ir.CreateStructGEP(storage, to, index));
+           ir.CreateStructGEP(storage, to, index), true);
     }
     for (const auto &field : object.declaredFields) {
       const auto index =
           session.layouts().fieldIndex(object.type, field.symbol);
-      auto *value = ir.CreateLoad(session.layouts().get(field.type).storage,
-                                  ir.CreateStructGEP(storage, from, index));
-      ir.CreateStore(value, ir.CreateStructGEP(storage, to, index));
+      auto *sourceField = ir.CreateStructGEP(storage, from, index);
+      auto *destinationField = ir.CreateStructGEP(storage, to, index);
+      if (field.type.kind == SemanticType::Class)
+        self(self, session.layouts().instance(field.type), sourceField,
+             destinationField, false);
+      else
+        ir.CreateStore(ir.CreateLoad(session.layouts().get(field.type).storage,
+                                     sourceField),
+                       destinationField);
     }
-    if (const auto index = session.layouts().activeIndex(object.type)) {
-      // A copy constructs a new live subobject. A move transfers the actual
-      // own-destructor permission, including already-suppressed state; it must
-      // not unconditionally arm destination flags.
-      llvm::Value *active = ir.getInt8(1);
-      if (transfer.kind == ConstructorKind::Move)
-        active = ir.CreateLoad(ir.getInt8Ty(),
-                               ir.CreateStructGEP(storage, from, *index));
-      ir.CreateStore(active, ir.CreateStructGEP(storage, to, *index));
-    }
+    if (!base && object.polymorphic)
+      dispatch.install(ir, to, object.id);
   };
-  copy(copy, owner, source, destination);
-  if (owner.polymorphic)
-    dispatch.install(ir, destination, owner.id);
-  // Suppression belongs to this verified whole-source transfer commit, never
-  // operand materialization. All payload, destination flags and headers are
-  // ready first; no source failure or callback can observe an intermediate.
-  if (transfer.kind == ConstructorKind::Move)
-    moved(ir, source, owner.type);
+  copy(copy, owner, source, destination, false);
 }
 
 namespace {

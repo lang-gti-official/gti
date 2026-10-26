@@ -2599,6 +2599,27 @@ int main() {
     auto *source = probe->getArg(1);
     lifetimes.freshTransfer(ir, destination, source, body, *stage);
     ir.CreateRetVoid();
+    if (plan.kind == ConstructorKind::Move) {
+      // The generated relocation oracle below independently executes field,
+      // header and suppressed-active-state transfer. This planner must select
+      // that same typed helper, not duplicate a second move implementation.
+      unsigned calls = 0;
+      for (const auto &block : *probe)
+        for (const auto &operation : block)
+          if (const auto *call = llvm::dyn_cast<llvm::CallInst>(&operation)) {
+            ++calls;
+            expect(call->getCalledFunction() ==
+                           lifetimes.generatedRelocation(owner.type) &&
+                       call->arg_size() == 2 &&
+                       call->getArgOperand(0) == destination &&
+                       call->getArgOperand(1) == source &&
+                       call->getCalledFunction()->hasFnAttribute(
+                           llvm::Attribute::NoUnwind),
+                   "fresh move uses the exact typed non-failing relocation");
+          }
+      expect(calls == 1, "fresh move performs exactly one relocation");
+      continue;
+    }
     std::set<std::uint64_t> fields, flags, headers, copiedFields, movedFlags,
         installed;
     const auto collect = [&](const auto &self, const MirClassInstance &object,
@@ -2677,6 +2698,93 @@ int main() {
         "actual flags before suppressing the whole source");
   }
   session.verify();
+}
+
+void testNestedFreshTransferPlanning() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend =
+      Frontend({.requireEntryPoint = true,
+                .lowerReachableOnly = true,
+                .lowerLibraryReachableOnly = true,
+                .trustedBodies = TrustedBodyAnalysis::Reachable})
+          .analyze(root / "examples/llvm/nested-hierarchy-transfer.gti",
+                   std::nullopt, {root / "stdlib/prelude.gti"}, {},
+                   {root / "stdlib"});
+  expect(frontend.canGenerateCode(), "nested transfers are valid GTI source");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!input)
+    throw std::runtime_error("nested transfer fixture lost its sealed program");
+  const auto admission = planLlvmAdmission(*input);
+  expect(admission.admitted(), "nested generated transfers have public proof");
+  Session session(*input, {});
+  Dispatch dispatch(session, admission);
+  const auto &program = session.program().mir();
+  unsigned copies = 0, moves = 0;
+  const auto before = modulePublication(session);
+  for (const auto &function : program.functionInstances()) {
+    if (function.entryKind == ProgramEntryKind::None)
+      continue;
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (!isFreshHierarchyTransferProducer(stage) ||
+            !containsHierarchyStorage(program, stage.info.type))
+          continue;
+        const auto transfer = Lifetimes::preflightFreshTransfer(
+            session, dispatch, function.body, stage);
+        if (transfer.kind == ConstructorKind::Copy) {
+          ++copies;
+          continue;
+        }
+        ++moves;
+        for (unsigned mutation = 0; mutation != 4; ++mutation) {
+          auto changed = program;
+          auto &field =
+              const_cast<MirClassInstance &>(*changed.findClassInstance(
+                  named(session.program(), "OwnedValue").id));
+          auto &body =
+              *findMirBody(changed, {MirBodyKind::Function, function.id});
+          const MirInstruction *producer = nullptr;
+          for (const auto &candidate : body.blocks)
+            for (const auto &instruction : candidate.instructions)
+              if (instruction.id == stage.id)
+                producer = &instruction;
+          if (!producer)
+            throw std::runtime_error("nested mutation lost its producer");
+          if (mutation == 0)
+            field.moveConstructor = SpecialMemberStatus::Deleted;
+          else if (mutation == 1)
+            field.moveConstructor = SpecialMemberStatus::Declared;
+          else if (mutation == 2)
+            field.traits.containsBorrowedState = true;
+          else {
+            auto &drop = const_cast<MirDropObligation &>(
+                *body.findDropObligation(transfer.sourceDrop));
+            auto &children = drop.dropType.aggregate.at(0).aggregate;
+            if (children.size() != 2)
+              throw std::runtime_error("nested mutation lost its field recipe");
+            children.pop_back();
+          }
+          const auto check = [&] {
+            static_cast<void>(
+                planFreshHierarchyTransfer(changed, body, *producer));
+          };
+          if (mutation == 3)
+            rejects<std::logic_error>(
+                check, "nested move rejects an omitted field cleanup recipe");
+          else
+            rejects<BackendUnsupportedError>(
+                check, "outer generated move cannot bypass a field contract");
+        }
+      }
+  }
+  expect(copies == 1 && moves == 2,
+         "nested copy and both moves were inspected");
+  expect(modulePublication(session) == before,
+         "nested transfer proofs publish no runtime helpers or tables");
 }
 
 void testFreshCopyViewPlanning() {
@@ -4423,6 +4531,7 @@ int main() { return 0; }
   testOrdinaryTransferPlacement();
   testFreshConstructionPlanning();
   testFreshTransferPlanning();
+  testNestedFreshTransferPlanning();
   testFreshCopyViewPlanning();
   testInertRelocation();
   testGeneratedEmpty();

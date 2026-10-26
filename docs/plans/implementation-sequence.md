@@ -11689,8 +11689,11 @@ integration prerequisites.
   fresh ordinary hierarchy fields now use one admission/emission destination
   proof, with native O0-O3 nested-interface, mutation and partial-construction
   cleanup evidence. Checked reference results and static record owners have
-  source/MIR/native O0-O3 evidence; containing-object value transfer remains
-  independent. Rich field-borrow and owner cases retain the existing C++ text-vocabulary
+  source/MIR/native O0-O3 evidence. Fresh generated copy/move now also composes
+  through borrow-free ordinary record fields with exact canonical cleanup and
+  independent field dispatch state; arrays, owner fields, source-defined
+  transfer and nonlocal/value-return publication remain prerequisites.
+  Rich field-borrow and owner cases retain the existing C++ text-vocabulary
   rejection and require independent source/MIR/native results;
   general transfer, dynamic ownership/in-place replacement, pure active states, exact optimized cost
   evidence and combined O14/O16 source/evidence identities remain open. The loop

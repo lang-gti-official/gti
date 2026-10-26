@@ -1,0 +1,46 @@
+// Generated special members compose through ordinary record fields. Copies
+// retain independent state; moves transfer cleanup exactly once.
+mut int events = 0;
+void record(int value) { events = events * 10 + value; }
+interface Reader { int read(); };
+class Value : public Reader {
+  mut int payload = 7;
+public:
+  int read() override { return this.payload; }
+  void write(int value) mut { this.payload = value; }
+};
+struct CopyRecord { mut Value value{}; };
+struct CopyEnvelope { mut CopyRecord inner{}; };
+
+class OwnedValue : public Reader {
+  int payload;
+public:
+  OwnedValue(int value) : payload(value) {}
+  ~OwnedValue() { record(this.payload); }
+  int read() override { return this.payload; }
+};
+struct MoveRecord {
+  mut OwnedValue first{1};
+  mut OwnedValue second{2};
+  ~MoveRecord() { record(3); }
+};
+struct MoveEnvelope { mut MoveRecord inner{}; };
+
+int read(Reader& value) { return value.read(); }
+// NESTED_TRANSFER_MAIN
+int main() {
+  CopyEnvelope original{};
+  mut CopyEnvelope copied = original;
+  copied.inner.value.write(19);
+  if (read(original.inner.value) != 7 || read(copied.inner.value) != 19) {
+    return 1;
+  }
+  {
+    MoveEnvelope first{};
+    MoveEnvelope second = std::move(first);
+    MoveEnvelope last = std::move(second);
+    if (events != 0 || read(last.inner.first) != 1 ||
+        read(last.inner.second) != 2) { return 2; }
+  }
+  return events == 321 ? 0 : 3;
+}

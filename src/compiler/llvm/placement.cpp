@@ -2,6 +2,7 @@
 #include "../mir_verification_queries.h"
 #include "closure_environment.h"
 #include "gti/backend.h"
+#include "gti/mir_effects.h"
 #include "memory_types.h"
 
 #include <algorithm>
@@ -744,12 +745,8 @@ private:
         (!interface && owner.abstract) || owner.cAbiRecord ||
         owner.cAbiLayout || owner.cOpaqueHandle || owner.unionLayout ||
         owner.compilerCapability != CompilerCapabilityTypeKind::None ||
-        owner.traits.containsBorrowedState ||
-        std::any_of(owner.declaredFields.begin(), owner.declaredFields.end(),
-                    [](const auto &field) {
-                      return !isPassiveScalarValueType(field.type);
-                    }))
-      unsupported("LLVM transfer requires a scalar ordinary hierarchy");
+        owner.traits.containsBorrowedState)
+      unsupported("LLVM transfer requires a borrow-free ordinary hierarchy");
     if (!path.insert(owner.id).second)
       malformed("LLVM transfer hierarchy has an inline base cycle");
     if (special && kind == ConstructorKind::Copy && owner.requiresActiveCleanup)
@@ -793,6 +790,16 @@ private:
       base(row);
     for (const auto &row : owner.structuralBases)
       base(row);
+    for (const auto &field : owner.declaredFields) {
+      if (isPassiveScalarValueType(field.type))
+        continue;
+      if (field.type.kind != SemanticType::Class)
+        unsupported("LLVM hierarchy transfer requires scalar or record fields");
+      // A field is an independent complete object. Its own generated-member
+      // contract must hold; a generated outer move cannot bypass a source
+      // constructor selected for a field.
+      shape(instance(field.type), kind, special, path);
+    }
     path.erase(owner.id);
   }
   std::size_t baseOccurrences(const MirClassInstance &owner,
@@ -811,33 +818,12 @@ private:
     const auto *result = body.findDropObligation(id);
     if (!result || result->id != id || result->initiallyActive)
       malformed("LLVM transfer lost its exact inactive drop obligation");
-    recipe(result->dropType, owner, false);
+    const auto canonical = mirUniqueCleanupType(program, owner.type);
+    const MirDropType inert{.type = owner.type, .classInstance = owner.id};
+    if ((owner.requiresActiveCleanup && !canonical) ||
+        result->dropType != (canonical ? *canonical : inert))
+      malformed("LLVM transfer drop recipe differs from its sealed schedule");
     return *result;
-  }
-  void recipe(const MirDropType &selected, const MirClassInstance &owner,
-              bool base) const {
-    if (selected.type != owner.type || selected.classInstance != owner.id ||
-        selected.destructor != owner.destructor ||
-        selected.requiresActiveCleanup != owner.requiresActiveCleanup ||
-        selected.uniqueOwnerField || selected.uniquePointeeClass ||
-        selected.polymorphicCleanup || selected.recursiveCleanup ||
-        selected.lambdaInstance || selected.fixedArray ||
-        selected.captureIndex || selected.payloadVariant ||
-        selected.payloadField ||
-        selected.uniqueOwnerBase !=
-            (base ? std::optional(owner.id) : std::nullopt))
-      malformed("LLVM transfer drop recipe has different class state");
-    std::size_t child = 0;
-    for (auto row = owner.bases.rbegin(); row != owner.bases.rend(); ++row) {
-      const auto &target = instance(row->type);
-      if (!target.requiresActiveCleanup)
-        continue;
-      if (child == selected.aggregate.size())
-        malformed("LLVM transfer drop recipe omits an active base");
-      recipe(selected.aggregate[child++], target, true);
-    }
-    if (child != selected.aggregate.size())
-      malformed("LLVM transfer drop recipe contains an unsupported child");
   }
 };
 

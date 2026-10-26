@@ -50,6 +50,7 @@ SUCCESS_FILES = {
     "fresh-hierarchy-copy-view": "tests/fixtures/llvm_dispatch_fresh_copy_view.gti",
     "inline-hierarchy-fields": "tests/fixtures/llvm_dispatch_inline_fields.gti",
     "hierarchy-reference-results": "examples/llvm/borrowed-hierarchy-owners.gti",
+    "nested-hierarchy-transfer": "examples/llvm/nested-hierarchy-transfer.gti",
     "dispatch-cost-correctness": "tests/fixtures/llvm_dispatch_execution_cost.gti",
     "shipped-example": "examples/llvm/inheritance-and-dispatch.gti",
 }
@@ -1044,12 +1045,28 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
         add(name, source, expected_exit=expected_exit, endpoints=TRANSFER_ENDPOINTS)
     source = (root / SUCCESS_FILES["static-dispatch"]).read_text(encoding="utf-8")
+    nested = (root / SUCCESS_FILES["nested-hierarchy-transfer"]).read_text(encoding="utf-8")
+    nested_failure = nested.replace("// NESTED_TRANSFER_MAIN", """
+class Guard {
+public:
+  ~Guard() {
+    if (events != 321) { int zero = 0; int checked_cleanup = 1 / zero; }
+  }
+};
+""").replace("int main() {", "int main() { Guard guard{};").replace(
+        "read(last.inner.second) != 2) { return 2; }",
+        "read(last.inner.second) != 2) { return 2; }\n    int zero = 0; return 120 / zero;")
+    add("nested-transfer-failure", nested_failure, "defined-failure", expected_exit=70,
+        failure_needle="return 120 / zero;", endpoints=TRANSFER_ENDPOINTS)
+    add("nested-transfer-wrong-cleanup", nested_failure.replace("events != 321", "events != 312"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle="return 120 / zero;",
+        endpoints=TRANSFER_ENDPOINTS)
     reference = (root / SUCCESS_FILES["hierarchy-reference-results"]).read_text(encoding="utf-8")
     reference_prefix, _ = reference.split("// REFERENCE_RESULTS_MAIN\n", 1)
     add("shared-owner-reference", reference_prefix + """
@@ -1179,6 +1196,7 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
                                "cleanup-oracle-wrong-trace", "nonobserving-cleanup-helper-cycle"),
         "fresh-local-generated-transfers": (
             "fresh-hierarchy-transfer", "fresh-hierarchy-copy-view",
+            "nested-hierarchy-transfer", "nested-transfer-failure", "nested-transfer-wrong-cleanup",
             "generated-copy-former-reject", "generated-move-former-reject",
             "fresh-copy-former-cli-control", "generated-move-virtual-failure"),
     }
@@ -1219,6 +1237,7 @@ def main() -> None:
              "owner-reference-failure", "owner-reference-wrong-cleanup",
              "shared-owner-reference", "reject-source-reset-retained-view",
              "owner-failure-before-reference",
+             "nested-transfer-failure", "nested-transfer-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

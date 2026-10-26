@@ -83,6 +83,14 @@ these owner compositions before execution; those exact failures are retained
 alongside mandatory source/MIR/native evidence. This is another bounded LLVM
 profile outside the numbered full-language census, not dynamic owner support.
 
+[`llvm/nested-hierarchy-transfer.gti`](llvm/nested-hierarchy-transfer.gti)
+demonstrates generated copy and move through ordinary record fields containing
+independent hierarchy objects. Copies retain independent state; two moves run
+each surviving destructor once. The dispatch execution gate owns C++20/23 O3,
+LLVM O0-O3 and failure-cleanup controls. Like the other bounded LLVM examples,
+this is outside the numbered language census, not general value-transfer
+coverage.
+
 [`llvm/immovable-placement.gti`](llvm/immovable-placement.gti) demonstrates
 deleted-copy/deleted-move objects constructed directly through fresh return
 chains and nested fixed-array elements, with stable addresses and exactly-once

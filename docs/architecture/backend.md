@@ -4645,24 +4645,34 @@ construct, transfer or initialize bytes. Field metadata itself grants no copy,
 move, replacement or return permission. Field-projected borrowed receivers retain
 the existing exact origin, access and loan checks.
 `NativeFreshHierarchyTransfer` admits a narrower generated-transfer profile:
-a scalar ordinary hierarchy, an exact Copy Load, targetless Copy Construct from
+a borrow-free ordinary hierarchy or containing record, an exact Copy Load, targetless Copy Construct from
 a checked selected source, or whole-binding Move, and exactly one Initialize
 into a fresh whole local. The producer, publication, ownership event and source,
 value and destination drop identities must agree. Explicit staged Move Construct,
 source-defined special members, borrowed fields and active-copy lifetimes reject.
+Scalar and ordinary record fields compose recursively. Each field retains its
+own generated-member contract; an outer generated move does not bypass a
+field's source-defined or deleted constructor. Fixed-array, payload and owner
+fields retain their separate transfer prerequisites. Cleanup identity is checked
+against the canonical MIR recipe, including nested fields, rather than a second
+backend reconstruction of destructor order.
 
 The program-aware placement query binds only those proven hierarchy producers.
 Body-only placement and ordinary nonhierarchy Copy/Move retain their existing
-snapshot behavior. Typed transfer copies logical scalar fields, installs the
-static destination's dispatch tables and transfers actual move flags before
-suppressing the verified whole source. It does not copy headers or padding,
-invent failure edges, or arm moved destination flags unconditionally. Source
+snapshot behavior. Typed copy walks logical fields and installs each complete
+field object's independent dispatch state; bases use their complete object's
+tables. A proven generated move reuses the existing typed relocation emitter,
+which transfers actual cleanup permissions and clears their source flags after
+publishing the corresponding destination state. No callback or failure point
+can observe this non-failing operation midway through publication. It does not
+copy headers or invent failure edges or arm moved destination flags
+unconditionally. Source
 copy state remains live; a copied base view gets the base's static dispatch state.
-The cost follows scalar payload, hierarchy headers and existing active flags;
+The cost follows logical payload, hierarchy headers and existing active flags;
 this structural model is not measured allocation or runtime-cost acceptance.
 
 `PolymorphicTransfer` still rejects unproved class-value copies/moves, assignment,
-replacement, by-value arguments/returns, captures, transfers of containing wrappers/arrays,
+replacement, by-value arguments/returns, captures, arrays and non-generated wrappers,
 nonlocal destinations and ownership/callback/native/thread combinations.
 The shared inline-storage exclusion follows exact fields/state bases and array
 elements, stops at references/raw pointers, and fails closed on unknown or cyclic
