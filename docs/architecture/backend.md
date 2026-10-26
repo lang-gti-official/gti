@@ -4821,6 +4821,18 @@ handling. Consuming extraction selects the original payload field rather than
 moving a whole enum before each extraction. Borrowed extractions retain the
 evaluated field address and upstream loan permissions. Native unions instead
 use the sealed overlapping layout with no hidden tag or active-member guarantee.
+Their existing one-input first-field construction uses the independent verified
+passive-union proof. Native lowering consumes the exact selected field type at
+the existing final destination; its sealed union projection has offset zero.
+The ordinary typed store writes only that field's scalar or passive-copy width,
+without clearing inactive tail or padding. MIR evaluates the input once before
+publication, so a failing input does not initialize or activate the union.
+Default zero initialization and generated copy/move keep their separate paths.
+The nested passive-union first-field fixture retains an existing C++ text
+vocabulary rejection as comparator evidence. Its acceptance instead requires
+independent semantic/MIR verification, field-sized IR copy checks and actual
+native execution; supported scalar union controls still compare both backends.
+Ordinary non-passive record fields remain rejected by the language.
 
 Verified consuming patterns extract every active field exactly once, with no
 intervening user operation or failure, and transfer out the shell's cleanup

@@ -10,6 +10,7 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/GlobalAlias.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/IntrinsicInst.h>
 
 #include <algorithm>
 #include <array>
@@ -44,6 +45,10 @@ struct Case {
 };
 
 constexpr std::array cases{
+    Case{"llvm_hosted_union_first_field.gti", 1235, "", 0},
+    Case{"llvm_hosted_union_first_field_aggregate.gti", 4, "", 0},
+    Case{"llvm_hosted_union_first_field_failure.gti", 321,
+         "union first-field initialization failure", 15},
     Case{"llvm_hosted_generated_default.gti", 33333, "", 0},
     Case{"llvm_hosted_generated_default_failure.gti", 321,
          "generated default argument failure", 17},
@@ -1096,6 +1101,47 @@ void run(const std::filesystem::path &repository,
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   require(frontend.canGenerateCode(), "hosted source produces valid MIR");
   require(verifyMirProgram(frontend.mir).valid(), "hosted MIR verifies");
+  if (test.fixture == "llvm_hosted_union_first_field.gti") {
+    const auto rejectsUnion = [&](auto mutation) {
+      auto invalid = frontend.mir;
+      bool changed = false;
+      for (auto &function : MirProgramTestAccess::functions(invalid))
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed || !mir_detail::passiveUnionFieldConstruction(
+                               invalid, instruction))
+              continue;
+            mutation(invalid, instruction);
+            require(!mir_detail::passiveUnionFieldConstruction(invalid,
+                                                               instruction),
+                    "malformed union cannot retain the first-field proof");
+            changed = true;
+          }
+      require(changed && !verifyMirProgram(invalid).valid(),
+              "malformed union proof fails before artifact publication");
+      auto lowered = LoweredProgramBuilder().build(
+          frontend.program, frontend.semantics, frontend.hir, invalid, invalid,
+          {}, TargetInfo::host());
+      std::vector<LoweredProgramIssue> rejectedIssues;
+      require(!lowered.valid() ||
+                  !verifiedLoweredProgram(std::move(*lowered.program),
+                                          rejectedIssues),
+              "malformed union construction cannot cross the sealed boundary");
+    };
+    rejectsUnion([](auto &, auto &instruction) {
+      const auto wrong =
+          instruction.parameterTypes.front() == SemanticType::UInt8
+              ? SemanticType::UInt64
+              : SemanticType::UInt8;
+      instruction.parameterTypes.front() = wrong;
+    });
+    rejectsUnion(
+        [](auto &, auto &instruction) { instruction.enumVariant = 0; });
+    rejectsUnion([](auto &, auto &instruction) {
+      instruction.definedFailure.propagation =
+          FailurePropagationKind::Constructor;
+    });
+  }
   std::vector<LoweredProgramIssue> issues;
   const auto program = verifiedLoweredProgram(
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
@@ -1189,6 +1235,42 @@ void run(const std::filesystem::path &repository,
     }
     require(factories == 3,
             "three unrelated bodyless factories retain their cost contract");
+  }
+  if (test.fixture == "llvm_hosted_union_first_field.gti" ||
+      test.fixture == "llvm_hosted_union_first_field_aggregate.gti") {
+    unsigned factories = 0;
+    for (const auto &instance : frontend.hir.functionInstances()) {
+      if (!instance.source)
+        continue;
+      const auto name = instance.source->name().lexeme;
+      if (name != "make_byte" && name != "make_nested_union")
+        continue;
+      const auto *function = session.abi().declareFunction(instance.id);
+      bool fieldStore = false;
+      for (const auto &block : *function)
+        for (const auto &instruction : block) {
+          require(!llvm::isa<llvm::MemSetInst>(instruction),
+                  "first-field construction adds no inactive union zeroing");
+          if (name == "make_byte") {
+            if (const auto *store =
+                    llvm::dyn_cast<llvm::StoreInst>(&instruction))
+              fieldStore |= store->getValueOperand()->getType()->isIntegerTy(8);
+          } else if (const auto *copy =
+                         llvm::dyn_cast<llvm::MemCpyInst>(&instruction)) {
+            const auto *size =
+                llvm::dyn_cast<llvm::ConstantInt>(copy->getLength());
+            require(size && size->getZExtValue() == 8,
+                    "passive first-field copy uses its field width, not union "
+                    "width");
+            fieldStore = true;
+          }
+        }
+      require(fieldStore,
+              "union factory initializes its exact typed first field");
+      ++factories;
+    }
+    require(factories == 1,
+            "the exact scalar or passive aggregate union factory is emitted");
   }
   auto *global = module.getGlobalVariable(
       "__gti_native_v1_g" + std::to_string(trace), true);
@@ -1306,6 +1388,12 @@ void run(const std::filesystem::path &repository,
                 executed.output.find(test.failure) != std::string::npos,
             "panic containment observes cleanup and original source location");
   }
+  if (test.fixture == "llvm_hosted_union_first_field.gti" ||
+      test.fixture == "llvm_hosted_union_first_field_aggregate.gti")
+    std::cout << "union first-field footprint: object="
+              << std::filesystem::file_size(object)
+              << " executable=" << std::filesystem::file_size(executable)
+              << " bytes; typed field stores add no inactive-tail zeroing\n";
   if (test.fixture == "llvm_hosted_generated_default.gti")
     std::cout << "generated construction footprint: object="
               << std::filesystem::file_size(object)

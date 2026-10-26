@@ -1,4 +1,5 @@
 #include "body.h"
+#include "../mir_verification_queries.h"
 #include "callables.h"
 #include "constructor_field_publication.h"
 #include "failure.h"
@@ -1153,6 +1154,17 @@ private:
       lifetimes.active(ir, target, instruction.info.type, false);
       if (instruction.constructorTarget) {
         result = call(instruction, target);
+      } else if (mir_detail::passiveUnionFieldConstruction(
+                     session.program().mir(), instruction)) {
+        const auto &object = session.layouts().instance(instruction.info.type);
+        const auto index = session.layouts().fieldIndex(
+            object.type, object.declaredFields.front().symbol);
+        // The sealed union projection retains the same address at offset zero.
+        // Initialize only the selected field, including its typed copy width.
+        const auto &field = object.declaredFields.at(index);
+        store(operand(instruction.operands.front()), target, field.type);
+        lifetimes.active(ir, target, object.type, true);
+        result = target;
       } else if (instruction.constructorKind == ConstructorKind::Ordinary &&
                  instruction.operands.empty() &&
                  instruction.info.type.kind == SemanticType::Class) {

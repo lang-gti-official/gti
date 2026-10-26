@@ -1,0 +1,28 @@
+mut int trace = 0;
+union ByteFirst { mut uint8_t value; mut uint64_t other; };
+union BoolFirst { mut bool value; mut uint64_t other; };
+union WideFirst { mut uint64_t value; mut uint8_t other; };
+union RealFirst { mut double value; mut uint8_t other; };
+uint8_t byte_input() { trace = trace * 10 + 1; return uint8_t(7); }
+bool bool_input() { trace = trace * 10 + 2; return true; }
+uint64_t wide_input() { trace = trace * 10 + 3; return uint64_t(123456789); }
+double real_input() { trace = trace * 10 + 5; return 1.25; }
+ByteFirst make_byte() { return ByteFirst(byte_input()); }
+int main() {
+  ByteFirst small = make_byte();
+  BoolFirst flag{bool_input()};
+  WideFirst wide{wide_input()};
+  RealFirst real{real_input()};
+  ByteFirst small_copy = small;
+  BoolFirst flag_copy = flag;
+  WideFirst wide_copy = wide;
+  RealFirst real_copy = real;
+  unsafe {
+    if (small.value != uint8_t(7) || small_copy.value != uint8_t(7)) { return 1; }
+    if (!flag.value || !flag_copy.value) { return 2; }
+    if (wide.value != uint64_t(123456789) || wide_copy.value != uint64_t(123456789)) { return 3; }
+    if (real.value != 1.25 || real_copy.value != 1.25) { return 5; }
+  }
+  if (trace != 1235) { return 6; }
+  return 0;
+}

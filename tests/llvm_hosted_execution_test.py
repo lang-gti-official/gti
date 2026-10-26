@@ -3,6 +3,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -99,9 +100,12 @@ def text_source_rejections(gti, root, scratch, endpoints, env):
 def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selection = sys.argv[3] if len(sys.argv) > 3 else "all"
-    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments", "reference-input", "reference-return", "vector", "array", "text-return", "generated-construction"}:
+    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments", "reference-input", "reference-return", "vector", "array", "text-return", "generated-construction", "union-construction"}:
         raise ValueError(f"unknown hosted case: {selection}")
     cases = (
+        ("llvm_hosted_union_first_field.gti", None),
+        ("llvm_hosted_union_first_field_aggregate.gti", None),
+        ("llvm_hosted_union_first_field_failure.gti", "union first-field initialization failure"),
         ("llvm_hosted_generated_default.gti", None),
         ("llvm_hosted_generated_default_contexts.gti", None),
         ("llvm_hosted_generated_default_failure.gti", "generated default argument failure"),
@@ -128,7 +132,7 @@ def main():
     endpoints = (
         Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
         *(Endpoint("llvm", f"O{level}") for level in
-          (range(4) if selection in {"all", "reference-return", "text-return", "generated-construction"}
+          (range(4) if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction"}
            else (0, 3))),
     )
     env = {**os.environ, "NO_COLOR": "1"}
@@ -136,8 +140,14 @@ def main():
         scratch = Path(temporary)
         if selection in {"all", "source-literals"}:
             source_literals(gti, root, scratch, endpoints, env)
+        selected_cases = 0
         for filename, failure in cases:
             if selection in {"status", "source-literals", "arguments"}:
+                continue
+            if selection == "union-construction" and filename not in {
+                    "llvm_hosted_union_first_field.gti",
+                    "llvm_hosted_union_first_field_aggregate.gti",
+                    "llvm_hosted_union_first_field_failure.gti"}:
                 continue
             if selection == "generated-construction" and filename not in {
                     "llvm_hosted_generated_default.gti",
@@ -164,6 +174,9 @@ def main():
                     "llvm_hosted_text_return_failure.gti"}:
                 continue
             if selection == "startup" and filename in {
+                    "llvm_hosted_union_first_field.gti",
+                    "llvm_hosted_union_first_field_aggregate.gti",
+                    "llvm_hosted_union_first_field_failure.gti",
                     "llvm_hosted_generated_default.gti",
                     "llvm_hosted_generated_default_contexts.gti",
                     "llvm_hosted_generated_default_failure.gti",
@@ -178,10 +191,27 @@ def main():
                 continue
             if selection == "source-location" and filename != "stdlib_surface_source_location.gti":
                 continue
+            selected_cases += 1
             observations = []
+            comparator_gaps = []
             for index, endpoint in enumerate(endpoints):
                 result = execute(gti, root, scratch / filename / str(index),
                                  root / "tests/fixtures" / filename, endpoint, env)
+                if (result.error and endpoint.backend == "cpp"
+                        and filename == "llvm_hosted_union_first_field_aggregate.gti"):
+                    # Preserve real comparator evidence for this existing gap.
+                    diagnostic = re.search(r"backend diagnostics saved at (.+/backend\.log)",
+                                           result.stderr)
+                    detail = (Path(diagnostic.group(1)).read_text(encoding="utf-8")
+                              if diagnostic else "")
+                    if (result.compile_returncode != 65 or "GTI-B0001" not in result.stderr
+                            or "complete C++ text vocabulary" not in detail
+                            or not any(name in detail for name in ("make_nested_union", "__gti_entry"))):
+                        raise AssertionError(f"unexpected aggregate comparator failure {endpoint}: {result}")
+                    comparator_gaps.append(endpoint.standard)
+                    print(f"{filename}: retained {endpoint.standard} vocabulary rejection at {diagnostic.group(1)}",
+                          flush=True)
+                    continue
                 if result.error:
                     raise AssertionError(f"{filename} {endpoint}: {result}")
                 expected_code = 70 if failure else 0
@@ -194,9 +224,12 @@ def main():
                 observations.append(result.observable)
             if any(value != observations[0] for value in observations):
                 raise AssertionError(f"hosted observable drift: {filename}: {observations}")
-            levels = "O0-O3" if selection in {"all", "reference-return", "text-return", "generated-construction"} else "O0/O3"
-            print(f"{filename}: uninstrumented C++20/23 O3 and LLVM {levels} passed",
-                  flush=True)
+            levels = "O0-O3" if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction"} else "O0/O3"
+            scope = (f"LLVM {levels}; recorded C++ aggregate vocabulary gap {comparator_gaps}"
+                     if comparator_gaps else f"C++20/23 O3 and LLVM {levels}")
+            print(f"{filename}: uninstrumented {scope} passed", flush=True)
+        if selection == "union-construction" and selected_cases != 3:
+            raise AssertionError(f"union construction requires all three fixtures, ran {selected_cases}")
         for status in (-2147483648, -1, 0, 1, 70, 255, 256, 512, 2147483647):
             if selection not in {"all", "status"}:
                 continue

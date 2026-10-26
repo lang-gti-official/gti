@@ -1,0 +1,14 @@
+mut int trace = 0;
+union Inner { mut uint32_t value; mut uint64_t other; };
+union Outer { mut Inner value; mut uint64_t other[2]; };
+Inner nested_input() { trace = trace * 10 + 4; return Inner(uint32_t(8)); }
+Outer make_nested_union() { return Outer(nested_input()); }
+int main() {
+  Outer nested = make_nested_union();
+  Outer copy = nested;
+  unsafe {
+    if (nested.value.value != uint32_t(8) || copy.value.value != uint32_t(8)) { return 1; }
+  }
+  if (trace != 4) { return 2; }
+  return 0;
+}
