@@ -823,7 +823,7 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
                  body.identity.address);
       if (!ranges || debug.tables->parameterFragments !=
                          lowered_detail::deriveSourceParameterFragments(
-                             program.mir_, body.identity.address, *ranges))
+                             program.mir_, body.identity.address))
         addIssue(issues, LoweredProgramIssueKind::InvalidBodyInventory,
                  "source parameter fragments differ from canonical pack "
                  "availability",

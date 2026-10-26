@@ -1856,7 +1856,8 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
                 fragment.element < local.declaration.type.arguments.size(),
             "pack fragment binds exact source parameter and concrete element");
       }
-  expect(fragments >= 2, "nonempty pack has fresh canonical availability");
+  expect(fragments == 2,
+         "unused scalar pack has one continuous entry interval per lane");
   for (int mutation = 0; mutation != 5; ++mutation) {
     auto forged = *built.program;
     bool changed = false;
@@ -1969,6 +1970,26 @@ int main() { return first(7, Owner(), Owner()) == 7 ? 0 : 1; }
                            State::Unavailable,
                    "retiring one pack element makes the grouped value "
                    "unavailable");
+            const auto position = [&](lang::MirDebugPoint point) {
+              if (point.blockEntry)
+                return std::size_t{0};
+              for (std::size_t i = 0; i < block.instructions.size(); ++i)
+                if (block.instructions[i].id == point.instruction)
+                  return 2 * i + 1 + static_cast<std::size_t>(point.after);
+              return 2 * block.instructions.size() + 1;
+            };
+            const auto at = position(after.front().point);
+            for (const auto &lowered : built.program->bodies())
+              if (lowered.identity.address == address &&
+                  lowered.sourceDebug.tables)
+                for (const auto &fragment :
+                     lowered.sourceDebug.tables->parameterFragments)
+                  if (fragment.place == place.id &&
+                      fragment.begin.block == block.id)
+                    expect(!(position(fragment.begin) <= at &&
+                             at < position(fragment.end)),
+                           "continuous pack fragments never span a retired "
+                           "element");
             ++retired;
           }
     }

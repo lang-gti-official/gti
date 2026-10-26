@@ -16336,12 +16336,60 @@ MirDebugAvailabilityBatch queryMirDebugAvailability(
     return batch;
   }
   const auto &tables = *body->sourceDebug.tables;
+  const mir_detail::MirSourceAnchorIndex anchors(*body);
+  const auto scopeFor = [&](HirStatementId statement, HirValueId value) {
+    const auto *anchor = anchors.find(statement, value);
+    return anchor ? anchor->scope : SourceScopeId{0};
+  };
+  struct PointFacts {
+    std::size_t position;
+    SourceScopeId scope;
+    bool tombstone = false;
+  };
+  std::map<std::pair<MirBlockId, MirInstructionId>, PointFacts> pointFacts;
+  std::map<MirBlockId, SourceScopeId> entryScopes;
+  for (const auto &block : body->blocks) {
+    auto &entryScope = entryScopes[block.id];
+    for (std::size_t i = 0; i < block.instructions.size(); ++i) {
+      const auto &instruction = block.instructions[i];
+      const auto scope =
+          scopeFor(instruction.hirStatement, instruction.hirValue);
+      pointFacts.emplace(std::pair{block.id, instruction.id},
+                         PointFacts{2 * i + 1, scope, instruction.tombstone});
+      if (!entryScope && !instruction.tombstone)
+        entryScope = scope;
+    }
+    pointFacts.emplace(std::pair{block.id, MirInstructionId{0}},
+                       PointFacts{2 * block.instructions.size() + 1,
+                                  scopeFor(block.terminator.hirStatement,
+                                           block.terminator.hirValue)});
+  }
+  const auto position = [&](MirDebugPoint point) {
+    return point.blockEntry
+               ? std::size_t{0}
+               : pointFacts.at({point.block, point.instruction}).position +
+                     point.after;
+  };
+  std::map<std::pair<SourceLocalId, MirBlockId>, std::size_t> lexicalEnds;
+  for (const auto &end : tables.localEnds) {
+    const auto at = position(end.point);
+    auto [found, inserted] =
+        lexicalEnds.emplace(std::pair{end.local, end.point.block}, at);
+    if (!inserted)
+      found->second = std::min(found->second, at);
+  }
   std::vector<mir_detail::MirExistingPlaceQuery> places;
   std::vector<std::size_t> indices;
   for (std::size_t i = 0; i < requests.size(); ++i) {
     const auto &request = requests[i];
     if (!request.local || request.local > tables.locals.size() ||
-        !validMirDebugPoint(*body, request.point)) {
+        !pointFacts.contains(
+            {request.point.block, request.point.instruction}) ||
+        pointFacts.at({request.point.block, request.point.instruction})
+            .tombstone ||
+        (request.point.blockEntry &&
+         (request.point.instruction || request.point.after)) ||
+        (!request.point.instruction && request.point.after)) {
       batch.verification =
           failure(*body, address.owner,
                   "source-local query has a foreign local or point",
@@ -16378,39 +16426,12 @@ MirDebugAvailabilityBatch queryMirDebugAvailability(
     result.readability = fact.readability;
     result.reason = fact.reason;
   }
-  const mir_detail::MirSourceAnchorIndex anchors(*body);
-  const auto scopeFor = [&](HirStatementId statement, HirValueId value) {
-    const auto *anchor = anchors.find(statement, value);
-    return anchor ? anchor->scope : SourceScopeId{0};
-  };
-  const auto position = [&](MirDebugPoint point) {
-    const auto &block = *body->findBlock(point.block);
-    if (point.blockEntry)
-      return std::size_t{0};
-    for (std::size_t i = 0; i < block.instructions.size(); ++i)
-      if (block.instructions[i].id == point.instruction)
-        return 2 * i + 1 + static_cast<std::size_t>(point.after);
-    return 2 * block.instructions.size() + 1;
-  };
   for (auto &fact : batch.requested) {
     const auto &point = fact.request.point;
-    const auto &block = *body->findBlock(point.block);
-    SourceScopeId scope = 0;
-    if (point.blockEntry) {
-      for (const auto &instruction : block.instructions)
-        if (!instruction.tombstone &&
-            (scope = scopeFor(instruction.hirStatement, instruction.hirValue)))
-          break;
-    } else if (point.instruction) {
-      for (const auto &instruction : block.instructions)
-        if (instruction.id == point.instruction) {
-          scope = scopeFor(instruction.hirStatement, instruction.hirValue);
-          break;
-        }
-    } else {
-      scope =
-          scopeFor(block.terminator.hirStatement, block.terminator.hirValue);
-    }
+    const auto scope =
+        point.blockEntry
+            ? entryScopes.at(point.block)
+            : pointFacts.at({point.block, point.instruction}).scope;
     const auto &local = tables.locals[fact.request.local - 1];
     bool visible = false;
     for (auto ancestor = scope; ancestor;
@@ -16419,16 +16440,16 @@ MirDebugAvailabilityBatch queryMirDebugAvailability(
         visible = true;
         break;
       }
-    const bool ended = std::any_of(
-        tables.localEnds.begin(), tables.localEnds.end(), [&](const auto &end) {
-          return end.local == fact.request.local &&
-                 end.point.block == point.block &&
-                 position(end.point) <= position(point);
-        });
+    const auto end = lexicalEnds.find({fact.request.local, point.block});
+    const bool ended =
+        end != lexicalEnds.end() && end->second <= position(point);
     if (ended || (scope && !visible)) {
       fact.readability = MirDebugReadability::Unavailable;
       fact.reason = MirDebugAvailabilityReason::OutOfScope;
     } else if (!scope &&
+               !(local.declaration.parameter &&
+                 local.declaration.type.kind == SemanticType::TypePack &&
+                 !tables.scopes[local.declaration.scope - 1].parent) &&
                fact.readability == MirDebugReadability::DefinitelyReadable) {
       fact.readability = MirDebugReadability::Unknown;
       fact.reason = MirDebugAvailabilityReason::Unproven;

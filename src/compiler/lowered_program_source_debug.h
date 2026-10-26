@@ -17,7 +17,6 @@ deriveSourceFragments(const MirProgram &program, MirBodyAddress address,
                       std::span<const LoweredSourceRange> readable);
 [[nodiscard]] std::vector<LoweredSourceParameterFragment>
 deriveSourceParameterFragments(const MirProgram &program,
-                               MirBodyAddress address,
-                               std::span<const LoweredSourceRange> readable);
+                               MirBodyAddress address);
 
 } // namespace lang::lowered_detail

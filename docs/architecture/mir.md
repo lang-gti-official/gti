@@ -3754,9 +3754,13 @@ concrete element index and freshly derived readable interval. Independent
 verification reconstructs their complete inventory; missing or forged entries
 cannot become positive debug availability. Borrowed packs without a complete
 canonical referent/dependency proof remain unproven. A separately queried entry
-interval binds parameter metadata to the actual native entry block, ending
-before the first MIR instruction; generated prologue operations receive no
-invented source statements.
+boundary binds parameter metadata to the actual native entry block. Parameter
+fragments query every instruction boundary and retain continuous proven
+readability across source-inert glue, with explicit lexical, ownership and
+borrow stops. Root-scoped source pack parameters do not need a statement anchor
+to remain lexically visible; ordinary locals do. Generated operations receive
+no invented source statements. Boundary and lexical-end indexes avoid repeated
+body scans in the batched source-local query.
 The semantic receiver-state producer records its accepted concrete type and one
 implicit local with no binding, symbol or source token. HIR verifies that origin
 against its accepted producer; MIR joins it only to an existing, unprojected

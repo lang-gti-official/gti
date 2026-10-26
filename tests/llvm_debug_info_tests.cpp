@@ -815,17 +815,24 @@ void hostedArtificialCarrier() {
     throw std::runtime_error("artificial startup metadata failed verification");
 }
 
-enum class ProductionDebugCase { Scalar, Receiver, OwnedPack, Lexical };
+enum class ProductionDebugCase {
+  Scalar,
+  Receiver,
+  OwnedPack,
+  ScalarPack,
+  Lexical
+};
 
 void productionValueEmission(
     const std::string &dumpPath,
     ProductionDebugCase selected = ProductionDebugCase::Scalar) {
   const bool receiver = selected == ProductionDebugCase::Receiver;
   const bool ownedPack = selected == ProductionDebugCase::OwnedPack;
+  const bool scalarPack = selected == ProductionDebugCase::ScalarPack;
   const bool lexical = selected == ProductionDebugCase::Lexical;
   const auto frontend =
       Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
-          .analyze("value-emission.gti", lexical     ? R"gti(
+          .analyze("value-emission.gti", lexical      ? R"gti(
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
 int32_t inspect(int32_t input) {
   int32_t local = input ^ 13;
@@ -838,7 +845,7 @@ int32_t inspect(int32_t input) {
 }
 int main() { return inspect(debug_input()) == 9 ? 0 : 1; }
 )gti"
-                                         : ownedPack ? R"gti(
+                                         : ownedPack  ? R"gti(
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
 class Owner { public: int32_t value = 9; ~Owner() { debug_checkpoint(this.value); } };
 int32_t inspect<Args...>(int32_t input, Args... rest) {
@@ -848,7 +855,16 @@ int32_t inspect<Args...>(int32_t input, Args... rest) {
 }
 int main() { return inspect(debug_input(), Owner(), Owner()) == 4 ? 0 : 1; }
 )gti"
-                                         : receiver  ? R"gti(
+                                         : scalarPack ? R"gti(
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+int32_t inspect<Args...>(int32_t input, Args... rest) {
+  mut int32_t local = input & 31;
+  debug_checkpoint(local);
+  return local;
+}
+int main() { return inspect(debug_input(), 9, 11) == 4 ? 0 : 1; }
+)gti"
+                                         : receiver   ? R"gti(
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
 class Receiver {
 public:
@@ -861,7 +877,7 @@ public:
 };
 int main() { Receiver owner{}; return owner.inspect(debug_input()) == 4 ? 0 : 1; }
 )gti"
-                                                     : R"gti(
+                                                      : R"gti(
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
 int32_t inspect(int32_t input) {
   mut int32_t local = input & 31;
@@ -1001,9 +1017,11 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   if (!values)
     throw std::runtime_error(
         "production local has no existing SSA value metadata");
-  if (ownedPack && (!packValues || !packEnds || !entryPacks))
+  if ((ownedPack || scalarPack) && (!packValues || !packEnds || !entryPacks))
     throw std::runtime_error(
-        "owned pack lost its entry location or genuine availability cuts");
+        "pack lost its entry location or genuine availability cuts: values=" +
+        std::to_string(packValues) + " ends=" + std::to_string(packEnds) +
+        " entry=" + std::to_string(entryPacks));
   if (receiver && !receivers)
     throw std::runtime_error(
         "production receiver has no existing address metadata");
@@ -1107,6 +1125,9 @@ int main(int argc, char **argv) {
                           ProductionDebugCase::OwnedPack);
   productionValueEmission(argc > 1 ? std::string(argv[1]) + ".lexical.ll" : "",
                           ProductionDebugCase::Lexical);
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".scalar-pack.ll"
+                                   : "",
+                          ProductionDebugCase::ScalarPack);
   std::cout << "sealed debug identities, locations, locals, recursive layout, "
                "root relocation and inlined source/parameter chains passed\n";
 }

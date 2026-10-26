@@ -19,6 +19,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <set>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
@@ -1447,52 +1448,80 @@ std::vector<LoweredSourceFragmentRange> lowered_detail::deriveSourceFragments(
 }
 
 std::vector<LoweredSourceParameterFragment>
-lowered_detail::deriveSourceParameterFragments(
-    const MirProgram &program, MirBodyAddress address,
-    std::span<const LoweredSourceRange> readable) {
+lowered_detail::deriveSourceParameterFragments(const MirProgram &program,
+                                               MirBodyAddress address) {
   std::vector<LoweredSourceParameterFragment> fragments;
   const auto *body = findMirBody(program, address);
   if (!body || !body->sourceDebug.tables)
     return fragments;
   const auto &locals = body->sourceDebug.tables->locals;
-  const auto *entry = body->findBlock(body->entry);
-  if (entry && std::any_of(locals.begin(), locals.end(), [](const auto &local) {
-        return local.declaration.parameter &&
-               local.declaration.type.kind == SemanticType::TypePack;
-      })) {
-    const MirDebugPoint begin{entry->id, 0, false, true};
-    const MirDebugPoint end{
-        entry->id,
-        entry->instructions.empty() ? 0 : entry->instructions.front().id,
-        false};
-    std::vector<MirDebugAvailabilityRequest> requests;
-    for (const auto &local : locals)
-      if (local.declaration.parameter &&
-          local.declaration.type.kind == SemanticType::TypePack)
-        requests.push_back({local.declaration.id, begin});
-    const auto availability =
-        queryMirDebugAvailability(program, address, requests);
-    if (availability.verification.valid())
-      for (const auto &fact : availability.requested)
-        if (fact.readability == MirDebugReadability::DefinitelyReadable) {
-          const auto &local = locals.at(fact.request.local - 1);
-          for (std::size_t element = 0;
-               element < local.declaration.type.arguments.size(); ++element)
-            fragments.push_back(
-                {local.declaration.id, local.place, element, begin, end});
-        }
-  }
-  for (const auto &range : readable) {
-    const auto &local = locals.at(range.local - 1);
+  struct Candidate {
+    const MirSourceLocal *local;
+    std::size_t first;
+    std::size_t last;
+  };
+  std::vector<Candidate> candidates;
+  std::vector<MirDebugAvailabilityRequest> requests;
+  for (const auto &local : locals) {
     const auto *place = body->findPlace(local.place);
     if (!local.declaration.parameter || !place ||
         place->root != MirPlaceRootKind::Binding ||
         place->type.kind != SemanticType::TypePack || !place->type.concretePack)
       continue;
-    for (std::size_t element = 0; element < place->type.arguments.size();
-         ++element)
-      fragments.push_back(
-          {range.local, place->id, element, range.begin, range.end});
+    for (const auto &block : body->blocks) {
+      const auto first = requests.size();
+      requests.push_back({local.declaration.id, {block.id, 0, false, true}});
+      for (const auto &instruction : block.instructions) {
+        if (instruction.tombstone)
+          continue;
+        requests.push_back(
+            {local.declaration.id, {block.id, instruction.id, false}});
+        requests.push_back(
+            {local.declaration.id, {block.id, instruction.id, true}});
+      }
+      requests.push_back({local.declaration.id, {block.id, 0, false}});
+      candidates.push_back({&local, first, requests.size()});
+    }
+  }
+  if (requests.empty())
+    return fragments;
+  const auto observed = queryMirDebugAvailability(program, address, requests);
+  if (!observed.verification.valid() ||
+      observed.requested.size() != requests.size())
+    return fragments;
+  const auto key = [](SourceLocalId local, MirDebugPoint point) {
+    return std::tuple{local, point.block, point.instruction, point.after,
+                      point.blockEntry};
+  };
+  std::set<decltype(key(0, {}))> stops;
+  for (const auto &stop : observed.requiredStops)
+    stops.insert(key(stop.local, stop.point));
+  // Formal packs have body-root lexical identity, independent of whether an
+  // instruction has a source anchor. Observe every boundary, preserving all
+  // lexical, ownership and borrow cuts rather than inferring continuity from
+  // nearby source statements or LLVM representation.
+  for (const auto &candidate : candidates) {
+    std::optional<MirDebugPoint> begin;
+    const auto &local = *candidate.local;
+    const auto emit = [&](MirDebugPoint end) {
+      for (std::size_t element = 0;
+           element < local.declaration.type.arguments.size(); ++element)
+        fragments.push_back(
+            {local.declaration.id, local.place, element, *begin, end});
+    };
+    for (auto i = candidate.first; i < candidate.last; ++i) {
+      const auto &fact = observed.requested[i];
+      const auto point = fact.request.point;
+      const bool readable =
+          fact.readability == MirDebugReadability::DefinitelyReadable &&
+          !stops.contains(key(local.declaration.id, point));
+      if (begin && (!readable || i + 1 == candidate.last)) {
+        emit(point);
+        begin.reset();
+      }
+      if (!begin && readable && i + 1 != candidate.last)
+        begin = point;
+    }
   }
   return fragments;
 }
@@ -1925,8 +1954,8 @@ LoweredProgramBuild LoweredProgramBuilder::build(
         debug.tables->fragments = lowered_detail::deriveSourceFragments(
             lowered.mir_, address, debug.tables->ranges);
         debug.tables->parameterFragments =
-            lowered_detail::deriveSourceParameterFragments(
-                lowered.mir_, address, debug.tables->ranges);
+            lowered_detail::deriveSourceParameterFragments(lowered.mir_,
+                                                           address);
       } else
         addIssue(build.issues, LoweredProgramIssueKind::InvalidBodyInventory,
                  "source-local ranges require valid current MIR availability",

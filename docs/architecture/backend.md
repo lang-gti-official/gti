@@ -4430,8 +4430,10 @@ This group is not a contiguous GTI object or a new ABI representation. Its
 fragments read existing physical arguments through the canonical parameter and
 ABI plans; direct lanes use values and indirect lanes use their existing
 addresses. Exact MIR entry intervals are emitted at the initialized native
-entry before its branch, allowing unused argument locations without artificial
-execution uses. Readability comes only from sealed canonical MIR intervals.
+entry before its branch. Continuous canonical parameter intervals avoid
+discarding unused argument locations at source-inert instruction boundaries;
+they create no execution uses. Readability comes only from sealed canonical MIR
+intervals, including every lexical, ownership and borrow cut.
 Availability ends and restorations at one native insertion position coalesce;
 an intervening emitted instruction preserves the cut. This prevents static
 address declarations from losing a restored location during optimization.
