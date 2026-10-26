@@ -12,6 +12,8 @@
 extern "C" {
 void gti_test_mutex_initialize(void *, int32_t);
 void gti_test_mutex_destroy(void *);
+void gti_test_mutex_transfer(void *, void *);
+void gti_test_mutex_cleanup(void *);
 void gti_test_mutex_token(void *);
 int32_t gti_test_mutex_lock(void *, void *);
 void gti_test_mutex_unlock(void *, void *);
@@ -39,10 +41,11 @@ template <class Work> double measure(Work work) {
          iterations;
 }
 
-void report(const char *name, Samples values) {
+void report(const char *name, Samples values,
+            const char *operation = "lock/increment/unlock") {
   std::sort(values.begin(), values.end());
-  std::printf("%s lock/increment/unlock ns: median=%.3f min=%.3f max=%.3f\n",
-              name, values[rounds / 2], values.front(), values.back());
+  std::printf("%s %s ns: median=%.3f min=%.3f max=%.3f\n",
+              name, operation, values[rounds / 2], values.front(), values.back());
 }
 } // namespace
 
@@ -95,6 +98,17 @@ int main() {
   gti_test_mutex_unlock(storage.data(), &token);
   gti_test_mutex_destroy(storage.data());
   report("LLVM token/payload test adapter", emitted);
+  alignas(8) std::array<unsigned char, 72> relocated{};
+  Samples lifetime{};
+  for (auto &sample : lifetime)
+    sample = measure([&] {
+      gti_test_mutex_initialize(storage.data(), 7);
+      gti_test_mutex_transfer(relocated.data(), storage.data());
+      gti_test_mutex_cleanup(storage.data());
+      gti_test_mutex_cleanup(relocated.data());
+    });
+  report("LLVM passive shell lifecycle", lifetime,
+         "initialize/fresh-shell-transfer/retire-both");
 #endif
   gti_rt_mutex_destroy_v1(&slot);
 }

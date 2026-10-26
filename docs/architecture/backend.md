@@ -4381,9 +4381,10 @@ boundary receives the zero-extended same-width old representation (including
 signed lanes); booleans use their canonical byte lane. The private service
 uses same-width native atomic loads and a process-lifetime pthread parking
 domain. An already-changed lane returns before domain initialization or locking.
-An unchanged lane receives a finite pre-parking probe (8192 processor hints on
-reviewed arm64, 256 pauses on reviewed x86_64), then enters the native blocking
-protocol. Blocking checks and enrollment share the notification lock, and every
+An unchanged lane receives at most 8192 processor-hinted probes, then enters the
+native blocking protocol. After the first 64 probes, a 50-microsecond deadline
+checked every 64 probes also bounds active waiting on slower targets; this is
+not a real-time scheduling guarantee. Blocking checks and enrollment share the notification lock, and every
 wake rechecks the value. Hash collisions require broadcast even for notify-one;
 notifications carry neither saved credit nor a source memory-order edge. No
 unbounded polling, GTI allocation, callback, or C++ exception transport implements

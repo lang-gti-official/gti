@@ -4,6 +4,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <pthread.h>
 
 namespace {
@@ -40,12 +41,15 @@ void wait(const void *lane, std::uint64_t old, std::uint32_t order) noexcept {
     return;
   // Short handoffs often finish before entering the kernel. Bound this work:
   // an unchanged lane always proceeds to the native parking protocol below.
-#if defined(__aarch64__)
-  constexpr unsigned probes = 8192;
-#else
-  constexpr unsigned probes = 256;
-#endif
-  for (unsigned probe = 0; probe != probes; ++probe) {
+  using Clock = std::chrono::steady_clock;
+  Clock::time_point deadline;
+  for (unsigned probe = 0; probe != 8192; ++probe) {
+    // Avoid clock reads on short handoffs. Slow hints/loaded hosts must not
+    // turn the finite instruction budget into a long active wait.
+    if (probe == 64)
+      deadline = Clock::now() + std::chrono::microseconds(50);
+    else if (probe > 64 && probe % 64 == 0 && Clock::now() >= deadline)
+      break;
 #if defined(__aarch64__)
     __asm__ __volatile__("yield");
 #elif defined(__x86_64__)

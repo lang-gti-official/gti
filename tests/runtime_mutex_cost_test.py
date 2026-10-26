@@ -16,6 +16,7 @@ def main():
     parser.add_argument("output", type=Path)
     parser.add_argument("--cxx", default="c++")
     parser.add_argument("--llvm-object", type=Path)
+    parser.add_argument("--runtime-library", type=Path)
     args = parser.parse_args()
     root, output = args.root.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -44,6 +45,8 @@ def main():
     if args.llvm_object:
         selected = args.llvm_object.resolve()
         extra = ["-DGTI_COST_LLVM", selected]
+        if args.runtime_library:
+            extra.append(args.runtime_library.resolve())
         emitted = {"path": str(selected), "bytes": selected.stat().st_size,
                    "sha256": hashlib.sha256(selected.read_bytes()).hexdigest()}
         run("emitter-size", ["size", selected])
