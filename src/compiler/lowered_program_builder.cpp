@@ -1438,6 +1438,7 @@ lowered_detail::deriveSourceValueRanges(const MirBody &body) {
         block.id,
         last == block.instructions.size() ? 0 : block.instructions[last].id,
         false};
+    const auto scopeEnd = end;
     const auto key = LocalBlock{event.local, block.id};
     if (const auto stop = ends.find(key); stop != ends.end()) {
       if (stop->second.first <= position(event.point))
@@ -1451,8 +1452,26 @@ lowered_detail::deriveSourceValueRanges(const MirBody &body) {
         [](std::size_t at, const auto &point) { return at < point.first; });
     if (next != points.end() && next->first < position(end))
       end = next->second;
-    if (position(event.point) < position(end))
-      ranges.push_back({event.local, event.value, event.point, end});
+    if (position(event.point) < position(end)) {
+      const auto &type = local.declaration.type;
+      const bool scalar =
+          constantIntegerDomain(type).has_value() ||
+          type == SemanticType::Bool || type == SemanticType::Char ||
+          type == SemanticType::Float || type == SemanticType::Double;
+      const auto stop = ends.find(key);
+      // An after-instruction end and the next before-instruction boundary
+      // denote the same execution position, including the return boundary.
+      const bool finalScopeBoundary =
+          end == scopeEnd ||
+          (end.after && position(end) + 1 == position(scopeEnd));
+      const bool lexicalScopeEnd =
+          scalar && body.blocks.size() == 1 &&
+          block.terminator.kind == MirTerminatorKind::Return &&
+          finalScopeBoundary && last == segments.back().second &&
+          stop != ends.end() && position(end) <= stop->second.first;
+      ranges.push_back(
+          {event.local, event.value, event.point, end, lexicalScopeEnd});
+    }
   }
   return ranges;
 }

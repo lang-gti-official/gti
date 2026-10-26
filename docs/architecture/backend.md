@@ -4456,11 +4456,21 @@ materializes a value, loads storage or adds execution instructions. A value
 profile is selected for optimized emission or already-promoted storage; O0
 retains proven existing storage across block boundaries. A value
 replacement at the same boundary supersedes its predecessor without an
-intervening unavailable record; genuine gaps and lexical exits still emit kills.
+intervening unavailable record; genuine gaps still emit kills. A scalar range
+ending at its final lexical segment in a single-block returning body may use
+the actual DWARF scope bounds instead of a kill. The lowered builder seals this
+qualification against the explicit source-local endpoint, normalizing adjacent
+after/before instruction boundaries; independent verification reconstructs it.
+Earlier value replacements, lifetime cuts and scopes with possible re-entry
+keep explicit ends. This avoids machine scheduling a final scope-end kill
+before the last source instruction within that scope.
 Pure integer SSA computations may use LLVM's own debug-expression recovery to
 describe their value from existing operands before machine lowering eliminates
 the transient result. This does not create values, execution uses or memory
-reads, and does not extend the verified source availability interval.
+reads, and does not extend the verified source availability interval. For
+locals with the sealed final-lexical-exit qualification, recovery also runs
+after optimization: scalar promotion can introduce fresh value records whose
+transient arithmetic results need the same expression recovery.
 Optimized-out locals retain named declarations without fabricated storage or
 value availability. Private execution symbols are not DWARF linkage names:
 source subprogram names remain visible in native backtraces without changing
@@ -4512,10 +4522,10 @@ this is not yet a source-local availability proof for captures inside the body.
 Unregistered, foreign-session, wrong-signature and rebound lambda identities
 reject without changing execution signatures or capture storage. Broader optimized
 representations and the full two-host failure/callback debugger matrix remain
-open. The optimized lexical-shadowing probe also remains a failing gate:
-verified inner-local facts reach LLVM, but machine lowering does not retain a
-usable location at the inner checkpoint. Its exact fixture is retained; an
-unavailable or outer-variable result is not accepted as the inner value.
+open. The exact optimized lexical-shadowing probe now observes the inner value
+11 and then the outer value 9 in the macOS native debugger. An unavailable or
+outer-variable result is not accepted as the inner value. Current composed
+source still requires its Linux gate; older Linux evidence is kept separately.
 Managed Linux debugger checks stage distribution LLDB22 and its missing
 dependencies under the run's build directory, retaining package and loaded-file
 hashes without installing host packages. LLDB21 reaches source breakpoints but

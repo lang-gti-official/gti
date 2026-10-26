@@ -321,6 +321,8 @@ BackendArtifact Session::emitObject() {
     instrumentAddress(module_, modules);
   if (instrumentsThread(mode))
     instrumentThread(module_, modules);
+  if (debugInfo_)
+    debugInfo_->prepareCodegen();
   verify();
   llvm::SmallVector<char, 0> bytes;
   llvm::raw_svector_ostream stream(bytes);

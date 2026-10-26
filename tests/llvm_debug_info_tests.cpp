@@ -863,7 +863,7 @@ void hostedArtificialCarrier() {
     throw std::runtime_error("forged startup identity was accepted");
   };
   rejects([&] { debug.begin(address, *alien); });
-  lowerScalarProgram(session, planLlvmAdmission(*input));
+  lowerScalarProgram(session, planLlvmAdmission(*input, session.options()));
   auto *entry = session.module().getFunction("main");
   if (!entry || !entry->getSubprogram())
     throw std::runtime_error("registered startup lost its artificial carrier");
@@ -1044,8 +1044,8 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   Session session(*input, {.optimization = LlvmCodegenOptimization::Aggressive,
                            .debugInfo = true});
   Session plain(*input, {.optimization = LlvmCodegenOptimization::Aggressive});
-  lowerScalarProgram(session, planLlvmAdmission(*input));
-  lowerScalarProgram(plain, planLlvmAdmission(*input));
+  lowerScalarProgram(session, planLlvmAdmission(*input, session.options()));
+  lowerScalarProgram(plain, planLlvmAdmission(*input, plain.options()));
   unsigned values = 0, receivers = 0, expressions = 0, fragments = 0;
   unsigned packValues = 0, packEnds = 0, entryPacks = 0;
   for (const auto &function : session.module()) {
@@ -1191,6 +1191,7 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   dump(dumpPath);
   (void)session.emitObject();
   (void)plain.emitObject();
+  std::set<const llvm::DILocalVariable *> recoveredLexicalLocals;
   for (const auto &function : session.module()) {
     const auto *other = plain.module().getFunction(function.getName());
     if (!other || function.size() != other->size())
@@ -1202,13 +1203,30 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
         throw std::runtime_error(
             "debug metadata changed optimized execution work");
       auto otherInstruction = otherBlock->begin();
-      for (const auto &instruction : block)
+      for (const auto &instruction : block) {
         if (instruction.getOpcode() != (otherInstruction++)->getOpcode())
           throw std::runtime_error(
               "debug metadata changed optimized execution opcodes");
+        if (lexical)
+          for (const auto &record : instruction.getDbgRecordRange())
+            if (const auto *variable =
+                    llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
+                variable && variable->getVariable()->getName() == "local") {
+              if (variable->isKillLocation())
+                throw std::runtime_error(
+                    "final scalar lexical exit retained a premature kill");
+              for (const auto &operation :
+                   variable->getExpression()->expr_ops())
+                if (operation.getOp() == llvm::dwarf::DW_OP_xor)
+                  recoveredLexicalLocals.insert(variable->getVariable());
+            }
+      }
       ++otherBlock;
     }
   }
+  if (lexical && recoveredLexicalLocals.size() != 2)
+    throw std::runtime_error(
+        "optimized lexical shadows lost their independent expressions");
   dump(dumpPath.empty() ? "" : dumpPath + ".optimized.ll");
 }
 

@@ -105,6 +105,9 @@ struct LoweredSourceValueRange {
   MirValueId value = 0;
   MirDebugPoint begin;
   MirDebugPoint end;
+  // A final scalar lexical exit in a single-block returning body; its actual
+  // DWARF scope bounds visibility. All other ends need an explicit value cut.
+  bool lexicalScopeEnd = false;
   friend bool operator==(const LoweredSourceValueRange &,
                          const LoweredSourceValueRange &) = default;
 };

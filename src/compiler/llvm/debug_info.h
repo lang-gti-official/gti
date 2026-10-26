@@ -33,6 +33,7 @@ public:
              std::span<llvm::Value *const> values = {});
   void endLocal(llvm::IRBuilder<> &ir, const MirPlace &place);
   void finalize();
+  void prepareCodegen();
 
 private:
   class Impl;

@@ -986,7 +986,7 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
         point(range.begin);
         output << " end=";
         point(range.end);
-        output << '\n';
+        output << " lexical-scope-end=" << range.lexicalScopeEnd << '\n';
       }
     }
     for (const LoweredSourceLocation &location : body.sourceLocations()) {

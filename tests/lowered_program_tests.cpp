@@ -2134,6 +2134,72 @@ void testDebugValueEvents() {
     }
 }
 
+void testDebugLexicalScopeEnds() {
+  for (const bool loop : {false, true}) {
+    const auto frontend =
+        lang::Frontend(
+            {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+            .analyze("debug-lexical-ends.gti", loop ? R"gti(
+int probe(int input) {
+  mut int result = 0;
+  mut int index = 0;
+  while (index < input) { int local = index ^ 15; result = local; ++index; }
+  return result;
+}
+int main() { return probe(4); }
+)gti"
+                                                    : R"gti(
+int probe(int input) {
+  int local = input ^ 13;
+  { int local = input ^ 15; int used = local; }
+  return local;
+}
+int main() { return probe(4); }
+)gti");
+    expect(frontend.canGenerateCode(), "lexical-end control analyzes");
+    if (!frontend.canGenerateCode())
+      continue;
+    const auto optimized =
+        lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                          .mir = frontend.mir,
+                                          .level = lang::OptimizationLevel::O3,
+                                          .target = lang::TargetInfo::host()});
+    auto built = lang::LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+        optimized.mir, optimized.report.transformations,
+        lang::TargetInfo::host());
+    expect(built.valid(), "lexical-end controls seal");
+    if (!built.valid())
+      continue;
+    unsigned marked = 0, values = 0;
+    for (const auto &body : built.program->bodies())
+      if (body.sourceDebug.tables)
+        for (const auto &range : body.sourceDebug.tables->valueRanges) {
+          ++values;
+          marked += range.lexicalScopeEnd;
+        }
+    expect(values && (loop ? marked == 0 : marked != 0),
+           "only straight-line scalar exits use lexical scope bounds; re-entry "
+           "keeps cuts");
+    auto forged = *built.program;
+    for (auto &body : lang::LoweredProgramTestAccess::bodies(forged))
+      if (body.sourceDebug.tables &&
+          !body.sourceDebug.tables->valueRanges.empty()) {
+        auto &range = body.sourceDebug.tables->valueRanges.front();
+        range.lexicalScopeEnd = !range.lexicalScopeEnd;
+        const auto issues = lang::verifyLoweredProgram(forged);
+        expect(std::any_of(issues.begin(), issues.end(),
+                           [](const auto &issue) {
+                             return issue.detail.find(
+                                        "verified MIR value events") !=
+                                    std::string::npos;
+                           }),
+               "forged lexical-end qualification fails fresh reconstruction");
+        break;
+      }
+  }
+}
+
 void testDetachedDebugRanges() {
   const auto frontend =
       lang::Frontend(
@@ -3340,6 +3406,7 @@ int main() {
   testDetachedDebugLocations();
   testDetachedDebugRanges();
   testDebugValueEvents();
+  testDebugLexicalScopeEnds();
   testDebugReceiverFragments();
   testVerificationEvidenceOwnsItsProgram();
   testMutationRejection();

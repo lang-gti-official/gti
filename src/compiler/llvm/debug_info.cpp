@@ -418,6 +418,7 @@ public:
   struct Local {
     llvm::TypedTrackingMDRef<llvm::DILocalVariable> variable;
     llvm::Value *storage = nullptr;
+    bool recoverAfterPromotion = false;
     Local() = default;
     Local(llvm::DILocalVariable *declaration, llvm::Value *address)
         : variable(declaration), storage(address) {}
@@ -728,7 +729,10 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     if (!valueLocals.contains(range.local))
       continue;
     event(range.begin).values.emplace_back(range.local, range.value);
-    event(range.end).ends.push_back(range.local);
+    if (!range.lexicalScopeEnd)
+      event(range.end).ends.push_back(range.local);
+    else
+      impl->locals.at({&function, range.local}).recoverAfterPromotion = true;
   }
   if (impl->optimized())
     for (const auto &fragment : lowered->sourceDebug.tables->fragments) {
@@ -1072,6 +1076,25 @@ void DebugInfo::endLocal(llvm::IRBuilder<> &ir, const MirPlace &place) {
                                 found->second.variable->getScope()),
           ir.GetInsertBlock());
   }
+}
+
+void DebugInfo::prepareCodegen() {
+  if (!impl->finalized)
+    throw std::logic_error(
+        "LLVM debug recovery precedes metadata finalization");
+  if (!impl->optimized())
+    return;
+  std::set<const llvm::DILocalVariable *> variables;
+  for (const auto &[identity, local] : impl->locals)
+    if (local.recoverAfterPromotion && local.variable)
+      variables.insert(local.variable.get());
+  for (auto &function : impl->session.module())
+    for (auto &block : function)
+      for (auto &instruction : block)
+        for (auto &record : instruction.getDbgRecordRange())
+          if (auto *variable = llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
+              variable && variables.contains(variable->getVariable()))
+            salvageScalarDebugValue(*variable);
 }
 
 void DebugInfo::finalize() {

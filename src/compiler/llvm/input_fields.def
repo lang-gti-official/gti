@@ -48,7 +48,7 @@ LLVM_INPUT_FIELDS(LoweredDeclaration, id, kind, parent, semanticIdentity, ownerC
 LLVM_INPUT_FIELDS(LoweredBody, identity, role, requiredGeneratedItems, sourceDebug)
 LLVM_INPUT_FIELDS(LoweredSourceLocation, block, instruction, source, scope)
 LLVM_INPUT_FIELDS(LoweredSourceRange, local, place, begin, end)
-LLVM_INPUT_FIELDS(LoweredSourceValueRange, local, value, begin, end)
+LLVM_INPUT_FIELDS(LoweredSourceValueRange, local, value, begin, end, lexicalScopeEnd)
 LLVM_INPUT_FIELDS(LoweredSourceFragmentRange, local, place, value, begin, end)
 LLVM_INPUT_FIELDS(LoweredSourceParameterFragment, local, place, element, begin, end)
 LLVM_INPUT_FIELDS(LoweredSourceDebugTables, domain, scopes, locals, locations, ranges, valueRanges, fragments, parameterFragments)
