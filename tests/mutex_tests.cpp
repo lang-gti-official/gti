@@ -1120,7 +1120,8 @@ int main() {
            "readonly ancestor use/publication cannot bypass its live exclusive "
            "child");
     auto forgedWrite = rejected.mir;
-    bool changedWrite = false;
+    unsigned changedWrites = 0;
+    bool bodyWriteRejected = false;
     for (auto &body : const_cast<std::vector<lang::MirFunctionInstance> &>(
              forgedWrite.functionInstances())) {
       const lang::MirLoan *activeChild = nullptr;
@@ -1138,23 +1139,35 @@ int main() {
           if (instruction.kind == lang::MirInstructionKind::Call &&
               instruction.loan == activeChild->id)
             firstPublication = instruction.id;
+      bool changedBody = false;
       for (auto &block : body.body.blocks)
         for (auto &instruction : block.instructions)
           if (firstPublication && instruction.id > firstPublication &&
               instruction.kind == lang::MirInstructionKind::CallInput &&
               instruction.operands.size() == 1 &&
-              instruction.operands.front().place == activeChild->source &&
+              (lang::mirCanonicalPlaceContains(
+                   body.body, instruction.operands.front().place,
+                   activeChild->source) ||
+               lang::mirCanonicalPlaceContains(
+                   body.body, activeChild->source,
+                   instruction.operands.front().place)) &&
               instruction.operands.front().kind ==
                   lang::MirOperandKind::BorrowRead) {
             instruction.operands.front().kind =
                 lang::MirOperandKind::BorrowWrite;
             instruction.callInputKind = lang::HirCallInputKind::MutableBorrow;
-            changedWrite = true;
+            ++changedWrites;
+            changedBody = true;
           }
+      if (changedBody)
+        bodyWriteRejected = !lang::verifyMirBody(body.body, body.id).valid();
     }
-    expect(changedWrite && !lang::verifyMirProgram(forgedWrite).valid(),
-           "a forged write through the readonly ancestor after publication "
-           "rejects");
+    expect(changedWrites == 1, "ancestor write mutation selects one canonical "
+                               "input after publication");
+    expect(bodyWriteRejected,
+           "the live-child body rejects the forged ancestor write");
+    expect(!lang::verifyMirProgram(forgedWrite).valid(),
+           "complete verification rejects the forged ancestor write");
   }
   const auto nested = analyze("mutex-nested-receiver.gti", R"gti(
 #include <std/mutex>
