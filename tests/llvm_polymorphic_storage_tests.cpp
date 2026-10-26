@@ -64,11 +64,13 @@ interface First {};
 interface Target {};
 class Model : public First, public Target { public: mut int number = 41; };
 class Other : public Target, public First { public: mut int number = 41; };
+class Plain { public: Plain() {} };
 struct Holder {
   mut gti_internal::polymorphic_storage<Target, 64, 16> first{};
   mut gti_internal::polymorphic_storage<Target, 64, 16> second{};
 };
 int run(int mode) {
+  Plain plain{};
   Holder holder{};
   if (mode == 2) {
     mut gti_internal::polymorphic_storage<Target, 1, 16> tiny{};
@@ -145,6 +147,22 @@ int run(int mode) {
   const auto unaligned =
       operation(program, IntrinsicKind::PolymorphicStorageConstruct, 64, 1);
   const auto type = construct.instruction->operands[0].type;
+  const MirConstructorInstance *slotConstructor = nullptr;
+  const MirConstructorInstance *plainConstructor = nullptr;
+  for (const auto &candidate : program.constructorInstances()) {
+    const auto *owner = program.findClassInstance(candidate.owner);
+    if (owner && owner->type == type && candidate.parameterTypes.empty()) {
+      if (slotConstructor)
+        throw std::runtime_error("ambiguous real slot default constructor");
+      slotConstructor = &candidate;
+    }
+    if (owner &&
+        owner->type == namedClass("slot_operation_probe::Plain").type &&
+        candidate.parameterTypes.empty())
+      plainConstructor = &candidate;
+  }
+  if (!slotConstructor || !plainConstructor)
+    throw std::runtime_error("missing real slot default constructor");
   const auto *holder = &namedClass("slot_operation_probe::Holder");
   const auto temporary =
       std::filesystem::temp_directory_path() /
@@ -203,6 +221,25 @@ int main(int argc, char **argv) {
     for (const auto selected : {construct, constructOther, read, readMut, has,
                                 reset, tiny, unaligned})
       slots.preflight(*selected.body, *selected.instruction);
+    slots.preflightDefaultConstructor(*slotConstructor);
+    auto detachedConstructor = *slotConstructor;
+    bool rejectedConstructor = false;
+    try {
+      slots.preflightDefaultConstructor(detachedConstructor);
+    } catch (const std::invalid_argument &) {
+      rejectedConstructor = true;
+    }
+    expect(rejectedConstructor,
+           "a detached constructor cannot impersonate sealed authority");
+    bool rejectedPlain = false;
+    try {
+      slots.preflightDefaultConstructor(*plainConstructor);
+    } catch (const BackendUnsupportedError &) {
+      rejectedPlain = true;
+    }
+    expect(
+        rejectedPlain,
+        "an ordinary source constructor cannot acquire private slot behavior");
     auto detached = *construct.instruction;
     bool rejected = false;
     try {
@@ -235,7 +272,11 @@ int main(int argc, char **argv) {
     const auto field = session.layouts().fieldSubobject(model, number).offset;
     ir.CreateStore(ir.getInt32(41),
                    ir.CreateGEP(ir.getInt8Ty(), payload, ir.getInt64(field)));
-    slots.initialize(ir, type, first);
+    // Fresh storage may contain arbitrary bytes; constructor entry must not
+    // assume allocator zeroing or copy an existing slot representation.
+    ir.CreateMemSet(first, ir.getInt8(0xa5), layout.type.size,
+                    llvm::Align(layout.type.alignment));
+    slots.initializeDefaultConstructor(ir, *slotConstructor, first);
     const auto beforeAlias = ir.GetInsertBlock()->size();
     bool rejectedAlias = false;
     try {

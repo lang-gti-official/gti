@@ -6,6 +6,7 @@
 #include "polymorphic_storage.h"
 
 #include <algorithm>
+#include <llvm/IR/Intrinsics.h>
 #include <set>
 
 namespace lang::native_llvm {
@@ -483,6 +484,11 @@ void Lifetimes::preflightInertRelocation(Session &session, Dispatch &dispatch,
         static_cast<void>(session.layouts().fieldIndex(selected, field.symbol));
         self(self, field.type, false);
       }
+    } else if (const auto *payload = program.findPayloadEnum(selected)) {
+      static_cast<void>(session.layouts().payload(selected));
+      for (const auto &variant : payload->variants)
+        for (const auto &field : variant.payloadTypes)
+          self(self, field, false);
     } else if (selected.kind == SemanticType::Array) {
       if (selected.arguments.size() != 1 || selected.arrayLengthParameterId)
         throw BackendUnsupportedError(
@@ -490,8 +496,8 @@ void Lifetimes::preflightInertRelocation(Session &session, Dispatch &dispatch,
       static_cast<void>(session.layouts().get(selected));
       self(self, selected.arguments.front(), false);
     } else {
-      // Structural payloads and private slots need their own typed relocation
-      // schedules. Never silently byte-copy a self-relative representation.
+      // Other structural representations need a typed relocation schedule.
+      // Never silently byte-copy a self-relative representation.
       if (mirTypeRelocationKind(program, selected) != RelocationKind::Bitwise ||
           semanticTraits(selected).containsBorrowedState ||
           selected.kind == SemanticType::UniqueOwner)
@@ -555,6 +561,44 @@ llvm::Function *Lifetimes::inertRelocation(const SemanticType &type) {
       }
       if (!base && owner.polymorphic)
         dispatch.install(ir, destination, owner.id);
+    } else if (const auto *payload =
+                   session.program().mir().findPayloadEnum(selected)) {
+      const auto physical = session.layouts().payload(selected);
+      auto *tag = ir.CreateLoad(ir.getInt32Ty(),
+                                payloadTagAddress(ir, physical, source));
+      auto *done =
+          llvm::BasicBlock::Create(session.context(), "payload.done", function);
+      auto *invalid = llvm::BasicBlock::Create(session.context(),
+                                               "payload.invalid", function);
+      // Empty storage has no active payload to read. Publish the destination
+      // tag only after every selected field has reached its final address.
+      ir.CreateStore(ir.getInt32(PayloadLayout::inactive),
+                     payloadTagAddress(ir, physical, destination));
+      auto *select =
+          ir.CreateSwitch(tag, invalid, payload->variants.size() + 1);
+      select->addCase(ir.getInt32(PayloadLayout::inactive), done);
+      for (std::size_t variant = 0; variant < payload->variants.size();
+           ++variant) {
+        auto *block = llvm::BasicBlock::Create(session.context(),
+                                               "payload.variant", function);
+        select->addCase(ir.getInt32(variant), block);
+        ir.SetInsertPoint(block);
+        const auto &fields = payload->variants[variant].payloadTypes;
+        for (std::size_t field = 0; field < fields.size(); ++field)
+          ir.CreateCall(
+              inertRelocation(fields[field]),
+              {payloadFieldAddress(ir, physical, destination, variant, field),
+               payloadFieldAddress(ir, physical, source, variant, field)});
+        ir.CreateStore(tag, payloadTagAddress(ir, physical, destination));
+        ir.CreateStore(ir.getInt32(PayloadLayout::inactive),
+                       payloadTagAddress(ir, physical, source));
+        ir.CreateBr(done);
+      }
+      ir.SetInsertPoint(invalid);
+      ir.CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type *>{},
+                         {});
+      ir.CreateUnreachable();
+      ir.SetInsertPoint(done);
     } else if (selected.kind == SemanticType::Array) {
       if (!selected.arrayLength)
         return;

@@ -1915,6 +1915,13 @@ private:
         }
     for (const auto &record : input.failureRecords)
       channels.at(record.id) = ir.CreateAlloca(session.abi().failureChannel());
+    if (constructor && owner &&
+        owner->compilerCapability ==
+            CompilerCapabilityTypeKind::PolymorphicStorage) {
+      // Initialize private representation without replacing the source body.
+      polymorphicStorage.initializeDefaultConstructor(ir, *constructor,
+                                                       thisAddress);
+    }
     if (constructor && constructor->dispatchState &&
         constructor->dispatchState->afterBaseInitialization == 0)
       dispatch.install(ir, thisAddress,

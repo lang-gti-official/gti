@@ -12,6 +12,10 @@ public:
                      Dispatch &dispatch);
   [[nodiscard]] static bool handles(IntrinsicKind intrinsic);
   void preflight(const MirBody &body, const MirInstruction &instruction);
+  void preflightDefaultConstructor(const MirConstructorInstance &constructor);
+  void initializeDefaultConstructor(llvm::IRBuilder<> &ir,
+                                    const MirConstructorInstance &constructor,
+                                    llvm::Value *receiver);
   [[nodiscard]] llvm::Value *emit(llvm::IRBuilder<> &ir, const MirBody &body,
                                   const MirInstruction &instruction,
                                   std::span<llvm::Value *const> inputs);
