@@ -10300,8 +10300,17 @@ static MirVerificationResult verifyMirSourceDebugStructure(const MirBody &body,
     switch (local.policy) {
     case MirSourceLocalPolicy::ExistingPlace: {
       const auto *place = body.findPlace(local.place);
-      if (!place || place->id != local.place || !declaration.binding ||
-          place->root != MirPlaceRootKind::Binding ||
+      const bool origin =
+          place &&
+          (declaration.receiver
+               ? !declaration.binding && !declaration.symbol &&
+                     !declaration.parameter &&
+                     place->root == MirPlaceRootKind::This && place->key &&
+                     place->key->receiver && !place->key->root &&
+                     place->key->projections.empty()
+               : declaration.binding &&
+                     place->root == MirPlaceRootKind::Binding);
+      if (!place || place->id != local.place || !origin ||
           !place->projections.empty() ||
           place->binding != declaration.binding ||
           place->symbol != declaration.symbol ||
@@ -16321,8 +16330,23 @@ MirDebugAvailabilityBatch queryMirDebugAvailability(
       indices.push_back(i);
     }
   }
-  const auto observed =
-      mir_detail::verifyMirBodyWithPlaceQueries(*body, address.owner, places);
+  mir_detail::MirDebugEntryPlaces entries;
+  if (std::any_of(places.begin(), places.end(), [&](const auto &query) {
+        return body->findPlace(query.place)->root == MirPlaceRootKind::This;
+      })) {
+    entries = mir_detail::debugEntryPlaces(program, address);
+    if (!entries.verification.valid()) {
+      batch.verification = std::move(entries.verification);
+      return batch;
+    }
+  }
+  // Pack entry observations are independently verified, but their physical
+  // fragments are not registered by the source-debug transport yet.
+  std::erase_if(entries.initialized, [&](MirPlaceId id) {
+    return body->findPlace(id)->root != MirPlaceRootKind::This;
+  });
+  const auto observed = verifyMirBodyWithPlaceQueriesImpl(
+      *body, address.owner, places, entries.initialized);
   batch.verification = observed.verification;
   if (!batch.verification.valid())
     return batch;

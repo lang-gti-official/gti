@@ -3744,9 +3744,15 @@ Its initial observation coverage is non-borrowed-state member receivers and
 trivial concrete trailing packs without overlapping drop obligations. It still
 requires the ordinary ownership and loan-flow observations; body-only queries
 cannot invent these entry facts. Constructors do not acquire an initialized
-whole receiver at entry. This query is currently tested independently: existing
-source-local range production remains on the body-only query until receiver and
-pack source identities and physical debug fragments are transported coherently.
+whole receiver at entry. Source-local range production consumes the exact
+receiver entries alongside canonical body observations. Pack entries remain an
+independently tested query until physical debug fragments are transported.
+The semantic receiver-state producer records its accepted concrete type and one
+implicit local with no binding, symbol or source token. HIR verifies that origin
+against its accepted producer; MIR joins it only to an existing, unprojected
+`This` root in the same place domain. A missing root stays unproven: debug
+collection does not create execution places. Constructor partial objects and
+borrowed-state receivers do not acquire blanket availability.
 
 Opt-in lexical-debug transport carries the requested profile into MIR
 and deep-copies collected HIR scopes, concrete local declarations, and source

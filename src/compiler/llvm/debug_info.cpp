@@ -455,7 +455,8 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
       continue;
     const auto &declaration = local.declaration;
     auto *scope = scopes.at(declaration.scope);
-    auto *file = impl->file(declaration.declaration);
+    auto *file = declaration.receiver ? scope->getFile()
+                                      : impl->file(declaration.declaration);
     unsigned parameter = 0;
     if (declaration.parameter && parameterBindings) {
       const auto found =
@@ -465,14 +466,17 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
         parameter =
             static_cast<unsigned>(found - parameterBindings->begin() + 1);
     }
-    auto *variable = parameter ? impl->builder.createParameterVariable(
-                                     scope, declaration.name, parameter, file,
-                                     declaration.declaration.line,
-                                     impl->type(declaration.type), true)
-                               : impl->builder.createAutoVariable(
-                                     scope, declaration.name, file,
-                                     declaration.declaration.line,
-                                     impl->type(declaration.type), true);
+    auto *variable =
+        parameter
+            ? impl->builder.createParameterVariable(
+                  scope, declaration.name, parameter, file,
+                  declaration.declaration.line, impl->type(declaration.type),
+                  true)
+            : impl->builder.createAutoVariable(
+                  scope, declaration.name, file, declaration.declaration.line,
+                  impl->type(declaration.type), true,
+                  declaration.receiver ? llvm::DINode::FlagArtificial
+                                       : llvm::DINode::FlagZero);
     impl->locals.emplace(std::pair{&function, declaration.id},
                          Impl::Local{variable, nullptr});
   }
@@ -541,7 +545,9 @@ void DebugInfo::location(llvm::IRBuilder<> &ir, MirBlockId block,
 void DebugInfo::local(llvm::IRBuilder<> &ir, const MirPlace &place,
                       llvm::Value *storage, unsigned parameter) {
   if (!ir.GetInsertBlock() || !storage || !storage->getType()->isPointerTy() ||
-      place.root != MirPlaceRootKind::Binding || !place.projections.empty())
+      (place.root != MirPlaceRootKind::Binding &&
+       place.root != MirPlaceRootKind::This) ||
+      !place.projections.empty())
     return;
   auto *function = ir.GetInsertBlock()->getParent();
   const auto address = impl->bodies.find(function);
@@ -554,7 +560,8 @@ void DebugInfo::local(llvm::IRBuilder<> &ir, const MirPlace &place,
     if (local.place != place.id ||
         local.policy != MirSourceLocalPolicy::ExistingPlace ||
         local.declaration.type != place.type ||
-        local.declaration.symbol != place.symbol)
+        local.declaration.symbol != place.symbol ||
+        local.declaration.receiver != (place.root == MirPlaceRootKind::This))
       continue;
     auto [entry, inserted] =
         impl->locals.try_emplace({function, local.declaration.id});
@@ -567,16 +574,18 @@ void DebugInfo::local(llvm::IRBuilder<> &ir, const MirPlace &place,
     const auto &declaration = local.declaration;
     const auto &source = declaration.declaration;
     auto *scope = impl->scopes.at(function).at(declaration.scope);
-    auto *file = impl->file(source);
+    auto *file = declaration.receiver ? scope->getFile() : impl->file(source);
     entry->second.storage = storage;
     entry->second.variable =
         parameter && declaration.parameter
             ? impl->builder.createParameterVariable(
                   scope, declaration.name, parameter, file, source.line,
                   impl->type(place.type), true)
-            : impl->builder.createAutoVariable(scope, declaration.name, file,
-                                               source.line,
-                                               impl->type(place.type), true);
+            : impl->builder.createAutoVariable(
+                  scope, declaration.name, file, source.line,
+                  impl->type(place.type), true,
+                  declaration.receiver ? llvm::DINode::FlagArtificial
+                                       : llvm::DINode::FlagZero);
   }
 }
 

@@ -17,7 +17,7 @@ LLVM_INPUT_FIELDS(MirBody, kind, hasCallerLocation, compilerTrustedSynchronizati
 LLVM_INPUT_FIELDS(MirDebugPoint, block, instruction, after, blockEntry)
 LLVM_INPUT_FIELDS(SourceDebugScope, id, parent, sourceUnit, source, expansion)
 LLVM_INPUT_FIELDS(SourceDebugAnchor, id, scope, source)
-LLVM_INPUT_FIELDS(HirSourceLocal, id, scope, binding, symbol, type, name, declaration, parameter)
+LLVM_INPUT_FIELDS(HirSourceLocal, id, scope, binding, symbol, type, name, declaration, parameter, receiver)
 LLVM_INPUT_FIELDS(MirSourceLocal, declaration, place, policy)
 LLVM_INPUT_FIELDS(MirSourceLocalEnd, local, point)
 LLVM_INPUT_FIELDS(MirSourceValueEvent, local, point, value)

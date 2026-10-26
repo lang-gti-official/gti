@@ -1052,6 +1052,51 @@ int main() { Receiver value{}; return packed(value.read(), 9, 11) - 4; }
         exact.verification.valid() &&
             exact.requested.front().readability == State::DefinitelyReadable,
         "exact concrete entry combines with canonical ownership/borrow flow");
+    if (member) {
+      const auto &locals = body.sourceDebug.tables->locals;
+      const auto local =
+          std::find_if(locals.begin(), locals.end(), [](const auto &row) {
+            return row.declaration.receiver;
+          });
+      expect(local != locals.end() && local->place == place->id &&
+                 local->declaration.name == "this" &&
+                 local->declaration.declaration == lang::SourceSpan{.line = 0} &&
+                 !local->declaration.binding && !local->declaration.symbol,
+             "implicit receiver keeps accepted identity without a fake source "
+             "token");
+      if (local != locals.end()) {
+        const std::vector<lang::MirDebugAvailabilityRequest> sourceRequests{
+            {local->declaration.id, {body.entry, 0, false, true}}};
+        const auto source = lang::queryMirDebugAvailability(
+            frontend.mir, address, sourceRequests);
+        expect(source.verification.valid() &&
+                   source.requested.front().readability ==
+                       State::DefinitelyReadable,
+               "receiver source ranges use the canonical concrete entry "
+               "observation");
+        auto forged = body;
+        forged.sourceDebug.tables->locals.at(local->declaration.id - 1)
+            .declaration.receiver = false;
+        expect(!lang::verifyMirBody(forged, function->id).valid(),
+               "a receiver cannot forge an ordinary binding origin");
+      }
+      auto forged = frontend.hir;
+      auto &rows = const_cast<std::vector<lang::HirFunctionInstance> &>(
+          forged.functionInstances());
+      for (auto &row : rows.at(hir.id - 1).body.sourceDebug.tables->locals)
+        if (row.receiver)
+          row.receiver = false;
+      expect(!lang::verifyHirSourceDebug(frontend.semantics, forged).valid(),
+             "HIR receiver origin must match the accepted semantic producer");
+      auto semantic = frontend.semantics;
+      auto &bodies = const_cast<std::vector<lang::SemanticSourceDebugBody> &>(
+          semantic.sourceDebugBodies());
+      for (auto &row : bodies)
+        if (row.receiverType)
+          row.receiverType = lang::SemanticType::Int32;
+      expect(!semantic.verifySourceDebug().empty(),
+             "semantic receiver cannot forge a different accepted owner type");
+    }
     for (int mutation = 0; mutation < 4; ++mutation) {
       auto forged = frontend.mir;
       auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(

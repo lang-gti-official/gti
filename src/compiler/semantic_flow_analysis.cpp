@@ -8990,6 +8990,17 @@ auto SemanticVisitor::Impl::declareReceiverState() -> void {
   }
   Symbol state{.type = openClassType(*currentClass),
                .assignable = receiverAllowsMutation(currentReceiverMutability)};
+  if (auto *tables = activeSourceDebugTables()) {
+    auto &body = semanticModel.sourceDebug_.tables->bodies.at(
+        *scopes.back().sourceDebugBody);
+    body.receiverType = state.type;
+    tables->locals.push_back({.id = tables->locals.size() + 1,
+                              .scope = 1,
+                              .type = state.type,
+                              .name = "this",
+                              .declaration = {.line = 0},
+                              .receiver = true});
+  }
   for (auto path : constructorDepth == 0
                        ? rawPointerFieldPaths(state.type)
                        : std::vector<std::vector<PlaceProjection>>{}) {
@@ -9881,6 +9892,7 @@ auto SemanticVisitor::Impl::beginSourceDebugBody(
     bodies.push_back({.kind = kind, .source = source, .creator = creator});
   auto &body = bodies[index];
   body.creator = creator;
+  body.receiverType.reset();
   body.facts.collection = SourceDebugCollection::CollectedLexicalV1;
   body.facts.tables = std::make_unique<SemanticSourceDebugTables>();
   auto &tables = *body.facts.tables;

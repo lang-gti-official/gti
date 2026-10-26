@@ -457,6 +457,7 @@ struct HirSourceLocal {
   std::string name;
   SourceSpan declaration;
   bool parameter = false;
+  bool receiver = false;
 
   friend bool operator==(const HirSourceLocal &,
                          const HirSourceLocal &) = default;

@@ -563,6 +563,22 @@ private:
     if (!output.sourceDebug.tables)
       return;
     for (auto &local : output.sourceDebug.tables->locals) {
+      if (local.declaration.receiver) {
+        const auto found = std::find_if(
+            output.places.begin(), output.places.end(), [&](const auto &place) {
+              return place.root == MirPlaceRootKind::This &&
+                     place.projections.empty() &&
+                     place.type == local.declaration.type && place.key &&
+                     place.key->domain == output.placeDomain &&
+                     place.key->receiver && !place.key->root &&
+                     place.key->projections.empty();
+            });
+        if (found != output.places.end()) {
+          local.place = found->id;
+          local.policy = MirSourceLocalPolicy::ExistingPlace;
+        }
+        continue;
+      }
       const auto found = bindingPlaces.find(local.declaration.binding);
       if (found == bindingPlaces.end())
         continue;

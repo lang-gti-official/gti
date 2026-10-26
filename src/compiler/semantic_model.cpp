@@ -2185,23 +2185,30 @@ std::vector<std::string> SemanticModel::verifySourceDebug() const {
             }))
       reject("duplicate semantic source-body identity");
     bool exactBody = false;
+    ClassId receiverOwner = 0;
     switch (body.kind) {
     case SourceDebugBodyKind::Function: {
       const auto *info =
           findFunction(*static_cast<const FunctionDecl *>(body.source));
       exactBody = info && info->bodyDeclaration() == body.source;
+      if (info && !info->staticMember)
+        receiverOwner = info->ownerClass;
       break;
     }
     case SourceDebugBodyKind::Constructor: {
       const auto *info =
           findConstructor(*static_cast<const ConstructorDecl *>(body.source));
       exactBody = info && info->declaration == body.source;
+      if (info)
+        receiverOwner = info->owner;
       break;
     }
     case SourceDebugBodyKind::Destructor: {
       const auto *info =
           findDestructor(*static_cast<const DestructorDecl *>(body.source));
       exactBody = info && info->declaration == body.source;
+      if (info)
+        receiverOwner = info->owner;
       break;
     }
     case SourceDebugBodyKind::Lambda: {
@@ -2265,11 +2272,24 @@ std::vector<std::string> SemanticModel::verifySourceDebug() const {
     for (const auto &[anchor, scope] : tables.expressions)
       if (!anchor || !validScope(scope))
         reject("semantic expression has an invalid source scope");
+    std::size_t receivers = 0;
     for (std::size_t local = 0; local < tables.locals.size(); ++local) {
       const auto &row = tables.locals[local];
       if (row.id != local + 1 || !validScope(row.scope) ||
-          (row.variable == nullptr) == (row.parameter == nullptr)) {
+          unsigned(row.variable != nullptr) +
+                  unsigned(row.parameter != nullptr) + unsigned(row.receiver) !=
+              1) {
         reject("semantic source local has an invalid identity or origin");
+        continue;
+      }
+      if (row.receiver) {
+        ++receivers;
+        if (!receiverOwner || !body.receiverType ||
+            body.receiverType->kind != SemanticType::Class ||
+            body.receiverType->classId != receiverOwner ||
+            row.type != *body.receiverType || row.symbol || row.scope != 1 ||
+            row.name != "this" || row.declaration != SourceSpan{.line = 0})
+          reject("semantic receiver differs from its accepted implicit state");
         continue;
       }
       const auto *binding = row.variable ? findBinding(*row.variable)
@@ -2286,6 +2306,8 @@ std::vector<std::string> SemanticModel::verifySourceDebug() const {
         reject("semantic source parameter belongs to a different root scope");
       }
     }
+    if (receivers != std::size_t(body.receiverType.has_value()))
+      reject("semantic receiver inventory differs from its accepted state");
   }
   return issues;
 }

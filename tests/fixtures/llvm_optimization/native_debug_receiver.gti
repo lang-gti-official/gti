@@ -1,0 +1,11 @@
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+class Receiver {
+public:
+  int32_t value = 4;
+  int32_t inspect(int32_t input) {
+    mut int32_t local = this.value & input;
+    debug_checkpoint(local);
+    return local;
+  }
+};
+int main() { Receiver owner{}; return owner.inspect(debug_input()) == 4 ? 0 : 1; }

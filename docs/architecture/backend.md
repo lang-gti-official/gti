@@ -4407,8 +4407,15 @@ availability. Recovery currently covers direct integer/bool/char scalars with
 unique binding storage, no loans, escaping addresses, ownership moves or
 place-bearing edge transport. Ranges are block-local and end at lexical or
 value replacement boundaries; there is no invented cross-block value merge.
-Expanded pack elements, receivers, broader optimized representations and the
-full two-host failure/callback debugger matrix remain open.
+Implicit receiver declarations come from the accepted semantic receiver state,
+preserved through HIR and matched to an existing verified MIR `This` root. Their
+declaration is artificial and line zero in the real owning lexical scope. The
+debug hook reads the already-selected receiver argument without loads, slots or
+signature changes; positive ranges require the canonical program-aware entry,
+ownership and borrow observations. Whole partial-constructor and borrowed-state
+receivers remain unproven. Expanded pack fragments, broader optimized
+representations and the full two-host failure/callback debugger matrix remain
+open.
 Managed Linux debugger checks stage distribution LLDB22 and its missing
 dependencies under the run's build directory, retaining package and loaded-file
 hashes without installing host packages. LLDB21 reaches source breakpoints but

@@ -2911,7 +2911,8 @@ private:
            .type = local.type,
            .name = local.name,
            .declaration = local.declaration,
-           .parameter = local.parameter != nullptr});
+           .parameter = local.parameter != nullptr,
+           .receiver = local.receiver});
     }
     for (const auto &statement : body.statements)
       if (const auto scope = facts.statements.find(statement.source);

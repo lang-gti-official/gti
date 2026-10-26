@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--lldb", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--optimization", choices=(0, 3), type=int, default=0)
-    parser.add_argument("--case", choices=("basic", "lexical", "inlined"), default="basic")
+    parser.add_argument("--case", choices=("basic", "lexical", "inlined", "receiver"), default="basic")
     parser.add_argument("--cc", default="clang")
     args = parser.parse_args()
     assert args.case != "lexical" or args.optimization == 0
@@ -43,6 +43,8 @@ def main():
         fixture = "native_debug_lexical.gti"
     elif args.case == "inlined":
         fixture = "native_debug_inline.gti"
+    elif args.case == "receiver":
+        fixture = "native_debug_receiver.gti"
     shutil.copyfile(root / "tests/fixtures/llvm_optimization" / fixture, source)
     manifest = {
         "status": "running", "commands": [],
@@ -69,7 +71,7 @@ def main():
         manifest["lldb_version"] = run([args.lldb, "--version"]).stdout.strip()
         binary = output / "native-debug"
         native = []
-        if args.optimization == 3:
+        if args.optimization == 3 or args.case == "receiver":
             provider = root / "tests/fixtures/llvm_optimization/native_debug_probe.c"
             manifest["native_probe_sha256"] = hashlib.sha256(provider.read_bytes()).hexdigest()
             manifest["cc_version"] = run([args.cc, "--version"]).stdout.strip()
@@ -84,16 +86,19 @@ def main():
         if sys.platform == "darwin":
             symbols = Path(str(binary) + ".dSYM") / "Contents/Resources/DWARF" / binary.name
             assert symbols.is_file(), "Darwin production debug companion is missing"
-        line = 6 if args.case == "lexical" else 5 if args.optimization == 3 else 4
+        line = (7 if args.case == "receiver" else 6 if args.case == "lexical"
+                else 5 if args.optimization == 3 else 4)
         command = [str(args.lldb), "--no-lldbinit", "--batch", str(binary),
                    "-o", f"breakpoint set --file native_debug.gti --line {line}",
                    "-o", "run", "-o", "frame info",
-                   "-o", "frame variable -- input local", "-o", "thread backtrace"]
+                   "-o", "frame variable -- input local" +
+                   (" this" if args.case == "receiver" else ""),
+                   "-o", "thread backtrace"]
         if args.case == "lexical":
             command += ["-o", "breakpoint set --file native_debug.gti --line 8",
                         "-o", "continue", "-o", "frame info",
                         "-o", "frame variable -- input local"]
-        elif args.optimization == 0:
+        elif args.optimization == 0 and args.case != "receiver":
             command += ["-o", "thread step-over", "-o", "frame info",
                         "-o", "frame variable -- input local"]
         command += ["-o", "continue"]
@@ -111,7 +116,11 @@ def main():
         assert result.returncode == 0, str(output / "lldb.log")
         assert "stop reason = breakpoint" in transcript
         assert re.search(rf"native_debug\.gti:{line}\b", transcript)
-        if args.case == "lexical":
+        if args.case == "receiver":
+            for name in ("input", "local", "value"):
+                assert re.search(rf"\b{name} = 4\b", transcript), transcript
+            assert re.search(r"\bthis =", transcript), transcript
+        elif args.case == "lexical":
             assert re.search(r"native_debug\.gti:8\b", transcript)
             values = re.findall(r"\blocal = (\d+)\b", transcript)
             assert values == ["11", "9"], transcript

@@ -774,10 +774,24 @@ void hostedArtificialCarrier() {
     throw std::runtime_error("artificial startup metadata failed verification");
 }
 
-void productionValueEmission(const std::string &dumpPath) {
+void productionValueEmission(const std::string &dumpPath,
+                             bool receiver = false) {
   const auto frontend =
       Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
-          .analyze("value-emission.gti", R"gti(
+          .analyze("value-emission.gti", receiver ? R"gti(
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+class Receiver {
+public:
+  int32_t value = 4;
+  int32_t inspect(int32_t input) {
+    mut int32_t local = this.value & input;
+    debug_checkpoint(local);
+    return local;
+  }
+};
+int main() { Receiver owner{}; return owner.inspect(debug_input()) == 4 ? 0 : 1; }
+)gti"
+                                                  : R"gti(
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
 int32_t inspect(int32_t input) {
   mut int32_t local = input & 31;
@@ -807,7 +821,7 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   Session plain(*input, {.optimization = LlvmCodegenOptimization::Aggressive});
   lowerScalarProgram(session, planLlvmAdmission(*input));
   lowerScalarProgram(plain, planLlvmAdmission(*input));
-  unsigned values = 0;
+  unsigned values = 0, receivers = 0;
   for (const auto &function : session.module()) {
     const auto *other = plain.module().getFunction(function.getName());
     if (!other || function.size() != other->size() ||
@@ -834,13 +848,24 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
         if (instruction.getOpcode() != otherInstruction->getOpcode())
           throw std::runtime_error(
               "debug value events changed execution opcodes");
-        for (const auto &record : instruction.getDbgRecordRange())
+        for (const auto &record : instruction.getDbgRecordRange()) {
           if (const auto *variable =
                   llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
               variable && variable->isDbgValue() &&
               !variable->isKillLocation() &&
               variable->getVariable()->getName() == "local")
             ++values;
+          if (const auto *variable =
+                  llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
+              variable && !variable->isKillLocation() &&
+              variable->getVariable()->getName() == "this") {
+            if (variable->getVariable()->getLine() != 0 ||
+                !variable->getVariable()->isArtificial())
+              throw std::runtime_error(
+                  "implicit receiver forged a source declaration");
+            ++receivers;
+          }
+        }
         ++otherInstruction;
       }
       ++otherBlock;
@@ -849,6 +874,9 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   if (!values)
     throw std::runtime_error(
         "production local has no existing SSA value metadata");
+  if (receiver && !receivers)
+    throw std::runtime_error(
+        "production receiver has no existing address metadata");
   session.debugInfo()->finalize();
   const auto dump = [&](const std::string &path) {
     if (path.empty())
@@ -876,6 +904,7 @@ int main(int argc, char **argv) {
   optimizedOutDeclarations();
   hostedArtificialCarrier();
   productionValueEmission(argc > 1 ? argv[1] : "");
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".receiver.ll" : "", true);
   std::cout << "sealed debug identities, locations, locals, recursive layout, "
                "root relocation and inlined source/parameter chains passed\n";
 }

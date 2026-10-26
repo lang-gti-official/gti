@@ -1482,6 +1482,11 @@ private:
           throw std::logic_error("LLVM receiver has no sealed object type");
         thisAddress = argument;
         memory.receiver(argument, *receiverType);
+        if (auto *debug = session.debugInfo())
+          for (const auto &place : input.places)
+            if (place.root == MirPlaceRootKind::This &&
+                place.projections.empty() && place.type == *receiverType)
+              debug->local(ir, place, argument);
         break;
       }
     }
@@ -1490,7 +1495,7 @@ private:
           body && body->sourceDebug.tables)
         for (const auto &local : body->sourceDebug.tables->locals) {
           if (local.policy != MirSourceLocalPolicy::ExistingPlace ||
-              local.declaration.parameter)
+              local.declaration.parameter || local.declaration.receiver)
             continue;
           const auto &place = *input.findPlace(local.place);
           debug->local(ir, place, memory.address(place.id));
