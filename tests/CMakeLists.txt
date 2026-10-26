@@ -548,6 +548,17 @@ target_compile_definitions(gti_llvm_cache_tests PRIVATE
   GTI_LLVM_CACHE_FIXTURE="${PROJECT_SOURCE_DIR}/tests/fixtures/llvm_cache")
 add_test(NAME llvm_cache_round_trip COMMAND gti_llvm_cache_tests)
 set_tests_properties(llvm_cache_round_trip PROPERTIES TIMEOUT 180)
+add_test(NAME llvm_debug_artifacts
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/llvm_debug_artifacts_test.py" "$<TARGET_FILE:gti>")
+set_tests_properties(llvm_debug_artifacts PROPERTIES TIMEOUT 240)
+if(APPLE)
+  add_test(NAME cpp_debug_artifacts
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/llvm_debug_artifacts_test.py"
+            "$<TARGET_FILE:gti>" --backend cpp)
+  set_tests_properties(cpp_debug_artifacts PROPERTIES TIMEOUT 240)
+endif()
 # Explicit matching-runtime evidence, separate from default/rejection coverage.
 set(GTI_LLVM_RUNTIME_TEST_COMPILER "" CACHE FILEPATH
     "Matching Clang++ for the native runtime identity fixture")

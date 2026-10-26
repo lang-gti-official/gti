@@ -42,64 +42,178 @@ struct StagedDebugBundleCleanup {
   }
 };
 
-// Native Darwin symbols are a bundle, not a single rename-replaceable file.
-// Never replace an unowned directory or follow a symbol-bundle symlink.
-std::optional<std::string>
-publishDebugBundle(const std::filesystem::path &staged,
-                   const std::filesystem::path &destination) {
-  constexpr std::string_view markerName = ".gti-debug-symbols";
-  constexpr std::string_view markerContents = "gti-debug-symbols-v1\n";
-  std::error_code error;
-  const auto status = std::filesystem::symlink_status(destination, error);
-  if (error && error != std::errc::no_such_file_or_directory)
-    return error.message();
-  const bool exists = std::filesystem::exists(status);
-  if (exists) {
-    if (!std::filesystem::is_directory(status))
-      return "refusing to replace a non-directory or symlink debug bundle";
-    const auto marker = destination / markerName;
-    error.clear();
-    if (!std::filesystem::is_regular_file(
-            std::filesystem::symlink_status(marker, error)) ||
-        error)
-      return "refusing to replace a debug bundle not owned by GTI";
-    std::ifstream input(marker);
-    std::string contents(markerContents.size(), '\0');
-    input.read(contents.data(), static_cast<std::streamsize>(contents.size()));
-    if (!input || contents != markerContents ||
-        input.peek() != std::char_traits<char>::eof())
-      return "refusing to replace a debug bundle not owned by GTI";
+// Keep the previous GTI-owned companion until its executable commits. Each
+// directory move is atomic; failure before executable commit restores the pair.
+class DebugBundlePublication final {
+public:
+  DebugBundlePublication() = default;
+  DebugBundlePublication(const DebugBundlePublication &) = delete;
+  DebugBundlePublication &operator=(const DebugBundlePublication &) = delete;
+  ~DebugBundlePublication() { static_cast<void>(rollback()); }
+
+  static std::optional<std::string>
+  validateDestination(const std::filesystem::path &destination) {
+    constexpr std::string_view markerName = ".gti-debug-symbols";
+    constexpr std::string_view markerContents = "gti-debug-symbols-v1\n";
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(destination, error);
+    if (error && error != std::errc::no_such_file_or_directory)
+      return error.message();
+    const bool exists = std::filesystem::exists(status);
+    if (exists) {
+      if (!std::filesystem::is_directory(status))
+        return "refusing to replace a non-directory or symlink debug bundle";
+      const auto marker = destination / markerName;
+      error.clear();
+      if (!std::filesystem::is_regular_file(
+              std::filesystem::symlink_status(marker, error)) ||
+          error)
+        return "refusing to replace a debug bundle not owned by GTI";
+      std::ifstream input(marker);
+      std::string contents(markerContents.size(), '\0');
+      input.read(contents.data(),
+                 static_cast<std::streamsize>(contents.size()));
+      if (!input || contents != markerContents ||
+          input.peek() != std::char_traits<char>::eof())
+        return "refusing to replace a debug bundle not owned by GTI";
+    }
+    return std::nullopt;
   }
-  if (writeArtifact(staged / markerName, markerContents) !=
-      ArtifactWriteStatus::Success)
-    return "cannot mark staged debug bundle as GTI-owned";
-  const auto backup = stagedArtifactPath(destination);
-  if (exists) {
+
+  std::optional<std::string> publish(const std::filesystem::path &staged,
+                                     const std::filesystem::path &destination) {
+    constexpr std::string_view markerName = ".gti-debug-symbols";
+    constexpr std::string_view markerContents = "gti-debug-symbols-v1\n";
+    std::error_code error;
+    if (!std::filesystem::is_directory(
+            std::filesystem::symlink_status(staged, error)) ||
+        error)
+      return "staged debug bundle is not a regular directory";
+    if (const auto failure = validateDestination(destination))
+      return failure;
     error.clear();
-    std::filesystem::rename(destination, backup, error);
+    const bool exists = std::filesystem::exists(destination, error);
     if (error)
       return error.message();
-  }
-  error.clear();
-  std::filesystem::rename(staged, destination, error);
-  if (error) {
+    if (writeArtifact(staged / markerName, markerContents) !=
+        ArtifactWriteStatus::Success)
+      return "cannot mark staged debug bundle as GTI-owned";
+#if !defined(_WIN32)
+    struct stat identity{};
+    if (::lstat(staged.c_str(), &identity) != 0 || !S_ISDIR(identity.st_mode))
+      return "cannot identify staged debug bundle directory";
+    device = static_cast<std::uintmax_t>(identity.st_dev);
+    inode = static_cast<std::uintmax_t>(identity.st_ino);
+#else
+    return "debug companion publication requires native directory identity "
+           "support";
+#endif
+    destinationPath = destination;
+    stagedPath = staged;
+    backupPath = stagedArtifactPath(destination);
     if (exists) {
-      std::error_code restoreError;
-      std::filesystem::rename(backup, destination, restoreError);
-      if (restoreError)
-        return error.message() + "; previous bundle retained at '" +
-               backup.string() +
-               "' (restore failed: " + restoreError.message() + ")";
+      error.clear();
+      std::filesystem::rename(destination, backupPath, error);
+      if (error) {
+        finished = true;
+        return error.message();
+      }
+      previous = true;
     }
-    return error.message();
+    error.clear();
+    std::filesystem::rename(staged, destination, error);
+    if (error) {
+      const auto detail = error.message();
+      const auto restore = rollback();
+      return restore ? detail + "; " + *restore : detail;
+    }
+    installed = true;
+    return std::nullopt;
   }
-  if (exists) {
-    // Exact validated, GTI-owned bundle moved above; never a workspace root.
-    std::filesystem::remove_all(backup, error);
+
+  std::optional<std::string> rollback() {
+    if (finished || destinationPath.empty())
+      return std::nullopt;
+    finished = true;
+    std::error_code error;
+    if (installed) {
+#if !defined(_WIN32)
+      struct stat current{};
+      if (::lstat(destinationPath.c_str(), &current) != 0 ||
+          !S_ISDIR(current.st_mode) ||
+          static_cast<std::uintmax_t>(current.st_dev) != device ||
+          static_cast<std::uintmax_t>(current.st_ino) != inode)
+        return "debug bundle changed during publication; previous bundle "
+               "retained at '" +
+               backupPath.string() + "'";
+#endif
+      std::filesystem::rename(destinationPath, stagedPath, error);
+      if (error)
+        return "cannot retire failed debug publication; previous bundle "
+               "retained at '" +
+               backupPath.string() + "': " + error.message();
+      installed = false;
+    }
+    if (previous) {
+      error.clear();
+      std::filesystem::rename(backupPath, destinationPath, error);
+      if (error)
+        return "previous debug bundle retained at '" + backupPath.string() +
+               "' (restore failed: " + error.message() + ")";
+    }
+    return std::nullopt;
+  }
+
+  std::optional<std::string> commit() {
+    finished = true;
+    if (!previous)
+      return std::nullopt;
+    std::error_code error;
+    std::filesystem::remove_all(backupPath, error);
     if (error)
-      return "published symbols but could not remove previous GTI-owned bundle "
+      return "published debug pair, but previous GTI-owned bundle remains at "
              "'" +
-             backup.string() + "': " + error.message();
+             backupPath.string() + "': " + error.message();
+    return std::nullopt;
+  }
+
+private:
+  std::filesystem::path destinationPath;
+  std::filesystem::path stagedPath;
+  std::filesystem::path backupPath;
+  std::uintmax_t device = 0;
+  std::uintmax_t inode = 0;
+  bool previous = false;
+  bool installed = false;
+  bool finished = false;
+};
+
+std::optional<std::string>
+debugBundleSourceCollision(const std::filesystem::path &symbols,
+                           const SourceManager &sources,
+                           const std::filesystem::path &representation) {
+  std::error_code error;
+  const auto canonical = std::filesystem::weakly_canonical(symbols, error);
+  if (error)
+    return "cannot inspect debug bundle path: " + error.message();
+  const auto generated =
+      std::filesystem::weakly_canonical(representation, error);
+  if (error)
+    return "cannot establish backend representation containment for debug "
+           "publication";
+  const auto relativeGenerated = generated.lexically_relative(canonical);
+  if (!relativeGenerated.empty() && !relativeGenerated.is_absolute() &&
+      *relativeGenerated.begin() != "..")
+    return "debug bundle conflicts with the requested backend representation";
+  for (const auto &name : sources.names()) {
+    const auto source = std::filesystem::weakly_canonical(name, error);
+    if (error)
+      return "cannot establish loaded source containment for debug publication";
+    const auto relative = source.lexically_relative(canonical);
+    if (!relative.empty() && !relative.is_absolute() &&
+        *relative.begin() != "..")
+      return "refusing to replace debug bundle containing loaded source '" +
+             name + "'";
   }
   return std::nullopt;
 }
@@ -1324,9 +1438,11 @@ void addNativeEnvironmentIdentity(IdentityBuilder &identity) {
 }
 
 std::vector<std::string>
-instrumentedNativeArguments(const std::vector<std::string> &arguments,
-                            const NativeInputs &inputs) {
+nativeSourceArguments(const std::vector<std::string> &arguments,
+                      const NativeInputs &inputs, bool debugInfo) {
   auto result = arguments;
+  if (debugInfo)
+    result.emplace_back("-g");
   if (inputs.instrumentation)
     append(result, inputs.instrumentation->compileArguments);
   return result;
@@ -1661,8 +1777,8 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
               temporaryRoot / (source.stem().string() + ".gti-discovery.d"));
           TemporaryArtifact preprocessedCleanup(preprocessed, true);
           TemporaryArtifact depfileCleanup(depfile, true);
-          const auto effectiveArguments =
-              instrumentedNativeArguments(arguments, native);
+          const auto effectiveArguments = nativeSourceArguments(
+              arguments, native, request.compilation().debugInfo());
           const std::vector<std::string> probeCommand =
               cSource ? nativeToolchain.preprocessCommand(
                             NativeCCompileRequest(
@@ -1996,7 +2112,8 @@ std::optional<std::string> readTextFile(const std::filesystem::path &path,
 }
 
 CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
-                                   std::string_view expectedKey, bool object) {
+                                   std::string_view expectedKey, bool object,
+                                   bool requiresSymbols) {
   const std::filesystem::path metadataPath = entry / "metadata";
   const std::filesystem::path generatedPath =
       entry / cacheRepresentationFile(object);
@@ -2029,6 +2146,11 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
   if (!metadata) {
     return {.status = CacheLookupStatus::Corrupt, .detail = std::move(detail)};
   }
+  if (metadata->symbols.has_value() != requiresSymbols)
+    return {.status = CacheLookupStatus::Corrupt,
+            .detail =
+                "debug companion presence does not match the requested policy"};
+
   if (metadata->key != expectedKey) {
     return {.status = CacheLookupStatus::Corrupt,
             .detail = "metadata key does not match its cache directory"};
@@ -3738,6 +3860,23 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     result.driverDiagnostic = diagnostic;
     return result;
   }
+  if (request.compilation().debugInfo() &&
+      request.compilation().target().os == "macos") {
+    const std::filesystem::path symbols(request.output().string() + ".dSYM");
+    if (const auto collision = debugBundleSourceCollision(
+            symbols, compilationInputs.sources, request.generatedSource())) {
+      result.status = ExecutableBuildStatus::ArtifactPathConflict;
+      result.driverDiagnostic = "gti: " + *collision;
+      return result;
+    }
+    if (const auto failure =
+            DebugBundlePublication::validateDestination(symbols)) {
+      result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+      result.driverDiagnostic =
+          "gti: failed to validate debug companion: " + *failure;
+      return result;
+    }
+  }
   std::optional<BuildProvenance> buildProvenance;
   if (request.buildReport()) {
     if (const std::optional<std::string> diagnostic =
@@ -3852,7 +3991,9 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         }
 
         const CacheLookupResult lookup =
-            lookupCacheEntry(*cacheEntry, *key, object);
+            lookupCacheEntry(*cacheEntry, *key, object,
+                             request.compilation().debugInfo() &&
+                                 request.compilation().target().os == "macos");
         if (lookup.status == CacheLookupStatus::Hit) {
           cacheProgress.update("hit; restoring executable");
           result.cache.status = BuildCacheStatus::Hit;
@@ -3903,34 +4044,58 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
           }
 
           std::string restoreError;
-          result.artifactPublishResult = copyFileAtomically(
-              *cacheEntry / "executable", request.output(), restoreError,
-              lookup.executableDigest, lookup.executablePermissions);
-          if (!result.artifactPublishResult->succeeded()) {
-            result.driverDiagnostic =
-                "gti: failed to restore cached executable: " + restoreError;
-            result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
-            return result;
-          }
           if (lookup.symbols) {
-            // Restore the symbol bundle through the same staged publication
-            // a fresh build uses, so ownership and collision rules hold.
             const std::filesystem::path symbols(request.output().string() +
                                                 ".dSYM");
-            const std::filesystem::path staged = stagedArtifactPath(symbols);
-            if (!copyTree(*lookup.symbols, staged, restoreError)) {
-              result.driverDiagnostic =
-                  "gti: failed to restore cached debug symbols: " +
-                  restoreError;
-              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+            if (const auto collision = debugBundleSourceCollision(
+                    symbols, result.compilation.sources,
+                    request.generatedSource())) {
+              result.status = ExecutableBuildStatus::ArtifactPathConflict;
+              result.driverDiagnostic = "gti: " + *collision;
               return result;
             }
-            if (const auto diagnostic = publishDebugBundle(staged, symbols)) {
-              std::error_code cleanupError;
-              std::filesystem::remove_all(staged, cleanupError);
+            const auto stagedExecutable = stagedArtifactPath(request.output());
+            TemporaryArtifact executableCleanup(stagedExecutable, true);
+            const auto stagedSymbols = stagedArtifactPath(symbols);
+            StagedDebugBundleCleanup symbolsCleanup{stagedSymbols};
+            const auto copied = copyFileAtomically(
+                *cacheEntry / "executable", stagedExecutable, restoreError,
+                lookup.executableDigest, lookup.executablePermissions);
+            if (!copied.succeeded() ||
+                !copyTree(*lookup.symbols, stagedSymbols, restoreError)) {
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
               result.driverDiagnostic =
-                  "gti: failed to publish cached debug bundle '" +
-                  symbols.string() + "': " + *diagnostic;
+                  "gti: failed to stage cached debug pair: " + restoreError;
+              return result;
+            }
+            DebugBundlePublication publication;
+            if (const auto failure =
+                    publication.publish(stagedSymbols, symbols)) {
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+              result.driverDiagnostic =
+                  "gti: failed to publish cached debug bundle: " + *failure;
+              return result;
+            }
+            result.artifactPublishResult =
+                publishArtifact(stagedExecutable, request.output());
+            if (!result.artifactPublishResult->succeeded()) {
+              const auto restore = publication.rollback();
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+              result.driverDiagnostic =
+                  "gti: failed to restore cached executable: " +
+                  result.artifactPublishResult->error.message() +
+                  (restore ? "; " + *restore : "");
+              return result;
+            }
+            if (const auto warning = publication.commit())
+              result.driverDiagnostic = "gti: warning: " + *warning;
+          } else {
+            result.artifactPublishResult = copyFileAtomically(
+                *cacheEntry / "executable", request.output(), restoreError,
+                lookup.executableDigest, lookup.executablePermissions);
+            if (!result.artifactPublishResult->succeeded()) {
+              result.driverDiagnostic =
+                  "gti: failed to restore cached executable: " + restoreError;
               result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
               return result;
             }
@@ -4003,7 +4168,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         const NativeCCompileRequest cRequest(
             *request.cCompiler(), source, stagedObject, cStandard,
             request.compilation().optimization(), includeDirectories,
-            instrumentedNativeArguments(arguments, request.nativeInputs()),
+            nativeSourceArguments(arguments, request.nativeInputs(),
+                                  request.compilation().debugInfo()),
             request.nativeInputs().targetPolicy);
         NativeCCompilationResult cCompilation{
             .source = source,
@@ -4050,7 +4216,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
             request.nativeCompiler(), source, stagedObject,
             request.compilation().cppStandard(),
             request.compilation().optimization(), includeDirectories,
-            instrumentedNativeArguments(arguments, request.nativeInputs()),
+            nativeSourceArguments(arguments, request.nativeInputs(),
+                                  request.compilation().debugInfo()),
             request.nativeInputs().targetPolicy);
         NativeCppCompilationResult cppCompilation{
             .source = source,
@@ -4287,36 +4454,17 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     result.provenance = std::move(buildProvenance);
   }
 
+  DebugBundlePublication debugPublication;
   if (request.compilation().debugInfo() &&
       request.compilation().target().os == "macos") {
     const ProgressScope symbolProgress(progress, ProgressPhase::Symbols);
     const std::filesystem::path stagedSymbols(stagedOutput.string() + ".dSYM");
     const std::filesystem::path symbols(request.output().string() + ".dSYM");
-    // Replacing an owned bundle must not remove a loaded source that was
-    // deliberately placed inside it. A symlink bundle is rejected below.
-    std::error_code collisionError;
-    const auto canonicalSymbols =
-        std::filesystem::weakly_canonical(symbols, collisionError);
-    if (collisionError) {
+    if (const auto collision = debugBundleSourceCollision(
+            symbols, result.compilation.sources, request.generatedSource())) {
       result.status = ExecutableBuildStatus::ArtifactPathConflict;
-      result.driverDiagnostic =
-          "gti: cannot inspect debug bundle path: " + collisionError.message();
+      result.driverDiagnostic = "gti: " + *collision;
       return result;
-    }
-    for (const std::string &name : result.compilation.sources.names()) {
-      const auto source =
-          std::filesystem::weakly_canonical(name, collisionError);
-      if (collisionError)
-        continue;
-      if (std::mismatch(canonicalSymbols.begin(), canonicalSymbols.end(),
-                        source.begin(), source.end())
-              .first == canonicalSymbols.end()) {
-        result.status = ExecutableBuildStatus::ArtifactPathConflict;
-        result.driverDiagnostic =
-            "gti: refusing to replace debug bundle containing loaded source '" +
-            name + "'";
-        return result;
-      }
     }
     std::error_code symbolError;
     if (!std::filesystem::is_directory(stagedSymbols, symbolError)) {
@@ -4335,7 +4483,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         return result;
       }
     }
-    if (const auto diagnostic = publishDebugBundle(stagedSymbols, symbols)) {
+    if (const auto diagnostic =
+            debugPublication.publish(stagedSymbols, symbols)) {
       generatedArtifact.keep();
       result.generatedSourceRetained = true;
       result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
@@ -4352,14 +4501,19 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   result.artifactPublishResult =
       publishArtifact(stagedOutput, request.output());
   if (!result.artifactPublishResult->succeeded()) {
+    const auto restore = debugPublication.rollback();
     generatedArtifact.keep();
     result.generatedSourceRetained = true;
     result.driverDiagnostic =
         "gti: failed to publish executable '" + request.output().string() +
-        "': " + result.artifactPublishResult->error.message();
+        "': " + result.artifactPublishResult->error.message() +
+        (restore ? "; " + *restore : "");
     result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
     return result;
   }
+
+  if (const auto warning = debugPublication.commit())
+    result.driverDiagnostic = "gti: warning: " + *warning;
 
   // The produced artifact's identity is captured from the published
   // executable, so the record describes the exact bytes a consumer holds

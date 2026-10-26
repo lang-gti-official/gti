@@ -629,14 +629,25 @@ void runChecks(const std::filesystem::path &self) {
   checkBuild(opaque);
   require(opaque.cache.status == BuildCacheStatus::Bypassed,
           "opaque native inputs must retain conservative cache bypass");
-  const auto beforeDebug = read(output);
   changed = {};
   changed.debug = true;
+  changed.keep = true;
   const auto debug = build(changed);
-  require(!debug.succeeded() &&
-              debug.cache.status == BuildCacheStatus::Bypassed &&
-              read(output) == beforeDebug,
-          "unsupported LLVM debug policy must bypass and preserve destination");
+  checkBuild(debug);
+  require(debug.cache.status == BuildCacheStatus::Miss &&
+              debug.cache.key != first.cache.key && debug.nativeProcess,
+          "debug policy must build a distinct real native object/cache entry");
+  execute(17);
+  const auto debugExecutable = read(output);
+  const auto debugObject = read(representation);
+  const auto debugHit = build(changed);
+  checkBuild(debugHit);
+  require(
+      debugHit.cache.status == BuildCacheStatus::Hit &&
+          !debugHit.nativeProcess && read(output) == debugExecutable &&
+          read(representation) == debugObject,
+      "debug object/executable must restore from their exact cache identity");
+  execute(17);
 
   const auto outside = temporary.root / "outside";
   write(outside, "preserve");

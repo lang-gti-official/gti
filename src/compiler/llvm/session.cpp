@@ -112,9 +112,6 @@ std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
     throw BackendUnsupportedError(
         "LLVM diagnostic instrumentation requires coherent pipeline and "
         "matching native runtime support (O-LLVM-14/15)");
-  if (options.debugInfo)
-    throw BackendUnsupportedError(
-        "LLVM debug metadata emission is not implemented yet (O-LLVM-14)");
   initializeTarget();
   const llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
 #if LLVM_VERSION_MAJOR >= 21

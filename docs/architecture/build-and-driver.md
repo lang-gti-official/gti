@@ -2154,8 +2154,11 @@ requires the LLVM backend closure to be statically linked, so those bytes also
 identify the actual LLVM implementation, including dirty builds. Existing
 source/dependency, runtime-content, native-toolchain and debug/policy inputs
 remain part of the key. An unavailable required identity bypasses; no CPU,
-feature, relocation or ABI fact is guessed. Unsupported LLVM debug requests
-remain rejected until source-debug production is implemented by O-LLVM-15.
+feature, relocation or ABI fact is guessed. LLVM debug requests use the composed
+O-LLVM-15 source/parameter and instruction/terminator metadata hooks; ordinary
+local lexical scopes, receiver/pack bindings and optimized inline availability
+remain dependent on their owning verified producer facts. The driver does not
+infer those facts from the AST or emitted representation.
 
 Object identity schema `gti-llvm-object-identity-v2` additionally records the
 actual debug boolean and stable diagnostic instrumentation spelling. The
@@ -2359,7 +2362,14 @@ Project and direct LLVM selection share the currently admitted executable
 profile; they do not imply full-language backend promotion. Source-level native
 C calls, generated embedding wrappers, automatic test dispatchers and further
 families retain their owning backend admission gates. Debug companion production
-depends on O-LLVM-15; this driver change does not implement debug metadata.
+consumes O-LLVM-15 metadata. On Darwin a debug cache entry must contain its
+companion: metadata that suppresses it is corruption. Cold and cache-hit paths
+validate companion ownership and source/output containment before publication.
+They stage the executable and symbols, retain the previous GTI-owned companion
+until the executable rename commits, and restore that companion if executable
+publication fails. Each file/directory rename is atomic; the two artifacts are
+not a simultaneous atomic snapshot. Native C/C++ provider compilation and its
+dependency probes receive the same source-debug flag.
 LLVM cross-target admission remains host-only pending initialized target,
 runtime/sysroot and execution evidence. LLVM executable requests reject explicit
 native target/sysroot policies and, on Darwin, `MACOSX_DEPLOYMENT_TARGET`,
