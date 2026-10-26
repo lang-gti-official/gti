@@ -245,6 +245,19 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
       declareRuntimeService(session, RuntimeService::BeginThreadLocals);
   expect(begin->arg_empty() && begin->getReturnType()->isVoidTy(),
          "startup is an actual C void entry");
+  expect(!begin->hasFnAttribute(llvm::Attribute::Cold),
+         "ordinary runtime startup is not classified as failure-only");
+  for (const auto service : {RuntimeService::EnterFailureCleanup,
+                             RuntimeService::LeaveFailureCleanup,
+                             RuntimeService::CheckFailureCleanup}) {
+    const auto *cleanup = declareRuntimeService(session, service);
+    expect(cleanup->hasFnAttribute(llvm::Attribute::Cold) &&
+               !cleanup->hasFnAttribute(llvm::Attribute::NoUnwind) &&
+               !cleanup->doesNotReturn(),
+           "failure cleanup cost hints preserve return and unwind contracts");
+    expect(declareRuntimeService(session, service) == cleanup,
+           "repeated runtime declaration retains the canonical cost policy");
+  }
   const auto *terminate =
       declareRuntimeService(session, RuntimeService::TerminateFailure);
   expect(terminate->arg_size() == 4 && terminate->doesNotReturn(),

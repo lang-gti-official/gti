@@ -10883,13 +10883,15 @@ Do not infer a uniform success-path benefit from the fixed-call baseline:
 the local optimizable returned-owner cleanup probe favored status while several
 other probes favored unwinding. Resolve the workload-specific generated-code
 costs and platform results before making the production decision.
-The integration candidate replaces aggregate-SSA channel copies with
-DataLayout-sized, overlap-safe bulk moves. This substantially reduces generated
-IR and code size in the owning-return probe, but paired local timings still
-show successful-path regressions in some return/replacement cases. Its
-performance acceptance remains open; do not treat the smaller representation
-or passing cleanup checks as a waiver. Inspect the target optimizer's frame
-placement and register preservation before accepting or revising this change.
+The integration candidate replaces aggregate-SSA channel and emergency-record
+copies with DataLayout-sized, overlap-safe bulk moves. Failure-cleanup runtime
+services carry a cold cost hint, without new unwind/return or alias promises.
+This recovers the owning-return probe's lost frame shrink-wrapping and reduces
+its generated code; paired local timings no longer show that return regression.
+The replacement-cleanup probe still regresses on successful execution. Performance
+acceptance remains open: neither smaller code nor passing cleanup checks waives
+it. Continue investigating generated frame/register costs and platform behavior
+before accepting or revising this change.
 
 ##### LLVM-C05: Dynamic Calls Use Planned Adapters
 

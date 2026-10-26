@@ -89,6 +89,8 @@ def main():
         ir = prefix.with_suffix(".ll").read_text()
         if "load %gti.failure_channel.v1," in ir:
             raise AssertionError("failure channel copy regressed to aggregate SSA transport")
+        if "load %gti.c.failure_record.v2," in ir:
+            raise AssertionError("emergency record copy regressed to aggregate SSA transport")
         if mode == "status" and "@llvm.memmove." not in ir:
             raise AssertionError("status propagation lost its bulk failure-channel transfer")
         scalar_calls = None

@@ -161,15 +161,15 @@ void Failures::terminateCleanup(llvm::IRBuilder<> &ir, llvm::Value *primary,
                                 llvm::Value *secondary) {
   auto *type = session.abi().failureEmergency();
   auto *envelope = ir.CreateAlloca(type);
-  llvm::Value *value = llvm::Constant::getNullValue(type);
-  value = ir.CreateInsertValue(value, ir.getInt32(2), 0);
-  value = ir.CreateInsertValue(
-      value, ir.CreateLoad(session.abi().failureRecord(), record(ir, primary)),
-      2);
-  value = ir.CreateInsertValue(
-      value,
-      ir.CreateLoad(session.abi().failureRecord(), record(ir, secondary)), 3);
-  ir.CreateStore(value, envelope);
+  ir.CreateStore(ir.getInt32(2), ir.CreateStructGEP(type, envelope, 0));
+  ir.CreateStore(ir.getInt32(0), ir.CreateStructGEP(type, envelope, 1));
+  auto *recordType = session.abi().failureRecord();
+  const auto alignment = session.dataLayout().getABITypeAlign(recordType);
+  const auto bytes = session.dataLayout().getTypeAllocSize(recordType).getFixedValue();
+  ir.CreateMemMove(ir.CreateStructGEP(type, envelope, 2), alignment,
+                   record(ir, primary), alignment, bytes);
+  ir.CreateMemMove(ir.CreateStructGEP(type, envelope, 3), alignment,
+                   record(ir, secondary), alignment, bytes);
   ir.CreateCall(
       declareRuntimeService(session, RuntimeService::TerminateCleanupFailure),
       {envelope, origin(ir, primary), origin(ir, secondary)});

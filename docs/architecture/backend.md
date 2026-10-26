@@ -4606,6 +4606,15 @@ plain ABI storage, not GTI owners; this operation does not perform a source
 copy or transfer a loan. Overlap-safe movement preserves the previous
 load-before-store behavior without materializing the message array as aggregate
 SSA values. The publication and cleanup edges remain MIR-owned and unchanged.
+Emergency containment initializes the envelope's version/reserved fields and
+bulk-copies each complete primary/secondary record into its distinct destination;
+it likewise avoids materializing the two message buffers as aggregate values.
+The failure-cleanup enter/check/leave runtime declarations carry LLVM's `cold`
+cost hint: they execute only during defined-failure propagation, not ordinary
+successful cleanup. This allows target block placement and frame shrink-wrapping
+without attaching a guessed weight to a source value or forcing an inlining
+decision. It adds no `nounwind`, `noreturn`, alias or memory-effect promise;
+ordinary startup/thread-local services do not inherit this classification.
 
 All GTI functions use deterministic `__gti_native_v2_f<instance-id>` names.
 Declaration planning retains source spans as private metadata and records

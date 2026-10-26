@@ -10166,8 +10166,10 @@ the failure-cleanup case retains C++20/23 comparison.
 `llvm_cleanup_context_execution` additionally propagates a long panic message
 with an embedded zero through three source frames, checking every reported byte,
 the original location and deterministic cleanup order against C++23 and LLVM
-O0-O3. The C04 retained-input checks reject aggregate-SSA channel copies and
-require the status path's bulk channel transfer.
+O0-O3. A second case preserves two distinct long messages and their original
+sites in the emergency envelope, with no later outer destructor after the
+secondary failure. The C04 retained-input checks reject aggregate-SSA channel
+and emergency-record copies and require the status path's bulk channel transfer.
 Whole ordinary-record replacement exercises the paired cleanup/publication
 schedule. Its unsafe `int*` observers count destruction of the old value,
 prepared replacement and surrounding owner when the old destructor fails;
