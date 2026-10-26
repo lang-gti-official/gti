@@ -1,0 +1,14 @@
+#include <std/string>
+[[c_abi]] struct NativePacket {
+  mut int8_t tag; mut uint16_t extent; mut int32_t count; mut double ratio;
+};
+extern "C" {
+  NativePacket native_packet_make(int32_t count);
+  int32_t native_record_mixed(NativePacket value, std::string_view text, int32_t last);
+}
+int32_t change(mut std::string& owner) { owner.append("!"); return 3; }
+int main() {
+  mut std::string owner{"native"};
+  [[discard]] native_record_mixed(native_packet_make(1), owner.view(), change(owner));
+  return 0;
+}

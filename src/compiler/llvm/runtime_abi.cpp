@@ -10,6 +10,8 @@ llvm::Function *declareRuntimeService(Session &session,
   std::vector<llvm::Type *> parameters;
   std::string name;
   bool neverReturns = false;
+  bool noUnwind = false;
+  bool cold = false;
   switch (service) {
   case RuntimeService::BeginThreadLocals:
     name = "gti_rt_thread_locals_begin_v1";
@@ -54,6 +56,29 @@ llvm::Function *declareRuntimeService(Session &session,
     parameters = {ptr, ptr, llvm::Type::getInt64Ty(context)};
     result = llvm::Type::getInt32Ty(context);
     break;
+  case RuntimeService::BeginCThreadRuntime:
+  case RuntimeService::EndCThreadRuntime:
+    noUnwind = true;
+    name = service == RuntimeService::BeginCThreadRuntime
+               ? "gti_rt_cthread_begin_v1"
+               : "gti_rt_cthread_end_v1";
+    break;
+  case RuntimeService::EnterFailureCleanup:
+    cold = true;
+    name = "gti_rt_failure_cleanup_enter_v1";
+    parameters = {ptr, ptr};
+    result = ptr;
+    break;
+  case RuntimeService::LeaveFailureCleanup:
+    cold = true;
+    name = "gti_rt_failure_cleanup_leave_v1";
+    parameters = {ptr};
+    break;
+  case RuntimeService::CheckFailureCleanup:
+    cold = true;
+    name = "gti_rt_failure_cleanup_check_v1";
+    parameters = {ptr, ptr};
+    break;
   }
   if (name.empty())
     throw std::logic_error("unknown LLVM runtime service identity");
@@ -69,6 +94,12 @@ llvm::Function *declareRuntimeService(Session &session,
       signature, llvm::GlobalValue::ExternalLinkage, name, session.module());
   if (neverReturns)
     function->addFnAttr(llvm::Attribute::NoReturn);
+  if (noUnwind)
+    function->addFnAttr(llvm::Attribute::NoUnwind);
+  // These services run only while propagating a defined failure. This is a
+  // cost/layout hint, not permission to remove cleanup or assume no unwind.
+  if (cold)
+    function->addFnAttr(llvm::Attribute::Cold);
   return function;
 }
 

@@ -1,0 +1,37 @@
+// Ordinary nonhierarchy Load/Move producers still materialize snapshots.
+// Initialize must commit those snapshots instead of mistaking them for values
+// already built in the final binding's storage.
+mut int drop_count = 0;
+mut int drop_sum = 0;
+
+class Plain {
+public:
+  mut int left;
+  int right;
+  Plain(int left, int right) : left(left), right(right) {}
+  int checksum() { return this.left * 100 + this.right; }
+};
+
+class Ticket {
+  int id;
+public:
+  Ticket(int id) : id(id) {}
+  int read() { return this.id; }
+  ~Ticket() { drop_count += 1; drop_sum += this.id; }
+};
+
+int main() {
+  mut Plain original{3, 7};
+  Plain copy = original;
+  original.left = 9;
+  if (copy.checksum() != 307 || original.checksum() != 907) { return 1; }
+  Plain moved = std::move(copy);
+  if (moved.checksum() != 307 || original.checksum() != 907) { return 2; }
+  {
+    Ticket first{4};
+    Ticket second = std::move(first);
+    Ticket third = std::move(second);
+    if (third.read() != 4 || drop_count != 0 || drop_sum != 0) { return 3; }
+  }
+  return drop_count == 1 && drop_sum == 4 ? 0 : 4;
+}

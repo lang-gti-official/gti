@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -35,26 +36,50 @@ def main() -> int:
         run([sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)], 0)
         run([str(output)], 0)
         output.unlink()
-        source.write_text("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }\n", encoding="utf-8")
+        source.write_text("class Owner { public: virtual int read() { return 0; } }; int main() { mut Owner value{}; Owner copied{}; value = copied; return value.read(); }\n", encoding="utf-8")
+        transfer_mir = root / "unsupported.mir"
+        run([sys.argv[1], str(source), "-O0", "--emit-mir", "-o", str(transfer_mir)], 0)
+        if not re.search(r"^\s+i\d+ load\b", transfer_mir.read_text(encoding="utf-8"), re.MULTILINE):
+            raise AssertionError("the replacement control lost its verified class-copy load")
+        if not re.search(r"^\s+i\d+ assign\b", transfer_mir.read_text(encoding="utf-8"), re.MULTILINE):
+            raise AssertionError("the replacement control lost its verified whole-object assignment")
         unsupported = run(
-            [sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)],
+            [sys.argv[1], str(source), "-O0", "--backend", "llvm", "-o", str(output)],
             65,
         )
         if "error[GTI-B0003]" not in unsupported.stderr or (
             "executable LLVM lowering is not implemented yet"
             not in unsupported.stderr
-        ) or "O-LLVM-" not in unsupported.stderr or "MirInstructionKind.Construct" not in unsupported.stderr:
+        ) or "O-LLVM-10" not in unsupported.stderr or "Shape.PolymorphicTransfer" not in unsupported.stderr or str(source) + ":" not in unsupported.stderr:
             raise AssertionError(
                 "LLVM selection did not preserve the structured limitation:\n"
                 + unsupported.stderr
             )
-        if output.exists():
-            raise AssertionError("an unsupported LLVM build published an executable")
+        if output.exists() or list(root.glob("*.o")) or list(root.glob("*.obj")):
+            raise AssertionError("an unsupported LLVM build published native output")
 
         output.write_bytes(b"existing artifact")
-        run([sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)], 65)
-        if output.read_bytes() != b"existing artifact":
+        run([sys.argv[1], str(source), "-O0", "--backend", "llvm", "-o", str(output)], 65)
+        if output.read_bytes() != b"existing artifact" or list(root.glob("*.o")) or list(root.glob("*.obj")):
             raise AssertionError("unsupported LLVM admission replaced an existing artifact")
+
+        # O0 deliberately retains this unused construction. Required-body
+        # assertions for read -> helper live in llvm_admission_tests; the CLI
+        # preserves the structured rejection and artifact boundary here.
+        source.write_text("""
+int helper() { auto call = []() -> int { return 9; }; return call(); }
+class Value { public: virtual int read() { return helper(); } };
+int main() { Value value{}; return 0; }
+""", encoding="utf-8")
+        mir = root / "required.mir"
+        run([sys.argv[1], str(source), "-O0", "--emit-mir", "-o", str(mir)], 0)
+        if not re.search(r"^\s+i\d+ construct\b", mir.read_text(encoding="utf-8"), re.MULTILINE):
+            raise AssertionError("the no-call dependency control lost its verified construction")
+        rejected = run([sys.argv[1], str(source), "-O0", "--backend", "llvm", "-o", str(output)], 65)
+        if "error[GTI-B0003]" not in rejected.stderr:
+            raise AssertionError("the no-call dependency control lost its structured limitation")
+        if output.read_bytes() != b"existing artifact" or list(root.glob("*.o")):
+            raise AssertionError("rejected dispatch dependencies published partial native output")
 
         run([sys.argv[1], str(source), "--backend", "unknown"], 64)
         run(

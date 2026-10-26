@@ -1,0 +1,18 @@
+manifest-version = 1
+
+[package]
+name = "infallible-embedding"
+version = "0.1.0"
+
+[targets.module]
+kind = "library"
+linkage = "shared"
+root = "src/module.gti"
+
+[[targets.module.exports]]
+function = "exchange"
+symbol = "sample_exchange"
+
+[[targets.module.exports]]
+function = "echo"
+symbol = "sample_echo"

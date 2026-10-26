@@ -380,6 +380,38 @@ bool sharedOwnerRepresentation(const MirProgram &program,
          !instance.unionLayout;
 }
 
+bool polymorphicStorageRepresentation(const MirProgram &program,
+                                      const MirClassInstance &instance) {
+  if (instance.compilerCapability !=
+          CompilerCapabilityTypeKind::PolymorphicStorage ||
+      instance.type.kind != SemanticType::Class ||
+      instance.type.arguments.size() != 1 ||
+      instance.type.valueArguments.size() != 2 ||
+      !instance.declaredFields.empty() || !instance.bases.empty() ||
+      !instance.structuralBases.empty() || instance.destructor ||
+      instance.destructorStatus != SpecialMemberStatus::Generated ||
+      instance.requiresActiveCleanup || instance.requiresActiveDropState ||
+      instance.polymorphic || instance.abstract || instance.cAbiRecord ||
+      instance.cOpaqueHandle || instance.cAbiLayout || instance.unionLayout)
+    return false;
+  const auto &bytes = instance.type.valueArguments[0];
+  const auto &alignment = instance.type.valueArguments[1];
+  if (bytes.kind != CompileTimeValue::UInt64 || bytes.value == 0 ||
+      bytes.value > 4096 || alignment.kind != CompileTimeValue::UInt64 ||
+      alignment.value == 0 || alignment.value > 4096 ||
+      (alignment.value & (alignment.value - 1)) != 0)
+    return false;
+  const MirClassInstance *interface = nullptr;
+  for (const auto &candidate : program.classInstances())
+    if (candidate.type == instance.type.arguments.front()) {
+      if (interface)
+        return false;
+      interface = &candidate;
+    }
+  return interface && interface->polymorphic &&
+         interface->compilerCapability == CompilerCapabilityTypeKind::None;
+}
+
 bool nativeObjectConstructionShape(const MirProgram &program,
                                    const MirInstruction &instruction) {
   if (!mir_detail::objectConstruct(program, instruction))

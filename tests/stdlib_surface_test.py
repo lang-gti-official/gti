@@ -16,6 +16,7 @@ from typing import Any
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from native_fixture_build import build_fixture
+from llvm_case_context import CaseContext, source_digest
 
 
 SCHEMA = "gti-stdlib-surface-v1"
@@ -288,38 +289,40 @@ def validate_manifest(manifest: dict[str, Any], repository: pathlib.Path) -> Non
     )
 
 
+def compiler_environment_overrides(
+    repository: pathlib.Path, runtime_library: pathlib.Path
+) -> dict[str, str]:
+    return {
+        "GTI_STDLIB_PATH": str(repository / "stdlib"),
+        "GTI_RUNTIME_INCLUDE": str(repository / "runtime" / "include"),
+        "GTI_RUNTIME_LIBRARY": str(runtime_library),
+    }
+
+
 def compiler_environment(
     repository: pathlib.Path, runtime_library: pathlib.Path
 ) -> dict[str, str]:
     environment = os.environ.copy()
-    environment.update(
-        {
-            "GTI_STDLIB_PATH": str(repository / "stdlib"),
-            "GTI_RUNTIME_INCLUDE": str(repository / "runtime" / "include"),
-            "GTI_RUNTIME_LIBRARY": str(runtime_library),
-        }
-    )
+    environment.update(compiler_environment_overrides(repository, runtime_library))
     return environment
 
 
-def run_case(
+def case_plan(
     case: dict[str, Any],
     compiler: pathlib.Path,
     cxx: pathlib.Path,
     runtime_library: pathlib.Path,
     repository: pathlib.Path,
     scratch: pathlib.Path,
-) -> None:
+) -> dict[str, Any]:
     case_root = scratch / case["id"]
-    case_root.mkdir()
-    for name, record in case.get("files", {}).items():
-        (case_root / name).write_bytes(bytes.fromhex(record["contents"]))
     source = repository / case["source"]
     native_sources = [repository / item for item in case.get("native_sources", [])]
     environment = compiler_environment(repository, runtime_library)
     optimizations = (
         case["optimizations"] if case["mode"] == "run" else [case["optimization"]]
     )
+    steps = []
     for optimization in optimizations:
         executable = case_root / f"program-{optimization}"
         command = [
@@ -333,21 +336,84 @@ def run_case(
             command.extend(
                 ["--execution-profile", str(case["execution_profile"])]
             )
-        built = build_fixture(
-            command,
-            executable,
-            native_sources=native_sources,
-            optimization=optimization,
-            cxx=cxx,
-            cwd=case_root,
-            env=environment,
-            text=True,
-            capture_output=True,
-            timeout=case.get("build_timeout_seconds", DEFAULT_BUILD_TIMEOUT_SECONDS),
-            check=False,
-        )
-        expected = case["expected"]
-        if case["mode"] == "diagnostic":
+        steps.append({
+            "optimization": optimization, "command": command, "executable": executable,
+            "build_options": {
+                "native_sources": native_sources, "optimization": optimization, "cxx": cxx,
+                "cwd": case_root, "env": environment, "text": True, "capture_output": True,
+                "timeout": case.get("build_timeout_seconds", DEFAULT_BUILD_TIMEOUT_SECONDS),
+                "check": False,
+            },
+            "run_command": [str(executable)],
+            "run_options": {"cwd": case_root, "input": case.get("stdin", ""),
+                            "text": True, "capture_output": True, "timeout": 120, "check": False},
+        })
+    return {
+        "case_root": case_root, "mode": case["mode"], "expected": case["expected"],
+        "files": {name: bytes.fromhex(record["contents"])
+                  for name, record in case.get("files", {}).items()},
+        "steps": steps,
+    }
+
+
+def case_role(case: dict[str, Any]) -> str:
+    return "positive-admission" if case["mode"] == "run" else "expected-rejection-control"
+
+
+def case_context(case: dict[str, Any], repository: pathlib.Path) -> dict:
+    # Tokens preserve the invocation shape without leaking ambient environment
+    # values or pretending that this native fixture contract is an LLVM recipe.
+    root, runtime = pathlib.Path("@REPOSITORY"), pathlib.Path("@RUNTIME_LIBRARY")
+    planned = case_plan(case, pathlib.Path("@COMPILER"), pathlib.Path("@CXX"),
+                        runtime, root, pathlib.Path("@SCRATCH"))
+    context = CaseContext(
+        provider="stdlib-surface", identity=case["id"], source=case["source"],
+        source_sha256=source_digest(repository / case["source"]),
+        execution_profile=case.get("execution_profile") or "single-threaded",
+        loading="stdlib-surface-native-fixture-with-compiler-overrides",
+        observation=f"stdlib-surface-{case['mode']}",
+        unresolved=("llvm-target-applicability", "native-fixture-build-contract",
+                    "implicit-shipped-backend"),
+    )
+    return {
+        "context": context.record(), "role": case_role(case), "observed": "unrun",
+        "case": case,
+        "compiler_environment": {"policy": "copy-inherited-and-override",
+                                 "overrides": compiler_environment_overrides(root, runtime)},
+        "runtime_environment": "inherited-separately",
+        "steps": [{
+            "optimization": step["optimization"], "command": step["command"],
+            "executable": str(step["executable"]),
+            "native_sources": [str(path) for path in step["build_options"]["native_sources"]],
+            "build_options": {
+                key: ([str(path) for path in value] if key == "native_sources" else
+                      str(value) if isinstance(value, pathlib.Path) else value)
+                for key, value in step["build_options"].items() if key != "env"
+            },
+            "cwd": str(step["build_options"]["cwd"]),
+            "build_timeout": step["build_options"]["timeout"],
+            "native_builder": "native_fixture_build.build_fixture",
+            "runtime": ({"command": step["run_command"],
+                         "options": {key: str(value) if isinstance(value, pathlib.Path) else value
+                                     for key, value in step["run_options"].items()}}
+                        if case["mode"] == "run" else None),
+        } for step in planned["steps"]],
+    }
+
+
+def run_case(
+    case: dict[str, Any], compiler: pathlib.Path, cxx: pathlib.Path,
+    runtime_library: pathlib.Path, repository: pathlib.Path, scratch: pathlib.Path,
+) -> None:
+    plan = case_plan(case, compiler, cxx, runtime_library, repository, scratch)
+    plan["case_root"].mkdir()
+    for name, contents in plan["files"].items():
+        (plan["case_root"] / name).write_bytes(contents)
+    for step in plan["steps"]:
+        optimization = step["optimization"]
+        built = build_fixture(step["command"], step["executable"], **step["build_options"])
+        expected = plan["expected"]
+        if plan["mode"] == "diagnostic":
             if built.returncode != expected["exit_code"] or any(
                 fragment not in built.stderr
                 for fragment in expected["stderr_contains"]
@@ -362,15 +428,7 @@ def run_case(
                 f"run case {case['id']} {optimization} did not build: "
                 f"exit={built.returncode}\nstdout:\n{built.stdout}\nstderr:\n{built.stderr}"
             )
-        executed = subprocess.run(
-            [str(executable)],
-            cwd=case_root,
-            input=case.get("stdin", ""),
-            text=True,
-            capture_output=True,
-            timeout=120,
-            check=False,
-        )
+        executed = subprocess.run(step["run_command"], **step["run_options"])
         actual = (executed.returncode, executed.stdout, executed.stderr)
         wanted = (
             expected["exit_code"],

@@ -46,9 +46,9 @@ def native_enum_imports(repo, compiler, cc, cxx, output, run):
     bindings = work / "bindings.gti"
     run([compiler, "bindgen", example / "flags.h", "--namespace", "native_flags",
          "-o", bindings], "enum-bindgen")
-    source, rejected = work / "main.gti", work / "required-aggregate.gti"
+    source, aggregate = work / "main.gti", work / "required-aggregate.gti"
     source.write_bytes((fixture / "native_enum_imports.gti").read_bytes())
-    rejected.write_bytes((fixture / "native_enum_aggregate.gti").read_bytes())
+    aggregate.write_bytes((fixture / "native_enum_aggregate.gti").read_bytes())
     header = work / "native.h"
     run([compiler, source, "--emit-native-header", "-o", header], "enum-header")
     executions = 0
@@ -84,25 +84,27 @@ def native_enum_imports(repo, compiler, cc, cxx, output, run):
         'default: 0), "enum output signature");\n')
     run([cc, "-std=c17", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", "-I",
          repo / "runtime/include", probe], "enum-c-header")
-    comparator = work / "cpp-aggregate"
-    run([compiler, rejected, "--std", "c++23", "-O3", "-o", comparator, "--",
-         work / "flags-O3.o"], "enum-build-cpp-aggregate")
-    result = run([comparator], "enum-run-cpp-aggregate")
-    if result.stdout or result.stderr:
-        raise RuntimeError("native enum C++ comparator output mismatch")
-    for level in (0, 3):
-        destination = work / f"unsupported-aggregate-O{level}"
-        sentinel = b"existing native artifact\n"
-        destination.write_bytes(sentinel)
-        result = run([compiler, rejected, "--backend", "llvm", f"-O{level}",
-                      "-o", destination], f"enum-reject-aggregate-O{level}", 65)
-        if "GTI-B0003" not in result.stderr or destination.read_bytes() != sentinel:
-            raise RuntimeError("unsupported imported aggregate published an artifact")
+    for standard in ("c++20", "c++23"):
+        comparator = work / f"cpp-aggregate-{standard}"
+        run([compiler, aggregate, "--backend", "cpp", "--std", standard, "-O3", "-o",
+             comparator, "--", work / "flags-O3.o"], "enum-build-" + comparator.name)
+        result = run([comparator], "enum-run-" + comparator.name)
+        if result.stdout or result.stderr:
+            raise RuntimeError("native enum C++ aggregate comparator output mismatch")
+    for c_level in (0, 3):
+        for level in range(4):
+            binary = work / f"aggregate-llvm{level}-c{c_level}"
+            run([compiler, aggregate, "--backend", "llvm", f"-O{level}", "-o",
+                 binary, "--", work / f"flags-O{c_level}.o"], "enum-build-" + binary.name)
+            result = run([binary], "enum-run-" + binary.name)
+            if result.stdout or result.stderr:
+                raise RuntimeError("native imported aggregate value execution mismatch")
+            executions += 1
     return {
         "public_executions": executions, "header_compiles": 5,
-        "supported_cpp_comparators": 1, "artifact_negatives": 2,
+        "supported_cpp_comparators": 2, "artifact_negatives": 0,
         "input_sha256": {str(path): sha256(path.read_bytes()).hexdigest()
-                         for path in (source, rejected, bindings, header,
+                         for path in (source, aggregate, bindings, header,
                                       example / "flags.h", example / "flags.c")},
     }
 

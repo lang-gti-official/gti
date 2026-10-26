@@ -1,0 +1,17 @@
+#include <std/string_view>
+#include <std/memory>
+unsafe std::string_view select_text(int& first, int& second, const char* bytes) {
+  unsafe { return std::assume_string_view(bytes, std::size_t(3), second); }
+}
+std::string_view relay_text(int& first, int& second, const char* bytes) {
+  unsafe { return select_text(first, second, bytes); }
+}
+int main() {
+  int first = 11;
+  mut int second = 22;
+  char bytes[5] = {'x', 'a', '\0', 'b', 'y'};
+  const char* data = &bytes[std::size_t(1)];
+  std::string_view result = relay_text(first, second, data);
+  second = 23;
+  return int(result.size());
+}

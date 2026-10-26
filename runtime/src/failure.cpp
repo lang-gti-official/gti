@@ -92,6 +92,12 @@ using gti::runtime::detail::WriteFunction;
 // Reserved for the emergency report, never an ordinary record category.
 constexpr gti_failure_code_v1 kCleanupFailureReportCode = 14;
 
+struct CleanupContext {
+  const gti_failure_record_v2 *record = nullptr;
+  const gti_failure_artifact_descriptor_v1 *artifact = nullptr;
+};
+thread_local CleanupContext incomingCleanup;
+
 constexpr std::string_view kFailureCategories[] = {
     "",
     "integer_overflow",
@@ -915,6 +921,39 @@ gti_rt_failure_capture_panic_bytes_v2(gti_failure_record_v2 *record,
       record, {reinterpret_cast<const char *>(data), size});
 }
 
+extern "C" const gti_failure_record_v2 *gti_rt_failure_cleanup_enter_v1(
+    const gti_failure_record_v2 *record,
+    const gti_failure_artifact_descriptor_v1 *artifact) {
+  if (record == nullptr)
+    std::abort();
+  if (incomingCleanup.record != nullptr)
+    return nullptr;
+  incomingCleanup = {record, artifact};
+  return record;
+}
+
+extern "C" void
+gti_rt_failure_cleanup_leave_v1(const gti_failure_record_v2 *token) {
+  if (token == nullptr)
+    return;
+  if (incomingCleanup.record != token)
+    std::abort();
+  incomingCleanup = {};
+}
+
+extern "C" void gti_rt_failure_cleanup_check_v1(
+    const gti_failure_record_v2 *secondary,
+    const gti_failure_artifact_descriptor_v1 *artifact) {
+  if (incomingCleanup.record == nullptr)
+    return;
+  if (secondary == nullptr)
+    std::abort();
+  const gti_failure_emergency_v2 emergency{
+      GTI_FAILURE_ABI_VERSION_V2, 0, *incomingCleanup.record, *secondary};
+  gti_rt_failure_terminate_cleanup_v2(&emergency, incomingCleanup.artifact,
+                                    artifact);
+}
+
 extern "C" gti_failure_report_result_v1
 gti_rt_failure_capture_panic_v2(gti_failure_record_v2 *record,
                                 gti_c_string_view message) {
@@ -1013,6 +1052,9 @@ extern "C" [[noreturn]] void gti_rt_failure_terminate_cleanup_v2(
     const gti_failure_emergency_v2 *failure,
     const gti_failure_artifact_descriptor_v1 *primary_artifact,
     const gti_failure_artifact_descriptor_v1 *secondary_artifact) {
+  // A managed-worker handoff may abandon generated frames. Never retain a
+  // borrowed record pointer after those frames have ceased to exist.
+  incomingCleanup = {};
   if (failure != nullptr && gti_runtime_detail::managed_worker_active()) {
     gti_runtime_detail::handoff_managed_worker_cleanup_failure(
         *failure, primary_artifact, secondary_artifact);

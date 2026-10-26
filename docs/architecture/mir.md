@@ -31,6 +31,34 @@ name determines language meaning or bypasses deleted/private constructors.
 
 ## Representation
 
+Bodyless generated default construction uses an explicit ordinary `Construct`
+with zero inputs and no constructor target. Whole-program verification requires
+the unique concrete owner's generated default policy and absence of an
+initializer schedule; ordinary materialization, publication and cleanup remain
+mandatory. Temporary receiver/argument proofs and effect analysis consume that
+same construction operation. A targetless ordinary `Call` cannot stand in for
+construction; native/deferred calls retain their separate typed targets or
+invocation capabilities.
+
+The existing one-input passive-union family is proved separately: the exact concrete union,
+sealed overlapping layout and first declared field type must match the input.
+That proof grants no ordinary call target, default-constructor policy, cleanup,
+borrow, failure or precise effect authority.
+
+A passive scalar value return preserves its source operand type and declared
+body return type. The MIR-owned scalar-return query proves an exact type or
+uses the existing shared context-free initialization-conversion rule; it does
+not repeat assignability or decide literal-dependent narrowing. Semantic
+contextual typing must already give a narrowed integer literal its exact type.
+Scalar results use value/constant/copy/move carriers. A copy/move's claimed
+source type must equal its exact selected place type before choosing either an
+exact return or an initialization conversion; ordinary operand and availability
+checks remain mandatory. Address or loan carriers cannot stand in
+for a by-value scalar. The query applies to the destination type: a reference
+return can intentionally carry a referent-typed address operand and retains its
+independent return-loan authority. Aggregate, enum, text, callable, raw and
+ownership return families receive no new authority from this scalar rule.
+
 Raw address conversion uses `Compute/Convert` with one evaluated pointer value.
 The independent `rawPointerConversion` query is shared by body verification and
 production backend admission: only typed/void or same-pointee conversion is
@@ -277,6 +305,19 @@ empty one-block `Exit` shape, except `Module/0`: its verified implicit-zero or
 constant storage stages remain `DataOnly`, while any merged `Initializer` step
 makes the module row executable.
 
+Instance-field initializer inventory includes declaration-only `Initialize`
+rows for fields without a resolved declaration initializer. The source/HIR
+bridge binds each such row to the exact root variable statement, field binding,
+SymbolId and concrete type, and proves both field and statement initializer
+absence. The shared MIR shape predicate recognizes only this exact instance
+body/field identity with no value, operands, constructor stage, failure or
+lifecycle effect. It does not authorize erasing a real initializer. These rows
+declare storage, not an implicit value or reference loan: the constructor's
+separately selected `This`-field writes and their publication remain required.
+No corresponding exemption applies to locals, module/static fields or actual
+constructor stages. Conservative inventory retention need not imply execution
+of a declaration-only row and must not be weakened to avoid representing it.
+
 The private C++ whole-program planner subsequently consumes the sealed lowered
 inventory. Its representation snapshot owns an exact canonical `MirProgram`
 copy, so planning checks structural equality rather than treating the
@@ -329,10 +370,23 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v114`/`mir-body-v93`,
-with `lowered-program-v26` declaration metadata. These distinct combined
+The combined deterministic serialization is currently `mir-v116`/`mir-body-v93`,
+with `lowered-program-v27` declaration metadata. These distinct combined
 identities retain both macro result-region/local-initializer authority and
 thread-local initialization, cleanup and reference-pack proof facts.
+Class records also preserve semantic-selected virtual root/target declarations.
+HIR binds each selection to exact concrete function and owner identities plus
+successive direct-base paths; MIR verifies complete root coverage, signatures,
+final target coherence and paths independently. Abstract classes may retain pure
+targets. Lowered declaration and instance records seal and serialize the same
+selection. These are backend-neutral facts; this metadata alone does not admit
+LLVM virtual execution or prescribe a table layout or physical call ABI.
+Represented polymorphic constructor stages may also carry an exact active-class
+plan anchored after successful `InitializeBase`, or at entry when no state-bearing
+base exists. Verification checks the selected instruction and success dominance;
+optimization preserves that identity. Absence remains valid core MIR for existing
+base-call families whose staging is incomplete, and requires a native admission
+gate rather than an invented entry transition.
 Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains
@@ -2745,7 +2799,12 @@ A `MirBody` owns:
   `TerminateCleanupFailure`. Production backend emission consumes this verified
   schedule, including admitted partial-construction rollback. New unsupported
   startup shapes must extend its construction and containment proof, not an
-  older source-tree execution path;
+  older source-tree execution path. The argument loop uses ordinary `Load`,
+  `Compute(Add)` and `Assign` instructions rather than a fused `Modify`.
+  `ComputeNextArgumentIndex` and `AdvanceArgumentIndex` bind arithmetic and
+  commit separately. The exact verified loop edge establishes
+  `0 <= index < count <= INT32_MAX`, so adding one cannot overflow; the verifier
+  rejects changes to the step, direction, source value or commit identity;
 - lexical scopes, cleanup edges, loans, carrier bindings, and source/HIR
   provenance.
 
@@ -3477,6 +3536,21 @@ the exact formal, source place, load and unsuspended entry loan; an early loan
 endpoint cannot be hidden behind the loaded SSA value. The base itself still
 cannot retain borrowed state. This permits forwarding a dynamic text view into
 an owning base constructor without mistaking it for a borrowed base object.
+An exact incoming scalar reference can also forward its address into the
+selected base reference formal, with the same referent and compatible access.
+Its `CallInput` names the constructor-initializer ordinal and has no ordinary
+HIR call-site identity; it appears at its source-argument position and
+`InitializeBase` is its sole argument consumer. Other arguments in this bounded
+reference family must be inert literals or direct incoming passive scalar
+formals. Effectful, failing, terminal, or owning later arguments remain valid
+source but need the fuller ordered prepared-input protocol before native staging.
+No terminal-abandonment relaxation is implied. The
+source seal binds the runtime dereference place to the exact HIR formal, not
+another same-typed parameter. A mutable formal retains its existing entry
+`Parameter` loan and permission; no replacement loan or endpoint is invented.
+The complete argument family is checked before publishing any such input, so
+a later unsupported owning argument cannot leave partial staging or a false
+constructor-state anchor. These MIR facts do not extend C++ backend admission.
 Interprocedural effect analysis follows
 the selected base constructor, so its allocation, memory, and other effects
 remain visible in the derived constructor's summary and to the optimizer.
@@ -4232,6 +4306,12 @@ published loans separately from ordinary scope loans and retires them only
 after armed subobject obligations are inactive. Independent verification rejects
 early retirement, missing failure retirement, and retirement on the successful
 constructor path, which must export the dependency to its caller.
+Non-lifecycle-bound constructor entry loans also remain live until rollback
+finishes. A later initializer can publish such a reference into a field and
+change its final loan classification after earlier failure edges were built.
+Those edges retire entry capabilities together with published dependencies,
+child-first after subobject cleanup, rather than ending them before rollback
+based on an incomplete publication inventory.
 
 A read-only operator on an eligible stable-dependency borrowed-class prvalue uses
 the same explicit `ReadTemporaryBorrow` schedule as an ordinary method. Other
@@ -4248,14 +4328,19 @@ input names an exact fresh class/struct producer or a passive payload-enum
 construction, and its selected parameter is read-only `T&`. Lowering
 materializes the producer's exact mutable place, emits `BorrowRead`, and
 attaches one `CallArgument` loan to the `CallInput`;
-a target-free, zero-input ordinary class `Call` can be the generated default
-producer. Body verification recognizes its exact structural shape; independent
+an explicit zero-input ordinary class `Construct` can be the bodyless generated
+default producer. Body verification recognizes its exact structural shape; independent
 program verification also requires the concrete owner's generated default
 constructor and no missing initializer schedule. This shares the receiver
 producer query and preserves all materialization, call-loan and drop checks.
 The shared invocation-target query uses that same shape and concrete lifecycle
 proof to classify this producer as executing no source body, rather than an
-unknown call that could access unrelated persistent storage. A required explicit
+unknown call that could access unrelated persistent storage. Per-instruction
+and transitive summaries retain its initialization without inventing user-code,
+runtime, allocation or escape effects. An unproven construction boundary keeps
+conservative unknown memory/call/trap and escape effects; persistent-storage
+checking cannot dismiss it merely because the instruction is a construction.
+A required explicit
 or implicit field initializer, or inherited-base initializer, instead has an
 exact concrete constructor schedule whose transitive effects remain checked.
 Missing or forged generated-constructor authority cannot suppress those effects.

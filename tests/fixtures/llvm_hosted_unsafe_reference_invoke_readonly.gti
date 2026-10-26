@@ -1,0 +1,26 @@
+#include <std/panic>
+mut int released = 0;
+struct Cell {
+  int tag;
+  mut int value;
+  Cell(int tag, int value) : tag(tag), value(value) {}
+  ~Cell() { released += this.tag; }
+};
+[[borrowed_from(second)]]
+unsafe Cell& select_cell(Cell& first, Cell& second, bool fail) {
+  if (fail) { std::panic("reference selection failure"); }
+  return second;
+}
+[[borrowed_from(second)]]
+Cell& relay_cell(Cell& first, Cell& second, bool fail) {
+  unsafe { return select_cell(first, second, fail); }
+}
+int main() {
+  {
+    Cell first{11, 41};
+    Cell second{22, 42};
+    Cell& selected = relay_cell(first, second, false);
+    if (selected.value != 42 || first.value != 41) { return 1; }
+  }
+  return released == 33 ? 0 : 2;
+}

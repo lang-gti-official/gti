@@ -244,7 +244,29 @@ public:
           std::vector<Scope> incomingScopes = scopes;
           const std::vector<TemporaryDrop> incomingTemporaryDrops =
               temporaryDrops;
-          for (const HirValueId argument : initializer.arguments) {
+          const bool stageReferenceInputs = stagedBase(initializer) != nullptr;
+          std::vector<std::optional<MirOperand>> preparedBaseInputs(
+              initializer.arguments.size());
+          for (std::size_t argumentIndex = 0;
+               argumentIndex < initializer.arguments.size(); ++argumentIndex) {
+            const HirValueId argument = initializer.arguments[argumentIndex];
+            if (stageReferenceInputs &&
+                forwardedBaseReference(initializer, argumentIndex)) {
+              const auto &parameter =
+                  program
+                      .findConstructorInstance(*initializer.constructorTarget)
+                      ->parameterTypes[argumentIndex];
+              auto prepared = prepareCallInput(
+                  0, argument, parameter,
+                  parameter.referenceAccess == AccessMode::Mutable
+                      ? HirCallInputKind::MutableBorrow
+                      : HirCallInputKind::ReadBorrow,
+                  MirCallInputRole::Argument, argumentIndex,
+                  argumentOperand(argument, parameter), false, false, 0,
+                  initializerIndex + 1);
+              preparedBaseInputs[argumentIndex] = std::move(prepared.operand);
+              continue;
+            }
             // The initializer reads each argument after all of them run, so
             // a class assignment's result is copied at its own commit.
             const HirValue *input = findValue(argument);
@@ -253,7 +275,8 @@ public:
             else
               (void)emitValue(argument);
           }
-          stageBaseInitializer(initializer, initializerIndex);
+          stageBaseInitializer(initializer, initializerIndex,
+                               preparedBaseInputs);
           const auto constructorOwnerIterator =
               constructor == nullptr
                   ? program.classInstances().end()
@@ -615,8 +638,51 @@ private:
   // of leaking through verified MIR.
   bool constructorUnarmedTransfer = false;
 
-  void stageBaseInitializer(const HirConstructorInitializer &initializer,
-                            std::size_t initializerIndex) {
+  // A first reference-base family forwards one exact incoming scalar
+  // reference. The semantic formal supplies access and referent type; the
+  // existing place engine supplies its evaluated address. No referent value
+  // is loaded merely to pass this borrow, and the base cannot retain it.
+  bool forwardedBaseReference(const HirConstructorInitializer &initializer,
+                              std::size_t index) const {
+    const auto *target =
+        initializer.constructorTarget
+            ? program.findConstructorInstance(*initializer.constructorTarget)
+            : nullptr;
+    if (!constructor ||
+        initializer.kind != ConstructorInitializerTargetKind::Base || !target ||
+        index >= target->parameterTypes.size() ||
+        index >= initializer.arguments.size())
+      return false;
+    const auto &parameter = target->parameterTypes[index];
+    const auto *value = findValue(initializer.arguments[index]);
+    if (parameter.kind != SemanticType::Reference ||
+        parameter.arguments.size() != 1 ||
+        !isPassiveScalarValueType(parameter.arguments.front()) || !value ||
+        value->kind != HirValueKind::Variable ||
+        value->info.category != ValueCategory::Place ||
+        value->info.type != parameter.arguments.front())
+      return false;
+    const auto local = localSymbols.find(value->symbol);
+    if (local == localSymbols.end())
+      return false;
+    const auto formal =
+        std::find(constructor->parameterBindings.begin(),
+                  constructor->parameterBindings.end(), local->second);
+    if (formal == constructor->parameterBindings.end())
+      return false;
+    const auto ordinal = static_cast<std::size_t>(
+        formal - constructor->parameterBindings.begin());
+    if (ordinal >= constructor->parameterTypes.size())
+      return false;
+    const auto &source = constructor->parameterTypes[ordinal];
+    return source.kind == SemanticType::Reference &&
+           source.arguments == parameter.arguments &&
+           (parameter.referenceAccess == AccessMode::ReadOnly ||
+            source.referenceAccess == AccessMode::Mutable);
+  }
+
+  const HirClassInstance *
+  stagedBase(const HirConstructorInitializer &initializer) const {
     // A base is a distinct under-construction place. Its exact selected
     // initializer completes before derived fields and arms one rollback token.
     // Argument effects stay in this MIR prefix; a backend must prove how that
@@ -639,7 +705,7 @@ private:
                               base.instance == initializer.base &&
                               base.type == initializer.targetType;
                      })) {
-      return;
+      return nullptr;
     }
     const auto base = std::find_if(
         program.classInstances().begin(), program.classInstances().end(),
@@ -649,7 +715,7 @@ private:
         });
     if (base == program.classInstances().end() ||
         base->traits.containsBorrowedState) {
-      return;
+      return nullptr;
     }
     if (!initializer.constructorTarget &&
         (base->defaultConstructor != SpecialMemberStatus::Generated ||
@@ -670,19 +736,87 @@ private:
                               value.functionTarget || value.constructorTarget ||
                               value.lambdaTarget;
                      })))
+      return nullptr;
+    const auto *selectedConstructor =
+        initializer.constructorTarget
+            ? program.findConstructorInstance(*initializer.constructorTarget)
+            : nullptr;
+    if (selectedConstructor && selectedConstructor->parameterTypes.size() !=
+                                   initializer.arguments.size())
+      return nullptr;
+    const bool referenceFamily =
+        selectedConstructor &&
+        std::any_of(selectedConstructor->parameterTypes.begin(),
+                    selectedConstructor->parameterTypes.end(),
+                    [](const auto &type) {
+                      return type.kind == SemanticType::Reference;
+                    });
+    for (std::size_t index = 0; index < initializer.arguments.size(); ++index) {
+      if (forwardedBaseReference(initializer, index))
+        continue;
+      const auto *value = findValue(initializer.arguments[index]);
+      if (!value ||
+          (selectedConstructor &&
+           selectedConstructor->parameterTypes[index].kind ==
+               SemanticType::Reference) ||
+          value->info.traits.drop != DropKind::Trivial ||
+          resolvedTraits(value->info.type).containsBorrowedState ||
+          value->info.type.kind == SemanticType::Reference)
+        return nullptr;
+      if (referenceFamily) {
+        // This checkpoint cannot abandon a prepared reference across a later
+        // effectful/terminal argument. Keep those valid source families
+        // unstaged until the shared prepared-input protocol covers them.
+        if (!value->definedFailure.empty() ||
+            !isPassiveScalarValueType(value->info.type))
+          return nullptr;
+        if (value->kind == HirValueKind::Literal)
+          continue;
+        const auto local = localSymbols.find(value->symbol);
+        if (value->kind != HirValueKind::Variable ||
+            local == localSymbols.end())
+          return nullptr;
+        const auto formal =
+            std::find(constructor->parameterBindings.begin(),
+                      constructor->parameterBindings.end(), local->second);
+        if (formal == constructor->parameterBindings.end() ||
+            constructor->parameterTypes[static_cast<std::size_t>(
+                formal - constructor->parameterBindings.begin())] !=
+                value->info.type)
+          return nullptr;
+      }
+    }
+    return &*base;
+  }
+
+  void
+  stageBaseInitializer(const HirConstructorInitializer &initializer,
+                       std::size_t initializerIndex,
+                       std::span<const std::optional<MirOperand>> prepared) {
+    // Check the entire initializer before preparing any input. Unsupported
+    // later arguments must not leave orphaned, partly staged CallInputs.
+    const auto *base = stagedBase(initializer);
+    if (!base)
       return;
     std::vector<MirOperand> arguments;
     std::vector<SemanticType> parameterTypes;
-    for (const auto argument : initializer.arguments) {
+    const auto *selectedConstructor =
+        initializer.constructorTarget
+            ? program.findConstructorInstance(*initializer.constructorTarget)
+            : nullptr;
+    for (std::size_t index = 0; index < initializer.arguments.size(); ++index) {
+      const auto argument = initializer.arguments[index];
       const HirValue *value = findValue(argument);
+      if (forwardedBaseReference(initializer, index)) {
+        const auto &parameter = selectedConstructor->parameterTypes[index];
+        arguments.push_back(prepared[index].value());
+        parameterTypes.push_back(parameter);
+        continue;
+      }
       // A transient dependency on an incoming parameter is not borrowed
       // state stored in the base. Preserve the value's loan metadata while
       // classifying the parameter using the same concrete type contract as
       // program verification; the selected base itself cannot retain borrows.
-      if (value == nullptr || value->info.traits.drop != DropKind::Trivial ||
-          resolvedTraits(value->info.type).containsBorrowedState ||
-          value->info.type.kind == SemanticType::Reference)
-        return;
       arguments.push_back(valueOperand(argument));
       parameterTypes.push_back(value->info.type);
     }
@@ -2711,9 +2845,11 @@ private:
                                return loan != nullptr && loan->lifecycleBound;
                              });
         });
+    std::vector<MirLoanId> deferredConstructorLoans;
     if (output.kind == MirBodyKind::Constructor ||
         output.kind == MirBodyKind::FieldInitializers || !hasLifecycleLoans) {
-      emitOrderedFailureDrain(consumedDrops, failureEndedLoans);
+      emitOrderedFailureDrain(consumedDrops, failureEndedLoans,
+                              deferredConstructorLoans);
     } else {
       const auto retained = retainedReborrowAncestors();
       for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
@@ -2761,7 +2897,11 @@ private:
     // normal local scope. Successful completion exports those dependencies;
     // failed construction exports nothing. Keep them through subobject
     // rollback, then retire every published capability before propagation.
-    for (const auto loan : childFirstMirLoans(constructorPublishedLoans)) {
+    auto constructorFailureLoans = constructorPublishedLoans;
+    constructorFailureLoans.insert(constructorFailureLoans.end(),
+                                   deferredConstructorLoans.begin(),
+                                   deferredConstructorLoans.end());
+    for (const auto loan : childFirstMirLoans(constructorFailureLoans)) {
       if (!containsLoan(failureEndedLoans, loan)) {
         (void)appendInstruction(
             {.kind = MirInstructionKind::EndBorrow, .loan = loan});
@@ -2789,13 +2929,24 @@ private:
   // established scope/loan schedule above.
   void
   emitOrderedFailureDrain(const std::vector<MirDropObligationId> &consumedDrops,
-                          const std::vector<MirLoanId> &endedLoans) {
+                          const std::vector<MirLoanId> &endedLoans,
+                          std::vector<MirLoanId> &deferredConstructorLoans) {
     const auto retained = temporaryCarrierLoans(consumedDrops);
     auto allEnded = endedLoans;
     for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
       for (auto loan = scope->loans.rbegin(); loan != scope->loans.rend();
            ++loan) {
         const MirLoan *record = output.findLoan(*loan);
+        // A later initializer can publish an entry reference into a field,
+        // changing its final loan record after this failure edge was built.
+        // Keep constructor entry capabilities through rollback on every edge,
+        // then retire them child-first with the published dependencies.
+        if (output.kind == MirBodyKind::Constructor && record &&
+            record->entry && !record->lifecycleBound &&
+            !containsLoan(allEnded, *loan)) {
+          deferredConstructorLoans.push_back(*loan);
+          continue;
+        }
         if (!containsLoan(allEnded, *loan) && !retained.contains(*loan) &&
             !containsLoan(constructorPublishedLoans, *loan) &&
             (record == nullptr || !record->lifecycleBound)) {
@@ -2877,6 +3028,8 @@ private:
       retired.push_back(entry.obligation);
       for (const auto loan : retiringTemporaryCarrierLoans(
                entry.obligation, retired, allEnded, true)) {
+        if (containsLoan(deferredConstructorLoans, loan))
+          continue;
         (void)appendInstruction(
             {.kind = MirInstructionKind::EndBorrow, .loan = loan});
         allEnded.push_back(loan);
@@ -6766,7 +6919,8 @@ private:
                    const SemanticType &type, HirCallInputKind inputKind,
                    MirCallInputRole role, std::size_t index, MirOperand operand,
                    bool stageOwningParameter, bool defaultArgument = false,
-                   MirDropObligationId movedBindingDrop = 0) {
+                   MirDropObligationId movedBindingDrop = 0,
+                   std::size_t constructorInitializer = 0) {
     ExpressionInfo info{.type = type,
                         .category = ValueCategory::Value,
                         .access = AccessMode::ReadOnly,
@@ -6779,6 +6933,7 @@ private:
     MirInstruction input{.kind = MirInstructionKind::CallInput,
                          .hirValue = sourceValue,
                          .callSite = callSite,
+                         .constructorInitializer = constructorInitializer,
                          .callInputRole = role,
                          .callInputIndex = index,
                          .callInputKind = inputKind,

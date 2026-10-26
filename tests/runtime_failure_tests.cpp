@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <thread>
 #include <type_traits>
 
 namespace {
@@ -18,6 +19,32 @@ void expect(bool condition, const char *message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+
+void testCleanupContext() {
+  gti_failure_record_v2 first{};
+  gti_failure_record_v2 nested{};
+  gti_rt_failure_cleanup_check_v1(&nested, nullptr);
+  const auto *token = gti_rt_failure_cleanup_enter_v1(&first, nullptr);
+  expect(token == &first, "the first cleanup scope owns its borrowed context");
+  const auto *inner = gti_rt_failure_cleanup_enter_v1(&nested, nullptr);
+  expect(inner == nullptr, "a nested cleanup cannot replace the primary");
+  gti_rt_failure_cleanup_leave_v1(inner);
+  expect(gti_rt_failure_cleanup_enter_v1(&nested, nullptr) == nullptr,
+         "leaving a nested scope preserves the original primary");
+  bool isolated = false;
+  std::thread worker([&] {
+    const auto *other = gti_rt_failure_cleanup_enter_v1(&nested, nullptr);
+    isolated = other == &nested;
+    gti_rt_failure_cleanup_leave_v1(other);
+  });
+  worker.join();
+  expect(isolated, "failure cleanup context is thread-confined");
+  gti_rt_failure_cleanup_leave_v1(token);
+  gti_rt_failure_cleanup_check_v1(&nested, nullptr);
+  const auto *next = gti_rt_failure_cleanup_enter_v1(&nested, nullptr);
+  expect(next == &nested, "leaving the root scope permits a new primary");
+  gti_rt_failure_cleanup_leave_v1(next);
 }
 
 struct PartialWriter {
@@ -352,6 +379,7 @@ static_assert(
                             gti_failure_observer_v1, void *)>);
 
 int main() {
+  testCleanupContext();
   testWriteAll();
   testUnicodeTableBoundaries();
   testDescriptorOutcomeValidation();

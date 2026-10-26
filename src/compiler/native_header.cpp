@@ -121,6 +121,42 @@ public:
   explicit NativeHeaderEmitter(const LoweredProgram &program)
       : program(program) {}
 
+  std::string signature(const LoweredEmbeddingExport &selected) {
+    collect();
+    assignCNames();
+    std::ostringstream output;
+    output << "gti-embedding-signature-v1;" << program.target().os << ';'
+           << program.target().arch << ';';
+    std::unordered_set<ClassId> visited;
+    const auto type = [&](const auto &self, const SemanticType &value) -> void {
+      if (value.kind == SemanticType::Array)
+        output << "array[" << value.arrayLength << "];";
+      else
+        output << cType(value) << ';';
+      for (const auto &argument : value.arguments)
+        self(self, argument);
+      if (value.kind != SemanticType::Class ||
+          !visited.insert(value.classId).second)
+        return;
+      const auto &record = nativeTypeFor(value.classId);
+      output << record.info->qualifiedName << ';'
+             << (record.info->kind == ClassKind::Union ? "union;" : "record;");
+      if (record.info->cAbiLayout) {
+        const auto &layout = *record.info->cAbiLayout;
+        output << layout.sizeBytes << ':' << layout.abiAlignmentBytes << ';';
+        for (const auto &field : layout.fields) {
+          output << field.offsetBytes << ':';
+          self(self, field.type);
+        }
+      }
+    };
+    type(type, selected.returnType);
+    output << "parameters=" << selected.parameterTypes.size() << ';';
+    for (const auto &parameter : selected.parameterTypes)
+      type(type, parameter);
+    return output.str();
+  }
+
   std::string emit() {
     collect();
     assignCNames();
@@ -150,9 +186,17 @@ public:
             "#include <type_traits>\n"
             "#endif\n\n";
 
-    emitCppBranch(body);
-    body << "#else\n\n";
-    emitCBranch(body);
+    if (program.embeddingPlan()) {
+      body << "#include <gti/embedding.h>\n\n";
+      body << "#ifdef __cplusplus\nextern \"C\" {\n";
+      emitCBranch(body, true);
+      body << "}\n#else\n";
+      emitCBranch(body);
+    } else {
+      emitCppBranch(body);
+      body << "#else\n\n";
+      emitCBranch(body);
+    }
     body << "#endif\n";
 
     const std::string contents = body.str();
@@ -194,14 +238,14 @@ private:
       }
       if (const auto *storage =
               std::get_if<LoweredStorageDeclaration>(&declaration.payload);
-          storage != nullptr && !storage->externalSymbol.empty()) {
+          storage != nullptr && !storage->externalSymbol.empty() && !program.embeddingPlan()) {
         variables.push_back({.declaration = &declaration, .info = storage});
         continue;
       }
       if (const auto *function =
               std::get_if<LoweredFunctionDeclaration>(&declaration.payload);
           function != nullptr && function->linkage == LanguageLinkage::C &&
-          !function->compilerPrivate) {
+          !function->compilerPrivate && !program.embeddingPlan()) {
         functions.push_back({.declaration = &declaration, .info = function});
       }
     }
@@ -209,11 +253,21 @@ private:
 
   void assignCNames() {
     std::unordered_set<std::string> used;
+    if (program.embeddingPlan()) {
+      used = {"gti_context_v1", "gti_embed_status_v1", "gti_export_descriptor_v1",
+              "gti_module_descriptor_v1", "gti_failure_record_v1",
+              "gti_failure_artifact_descriptor_v1", "gti_failure_observer_v1",
+              "gti_c_string_view"};
+      for (const auto &selected : program.embeddingPlan()->exports) {
+        if (!used.insert(selected.symbol).second)
+          throw BackendUnsupportedError("embedding export collides with a public ABI type: " + selected.symbol);
+      }
+    }
     const auto assignRoots = [&](auto &types) {
       for (NativeRecord &type : types) {
-        if (type.declaration->namespaceScope.empty()) {
+        if (type.declaration->namespaceScope.empty() &&
+            used.insert(type.declaration->name).second) {
           type.cName = type.declaration->name;
-          used.insert(type.cName);
         }
       }
     };
@@ -431,7 +485,7 @@ private:
         "unsupported checked C ABI type reached native header backend");
   }
 
-  std::string cType(const SemanticType &type) const {
+  std::string cType(const SemanticType &type, bool cpp = false) const {
     if (type.nativeCScalar != NativeCScalarKind::None) {
       if (SemanticType::nativeCScalarType(type.nativeCScalar,
                                           program.target()) != type) {
@@ -444,7 +498,7 @@ private:
     case SemanticType::Void:
       return "void";
     case SemanticType::Bool:
-      return "_Bool";
+      return cpp ? "bool" : "_Bool";
     case SemanticType::Int8:
       return "int8_t";
     case SemanticType::Int16:
@@ -478,7 +532,7 @@ private:
         break;
       }
       const SemanticType &pointee = type.arguments.front();
-      std::string spelling = cType(pointee);
+      std::string spelling = cType(pointee, cpp);
       if (type.pointerAccess == AccessMode::ReadOnly)
         spelling = pointee.kind == SemanticType::RawPointer ||
                            pointee.kind == SemanticType::CString ||
@@ -570,13 +624,13 @@ private:
   }
 
   void emitCCallbackAlias(std::ostream &output,
-                          const NativeCallbackAlias &alias) const {
+                          const NativeCallbackAlias &alias, bool cpp = false) const {
     const SemanticType *returnType =
         alias.info->type.nativeFunctionReturnType();
     if (returnType == nullptr) {
       throw std::logic_error("checked native callback alias is malformed");
     }
-    output << "typedef " << cType(*returnType) << " (*" << alias.cName << ")(";
+    output << "typedef " << cType(*returnType, cpp) << " (*" << alias.cName << ")(";
     const std::span<const SemanticType> parameters =
         alias.info->type.nativeFunctionParameterTypes();
     if (parameters.empty()) {
@@ -586,7 +640,7 @@ private:
       if (index != 0) {
         output << ", ";
       }
-      output << cType(parameters[index]);
+      output << cType(parameters[index], cpp);
     }
     output << ");\n";
   }
@@ -775,10 +829,15 @@ private:
     }
     emitCppSourceNameAliases(output);
     emitCppFunctions(output);
+    if (program.embeddingPlan()) {
+      output << "extern \"C\" {\n";
+      emitEmbeddingExports(output, true);
+      output << "}\n";
+    }
     output << '\n';
   }
 
-  void emitCBranch(std::ostream &output) const {
+  void emitCBranch(std::ostream &output, bool cpp = false) const {
     for (const NativeRecord &record : records) {
       output << "/* " << record.info->qualifiedName << " */\n"
              << "typedef "
@@ -794,7 +853,7 @@ private:
       output << '\n';
     }
     for (const std::size_t index : orderedCallbackAliases) {
-      emitCCallbackAlias(output, callbackAliases[index]);
+      emitCCallbackAlias(output, callbackAliases[index], cpp);
     }
     if (!callbackAliases.empty()) {
       output << '\n';
@@ -808,17 +867,17 @@ private:
         output << "  "
                << fieldDeclaration(
                       field,
-                      [this](const SemanticType &type) { return cType(type); })
+                      [this, cpp](const SemanticType &type) { return cType(type, cpp); })
                << ";\n";
       }
       output << "};\n\n";
     }
     for (const NativeRecord &record : records) {
       const MirCAbiRecordLayout &layout = *record.info->cAbiLayout;
-      output << "_Static_assert(sizeof(" << record.cName
+      output << (cpp ? "static_assert(sizeof(" : "_Static_assert(sizeof(") << record.cName
              << ") == " << layout.sizeBytes
              << ", \"GTI native record size mismatch\");\n"
-             << "_Static_assert(_Alignof(" << record.cName
+             << (cpp ? "static_assert(alignof(" : "_Static_assert(_Alignof(") << record.cName
              << ") == " << layout.abiAlignmentBytes
              << ", \"GTI native record alignment mismatch\");\n";
       for (const MirCAbiRecordFieldLayout &field : layout.fields) {
@@ -827,7 +886,7 @@ private:
           throw std::logic_error(
               "checked C ABI field symbol is unavailable to native header");
         }
-        output << "_Static_assert(offsetof(" << record.cName << ", "
+        output << (cpp ? "static_assert(offsetof(" : "_Static_assert(offsetof(") << record.cName << ", "
                << symbol->name << ") == " << field.offsetBytes
                << ", \"GTI native record field offset mismatch\");\n";
       }
@@ -844,6 +903,24 @@ private:
       emitVariableDeclaration(
           output, variable,
           [this](const SemanticType &type) { return cType(type); });
+    }
+    emitEmbeddingExports(output, false);
+  }
+
+  void emitEmbeddingExports(std::ostream &output, bool cpp) const {
+    if (!program.embeddingPlan())
+      return;
+    const auto type = [&](const SemanticType &value) {
+      return cpp ? cppType(value) : cType(value);
+    };
+    for (const auto &selected : program.embeddingPlan()->exports) {
+      output << "gti_embed_status_v1 " << selected.symbol
+             << "(gti_context_v1 *context";
+      for (std::size_t i = 0; i < selected.parameterTypes.size(); ++i)
+        output << ", " << type(selected.parameterTypes[i]) << " argument" << i;
+      if (selected.returnType != SemanticType::Void)
+        output << ", " << type(selected.returnType) << " *out_result";
+      output << ", gti_failure_record_v1 *out_failure);\n";
     }
   }
 
@@ -873,6 +950,11 @@ private:
 };
 
 } // namespace
+
+std::string nativeEmbeddingSignature(
+    const LoweredProgram &program, const LoweredEmbeddingExport &selected) {
+  return NativeHeaderEmitter(program).signature(selected);
+}
 
 BackendArtifact NativeHeaderBackend::generate(LoweredProgram program) {
   std::vector<LoweredProgramIssue> issues;

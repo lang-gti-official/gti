@@ -371,6 +371,66 @@ void negativeChecks(Session &session) {
 // This is an isolated boundary/transport oracle, not GTI body coverage. Exact
 // sealed callback targets get deliberately tiny private-ABI test bodies here.
 void emitCallbackProbes(Session &session, bool concurrent) {
+  const auto &program = session.program().mir();
+  const auto &targetInfo = session.program().target();
+  unsigned conversions = 0;
+  for (const auto &adapter : program.nativeCallbackAdapters()) {
+    require(nativeCCallbackContract(program, targetInfo, adapter),
+            "callback requires its exact sealed target, ABI and attachment");
+    const auto malformed = [&](auto change) {
+      auto forged = adapter;
+      change(forged);
+      require(!nativeCCallbackContract(program, targetInfo, forged),
+              "a forged callback contract must reject before emission");
+    };
+    malformed([](auto &value) { value.id = 0; });
+    malformed([](auto &value) { value.target = 0; });
+    malformed([](auto &value) { value.type = SemanticType::Int32; });
+    malformed([](auto &value) {
+      value.targetMayRaiseDefinedFailure = !value.targetMayRaiseDefinedFailure;
+    });
+    malformed([](auto &value) { value.catchesNativeExceptions = false; });
+    malformed([](auto &value) {
+      value.cThreadCallback = value.cThreadCallback == CThreadCallbackKind::None
+                                  ? CThreadCallbackKind::ThreadConfined
+                                  : CThreadCallbackKind::None;
+    });
+  }
+  for (const auto &function : program.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.nativeCallbackAdapter)
+          continue;
+        require(nativeCCallbackStageContract(program, targetInfo, function.body,
+                                             instruction),
+                "actual callback conversion must bind the exact source stage");
+        ++conversions;
+        const auto malformed = [&](auto change) {
+          auto body = function.body;
+          auto &changedBlock = *std::find_if(
+              body.blocks.begin(), body.blocks.end(),
+              [&](const auto &candidate) { return candidate.id == block.id; });
+          auto &changed = *std::find_if(changedBlock.instructions.begin(),
+                                        changedBlock.instructions.end(),
+                                        [&](const auto &candidate) {
+                                          return candidate.id == instruction.id;
+                                        });
+          change(changed);
+          require(
+              !nativeCCallbackStageContract(program, targetInfo, body, changed),
+              "a matching forged body row cannot grant callback conversion");
+        };
+        malformed([](auto &value) { value.kind = MirInstructionKind::Load; });
+        malformed([](auto &value) { value.operation = MirOperation::None; });
+        malformed([](auto &value) { value.result.reset(); });
+        malformed([](auto &value) { value.info.type = SemanticType::Int32; });
+        malformed([](auto &value) { value.rawMemoryAccess = true; });
+        malformed([](auto &value) { value.functionTarget = 1; });
+        malformed([](auto &value) { value.nativeCallbackAdapter = 0; });
+        malformed([](auto &value) { value.operands.push_back({}); });
+      }
+  require(conversions >= program.nativeCallbackAdapters().size(),
+          "the callback oracle must include real source conversion stages");
   Failures failures(session);
   emitNativeCCallbacks(session, failures);
   require(session.program().mir().nativeCallbackAdapters().size() ==
@@ -744,6 +804,132 @@ void emitCountedTextProbes(Session &session) {
           "counted C oracle must include unrelated and actual runtime clients");
 }
 
+void checkNativeResultInputs(Session &session) {
+  const auto &program = session.program().mir();
+  const auto &target = session.program().target();
+  unsigned inputs = 0;
+  for (const auto &function : program.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (!nativeCResultInputContract(program, target, function.body, stage))
+          continue;
+        ++inputs;
+        const auto malformed = [&](const auto &mutate) {
+          auto body = function.body;
+          MirInstruction *selected = nullptr;
+          for (auto &block : body.blocks)
+            for (auto &candidate : block.instructions)
+              if (candidate.id == stage.id)
+                selected = &candidate;
+          require(selected != nullptr, "missing cloned native result input");
+          mutate(body, *selected);
+          require(!nativeCResultInputContract(program, target, body, *selected),
+                  "mutated native result input must reject");
+        };
+        malformed([](auto &, auto &value) { value.callSite = 0; });
+        malformed([](auto &, auto &value) { value.callInputIndex += 100; });
+        malformed([](auto &, auto &value) { value.hirValue = 0; });
+        malformed([](auto &, auto &value) { value.rawMemoryAccess = true; });
+        malformed([](auto &, auto &value) {
+          value.unsafeOperation = UnsafeOperationKind::RawDereference;
+        });
+        malformed([](auto &, auto &value) {
+          value.callInputKind = HirCallInputKind::MutableBorrow;
+        });
+        malformed([](auto &, auto &value) { value.operands.front().value = 0; });
+        malformed([](auto &body, auto &value) {
+          for (auto &block : body.blocks)
+            for (auto &producer : block.instructions)
+              if (producer.result == value.operands.front().value)
+                producer.hirValue = 0;
+        });
+        malformed([](auto &body, auto &value) {
+          for (auto &block : body.blocks)
+            for (auto &producer : block.instructions)
+              if (producer.result == value.operands.front().value)
+                producer.nativeCalleeType.reset();
+        });
+        malformed([](auto &body, auto &value) {
+          for (auto &block : body.blocks)
+            for (auto &call : block.instructions)
+              if (call.kind == MirInstructionKind::Call &&
+                  call.callSite == value.callSite)
+                call.operands[value.callInputIndex].value = 0;
+        });
+      }
+  require(inputs != 0, "native result fixture needs exact staged C results");
+}
+
+void checkFunctionBorrows(Session &session) {
+  const auto &program = session.program().mir();
+  const auto &target = session.program().target();
+  unsigned reads = 0, writes = 0;
+  for (const auto &function : program.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (!nativeCFunctionBorrowInputContract(program, target, function.body,
+                                                stage))
+          continue;
+        (stage.callInputKind == HirCallInputKind::MutableBorrow ? writes : reads)++;
+        const auto malformed = [&](const auto &mutate) {
+          auto body = function.body;
+          MirInstruction *selected = nullptr;
+          for (auto &block : body.blocks)
+            for (auto &candidate : block.instructions)
+              if (candidate.id == stage.id)
+                selected = &candidate;
+          require(selected != nullptr, "missing cloned native borrow input");
+          mutate(body, *selected);
+          require(!nativeCFunctionBorrowInputContract(program, target, body,
+                                                      *selected),
+                  "mutated native function borrow must reject");
+        };
+        malformed([](auto &, auto &value) { value.callSite = 0; });
+        malformed([](auto &, auto &value) { value.callInputIndex += 100; });
+        malformed([](auto &, auto &value) {
+          value.callInputRole = MirCallInputRole::Receiver;
+        });
+        malformed([](auto &, auto &value) {
+          value.callInputKind = HirCallInputKind::Value;
+        });
+        malformed([](auto &, auto &value) { value.rawMemoryAccess = true; });
+        malformed([](auto &, auto &value) {
+          value.unsafeOperation = UnsafeOperationKind::ForeignPointerCall;
+        });
+        malformed([](auto &, auto &value) {
+          value.operands.front().kind = MirOperandKind::Copy;
+        });
+        malformed([](auto &, auto &value) { value.operands.front().place = 0; });
+        malformed([](auto &, auto &value) {
+          value.info.type.arguments.front() = SemanticType::NativeFunction;
+        });
+        malformed([](auto &body, auto &value) {
+          for (auto &result : body.values)
+            if (result.id == *value.result)
+              result.definition = 0;
+        });
+        malformed([](auto &body, auto &value) {
+          for (auto &block : body.blocks)
+            for (auto &call : block.instructions)
+              if (call.kind == MirInstructionKind::Call &&
+                  call.callSite == value.callSite)
+                call.operands[value.callInputIndex].value = 0;
+        });
+        if (stage.callInputKind == HirCallInputKind::MutableBorrow)
+          malformed([](auto &body, auto &value) {
+            for (auto &place : body.places)
+              if (place.id == value.operands.front().place)
+                place.access = AccessMode::ReadOnly;
+          });
+        auto detached = stage;
+        detached.defaultArgument = !detached.defaultArgument;
+        require(!nativeCFunctionBorrowInputContract(program, target,
+                                                     function.body, detached),
+                "detached native borrow input must match its canonical stage");
+      }
+  require(reads && writes, "native borrow fixture needs read and mutable inputs");
+}
+
 void emitSourcePreflight(Session &session,
                          const VerifiedLoweredProgram &input) {
   const auto &program = session.program().mir();
@@ -892,6 +1078,116 @@ void emitStorageProbes(Session &session) {
 
 } // namespace
 
+void checkAggregateImports(Session &session) {
+  const auto &program = session.program().mir();
+  const auto &target = session.program().target();
+  unsigned imports = 0, calls = 0;
+  bool callbackField = false;
+  for (const auto &function : program.functionInstances()) {
+    if (function.externalSymbol == "native_unadmitted_hook") {
+      require(nativeCDeclarationContract(program, target, function) &&
+                  !nativeCAggregateImportContract(program, target, function),
+              "physical native layout cannot admit a function-pointer field");
+      callbackField = true;
+    }
+    if (nativeCAggregateImportContract(program, target, function)) {
+      ++imports;
+      require(
+          !nativeCScalarImportContract(program, target, function) &&
+              !nativeCCountedInputContract(program, target, function) &&
+              !nativeCScalarFunctionImportContract(program, target, function),
+          "aggregate import witness cannot relabel scalar/count/getter "
+          "families");
+      const auto plan = planNativeCFunction(session, function.returnType,
+                                            function.parameterTypes);
+      verifyNativeCImport(*session.abi().declareFunction(function.id),
+                          plan.signature);
+      for (unsigned mutation = 0; mutation < 5; ++mutation) {
+        auto invalid = function;
+        if (mutation == 0)
+          invalid.externalSymbol += "_forged";
+        if (mutation == 1)
+          invalid.definitionKind = MirDefinitionKind::RuntimeBinding;
+        if (mutation == 2)
+          invalid.returnType = SemanticType::Unknown;
+        if (mutation == 3)
+          invalid.parameterTypes.push_back(SemanticType::Int32);
+        if (mutation == 4)
+          invalid.linkage = LanguageLinkage::Gti;
+        require(!nativeCAggregateImportContract(program, target, invalid),
+                "forged aggregate declaration cannot acquire a native witness");
+      }
+    }
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *callee =
+            instruction.functionTarget
+                ? program.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (!callee ||
+            !nativeCAggregateImportContract(program, target, *callee))
+          continue;
+        require(
+            nativeCDirectCallContract(program, target, function.body,
+                                      instruction),
+            "aggregate calls consume the exact canonical staged C contract");
+        auto invalid = instruction;
+        ++invalid.callSite;
+        require(
+            !nativeCDirectCallContract(program, target, function.body, invalid),
+            "aggregate transport cannot accept mismatched staged inputs");
+        ++calls;
+      }
+  }
+  require(
+      imports >= 8 && calls >= 8 && callbackField,
+      "aggregate fixture must exercise multiple result and argument families");
+}
+
+void checkNativeBoundaryReachability(Session &session) {
+  const auto roots = reachableProgram(session.program());
+  require(!roots.conservative,
+          "verified native signatures must retain exact roots");
+  unsigned checked = 0;
+  auto malformed = session.program();
+  auto &functions = const_cast<std::vector<MirFunctionInstance> &>(
+      malformed.mir().functionInstances());
+  for (auto &function : functions) {
+    if (!roots.contains(MirBodyAddress{MirBodyKind::Function, function.id}))
+      continue;
+    for (auto &block : function.body.blocks)
+      for (auto &stage : block.instructions) {
+        if (stage.tombstone)
+          continue;
+        if (stage.nativeCallbackAdapter) {
+          const auto id = *stage.nativeCallbackAdapter;
+          const auto *adapter = malformed.mir().findNativeCallbackAdapter(id);
+          require(adapter &&
+                      roots.contains(MirBodyAddress{MirBodyKind::Function,
+                                                    adapter->target}) &&
+                      roots.contains(LoweredGeneratedItemIdentity{
+                          .kind = LoweredGeneratedItemKind::NativeInteropAdapter,
+                          .owner = id}),
+                  "a callback must retain its exact adapter and target body");
+          stage.nativeCallbackAdapter = 0;
+          require(reachableProgram(malformed).conservative,
+                  "a forged callback conversion must restore conservative roots");
+          stage.nativeCallbackAdapter = id;
+          ++checked;
+        }
+        if (stage.nativeCalleeType) {
+          ++stage.callSite;
+          require(reachableProgram(malformed).conservative,
+                  "a forged native signature stage must restore conservative roots");
+          --stage.callSite;
+          ++checked;
+        }
+      }
+  }
+  require(checked != 0,
+          "native closure fixture must exercise a call or callback");
+}
+
 void checkNativeReachability(Session &session, bool conservative) {
   const auto roots = reachableProgram(session.program());
   require(roots.conservative == conservative,
@@ -943,15 +1239,252 @@ void checkNativeReachability(Session &session, bool conservative) {
     for (auto &block : function.body.blocks)
       for (auto &instruction : block.instructions)
         if (instruction.nativeCalleeType) {
+          const bool required = roots.contains(
+              MirBodyAddress{MirBodyKind::Function, function.id});
           ++instruction.callSite;
-          require(reachableProgram(exported).conservative,
-                  "malformed staged native calls retain conservative closure");
+          require(reachableProgram(exported).conservative == required,
+                  "only malformed required native calls broaden the closure");
           --instruction.callSite;
-          checkedMalformed = true;
+          checkedMalformed |= required;
         }
   }
   require(checkedExport && checkedMalformed,
           "root controls must exercise source-C and malformed call fallbacks");
+}
+
+void checkStorageImports(Session &session,
+                         const VerifiedLoweredProgram &input) {
+  const auto &program = session.program().mir();
+  const auto &target = session.program().target();
+  std::map<SymbolId, llvm::GlobalVariable *> globals;
+  declareNativeCStorage(session, globals);
+  for (const auto &identity : program.classInstances()) {
+    const auto pointer = SemanticType::rawPointerTo(identity.type);
+    require(
+        nativeCOpaquePointerReferentContract(program, target, pointer) ==
+            identity.cOpaqueHandle,
+        "opaque witness must select the exact sealed pointer-only identity");
+  }
+  for (const auto &storage : program.foreignStorageDeclarations()) {
+    require(nativeCStorageImportContract(program, target, storage),
+            "public storage requires its exact bounded import witness");
+    if (nativeCOpaquePointerReferentContract(program, target, storage.type)) {
+      const auto &referent = storage.type.arguments.front();
+      require(
+          !nativeCValueContract(program, target, referent,
+                                NativeCValueRole::Storage) &&
+              !nativeCOpaquePointerReferentContract(program, target, referent),
+          "pointer-only identity must not admit an opaque object value");
+      auto pointer = storage.type;
+      pointer.arguments.front() = SemanticType::Int32;
+      require(!nativeCOpaquePointerReferentContract(program, target, pointer),
+              "an ordinary pointer is not an opaque identity witness");
+      pointer = storage.type;
+      pointer.arguments.push_back(referent);
+      require(!nativeCOpaquePointerReferentContract(program, target, pointer),
+              "a malformed pointer cannot authorize opaque type metadata");
+      auto unsupportedTarget = target;
+      unsupportedTarget.arch = "unsupported";
+      require(!nativeCOpaquePointerReferentContract(program, unsupportedTarget,
+                                                    storage.type),
+              "opaque pointer representation remains target bound");
+    }
+    auto forged = storage;
+    forged.externalSymbol += "_forged";
+    require(!nativeCStorageImportContract(program, target, forged),
+            "forged foreign storage name must reject");
+    forged = storage;
+    forged.type = SemanticType::StringView;
+    require(!nativeCStorageImportContract(program, target, forged),
+            "forged foreign storage type must reject");
+    auto *global = globals.at(storage.symbol);
+    require(!global->isConstant() && !global->hasInitializer() &&
+                global->hasExternalLinkage() &&
+                global->getAlign() ==
+                    session.layouts().get(storage.type).alignment,
+            "foreign storage is external nonconstant aligned data, never GTI "
+            "init/drop");
+  }
+  rejects<std::logic_error>([&] { declareNativeCStorage(session, globals); });
+  require(!program.foreignStorageDeclarations().empty(),
+          "missing foreign storage control");
+  Session collision(input, session.options());
+  static_cast<void>(llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(collision.context()),
+                              false),
+      llvm::GlobalValue::ExternalLinkage,
+      program.foreignStorageDeclarations().front().externalSymbol,
+      collision.module()));
+  std::map<SymbolId, llvm::GlobalVariable *> conflicting;
+  rejects<std::logic_error>(
+      [&] { declareNativeCStorage(collision, conflicting); });
+  unsigned loads = 0, assigns = 0, modifies = 0;
+  for (const auto &function : program.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        if ((stage.unsafeOperation != UnsafeOperationKind::ForeignStorage &&
+             stage.unsafeOperation != UnsafeOperationKind::UnionMember) ||
+            stage.kind == MirInstructionKind::Lifecycle)
+          continue;
+        const bool unionAccess =
+            stage.unsafeOperation == UnsafeOperationKind::UnionMember;
+        const auto foreignPlace = [&](MirPlaceId id) {
+          const auto *place = function.body.findPlace(id);
+          return place && place->foreignStorage;
+        };
+        if (unionAccess &&
+            !(stage.destination && foreignPlace(*stage.destination)) &&
+            !std::any_of(stage.operands.begin(), stage.operands.end(),
+                         [&](const auto &operand) {
+                           return foreignPlace(operand.place);
+                         }))
+          continue;
+        const auto accessContract = unionAccess
+                                        ? nativeCStorageUnionAccessContract
+                                        : nativeCStorageAccessContract;
+        std::cout << "storage stage " << function.id << '/' << block.id << '/'
+                  << stage.id << " kind=" << static_cast<unsigned>(stage.kind)
+                  << " witness="
+                  << accessContract(program, target, function.body, stage)
+                  << '\n';
+        require(
+            accessContract(program, target, function.body, stage),
+            "actual foreign storage stage must retain exact structural proof");
+        if (loads == 0 && assigns == 0) {
+          const auto malformed = [&](auto change) {
+            auto body = function.body;
+            MirInstruction *selected = nullptr;
+            for (auto &block : body.blocks)
+              for (auto &candidate : block.instructions)
+                if (candidate.id == stage.id)
+                  selected = &candidate;
+            require(selected != nullptr, "missing cloned storage stage");
+            change(body, *selected);
+            require(
+                !accessContract(program, target, body, *selected),
+                "forged or mixed storage stage cannot acquire raw permission");
+          };
+          malformed([](auto &, auto &value) {
+            value.unsafeOperation = UnsafeOperationKind::RawDereference;
+          });
+          malformed([&](auto &, auto &value) {
+            value.unsafeOperation = unionAccess
+                                        ? UnsafeOperationKind::ForeignStorage
+                                        : UnsafeOperationKind::UnionMember;
+          });
+          malformed([](auto &, auto &value) {
+            value.kind = MirInstructionKind::Call;
+          });
+          malformed([](auto &, auto &value) {
+            value.intrinsic = IntrinsicKind::ObjectDestroy;
+          });
+          malformed([](auto &, auto &value) { value.functionTarget = 1; });
+          malformed([](auto &, auto &value) { value.rawMemoryAccess = false; });
+          malformed([](auto &, auto &value) {
+            value.receiver = value.operands.front();
+          });
+          malformed([](auto &body, auto &value) {
+            auto extra = body.places.front();
+            extra.id = body.places.size() + 1;
+            extra.root = MirPlaceRootKind::Value;
+            extra.foreignStorage = false;
+            extra.capture = 0;
+            extra.type = SemanticType::Int32;
+            extra.projections = {{.kind = MirProjectionKind::RawDereference}};
+            body.places.push_back(extra);
+            value.operands.push_back({.kind = MirOperandKind::Copy,
+                                      .place = extra.id,
+                                      .type = extra.type});
+          });
+          malformed([](auto &body, auto &value) {
+            auto extra = body.places.front();
+            extra.id = body.places.size() + 1;
+            extra.root = MirPlaceRootKind::Symbol;
+            extra.foreignStorage = true;
+            extra.symbol = 0;
+            extra.capture = 0;
+            extra.type = SemanticType::Int32;
+            extra.projections.clear();
+            body.places.push_back(extra);
+            value.operands.push_back({.kind = MirOperandKind::Copy,
+                                      .place = extra.id,
+                                      .type = extra.type});
+          });
+          malformed([](auto &, auto &value) {
+            value.operands.push_back({.kind = MirOperandKind::Value,
+                                      .type = SemanticType::StringView});
+          });
+          for (const auto &place : function.body.places)
+            if (place.foreignStorage) {
+              require(
+                  nativeCStoragePlaceContract(program, target, function.body,
+                                              place),
+                  "actual foreign place must bind canonical root and storage");
+              auto forged = place;
+              forged.symbol = 0;
+              require(!nativeCStoragePlaceContract(program, target,
+                                                   function.body, forged),
+                      "forged storage symbol cannot acquire a place witness");
+              forged = place;
+              forged.capture = 1;
+              require(!nativeCStoragePlaceContract(program, target,
+                                                   function.body, forged),
+                      "foreign storage cannot grant capture policy");
+              forged = place;
+              forged.type = SemanticType::StringView;
+              require(!nativeCStoragePlaceContract(program, target,
+                                                   function.body, forged),
+                      "forged storage type cannot acquire a place witness");
+              forged = place;
+              forged.projections.push_back(
+                  {.kind = MirProjectionKind::Field, .field = 0});
+              require(!nativeCStoragePlaceContract(program, target,
+                                                   function.body, forged),
+                      "forged projection cannot acquire a place witness");
+              const auto malformedPlace = [&](auto change) {
+                auto body = function.body;
+                auto &changed =
+                    *std::find_if(body.places.begin(), body.places.end(),
+                                  [&](const auto &candidate) {
+                                    return candidate.id == place.id;
+                                  });
+                change(changed);
+                require(!nativeCStoragePlaceContract(program, target, body,
+                                                     changed),
+                        "a matching body row must still prove its exact "
+                        "projection");
+              };
+              malformedPlace(
+                  [](auto &value) { value.initiallyAvailable = false; });
+              malformedPlace([](auto &value) { value.binding = 1; });
+              malformedPlace(
+                  [](auto &value) { value.type = SemanticType::StringView; });
+              if (!place.projections.empty()) {
+                malformedPlace([](auto &value) {
+                  value.projections.front().kind =
+                      MirProjectionKind::RawDereference;
+                });
+                if (place.projections.front().kind == MirProjectionKind::Field)
+                  malformedPlace(
+                      [](auto &value) { value.projections.front().field = 0; });
+              }
+            }
+        }
+        loads += stage.kind == MirInstructionKind::Load;
+        assigns += stage.kind == MirInstructionKind::Assign;
+        modifies += stage.kind == MirInstructionKind::Modify;
+      }
+  const auto admission = planLlvmAdmission(input, session.options());
+  for (const auto &use : admission.requirements())
+    if (use.required && use.entry->state == LlvmCoverageState::Pending &&
+        (!use.implementedShape ||
+         use.implementedShape->state != LlvmCoverageState::Implemented))
+      std::cout << "remaining " << use.entry->key() << " block=" << use.block
+                << " instruction=" << use.instruction << '\n';
+  require(loads && assigns,
+          "storage fixture needs actual verified loads and assignments");
+  std::cout << "storage counts " << loads << '/' << assigns << '/' << modifies
+            << '\n';
 }
 
 int main(int argc, char **argv) {
@@ -959,18 +1492,30 @@ int main(int argc, char **argv) {
     const bool contracts = argc == 6 && std::string(argv[5]) == "--contracts";
     const bool preflight =
         argc == 6 && std::string(argv[5]) == "--source-preflight";
+    const bool storageContracts =
+        argc == 6 && std::string(argv[5]) == "--storage-contracts";
+    const bool borrowContracts =
+        argc == 6 && std::string(argv[5]) == "--borrow-contracts";
+    const bool resultContracts =
+        argc == 6 && std::string(argv[5]) == "--result-contracts";
     const bool storage = argc == 6 && std::string(argv[5]) == "--storage";
     const bool text = argc == 6 && std::string(argv[5]) == "--text-contracts";
+    const bool aggregates =
+        argc == 6 && std::string(argv[5]) == "--aggregate-contracts";
     const bool reachability =
         argc == 6 && std::string(argv[5]) == "--reachability";
+    const bool nativeReachability =
+        argc == 6 && std::string(argv[5]) == "--native-boundary-reachability";
     const bool conservative =
         argc == 6 && std::string(argv[5]) == "--conservative-reachability";
     const bool concurrent =
         argc == 6 && std::string(argv[5]) == "--thread-callbacks";
-    require(argc == 5 || (argc == 6 &&
-                          (std::string(argv[5]) == "--callbacks" ||
-                           concurrent || contracts || preflight || storage ||
-                           text || reachability || conservative)),
+    require(argc == 5 ||
+                (argc == 6 &&
+                 (std::string(argv[5]) == "--callbacks" || concurrent ||
+                  contracts || preflight || storage || text || aggregates ||
+                  reachability || nativeReachability || conservative ||
+                  storageContracts || borrowContracts || resultContracts)),
             "usage: test fixture.gti output.o output.ll O[0-3] "
             "[--callbacks|--thread-callbacks]");
     const auto input = fixture(argv[1], concurrent, argc == 6);
@@ -980,12 +1525,30 @@ int main(int argc, char **argv) {
         LlvmCodegenOptimization::None, LlvmCodegenOptimization::Less,
         LlvmCodegenOptimization::Default, LlvmCodegenOptimization::Aggressive};
     Session session(input, {.optimization = levels[level]});
+    if (nativeReachability) {
+      checkNativeBoundaryReachability(session);
+      std::cout << "PASS: exact callback and native signature roots\n";
+      return 0;
+    }
     if (reachability || conservative) {
       checkNativeReachability(session, conservative);
       std::cout << "PASS: exact native call dependency roots\n";
       return 0;
     }
-    if (text) {
+    if (borrowContracts || resultContracts) {
+      if (borrowContracts)
+        checkFunctionBorrows(session);
+      else
+        checkNativeResultInputs(session);
+      const auto admission = planLlvmAdmission(input, session.options());
+      require(!admission.firstUnsupported(), "native borrows need public admission");
+      lowerScalarProgram(session, admission);
+    } else if (storageContracts) {
+      checkStorageImports(session, input);
+    } else if (aggregates) {
+      checkAggregateImports(session);
+      emitSourcePreflight(session, input);
+    } else if (text) {
       emitCountedTextProbes(session);
     } else if (storage) {
       emitStorageProbes(session);
@@ -1021,9 +1584,12 @@ int main(int argc, char **argv) {
     require(output.good(), "cannot write object output");
     std::cout
         << "classifier/oracle object O" << level
-        << (text        ? ": public counted C input record contracts; "
-            : storage   ? ": exact foreign storage contracts; "
-            : preflight ? ": real GTI body native preflight; "
+        << (text         ? ": public counted C input record contracts; "
+            : storage    ? ": exact foreign storage contracts; "
+            : preflight  ? ": real GTI body native preflight; "
+            : aggregates ? ": exact passive aggregate import contracts; "
+            : storageContracts
+                ? ": exact foreign storage projection contracts; "
             : contracts ? ": exact declaration/call contracts; "
             : argc == 6
                 ? ": isolated callback boundary test bodies; "

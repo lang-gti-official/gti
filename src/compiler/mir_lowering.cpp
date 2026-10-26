@@ -341,6 +341,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .kind = instance.kind,
         .bases = instance.bases,
         .structuralBases = instance.bases,
+        .virtualDispatch = instance.virtualDispatch,
         .abstract = instance.abstract,
         .polymorphic = instance.polymorphic,
         .cAbiRecord = instance.cAbiRecord,
@@ -606,6 +607,33 @@ MirLowerer::lowerProgram(const HirProgram &source,
              &instance.initializers, nullptr, &instance, nullptr, nullptr,
              nullptr, compilerTrustedSourceUnit(source, instance.sourceUnit),
              constructorOwner)});
+    auto &lowered = result.program.constructors.back();
+    if (constructorOwner && constructorOwner->polymorphic &&
+        lowered.definitionKind == MirDefinitionKind::Source) {
+      const auto stateBase = std::find_if(
+          constructorOwner->bases.begin(), constructorOwner->bases.end(),
+          [](const auto &base) { return !base.interface; });
+      if (stateBase == constructorOwner->bases.end()) {
+        lowered.dispatchState =
+            MirConstructorDispatchState{.activeClass = constructorOwner->id};
+      } else {
+        for (const auto &block : lowered.body.blocks)
+          for (const auto &instruction : block.instructions) {
+            const auto *place =
+                instruction.destination
+                    ? lowered.body.findPlace(*instruction.destination)
+                    : nullptr;
+            if (instruction.kind == MirInstructionKind::InitializeBase &&
+                place && place->root == MirPlaceRootKind::This &&
+                place->projections.size() == 1 &&
+                place->projections.front().kind == MirProjectionKind::Base &&
+                place->projections.front().selection == stateBase->instance)
+              lowered.dispatchState = MirConstructorDispatchState{
+                  .activeClass = constructorOwner->id,
+                  .afterBaseInitialization = instruction.id};
+          }
+      }
+    }
   }
 
   result.program.destructors.reserve(source.destructorInstances().size());

@@ -1,10 +1,12 @@
 #include "../src/compiler/llvm/abi.h"
 #include "../src/compiler/llvm/body.h"
+#include "../src/compiler/llvm/memory_types.h"
 #include "../src/compiler/llvm/places.h"
 #include "../src/compiler/llvm/runtime_abi.h"
 #include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/llvm_backend.h"
 #include "gti/mir_verifier.h"
 #include "gti/runtime_execution.h"
 #include "gti/runtime_failure.h"
@@ -15,6 +17,7 @@
 #include <llvm/IR/GlobalAlias.h>
 #include <llvm/IR/IRBuilder.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -127,6 +130,18 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
   expect(array.addressOnly && array.size == 10 && array.stride == 2 &&
              array.alignment == 2,
          "arrays retain their exact stride and aggregate storage");
+  const auto pointerSlots = layouts.get(SemanticType::arrayOf(
+      SemanticType::rawPointerTo(SemanticType::Void), 3));
+  expect(pointerSlots.addressOnly && pointerSlots.size == 24 &&
+             pointerSlots.stride == 8 && pointerSlots.alignment == 8 &&
+             llvm::cast<llvm::ArrayType>(pointerSlots.storage)
+                 ->getElementType()->isPointerTy(),
+         "pointer arrays store exact pointer-width values, not pointee layouts");
+  const auto pointerGrid = layouts.get(SemanticType::arrayOf(
+      SemanticType::arrayOf(SemanticType::rawPointerTo(SemanticType::Int32), 3), 2));
+  expect(pointerGrid.size == 48 && pointerGrid.stride == 24 &&
+             pointerGrid.alignment == 8,
+         "nested pointer arrays preserve row stride and natural alignment");
   const auto empty =
       layouts.get(SemanticType::arrayOf(SemanticType::UInt32, 0));
   expect(empty.size == 0 && empty.alignment == 4,
@@ -255,6 +270,19 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
       declareRuntimeService(session, RuntimeService::BeginThreadLocals);
   expect(begin->arg_empty() && begin->getReturnType()->isVoidTy(),
          "startup is an actual C void entry");
+  expect(!begin->hasFnAttribute(llvm::Attribute::Cold),
+         "ordinary runtime startup is not classified as failure-only");
+  for (const auto service : {RuntimeService::EnterFailureCleanup,
+                             RuntimeService::LeaveFailureCleanup,
+                             RuntimeService::CheckFailureCleanup}) {
+    const auto *cleanup = declareRuntimeService(session, service);
+    expect(cleanup->hasFnAttribute(llvm::Attribute::Cold) &&
+               !cleanup->hasFnAttribute(llvm::Attribute::NoUnwind) &&
+               !cleanup->doesNotReturn(),
+           "failure cleanup cost hints preserve return and unwind contracts");
+    expect(declareRuntimeService(session, service) == cleanup,
+           "repeated runtime declaration retains the canonical cost policy");
+  }
   const auto *terminate =
       declareRuntimeService(session, RuntimeService::TerminateFailure);
   expect(terminate->arg_size() == 4 && terminate->doesNotReturn(),
@@ -680,6 +708,200 @@ int main(void) {
                .c_str());
   }
 }
+void testConservativeClassObject() {
+  const auto frontend = Frontend().analyze("llvm-rootless-class-object.gti", R"(
+class Value {
+  int data;
+public:
+  Value(int input) : data(input) {}
+  int read() { return this.data; }
+};
+int inspect(int input) { Value value{input}; return value.read(); }
+)");
+  expect(frontend.canGenerateCode(),
+         "rootless object consumer source verifies");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(lowered, issues);
+  if (!input)
+    throw std::runtime_error("rootless object consumer lost its source seal");
+  const auto admission = planLlvmAdmission(*input);
+  expect(admission.admitted() &&
+             admission.closure() == LlvmAdmissionClosure::AllExecutableBodies,
+         "real public object source keeps its complete conservative inventory");
+  Session proof(*input, {});
+  const auto target = std::find_if(
+      proof.program().mir().functionInstances().begin(),
+      proof.program().mir().functionInstances().end(),
+      [&](const auto &function) {
+        const auto *declaration =
+            proof.program().findFunctionDeclaration(function.declaration);
+        return declaration && declaration->qualifiedName == "inspect";
+      });
+  if (target == proof.program().mir().functionInstances().end())
+    throw std::runtime_error(
+        "rootless object consumer lost its selected GTI target");
+  const auto domain = constantIntegerDomain(SemanticType::Int32);
+  const bool sourceSignature =
+      target->returnType == SemanticType::Int32 &&
+      target->parameterTypes ==
+          std::vector<SemanticType>{SemanticType::Int32} &&
+      !target->mayRaiseDefinedFailure && !target->tracksCaller &&
+      !target->owner && !target->neverReturns && domain &&
+      domain->width == 32 && domain->signedValue &&
+      proof.layouts().get(SemanticType::Int32).size == 4;
+  expect(sourceSignature, "consumer target is independently proven infallible "
+                          "signed int32 -> int32");
+  if (!sourceSignature)
+    return; // Never strip a failure/caller/receiver channel to obtain C
+            // compatibility.
+  const auto gti = proof.abi().gti(target->returnType, target->parameterTypes,
+                                   target->mayRaiseDefinedFailure, false,
+                                   target->tracksCaller);
+  const auto nativeC =
+      proof.abi().nativeC(target->returnType, target->parameterTypes);
+  auto *function = proof.abi().declareFunction(target->id);
+  auto *cDeclaration =
+      llvm::Function::Create(nativeC.type, llvm::GlobalValue::ExternalLinkage,
+                             "consumer.signature.proof", proof.module());
+  nativeC.applyTo(*cDeclaration);
+  const bool compatible =
+      gti == nativeC && !gti.statusResult && !gti.resultDestination &&
+      !gti.failureDestination && gti.parameters.size() == 1 &&
+      gti.parameters[0].channel == AbiChannel::Argument &&
+      gti.parameters[0].sourceIndex == 0 && !gti.parameters[0].indirect &&
+      gti.type->getReturnType()->isIntegerTy(32) &&
+      gti.type->getParamType(0)->isIntegerTy(32) &&
+      function->getCallingConv() == llvm::CallingConv::C &&
+      function->getCallingConv() == cDeclaration->getCallingConv() &&
+      function->getFunctionType() == cDeclaration->getFunctionType() &&
+      function->getAttributes() == cDeclaration->getAttributes();
+  expect(compatible, "central GTI/C plans agree on complete physical channels, "
+                     "attributes, extensions and calling convention");
+  cDeclaration->eraseFromParent();
+  if (!compatible)
+    return;
+  const std::string symbol = function->getName().str();
+  // This tests one planner-proved scalar compatibility, not a stable GTI C
+  // export or Library/Embedding ABI. Actual bytes come from public generate.
+  namespace fs = std::filesystem;
+  const auto root =
+      fs::temp_directory_path() /
+      ("gti-rootless-object-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directory(root);
+  struct Cleanup {
+    fs::path root;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(root, ignored);
+    }
+  } cleanup{root};
+  const auto consumer = root / "consumer.c";
+  expect(driver::writeArtifact(
+             consumer, "#include <stdint.h>\nextern int32_t " + symbol +
+                           "(int32_t);\nint main(void) { if (" + symbol +
+                           "(25) != 25) return 1; if (" + symbol +
+                           "(-7) != -7) return 2; return 0; }\n") ==
+             driver::ArtifactWriteStatus::Success,
+         "write planner-proved rootless object consumer");
+  driver::NativeToolchain toolchain;
+  const auto compiled = driver::invokeProcess(
+      toolchain.command(driver::NativeCCompileRequest(
+          driver::discoverCCompiler(), consumer, root / "consumer.o",
+          driver::CStandard::C17, OptimizationLevel::O2, {}, {})),
+      {.timeout = std::chrono::seconds(30), .isolateProcessGroup = true});
+  if (!compiled.succeeded())
+    std::cerr << compiled.output;
+  expect(compiled.succeeded(), "compile the bounded C17 object consumer");
+  if (!compiled.succeeded())
+    return;
+  fs::path published;
+  std::string previous;
+  for (const auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
+    const auto object = LlvmBackend({.optimization = level}).generate(lowered);
+    published = root / (level == LlvmCodegenOptimization::None ? "source-O0.o"
+                                                               : "source-O3.o");
+    expect(object.kind == BackendArtifactKind::Object &&
+               driver::writeArtifact(published, object.contents) ==
+                   driver::ArtifactWriteStatus::Success,
+           "publish the actual public backend's ordinary-class object");
+    driver::NativeInputs inputs;
+    inputs.libraryFiles.push_back(root / "consumer.o");
+    const auto executable =
+        root / (level == LlvmCodegenOptimization::None ? "run-O0" : "run-O3");
+    const auto linked = driver::invokeProcess(
+        toolchain.command(driver::NativeLinkRequest(
+            driver::discoverNativeCompiler(), published, executable, inputs)),
+        {.timeout = std::chrono::seconds(30), .isolateProcessGroup = true});
+    if (!linked.succeeded())
+      std::cerr << linked.output;
+    expect(linked.succeeded(),
+           "link the unmodified public ordinary-class object");
+    if (linked.succeeded()) {
+      const auto run = driver::invokeProcess(
+          {executable.string()}, {.captureSuccessfulOutput = true,
+                                  .timeout = std::chrono::seconds(30),
+                                  .isolateProcessGroup = true});
+      if (!run.succeeded())
+        std::cerr << run.output;
+      expect(run.succeeded() && run.output.empty(),
+             "O0/O3 execute actual constructor/getter observations 25 and -7");
+    }
+    previous = object.contents;
+  }
+  const auto unsupported =
+      Frontend().analyze("llvm-rootless-pending-payload.gti", R"(
+enum class Choice { empty, held(int value) };
+class Value {
+  Choice data;
+public:
+  Value(int input) : data(Choice::held(input)) {}
+  int read() { return 0; }
+};
+int inspect(int input) { Value value{input}; return value.read(); }
+)");
+  expect(unsupported.canGenerateCode(),
+         "negative object source has valid class storage and payload syntax");
+  if (unsupported.canGenerateCode()) {
+    const auto bad =
+        gti_test::lowerProgram(unsupported, unsupported.mir, unsupported.mir);
+    std::vector<LoweredProgramIssue> badIssues;
+    const auto badVerified = verifiedLoweredProgram(bad, badIssues);
+    expect(badVerified.has_value(),
+           "pending payload negative retains its verified lowered snapshot");
+    if (!badVerified)
+      return;
+    const auto badAdmission = planLlvmAdmission(*badVerified);
+    expect(!badAdmission.admitted() &&
+               std::any_of(badAdmission.requirements().begin(),
+                           badAdmission.requirements().end(),
+                           [](const auto &use) {
+                             return use.required &&
+                                    use.entry->key() == "Shape.PayloadEnum" &&
+                                    !use.implementedShape;
+                           }),
+           "payload generation remains blocked by its exact pending coverage "
+           "requirement");
+    rejects<BackendUnsupportedError>(
+        [&] {
+          const auto object = LlvmBackend().generate(bad);
+          static_cast<void>(driver::writeArtifact(published, object.contents));
+        },
+        "pending payload generation rejects before replacing an existing "
+        "object");
+    std::ifstream stream(published, std::ios::binary);
+    const std::string retained{std::istreambuf_iterator<char>(stream), {}};
+    expect(retained == previous,
+           "a rejected required body leaves previous artifact bytes unchanged");
+  }
+}
+
 // Real source -> verified lowered bodies -> private native body component.
 // Admission is tested separately; this does not grant a public coverage row.
 void testClassBodyComponent() {
@@ -829,7 +1051,7 @@ int main() {
         LlvmCodegenOptimization::Default,
         LlvmCodegenOptimization::Aggressive}) {
     Session session(*program, {.optimization = level});
-    const auto admission = planLlvmAdmission(*program);
+    const auto admission = planLlvmAdmission(*program, session.options());
     expect(admission.admitted(), "real class component has public admission");
     lowerScalarProgram(session, admission);
     auto *registration = llvm::StructType::getTypeByName(
@@ -1056,8 +1278,9 @@ int main() { Pair value = create<Pair>(20, 22); return value.sum() == 42 ? 0 : 1
     for (const auto level :
          {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
       try {
-        Session session(*program, {.optimization = level});
-        const auto admission = planLlvmAdmission(*program);
+        const LlvmBackendOptions options{.optimization = level};
+        const auto admission = planLlvmAdmission(*program, options);
+        Session session(*program, options);
         expect(admission.admitted(),
                "concrete pack aliases have native admission");
         lowerScalarProgram(session, admission);
@@ -1083,6 +1306,215 @@ int main() { Pair value = create<Pair>(20, 22); return value.sum() == 42 ? 0 : 1
         expect(false, "verified aliases must not consume additional ABI lanes");
       }
     }
+  }
+}
+
+void testPolymorphicStorageLayout(const std::filesystem::path &repository) {
+  namespace fs = std::filesystem;
+  const auto library = fs::canonical(repository / "stdlib/std/polymorphic.gti");
+  std::ifstream input(library);
+  std::string source(std::istreambuf_iterator<char>{input}, {});
+  expect(input.good() || input.eof(), "read trusted polymorphic declarations");
+  source += "\nnamespace slot_layout_probe {\n"
+            "interface Target { int read(); };\nint run() {\n";
+  for (std::uint64_t alignment = 1; alignment <= 4096; alignment *= 2)
+    for (const auto capacity : {1, 4096})
+      source += "gti_internal::polymorphic_storage<Target, " +
+                std::to_string(capacity) + ", " + std::to_string(alignment) +
+                "> slot_" + std::to_string(capacity) + "_" +
+                std::to_string(alignment) + "{};\n";
+  source += "return 0; } }\n";
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  auto frontend = Frontend(options).analyze(
+      repository / "tests/slot-layout-entry.gti",
+      "#include <std/polymorphic>\n"
+      "int main() { return slot_layout_probe::run(); }\n",
+      {repository / "stdlib/prelude.gti"}, {{library.string(), source}},
+      {repository / "stdlib"});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    throw std::runtime_error("invalid polymorphic slot layout source");
+  }
+  std::vector<LoweredProgramIssue> issues;
+  const auto program = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!program)
+    throw std::runtime_error("unverified polymorphic slot layout source");
+  Session session(*program, {});
+  const auto &mir = program->program().mir();
+  std::size_t count = 0;
+  for (const auto &owner : mir.classInstances()) {
+    if (owner.compilerCapability !=
+        CompilerCapabilityTypeKind::PolymorphicStorage)
+      continue;
+    ++count;
+    expect(polymorphicStorageRepresentation(mir, owner),
+           "real sealed capability has one concrete footprint");
+    const auto slot = session.layouts().polymorphicStorage(owner.type);
+    const auto layout = session.layouts().get(owner.type);
+    const auto pointer = session.dataLayout().getPointerSize();
+    const auto expectedAlignment = std::max<std::uint64_t>(
+        session.dataLayout().getPointerABIAlignment(0).value(),
+        slot.payloadAlignment);
+    const auto roundUp = [](std::uint64_t value, std::uint64_t alignment) {
+      return (value + alignment - 1) / alignment * alignment;
+    };
+    const auto payloadOffset = roundUp(2 * pointer, slot.payloadAlignment);
+    expect(layout.storage == slot.type.storage && layout.addressOnly &&
+               layout.alignment == expectedAlignment &&
+               layout.fieldOffsets.at(slot.operationsIndex) == 0 &&
+               layout.fieldOffsets.at(slot.interfaceIndex) == pointer &&
+               layout.fieldOffsets.at(slot.payloadIndex) == payloadOffset &&
+               layout.size ==
+                   roundUp(payloadOffset + slot.capacity, expectedAlignment) &&
+               layout.stride == layout.size,
+           "inline slot extent and payload alignment use target DataLayout");
+    auto *nested = llvm::StructType::get(
+        session.context(),
+        {llvm::Type::getInt8Ty(session.context()), layout.storage,
+         llvm::Type::getInt8Ty(session.context())});
+    const auto *nestedLayout = session.dataLayout().getStructLayout(nested);
+    expect(nestedLayout->getElementOffset(1) == expectedAlignment &&
+               nestedLayout->getElementOffset(2) ==
+                   expectedAlignment + layout.size &&
+               session.dataLayout().getABITypeAlign(nested).value() ==
+                   expectedAlignment,
+           "slot alignment survives ordinary containment without alloca "
+           "overrides");
+    auto invalid = owner;
+    invalid.compilerCapability = CompilerCapabilityTypeKind::None;
+    expect(!polymorphicStorageRepresentation(mir, invalid),
+           "nominal spelling without capability does not grant representation");
+    invalid = owner;
+    invalid.type.valueArguments[1] = CompileTimeValue::uint64(3);
+    expect(!polymorphicStorageRepresentation(mir, invalid),
+           "non-power-of-two alignment rejects");
+    invalid = owner;
+    invalid.type.valueArguments[0] = CompileTimeValue::uint64(0);
+    expect(!polymorphicStorageRepresentation(mir, invalid),
+           "zero capacity rejects");
+    invalid = owner;
+    invalid.type.valueArguments[0] = CompileTimeValue::uint64(4097);
+    expect(!polymorphicStorageRepresentation(mir, invalid),
+           "oversized capacity rejects");
+    invalid = owner;
+    invalid.type.arguments[0] = SemanticType::Int32;
+    expect(!polymorphicStorageRepresentation(mir, invalid),
+           "non-interface target rejects");
+    invalid = owner;
+    invalid.requiresActiveCleanup = true;
+    expect(!polymorphicStorageRepresentation(mir, invalid),
+           "active cleanup cannot use inert slot representation");
+  }
+  expect(count == 26,
+         "all capacities and supported alignment powers were tested");
+  expect(!planLlvmAdmission(*program).admitted(),
+         "layout alone does not admit unimplemented slot lifecycle operations");
+
+  // Native representation oracle only, not an alternative GTI body emitter.
+  // The external observer prevents alignment and payload accesses from being
+  // folded away based solely on LLVM's own layout assumptions.
+  const auto root =
+      fs::temp_directory_path() /
+      ("gti-slot-layout-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directory(root);
+  struct Cleanup {
+    fs::path root;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(root, ignored);
+    }
+  } cleanup{root};
+  const auto consumer = root / "consumer.c";
+  expect(driver::writeArtifact(consumer, R"(
+#include <stdint.h>
+#include <stddef.h>
+extern int gti_slot_probe(void);
+int gti_slot_observe(void *slot, void *payload, uint64_t size,
+                     uint64_t alignment, uint64_t capacity) {
+  uint64_t owner_align = alignment > _Alignof(void*) ? alignment : _Alignof(void*);
+  uint64_t offset = (2 * sizeof(void*) + alignment - 1) / alignment * alignment;
+  uint64_t expected = (offset + capacity + owner_align - 1) / owner_align * owner_align;
+  if ((uintptr_t)slot % owner_align || (uintptr_t)payload % alignment ||
+      (unsigned char*)payload - (unsigned char*)slot != (ptrdiff_t)offset ||
+      size != expected) return 1;
+  ((unsigned char*)payload)[0] = 91;
+  ((unsigned char*)payload)[capacity - 1] = 92;
+  return 0;
+}
+int main(void) { return gti_slot_probe(); }
+)") == driver::ArtifactWriteStatus::Success,
+         "write inline slot C observer");
+  driver::NativeToolchain toolchain;
+  const auto cobject = root / "consumer.o";
+  const auto compiled = toolchain.invoke(driver::NativeCCompileRequest(
+      driver::discoverCCompiler(), consumer, cobject, driver::CStandard::C17,
+      OptimizationLevel::O2, {}, {}));
+  expect(compiled.succeeded(), "compile inline slot C observer");
+  if (!compiled.succeeded())
+    return;
+  for (const auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
+    Session native(*program, {.optimization = level});
+    const auto plan = native.abi().nativeC(SemanticType::Int32, {});
+    auto *probe =
+        llvm::Function::Create(plan.type, llvm::GlobalValue::ExternalLinkage,
+                               "gti_slot_probe", native.module());
+    plan.applyTo(*probe);
+    const std::vector<SemanticType> parameters{
+        SemanticType::rawPointerTo(SemanticType::UInt8),
+        SemanticType::rawPointerTo(SemanticType::UInt8), SemanticType::UInt64,
+        SemanticType::UInt64, SemanticType::UInt64};
+    const auto observerPlan =
+        native.abi().nativeC(SemanticType::Int32, parameters);
+    auto *observer = llvm::Function::Create(
+        observerPlan.type, llvm::GlobalValue::ExternalLinkage,
+        "gti_slot_observe", native.module());
+    observerPlan.applyTo(*observer);
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(native.context(), "entry", probe));
+    llvm::Value *result = ir.getInt32(0);
+    for (const auto &owner : mir.classInstances()) {
+      if (!polymorphicStorageRepresentation(mir, owner))
+        continue;
+      const auto slot = native.layouts().polymorphicStorage(owner.type);
+      auto *address = ir.CreateAlloca(slot.type.storage);
+      auto *payload =
+          ir.CreateStructGEP(slot.type.storage, address, slot.payloadIndex);
+      auto *call = ir.CreateCall(observer,
+                                 {address, payload, ir.getInt64(slot.type.size),
+                                  ir.getInt64(slot.payloadAlignment),
+                                  ir.getInt64(slot.capacity)});
+      observerPlan.applyTo(*call);
+      auto *last = ir.CreateInBoundsGEP(ir.getInt8Ty(), payload,
+                                        ir.getInt64(slot.capacity - 1));
+      auto *actual =
+          ir.CreateZExt(ir.CreateLoad(ir.getInt8Ty(), last), ir.getInt32Ty());
+      result = ir.CreateOr(
+          result, ir.CreateOr(call, ir.CreateXor(actual, ir.getInt32(92))));
+    }
+    ir.CreateRet(result);
+    native.requireDefinition(*probe);
+    const auto object = native.emitObject();
+    const auto path = root / "probe.o";
+    expect(driver::writeArtifact(path, object.contents) ==
+               driver::ArtifactWriteStatus::Success,
+           "write native inline slot layout object");
+    driver::NativeInputs inputs;
+    inputs.libraryFiles.push_back(cobject);
+    const auto executable = root / "probe";
+    const auto linked = toolchain.invoke(driver::NativeLinkRequest(
+        driver::discoverNativeCompiler(), path, executable, inputs));
+    expect(linked.succeeded(), "link native inline slot layout object");
+    if (linked.succeeded())
+      expect(driver::invokeProcess({executable.string()}).succeeded(),
+             "native slot addresses and full payload extents agree with C at "
+             "O0/O3");
   }
 }
 
@@ -1247,8 +1679,9 @@ void gti_rt_posix_free_v1(void *address) {
     return;
   for (const auto level :
        {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
-    Session session(*program, {.optimization = level});
-    const auto admission = planLlvmAdmission(*program);
+    const LlvmBackendOptions options{.optimization = level};
+    const auto admission = planLlvmAdmission(*program, options);
+    Session session(*program, options);
     expect(admission.admitted(),
            "combined O7/O8 scalar-owner payload admission");
     if (!admission.admitted()) {
@@ -1362,6 +1795,11 @@ int main(void) {
 
 int main(int argc, char **argv) {
   try {
+    if (argc == 3 &&
+        std::string_view(argv[1]) == "--polymorphic-storage-layout") {
+      testPolymorphicStorageLayout(argv[2]);
+      return failures == 0 ? 0 : 1;
+    }
     if (argc >= 3 && std::string_view(argv[1]) == "--payload-unique-owner") {
       testPayloadUniqueOwner(argv[2], argc == 4 && std::string_view(argv[3]) ==
                                                        "--source-only");
@@ -1376,6 +1814,7 @@ int main(int argc, char **argv) {
     testInvalidModule(input);
     testDiagnostics(input);
     testObjectHandoff(input);
+    testConservativeClassObject();
     testClassBodyComponent();
     testConcretePackAliases();
     testExecutionCAbi();

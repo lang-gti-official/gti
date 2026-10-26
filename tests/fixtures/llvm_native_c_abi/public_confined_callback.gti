@@ -1,0 +1,22 @@
+#include <std/cthread>
+
+using Operation = (int32_t) -> int32_t;
+extern "C" {
+  int32_t native_confined_invoke(Operation operation);
+  int32_t native_confined_cleanup_divisor();
+}
+
+struct Guard {
+  ~Guard() { int32_t checked = 100 / native_confined_cleanup_divisor(); }
+};
+
+[[thread_confined_callback]]
+int32_t confined_operation(int32_t value) {
+  Guard guard{};
+  return 100 / value;
+}
+
+int main() {
+  Operation operation = confined_operation;
+  unsafe { return native_confined_invoke(operation); }
+}

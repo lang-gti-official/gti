@@ -1,0 +1,6 @@
+extern "C" { mut int32_t* native_pointer; }
+int main() {
+  mut int32_t* loaded = nullptr;
+  unsafe { loaded = native_pointer; }
+  return *loaded;
+}

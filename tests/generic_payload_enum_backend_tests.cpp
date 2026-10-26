@@ -174,8 +174,8 @@ int main() {
   expect(leftName && rightName && leftName != rightName,
          "native representation names preserve exact generic identity");
   const auto serialized = lang::LoweredProgramPrinter().print(lowered);
-  expect(serialized.starts_with("lowered-program-v26") &&
-             lang::MirPrinter().print(frontend.mir).starts_with("mir-v114"),
+  expect(serialized.starts_with("lowered-program-v27") &&
+             lang::MirPrinter().print(frontend.mir).starts_with("mir-v116"),
          "snapshot versions retain the concrete enum identity contract");
   auto badLowered = lowered;
   for (auto &row : lang::LoweredProgramTestAccess::declarations(badLowered)) {

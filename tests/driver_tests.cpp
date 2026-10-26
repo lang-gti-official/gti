@@ -3035,6 +3035,42 @@ void testBuildReportRecordRoundTrip() {
          "a round-tripped record should compare equal to its source");
   expect(lang::driver::serializeBuildProvenanceJson(*parsed) == serialized,
          "re-serializing a parsed record should reproduce the sidecar");
+  auto embedding = recorded;
+  embedding.project->targetKind = "library";
+  embedding.embeddingHeader = recorded.artifact;
+  embedding.embeddingHeader->canonicalPath = "/work/sample/build/gti/module.h";
+  const auto embeddingText = lang::driver::serializeBuildProvenanceJson(embedding);
+  const auto embeddingParsed = lang::driver::parseBuildProvenanceJson(embeddingText, parseError);
+  expect(embeddingParsed && lang::driver::compareBuildProvenance(embedding, *embeddingParsed).empty(),
+         "library reports preserve the matching header identity");
+  auto changedHeader = embedding;
+  changedHeader.embeddingHeader->bytes += 1;
+  expect(!lang::driver::compareBuildProvenance(embedding, changedHeader).empty(),
+         "verification detects embedding companion drift");
+  changedHeader.embeddingHeader.reset();
+  expect(!lang::driver::parseBuildProvenanceJson(
+             lang::driver::serializeBuildProvenanceJson(changedHeader), parseError),
+         "library reports cannot omit their required header companion");
+  embedding.nativeCommand = {"clang++", "/stage/one/module.o", "-dynamiclib",
+                             "-Xlinker", "-exported_symbols_list", "-Xlinker",
+                             "/stage/one/exports.txt", "-o", "/stage/one/libmodule.dylib"};
+  auto relocatedEmbedding = embedding;
+  relocatedEmbedding.nativeCommand[1] = "/stage/two/module.o";
+  relocatedEmbedding.nativeCommand[6] = "/stage/two/exports.txt";
+  relocatedEmbedding.nativeCommand[8] = "/stage/two/libmodule.dylib";
+  expect(lang::driver::compareBuildProvenance(embedding, relocatedEmbedding).empty(),
+         "embedding report replay normalizes only its private generation inputs");
+  relocatedEmbedding.nativeCommand[6] = "/user/exports.txt";
+  expect(!lang::driver::compareBuildProvenance(embedding, relocatedEmbedding).empty(),
+         "embedding replay preserves user export-map identity");
+  relocatedEmbedding = embedding;
+  relocatedEmbedding.nativeCommand[1] = "/stage/one/other.o";
+  expect(!lang::driver::compareBuildProvenance(embedding, relocatedEmbedding).empty(),
+         "embedding replay preserves other native object operands");
+  relocatedEmbedding = embedding;
+  relocatedEmbedding.nativeCommand[4] = "--other-linker-policy";
+  expect(!lang::driver::compareBuildProvenance(embedding, relocatedEmbedding).empty(),
+         "embedding replay preserves linker policy");
   expect(parsed->debugInfo, "build reports should preserve debug policy");
   expect(parsed->rawPointerAudit == lang::RawPointerAuditMode::Strict,
          "build reports preserve raw pointer audit policy");

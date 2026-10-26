@@ -1,0 +1,8 @@
+[[c_opaque]] struct StorageToken;
+extern "C" { StorageToken* native_storage_get_token(); }
+int main() {
+  unsafe {
+    auto value = *native_storage_get_token();
+  }
+  return 0;
+}

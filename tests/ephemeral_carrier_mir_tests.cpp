@@ -264,6 +264,106 @@ void checkSchedules() {
   }
 }
 
+void checkLaterReferenceFieldRollback() {
+  const auto frontend =
+      lang::Frontend().analyze("later-reference-field.gti", R"gti(
+struct Marker {
+  mut int& slot;
+  Marker(mut int& target) : slot(target) {}
+  ~Marker() { slot = 1; }
+};
+struct Owner {
+  Marker first;
+  Marker second;
+  mut int& slot;
+  int value;
+  Owner(int input, mut int& one, mut int& two, mut int& own)
+    : first(Marker(one)), second(Marker(two)), slot(own), value(input + 1) {}
+  ~Owner() { slot = 1; }
+};
+int main() {
+  mut int one = 0;
+  mut int two = 0;
+  mut int own = 0;
+  { Owner owner{0, one, two, own}; }
+  return one + two + own - 3;
+}
+)gti");
+  expect(frontend.canGenerateCode(),
+         "later reference publication preserves earlier constructor rollback");
+  if (!frontend.canGenerateCode())
+    return;
+  bool checked = false;
+  bool checkedLifecycle = false;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto &body = constructor.body;
+    for (const auto &block : body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *loan =
+            instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::EndBorrow || !loan ||
+            !loan->entry || !loan->escapes || !loan->storedField)
+          continue;
+        for (const auto &target : body.blocks) {
+          if (!target.activeFailure ||
+              !failurePathReaches(body, target.id, block.id))
+            continue;
+          const auto drop = std::find_if(
+              target.instructions.begin(), target.instructions.end(),
+              [&](const auto &candidate) {
+                const auto *obligation =
+                    candidate.lifecycle.size() == 1
+                        ? body.findDropObligation(
+                              candidate.lifecycle.front().source)
+                        : nullptr;
+                return candidate.kind == lang::MirInstructionKind::Drop &&
+                       obligation &&
+                       obligation->kind ==
+                           lang::MirDropObligationKind::ConstructionRollback;
+              });
+          if (drop == target.instructions.end())
+            continue;
+          auto malformed = body;
+          auto &original = malformed.blocks[block.id - 1].instructions;
+          std::erase_if(original, [&](const auto &candidate) {
+            return candidate.id == instruction.id;
+          });
+          auto &destination = malformed.blocks[target.id - 1].instructions;
+          const auto before = std::find_if(
+              destination.begin(), destination.end(),
+              [&](const auto &candidate) { return candidate.id == drop->id; });
+          destination.insert(before, instruction);
+          const auto verification = lang::verifyMirBody(malformed);
+          const bool lifecycleRejected = std::any_of(
+              verification.errors.begin(), verification.errors.end(),
+              [](const auto &error) {
+                return error.message.find("constructor dependency "
+                                          "retirement after rollback") !=
+                       std::string::npos;
+              });
+          checkedLifecycle |= lifecycleRejected;
+          // Moving across the cleanup-boundary marker can be rejected by the
+          // structural schedule check before lifecycle dataflow is evaluated.
+          expect(lifecycleRejected ||
+                     std::any_of(verification.errors.begin(),
+                                 verification.errors.end(),
+                                 [](const auto &error) {
+                                   return error.message ==
+                                          "cleanup sequence is not connected "
+                                          "to its exact boundary marker";
+                                 }),
+                 "moving later-field entry retirement before rollback remains "
+                 "rejected");
+          checked = true;
+        }
+      }
+    }
+  }
+  expect(
+      checked && checkedLifecycle,
+      "later-field regression exercises armed rollback lifecycle verification");
+}
+
 void checkConstructorRollbackMutations() {
   const auto frontend = analyze(
       "mut Counter owner{}; int result = FallibleService(owner, 0).read(); "
@@ -2196,6 +2296,7 @@ int main() {
 
 int main() {
   checkSchedules();
+  checkLaterReferenceFieldRollback();
   checkConstructorRollbackMutations();
   checkForbiddenResultMutation();
   checkLegacyBorrowedOperatorSchedules();

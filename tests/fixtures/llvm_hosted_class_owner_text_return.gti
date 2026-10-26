@@ -1,0 +1,37 @@
+#include <std/memory>
+#include <std/string_view>
+mut int released = 0;
+struct Owner {
+  int tag;
+  std::unique_ptr<int> token;
+  Owner(int tag) : tag(tag), token(std::make_unique<int>(5)) {}
+  ~Owner() { released += this.tag; }
+};
+unsafe std::string_view select_text(Owner& first, Owner& second, const char* bytes) {
+  unsafe { return std::assume_string_view(bytes, std::size_t(3), second); }
+}
+std::string_view relay_text(Owner& first, Owner& second, const char* bytes) {
+  unsafe { return select_text(first, second, bytes); }
+}
+unsafe c_string select_c_string(Owner& owner, const char* bytes) {
+  unsafe { return std::assume_c_string(bytes, owner); }
+}
+c_string relay_c_string(Owner& owner, const char* bytes) {
+  unsafe { return select_c_string(owner, bytes); }
+}
+int main() {
+  {
+    Owner first{11};
+    Owner second{22};
+    char bytes[5] = {'x', 'a', '\0', 'b', '\0'};
+    const char* data = &bytes[std::size_t(1)];
+    std::string_view text = relay_text(first, second, data);
+    c_string c_first = relay_c_string(second, data);
+    c_string c_second = relay_c_string(second, &bytes[std::size_t(3)]);
+    if (text.size() != std::size_t(3) || text != "a\0b" ||
+        c_first == nullptr || c_second == nullptr || c_first == c_second) {
+      return 1;
+    }
+  }
+  return released == 33 ? 0 : 2;
+}

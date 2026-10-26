@@ -256,12 +256,12 @@ void testSemanticAndLoweringRoots() {
   if (lowered.valid()) {
     const std::string serialized =
         lang::LoweredProgramPrinter().print(*lowered.program);
-    expect(serialized.starts_with("lowered-program-v26\n") &&
+    expect(serialized.starts_with("lowered-program-v27\n") &&
                serialized.find("embedding-export symbol=\"game_update_v1\"") !=
                    std::string::npos &&
                lang::MirPrinter()
                    .print(optimized.mir)
-                   .starts_with("mir-v114 valid=1\n"),
+                   .starts_with("mir-v116 valid=1\n"),
            "library-only serialization should retain canonical export facts");
   }
 
@@ -491,8 +491,8 @@ void testDormantDriverModel() {
 
   const lang::driver::ManifestLoadResult released =
       lang::driver::loadProjectManifest(manifestPath);
-  expect(!released.succeeded() && hasCode(released.diagnostics, "GTI-B2000"),
-         "released manifest loading should keep library targets dormant");
+  expect(released.succeeded(),
+         "released manifest loading should retain library target requests");
 
   const lang::driver::ManifestFeaturePolicy enabled{.dormantLibraryTargets =
                                                         true};
@@ -526,10 +526,11 @@ void testDormantDriverModel() {
          "dormant feature policy and dirty manifest overlays must compose "
          "without disk writes");
   const auto disabledOverlay = lang::driver::resolveProjectWorkspace(
-      temporary.root(), std::nullopt, {.allowAcquisition = false}, overlay);
+      temporary.root(), std::nullopt, {.allowAcquisition = false}, overlay,
+      {.dormantLibraryTargets = false});
   expect(!disabledOverlay.succeeded() &&
              hasCode(disabledOverlay.diagnostics, "GTI-B2000"),
-         "a manifest overlay cannot activate public library targets");
+         "a manifest overlay cannot override an explicitly disabled library policy");
 
   const lang::driver::ProjectResolutionResult resolved =
       lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(

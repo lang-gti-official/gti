@@ -641,6 +641,21 @@ struct HirClassTypeAlias {
   SemanticType type = SemanticType::Unknown;
 };
 
+// Concrete semantic dispatch selection. Paths contain successive direct base
+// identities, excluding the complete owner; an empty path selects that owner.
+// No native offsets or physical call convention belong in this record.
+struct HirVirtualDispatch {
+  HirFunctionInstanceId root = 0;
+  HirFunctionInstanceId target = 0;
+  HirClassInstanceId rootOwner = 0;
+  HirClassInstanceId targetOwner = 0;
+  std::vector<HirClassInstanceId> rootPath;
+  std::vector<HirClassInstanceId> targetPath;
+
+  friend bool operator==(const HirVirtualDispatch &,
+                         const HirVirtualDispatch &) = default;
+};
+
 struct HirClassInstance {
   HirClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -663,6 +678,7 @@ struct HirClassInstance {
   std::optional<SemanticType> shareCondition;
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
+  std::vector<HirVirtualDispatch> virtualDispatch;
   bool abstract = false;
   bool polymorphic = false;
   bool cAbiRecord = false;

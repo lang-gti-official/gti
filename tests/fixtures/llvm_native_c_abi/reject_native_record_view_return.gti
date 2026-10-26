@@ -1,0 +1,3 @@
+[[c_abi]] struct NativeRecord { mut int32_t value; };
+extern "C" { std::string_view native_retained_view(NativeRecord value); }
+int main() { return 0; }

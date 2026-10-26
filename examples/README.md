@@ -1,5 +1,41 @@
 # GTI examples
 
+[`llvm/native-c-storage.gti`](llvm/native-c-storage.gti) reads and updates
+native library globals, then shows that a loaded native function pointer stays
+selected while argument evaluation replaces the library's next function.
+Its ordinary wrapper runs cleanup once. Build from the repository root:
+
+```sh
+cc -std=c17 -O3 -c examples/llvm/native-c-storage-native/state.c -o /tmp/native-state.o
+gti examples/llvm/native-c-storage.gti --backend llvm -O3 -o /tmp/native-state -- /tmp/native-state.o
+/tmp/native-state
+```
+
+It prints `native-state:13,31` and `cleanup`, one per line. The registered
+`llvm_native_c_storage_execution` harness uses this actual example at LLVM
+O0-O3 against C O0/O3 and supported C++20/23 controls. Like other bounded LLVM
+examples, it is outside the numbered full-language census.
+
+[`llvm/native-c-record-values.gti`](llvm/native-c-record-values.gti) receives
+passive C records from native factories, copies and returns them through
+ordinary GTI functions, and passes a fixed-array record back to C. It checks
+that updating a by-value copy preserves the original and that scoped wrapper
+cleanup runs once. Build and run from the repository root with an optimized GTI
+compiler:
+
+```sh
+cc -std=c17 -O3 -c examples/llvm/native-c-record-values-native/records.c -o /tmp/native-records.o
+gti examples/llvm/native-c-record-values.gti --backend llvm -O3 -o /tmp/native-record-values -- /tmp/native-records.o
+/tmp/native-record-values
+```
+
+It prints `records:7,8` and `cleanup`, one per line. The registered
+`llvm_native_c_aggregate_execution` harness uses the actual example source at
+LLVM O0-O3 against C O0/O3 and C++20/23 controls. Native records carry passive
+representation; factories and ordinary source wrappers provide initialization
+and cleanup policy. Like the other bounded LLVM profiles, this example is
+outside the numbered full-language census.
+
 [`llvm/native-c-function-values.gti`](llvm/native-c-function-values.gti)
 demonstrates an exact scalar function pointer returned by C, its nullable check
 and copied value, native invocation after argument preparation changes C's next
@@ -23,6 +59,18 @@ and requires the caller to establish its signature, lifetime and preconditions.
 overlapping union storage, concrete generic alternatives and scoped payload
 borrows. `llvm_payload_execution` runs it at LLVM O0-O3 against C++20/23 O3;
 it is outside the numbered full-language census like the other LLVM profiles.
+
+[`llvm/inheritance-and-dispatch.gti`](llvm/inheritance-and-dispatch.gti)
+demonstrates fresh local objects, a multilevel state base, multiple interfaces,
+checked readonly/mutable borrowed calls, and generated copies/moves into fresh
+locals while preserving the complete object's interface views. Build with
+`gti examples/llvm/inheritance-and-dispatch.gti --backend llvm -O3 -o dispatch`.
+`llvm_dispatch_execution` owns its native O0/O3 checks; dedicated transfer
+fixtures additionally run O1/O2. Owning polymorphism, general value transport,
+replacement and destructor-observed virtual phases remain pending. This
+bounded profile is outside the numbered full-language census. The shared
+preview collector requires its owning execution gate, along with the other
+`llvm/` example gates; registration does not certify pending language shapes.
 
 [`llvm/immovable-placement.gti`](llvm/immovable-placement.gti) demonstrates
 deleted-copy/deleted-move objects constructed directly through fresh return
@@ -702,6 +750,12 @@ demonstrates prefix and compound mutation proofs through a mutable reference,
 using the same general mechanism as source-defined iterator movement policy.
 
 ## Complete projects
+
+[`infallible-embedding/`](infallible-embedding/README.md) builds an LLVM shared
+library and its matching C header through `gti build`. Its C host creates a
+context, calls scalar and passive-record exports, destroys the context and
+unloads/reloads the immutable generation. The focused `llvm_embedding_project`
+gate owns this nested example; the numbered executable MIR census is unchanged.
 
 [`annotated-tests/`](annotated-tests/README.md) shows one manifest suite root
 with several `[[test]]` functions, automatic reporting, source-located checks

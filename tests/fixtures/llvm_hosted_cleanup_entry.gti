@@ -1,0 +1,10 @@
+// Source/MIR contract fixture for an explicitly alternative source library.
+// The test installs its trace source only in an isolated copied stdlib.
+#include <std/string>
+#include <std/vector>
+#include <std/detail/llvm_hosted_cleanup_trace>
+
+int main(int argc, std::vector<std::string> argv) {
+  gti_hosted_cleanup_fixture::write("main-entered\n");
+  return argc >= 0 && argv.size() == std::size_t(argc) ? 0 : 1;
+}

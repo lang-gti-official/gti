@@ -1,0 +1,5 @@
+[[c_opaque]] struct StorageToken;
+int main() {
+  StorageToken value;
+  return 0;
+}

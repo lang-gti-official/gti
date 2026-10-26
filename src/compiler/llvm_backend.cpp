@@ -2,6 +2,7 @@
 
 #include "gti/llvm_admission.h"
 #include "gti/lowered_program.h"
+#include "gti/native_header.h"
 #include "gti/target.h"
 #include "llvm/body.h"
 #include "llvm/session.h"
@@ -106,7 +107,19 @@ BackendArtifact LlvmBackend::generate(LoweredProgram program) {
 
   native_llvm::Session session(*verified, options);
   native_llvm::lowerScalarProgram(session, admission);
-  return session.emitObject();
+  auto artifact = session.emitObject();
+  if (const auto &plan = verified->program().embeddingPlan()) {
+    EmbeddingCompanion companion;
+    companion.header =
+        NativeHeaderBackend().generate(verified->program()).contents;
+    companion.publicSymbols = {"gti_context_create_v1",
+                               "gti_context_destroy_v1",
+                               "gti_get_module_descriptor_v1"};
+    for (const auto &selected : plan->exports)
+      companion.publicSymbols.push_back(selected.symbol);
+    artifact.embedding = std::move(companion);
+  }
+  return artifact;
 }
 
 } // namespace lang

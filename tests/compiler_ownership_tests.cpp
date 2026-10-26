@@ -3641,7 +3641,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v114 ") &&
+  expect(mirDump.starts_with("mir-v116 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -18756,7 +18756,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v114 ") &&
+             mirDump.starts_with("mir-v116 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -21428,7 +21428,9 @@ bool inspect(Implicit& value) { return true; }
 bool inspect(Defaulted& value) { return true; }
 bool inspect(Cleanup& value) { return true; }
 void observe(bool value) {}
+Implicit make() { return Implicit(); }
 int main() {
+  Implicit named = make();
   observe(inspect(Implicit()));
   observe(inspect(Defaulted()));
   observe(inspect(Cleanup()));
@@ -21468,14 +21470,67 @@ int main() {
                 : lang::MirTemporaryMaterialization{};
       expect(materialization && materialization.producer &&
                  materialization.producer->kind ==
-                     lang::MirInstructionKind::Call &&
+                     lang::MirInstructionKind::Construct &&
                  !materialization.producer->functionTarget &&
                  !materialization.producer->constructorTarget &&
                  materialization.producer->operands.empty(),
-             "each default temporary retains its exact target-free producer");
+             "each default temporary retains its explicit generated Construct");
       ++stages;
     }
   expect(stages == 3, "all three generated temporary argument loans survive");
+  auto invalidHir = frontend.hir;
+  auto *hirMain = const_cast<lang::HirFunctionInstance *>(
+      invalidHir.findFunctionInstance(mainId));
+  bool changedHir = false;
+  if (hirMain)
+    for (auto &value : hirMain->body.values)
+      if (value.kind == lang::HirValueKind::DirectInitializer &&
+          !value.constructorTarget) {
+        value.kind = lang::HirValueKind::Call;
+        changedHir = true;
+        break;
+      }
+  expect(
+      changedHir &&
+          !lang::verifyHirProgramPlans(frontend.semantics, invalidHir).valid(),
+      "HIR retains the semantic generated construction selection");
+
+  // A standalone result must carry the same proof, even without a later
+  // temporary receiver or argument loan to expose a forged producer.
+  auto invalidStandalone = frontend.mir;
+  bool changedStandalone = false;
+  for (const auto &candidate : invalidStandalone.functionInstances()) {
+    auto *function = const_cast<lang::MirFunctionInstance *>(&candidate);
+    if (function->id == mainId)
+      continue;
+    for (auto &block : function->body.blocks)
+      for (auto &producer : block.instructions)
+        if (producer.kind == lang::MirInstructionKind::Construct &&
+            !producer.constructorTarget) {
+          producer.kind = lang::MirInstructionKind::Call;
+          changedStandalone = true;
+        }
+  }
+  expect(changedStandalone &&
+             !lang::verifyMirProgram(invalidStandalone).valid(),
+         "standalone generated results cannot become unexplained calls");
+
+  auto invalidFactory = frontend.mir;
+  auto *factoryMain = const_cast<lang::MirFunctionInstance *>(
+      invalidFactory.findFunctionInstance(mainId));
+  bool changedFactory = false;
+  if (factoryMain)
+    for (auto &block : factoryMain->body.blocks)
+      for (auto &call : block.instructions)
+        if (call.kind == lang::MirInstructionKind::Call &&
+            call.functionTarget &&
+            call.info.type.kind == lang::SemanticType::Class) {
+          call.functionTarget.reset();
+          changedFactory = true;
+          break;
+        }
+  expect(changedFactory && !lang::verifyMirProgram(invalidFactory).valid(),
+         "a factory call cannot become construction by losing its target");
   expect(!gti_test::emitCppText(frontend).empty(),
          "generated temporary arguments use the verified native lifetime path");
 
@@ -21506,6 +21561,24 @@ int main() {
       }
     return false;
   };
+  expect(rejects([](auto &, auto &, auto &, auto &producer) {
+           producer.kind = lang::MirInstructionKind::Call;
+         }),
+         "generated construction cannot revert to a targetless ordinary call");
+  expect(rejects([&](auto &, auto &, auto &, auto &producer) {
+           producer.bodyTarget =
+               lang::MirBodyAddress{lang::MirBodyKind::Function, mainId};
+         }),
+         "bodyless construction cannot acquire an unrelated body target");
+  expect(rejects([](auto &, auto &, auto &input, auto &producer) {
+           producer.loan = input.loan;
+         }),
+         "bodyless construction cannot acquire a result loan");
+  expect(rejects([](auto &, auto &, auto &, auto &producer) {
+           producer.definedFailure.propagation =
+               lang::FailurePropagationKind::Constructor;
+         }),
+         "bodyless generated construction cannot invent a failure edge");
   expect(rejects([](auto &, auto &, auto &, auto &producer) {
            producer.info.type = lang::SemanticType::UInt64;
          }),
@@ -21547,6 +21620,220 @@ int main() {
          }),
          "generated default arguments still require exact full-expression "
          "materialization and drop authority");
+
+  const auto unionFrontend =
+      lang::Frontend().analyze("generated-default-union-boundary.gti", R"gti(
+union Overlay { mut uint64_t first; mut uint32_t second; };
+Overlay zero() { return Overlay(); }
+int main() {
+  mut Overlay overlay{uint64_t(7)};
+  unsafe { overlay.second = uint32_t(2); }
+  return 0;
+}
+)gti");
+  expect(unionFrontend.canGenerateCode() && unionFrontend.mirValid &&
+             lang::verifyMirProgram(unionFrontend.mir).valid(),
+         "exact first-field union construction remains distinct from an "
+         "empty generated default");
+  if (!unionFrontend.canGenerateCode())
+    return;
+  const auto rejectsUnion = [&](auto mutation) {
+    auto program = unionFrontend.mir;
+    for (const auto &original : unionFrontend.mir.functionInstances()) {
+      auto *function = const_cast<lang::MirFunctionInstance *>(
+          program.findFunctionInstance(original.id));
+      for (auto &block : function->body.blocks)
+        for (auto &construct : block.instructions) {
+          if (construct.kind != lang::MirInstructionKind::Construct ||
+              construct.constructorTarget || construct.operands.size() != 1)
+            continue;
+          mutation(program, construct);
+          return !lang::verifyMirProgram(program).valid();
+        }
+    }
+    return false;
+  };
+  expect(rejectsUnion([](auto &, auto &construct) {
+           construct.operands.push_back(construct.operands.front());
+           construct.parameterTypes.push_back(construct.parameterTypes.front());
+         }),
+         "a union cannot invent another initialization input");
+  expect(rejectsUnion([](auto &, auto &construct) {
+           construct.parameterTypes.front() = lang::SemanticType::UInt32;
+           construct.operands.front() = {.kind = lang::MirOperandKind::Constant,
+                                         .literal =
+                                             lang::Literal{std::uint64_t(1)},
+                                         .type = lang::SemanticType::UInt32};
+         }),
+         "a union initializer must use its first field's exact type");
+  expect(rejectsUnion([](auto &program, auto &construct) {
+           auto &owners = const_cast<std::vector<lang::MirClassInstance> &>(
+               program.classInstances());
+           for (auto &owner : owners)
+             if (owner.type == construct.info.type)
+               owner.kind = lang::ClassKind::Struct;
+         }),
+         "ordinary records cannot impersonate union-field construction");
+  expect(rejectsUnion([](auto &program, auto &construct) {
+           auto &owners = const_cast<std::vector<lang::MirClassInstance> &>(
+               program.classInstances());
+           std::erase_if(owners, [&](const auto &owner) {
+             return owner.type == construct.info.type;
+           });
+         }),
+         "union initialization requires its concrete owner");
+  expect(rejectsUnion([](auto &program, auto &construct) {
+           auto &owners = const_cast<std::vector<lang::MirClassInstance> &>(
+               program.classInstances());
+           for (auto &owner : owners)
+             if (owner.type == construct.info.type)
+               owner.unionLayout->fields.front().field =
+                   owner.declaredFields.back().symbol;
+         }),
+         "union construction retains the exact declared field/layout identity");
+  expect(rejectsUnion([](auto &, auto &construct) {
+           construct.definedFailure.propagation =
+               lang::FailurePropagationKind::Constructor;
+         }),
+         "passive union construction cannot invent a constructor failure");
+  expect(
+      rejectsUnion([](auto &, auto &construct) { construct.enumVariant = 0; }),
+      "native union construction cannot acquire a payload-enum variant");
+}
+
+void testGeneratedDefaultConstructionContexts() {
+  const auto frontend =
+      lang::Frontend().analyze("generated-default-contexts.gti", R"gti(
+namespace construction {
+struct Token<T> { int number() { return 1; } };
+}
+struct construction::Token<int> { int number() { return 2; } };
+struct construction::Token<char> { int number() { return 3; } };
+construction::Token<T> make_token<T>() { return construction::Token<T>(); }
+struct Factory<T> {
+  construction::Token<T> make() { return construction::Token<T>(); }
+};
+struct ConstructorContext<T> {
+  construction::Token<T> token;
+  ConstructorContext() : token(construction::Token<T>()) {}
+  int number() { return this.token.number(); }
+};
+int nested_token<T>() {
+  auto outer = []() -> int {
+    auto inner = []() -> int {
+      construction::Token<T> token = construction::Token<T>();
+      return token.number();
+    };
+    return inner();
+  };
+  return outer();
+}
+int main() {
+  construction::Token<int> integer = make_token<int>();
+  construction::Token<char> character = make_token<char>();
+  if (integer.number() != 2) { return 1; }
+  if (character.number() != 3) { return 2; }
+  Factory<int> factory = Factory<int>();
+  construction::Token<int> member = factory.make();
+  if (member.number() != 2) { return 3; }
+  ConstructorContext<char> constructed{};
+  if (constructed.number() != 3) { return 4; }
+  if (nested_token<int>() != 2) { return 5; }
+  if (nested_token<char>() != 3) { return 6; }
+  return 0;
+}
+)gti");
+  if (!frontend.canGenerateCode())
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode() &&
+             lang::verifyHirProgramPlans(frontend.semantics, frontend.hir)
+                 .valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "generic function, class, constructor and nested lambda construction "
+         "select exact specialized owners");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto rejects = [&](auto mutation, std::string_view detail) {
+    auto hir = frontend.hir;
+    if (!mutation(hir))
+      return false;
+    const auto checked = lang::verifyHirProgramPlans(frontend.semantics, hir);
+    return !checked.valid() &&
+           std::any_of(checked.errors.begin(), checked.errors.end(),
+                       [&](const auto &error) {
+                         return error.find(detail) != std::string::npos;
+                       });
+  };
+  expect(
+      rejects(
+          [](auto &hir) {
+            for (const auto &candidate : hir.functionInstances()) {
+              auto &function =
+                  const_cast<lang::HirFunctionInstance &>(candidate);
+              if (function.source &&
+                  function.source->name().lexeme == "make_token" &&
+                  function.typeArguments == std::vector<lang::SemanticType>{
+                                                lang::SemanticType::Int32}) {
+                function.typeArguments = {lang::SemanticType::Char};
+                return true;
+              }
+            }
+            return false;
+          },
+          "generated default value lost its exact construction selection"),
+      "a function's mismatched generic arguments cannot retarget construction");
+  expect(rejects(
+             [](auto &hir) {
+               std::optional<lang::HirValue> first;
+               lang::HirValue *second = nullptr;
+               for (const auto &candidate : hir.functionInstances()) {
+                 auto &function =
+                     const_cast<lang::HirFunctionInstance &>(candidate);
+                 if (!function.source ||
+                     function.source->name().lexeme != "nested_token")
+                   continue;
+                 for (auto &value : function.body.values)
+                   if (value.kind == lang::HirValueKind::Lambda &&
+                       value.lambdaTarget) {
+                     if (function.typeArguments ==
+                         std::vector<lang::SemanticType>{
+                             lang::SemanticType::Int32})
+                       first = value;
+                     else if (function.typeArguments ==
+                              std::vector<lang::SemanticType>{
+                                  lang::SemanticType::Char})
+                       second = &value;
+                   }
+               }
+               if (!first || !second)
+                 return false;
+               second->lambdaTarget = first->lambdaTarget;
+               second->info.type = first->info.type;
+               return true;
+             },
+             "construction body has ambiguous instance arguments"),
+         "sibling lambda creators cannot share incompatible construction "
+         "contexts");
+  expect(rejects(
+             [](auto &hir) {
+               for (const auto &function : hir.functionInstances())
+                 for (const auto &value : function.body.values)
+                   if (value.kind == lang::HirValueKind::Lambda &&
+                       value.lambdaTarget) {
+                     auto *lambda = const_cast<lang::HirLambda *>(
+                         hir.findLambda(*value.lambdaTarget));
+                     if (!lambda)
+                       return false;
+                     auto cycle = value;
+                     cycle.id = 1000000;
+                     lambda->body.values.push_back(std::move(cycle));
+                     return true;
+                   }
+               return false;
+             },
+             "construction context contains a lambda creator cycle"),
+         "a cyclic creator graph cannot infer construction authority");
 }
 
 void testTemporaryArgumentBorrows() {
@@ -23370,6 +23657,8 @@ constexpr NamedTest kTests[] = {
     {"testVirtualTemporaryReceivers", testVirtualTemporaryReceivers},
     {"testGeneratedDefaultTemporaryArgumentBorrows",
      testGeneratedDefaultTemporaryArgumentBorrows},
+    {"testGeneratedDefaultConstructionContexts",
+     testGeneratedDefaultConstructionContexts},
     {"testTemporaryArgumentBorrows", testTemporaryArgumentBorrows},
     {"testConditionalTemporaryArgumentBorrows",
      testConditionalTemporaryArgumentBorrows},

@@ -1,0 +1,31 @@
+// cc -std=c17 -O3 -c examples/llvm/native-c-record-values-native/records.c -o /tmp/native-records.o
+// gti examples/llvm/native-c-record-values.gti --backend llvm -O3 -o /tmp/native-record-values -- /tmp/native-records.o
+// /tmp/native-record-values
+// Expected output: records:7,8 then cleanup, one per line.
+// C factories initialize representation values. Ordinary GTI code can copy,
+// inspect, relay and return them; cleanup policy belongs in an ordinary wrapper.
+[[c_abi]] struct Sample { mut uint32_t id; mut double weight; };
+[[c_abi]] struct Samples { mut Sample entries[2]; };
+extern "C" {
+  Sample native_sample_make(uint32_t id);
+  Sample native_sample_adjust(Sample value);
+  Samples native_sample_pair(Sample first, Sample second);
+  int32_t native_sample_check(Samples values);
+  void native_sample_cleanup();
+}
+struct Guard { ~Guard() { native_sample_cleanup(); } };
+Samples collect(Sample first, Sample second) {
+  return native_sample_pair(first, second);
+}
+int main() {
+  Guard guard{};
+  auto original = native_sample_make(uint32_t(7));
+  auto changed = native_sample_adjust(original);
+  auto samples = collect(original, changed);
+  if (original.id != uint32_t(7) || original.weight != 1.25d) return 1;
+  if (samples.entries[0].id != uint32_t(7) ||
+      samples.entries[1].id != uint32_t(8) ||
+      samples.entries[1].weight != 3.75d) return 2;
+  if (native_sample_check(samples) != 1) return 3;
+  return 0;
+}

@@ -1,0 +1,14 @@
+[[c_abi]] struct NativePacket {
+  mut int8_t tag; mut uint16_t extent; mut int32_t count; mut double ratio;
+};
+extern "C" {
+  NativePacket native_record_mark_packet(int32_t count);
+  void native_record_consume_pair(NativePacket first, NativePacket second);
+  int32_t native_record_mark(int32_t value);
+}
+struct Guard { ~Guard() { [[discard]] native_record_mark(99); } };
+int main() {
+  Guard guard{};
+  native_record_consume_pair(native_record_mark_packet(1), native_record_mark_packet(2));
+  return 0;
+}

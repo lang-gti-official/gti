@@ -1,0 +1,14 @@
+struct Record {
+  int value;
+  Record(int input) : value(input) {}
+  ~Record() {}
+};
+
+Record make(int input) {
+  return Record(input);
+}
+
+int sample(int input) {
+  Record result = make(input);
+  return result.value + 1;
+}

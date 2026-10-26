@@ -877,18 +877,44 @@ Consequently, a test returning a nonzero failure count such as 256 cannot be
 reported as passed because the host truncates its process status. The defined
 runtime-failure status remains 70.
 
-The driver also owns an internal, dormant `library` target model for the
-engine-embedding campaign. Under the non-default `ManifestFeaturePolicy`, a
-target must declare `linkage = "shared"` and at least one
+The driver supports an infallible LLVM `library` target. A target must declare
+`linkage = "shared"` and at least one
 `[[targets.<name>.exports]]` table mapping an exact qualified GTI function to
 an explicit C symbol. `ProjectTarget`, `ProjectBuildPlan`, `ProjectFacts`, and
 `CompilationRequest` retain that policy and all declaration spans; the build
 plan's model identity canonicalizes export rows by public symbol. Its planned
-output uses the target platform's `.dylib`, `.so`, or `.dll` spelling. The
-ordinary CLI never enables this policy, so released manifests diagnose
-`kind = "library"` as unavailable and no incomplete shared artifact can be
-published. Internal tests may resolve the plan and run the ordinary frontend
-`check` path. Activation and native publication remain owned by `B-LIB-02`.
+output uses the target platform's library spelling inside a fresh immutable
+generation directory. `gti build <target> --backend llvm` uses the normal
+selected-backend pipeline and one loaded frontend snapshot. Unsupported targets,
+fallible closures and the C++ backend reject; no CLI default changes. A host
+loads the printed library path and compiles against its adjacent generated
+header. Library targets cannot be run/tested as executables.
+
+The embedding SDK now separates generation from publication:
+`generateLlvmEmbedding` produces a matched native object, generated header and
+exact public-symbol list from one lowered program. `publishEmbeddingLibrary`
+in `gti_driver` links that object with the PIC runtime through the existing
+native command machinery. On macOS arm64 and Linux x86_64 it emits an explicit
+export allowlist and requires all native references to resolve. A new immutable
+generation directory containing only the library and header is atomically
+published after linking succeeds. Publication uses an exclusive rename, so an
+existing destination also rejects when it was created while the linker ran.
+Hosts may retain an older loaded generation while building another. Native
+failure removes private staging artifacts without replacing an existing
+destination. The project driver uses this same publisher to stage a complete
+generation before exposing it. Its `embedding-v1` cache extends the existing
+LLVM/toolchain identity with linkage, ABI and exact export requests, checks
+both object and header payloads, and restores a complete new generation on a
+hit. Missing, changed or non-regular companion files invalidate the entry.
+Reports include the library plus `embedding_header` path/size/SHA-256; report
+capture retains the existing real-invocation cache bypass. Report replay ignores
+only the SDK-generated object/export-map locations within its private link
+directory; user operands, linker policy and artifact/header content remain
+compared. Debug generations include the matching native symbols, collected
+before removing the link object and restored on cache hits. `gti clean` removes
+managed generations. Hosts remain responsible for ending use before cleanup
+or unload. Fallible exports and the full installed/editor embedding campaign
+are not implied by this infallible project workflow.
 
 The top-level `[build]`, selected `[profiles.<name>]` and selected
 `[targets.<name>]` tables accept `defines = ["DEBUG", "FEATURE"]`. Names must

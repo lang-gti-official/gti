@@ -17,7 +17,7 @@ class Abi;
 class DebugInfo;
 
 // Private, invalidatable whole-program ABI, not an external GTI ABI promise.
-inline constexpr unsigned executionAbiVersion = 1;
+inline constexpr unsigned executionAbiVersion = 2;
 
 [[nodiscard]] std::unique_ptr<llvm::TargetMachine>
 makeMachine(const TargetInfo &target, LlvmBackendOptions options);

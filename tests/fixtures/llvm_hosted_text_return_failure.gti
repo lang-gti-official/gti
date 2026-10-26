@@ -1,0 +1,29 @@
+#include <std/panic>
+#include <std/memory>
+mut int trace = 0;
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  int read() { return this.value; }
+  ~Marker() { trace = trace * 10 + this.value; }
+};
+thread_local Marker early{1};
+thread_local Marker late{2};
+unsafe std::string_view checked_text(int& owner, const char* bytes, bool fail) {
+  if (fail) { std::panic("counted text failure"); }
+  unsafe { return std::assume_string_view(bytes, std::size_t(3), owner); }
+}
+std::string_view relay_text(int& owner, const char* bytes, bool fail) {
+  unsafe { return checked_text(owner, bytes, fail); }
+}
+int main() {
+  [[discard]] early.read();
+  [[discard]] late.read();
+  Marker local{3};
+  int owner = 22;
+  char bytes[3] = {'a', '\0', 'b'};
+  std::string_view result = relay_text(owner, &bytes[std::size_t(0)], true);
+  trace = 9999;
+  return int(result.size());
+}

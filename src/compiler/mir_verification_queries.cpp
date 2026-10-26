@@ -556,18 +556,134 @@ bool referenceAddressRetainsLoan(const MirBody &body, const MirPlace &address,
   return !visited.empty();
 }
 
-bool generatedDefaultConstruction(const MirInstruction &instruction) {
-  return instruction.kind == MirInstructionKind::Call &&
+namespace {
+
+bool neutralTargetlessConstruction(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Construct &&
          instruction.info.type.kind == SemanticType::Class &&
          instruction.info.category == ValueCategory::Value &&
          instruction.result && !instruction.functionTarget &&
          !instruction.constructorTarget && !instruction.lambdaTarget &&
          !instruction.bodyTarget && !instruction.nativeCalleeType &&
          !instruction.receiver && !instruction.loan && !instruction.ownership &&
-         instruction.operands.empty() && instruction.parameterTypes.empty() &&
          instruction.constructorKind == ConstructorKind::Ordinary &&
          instruction.intrinsic == IntrinsicKind::None &&
-         instruction.dispatch == CallDispatch::Static;
+         instruction.operation == MirOperation::None &&
+         instruction.unsafeOperation == UnsafeOperationKind::None &&
+         !instruction.rawMemoryAccess &&
+         instruction.synchronization.kind ==
+             SynchronizationOperationKind::None &&
+         instruction.dispatch == CallDispatch::Static &&
+         instruction.callSite == 0 && !instruction.callableBoundary &&
+         !instruction.callableInvocation &&
+         instruction.callableArguments.empty() &&
+         !instruction.nativeCallbackAdapter && !instruction.threadTaskAdapter &&
+         instruction.scopedThreadTasks.empty() &&
+         instruction.borrowOrigin == BorrowOriginKind::None &&
+         instruction.borrowArguments.empty() &&
+         instruction.borrowFields.empty() && !instruction.borrowPlace &&
+         !instruction.dependentTextPublication &&
+         !instruction.restoresReferenceResult &&
+         instruction.restoredBorrowFields.empty() &&
+         instruction.objectAllocation == 0 &&
+         instruction.definedFailure.empty() &&
+         instruction.localFailureSites.empty();
+}
+
+} // namespace
+
+bool generatedDefaultConstruction(const MirInstruction &instruction) {
+  return neutralTargetlessConstruction(instruction) &&
+         instruction.operands.empty() && instruction.parameterTypes.empty();
+}
+
+bool passiveUnionFieldConstruction(const MirProgram &program,
+                                   const MirInstruction &instruction) {
+  if (!neutralTargetlessConstruction(instruction) ||
+      instruction.operands.size() != 1 ||
+      instruction.parameterTypes.size() != 1 || instruction.enumOwner ||
+      instruction.enumValue || instruction.enumVariant ||
+      instruction.payloadIndex || instruction.payloadExtractionKind ||
+      instruction.literal || instruction.objectLayoutType ||
+      !instruction.closureCaptureTypes.empty() ||
+      !instruction.closureCaptureModes.empty() ||
+      instruction.functionPointerFunctionTarget ||
+      instruction.functionPointerLambdaTarget || instruction.neverReturns ||
+      instruction.noNormalBorrowResult || instruction.tracksCaller ||
+      instruction.callerLocation || instruction.callerLocationSite != 0 ||
+      instruction.forwardsCallerLocation || instruction.sourceLocation ||
+      instruction.constructorInitializer != 0 || instruction.callInputRole ||
+      instruction.retainedOwnerPlace || instruction.preparedParameterDrop ||
+      instruction.successResultDrop || instruction.successResultDestination ||
+      instruction.elementCleanup || instruction.replacementCleanup ||
+      instruction.replacementPair != 0 || !instruction.lifecycle.empty())
+    return false;
+  const MirClassInstance *owner = nullptr;
+  for (const auto &candidate : program.classInstances()) {
+    if (candidate.type != instruction.info.type)
+      continue;
+    if (owner != nullptr)
+      return false;
+    owner = &candidate;
+  }
+  if (owner == nullptr || owner->kind != ClassKind::Union ||
+      !owner->unionLayout || owner->abstract || owner->polymorphic ||
+      owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+      !owner->bases.empty() || !owner->structuralBases.empty() ||
+      owner->destructor || owner->requiresActiveCleanup ||
+      owner->requiresActiveDropState || owner->traits.containsBorrowedState ||
+      owner->traits.drop != DropKind::Trivial ||
+      instruction.info.traits != owner->traits || !owner->fields.empty() ||
+      !owner->fieldDropOrder.empty() || owner->generatedDefaultRequiresSchedule)
+    return false;
+  const auto &layout = *owner->unionLayout;
+  if (layout.sizeBytes == 0 || layout.abiAlignmentBytes == 0 ||
+      layout.sizeBytes % layout.abiAlignmentBytes != 0 ||
+      layout.fields.empty() ||
+      layout.fields.size() != owner->declaredFields.size())
+    return false;
+  for (std::size_t index = 0; index < layout.fields.size(); ++index) {
+    const auto &field = owner->declaredFields[index];
+    const auto &native = layout.fields[index];
+    if (field.field == 0 || field.symbol == 0 ||
+        field.type == SemanticType::Unknown ||
+        field.dropKind != DropKind::Trivial || field.requiresActiveCleanup ||
+        native.field != field.symbol || native.type != field.type ||
+        native.sizeBytes == 0 || native.abiAlignmentBytes == 0 ||
+        native.sizeBytes > layout.sizeBytes ||
+        layout.abiAlignmentBytes % native.abiAlignmentBytes != 0)
+      return false;
+  }
+  const auto &type = owner->declaredFields.front().type;
+  const auto &input = instruction.operands.front();
+  return instruction.parameterTypes.front() == type && input.type == type &&
+         (input.kind == MirOperandKind::Value ||
+          input.kind == MirOperandKind::Constant);
+}
+
+MirScalarReturnConversion scalarReturnConversion(const MirBody &body,
+                                                 const MirOperand &operand) {
+  if (!isPassiveScalarValueType(body.returnType))
+    return MirScalarReturnConversion::NotApplicable;
+  switch (operand.kind) {
+  case MirOperandKind::Value:
+  case MirOperandKind::Constant:
+    break;
+  case MirOperandKind::Copy:
+  case MirOperandKind::Move: {
+    const auto *place = body.findPlace(operand.place);
+    if (place == nullptr || place->type != operand.type)
+      return MirScalarReturnConversion::Invalid;
+    break;
+  }
+  default:
+    return MirScalarReturnConversion::Invalid;
+  }
+  if (operand.type == body.returnType)
+    return MirScalarReturnConversion::Exact;
+  return isImplicitScalarInitializationConversion(body.returnType, operand.type)
+             ? MirScalarReturnConversion::Initialization
+             : MirScalarReturnConversion::Invalid;
 }
 
 bool generatedUniqueConstruction(const MirInstruction &instruction) {

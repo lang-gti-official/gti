@@ -19,11 +19,10 @@ namespace lang::driver {
 
 inline constexpr int currentManifestVersion = 1;
 
-// Internal-only feature gates for manifest shapes that must be retained and
-// tested before their artifact path is safe to expose through released CLI
-// commands. Production callers use the default, fully disabled policy.
+// Manifest admission policy. Production enables library requests; callers may
+// still explicitly disable them. Backend closure admission governs execution.
 struct ManifestFeaturePolicy {
-  bool dormantLibraryTargets = false;
+  bool dormantLibraryTargets = true;
 };
 
 [[nodiscard]] bool isPortableProjectName(std::string_view name);

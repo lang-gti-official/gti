@@ -1,0 +1,22 @@
+struct Marker {
+  mut int& slot;
+  Marker(mut int& target) : slot(target) {}
+  ~Marker() {
+    if (slot == 0) { slot = 1; }
+    else { slot = 2; }
+  }
+};
+
+int consume(Marker value, int input) {
+  return input + 1;
+}
+
+int middle(int input, mut int& first, mut int& second) {
+  Marker marker{second};
+  return consume(Marker(first), input);
+}
+
+int sample(int input, mut int& first, mut int& second, mut int& outer) {
+  Marker marker{outer};
+  return middle(input, first, second);
+}

@@ -1,4 +1,5 @@
 #include "gti/driver/project.h"
+#include "gti/driver/artifact.h"
 
 #include "gti/driver/process.h"
 #include "gti/format_config.h"
@@ -709,7 +710,15 @@ ProjectBuildPlan makeBuildPlan(
     executableName += ".exe";
   }
 #endif
-  const std::filesystem::path output = outputDirectory / executableName;
+  // A host may retain a loaded generation while a later build is published.
+  // This path is output location, not a compiler/cache identity input.
+  const std::filesystem::path generation =
+      selectedTarget.kind == ProjectTargetKind::Library
+          ? outputDirectory /
+                temporaryArtifactPath(selectedTarget.name, ".generation")
+                    .filename()
+          : outputDirectory;
+  const std::filesystem::path output = generation / executableName;
   const std::filesystem::path generatedSource =
       outputDirectory / ".gti-intermediate" /
       (selectedTarget.name +

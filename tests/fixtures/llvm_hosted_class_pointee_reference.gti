@@ -1,0 +1,33 @@
+#include <std/memory>
+
+mut int retired = 0;
+
+struct Referent {
+  mut int value;
+  std::unique_ptr<int> token;
+  Referent(int value) : value(value), token(std::make_unique<int>(value)) {}
+  ~Referent() { retired = retired * 10 + 1; }
+};
+
+struct Owner {
+  int prefix;
+  mut Referent item;
+  Owner() : prefix(11), item(Referent(42)) {}
+  ~Owner() { retired = retired * 10 + 2; }
+};
+
+int main() {
+  {
+    mut Owner owner{};
+    Referent& read = unsafe { std::assume_ref(&owner.item, owner) };
+    if (read.value != 42) {
+      return 1;
+    }
+    mut Referent& write = unsafe { std::assume_mut(&owner.item, owner) };
+    write.value = 43;
+    if (owner.item.value != 43 || owner.prefix != 11) {
+      return 2;
+    }
+  }
+  return retired == 21 ? 0 : 3;
+}
