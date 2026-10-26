@@ -1469,6 +1469,20 @@ private:
   };
   using ScopeStack = std::vector<Scope>;
 
+  // An initializer is a source region, not a new semantic lookup scope.
+  struct SourceDebugRegionGuard {
+    Impl &visitor;
+    std::size_t scopeIndex = 0;
+    bool active = false;
+    std::optional<std::size_t> body;
+    const void *owner = nullptr;
+    SourceScopeId scope = 0;
+    std::size_t nextChild = 0;
+
+    SourceDebugRegionGuard(Impl &visitor, const VariableDecl &declaration);
+    ~SourceDebugRegionGuard();
+  };
+
   enum class ValueControlFlowKind {
     Loop,
     Switch,

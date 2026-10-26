@@ -457,6 +457,26 @@ struct HirSourceLocal {
   std::string name;
   SourceSpan declaration;
   bool parameter = false;
+
+  friend bool operator==(const HirSourceLocal &, const HirSourceLocal &) =
+      default;
+};
+
+struct HirInitializerSourceDebug {
+  std::size_t id = 0;
+  const VariableDecl *declaration = nullptr;
+  std::vector<HirValueId> roots;
+  std::vector<HirSourceLocal> locals;
+  std::vector<std::pair<HirStatementId, SourceScopeId>> statements;
+  std::vector<std::pair<HirValueId, SourceScopeId>> values;
+
+  [[nodiscard]] const SemanticSourceDebugTables &sourceFacts() const {
+    return acceptedSource_;
+  }
+
+private:
+  friend class HirLowerer;
+  SemanticSourceDebugTables acceptedSource_;
 };
 
 struct HirSourceDebugTables {
@@ -464,6 +484,9 @@ struct HirSourceDebugTables {
   std::vector<HirSourceLocal> locals;
   std::vector<std::pair<HirStatementId, SourceScopeId>> statements;
   std::vector<std::pair<HirValueId, SourceScopeId>> values;
+  // Region-local IDs are qualified by the deterministic region ID. MIR
+  // flattens them only after verifying the exact initializer roots.
+  std::vector<HirInitializerSourceDebug> initializers;
 
   [[nodiscard]] const SemanticSourceDebugTables &sourceFacts() const {
     return acceptedSource_;

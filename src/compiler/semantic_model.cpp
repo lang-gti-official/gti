@@ -2215,6 +2215,12 @@ std::vector<std::string> SemanticModel::verifySourceDebug() const {
         reject("source lambda has no exact creator body in this model");
       break;
     }
+    case SourceDebugBodyKind::Initializer: {
+      const auto &declaration =
+          *static_cast<const VariableDecl *>(body.source);
+      exactBody = findBinding(declaration) != nullptr;
+      break;
+    }
     }
     if (body.kind != SourceDebugBodyKind::Lambda && body.creator)
       reject("non-lambda source body has a foreign creator");

@@ -345,6 +345,92 @@ int main() { return parent(4); }
   }
 }
 
+void testInitializerSourceDebugProducers() {
+  const auto syntax =
+      lang::Frontend({.stopAfter = lang::FrontendPhase::Parsing})
+          .analyze("source-debug-initializers.gti", R"gti(
+mut int32_t trace = 0;
+int32_t seed() { trace++; return trace; }
+int32_t global = seed();
+thread_local int32_t per_thread = seed();
+struct Defaulted { int32_t value = seed(); };
+struct StaticStorage { static int32_t value = seed(); };
+struct Selected {
+  int32_t value = seed();
+  Selected() {}
+  Selected(int32_t input) : value(input) {}
+};
+struct Generic<T> {
+  int32_t value = seed();
+  static int32_t shared = seed();
+};
+struct EmptyPack<Ts...> { int32_t value = seed(); };
+int main() {
+  Defaulted first{};
+  Selected second{};
+  Selected third{3};
+  Generic<int32_t> fourth{};
+  Generic<int64_t> fifth{};
+  EmptyPack<> sixth{};
+  thread_local int32_t local = seed();
+  return global + per_thread + first.value + second.value + third.value;
+}
+)gti");
+  expect(syntax.syntaxValid, "initializer source fixture parses");
+  if (!syntax.syntaxValid)
+    return;
+  lang::SemanticVisitor collected(
+      lang::TargetInfo::host(), &syntax.sourceGraph, true, nullptr,
+      &syntax.sources,
+      lang::RawPointerAuditMode::Off, false,
+      lang::TrustedBodyAnalysis::Complete, lang::SourceDebugProfile::LexicalV1);
+  expect(collected.check(syntax.program), "initializer source fixture analyzes");
+  expect(collected.applyProgramRequest(syntax.program, {}),
+         "initializer source fixture applies its program request");
+  for (const auto &diagnostic : collected.errors())
+    std::cerr << "initializer semantic: " << diagnostic.message << '\n';
+  for (const auto &issue : collected.model().verifySourceDebug())
+    std::cerr << "initializer semantic debug: " << issue << '\n';
+  expect(collected.model().verifySourceDebug().empty(),
+         "initializer regions preserve accepted semantic identity");
+  auto lowered = lang::HirLowerer(lang::TargetInfo::host())
+                     .lower(syntax.program, collected.model(), collected);
+  const auto verification =
+      lang::verifyHirSourceDebug(collected.model(), lowered.program);
+  for (const auto &issue : verification.errors)
+    std::cerr << "initializer HIR debug: " << issue << '\n';
+  expect(lowered.program.valid() && verification.valid(),
+         "module, TLS, concrete fields and selected defaults retain regions");
+  if (!lowered.program.valid() || !verification.valid())
+    return;
+  expect(lowered.program.module().sourceDebug.tables &&
+             !lowered.program.module().sourceDebug.tables->initializers.empty(),
+         "module source work has its own initializer regions");
+  bool generated = false;
+  bool selected = false;
+  for (const auto &constructor : lowered.program.constructorInstances()) {
+    const auto &record = constructor.body.sourceDebug;
+    if (!record.tables || record.tables->initializers.empty())
+      continue;
+    generated |= constructor.generatedDefault;
+    selected |= !constructor.generatedDefault;
+    auto &body = const_cast<lang::HirBody &>(constructor.body);
+    const auto saved = body.sourceDebug;
+    body.sourceDebug.tables->initializers.front().roots = {0};
+    expect(!lang::verifyHirSourceDebug(collected.model(), lowered.program)
+                .valid(),
+           "foreign initializer roots cannot acquire source regions");
+    body.sourceDebug = saved;
+    body.sourceDebug.tables->initializers.clear();
+    expect(!lang::verifyHirSourceDebug(collected.model(), lowered.program)
+                .valid(),
+           "source defaults cannot be stripped from generated constructors");
+    body.sourceDebug = saved;
+  }
+  expect(generated && selected,
+         "generated and source constructors retain selected field defaults");
+}
+
 [[nodiscard]] bool
 hasIssue(const std::vector<lang::LoweredProgramIssue> &issues,
          lang::LoweredProgramIssueKind kind) {
@@ -1944,6 +2030,7 @@ int main() {
 int main() {
   testSourceDebugRecordOwnership();
   testSemanticSourceDebugProducers();
+  testInitializerSourceDebugProducers();
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();

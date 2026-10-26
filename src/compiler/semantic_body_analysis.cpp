@@ -5920,6 +5920,7 @@ auto SemanticVisitor::Impl::visitConceptDecl(const ConceptDecl &stmt) -> void {
 auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     -> void {
   const DeclarationOrderScope declarationOrder{*this, stmt};
+  const SourceDebugRegionGuard sourceRegion{*this, stmt};
   const std::size_t declarationDiagnosticStart = diagnostics.size();
   if (stmt.isThreadLocal() && !validateThreadLocalDeclaration(stmt))
     return;

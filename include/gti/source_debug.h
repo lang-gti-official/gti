@@ -18,6 +18,7 @@ enum class SourceDebugBodyKind : std::uint8_t {
   Constructor,
   Destructor,
   Lambda,
+  Initializer,
 };
 
 // Source membership is descriptive. In particular, an extent cannot establish

@@ -9814,6 +9814,37 @@ auto SemanticVisitor::Impl::validateLoopBackedge(const ScopeStack &beforeLoop,
   }
 }
 
+SemanticVisitor::Impl::SourceDebugRegionGuard::SourceDebugRegionGuard(
+    Impl &visitor, const VariableDecl &declaration)
+    : visitor(visitor) {
+  if (visitor.sourceDebugProfile != SourceDebugProfile::LexicalV1 ||
+      visitor.scopes.empty() ||
+      (visitor.functionDepth != 0 && !declaration.isStatic() &&
+       !declaration.isThreadLocal()))
+    return;
+  scopeIndex = visitor.scopes.size() - 1;
+  const auto &frame = visitor.scopes[scopeIndex];
+  body = frame.sourceDebugBody;
+  owner = frame.sourceDebugOwner;
+  scope = frame.sourceDebugScope;
+  nextChild = frame.sourceDebugNextChild;
+  active = true;
+  visitor.beginSourceDebugBody(
+      SourceDebugBodyKind::Initializer, &declaration,
+      declaration.extent().value_or(tokenSpan(declaration.name())));
+  visitor.recordSourceDebugStatement(declaration);
+}
+
+SemanticVisitor::Impl::SourceDebugRegionGuard::~SourceDebugRegionGuard() {
+  if (!active)
+    return;
+  auto &frame = visitor.scopes[scopeIndex];
+  frame.sourceDebugBody = body;
+  frame.sourceDebugOwner = owner;
+  frame.sourceDebugScope = scope;
+  frame.sourceDebugNextChild = nextChild;
+}
+
 auto SemanticVisitor::Impl::activeSourceDebugTables()
     -> SemanticSourceDebugTables * {
   if (sourceDebugProfile != SourceDebugProfile::LexicalV1 || scopes.empty() ||
