@@ -1,11 +1,37 @@
 #pragma once
 
+#include "gti/diagnostic.h"
+
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string_view>
 #include <utility>
 
 namespace lang {
+
+using SourceScopeId = std::size_t;
+using SourceLocalId = std::size_t;
+
+enum class SourceDebugBodyKind : std::uint8_t {
+  Function,
+  Constructor,
+  Destructor,
+  Lambda,
+};
+
+// Source membership is descriptive. In particular, an extent cannot establish
+// the lifetime or readability of an execution place.
+struct SourceDebugScope {
+  SourceScopeId id = 0;
+  SourceScopeId parent = 0;
+  std::size_t sourceUnit = 0;
+  SourceSpan source;
+  std::size_t expansion = 0;
+
+  friend bool operator==(const SourceDebugScope &,
+                         const SourceDebugScope &) = default;
+};
 
 enum class SourceDebugProfile : std::uint8_t { None, LexicalV1 };
 

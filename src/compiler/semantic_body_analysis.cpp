@@ -93,6 +93,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   lexicallyReachableFunctions.clear();
   semanticModel.clear();
   semanticModel.setExecutionProfile(target.executionProfile);
+  semanticModel.setSourceDebugProfile(sourceDebugProfile);
   semanticModel.setPlaceSnapshot(acquirePlaceSnapshotIdentity());
   semanticModel.setAnalysisSeal(
       program != nullptr
@@ -2095,6 +2096,9 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Constructor,
                                .id = constructorInfo->id};
   beginScope();
+  beginSourceDebugBody(SourceDebugBodyKind::Constructor, &stmt,
+                       stmt.extent().value_or(tokenSpan(stmt.name())),
+                       stmt.parameters(), nullptr, stmt.name().expansion);
   const bool collectingRawFields =
       requestSession.collectingRawResult &&
       requestSession.collectingRawResult->constructor == constructorInfo->id;
@@ -2549,6 +2553,9 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
                                .id = owner.id};
   auto enclosingRawProgramStorage = saveRawProgramStorage();
   beginScope();
+  beginSourceDebugBody(SourceDebugBodyKind::Destructor, &stmt,
+                       stmt.extent().value_or(tokenSpan(stmt.tilde())), {},
+                       nullptr, stmt.tilde().expansion);
   declareReceiverState();
   if (Symbol *receiver = receiverStateSymbol();
       receiver != nullptr && isDirectStoredReferenceType(receiver->type))
@@ -3629,6 +3636,9 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   }
   ++functionDepth;
   beginScope();
+  beginSourceDebugBody(SourceDebugBodyKind::Function, &stmt,
+                       stmt.extent().value_or(tokenSpan(functionToken)),
+                       stmt.parameters(), nullptr, functionToken.expansion);
   if (methodDeclaration && !staticMethod) {
     declareReceiverState();
     if (Symbol *receiver = receiverStateSymbol();
@@ -10014,6 +10024,12 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   std::optional<ResultUse> enclosingResultUse = contextualResultUse;
   scopes.clear();
   scopes.push_back(std::move(captureScope));
+  beginSourceDebugBody(SourceDebugBodyKind::Lambda, &expr,
+                       tokenSpan(expr.bracket()), expr.parameters(),
+                       enclosingScopes.empty()
+                           ? nullptr
+                           : enclosingScopes.back().sourceDebugOwner,
+                       sourceExpansion);
   currentReturnType = returnType;
   const bool mutableCaptures =
       std::any_of(captures.begin(), captures.end(), [](const auto &capture) {

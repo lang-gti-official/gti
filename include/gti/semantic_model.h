@@ -4,6 +4,7 @@
 #include "gti/process_memory_runtime.h"
 #include "gti/program_request.h"
 #include "gti/semantic_core.h"
+#include "gti/source_debug.h"
 
 #include <functional>
 #include <span>
@@ -2259,8 +2260,79 @@ struct MacroExpansionSite {
   const Call *call = nullptr;
 };
 
+// These anchors are private to the analyzed syntax lifetime. HIR joins them
+// against this exact model before copying pointer-free concrete debug rows.
+struct SemanticSourceLocal {
+  SourceLocalId id = 0;
+  SourceScopeId scope = 0;
+  const VariableDecl *variable = nullptr;
+  const Parameter *parameter = nullptr;
+  SymbolId symbol = 0;
+  SemanticType type = SemanticType::Unknown;
+  std::string name;
+  SourceSpan declaration;
+};
+
+struct SemanticSourceDebugInstance {
+  bool concrete = false;
+  std::uint8_t kind = 0;
+  std::size_t declaration = 0;
+  std::vector<SemanticType> classTypes;
+  std::vector<CompileTimeValue> classValues;
+  std::vector<SemanticType> types;
+  std::vector<CompileTimeValue> values;
+
+  friend bool operator==(const SemanticSourceDebugInstance &,
+                         const SemanticSourceDebugInstance &) = default;
+};
+
+struct SemanticSourceDebugTables {
+  SourceDebugBodyKind kind = SourceDebugBodyKind::Function;
+  const void *source = nullptr;
+  const void *creator = nullptr;
+  std::size_t snapshot = 0;
+  SemanticSourceDebugInstance instance;
+  std::vector<SourceDebugScope> scopes;
+  std::vector<SemanticSourceLocal> locals;
+  std::unordered_map<const Stmt *, SourceScopeId> statements;
+  std::unordered_map<const Expr *, SourceScopeId> expressions;
+  struct FrameAnchor {
+    SourceScopeId parent = 0;
+    const Stmt *statement = nullptr;
+    std::size_t ordinal = 0;
+  };
+  std::vector<FrameAnchor> frameAnchors;
+  bool consistent = true;
+};
+
+struct SemanticSourceDebugBody {
+  SourceDebugBodyKind kind = SourceDebugBodyKind::Function;
+  const void *source = nullptr;
+  const void *creator = nullptr;
+  SourceDebugRecord<SemanticSourceDebugTables> facts;
+};
+
+struct SemanticSourceDebugModelTables {
+  SemanticSourceDebugInstance instance;
+  std::vector<SemanticSourceDebugBody> bodies;
+};
+
 class SemanticModel {
 public:
+  [[nodiscard]] SourceDebugProfile sourceDebugProfile() const {
+    return sourceDebugProfile_;
+  }
+  [[nodiscard]] const std::vector<SemanticSourceDebugBody> &
+  sourceDebugBodies() const {
+    static const std::vector<SemanticSourceDebugBody> empty;
+    return sourceDebug_.tables ? sourceDebug_.tables->bodies : empty;
+  }
+  // Deliberately does not inherit a base model's source-body facts. A concrete
+  // delta must have collected the body in its own accepted analysis domain.
+  [[nodiscard]] const SemanticSourceDebugBody *
+  findSourceDebugBody(SourceDebugBodyKind kind, const void *source) const;
+  [[nodiscard]] std::vector<std::string> verifySourceDebug() const;
+
   // Own semantic-generated constructor syntax for the lifetime of every
   // downstream reference; cached parsed source trees remain immutable.
   std::vector<std::shared_ptr<const ConstructorDecl>> designatedConstructors;
@@ -2721,6 +2793,8 @@ private:
   void clear();
 
   void setExecutionProfile(ExecutionProfile profile);
+
+  void setSourceDebugProfile(SourceDebugProfile profile);
 
   void setPlaceSnapshot(std::size_t snapshot);
 
@@ -3216,6 +3290,8 @@ private:
   std::unordered_map<const Expr *, SymbolId> resolvedSymbols;
   SemanticDatabase semanticDatabase;
   std::optional<SemanticCompletionContext> completion;
+  SourceDebugProfile sourceDebugProfile_ = SourceDebugProfile::None;
+  SourceDebugRecord<SemanticSourceDebugModelTables> sourceDebug_;
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
   std::size_t placeSnapshot_ = 0;
   // Instance-delta base; see beginInstanceDelta.

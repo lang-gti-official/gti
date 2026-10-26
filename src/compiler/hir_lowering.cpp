@@ -213,6 +213,7 @@ private:
     baseModel = &semantics;
     output = {};
     output.program.executionProfile_ = target.executionProfile;
+    output.program.sourceDebugProfile_ = baseModel->sourceDebugProfile();
     output.program.programKind_ = baseModel->programKind();
     output.program.semanticAnalysisSeal = baseModel->analysisSeal();
     constantClosure = false;
@@ -224,7 +225,7 @@ private:
     nextStatementId = 1;
     placeSnapshotId = baseModel->placeSnapshot();
     nextPlaceBodyId = 1;
-    lifecycleValid = true;
+    lifecycleValid = semantics.verifySourceDebug().empty();
     processedClasses = 0;
     processedFunctions = 0;
     processedConstructors = 0;
@@ -1764,6 +1765,8 @@ private:
       analysis = instanceProvider->analyzeClassFieldInitializers(
           snapshot.declaration, snapshot.typeArguments,
           snapshot.valueArguments);
+      lifecycleValid =
+          lifecycleValid && analysis.model.verifySourceDebug().empty();
       retainInstanceSymbols(analysis.model);
       appendInstanceDiagnostics(std::move(analysis.diagnostics),
                                 snapshot.instantiationSite, discoveryOrigin);
@@ -2034,6 +2037,8 @@ private:
         instanceProvider->analyzeFunctionInstance(
             declaration->id, classArguments, classValueArguments,
             snapshot.typeArguments, snapshot.valueArguments));
+    lifecycleValid =
+        lifecycleValid && analysis->model.verifySourceDebug().empty();
     retainInstanceSymbols(analysis->model);
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
                               snapshot.instantiationSite,
@@ -2065,6 +2070,8 @@ private:
         instanceProvider->analyzeConstructorInstance(
             snapshot.declaration, owner.typeArguments, owner.valueArguments,
             snapshot.typeArguments, snapshot.valueArguments));
+    lifecycleValid =
+        lifecycleValid && analysis->model.verifySourceDebug().empty();
     retainInstanceSymbols(analysis->model);
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
                               snapshot.instantiationSite,
@@ -2395,6 +2402,8 @@ private:
                  const HirCallableParameter &right) {
                 return left.parameterIndex < right.parameterIndex;
               });
+    captureSourceDebug(SourceDebugBodyKind::Function, bodyDeclaration, *model,
+                       body);
     output.program.functions[index].body = std::move(body);
     output.program.functions[index].parameterBindings =
         std::move(parameterBindings);
@@ -2684,6 +2693,9 @@ private:
     output.program.constructors[index].parameterBindings =
         std::move(parameterBindings);
     output.program.constructors[index].initializers = std::move(initializers);
+    if (!snapshot.generatedDefault)
+      captureSourceDebug(SourceDebugBodyKind::Constructor, snapshot.source,
+                         bodyModel, body);
     output.program.constructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
@@ -2710,6 +2722,8 @@ private:
       const PhaseTimeScope timeScope("hir-instance-analysis", "destructor");
       analysis = instanceProvider->analyzeDestructorInstance(
           owner.declaration, owner.typeArguments, owner.valueArguments);
+      lifecycleValid =
+          lifecycleValid && analysis.model.verifySourceDebug().empty();
       retainInstanceSymbols(analysis.model);
       appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt,
                                 discoveryOrigin);
@@ -2733,6 +2747,8 @@ private:
                         owner.typeArguments, owner.valueArguments, body);
     finalizeLifetimes(body, *model);
     lowerLoans(*model, body, snapshot.source);
+    captureSourceDebug(SourceDebugBodyKind::Destructor, snapshot.source, *model,
+                       body);
     output.program.destructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
@@ -2822,6 +2838,59 @@ private:
     body.bindings.push_back({.id = id, .payloadPattern = &name, .info = info});
     (void)enqueueClass(info.type);
     return id;
+  }
+
+  void captureSourceDebug(SourceDebugBodyKind kind, const void *source,
+                          const SemanticModel &model, HirBody &body) {
+    if (output.program.sourceDebugProfile_ == SourceDebugProfile::None)
+      return;
+    const auto *accepted = model.findSourceDebugBody(kind, source);
+    if (model.sourceDebugProfile() != output.program.sourceDebugProfile_ ||
+        accepted == nullptr || !isValidSourceDebugRecord(accepted->facts) ||
+        accepted->facts.collection !=
+            SourceDebugCollection::CollectedLexicalV1 ||
+        accepted->facts.tables == nullptr) {
+      lifecycleValid = false;
+      return;
+    }
+    ensurePlaceDomain(body);
+    const auto &facts = *accepted->facts.tables;
+    body.sourceDebug.collection = SourceDebugCollection::CollectedLexicalV1;
+    body.sourceDebug.tables = std::make_unique<HirSourceDebugTables>();
+    auto &tables = *body.sourceDebug.tables;
+    tables.domain = body.placeDomain;
+    tables.acceptedSource_ = facts;
+    for (const auto &local : facts.locals) {
+      const auto binding = std::find_if(
+          body.bindings.begin(), body.bindings.end(),
+          [&](const auto &candidate) {
+            return (local.variable && candidate.variable == local.variable) ||
+                   (local.parameter && candidate.parameter == local.parameter);
+          });
+      if (binding != body.bindings.end() &&
+          (binding->info.symbol != local.symbol ||
+           binding->info.type != local.type)) {
+        lifecycleValid = false;
+        return;
+      }
+      tables.locals.push_back(
+          {.id = local.id,
+           .scope = local.scope,
+           .binding = binding == body.bindings.end() ? 0 : binding->id,
+           .symbol = local.symbol,
+           .type = local.type,
+           .name = local.name,
+           .declaration = local.declaration,
+           .parameter = local.parameter != nullptr});
+    }
+    for (const auto &statement : body.statements)
+      if (const auto scope = facts.statements.find(statement.source);
+          scope != facts.statements.end())
+        tables.statements.emplace_back(statement.id, scope->second);
+    for (const auto &value : body.values)
+      if (const auto scope = facts.expressions.find(value.source);
+          scope != facts.expressions.end())
+        tables.values.emplace_back(value.id, scope->second);
   }
 
   void ensurePlaceDomain(HirBody &body) {
@@ -4079,6 +4148,7 @@ private:
     currentSourceFunctionName = enclosingSourceFunctionName;
     finalizeLifetimes(body, model);
     lowerLoans(model, body, nullptr, info->captures);
+    captureSourceDebug(SourceDebugBodyKind::Lambda, &lambda, model, body);
     std::vector<bool> captureRequiresActiveCleanup;
     captureRequiresActiveCleanup.reserve(info->captures.size());
     for (const LambdaCaptureInfo &capture : info->captures) {
