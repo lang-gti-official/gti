@@ -6,6 +6,38 @@
 
 namespace lang::llvm_detail {
 
+namespace {
+
+struct CoverageClaim {
+  LlvmCoverageState state;
+  std::string_view positiveTest;
+  std::string_view positiveAssertion;
+  std::string_view positiveEvidenceGap;
+};
+
+constexpr CoverageClaim pendingCoverageClaim() {
+  return {LlvmCoverageState::Pending, {}, {}, {}};
+}
+
+constexpr CoverageClaim nonExecutingCoverageClaim() {
+  return {LlvmCoverageState::VerifiedNonExecuting,
+          "llvm_admission",
+          "ledger.nonexecuting",
+          {}};
+}
+
+constexpr CoverageClaim implementedCoverageClaim(std::string_view test,
+                                                 std::string_view assertion) {
+  return {LlvmCoverageState::Implemented, test, assertion, {}};
+}
+
+[[maybe_unused]] constexpr CoverageClaim
+implementedCoverageGap(std::string_view explanation) {
+  return {LlvmCoverageState::Implemented, {}, {}, explanation};
+}
+
+} // namespace
+
 static_assert(
     std::is_same_v<Literal, std::variant<std::monostate, std::nullptr_t,
                                          std::uint64_t, BinaryFloat,
@@ -40,20 +72,24 @@ static_assert(std::variant_size_v<LoweredGeneratedItemPayload> == 7,
     using Enum = Type;                                                         \
     constexpr std::string_view family = #Type;                                 \
     switch (value) {
-#define LLVM_COVERAGE_ENTRY(Name, Milestone, State, Rule, Predicate)           \
+#define Pending pendingCoverageClaim()
+#define VerifiedNonExecuting nonExecutingCoverageClaim()
+#define LLVM_COVERAGE_IMPLEMENTED(Test, Assertion)                             \
+  implementedCoverageClaim(Test, Assertion)
+#define LLVM_COVERAGE_IMPLEMENTED_GAP(Explanation)                             \
+  implementedCoverageGap(Explanation)
+#define LLVM_COVERAGE_ENTRY(Name, Milestone, Claim, Rule, Predicate)           \
   case Enum::Name: {                                                           \
-    static constexpr LlvmCoverageEntry entry{                                  \
-        family,                                                                \
-        #Name,                                                                 \
-        Milestone,                                                             \
-        LlvmCoverageState::State,                                              \
-        LlvmNonExecutingRule::Rule,                                            \
-        Predicate,                                                             \
-        LlvmCoverageState::State == LlvmCoverageState::Implemented             \
-            ? (Milestone == 6   ? "llvm_class_execution"                       \
-               : Milestone == 5 ? "llvm_place_execution"                       \
-                                : "llvm_scalar_execution")                     \
-            : "llvm_admission"};                                               \
+    static constexpr auto claim = Claim;                                       \
+    static constexpr LlvmCoverageEntry entry{family,                           \
+                                             #Name,                            \
+                                             Milestone,                        \
+                                             claim.state,                      \
+                                             LlvmNonExecutingRule::Rule,       \
+                                             Predicate,                        \
+                                             claim.positiveTest,               \
+                                             claim.positiveAssertion,          \
+                                             claim.positiveEvidenceGap};       \
     return entry;                                                              \
   }
 #define LLVM_COVERAGE_SENTINEL(Name)                                           \
@@ -66,8 +102,12 @@ static_assert(std::variant_size_v<LoweredGeneratedItemPayload> == 7,
 #include "coverage.def"
 #undef LLVM_COVERAGE_BEGIN
 #undef LLVM_COVERAGE_ENTRY
+#undef LLVM_COVERAGE_IMPLEMENTED_GAP
+#undef LLVM_COVERAGE_IMPLEMENTED
 #undef LLVM_COVERAGE_SENTINEL
 #undef LLVM_COVERAGE_END
+#undef VerifiedNonExecuting
+#undef Pending
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

@@ -1,0 +1,19 @@
+extern "C" {
+  mut uint64_t native_cost_counter;
+  uint64_t native_cost_storage_step(uint64_t value);
+  int32_t native_cost_storage_finish(uint64_t checksum);
+}
+int main() {
+  mut uint64_t checksum = uint64_t(0);
+  mut uint64_t index = uint64_t(0);
+  while (index < uint64_t(20000000)) {
+    unsafe {
+      native_cost_counter = index;
+      uint64_t result = native_cost_storage_step(index);
+      checksum += native_cost_counter;
+      checksum += result;
+    }
+    index += uint64_t(1);
+  }
+  return native_cost_storage_finish(checksum);
+}

@@ -1,0 +1,11 @@
+[[c_opaque]] struct StorageToken;
+extern "C" {
+  mut StorageToken* native_token;
+  void native_storage_reset();
+  int32_t native_storage_token(StorageToken* value);
+}
+int main() {
+  native_storage_reset();
+  unsafe { if (native_storage_token(native_token) != 1) return 1; }
+  return 0;
+}

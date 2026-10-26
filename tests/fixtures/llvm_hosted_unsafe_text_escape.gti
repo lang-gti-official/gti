@@ -1,0 +1,7 @@
+#include <std/memory>
+std::string_view escape() {
+  int owner = 0;
+  char bytes[3] = {'a', '\0', 'b'};
+  unsafe { return std::assume_string_view(&bytes[std::size_t(0)], std::size_t(3), owner); }
+}
+int main() { return int(escape().size()); }

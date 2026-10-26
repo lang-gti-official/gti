@@ -1,0 +1,8 @@
+#include <std/functional>
+
+int main() {
+  int factor = 3;
+  auto multiply = [factor](int value) -> int { return value * factor; };
+  std::function_ref<int(int)> view{multiply};
+  return view(4) == 12 ? 0 : 1;
+}

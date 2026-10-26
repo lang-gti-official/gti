@@ -1,0 +1,54 @@
+using NativeOperation = (int32_t) -> int32_t;
+using NativeFlags = c_uint;
+[[c_abi]] struct StorageCell { mut int32_t count; mut double weight; };
+[[c_abi]] union StorageBits { mut uint64_t number; mut double real; };
+[[c_abi]] struct StorageState { mut StorageCell cells[2]; mut StorageBits bits; };
+extern "C" {
+  mut int32_t native_counter;
+  [[link_name("native_external_epoch")]] mut int32_t epoch;
+  int32_t native_limit;
+  mut NativeFlags native_flags;
+  mut bool native_enabled;
+  mut float native_scale;
+  mut NativeOperation native_operation;
+  mut StorageState native_state;
+  mut int32_t* native_pointer;
+  void native_storage_reset();
+  void native_storage_bump();
+  int32_t native_storage_check(int32_t* address);
+  int32_t native_storage_swap(int32_t value);
+  StorageCell native_storage_cell(int32_t value);
+  StorageBits native_storage_bits(uint64_t value);
+  int32_t native_storage_verify();
+  void native_storage_cleanup();
+}
+struct Guard { ~Guard() { native_storage_cleanup(); } };
+// Supported C++ controls accompany the independent LLVM-only source shapes.
+int main() {
+  Guard guard{};
+  native_storage_reset();
+  unsafe {
+    if (native_counter != 10 || native_limit != 17) return 1;
+    native_counter = 23;
+    native_storage_bump();
+    int32_t* address = &native_counter;
+    if (native_counter != 28 || native_storage_check(address) != 1) return 2;
+    native_enabled = true; native_scale = float(2); native_flags = NativeFlags(12);
+    StorageState whole = native_state;
+    native_state = whole;
+    native_state.cells[0].count = 41;
+    native_state.cells[1].count = 73;
+    native_state.cells[1].weight = 3.5d;
+    native_state.bits = native_storage_bits(uint64_t(81));
+    StorageBits bits = native_state.bits;
+    if (bits.number != uint64_t(81)) return 3;
+    int32_t* pointer = native_pointer;
+    if (*pointer != 91) return 4;
+    native_pointer = address;
+    if (native_operation(native_storage_swap(2)) != 13 || native_operation(2) != 31) return 5;
+    if (epoch != 43) return 10;
+    epoch = 44;
+    if (native_storage_verify() != 1) return 6;
+  }
+  return 0;
+}

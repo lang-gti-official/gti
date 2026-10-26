@@ -1,0 +1,23 @@
+mut int trace = 0;
+int initialize(int value) {
+  trace = trace * 10 + value;
+  return value;
+}
+int first = initialize(1);
+int second = initialize(2);
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  int read() { return this.value; }
+  ~Marker() { trace = trace * 10 + this.value; }
+};
+thread_local Marker early{4};
+thread_local Marker late{5};
+int main() {
+  if (trace != 12 || first != 1 || second != 2) { return 1; }
+  [[discard]] early.read();
+  [[discard]] late.read();
+  { Marker local{3}; }
+  return trace == 123 ? 0 : 2;
+}

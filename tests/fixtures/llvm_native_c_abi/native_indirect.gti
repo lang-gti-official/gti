@@ -1,0 +1,30 @@
+using Unary = (int32_t) -> int32_t;
+using Narrow = (int8_t, uint16_t) -> int16_t;
+using Floating = (float, double) -> double;
+using Pointer = (int32_t*) -> int32_t*;
+using NativeScalar = (c_long, c_char, c_bool) -> c_longlong;
+extern "C" {
+  Unary native_unary();
+  Unary native_absent();
+  Narrow native_narrow();
+  Floating native_floating();
+  Pointer native_pointer_operation();
+  int32_t* native_pointer_value();
+  NativeScalar native_scalar_operation();
+}
+Unary relay(Unary value) { return value; }
+int main() {
+  unsafe {
+    Unary original = native_unary();
+    Unary absent = native_absent();
+    if (original == nullptr || absent != nullptr) return 1;
+    Unary copied = relay(original);
+    if (copied != original || copied(31) != 42) return 2;
+    if (native_narrow()(int8_t(-97), uint16_t(54321)) != int16_t(-96)) return 3;
+    if (native_floating()(float(1.5), 2.25d) != 3.75d) return 4;
+    int32_t* address = native_pointer_value();
+    if (native_pointer_operation()(address) != address) return 5;
+    if (native_scalar_operation()(c_long(2147483650), c_char(97), true) != c_longlong(2147483651)) return 6;
+  }
+  return 0;
+}

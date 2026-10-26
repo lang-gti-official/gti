@@ -1,0 +1,13 @@
+int invoke<F>(F callable) { return callable(); }
+
+class CallbackField {
+  int value = invoke([]() -> int { return 17; });
+public:
+  int read() { return this.value; }
+};
+
+int main() {
+  CallbackField first{};
+  CallbackField second{};
+  return first.read() + second.read() - 34;
+}

@@ -1,0 +1,7 @@
+using Operation = (int32_t) -> int32_t;
+extern "C" { Operation native_unary(); }
+Operation fetch() { unsafe { return native_unary(); } }
+int main() {
+  Operation operation = fetch();
+  return operation(1);
+}

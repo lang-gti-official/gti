@@ -1,0 +1,13 @@
+using Selected = (int32_t, int32_t) -> void;
+extern "C" {
+  Selected native_select_operation();
+  int32_t native_mark(int32_t value);
+}
+struct Guard {
+  ~Guard() { [[discard]] native_mark(99); }
+};
+int main() {
+  Guard guard{};
+  unsafe { native_select_operation()(native_mark(1), native_mark(2)); }
+  return 0;
+}

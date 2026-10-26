@@ -143,6 +143,30 @@ The importer reports unsupported storage explicitly, preserves object/pointee
 qualifiers, and emits an external declaration even when it reads a C definition.
 Accessor macros such as `errno` still need a native adapter.
 
+LLVM admits external objects through an exact canonical declaration, symbol,
+root place and storage-access witness. Supported shapes are scalars and native
+integer aliases, raw pointers, scalar native function pointers, and passive C
+records/unions with recursively passive scalar, pointer, record and fixed-array
+fields. The foreign declaration stays external, nonconstant and aligned even
+when source access is read-only; it acquires no GTI initializer or cleanup.
+Loaded function pointers are selected before later call arguments execute.
+The runnable [native storage example](../../examples/llvm/native-c-storage.gti)
+shows mutation, function replacement and ordinary wrapper cleanup.
+
+The current LLVM storage integration still requires separate admission work
+for C-opaque pointer referent metadata and direct foreign-union member access.
+Whole union values can be copied through foreign storage and inspected through
+local snapshots under the ordinary unsafe union policy. These prerequisites
+remain required acceptance cases; they are not grants to treat incomplete
+objects as by-value classes or to bypass union-member obligations. Callback
+fields, aggregate native-function storage, views, owners, TLS and exports remain
+outside this bounded storage profile.
+
+The C++ comparison backend currently rejects valid foreign checked updates,
+projected record snapshots and record-array element assignments in its text
+vocabulary. LLVM tests retain those source programs, verified MIR and independent
+native-C state checks, alongside C++ controls for its supported storage forms.
+
 The [native variable bindings example](../../examples/native-variable-bindings/README.md)
 imports and links writable/const scalars, pointer objects, replaceable callback
 objects, a passive record and a renamed symbol. Its tests verify generated

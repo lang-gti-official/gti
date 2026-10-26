@@ -1,0 +1,16 @@
+#include <std/functional>
+
+uint64_t next(uint64_t value) { return value + uint64_t(1); }
+
+int main() {
+  mut uint64_t total = uint64_t(0);
+  mut auto accumulate = [mut &total](uint64_t value) -> void {
+    total += value;
+  };
+  std::function_ptr<uint64_t(uint64_t)> pointer{next};
+  for (mut uint64_t index = uint64_t(0); index < uint64_t(400000000);
+       index++) {
+    accumulate(pointer(index));
+  }
+  return total == uint64_t(80000000200000000) ? 0 : 1;
+}

@@ -1,0 +1,13 @@
+#include <std/cthread>
+using Transform = (int32_t) -> int32_t;
+using Worker = (void*) -> int32_t;
+using Initializer = () -> void;
+[[thread_confined_callback]] int32_t callback_confined(int32_t value) { return value; }
+int32_t callback_worker(void* context) { return 31; }
+void callback_once() {}
+int main() {
+  Transform confined = callback_confined;
+  Worker worker = callback_worker;
+  Initializer once = callback_once;
+  return 0;
+}

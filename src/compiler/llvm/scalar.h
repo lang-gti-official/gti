@@ -33,6 +33,9 @@ private:
   Session &session;
   llvm::IRBuilder<> &ir;
   Guard guard;
+  [[nodiscard]] llvm::Constant *constantStorage(
+      const TypeLayout &layout,
+      std::span<const std::pair<std::uint64_t, llvm::Constant *>> fragments);
   [[nodiscard]] bool signedType(const SemanticType &type) const;
   [[nodiscard]] SemanticType promoted(const SemanticType &type) const;
   [[nodiscard]] llvm::Value *arithmetic(MirOperation operation,
