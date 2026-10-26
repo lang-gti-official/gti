@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
 import shutil
@@ -123,13 +124,16 @@ def main():
         "schema": 1, "completed": False, "evidence_sha256": digest(evidence_path),
         "tool_sha256": digest(Path(__file__)), "python": sys.version,
         "platform": platform.platform(), "machine": platform.machine(),
+        "host_cpus": os.cpu_count(), "load_average_start": os.getloadavg(),
         "samples": args.samples, "warmups": args.warmups,
         "runtime_sha256": evidence["runtime_sha256"],
-        "measurement": "in-process checked loop; alternating candidates",
+        "measurement": ("real scoped worker start/join and source cleanup; checked loop; alternating candidates"
+                        if evidence.get("profile") == "scoped-workers" else
+                        "in-process checked loop; alternating candidates"),
         "call_boundaries": evidence.get("call_boundaries", "fixed"),
         "profile": evidence.get("profile", "scalar-cleanup"),
         "limitations": ["not a whole-program speedup or production acceptance",
-                        "no worker/callback boundary or allocation measurement",
+                        "no public callback, user TLS or allocation measurement; workers only in scoped-workers profile",
                         "no full-compiler build cost or host-contention isolation"],
         "emission_build_metrics": evidence.get("build_metrics", False),
         "artifacts": [], "comparisons": [],
@@ -195,6 +199,7 @@ def main():
                 })
                 save()
     verify_artifacts(evidence, evidence_path.parent, args.fixtures)
+    report["load_average_end"] = os.getloadavg()
     report["completed"] = True
     save()
     print(f"C04 cost: {len(report['comparisons'])} checked comparisons; {output / 'cost.json'}")
