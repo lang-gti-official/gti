@@ -1095,79 +1095,182 @@ int main() {
            "parent/input/target/access/endpoint/capability " +
                std::to_string(mutation));
   }
-  for (const auto &conflict :
-       {std::string("auto guard = this.owner.lock(); see(this.owner);"),
-        std::string("auto guard = this.owner.lock(); auto second = "
-                    "this.owner.lock();")}) {
-    auto invalid = source;
-    const auto position = invalid.find("auto guard = this.owner.lock();");
-    invalid.replace(position,
-                    std::string("auto guard = this.owner.lock();").size(),
-                    conflict);
-    const auto declaration = invalid.find("class User");
-    invalid.insert(declaration, "void see(std::mutex<int32_t>& value) {}\n");
-    const auto rejected = analyze("mutex-ancestor-conflict.gti", invalid);
-    bool exactConflict = false;
-    for (const auto &body : rejected.mir.functionInstances())
-      for (const auto &error : lang::verifyMirBody(body.body, body.id).errors)
-        exactConflict |=
-            error.message.find("conflicts with active mutable loan") !=
-            std::string::npos;
-    // This tests the MIR firewall. The separate source-diagnostic frontier
-    // records that these invalid sources still reach B0001, not a public rule.
-    expect(rejected.semanticValid && rejected.hirValid && !rejected.mirValid &&
-               exactConflict,
-           "readonly ancestor use/publication cannot bypass its live exclusive "
-           "child");
-    auto forgedWrite = rejected.mir;
-    unsigned changedWrites = 0;
-    bool bodyWriteRejected = false;
-    for (auto &body : const_cast<std::vector<lang::MirFunctionInstance> &>(
-             forgedWrite.functionInstances())) {
-      const lang::MirLoan *activeChild = nullptr;
-      for (const auto &loan : body.body.loans)
-        if (loan.kind == lang::MirLoanKind::Stored && loan.lifecycleBound &&
-            loan.access == lang::AccessMode::Mutable && loan.parent != 0) {
-          activeChild = &loan;
-          break;
-        }
-      if (!activeChild)
+  const auto semanticChildCount = [](const lang::FrontendResult &checked) {
+    unsigned count = 0;
+    for (const auto &loan : checked.semantics.loans()) {
+      const bool namedGuard = std::any_of(
+          loan.carriers.begin(), loan.carriers.end(), [&](auto carrier) {
+            const auto *symbol =
+                checked.semantics.database().findSymbol(carrier);
+            return symbol && symbol->name == "guard";
+          });
+      if (!namedGuard)
         continue;
-      lang::MirInstructionId firstPublication = 0;
-      for (const auto &block : body.body.blocks)
-        for (const auto &instruction : block.instructions)
-          if (instruction.kind == lang::MirInstructionKind::Call &&
-              instruction.loan == activeChild->id)
-            firstPublication = instruction.id;
-      bool changedBody = false;
-      for (auto &block : body.body.blocks)
+      const auto *parent = checked.semantics.findLoan(loan.parent);
+      if (loan.kind == lang::SemanticLoanKind::StoredValue &&
+          loan.access == lang::AccessMode::Mutable && loan.lifecycleBound &&
+          !loan.entry && !loan.protectsStorage && loan.place.receiver &&
+          !loan.place.projections.empty() && parent && parent->entry &&
+          parent->kind == lang::SemanticLoanKind::StoredValue &&
+          parent->access == lang::AccessMode::ReadOnly &&
+          !parent->protectsStorage)
+        ++count;
+    }
+    return count;
+  };
+  expect(semanticChildCount(frontend) == 1,
+         "semantics retains the exclusive result separately from its shared "
+         "abstract lifetime parent");
+  for (bool secondPublication : {false, true}) {
+    const std::string suffix = secondPublication
+                                   ? "auto second = this.owner.lock();"
+                                   : "see(this.owner);";
+    const auto makeSource = [&](bool ended) {
+      auto text = source;
+      const std::string first = "auto guard = this.owner.lock();";
+      const auto position = text.find(first);
+      text.replace(position, first.size(),
+                   (ended ? "{ " + first + " } " : first + " ") + suffix);
+      text.insert(text.find("class User"),
+                  "void see(std::mutex<int32_t>& value) {}\n");
+      return text;
+    };
+    const auto rejected =
+        analyze("mutex-ancestor-conflict.gti", makeSource(false));
+    expect(!rejected.semanticValid && hasCode(rejected, "GTI-S2017") &&
+               !hasCode(rejected, "GTI-B0001"),
+           "ancestor access/publication rejects in semantics while an unused "
+           "exclusive carrier remains alive");
+    const auto ended = analyze("mutex-ancestor-ended.gti", makeSource(true));
+    expect(ended.canGenerateCode() && lang::verifyMirProgram(ended.mir).valid(),
+           "ending the first carrier scope permits the same ancestor access");
+    if (!ended.canGenerateCode()) {
+      printDiagnostics(ended);
+      continue;
+    }
+    lang::HirFunctionInstanceId use = 0, see = 0;
+    for (const auto &function : ended.hir.functionInstances()) {
+      if (function.source && function.source->name().lexeme == "use")
+        use = function.id;
+      if (function.source && function.source->name().lexeme == "see")
+        see = function.id;
+    }
+    const auto *original = ended.mir.findFunctionInstance(use);
+    if (!original) {
+      expect(false, "firewall source has its exact checked method body");
+      continue;
+    }
+    lang::MirLoanId firstChild = 0;
+    for (const auto &loan : original->body.loans)
+      if (!loan.entry && loan.kind == lang::MirLoanKind::Stored &&
+          loan.access == lang::AccessMode::Mutable && loan.lifecycleBound) {
+        firstChild = loan.id;
+        break;
+      }
+    lang::HirValueId site = 0, publicationSite = 0;
+    lang::MirInstructionId publication = 0;
+    for (const auto &block : original->body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (!secondPublication && instruction.functionTarget == see)
+          site = instruction.callSite;
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.loan) {
+          if (*instruction.loan == firstChild) {
+            publication = instruction.id;
+            publicationSite = instruction.callSite;
+          } else if (secondPublication)
+            site = instruction.callSite;
+        }
+      }
+    expect(firstChild && site && publication,
+           "firewall mutation selects the exact child and later input");
+    if (!firstChild || !site || !publication)
+      continue;
+    for (bool after : {false, true}) {
+      auto changed = ended.mir;
+      auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+          changed.functionInstances());
+      auto function =
+          std::find_if(functions.begin(), functions.end(),
+                       [&](const auto &value) { return value.id == use; });
+      auto &body = function->body;
+      std::vector<lang::MirInstruction> moved;
+      for (auto &block : body.blocks)
+        std::erase_if(block.instructions, [&](const auto &instruction) {
+          const bool selected =
+              secondPublication
+                  ? instruction.kind == lang::MirInstructionKind::CallInput &&
+                        instruction.callSite == site
+                  : instruction.callSite == site ||
+                        (instruction.kind ==
+                             lang::MirInstructionKind::Lifecycle &&
+                         instruction.hirValue == site);
+          if (selected)
+            moved.push_back(instruction);
+          return selected;
+        });
+      lang::MirBlockId success = 0;
+      for (const auto &block : body.blocks)
+        if (block.terminator.invokeInstruction == publication)
+          success = block.terminator.target;
+      unsigned insertions = 0;
+      for (auto &block : body.blocks) {
+        auto where = block.instructions.end();
+        if (after && block.id == success)
+          where = std::find_if(
+              block.instructions.begin(), block.instructions.end(),
+              [](const auto &instruction) {
+                return instruction.kind == lang::MirInstructionKind::Drop;
+              });
+        else if (!after)
+          where =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const auto &instruction) {
+                             return instruction.kind ==
+                                        lang::MirInstructionKind::CallInput &&
+                                    instruction.callSite == publicationSite;
+                           });
+        if (where == block.instructions.end())
+          continue;
+        for (const auto &instruction : moved)
+          if (instruction.result)
+            body.values[*instruction.result - 1].definitionBlock = block.id;
+        block.instructions.insert(where, moved.begin(), moved.end());
+        ++insertions;
+      }
+      expect(moved.size() == (secondPublication ? 1U : 3U) && insertions == 1 &&
+                 lang::rebuildMirValueUses(body),
+             "firewall mutation relocates one exact sequence and repairs value "
+             "metadata");
+      const auto verified = lang::verifyMirProgram(changed);
+      if (!after) {
+        expect(verified.valid(), "the same relocated sequence is structurally "
+                                 "valid before publication");
+        continue;
+      }
+      expect(!verified.valid() && verified.errors.size() == 1 &&
+                 verified.errors.front().message.find(
+                     "conflicts with active mutable loan") != std::string::npos,
+             "independent MIR rejects exactly the live exclusive ancestor "
+             "conflict");
+      unsigned writes = 0;
+      for (auto &block : body.blocks)
         for (auto &instruction : block.instructions)
-          if (firstPublication && instruction.id > firstPublication &&
-              instruction.kind == lang::MirInstructionKind::CallInput &&
+          if (instruction.kind == lang::MirInstructionKind::CallInput &&
+              instruction.callSite == site &&
               instruction.operands.size() == 1 &&
-              (lang::mirCanonicalPlaceContains(
-                   body.body, instruction.operands.front().place,
-                   activeChild->source) ||
-               lang::mirCanonicalPlaceContains(
-                   body.body, activeChild->source,
-                   instruction.operands.front().place)) &&
               instruction.operands.front().kind ==
                   lang::MirOperandKind::BorrowRead) {
             instruction.operands.front().kind =
                 lang::MirOperandKind::BorrowWrite;
             instruction.callInputKind = lang::HirCallInputKind::MutableBorrow;
-            ++changedWrites;
-            changedBody = true;
+            ++writes;
           }
-      if (changedBody)
-        bodyWriteRejected = !lang::verifyMirBody(body.body, body.id).valid();
+      expect(writes == 1 && !lang::verifyMirBody(body, use).valid() &&
+                 !lang::verifyMirProgram(changed).valid(),
+             "exactly one forged ancestor write rejects in body and program "
+             "checks");
     }
-    expect(changedWrites == 1, "ancestor write mutation selects one canonical "
-                               "input after publication");
-    expect(bodyWriteRejected,
-           "the live-child body rejects the forged ancestor write");
-    expect(!lang::verifyMirProgram(forgedWrite).valid(),
-           "complete verification rejects the forged ancestor write");
   }
   const auto nested = analyze("mutex-nested-receiver.gti", R"gti(
 #include <std/mutex>
@@ -1194,6 +1297,8 @@ int main() {
     printDiagnostics(nested);
   expect(nested.canGenerateCode() && lang::verifyMirProgram(nested.mir).valid(),
          "nested stored receiver paths preserve exact lifetime ancestry");
+  expect(semanticChildCount(nested) == 1,
+         "nested stored receiver retains its exact semantic exclusive child");
   auto mutableCarrier = analyze("ordinary-exclusive-carrier.gti", R"gti(
 class Lease {
   mut int& value;
