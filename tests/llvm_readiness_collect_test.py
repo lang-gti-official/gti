@@ -114,8 +114,13 @@ def main() -> None:
             current_profile = context["context"]["execution_profile"]
             mismatched["cases"][name]["context"]["execution_profile"] = (
                 "concurrent" if current_profile == "single-threaded" else "single-threaded")
-            rejects(lambda: collector.validate_context_sidecar(
-                mismatched, modules[test].evidence_manifest(root)), "execution profile")
+            declared = modules[test].evidence_manifest(root)
+            if any(name in profile["sources"] for profile in declared["profiles"].values()):
+                rejects(lambda: collector.validate_context_sidecar(
+                    mismatched, declared), "execution profile")
+            else:
+                # Unprofiled inventory members keep their independent producer context.
+                collector.validate_context_sidecar(mismatched, declared)
             value = canonical["members"][f"registered-llvm-evidence:{test}:{name}"]
             audit.require(value["contract"]["case_context"] == context and
                           value["contract"]["role"] == context["role"],

@@ -57,7 +57,7 @@ def validate_context_sidecar(sidecar: dict, manifest: dict, *,
             modes = {profile["execution-profile"]
                      for profile in manifest["profiles"].values()
                      if name in profile["sources"]}
-            if modes != {context.execution_profile}:
+            if modes and modes != {context.execution_profile}:
                 raise ValueError("case-context execution profile differs from its manifest")
             if context.source_sha256 != source["sha256"]:
                 raise ValueError("case-context source digest drifted")
