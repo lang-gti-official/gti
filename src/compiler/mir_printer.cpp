@@ -280,7 +280,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v114 valid=" << program.valid() << '\n';
+    output << "mir-v115 valid=" << program.valid() << '\n';
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -518,6 +518,19 @@ public:
         type(base.type);
         output << ",interface=" << base.interface << '}';
       }
+      output << "] virtual-dispatch=[";
+      for (std::size_t index = 0; index < instance.virtualDispatch.size();
+           ++index) {
+        separator(index);
+        const auto &selected = instance.virtualDispatch[index];
+        output << "{root=" << selected.root << ",target=" << selected.target
+               << ",root-owner=" << selected.rootOwner
+               << ",target-owner=" << selected.targetOwner << ",root-path=[";
+        list(selected.rootPath);
+        output << "],target-path=[";
+        list(selected.targetPath);
+        output << "]}";
+      }
       output << "] structural-bases=[";
       for (std::size_t index = 0; index < instance.structuralBases.size();
            ++index) {
@@ -614,6 +627,12 @@ public:
                << ",type=";
         type(instance.parameterTypes[index]);
         output << '}';
+      }
+      output << "] parameter-bindings=[";
+      for (std::size_t index = 0; index < instance.parameterBindings.size();
+           ++index) {
+        separator(index);
+        output << 'b' << instance.parameterBindings[index];
       }
       output << "] ownerless-text-parameters=[";
       for (std::size_t index = 0;
@@ -761,6 +780,12 @@ public:
         type(instance.parameterTypes[index]);
         output << '}';
       }
+      output << "] parameter-bindings=[";
+      for (std::size_t index = 0; index < instance.parameterBindings.size();
+           ++index) {
+        separator(index);
+        output << 'b' << instance.parameterBindings[index];
+      }
       output << "] borrow=" << number(instance.borrowOrigin) << ':'
              << instance.borrowParameter << ':' << number(instance.borrowAccess)
              << " borrow-parameters=[";
@@ -795,6 +820,12 @@ public:
       output << " may-raise-defined-failure="
              << instance.mayRaiseDefinedFailure;
       effectSummary(instance.effectSummary);
+      output << " dispatch-state=";
+      if (instance.dispatchState)
+        output << instance.dispatchState->activeClass << ':'
+               << instance.dispatchState->afterBaseInitialization;
+      else
+        output << "unrepresented";
       output << " initializers=[";
       for (std::size_t index = 0; index < instance.initializers.size();
            ++index) {

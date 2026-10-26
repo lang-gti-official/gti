@@ -1,0 +1,13 @@
+#include <std/memory>
+
+class Fixed {
+public:
+  Fixed() {}
+  Fixed(Fixed& other) = delete;
+  Fixed(Fixed&& other) = delete;
+};
+int main() {
+  mut std::uninitialized<Fixed> vacant{};
+  std::uninitialized<Fixed> moved = std::move(vacant);
+  return 0;
+}

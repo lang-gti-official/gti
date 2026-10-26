@@ -4384,6 +4384,186 @@ below; private ownership capabilities, inheritance/dispatch and payload-enum
 representations retain their later milestones. No public ordinary-class
 `sizeof` contract is invented.
 
+O-LLVM-10 prerequisite layout queries locate a unique physical base subobject
+by sealed concrete type identity, or a field's declaring subobject by its exact
+SymbolId. They preserve existing field/base indices and use the same target
+offsets; missing, repeated, ambiguous, foreign or out-of-range identities reject.
+The place layer follows those paths for inherited fields and MIR-authorized
+class-reference upcasts, evaluating the source address once and retaining
+readonly/mutable permission. An already-selected base view is not adjusted
+again, and no general downcast or source member/access/override lookup is
+introduced. Public admission remains independently restricted as described below.
+
+The private dispatch planner reuses a polymorphic state-bearing base's physical
+pointer for its derived class views; interfaces retain distinct locations.
+Locations carry exact physical-owner paths, including nonzero offsets when an
+interface precedes the state base. Slot profiles preserve the ancestor prefix
+and append only new sealed roots; aliases of one physical location share one
+table and one installation store. Isolated nonpure adjustment thunks use the
+central ABI channels and exact selected target, adjust from the pointer owner,
+and forward failure/result destinations without publishing success on failure.
+Infallible direct results use target-aligned storage (including boolean `i8`);
+address-only results reuse the destination. This is the current central
+planner's provisional transport, not resolution of C04. Pure-bearing tables
+and infallible terminal targets remain explicitly gated; no failure meaning,
+null callee, trap or unreachable continuation is invented.
+
+The body call path consumes the named function instance's sealed root-family
+rows and the receiver's exact concrete root identities. It loads the stable
+slot through its physical pointer owner and uses the central root ABI, including
+the original MIR Invoke failure edge and success-only result publication.
+Direct member calls project an exact base path; inverse receiver presentation
+is limited to the shared verified exact-receiver proof and readonly access.
+No source overload/override selection or general downcast is reconstructed.
+Private tests inspect this wiring independently of public admission.
+
+Native required-body closure also follows exact selected source implementations
+from required constructor active states, verified no-schedule generated default
+events and static class cleanup recipes, even if no source virtual call occurs.
+A shared pure enumeration reads the sealed active-class target rows and requires
+each Source target's sealed executable body; the normal transitive worklist then
+checks its helpers and generated dependencies. Unreachable classes and unrelated
+methods are not new roots. Existing unknown-call/native/thread conservative
+triggers remain unchanged. Production dispatch binds the actual immutable
+admission plan and checks the complete source-target demand before publishing
+tables or adjustment bodies; final unresolved-definition checking is not an
+admission substitute. Only the owning structural test can construct an unbound
+private inspection probe. Representation and source demand alone do not admit
+an executable polymorphic operation.
+
+Source constructor bodies consume the verified constructor dispatch-state
+schedule: entry activation when there is no state-bearing base, or activation
+on the exact `InitializeBase` normal continuation. Base calls use the selected
+constructor, physical destination and current shared ABI; a failed base never
+installs derived state. MIR retains all base/subobject rollback publication and
+ordering. Unstaged polymorphic source constructors remain unsupported.
+
+An exact generated ordinary default with no source schedule can initialize
+fresh metadata-only class/struct storage directly: no declared fields or
+state-bearing bases, only verified interface subobjects, and no foreign layout,
+union or compiler capability. The body emitter checks the exact construction
+result or selected targetless base initializer and its physical `This` base
+destination. It initializes the empty storage, installs all exact class tables,
+then arms its existing own-destructor state at publication. An empty base still
+precedes the original derived activation anchor and field-failure rollback;
+the whole derived destructor is not armed early. This path has no source
+callbacks and is never used for assignment or generated copy/move destinations.
+It does not eliminate interface headers or relax observable pure-phase gates.
+
+The body emitter represents a source-sealed declaration-only instance-field
+initializer row as storage only, with no value store, cleanup arming or reference
+address publication. Source/HIR coherence proves the resolved initializer is
+absent; the shared MIR predicate checks exact body, field and instruction shape.
+Actual constructor writes, mixed declaration defaults/explicit overrides and
+reference loans retain their independent contracts. This does not admit empty
+local/global/static-field/constructor initialization or imply zero filling.
+Unsupported conservative inventory uses, polymorphic dispatch and library/export
+admission retain their separate gates; private complete-body lowering is not
+public native-dispatch acceptance.
+
+Static destruction recipes install their selected class state before observable
+source/child cleanup only when an existing source-destructor active byte in the
+exact recipe tree witnesses remaining observable work. The predicate is not
+object liveness: entry is already guarded by a completed object/subobject
+obligation. It follows only sealed field/base/fixed-array addresses, with no
+owner/raw-pointer traversal. A cleared own flag cannot hide live children; an
+all-inert shell suppresses header stores but still performs its original guarded
+cleanup. Trivial children omitted by MIR do not acquire invented lifetime state.
+Array descriptor destructor IDs summarize leaf effects, not an array-owned
+active byte. Helpers short-circuit at the first armed source destructor and use
+bounded native loops rather than code expansion per array extent. Source order,
+first/secondary-failure handling and aggregate draining are unchanged.
+
+Polymorphic replacement cleanup remains explicitly rejected: its invocation
+context must establish the receiver-state policy without inferring destruction
+from reuse of a drop recipe. Dynamic owning cleanup,
+transfer/assignment-state preservation and observable pure phases
+remain separate obligations.
+
+The bounded public hierarchy profile uses exact per-operation admission proofs,
+not a class-wide enable bit. `NativeStaticDispatchStorage` describes ordinary
+hierarchies with passive scalar fields and fresh whole-local final destinations,
+selected base initialization and static cleanup. "Static" describes the
+representation, not permission for global or thread-local storage.
+`NativeBorrowedDispatchView` describes checked selected class/base/interface
+addresses with preserved access; `NativeVirtualInvocation` requires the exact
+sealed root, one evaluated receiver, physical adjustment and scalar-or-void
+signature through the existing shared ABI and MIR failure edge. Abstract
+interface metadata is not an executable pure active state.
+
+Admission first records excluded transfers and complete required-body demand,
+then independently preflights exact uses in an options/snapshot-bound temporary
+session without publishing functions, tables or IR. Successful and unsupported
+occurrences remain separate even within one body. Cleanup and generated-empty
+preflights are shared with emission, which retains its own validation.
+`NativeFreshHierarchyTransfer` admits a narrower generated-transfer profile:
+a scalar ordinary hierarchy, an exact Copy Load, targetless Copy Construct from
+a checked selected source, or whole-binding Move, and exactly one Initialize
+into a fresh whole local. The producer, publication, ownership event and source,
+value and destination drop identities must agree. Explicit staged Move Construct,
+source-defined special members, borrowed fields and active-copy lifetimes reject.
+
+The program-aware placement query binds only those proven hierarchy producers.
+Body-only placement and ordinary nonhierarchy Copy/Move retain their existing
+snapshot behavior. Typed transfer copies logical scalar fields, installs the
+static destination's dispatch tables and transfers actual move flags before
+suppressing the verified whole source. It does not copy headers or padding,
+invent failure edges, or arm moved destination flags unconditionally. Source
+copy state remains live; a copied base view gets the base's static dispatch state.
+The cost follows scalar payload, hierarchy headers and existing active flags;
+this structural model is not measured allocation or runtime-cost acceptance.
+
+`PolymorphicTransfer` still rejects unproved class-value copies/moves, assignment,
+replacement, by-value arguments/returns, captures, containing wrappers/arrays,
+nonlocal destinations and ownership/callback/native/thread combinations.
+The shared inline-storage exclusion follows exact fields/state bases and array
+elements, stops at references/raw pointers, and fails closed on unknown or cyclic
+storage. It grants no layout or borrow authority. Body and memory-store guards
+also reject byte transport before identity or memcpy shortcuts; copying a
+checked borrowed address is not copying its object.
+
+The isolated explicit copy through an evaluated base-reference Loan passes
+independent verified source/MIR and native O0-O3 checks. The existing C++20/23
+consumer rejects that exact operand with its incomplete generic destination/
+cleanup-schedule diagnostic; the gate reproduces both failures explicitly.
+Other generated hierarchy transfers keep their supported C++20/23 comparisons.
+Normal move-chain cleanup and virtual failure after a move require exact,
+exactly-once numeric destructor traces without observing destructor dispatch.
+
+`DestructorDispatchObservation` remains pending: cleanup order and a destructor
+owner do not establish a virtual active-class transition. Source cleanup and
+transitive helper observations through virtual calls or unresolved escapes
+reject until an approved backend-neutral lifecycle-dispatch contract exists.
+This is a missing prerequisite, not a permanent source-language prohibition.
+The native execution gate uses verified constructor states and explicit numeric
+destructor IDs to check cleanup order without asserting that missing rule.
+Pure active states, dynamic owners and replacement remain separately pending.
+Exact pure GTI requirements may supply ABI-only owner/root/signature metadata
+without an executable body. That per-use declaration witness does not excuse a
+demanded concrete definition or promote the declaration family. Nonpure targets
+and every reachable active state retain their independent preflight and demand.
+Reference initialization presents its selected address using the destination's
+exact class-reference type before storing it. The original complete-object loan
+is unchanged; loading and forwarding an already selected interface/base alias
+does not apply the offset again.
+`llvm_dispatch_execution` owns real public native O0/O3 execution, supported
+C++20/23 comparisons and artifact-preserving exclusions, including the shipped
+`examples/llvm/inheritance-and-dispatch.gti`. A nested mutable-reference chain
+has verified source/MIR and native execution evidence but both existing C++
+standards reject its complete text vocabulary. The gate records those failed
+comparators explicitly rather than counting them as execution passes; all
+supported alias/base/method cases retain both comparators. The self-contained
+failure-cleanup guard checks an exact digit trace and preserves only the original
+failure/code/source/exit. A deliberately wrong expected trace must produce a
+secondary failure and be rejected by the same positive assertion. Importing
+`std/panic` solely for that guard would pull unrelated pending library bodies
+into the unchanged conservative virtual-call closure, so it uses checked scalar
+arithmetic instead. Hosted/stdlib composition remains pending.
+Its representative loop fixture
+checks correctness only; it proves neither retained dynamic-call cost nor
+allocation counts. Both target ABIs and separate optimized cost acceptance
+remain obligations before O-LLVM-10 can complete.
+
 `Abi` centralizes signatures for definitions, calls and future adapters:
 
 | Private GTI ABI v1 shape | Transport |
@@ -4512,6 +4692,37 @@ TLS. Private ownership capabilities, indirect/virtual dispatch, general native
 calls and native debug information remain explicit limitations. No mixed-backend
 fallback is used. C++ stays the default.
 
+Hosted returns preserve GTI's portable status policy: values from 0 through 255
+are returned unchanged and every other `int32_t` result becomes status 1. This
+normalization applies only to the sealed startup `ReturnEntry`, never to an
+ordinary GTI function return. The four source-location literal operations read
+their sealed caller metadata directly; text retains its UTF-8 byte extent and
+line/column retain their exact unsigned values. The source-defined owning
+`source_location` wrapper composes these operations with independently admitted
+string storage and checked references; its runtime case is tested separately
+from isolated literals. Neither case establishes full hosted-library closure.
+
+An unsafe source call's repeated permission marker on a scalar materialization
+can be admitted only through the exact checked `CallResult` loan. The current
+witness requires an unprojected loan place and a unique earlier same-block
+source GTI call with matching HIR identity, result type, reference access and
+unsafe contract. The call and callee body remain independently admitted; raw,
+foreign and intrinsic operations do not inherit this witness. MIR loan-flow
+verification still establishes active access. Possible owner origins never
+substitute for the returned runtime address.
+The same producer proof admits a direct same-block `CallResult`-to-`Return`
+loan transfer when its complete dependencies, access, type and HIR identity
+are unchanged and the return terminator consumes that exact escaping loan.
+It does not authorize constructing a reference from a possible owner address.
+
+Raw primitive references may use an ordinary, independently admitted native
+class reference as their lifetime witness. The centralized
+`rawBorrowResultLoan` verifier query supplies the exact parent, origin and access
+contract. The evaluated raw pointer supplies the physical address, even when
+the witness owns a different address. This does not prove pointer membership,
+extend the supported pointee layouts, or add runtime checks or alias promises;
+the unsafe caller retains its alignment, initialization and lifetime obligations.
+
 ### LLVM Places And Counted Text
 
 `places.cpp` owns body-local storage, selected loan addresses and evaluated
@@ -4527,6 +4738,13 @@ references and constrained fixed-array range operations. Array bounds compare
 the evaluated index before address selection or access. Constant global arrays
 consume sealed recursive constants; dynamic initialization keeps MIR order.
 
+Read-only and mutable references to integral enums, including reference returns,
+use the exact enum identity in the sealed integral inventory and its underlying
+storage layout. This selected-address rule does not broaden enum-array or raw
+memory admission. An integral-enum payload field uses the same reference rule,
+but its enclosing payload storage remains independently gated by O-LLVM-07;
+combined payload-field execution evidence is still required.
+
 Counted byte views retain embedded NUL, UTF-8 bytes and their byte count. Text
 literals, storage, PHIs and ABI values share the session's one text-view type.
 Size/empty/index operations and byte equality require no heap allocation;
@@ -4539,7 +4757,12 @@ evaluated MIR operands. Integer-plus-pointer preserves source evaluation order.
 Checked address assertions retain verified witness loans while returning the
 selected physical pointer, never the witness's address. Checked erasure uses
 the exact `ErasedObject` capability declaration identity; ordinary classes with
-similar names gain no representation support. Its opaque referent has no
+similar names gain no representation support. O-LLVM-09's represented-erasure
+generalization includes cleanup-free integral enums: mutable restoration writes
+the original enum place, read-only restoration preserves its access, and an
+unrelated enum value remains untouched. This supersedes the earlier native
+rejection of that shape; it does not admit a forged erased capability or relax
+the source escape, overlap, or read-only rules. The opaque referent has no
 by-value object representation. Restoration/return publication retains exact
 source, producer, type and access facts. Ordinary unsafe GTI functions remain
 calls to their inventoried source bodies, not intrinsic substitutions.
@@ -4695,6 +4918,203 @@ The program contains no GTI heap-allocation operation; process-startup
 allocations were not measured. This bounded probe shows no material regression,
 not a general class-backend speedup claim.
 
+### LLVM Unions And Payloads
+
+The native payload plan belongs to `Layouts`, keyed by exact concrete sealed
+enum identity in one session. Safe sums use a 32-bit alternative index followed
+by aligned overlapping storage; every alternative has its exact field storage
+types, including byte-backed booleans. All consumers query that plan for tag and
+field addresses. The reserved `UINT32_MAX` encoding is representation-only
+inactive/moved state: the plan verifies that every source alternative index is
+strictly smaller. No niche optimization or source-visible empty case is inferred.
+
+Fresh payload arguments share destination publication with classes and arrays.
+The complete tag is written only after the operands have completed. Cleanup
+consumes the exact MIR alternative/field recipes, retires the active tag before
+running children, and preserves reverse cleanup and primary/secondary failure
+handling. Consuming extraction selects the original payload field rather than
+moving a whole enum before each extraction. Borrowed extractions retain the
+evaluated field address and upstream loan permissions. Native unions instead
+use the sealed overlapping layout with no hidden tag or active-member guarantee.
+
+Verified consuming patterns extract every active field exactly once, with no
+intervening user operation or failure, and transfer out the shell's cleanup
+obligation after the last extraction. The drained shell is never dropped or
+read again. A scalar owner's old payload bits therefore need no separate
+clearing merely to prevent a second parent drop; MIR transfers that cleanup
+authority. This is distinct from ordinary moves out of reusable owner storage.
+
+Dependency groups and active-alternative conditions remain verifier-owned
+permissions. Their native witness requires concrete native source places and
+exact alternative identities; it does not select the first possible owner as
+the physical address. `MirReferenceSelection` uses its evaluated MIR value,
+and reference-binding payload extractions retain the field or stored referent
+address. A place-category `Load` is still a value, including a loaded raw
+pointer; source category alone never decides this physical distinction.
+
+Static payload constants preserve the same canonical offsets, extent and
+alignment. A packed initializer with explicit padding and typed field fragments
+represents the selected alternative, including pointer/text relocations. Arrays
+and containing classes preserve their canonical strides and field offsets;
+global storage receives explicit canonical alignment. This creates no startup
+evaluation or allocation and does not introduce another constexpr evaluator.
+Tracked inactive-state failures use sealed caller-location metadata just like
+panic, retaining source attribution through source-defined wrappers.
+
+Concrete variadic parameters remain flattened in the existing private ABI.
+Their MIR pack binding is metadata: each projected element aliases its own
+incoming argument cell, preserving final addresses without a tuple allocation
+or a second aggregate copy. `parameter_packs` is the single shared planner for
+ABI lanes, body entry, place storage and admission. It proves exact owner
+parameter types/bindings and coalesces compatible MIR views by their verified
+identity, never advancing an argument cursor once per view. Even an empty pack
+retains its source formal binding; the text dump's omission is not a different
+owner contract. Absent empty bindings and unproduced zero-continuation forms
+are rejected. Complete scalar pack views need not carry an ownership PlaceKey:
+exact formal binding, constant index and verified element type identify their
+physical lane. Any supplied key must agree; missing keys are never fabricated
+and this mapping grants no loan or access permission. TypePack descriptors erase
+only for exact function/constructor
+formals, while runtime pack SSA values stay forbidden. Symbolic, nested and
+non-trailing native packs remain unsupported. Direct consuming methods similarly use
+their exact selected source target and verified receiver transfer; this does
+not admit erased callables or introduce a separate invocation ABI.
+
+O-LLVM-07 remains under implementation. Its owning matrix covers nested and
+generic alternatives, static/global/thread-local storage, ordinary source
+optional/expected wrappers, stored references, source propagation, replacement,
+consuming cleanup, partial-input failure and sibling cleanup after a destructor
+fails. A C++ vocabulary gap for an owning conditional-result body is explicitly
+recorded; native execution checks its values and exact destructor trace rather
+than extending the deprecated comparator. Full platform/cost acceptance and
+slot-capability composition remain obligations. The current optional library
+uses ordinary enums, not the legacy `OptionalStorage` capability. The live
+`PolymorphicStorage` family requires concrete polymorphic object layout from
+O-LLVM-10; heap-owned compositions also require O-LLVM-08. Neither dependency is
+silently granted by the existence of a payload layout.
+### LLVM Function Values And Closure Environments
+
+O-LLVM-09 lowers exact function items, invocation-pointer capabilities and
+concrete lambda instances from verified MIR. `callables.cpp` resolves only
+sealed body identities and signatures. A function item is physically stateless;
+a function-pointer capability stores a typed internal adapter address; a lambda
+stores its captures in target-layout order. None of these paths recognizes a
+public callable-wrapper name or falls back to generated C++.
+
+Lambda bodies use the private GTI ABI planned by `Abi`. A capturing lambda has
+its environment as the planned receiver; a captureless lambda has no mandatory
+environment channel. Direct calls retain their exact ABI. Invocation pointers
+use a checked adapter built from the same `FunctionAbi`, so failure-free targets
+can participate without a function-type cast and failure-capable targets retain
+the original failure record. This is the implemented status-based C04 baseline,
+not a decision that freezes the campaign's open failure-transport evaluation.
+Native C callback adapters remain the separate O-LLVM-11 boundary.
+
+Capture construction consumes the MIR-owned capture types, order and copy/move/
+borrow modes. Borrowed captures store only the selected referent address and do
+not acquire cleanup. Owned captures use the ordinary typed storage, move-state
+and reverse cleanup machinery. Returned closures, stored closure fields,
+prepared consuming receivers and later-argument or later-field failure therefore
+share the same final-destination publication and rollback rules as ordinary
+classes. An ordinary closure environment stays in its caller-owned object
+storage; the backend does not allocate merely to form or invoke it. Ownership
+capabilities whose storage policy itself requires allocation still compose with
+O-LLVM-08, and polymorphic callable wrappers still compose with O-LLVM-10.
+
+Several instantiated lambda bodies may have the same fully concrete lambda type,
+for example when a default field initializer is retained both as its own body
+and through generated construction. They may share one physical environment
+layout only when every instance agrees on ordered capture storage types, capture
+modes and active-cleanup state. This representation check never selects a body:
+formation and invocation retain their exact `lambdaTarget`, while cleanup
+resolves the exact `MirDropType::lambdaInstance` before checking its capture
+selectors and nested recipes. Body-local bindings, effects, borrow contracts and
+source identity are therefore not canonicalized with storage.
+
+Checked erased-reference transport is admitted from the verifier's exact
+referent type, access, origin and loan facts. The LLVM backend accepts any
+already-represented complete object, plus concrete closure and invocation-
+pointer storage, and carries only the selected address through erase/restore.
+It does not recognize `std::function_ref` or any other public wrapper name;
+wrapper construction and invocation compose from their ordinary source bodies.
+An unrelated source helper can relay that address only when the central MIR
+verifier proves its finite exact call chain reaches the trusted restore
+intrinsic with the same opaque witness, referent type, complete field path,
+access and argument origin. A complete scalar referent legitimately has an
+empty field path; a summary flag, tombstoned producer, changed origin/access or
+cyclic helper chain without the intrinsic endpoint is not authority.
+Abstract, opaque, symbolic and unsupported capability storage remains rejected
+even when a similarly spelled source wrapper exists.
+
+An unstaged constructor-field record is also a distinct pending admission
+requirement. One shared plan proves the exact constructor owner, field, SSA
+result and unique record producer before the body may use the field as that
+producer's final destination. A staged `Initialize` sibling suppresses this
+route. The requirement is witnessed only by an independently admitted scalar
+transport or concrete storage shape, so adding an owner representation does not
+silently claim constructor publication for it.
+
+That shared plan has two explicit transports. `ExactValue` retains the original
+same-type scalar/class/callable route. `NullUniqueOwner` accepts only a real
+source `nullptr` literal with `NullPtr` value type and no operands, call/effect,
+borrow, ownership, lifecycle, unsafe or target metadata, targeting exactly one
+complete `UniqueOwner<T>` field. Admission additionally requires the target's
+implemented `NativeUniqueOwnership` shape; the callable component therefore
+fails closed without O-LLVM-08. Native emission keeps the source null SSA value
+but writes a target-typed null pointer directly to the owner field exactly once.
+It never treats the source `NullPtr` as owner placement storage, invents drop
+state or recognizes the source-defined `std::unique_ptr` name.
+
+A constructor `Stored` loan is not itself a representation decision. The
+shared publication plan resolves the exact declared field and initializer. A
+reference field publishes its selected referent address once; a class or lambda
+field carrying nested borrowed state is provenance-only because its complete
+by-value object was already published by the verified move/copy stage. Native
+emission skips both a second field write and runtime loan-slot materialization
+for that provenance-only handoff. Missing, ambiguous or type-inconsistent
+field facts fail closed rather than treating every Stored loan as a pointer.
+
+Concrete trailing parameter packs have no runtime pack object. One exact
+concrete-parameter plan serves admission, body lowering and place storage. It
+accepts the verified MIR forms currently emitted: the source trailing
+`TypePack`, or expanded parameter types retaining one trailing source-level
+pack binding. A per-lane binding vector with zero-valued continuations has no
+sealed producer and is rejected. An empty pack has no physical lane, but its
+trailing source binding remains in the owner's verified binding vector; a
+body-local available pack root is not a substitute for that identity. Repeated
+MIR views with the same verified binding, constant element index and type
+coalesce into one logical pack or element root and never consume another ABI
+lane. A projected view need not carry an ownership `PlaceKey`; every key that
+is present must exactly extend the pack root with that element index.
+Conflicting keys, types or formal identities fail closed. The body maps each
+used projected `PackElement` to its typed ABI lane. Concrete packs embedded in
+a lambda's enclosing substitution identity are inventory metadata rather than
+executable storage.
+Symbolic, nested, non-trailing and mismatched mappings remain unsupported.
+
+`llvm_callable_execution` compares direct/indirect calls, read/mutable/once
+invocation, returned/stored and nested generic closures, borrowed-carrier field
+storage, checked erased source wrappers, failure propagation and cleanup with
+the production backend where that backend has a matching representation.
+Native-only wrapper controls exercise final-field placement and rollback after
+a later initializer. Borrow rejection remains a frontend result.
+The optimized owned-closure probe also audits the linked executable for GTI
+allocation-provider symbols; performance and code-size observations are bounded
+workload evidence, not a general speedup claim.
+
+The 2026-10-25 macOS arm64 checkpoint uses 400-million-iteration workloads so
+each measured run exceeds 0.09 seconds. Five-sample medians for C++23/O3 versus
+LLVM/O3 were 100.606/100.519 ms for direct calls, 102.091/101.377 ms for a
+borrowed-capture closure, 94.638/649.676 ms for an invocation pointer, and
+99.422/654.378 ms for the mixed closure/pointer path. Direct and closure paths
+are within about 1%; the roughly sevenfold pointer overhead is stable and
+material.
+The pointer executables were 107,048/122,344 bytes; direct executables were
+106,744/105,688 bytes and closure executables 106,744/105,640 bytes. The
+separate owned-closure executable was 105,768 bytes and retained no GTI
+allocation-provider symbol. This isolates a remaining indirect-adapter/inlining
+cost; it is not final O-LLVM-09 performance acceptance.
+
 ### LLVM Coverage And Admission
 
 `llvm_admission.h` exposes `llvmCoverageLedger()` and
@@ -4710,7 +5130,9 @@ synchronization, native-runtime, declaration/generated-item and startup enum to
 a named O-LLVM milestone. Entries distinguish pending lowering, implemented
 lowering and verified nonexecuting facts. Scalar execution entries name the
 `llvm_scalar_execution` gate; implemented places/text shapes name
-`llvm_place_execution`; class/TLS shapes name `llvm_class_execution`.
+`llvm_place_execution`; class/TLS shapes name `llvm_class_execution`. Only the
+three exact bounded hierarchy witnesses name `llvm_dispatch_execution`; the
+global class-base, polymorphic and virtual-call vocabulary remains pending.
 A nonexecuting permission/provenance fact can be inventoried without a
 runtime operation; a source-only query marked `MustBeAbsent` cannot silently
 be erased if it appears as executable input. Neither classification grants LLVM
@@ -4726,14 +5148,78 @@ unsupported occurrence of the same enum in the same body. `MustBeAbsent` rules
 are never overridden, and callers cannot supply witnesses. These facts live in
 the backend admission plan, not in `LoweredProgram`.
 
+The conservative class-inventory use may consume `NativeClassStorage` only for
+ordinary `Class`/`Struct` instances passing the existing recursive concrete
+storage proof, with native-record, opaque, union and private-capability layouts
+explicitly excluded. This does not promote the global class-kind ledger row.
+Every required field type, trait, body, cleanup, call and generated dependency
+is still inventoried independently; representable storage does not certify an
+unsupported method. Rootless ordinary object generation can therefore retain
+and lower complete declaration inventory without admitting library/export
+program kinds or polymorphic storage. A focused object consumer validates one
+infallible signed-32-bit GTI/C scalar ABI equivalence through the shared planner
+before linking actual public-backend objects at O0/O3. It is not a stable C
+export or general library ABI promise.
+
 The compiled switches reject new unassigned enum members, including enums with
 no count sentinel. `input_fields.def` checks the decomposition of the central
 input records, so new fields require coverage/admission review too. Literal and
 declaration/generated payload variants have corresponding compile-time guards.
-Each ledger entry names inventory-positive and drift-negative test gates;
-these are coverage evidence, not execution evidence for pending lowering. When
-an entry becomes implemented its owner must add real positive/negative execution
-tests for its admitted shapes and update its predicate and test references.
+An executable implementation claim is written at its ledger row as
+`LLVM_COVERAGE_IMPLEMENTED(test, profile)`. Bare `Implemented` is not a valid
+claim and there is no milestone-wide scalar fallback. Pending rows carry no
+execution acceptance. Verified nonexecuting rows instead name the structural
+ledger assertion which verifies their rule. An already implemented row with no
+matching executable fixture uses `LLVM_COVERAGE_IMPLEMENTED_GAP(reason)`; that
+preserves the implementation classification but blocks promotion rather than
+manufacturing evidence.
+
+`llvm_coverage_evidence` reconciles those claims with the configured CTest
+inventory and JSON evidence manifests derived from the execution tests' actual
+runnable case dictionaries. Manifest schema
+`gti.llvm.execution-evidence/v1` binds a test to named profiles, each profile to
+stable source IDs, and each source ID to its repository/inline origin and the
+SHA-256 of the exact UTF-8 text. Unknown fields, stale hashes and dangling
+source IDs reject. Evidence producers register through the CMake-owned
+`gti_register_llvm_evidence_manifest` service. Its deferred writer emits one
+generated registry after the tests directory has declared every producer, so
+the audit does not maintain a second hard-coded test list. Malformed, duplicate
+or non-CTest registrations, missing scripts and scripts without the manifest
+contract reject. The registered CTest command must execute that exact script;
+naming an unrelated test is not evidence. A test-only admission probe lowers
+each named source and
+requires its plan to contain the exact row, including structural implementation
+witnesses. This establishes that the test source reaches the claimed coverage
+vocabulary. It does not establish that an unrun test passed, that cleanup and
+failure behavior were correct, or that another platform ran the case. The
+report therefore records exact source state, build configuration,
+host/compiler/LLVM identity and separate `passed`, `failed`, `unrun` or
+`unavailable` observation states. The compiled source identity must agree with
+the live repository HEAD and cleanliness, preventing an older helper from
+certifying changed audit code. Raw ledger reports start unrun; dirty source is
+explicitly non-exact. Structural completeness and observed execution are
+reported separately. Production promotion requires both on an exact source;
+an all-implemented ledger with unrun tests is never promotion-ready.
+
+The payload, callable and memory execution gates participate in that same
+manifest registry. Their profiles are derived from the case dictionaries the
+CTest commands actually execute, including payload pack/access failures,
+public checked arithmetic, callable transfer/cleanup and the memory/lifetime
+matrix. A checked source profile is therefore not a hand-maintained alias for
+some other test. Admission inventories each verified callable argument
+descriptor separately from the callable receiver's invocation boundary. The
+MIR verifier binds those descriptors to an exact target parameter, boundary
+and owned-transfer stage, so an owned carrier call cannot be inferred from an
+adjacent closure or forged by a backend caller. Explicit raw-pointer conversion
+reaches verified MIR as an effect-free `Compute/Convert`, not as an executable
+intrinsic call. Admission reuses the central `rawPointerConversion` verifier
+before attaching the `NativeObjectAddress` witness: both operands remain exact
+raw-pointer values, the conversion cannot add mutable access, concrete
+pointees must match unless one side is `void`, and each non-void pointee must
+have a supported native representation. Numeric conversions and malformed
+pointer conversions cannot borrow that witness. These are coverage
+classification corrections for existing language behavior; they do not add a
+callable form or cast, or widen either source rule.
 
 The inventory records types and nested arguments, access and ownership modes,
 exact instructions and their failure/cleanup/publication shapes, generated
@@ -4754,7 +5240,8 @@ types. Passive data without a use is metadata; ordered executable initialization
 is never omitted. Unknown indirect/virtual/callback/task dispatch,
 declaration-backed generated dependencies, embedding exports and rootless
 libraries conservatively select `AllExecutableBodies` and retain all generated
-items. Those shapes reject until their families are admitted. This is a bounded
+items. Each required use still needs its own admitted shape; a supported virtual
+call does not hide unrelated unsupported bodies in that conservative closure. This is a bounded
 omission proof, not speculative whole-program devirtualization.
 
 Admission scans the full inventory before returning a result. The first
@@ -4785,6 +5272,140 @@ and MIR marker/ownership assertions. LLVM endpoints use native artifacts and
 observable exit/stdout/stderr comparison without C++ representation options.
 Current LLVM corpus runs must fail until their requirements are implemented;
 unsupported builds are never counted as successful execution.
+
+Readiness reporting keeps three different claims separate. The coverage ledger
+classifies the complete compiler vocabulary, so its global `Pending` count
+remains visible. Admission is use-specific: a required use of a pending family
+is supported only when that exact `LlvmCoverageUse` carries an implemented
+shape selected by the inventory. The test-only coverage probe serializes that
+binding directly from the admission plan in
+`gti.llvm.required-uses/v1`; seeing the base and shape keys elsewhere is not a
+witness. Production admission and `firstUnsupported()` remain authoritative.
+The report validator preserves the plan's diagnostic selection: the first
+unsupported source-located instruction takes precedence, with the earliest
+unsupported record retained as fallback. Malformed base rows, witnesses and
+location records reject before that selection is evaluated.
+
+`tests/llvm_readiness_baseline.json` is the versioned durable readiness
+contract. It pins the frozen-baseline provenance, canonical source providers,
+supported-family obligations, shipped target/profile identities and complete
+O-LLVM-16 gate names without copying body/block/instruction inventories. Exact
+required-use inventories, counts and digests are run artifacts tied to the
+source, compiler, build and target that produced them. Receipts for a different,
+truncated or stale artifact do not apply. The normal focused evidence gate
+emits `gti.llvm.readiness-run/v1` with an explicit
+`focused-schema-control` scope and therefore cannot make a candidate promotion
+ready.
+
+Baseline structural readiness means every member of every canonical provider
+has an exact admitted use artifact for each required target/profile, including
+the actual implemented witness on each pending required use. It is still only a
+prerequisite. General language-family review, registered positive and negative
+execution, cross-family interactions, both shipped platforms, optimized cost,
+sanitizers and installed-package gates remain independent requirements for
+campaign promotion. Missing providers, unrepresented supported families,
+unrun gates and unavailable platforms are reported as unresolved; they are not
+converted into a count of missing features. The additive
+`gti.llvm.coverage-readiness/v2` summary retains the preceding global-row fields
+for consumers of the unversioned report while adding the distinct baseline and
+campaign results.
+
+`tests/llvm_readiness_collect.py` provides opt-in `plan`, `collect` and
+cross-host `reconcile` operations. Collection reuses the census, registered
+producer APIs and validated stdlib surface manifest, preserving declared case
+context. Missing role, loading context or target/profile applicability remains
+unresolved; filenames and fixture registration do not establish a positive
+standalone program. The current census and execution-manifest vocabulary lack
+reusable complete case-context metadata. The census now shares its source,
+profile and loading facts through `example_case_context.py` and the validated
+`gti.llvm.case-context/v1` vocabulary. Its sorted discovery, three concurrent
+selections, environment defaulting and MIR observation remain census-owned;
+LLVM target applicability and native outcomes remain unresolved. The collector
+binds this context sidecar without changing the pinned source membership.
+The scalar producer supplies a `gti.llvm.case-context-sidecar/v1` envelope bound
+to its unchanged execution-evidence manifest. Its runtime-failure programs are
+positive compilation obligations with exit/diagnostic and complete differential
+assertions; historical unsupported-operation controls remain a separate set.
+An explicit producer-declared partition policy binds each set's roles;
+swapping a valid role across that boundary rejects rather than redefining the
+source obligation. Unclassified roles require an explicit policy declaration.
+Consumption compares that policy with the producer's authoritative contract;
+coordinated policy/role edits cannot reinterpret the pinned sources. The full
+context and policy bind the collection plan identity, invalidating earlier
+receipts when the declared contract changes.
+Source materialization, endpoint arguments, cwd/environment policy, time bounds
+and assertion data come from the harness's own records and argument planner.
+The sidecar is unrun metadata, never a passing execution receipt. Unresolved
+host/runtime/environment context prevents the collector from guessing a probe.
+Stdlib cases retain their declared context,
+but missing target applicability still prevents a complete collection claim.
+The stdlib provider's own plan now supplies fixture bytes, ordered native
+inputs, compiler arguments/overrides and mode-specific build/runtime
+observations to both its harness and the collector. Runtime environment
+inheritance stays separate from the compiler overrides. Its implicit shipped
+backend and opaque `native_fixture_build` boundary are recorded; the existing
+C++ native-provider route is not LLVM execution evidence. Context role and
+expectation data must match the authoritative validated manifest case.
+An explicit frontend-rejection control can satisfy only its declared control;
+it never establishes executable support.
+
+Collection artifacts use `gti.llvm.readiness-collection/v1` and
+`gti.llvm.readiness-member-receipt/v1`. Receipts bind actual bounded helper
+output and required-use artifacts to the source, provider/baseline revision,
+compiler binary/build and target/profile. Validation rechecks the actual
+artifact and admission selection before trusting a receipt's status or digest.
+Independent optimized platform builds may reconcile for the same source and
+provider revision; reuse within a target requires the exact binary/build.
+Attempts form append-only history: interrupted work is distinguishable from
+failure, and retries retain the original logs and outcomes. Output directories
+must be specific paths outside the source tree; collection never deletes them.
+Structural observations always retain execution, cleanup, performance and
+campaign signoff as unrun. The focused `llvm_readiness_collection_controls`
+uses real scalar/callable/rejection probes and explicitly scoped miniature
+recovery controls, never a full-provider or platform execution claim.
+
+The separate opt-in `observe-host` collector operation selects explicit member
+IDs, execution profiles and `O0`/`O3` levels. Its
+`canonical-repository-actual-host/v1` contract deliberately observes the selected
+source with the checked-out repository standard library; it does not replay an
+inherited historical harness environment or custom hosted-library transform.
+The test helper's `--observe-canonical-host` uses public toolchain discovery,
+`AnalysisConfiguration(TargetInfo::host(), profile, RuntimeProfile::Hosted)` and
+an immutable LLVM-selected `CompilationRequest` requiring executable entry and
+definition closure. Public `compileWithBackend` owns loading, semantics,
+optimization and verified lowering. A test-only inspection backend re-verifies
+the detached program and serializes the existing admission plan/selection into
+an in-memory JSON artifact. Observer success is not LLVM emission or execution;
+source definition completeness does not force sealed native reachability.
+The observer preserves the production choice between sealed entry dependencies
+and all executable bodies for conservative/unknown dispatch.
+Valid unsupported programs remain unmet admission obligations. Frontend, MIR
+and observer failures remain distinct from unresolved setup and admitted-only
+observations. The preceding `--probe`/`--probe-uses` paths are unchanged.
+
+Canonical observations hash the actual loaded `SourceManager` bytes, including
+entry, default prelude and resolved includes. Required input, helper binary and
+additional resolved runtime resources have before/after snapshots. Missing
+entry/prelude or changed required inputs prevents a valid observation; missing
+runtime archive/header identities are recorded honestly as execution
+obligations and do not block this no-link stage. Native inputs remain declared,
+unresolved and unlinked; no native compiler, linker or program is invoked by
+the observer. `O0`/`O3` select the normal MIR optimization pipeline, not evidence
+of native code generation at either level.
+
+These artifacts/collections/receipts use distinct
+`gti.llvm.canonical-host-admission/v1`, `gti.llvm.canonical-host-collection/v1`
+and `gti.llvm.canonical-host-receipt/v1` schemas. They cannot satisfy the pinned
+historical baseline without explicit reconciliation. In particular, supported
+hosted targets have `runtimeCapabilities.threads=true` in both execution
+profiles, produced by `AnalysisConfiguration`; the historical manual helper's
+single-threaded tuple has `threads=false`. Availability is not permission:
+`SemanticVisitor::Impl::validateConcurrentSurfaceAvailability` requires both
+the concurrent profile and thread capability, otherwise `GTI-S2084` rejects.
+No baseline rewrite or equivalence between these effective configurations is
+implied. `reconcile-host` validates one retained run; cross-platform campaign
+reconciliation, original harness loading, native execution, cleanup and all
+promotion/performance gates remain unresolved.
 
 The remaining architecture obligations have explicit owners:
 

@@ -5,14 +5,19 @@
 #include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/llvm_backend.h"
+#include "gti/mir_verifier.h"
 #include "gti/runtime_execution.h"
 #include "gti/runtime_failure.h"
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/DiagnosticPrinter.h>
+#include <llvm/IR/GlobalAlias.h>
 #include <llvm/IR/IRBuilder.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -21,6 +26,14 @@
 #include <iterator>
 #include <limits>
 #include <stdexcept>
+
+namespace lang {
+struct MirProgramTestAccess {
+  static std::vector<MirFunctionInstance> &functions(MirProgram &program) {
+    return program.functions;
+  }
+};
+} // namespace lang
 
 namespace {
 using namespace lang;
@@ -48,6 +61,7 @@ VerifiedLoweredProgram fixture() {
 struct Node { mut Node* next = nullptr; mut int32_t value = 0; };
 [[c_abi]] struct Packet { mut uint8_t tag; mut uint64_t value; };
 [[c_abi]] union Overlay { mut uint64_t bits; mut double value; };
+enum Data { empty, number(int value), pair(uint8_t tag, uint64_t value), node(Node value), flag(bool value) };
 int recurse(int value) {
   if (value == 0) { return 0; }
   return recurse(value - 1);
@@ -133,6 +147,22 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
           layout.size == 16 &&
               layout.fieldOffsets == std::vector<std::uint64_t>({0, 8}),
           "recursive pointer records are planned without recursive expansion");
+  }
+  expect(input.program().mir().payloadEnums().size() == 1,
+         "layout fixture retains its concrete payload definition");
+  for (const auto &payload : input.program().mir().payloadEnums()) {
+    const auto &layout = layouts.payload(payload.type);
+    expect(layout.type.addressOnly && layout.type.value->isPointerTy() &&
+               layout.type.size == 24 && layout.type.alignment == 8 &&
+               layout.type.fieldOffsets == std::vector<std::uint64_t>({0, 8}),
+           "payload storage shares one aligned overlap after its exact tag");
+    expect(layout.variants.size() == 5 &&
+               layout.variants[0]->getNumElements() == 0 &&
+               layout.variants[4]->getElementType(0)->isIntegerTy(8),
+           "unit alternatives and bool payload storage retain exact shapes");
+    expect(&layout == &layouts.payload(payload.type) &&
+               layouts.get(payload.type).storage == layout.storage,
+           "all payload layout consumers share a session-owned plan");
   }
   rejects<BackendUnsupportedError>(
       [&] {
@@ -355,8 +385,12 @@ void emitPlaceComponentProbe(Session &session) {
         ir.SetInsertPoint(success);
       });
   places.allocate({});
-  places.parameter(source->parameterBindings[0], function->getArg(0), false);
-  places.parameter(source->parameterBindings[1], function->getArg(1), false);
+  places.parameter({.binding = source->parameterBindings[0],
+                    .type = source->parameterTypes[0]},
+                   function->getArg(0), false);
+  places.parameter({.binding = source->parameterBindings[1],
+                    .type = source->parameterTypes[1]},
+                   function->getArg(1), false);
   auto *storageType =
       llvm::cast<llvm::ArrayType>(session.layouts().get(array->type).storage);
   auto *initial = llvm::ConstantArray::get(
@@ -609,10 +643,207 @@ int main(void) {
             .succeeded(),
         "NativeLinkRequest links LLVM objects without a source compilation "
         "step");
-    expect(driver::invokeProcess({executable.string()}).succeeded(),
-           "linked C consumer observes exact object bytes");
+    const auto executed = driver::invokeProcess({executable.string()});
+    expect(executed.succeeded(),
+           ("linked C consumer observes exact object bytes (exit " +
+            std::to_string(executed.exitCode) + ")")
+               .c_str());
   }
 }
+void testConservativeClassObject() {
+  const auto frontend = Frontend().analyze("llvm-rootless-class-object.gti", R"(
+class Value {
+  int data;
+public:
+  Value(int input) : data(input) {}
+  int read() { return this.data; }
+};
+int inspect(int input) { Value value{input}; return value.read(); }
+)");
+  expect(frontend.canGenerateCode(),
+         "rootless object consumer source verifies");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(lowered, issues);
+  if (!input)
+    throw std::runtime_error("rootless object consumer lost its source seal");
+  const auto admission = planLlvmAdmission(*input);
+  expect(admission.admitted() &&
+             admission.closure() == LlvmAdmissionClosure::AllExecutableBodies,
+         "real public object source keeps its complete conservative inventory");
+  Session proof(*input, {});
+  const auto target = std::find_if(
+      proof.program().mir().functionInstances().begin(),
+      proof.program().mir().functionInstances().end(),
+      [&](const auto &function) {
+        const auto *declaration =
+            proof.program().findFunctionDeclaration(function.declaration);
+        return declaration && declaration->qualifiedName == "inspect";
+      });
+  if (target == proof.program().mir().functionInstances().end())
+    throw std::runtime_error(
+        "rootless object consumer lost its selected GTI target");
+  const auto domain = constantIntegerDomain(SemanticType::Int32);
+  const bool sourceSignature =
+      target->returnType == SemanticType::Int32 &&
+      target->parameterTypes ==
+          std::vector<SemanticType>{SemanticType::Int32} &&
+      !target->mayRaiseDefinedFailure && !target->tracksCaller &&
+      !target->owner && !target->neverReturns && domain &&
+      domain->width == 32 && domain->signedValue &&
+      proof.layouts().get(SemanticType::Int32).size == 4;
+  expect(sourceSignature, "consumer target is independently proven infallible "
+                          "signed int32 -> int32");
+  if (!sourceSignature)
+    return; // Never strip a failure/caller/receiver channel to obtain C
+            // compatibility.
+  const auto gti = proof.abi().gti(target->returnType, target->parameterTypes,
+                                   target->mayRaiseDefinedFailure, false,
+                                   target->tracksCaller);
+  const auto nativeC =
+      proof.abi().nativeC(target->returnType, target->parameterTypes);
+  auto *function = proof.abi().declareFunction(target->id);
+  auto *cDeclaration =
+      llvm::Function::Create(nativeC.type, llvm::GlobalValue::ExternalLinkage,
+                             "consumer.signature.proof", proof.module());
+  nativeC.applyTo(*cDeclaration);
+  const bool compatible =
+      gti == nativeC && !gti.statusResult && !gti.resultDestination &&
+      !gti.failureDestination && gti.parameters.size() == 1 &&
+      gti.parameters[0].channel == AbiChannel::Argument &&
+      gti.parameters[0].sourceIndex == 0 && !gti.parameters[0].indirect &&
+      gti.type->getReturnType()->isIntegerTy(32) &&
+      gti.type->getParamType(0)->isIntegerTy(32) &&
+      function->getCallingConv() == llvm::CallingConv::C &&
+      function->getCallingConv() == cDeclaration->getCallingConv() &&
+      function->getFunctionType() == cDeclaration->getFunctionType() &&
+      function->getAttributes() == cDeclaration->getAttributes();
+  expect(compatible, "central GTI/C plans agree on complete physical channels, "
+                     "attributes, extensions and calling convention");
+  cDeclaration->eraseFromParent();
+  if (!compatible)
+    return;
+  const std::string symbol = function->getName().str();
+  // This tests one planner-proved scalar compatibility, not a stable GTI C
+  // export or Library/Embedding ABI. Actual bytes come from public generate.
+  namespace fs = std::filesystem;
+  const auto root =
+      fs::temp_directory_path() /
+      ("gti-rootless-object-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directory(root);
+  struct Cleanup {
+    fs::path root;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(root, ignored);
+    }
+  } cleanup{root};
+  const auto consumer = root / "consumer.c";
+  expect(driver::writeArtifact(
+             consumer, "#include <stdint.h>\nextern int32_t " + symbol +
+                           "(int32_t);\nint main(void) { if (" + symbol +
+                           "(25) != 25) return 1; if (" + symbol +
+                           "(-7) != -7) return 2; return 0; }\n") ==
+             driver::ArtifactWriteStatus::Success,
+         "write planner-proved rootless object consumer");
+  driver::NativeToolchain toolchain;
+  const auto compiled = driver::invokeProcess(
+      toolchain.command(driver::NativeCCompileRequest(
+          driver::discoverCCompiler(), consumer, root / "consumer.o",
+          driver::CStandard::C17, OptimizationLevel::O2, {}, {})),
+      {.timeout = std::chrono::seconds(30), .isolateProcessGroup = true});
+  if (!compiled.succeeded())
+    std::cerr << compiled.output;
+  expect(compiled.succeeded(), "compile the bounded C17 object consumer");
+  if (!compiled.succeeded())
+    return;
+  fs::path published;
+  std::string previous;
+  for (const auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
+    const auto object = LlvmBackend({.optimization = level}).generate(lowered);
+    published = root / (level == LlvmCodegenOptimization::None ? "source-O0.o"
+                                                               : "source-O3.o");
+    expect(object.kind == BackendArtifactKind::Object &&
+               driver::writeArtifact(published, object.contents) ==
+                   driver::ArtifactWriteStatus::Success,
+           "publish the actual public backend's ordinary-class object");
+    driver::NativeInputs inputs;
+    inputs.libraryFiles.push_back(root / "consumer.o");
+    const auto executable =
+        root / (level == LlvmCodegenOptimization::None ? "run-O0" : "run-O3");
+    const auto linked = driver::invokeProcess(
+        toolchain.command(driver::NativeLinkRequest(
+            driver::discoverNativeCompiler(), published, executable, inputs)),
+        {.timeout = std::chrono::seconds(30), .isolateProcessGroup = true});
+    if (!linked.succeeded())
+      std::cerr << linked.output;
+    expect(linked.succeeded(),
+           "link the unmodified public ordinary-class object");
+    if (linked.succeeded()) {
+      const auto run = driver::invokeProcess(
+          {executable.string()}, {.captureSuccessfulOutput = true,
+                                  .timeout = std::chrono::seconds(30),
+                                  .isolateProcessGroup = true});
+      if (!run.succeeded())
+        std::cerr << run.output;
+      expect(run.succeeded() && run.output.empty(),
+             "O0/O3 execute actual constructor/getter observations 25 and -7");
+    }
+    previous = object.contents;
+  }
+  const auto unsupported =
+      Frontend().analyze("llvm-rootless-pending-payload.gti", R"(
+enum class Choice { empty, held(int value) };
+class Value {
+  Choice data;
+public:
+  Value(int input) : data(Choice::held(input)) {}
+  int read() { return 0; }
+};
+int inspect(int input) { Value value{input}; return value.read(); }
+)");
+  expect(unsupported.canGenerateCode(),
+         "negative object source has valid class storage and payload syntax");
+  if (unsupported.canGenerateCode()) {
+    const auto bad =
+        gti_test::lowerProgram(unsupported, unsupported.mir, unsupported.mir);
+    std::vector<LoweredProgramIssue> badIssues;
+    const auto badVerified = verifiedLoweredProgram(bad, badIssues);
+    expect(badVerified.has_value(),
+           "pending payload negative retains its verified lowered snapshot");
+    if (!badVerified)
+      return;
+    const auto badAdmission = planLlvmAdmission(*badVerified);
+    expect(!badAdmission.admitted() &&
+               std::any_of(badAdmission.requirements().begin(),
+                           badAdmission.requirements().end(),
+                           [](const auto &use) {
+                             return use.required &&
+                                    use.entry->key() == "Shape.PayloadEnum" &&
+                                    !use.implementedShape;
+                           }),
+           "payload generation remains blocked by its exact pending coverage "
+           "requirement");
+    rejects<BackendUnsupportedError>(
+        [&] {
+          const auto object = LlvmBackend().generate(bad);
+          static_cast<void>(driver::writeArtifact(published, object.contents));
+        },
+        "pending payload generation rejects before replacing an existing "
+        "object");
+    std::ifstream stream(published, std::ios::binary);
+    const std::string retained{std::istreambuf_iterator<char>(stream), {}};
+    expect(retained == previous,
+           "a rejected required body leaves previous artifact bytes unchanged");
+  }
+}
+
 // Real source -> verified lowered bodies -> private native body component.
 // Admission is tested separately; this does not grant a public coverage row.
 void testClassBodyComponent() {
@@ -762,7 +993,7 @@ int main() {
         LlvmCodegenOptimization::Default,
         LlvmCodegenOptimization::Aggressive}) {
     Session session(*program, {.optimization = level});
-    const auto admission = planLlvmAdmission(*program);
+    const auto admission = planLlvmAdmission(*program, session.options());
     expect(admission.admitted(), "real class component has public admission");
     lowerScalarProgram(session, admission);
     auto *registration = llvm::StructType::getTypeByName(
@@ -876,6 +1107,367 @@ int main() {
   std::filesystem::remove_all(root);
 }
 
+void testConcretePackAliases() {
+  SemanticType empty;
+  empty.kind = SemanticType::TypePack;
+  empty.concretePack = true;
+  const std::vector<SemanticType> noParameters;
+  const std::vector<HirBindingId> noBindings;
+  const std::vector<HirBindingId> emptyBinding{7};
+  expect(concretePackPrefix(noParameters, emptyBinding, 7, empty) == 0,
+         "empty trailing pack retains its exact source formal binding");
+  expect(!concretePackPrefix(noParameters, noBindings, 7, empty),
+         "an unrelated absent binding cannot witness an empty formal pack");
+  auto pair = empty;
+  pair.arguments = {SemanticType::Int32, SemanticType::Int32};
+  const std::vector<HirBindingId> physicalContinuations{7, 0};
+  expect(!concretePackPrefix(pair.arguments, physicalContinuations, 7, pair),
+         "unproduced zero-continuation binding compatibility stays rejected");
+  const std::vector<SemanticType> nonTrailing{pair, SemanticType::Int32};
+  rejects<BackendUnsupportedError>(
+      [&] { static_cast<void>(flattenConcreteParameters(nonTrailing)); },
+      "non-trailing native packs remain rejected");
+  namespace fs = std::filesystem;
+  const auto root =
+      fs::temp_directory_path() /
+      ("gti-llvm-pack-aliases-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directories(root);
+  struct Cleanup {
+    fs::path root;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(root, ignored);
+    }
+  } cleanup{root};
+  for (const bool projected : {false, true}) {
+    auto frontend = Frontend().analyze("pack-aliases.gti", R"(
+struct Pair {
+  int left;
+  int right;
+  Pair(int left, int right) : left(left), right(right) {}
+  int sum() { return this.left + this.right; }
+};
+T create<T, Args...>(Args... args) { return T(args...); }
+int main() { Pair value = create<Pair>(20, 22); return value.sum() == 42 ? 0 : 1; }
+)");
+    expect(frontend.canGenerateCode(), "pack alias source fixture is valid");
+    bool duplicated = false;
+    for (auto &function : MirProgramTestAccess::functions(frontend.mir)) {
+      const MirPlace *selected = nullptr;
+      for (const auto &place : function.body.places) {
+        if (place.root != MirPlaceRootKind::Binding)
+          continue;
+        if ((!projected && place.projections.empty() &&
+             place.type.kind == SemanticType::TypePack) ||
+            (projected && place.projections.size() == 1 &&
+             place.projections[0].kind == MirProjectionKind::PackElement)) {
+          selected = &place;
+          break;
+        }
+      }
+      if (selected) {
+        auto invalid = function.body;
+        const auto root =
+            std::find_if(invalid.places.begin(), invalid.places.end(),
+                         [](const auto &place) {
+                           return place.type.kind == SemanticType::TypePack &&
+                                  place.projections.empty();
+                         });
+        const auto element =
+            std::find_if(invalid.places.begin(), invalid.places.end(),
+                         [](const auto &place) {
+                           return place.projections.size() == 1 &&
+                                  place.projections[0].kind ==
+                                      MirProjectionKind::PackElement;
+                         });
+        if (root != invalid.places.end() && root->key &&
+            element != invalid.places.end()) {
+          element->key = root->key;
+          element->key->projections.push_back(
+              {.kind = PlaceProjectionKind::ConstantIndex,
+               .index = root->type.arguments.size()});
+          expect(!planConcreteParameters(function.parameterTypes,
+                                         function.parameterBindings, invalid),
+                 "a supplied conflicting projected key cannot be ignored");
+        } else {
+          expect(false,
+                 "alias fixture retains its projected-key negative control");
+        }
+        auto alias = *selected;
+        alias.id = function.body.places.size() + 1;
+        function.body.places.push_back(std::move(alias));
+        duplicated = true;
+        break;
+      }
+    }
+    expect(duplicated, "fixture retains a concrete pack root/element");
+    const auto checked = verifyMirProgram(frontend.mir);
+    for (const auto &error : checked.errors)
+      std::cerr << error.message << '\n';
+    expect(checked.valid(), "compatible duplicate pack views are verified MIR");
+    if (!checked.valid())
+      continue;
+    std::vector<LoweredProgramIssue> issues;
+    const auto program = verifiedLoweredProgram(
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+    expect(program.has_value(), "duplicate views survive the sealed boundary");
+    if (!program)
+      continue;
+    std::cout << (projected ? "projected" : "root")
+              << " pack alias: MIR and sealed snapshot verified\n";
+    for (const auto level :
+         {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
+      try {
+        const LlvmBackendOptions options{.optimization = level};
+        const auto admission = planLlvmAdmission(*program, options);
+        Session session(*program, options);
+        expect(admission.admitted(),
+               "concrete pack aliases have native admission");
+        lowerScalarProgram(session, admission);
+        const auto object = session.emitObject();
+        const auto path = root / "probe.o";
+        expect(driver::writeArtifact(path, object.contents) ==
+                   driver::ArtifactWriteStatus::Success,
+               "write concrete pack alias object");
+        driver::NativeInputs inputs;
+        inputs.finalLibraryFiles.push_back(
+            driver::discoverToolchainLayout(nullptr).runtimeLibrary);
+        const auto executable = root / "probe";
+        const auto linked =
+            driver::NativeToolchain().invoke(driver::NativeLinkRequest(
+                driver::discoverNativeCompiler(), path, executable, inputs));
+        expect(linked.succeeded(), "link concrete pack alias source program");
+        if (linked.succeeded())
+          expect(driver::invokeProcess({executable.string()}).succeeded(),
+                 "duplicate views preserve distinct incoming pack lanes");
+      } catch (const std::exception &error) {
+        std::cerr << (projected ? "projected" : "root")
+                  << " pack alias: " << error.what() << '\n';
+        expect(false, "verified aliases must not consume additional ABI lanes");
+      }
+    }
+  }
+}
+
+void testPayloadUniqueOwner(const std::filesystem::path &repository,
+                            bool sourceOnly) {
+  namespace fs = std::filesystem;
+  const auto library = fs::canonical(repository / "stdlib/std/memory.gti");
+  std::ifstream input(library);
+  std::string source(std::istreambuf_iterator<char>{input}, {});
+  expect(input.good() || input.eof(),
+         "read actual trusted memory declarations");
+  // Overlay a real trusted unit, keeping its capability declarations intact.
+  // Only this source fixture may name the private scalar owner representation.
+  source += R"(
+namespace payload_owner_probe {
+mut int32_t allocated = 0;
+mut int32_t released = 0;
+enum Packet { owned(gti_internal::unique_owner<int32_t> value) };
+gti_internal::unique_owner<int32_t> extract() {
+  mut Packet source = Packet::owned(gti_internal::allocate_unique_owner<int32_t>(42));
+  switch (std::move(source)) {
+  case Packet::owned(value): return std::move(value);
+  }
+}
+int run() {
+  {
+    gti_internal::unique_owner<int32_t> selected = extract();
+    // The source payload is already dead, while its extracted owner is live.
+    if (allocated != 1 || released != 0) { return 1; }
+    if (gti_internal::unique_owner_borrow(selected) != 42) { return 2; }
+  }
+  return allocated == 1 && released == 1 ? 0 : 3;
+}
+}
+)";
+  FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  auto frontend = Frontend(options).analyze(
+      repository / "tests/payload-owner-entry.gti",
+      "#include <std/memory>\n"
+      "int main() { return payload_owner_probe::run(); }\n",
+      {repository / "stdlib/prelude.gti"}, {{library.string(), source}},
+      {repository / "stdlib"});
+  for (const auto &diagnostic : frontend.diagnostics)
+    if (!frontend.canGenerateCode())
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "trusted scalar-owner payload fixture produces authoritative MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto checked = verifyMirProgram(frontend.mir);
+  expect(checked.valid(), "scalar-owner payload MIR verifies without mutation");
+  std::vector<LoweredProgramIssue> issues;
+  const auto program = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  expect(program.has_value(), "scalar-owner payload crosses sealed boundary");
+  if (!program)
+    return;
+  const auto &mir = program->program().mir();
+  std::array<SymbolId, 2> counterSymbols{};
+  for (std::size_t index = 0; index < counterSymbols.size(); ++index) {
+    const auto name = index == 0 ? "payload_owner_probe::allocated"
+                                 : "payload_owner_probe::released";
+    unsigned matches = 0;
+    bool valid = false;
+    for (const auto &symbol : program->program().symbols()) {
+      if (symbol.qualifiedName != name)
+        continue;
+      ++matches;
+      counterSymbols[index] = symbol.id;
+      valid = symbol.kind == SymbolKind::GlobalVariable &&
+              symbol.type == SemanticType::Int32 && symbol.mutableBinding;
+    }
+    expect(matches == 1 && valid,
+           "each provider counter is one exact sealed mutable scalar global");
+    if (matches != 1 || !valid)
+      return;
+  }
+  const auto owner = SemanticType::uniqueOwnerOf(SemanticType::Int32);
+  bool exactField = false;
+  for (const auto &payload : mir.payloadEnums())
+    for (const auto &variant : payload.variants)
+      exactField |= variant.payloadTypes == std::vector<SemanticType>{owner};
+  bool move = false;
+  bool payloadDrop = false;
+  bool ownerDrop = false;
+  for (const auto &function : mir.functionInstances()) {
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        move |= instruction.operation == MirOperation::PayloadExtract &&
+                instruction.info.type == owner &&
+                instruction.payloadExtractionKind ==
+                    PayloadExtractionKind::MoveValue;
+        if (instruction.kind == MirInstructionKind::Drop &&
+            instruction.destination) {
+          const auto *place = function.body.findPlace(*instruction.destination);
+          ownerDrop |= place && place->type == owner;
+          payloadDrop |= place && mir.findPayloadEnum(place->type);
+        }
+      }
+  }
+  expect(exactField && move && payloadDrop && ownerDrop,
+         "sealed body retains scalar UniqueOwner MoveValue and both drops");
+  if (!exactField || !move || !payloadDrop || !ownerDrop)
+    return;
+  std::cout << "scalar UniqueOwner payload: verified source, MoveValue and "
+               "both drops\n";
+  if (sourceOnly)
+    return;
+
+  const auto root =
+      fs::temp_directory_path() /
+      ("gti-llvm-payload-owner-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directories(root);
+  struct Cleanup {
+    fs::path root;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(root, ignored);
+    }
+  } cleanup{root};
+  const auto shim = root / "provider.c";
+  expect(driver::writeArtifact(shim, R"(
+#define _POSIX_C_SOURCE 200112L
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+static void *active;
+extern int32_t payload_owner_allocated_v1, payload_owner_released_v1;
+void *gti_rt_posix_memalign_v1(uint64_t bytes, uint64_t alignment, int32_t *status) {
+  if (payload_owner_allocated_v1 || !bytes || !alignment) abort();
+  void *address = NULL;
+  *status = posix_memalign(&address, (size_t)alignment, (size_t)bytes);
+  if (*status || !address) abort();
+  active = address;
+  ++payload_owner_allocated_v1;
+  return address;
+}
+void gti_rt_posix_free_v1(void *address) {
+  if (!address || address != active || payload_owner_released_v1) {
+    fputs("payload provider: invalid or duplicate release\n", stderr);
+    abort();
+  }
+  active = NULL;
+  ++payload_owner_released_v1;
+  free(address);
+}
+)") == driver::ArtifactWriteStatus::Success,
+         "write versioned counting memory provider");
+  driver::NativeToolchain toolchain;
+  const auto shimObject = root / "provider.o";
+  const auto compiled = toolchain.invoke(driver::NativeCCompileRequest(
+      driver::discoverCCompiler(), shim, shimObject, driver::CStandard::C17,
+      OptimizationLevel::O2, {}, {}));
+  if (!compiled.succeeded())
+    std::cerr << compiled.output;
+  expect(compiled.succeeded(), "compile exact v1 count/double-free oracle");
+  if (!compiled.succeeded())
+    return;
+  for (const auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
+    const LlvmBackendOptions options{.optimization = level};
+    const auto admission = planLlvmAdmission(*program, options);
+    Session session(*program, options);
+    expect(admission.admitted(),
+           "combined O7/O8 scalar-owner payload admission");
+    if (!admission.admitted()) {
+      std::cerr << admission.limitation() << '\n';
+      return;
+    }
+    lowerScalarProgram(session, admission);
+    // Only the test shim sees these aliases. Production admission/exports are
+    // unchanged; verify and optimize this instrumented module normally.
+    for (std::size_t index = 0; index < counterSymbols.size(); ++index) {
+      auto *global = session.module().getGlobalVariable(
+          "__gti_native_v1_g" + std::to_string(counterSymbols[index]), true);
+      const bool valid = global && global->getValueType()->isIntegerTy(32) &&
+                         !global->isConstant() && !global->isThreadLocal();
+      expect(valid, "provider alias retains exact mutable global storage");
+      if (!valid)
+        return;
+      llvm::GlobalAlias::create(global->getValueType(),
+                                global->getAddressSpace(),
+                                llvm::GlobalValue::ExternalLinkage,
+                                index == 0 ? "payload_owner_allocated_v1"
+                                           : "payload_owner_released_v1",
+                                global, &session.module());
+    }
+    const auto object = root / "probe.o";
+    expect(driver::writeArtifact(object, session.emitObject().contents) ==
+               driver::ArtifactWriteStatus::Success,
+           "write real scalar-owner payload body object");
+    driver::NativeInputs inputs;
+    inputs.finalLibraryFiles = {
+        shimObject, driver::discoverToolchainLayout(nullptr).runtimeLibrary};
+    const auto executable = root / "probe";
+    const auto linked = toolchain.invoke(driver::NativeLinkRequest(
+        driver::discoverNativeCompiler(), object, executable, inputs));
+    if (!linked.succeeded())
+      std::cerr << linked.output;
+    expect(linked.succeeded(), "link real body with independent memory oracle");
+    if (linked.succeeded()) {
+      const auto run = driver::invokeProcess({executable.string()});
+      if (!run.succeeded()) {
+        std::cerr << "scalar-owner payload program exit " << run.exitCode
+                  << ": " << run.output;
+      }
+      expect(run.succeeded(), "scalar payload move has exactly one allocation "
+                              "and release, without early or double cleanup");
+      if (run.succeeded())
+        std::cout << "scalar UniqueOwner payload: "
+                  << (level == LlvmCodegenOptimization::None ? "O0" : "O3")
+                  << " allocation/release 1/1, no early/double cleanup\n";
+    }
+  }
+}
+
 void testExecutionCAbi() {
   const auto root =
       std::filesystem::temp_directory_path() /
@@ -934,14 +1526,25 @@ int main(void) {
 }
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
   try {
+    if (argc >= 3 && std::string_view(argv[1]) == "--payload-unique-owner") {
+      testPayloadUniqueOwner(argv[2], argc == 4 && std::string_view(argv[3]) ==
+                                                       "--source-only");
+      return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--pack-aliases") {
+      testConcretePackAliases();
+      return failures == 0 ? 0 : 1;
+    }
     const auto input = fixture();
     testLayoutAndAbi(input);
     testInvalidModule(input);
     testDiagnostics(input);
     testObjectHandoff(input);
+    testConservativeClassObject();
     testClassBodyComponent();
+    testConcretePackAliases();
     testExecutionCAbi();
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';

@@ -1,0 +1,28 @@
+#include <std/memory>
+
+mut int released = 0;
+
+struct Owner {
+  int prefix;
+  mut int value;
+  std::unique_ptr<int> token;
+  Owner(int prefix, int value)
+      : prefix(prefix), value(value), token(std::make_unique<int>(5)) {}
+  ~Owner() { released += 1; }
+};
+
+int main() {
+  {
+    mut Owner owner{11, 42};
+    int& read = unsafe { std::assume_ref(&owner.value, owner) };
+    if (read != 42) {
+      return 1;
+    }
+    mut int& write = unsafe { std::assume_mut(&owner.value, owner) };
+    write = 43;
+    if (owner.value != 43 || owner.prefix != 11) {
+      return 2;
+    }
+  }
+  return released == 1 ? 0 : 3;
+}

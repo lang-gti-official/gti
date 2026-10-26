@@ -2,15 +2,33 @@
 """Concrete class/lifetime execution through independent native endpoints."""
 
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from llvm_evidence_manifest import build_manifest
 
 
 CASES = {
+    "initializer-list-and-defaults": r'''
+mut int events = 0;
+int mark(int value) { events = events * 10 + value; return value; }
+class Mixed {
+  int data;
+  int defaulted = mark(2);
+  int overridden = mark(9);
+public:
+  Mixed(int input) : data(mark(input)), overridden(mark(3)) {}
+  int total() { return this.data + this.defaulted + this.overridden; }
+};
+int main() {
+  Mixed value{1};
+  return value.total() == 6 && events == 123 ? 0 : 1;
+}
+''',
     "ordinary": r'''
 mut int events = 0;
 class Ticket {
@@ -370,11 +388,50 @@ int main() { return local(32); }
 }
 
 
+def success_cases(root: Path) -> dict[str, str]:
+    cases = dict(CASES)
+    cases["shipped-example"] = (
+        root / "examples/llvm/classes-and-lifetimes.gti").read_text(
+            encoding="utf-8")
+    cases["fresh-transfer-placement"] = (
+        root / "tests/fixtures/llvm_class_fresh_transfer_regression.gti").read_text(
+            encoding="utf-8")
+    return cases
+
+
+def evidence_cases(root: Path) -> dict[str, str]:
+    return {**success_cases(root),
+            **{name: source for name, (source, _, _) in FAILURES.items()},
+            **NATIVE_ONLY,
+            **{name: source for name, (source, _) in NATIVE_FAILURES.items()}}
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    cases = evidence_cases(root)
+    profiles = {name: (name,) for name in cases}
+    assert all(case in cases for profile in profiles.values() for case in profile)
+    return profiles
+
+
+def evidence_manifest(root: Path) -> dict:
+    return build_manifest(
+        "llvm_class_execution", evidence_cases(root), evidence_profiles(root),
+        {"shipped-example": "examples/llvm/classes-and-lifetimes.gti",
+         "fresh-transfer-placement": "tests/fixtures/llvm_class_fresh_transfer_regression.gti"})
+
+
+def list_evidence(root: Path) -> None:
+    print(json.dumps(evidence_manifest(root), sort_keys=True))
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
+        list_evidence(Path(sys.argv[2]).resolve())
+        return
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
-    CASES["shipped-example"] = (root / "examples/llvm/classes-and-lifetimes.gti").read_text(encoding="utf-8")
+    runnable_cases = success_cases(root)
     selected = sys.argv[3] if len(sys.argv) > 3 else None
-    if selected and selected not in CASES and selected not in FAILURES and selected not in NATIVE_ONLY and selected not in NATIVE_FAILURES:
+    if selected and selected not in runnable_cases and selected not in FAILURES and selected not in NATIVE_ONLY and selected not in NATIVE_FAILURES:
         raise ValueError(f"unknown class execution case: {selected}")
     env = os.environ.copy()
     env["NO_COLOR"] = "1"
@@ -382,7 +439,7 @@ def main():
                  *(Endpoint("llvm", mode) for mode in ("O0", "O1", "O2", "O3")))
     with tempfile.TemporaryDirectory(prefix="gti-llvm-classes-") as directory:
         work = Path(directory)
-        for name, text in CASES.items():
+        for name, text in runnable_cases.items():
             if selected and name != selected:
                 continue
             source = work / f"{name}.gti"

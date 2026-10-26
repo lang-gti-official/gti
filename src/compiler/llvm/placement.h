@@ -3,6 +3,7 @@
 #include "gti/mir.h"
 
 #include <map>
+#include <set>
 
 namespace lang::native_llvm {
 
@@ -13,6 +14,41 @@ namespace lang::native_llvm {
           addressValue(type.arguments[0]));
 }
 
+[[nodiscard]] inline bool addressValue(const MirProgram &program,
+                                       const SemanticType &type) {
+  return type.kind == SemanticType::Class ||
+         (type.kind == SemanticType::Enum && program.findPayloadEnum(type)) ||
+         type.kind == SemanticType::Lambda ||
+         (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+          addressValue(program, type.arguments[0]));
+}
+
+// Exclusion only: inline hierarchy state cannot use ordinary object-byte
+// transport. Indirections transport addresses, not their referents. Unknown,
+// missing or cyclic storage fails closed; false is never inferred from it.
+// This does not establish layout, borrowing, fresh placement or admission.
+[[nodiscard]] bool containsHierarchyStorage(const MirProgram &program,
+                                            const SemanticType &type);
+
+// A candidate is not permission to transfer. The complete pure-MIR plan below
+// binds its exact source, generated policy, ownership and fresh publication.
+[[nodiscard]] bool
+isFreshHierarchyTransferProducer(const MirInstruction &instruction);
+
+struct FreshHierarchyTransfer {
+  MirOperand source;
+  MirPlaceId destination = 0;
+  const MirInstruction *publication = nullptr;
+  ConstructorKind kind = ConstructorKind::Copy;
+  HirClassInstanceId owner = 0;
+  MirDropObligationId sourceDrop = 0;
+  MirDropObligationId valueDrop = 0;
+};
+
+[[nodiscard]] FreshHierarchyTransfer
+planFreshHierarchyTransfer(const MirProgram &program, const MirBody &body,
+                           const MirInstruction &producer);
+
 // Fresh values have one physical destination. This plan follows only verified
 // value transport; it never elides a MIR Copy/Move or aliases a named local to
 // the caller's return storage.
@@ -22,16 +58,23 @@ public:
     MirPlaceId place = 0;
     MirValueId aggregate = 0;
     std::size_t element = 0;
+    std::optional<std::size_t> variant;
     bool returned = false;
     friend bool operator==(const Target &, const Target &) = default;
   };
   explicit Placement(const MirBody &body);
+  // Explicit opt-in for typed hierarchy transfer emission. Ordinary Load/Move
+  // snapshots retain baseline placement; only exact successful MIR plans add
+  // hierarchy final-local destinations. Neither constructor grants admission.
+  Placement(const MirProgram &program, const MirBody &body);
   [[nodiscard]] const Target *target(MirValueId value) const;
   [[nodiscard]] bool fresh(MirValueId value) const;
 
 private:
   std::map<MirValueId, const MirInstruction *> producers;
   std::map<MirValueId, Target> targets;
+  std::set<MirValueId> hierarchyTransfers;
+  void collect(const MirProgram *program, const MirBody &body);
   void bind(MirValueId value, Target target);
 };
 

@@ -25,6 +25,8 @@ import subprocess
 import sys
 import tempfile
 
+import example_case_context as examples
+
 MARKER = "GTI verified-MIR body"
 MARKER_PATTERN = re.compile(
     rf"{re.escape(MARKER)}:[^\n]* "
@@ -54,29 +56,17 @@ def census(gti: Path, root: Path) -> dict[str, int | None]:
     # A release-configured gti discovers only the installed stdlib layout;
     # point it at the repository stdlib so the census is build-flavor
     # independent.
-    env = dict(os.environ)
-    env.setdefault("GTI_STDLIB_PATH", str(root / "stdlib"))
+    env = examples.environment(root, os.environ)
     with tempfile.TemporaryDirectory(prefix="gti-census-") as scratch:
         out = Path(scratch) / "census.cpp"
-        for source in sorted((root / "examples").glob("*.gti")):
+        for case in examples.cases(root):
+            source = root / case.source
             out.unlink(missing_ok=True)
             completed = subprocess.run(
-                [
-                    str(gti),
-                    "--emit-cpp",
-                    *(
-                        ["--execution-profile", "concurrent"]
-                        if source.name
-                        in {"066-managed-threads.gti", "076-scalar-atomics.gti", "175-thread-local-storage.gti"}
-                        else []
-                    ),
-                    str(source),
-                    "-o",
-                    str(out),
-                ],
+                examples.census_command(case, root, gti, out),
                 cwd=root,
                 capture_output=True,
-                timeout=180,
+                timeout=examples.CENSUS_TIMEOUT,
                 check=False,
                 env=env,
             )

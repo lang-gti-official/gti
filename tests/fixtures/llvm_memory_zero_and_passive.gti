@@ -1,0 +1,13 @@
+#include <std/memory>
+
+int main() {
+  mut int value = 7;
+  unsafe {
+    int* absent = nullptr;
+    std::relocate_range_at(absent, absent, uint64_t(0));
+    // A scalar has no automatic GTI drop. End its live lifetime exactly once
+    // and never read it again; the enclosing stack bytes need no allocation.
+    std::destroy_at(&value);
+  }
+  return 0;
+}

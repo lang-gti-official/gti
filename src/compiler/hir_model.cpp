@@ -659,6 +659,61 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                    instance.typeArguments[typeIndex++]);
       }
     }
+    if (instance.virtualDispatch.size() != owner->virtualDispatch.size())
+      result.errors.emplace_back(
+          "HIR virtual dispatch inventory differs from semantic selection");
+    const auto exactDispatchPath = [&](const auto &path,
+                                       HirClassInstanceId endpoint) {
+      auto current = instance.id;
+      std::unordered_set<HirClassInstanceId> seen{current};
+      for (const auto next : path) {
+        if (!current || current > program.classInstances().size() ||
+            !seen.insert(next).second)
+          return false;
+        const auto &bases = program.classInstances()[current - 1].bases;
+        const auto found =
+            std::find_if(bases.begin(), bases.end(), [&](const auto &base) {
+              return base.instance == next;
+            });
+        if (found == bases.end() || !next ||
+            next > program.classInstances().size() ||
+            program.classInstances()[next - 1].type != found->type)
+          return false;
+        current = next;
+      }
+      return current == endpoint && endpoint != 0 &&
+             endpoint <= program.classInstances().size();
+    };
+    std::unordered_set<HirFunctionInstanceId> dispatchRoots;
+    for (std::size_t index = 0; index < instance.virtualDispatch.size();
+         ++index) {
+      const auto &row = instance.virtualDispatch[index];
+      const auto *root = program.findFunctionInstance(row.root);
+      const auto *target = program.findFunctionInstance(row.target);
+      const auto *selected = index < owner->virtualDispatch.size()
+                                 ? &owner->virtualDispatch[index]
+                                 : nullptr;
+      if (!selected || !root || !target ||
+          !dispatchRoots.insert(row.root).second ||
+          root->declaration != selected->root ||
+          target->declaration != selected->target ||
+          root->owner != row.rootOwner || target->owner != row.targetOwner ||
+          !exactDispatchPath(row.rootPath, row.rootOwner) ||
+          !exactDispatchPath(row.targetPath, row.targetOwner) ||
+          program.classInstances()[row.targetOwner - 1].type !=
+              substituteSemanticType(selected->targetOwner, substitution,
+                                     &semantics) ||
+          !root->virtualMethod || !target->virtualMethod ||
+          root->staticMember || target->staticMember ||
+          root->parameterTypes != target->parameterTypes ||
+          root->returnType != target->returnType ||
+          (target->pureVirtual && !instance.abstract) ||
+          (!target->pureVirtual &&
+           (!target->source || !target->source->body())))
+        result.errors.emplace_back(
+            "HIR virtual dispatch differs from its exact semantic "
+            "root/target/owner/path contract");
+    }
     for (std::size_t index = 0; index < instance.typeAliases.size(); ++index) {
       const auto &alias = instance.typeAliases[index];
       const TypeAliasInfo *primary =

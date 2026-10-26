@@ -2,12 +2,17 @@
 """Execute real lowered GTI at native O0/O3 against the production oracle."""
 
 from pathlib import Path
+from dataclasses import asdict, dataclass
+import hashlib
+import json
 import os
 import subprocess
 import sys
 import tempfile
 
-from backend_execution import Endpoint, execute
+from backend_execution import Endpoint, execute, plan_compile_command
+from llvm_case_context import CaseContext
+from llvm_evidence_manifest import build_manifest, build_context_sidecar
 
 
 SCALARS = r'''
@@ -67,6 +72,25 @@ int main() {
   if (!(int64_t(-1) < uint32_t(1)) || !(uint32_t(1) > int64_t(-1))
       || int16_t(-1) + uint16_t(1) != 0 || double(1.5) + float(0.5) != 2.0d) { return 9; }
   return 0;
+}
+'''
+
+COVERAGE_CONSTRUCTIONS = r'''
+#include <std/numeric>
+
+using Index = uint8_t;
+mut int implicit_zero;
+
+T convert<std::numeric T>(int value) { return T(value); }
+T default_value<std::default_initializable T>() { return T(); }
+
+int main() {
+  mut int value = 2;
+  int sequenced = (value += 1, +value);
+  Index alias = Index(sequenced);
+  uint8_t converted = convert<uint8_t>(sequenced);
+  uint8_t zero = default_value<uint8_t>();
+  return int(alias) + int(converted) + int(zero) + implicit_zero - 6;
 }
 '''
 
@@ -133,19 +157,17 @@ int main() { require(false); return 0; }
     return cases
 
 
-def main() -> None:
-    gti = Path(sys.argv[1]).resolve()
-    root = Path(sys.argv[2]).resolve()
-    env = os.environ.copy()
-    successes = {'scalars': SCALARS, 'widths': widths(),
-                 'shipped-example': (root / 'examples/llvm/scalar-control-flow.gti').read_text(),
-                 'globals': '''
+def successes(root: Path) -> dict[str, str]:
+    return {'scalars': SCALARS, 'widths': widths(),
+            'coverage-constructions': COVERAGE_CONSTRUCTIONS,
+            'shipped-example': (root / 'examples/llvm/scalar-control-flow.gti').read_text(),
+            'globals': '''
 int initialize() { return 3; }
 mut int value = initialize();
 bool enabled = true;
 int main() { value += 1; if (!enabled) { return 1; } return value - 4; }
 ''',
-                 'dormant-owner': '''
+            'dormant-owner': '''
 class Unused { public: Unused() {} ~Unused() {} };
 int unused() { Unused value{}; return 1; }
 int main() { return 0; }
@@ -160,43 +182,212 @@ int main() {
   return 0;
 }
 '''}
+
+
+def rejections() -> dict[str, str]:
+    return {
+        'polymorphic-owner': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }',
+        'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; return data[0].read(); }',
+        'polymorphic-tls': 'class Owner { public: virtual int read() { return 0; } }; thread_local Owner value{}; int main() { return value.read(); }',
+    }
+
+
+@dataclass(frozen=True)
+class ScalarCase:
+    source_text: str
+    context: CaseContext
+    expectation: dict
+    endpoints: tuple[Endpoint, ...]
+    build_timeout: int
+    run_timeout: int | None
+
+    @property
+    def is_control(self) -> bool:
+        return self.expectation['kind'] == 'backend-rejection'
+
+    def sidecar_record(self) -> dict:
+        return {
+            'context': self.context.record(),
+            'role': 'expected-rejection-control' if self.is_control else 'positive-admission',
+            'observation': {
+                'endpoints': ([asdict(endpoint) for endpoint in self.endpoints] if not self.is_control
+                              else [{'backend': 'llvm', 'optimization': None}]),
+                'setup': ({'cwd': 'inherited', 'environment': 'inherited', 'build_timeout': self.build_timeout,
+                           'extra_native_inputs': [], 'argv': None} if self.is_control else
+                          {'cwd': 'repository-root', 'environment': 'copy-inherited',
+                           'build_timeout': self.build_timeout, 'run_timeout': self.run_timeout,
+                           'extra_native_inputs': [], 'argv': []}),
+                'expectation': dict(self.expectation),
+            },
+        }
+
+
+def scalar_cases(root: Path) -> dict[str, ScalarCase]:
+    endpoints = (Endpoint('cpp', 'O3', 'c++23'), Endpoint('llvm', 'O0'), Endpoint('llvm', 'O3'))
+    cases = {}
+
+    def add(name: str, text: str, expectation: dict) -> None:
+        control = expectation['kind'] == 'backend-rejection'
+        origin = ('examples/llvm/scalar-control-flow.gti' if name == 'shipped-example'
+                  else f'inline/{name}.gti')
+        context = CaseContext(
+            provider='llvm_scalar_execution', identity=name, source=origin,
+            source_sha256=hashlib.sha256(text.encode('utf-8')).hexdigest(),
+            source_kind='repository' if name == 'shipped-example' else 'inline',
+            materialized_name=f'reject-{name}.gti' if control else f'{name}.gti',
+            execution_profile='single-threaded',
+            loading='materialized-source-with-inherited-compiler-environment',
+            observation='scalar-unsupported-control' if control else 'scalar-differential-execution',
+            unresolved=('host-target-applicability', 'effective-compiler-environment',
+                        'implicit-toolchain-runtime'),
+        )
+        cases[name] = ScalarCase(text, context, expectation, () if control else endpoints,
+                                 60 if control else 240, None if control else 15)
+
+    for name, text in successes(root).items():
+        add(name, text, {'kind': 'success', 'exit_code': 0, 'stdout': '', 'stderr': '',
+                         'differential': 'exact-exit-stdout-stderr'})
+    for name, (text, diagnostic) in failures().items():
+        add(name, text, {'kind': 'defined-failure', 'exit_code': 70, 'diagnostic': diagnostic,
+                         'differential': 'exact-exit-stdout-stderr'})
+    for name, text in rejections().items():
+        add(name, text, {'kind': 'backend-rejection', 'exit_code': 65,
+                         'diagnostic': 'GTI-B0003',
+                         'preserved_output_hex': b'existing artifact'.hex()})
+    return cases
+
+
+def rejection_plan(gti: Path, source: Path, output: Path, *, timeout: int) -> tuple[list[str], dict]:
+    return ([str(gti), str(source), '--backend', 'llvm', '-o', str(output)],
+            {'capture_output': True, 'text': True, 'timeout': timeout})
+
+
+def scalar_command_plans(case: ScalarCase, name: str, gti: Path,
+                         root: Path, work: Path) -> list[dict]:
+    source = work / case.context.materialized_name
+    if case.is_control:
+        command, options = rejection_plan(gti, source, work / f'reject-{name}', timeout=case.build_timeout)
+        return [{'command': command, 'options': options,
+                 'cwd_policy': 'inherited', 'environment_policy': 'inherited'}]
+    return [{
+        'command': plan_compile_command(
+            gti, source, work / f'{name}-{endpoint.backend}-{endpoint.optimization}' /
+            ('program.exe' if os.name == 'nt' else 'program'), endpoint),
+        'cwd': str(root), 'environment_policy': 'copy-inherited',
+        'build_timeout': case.build_timeout, 'run_timeout': case.run_timeout,
+    } for endpoint in case.endpoints]
+
+
+def evidence_cases(root: Path) -> dict[str, str]:
+    return {name: case.source_text for name, case in scalar_cases(root).items() if not case.is_control}
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    cases = evidence_cases(root)
+    panic = ('panic', 'empty-panic', 'truncated-panic', 'assertion')
+    profiles = {
+        'scalars': ('scalars',),
+        'widths': ('widths',),
+        'globals': ('globals',),
+        'numeric-intrinsics': ('numeric-intrinsics',),
+        'coverage-constructions': ('coverage-constructions',),
+        'defined-failures': tuple(failures()),
+        'panic-failures': panic,
+    }
+    assert all(case in cases for profile in profiles.values() for case in profile)
+    return profiles
+
+
+def evidence_manifest(root: Path) -> dict:
+    origins = {name: case.context.source for name, case in scalar_cases(root).items()
+               if not case.is_control and case.context.source_kind == 'repository'}
+    return build_manifest(
+        'llvm_scalar_execution', evidence_cases(root), evidence_profiles(root),
+        origins)
+
+
+def evidence_partition_policy(root: Path) -> dict[str, str]:
+    del root
+    return {'cases': 'positive-admission', 'controls': 'expected-rejection-control'}
+
+
+def evidence_context(root: Path) -> dict:
+    cases = scalar_cases(root)
+    return build_context_sidecar(
+        evidence_manifest(root),
+        {name: case.sidecar_record() for name, case in cases.items() if not case.is_control},
+        {name: case.sidecar_record() for name, case in cases.items() if case.is_control},
+        partition_policy=evidence_partition_policy(root))
+
+
+def list_evidence(root: Path) -> None:
+    print(json.dumps(evidence_manifest(root), sort_keys=True))
+
+
+def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == '--list-evidence':
+        list_evidence(Path(sys.argv[2]).resolve())
+        return
+    gti = Path(sys.argv[1]).resolve()
+    root = Path(sys.argv[2]).resolve()
+    selection = sys.argv[3] if len(sys.argv) > 3 else None
+    env = os.environ.copy()
+    cases = scalar_cases(root)
+    success_cases = {name: case for name, case in cases.items() if case.expectation['kind'] == 'success'}
+    failure_cases = {name: case for name, case in cases.items() if case.expectation['kind'] == 'defined-failure'}
+    rejection_cases = {name: case for name, case in cases.items() if case.is_control}
+    if (selection and selection not in success_cases and
+            selection not in failure_cases and selection not in rejection_cases):
+        raise ValueError(f'unknown scalar execution case: {selection}')
     with tempfile.TemporaryDirectory(prefix='gti-llvm-scalars-') as temporary:
         work = Path(temporary)
-        for name, source_text in successes.items():
-            source = work / f'{name}.gti'
-            source.write_text(source_text)
+        for name, specification in success_cases.items():
+            if selection and selection != name:
+                continue
+            source = work / specification.context.materialized_name
+            source.write_text(specification.source_text)
             results = []
-            for endpoint in (Endpoint('cpp', 'O3', 'c++23'), Endpoint('llvm', 'O0'), Endpoint('llvm', 'O3')):
+            for endpoint in specification.endpoints:
                 case = work / f'{name}-{endpoint.backend}-{endpoint.optimization}'
-                result = execute(gti, root, case, source, endpoint, env)
-                if result.error or result.observable != (0, '', ''):
+                result = execute(gti, root, case, source, endpoint, env,
+                                 build_timeout=specification.build_timeout,
+                                 run_timeout=specification.run_timeout)
+                expected = specification.expectation
+                if result.error or result.observable != (expected['exit_code'], expected['stdout'], expected['stderr']):
                     raise AssertionError(f'{name} {endpoint}: {result}')
                 results.append(result.observable)
             assert results[0] == results[1] == results[2]
-        for name, (source_text, diagnostic) in failures().items():
-            source = work / f'{name}.gti'
-            source.write_text(source_text)
+        for name, specification in failure_cases.items():
+            if selection and selection != name:
+                continue
+            source = work / specification.context.materialized_name
+            source.write_text(specification.source_text)
             results = []
-            for endpoint in (Endpoint('cpp', 'O3', 'c++23'), Endpoint('llvm', 'O0'), Endpoint('llvm', 'O3')):
+            for endpoint in specification.endpoints:
                 case = work / f'{name}-{endpoint.backend}-{endpoint.optimization}'
-                result = execute(gti, root, case, source, endpoint, env)
-                if result.error or result.returncode != 70 or diagnostic not in result.stderr:
+                result = execute(gti, root, case, source, endpoint, env,
+                                 build_timeout=specification.build_timeout,
+                                 run_timeout=specification.run_timeout)
+                expected = specification.expectation
+                if result.error or result.returncode != expected['exit_code'] or expected['diagnostic'] not in result.stderr:
                     raise AssertionError(f'{name} {endpoint}: {result}')
                 results.append(result.observable)
             if not results[0] == results[1] == results[2]:
                 raise AssertionError(f'{name}: source/failure attribution drift: {results}')
-        for name, text in {'polymorphic-owner': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }',
-                           'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; return data[0].read(); }',
-                           'polymorphic-tls': 'class Owner { public: virtual int read() { return 0; } }; thread_local Owner value{}; int main() { return value.read(); }'}.items():
-            source = work / f'reject-{name}.gti'
-            source.write_text(text)
+        for name, specification in rejection_cases.items():
+            if selection and selection != name:
+                continue
+            source = work / specification.context.materialized_name
+            source.write_text(specification.source_text)
             output = work / f'reject-{name}'
-            output.write_bytes(b'existing artifact')
-            result = subprocess.run([str(gti), str(source), '--backend', 'llvm', '-o', str(output)],
-                                    capture_output=True, text=True, timeout=60)
-            if result.returncode != 65 or 'GTI-B0003' not in result.stderr or output.read_bytes() != b'existing artifact':
+            expected = specification.expectation
+            sentinel = bytes.fromhex(expected['preserved_output_hex'])
+            output.write_bytes(sentinel)
+            command, options = rejection_plan(gti, source, output, timeout=specification.build_timeout)
+            result = subprocess.run(command, **options)
+            if result.returncode != expected['exit_code'] or expected['diagnostic'] not in result.stderr or output.read_bytes() != sentinel:
                 raise AssertionError(f'unsupported {name}: {result}')
-    print('LLVM scalar O0/O3 execution, C++ differential failures and unsupported-owner controls passed')
+    print('LLVM scalar O0/O3 execution, C++ differential failures and unsupported hierarchy-storage controls passed')
 
 
 if __name__ == '__main__':

@@ -1,0 +1,18 @@
+// Source rejection control: inherited borrowed state remains GTI-S2045.
+class BorrowBase {
+  int& held;
+public:
+  BorrowBase(int& value) : held(value) {}
+  virtual int read() { return this.held; }
+};
+
+class BorrowLeaf : public BorrowBase {
+public:
+  BorrowLeaf(int& value) : BorrowBase(value) {}
+};
+
+int main() {
+  int value = 3;
+  BorrowLeaf leaf{value};
+  return leaf.read() - 3;
+}
