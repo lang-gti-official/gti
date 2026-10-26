@@ -1,0 +1,12 @@
+#include <std/mutex>
+
+int main() {
+  std::mutex<int64_t> value{0};
+  for (mut int32_t index = 0; index < 20000000; ++index) {
+    mut std::mutex_guard<int64_t> guard = value.lock();
+    mut int64_t& current = guard.get();
+    current = current + 1;
+  }
+  std::mutex_guard<int64_t> guard = value.lock();
+  return guard.get() == int64_t(20000000) ? 0 : 1;
+}

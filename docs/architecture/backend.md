@@ -4531,12 +4531,20 @@ Mutex admission has its own exact representation/operation witnesses, including
 constructor payload transfer, guard loans and native-only hosted retirement.
 It does not broaden the generic native-value or native-cleanup predicates.
 The public O0-O3 service harness additionally requires normal, rollback,
-first/emergency failure and moved-guard execution. Reconciliation with the
-frozen hierarchy implementation remains incomplete while its inline-storage
-query rejects the private atomic/mutex capabilities before admission. Kernel
-or pre-reconciliation evidence is not a public acceptance receipt for that
-combined source. The observational cost probe distinguishes runtime-service
-cost from the token/payload adapter and does not claim public-lifecycle parity.
+first/emergency failure and moved-guard execution. The inline hierarchy query
+validates canonical atomic/mutex capabilities through their representation
+predicates: atomic storage and a lock token contain no inline hierarchy, while
+mutex storage recursively includes its payload. A token's type argument does
+not place that payload inside the token. Malformed/ambiguous capabilities still
+reject in the non-emitting query. Non-hierarchy address-valued MIR place loads
+preserve the selected address instead of materializing a copy; borrowing a
+locked shell must not move or retire it. A statically false failure condition
+needs no emitted check, while runtime conditions retain their exact MIR failure
+edge and original cleanup/record. Public array tests exercise both cases.
+Kernel and earlier-source evidence remain distinct from public acceptance.
+The boundary cost probe distinguishes runtime-service cost from the token
+adapter; the public synchronization cost harness instead compiles identical
+GTI source for each explicitly recorded backend/standard and workload.
 
 Managed tasks retain the C runtime's entry/destroy, complete/abandon-task and
 take/abandon-result callbacks. Each generated callback must contain GTI failure

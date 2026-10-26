@@ -98,7 +98,9 @@ std::optional<SemanticType> nativeAtomicElement(const MirProgram &program,
   if (!owner ||
       owner->compilerCapability != CompilerCapabilityTypeKind::AtomicStorage ||
       owner->polymorphic || owner->abstract || owner->cOpaqueHandle ||
-      owner->cAbiLayout || owner->unionLayout || !owner->bases.empty() ||
+      owner->cAbiRecord || owner->cAbiLayout || owner->unionLayout ||
+      owner->destructor || !owner->fields.empty() ||
+      !owner->fieldDropOrder.empty() || !owner->bases.empty() ||
       !owner->structuralBases.empty() || !owner->declaredFields.empty() ||
       owner->requiresActiveCleanup || owner->requiresActiveDropState)
     return {};

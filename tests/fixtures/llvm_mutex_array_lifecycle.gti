@@ -3,6 +3,12 @@
 
 std::atomic<int32_t> drops{0};
 
+extern "C" {
+  void gti_test_mutex_array_begin();
+  int32_t gti_test_mutex_array_index();
+  void gti_test_mutex_array_drop(int32_t value);
+}
+
 class Payload {
   int32_t value;
 public:
@@ -10,14 +16,22 @@ public:
   Payload(Payload& other) = delete;
   Payload(Payload&& other) = default;
   int32_t read() { return this.value; }
-  ~Payload() { drops.store(drops.load() * 10 + this.value); }
+  ~Payload() {
+    drops.store(drops.load() * 10 + this.value);
+    gti_test_mutex_array_drop(this.value);
+  }
 };
 
 int main() {
+  gti_test_mutex_array_begin();
   {
     mut std::mutex<Payload> values[2] = {
       std::mutex<Payload>(Payload(1)), std::mutex<Payload>(Payload(2))
     };
+    {
+      std::mutex_guard<Payload> guard = values[gti_test_mutex_array_index()].lock();
+      if (guard.get().read() != 2) { return 4; }
+    }
     std::mutex<Payload> moved = std::move(values[0]);
     if (drops.load() != 0) { return 1; }
     std::mutex_guard<Payload> guard = moved.lock();

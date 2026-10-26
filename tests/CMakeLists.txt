@@ -1737,6 +1737,8 @@ add_executable(gti_llvm_mutex_contract_tests llvm_mutex_contract_tests.cpp)
 target_include_directories(gti_llvm_mutex_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_mutex_contract_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
 add_test(NAME llvm_mutex_contracts COMMAND gti_llvm_mutex_contract_tests "${PROJECT_SOURCE_DIR}")
+add_test(NAME llvm_mutex_hierarchy_contracts
+  COMMAND gti_llvm_mutex_contract_tests "${PROJECT_SOURCE_DIR}" --hierarchy-contracts)
 add_executable("gti_llvm_coverage_evidence"
                "${PROJECT_SOURCE_DIR}/tests/llvm_coverage_evidence.cpp")
 target_link_libraries("gti_llvm_coverage_evidence" PRIVATE gti_llvm_backend gti_driver)

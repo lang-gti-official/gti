@@ -1,6 +1,8 @@
 #include "../src/compiler/llvm/lifetimes.h"
 #include "../src/compiler/llvm/mutexes.h"
 #include "../src/compiler/llvm/body.h"
+#include "../src/compiler/llvm/atomic_types.h"
+#include "../src/compiler/llvm/placement.h"
 #include "cpp_backend_test_support.h"
 #include "gti/mir_effects.h"
 
@@ -17,6 +19,87 @@ using namespace lang::native_llvm;
 void require(bool condition, const char *message) {
   if (!condition)
     throw std::runtime_error(message);
+}
+
+void checkHierarchyContracts(const std::filesystem::path &root) {
+  FrontendOptions options;
+  options.target.executionProfile = ExecutionProfile::Concurrent;
+  options.target.runtimeCapabilities.threads = true;
+  options.requireEntryPoint = true;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      root / "tests/fixtures/llvm_mutex_hierarchy_contract.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode())
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  require(frontend.canGenerateCode(), "hierarchy capability source reaches MIR");
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, options.target),
+      issues);
+  require(input.has_value(), "hierarchy capability source has a sealed snapshot");
+  const auto &program = input->program().mir();
+  unsigned checked = 0;
+  for (const auto &owner : program.classInstances()) {
+    const bool atomic = owner.compilerCapability ==
+                        CompilerCapabilityTypeKind::AtomicStorage;
+    const bool storage = owner.compilerCapability ==
+                         CompilerCapabilityTypeKind::MutexStorage;
+    const bool token = owner.compilerCapability ==
+                       CompilerCapabilityTypeKind::MutexLockToken;
+    if (!atomic && !storage && !token)
+      continue;
+    ++checked;
+    if (atomic) {
+      require(nativeAtomicElement(program, owner.type) == SemanticType::Int32,
+              "atomic hierarchy proof consumes exact scalar storage");
+    } else {
+      const auto payload = nativeMutexElement(program, owner.type,
+                                               owner.compilerCapability);
+      require(payload && containsHierarchyStorage(program, *payload),
+              "mutex payload recursively contains an ordinary hierarchy");
+    }
+    require(containsHierarchyStorage(program, owner.type) == storage,
+            "only mutex storage inlines its payload; a token never does");
+    const auto rejects = [&](auto mutate) {
+      auto malformed = program;
+      auto &changed = const_cast<MirClassInstance &>(
+          *malformed.findClassInstance(owner.id));
+      mutate(changed);
+      bool rejected = false;
+      try {
+        static_cast<void>(containsHierarchyStorage(malformed, changed.type));
+      } catch (const BackendUnsupportedError &) {
+        rejected = true;
+      }
+      require(rejected,
+              "malformed private layout rejects in the non-emitting query");
+    };
+    rejects([](auto &row) { row.polymorphic = true; });
+    rejects([](auto &row) { row.requiresActiveDropState = true; });
+    rejects([](auto &row) { row.cAbiLayout = MirCAbiRecordLayout{}; });
+    rejects([](auto &row) { row.destructor = 1; });
+    rejects([](auto &row) { row.fields.push_back({}); });
+    rejects([](auto &row) { row.fieldDropOrder.push_back({}); });
+    rejects([](auto &row) { row.type.arguments.clear(); });
+    rejects([](auto &row) { row.compilerCapability =
+                              CompilerCapabilityTypeKind::MutexLockToken;
+                           row.requiresActiveCleanup = true; });
+    auto duplicate = program;
+    const_cast<std::vector<MirClassInstance> &>(duplicate.classInstances())
+        .push_back(owner);
+    bool rejected = false;
+    try {
+      static_cast<void>(containsHierarchyStorage(duplicate, owner.type));
+    } catch (const BackendUnsupportedError &) {
+      rejected = true;
+    }
+    require(rejected, "duplicate capability identity rejects before emission");
+  }
+  require(checked == 3, "atomic, mutex storage and token proofs all exercised");
+  std::cout << "private capability inline hierarchy and malformed controls PASS\n";
 }
 
 void checkPredicates(const std::filesystem::path &root) {
@@ -288,6 +371,36 @@ void checkSourceComposition(const std::filesystem::path &root,
   for (const auto &key : pending)
     std::cout << "source-composition pending public gate: " << key << '\n';
   lowerScalarProgram(session, admission);
+  if (guard) {
+    bool checked = false;
+    for (const auto &constructor : input->program().mir().constructorInstances()) {
+      const bool nativeReference = std::any_of(
+          constructor.initializers.begin(), constructor.initializers.end(),
+          [&](const auto &initializer) {
+            return initializer.storesReference &&
+                   initializer.targetType.kind == SemanticType::Reference &&
+                   initializer.targetType.arguments.size() == 1 &&
+                   nativeMutexElement(input->program().mir(),
+                       initializer.targetType.arguments.front(),
+                       CompilerCapabilityTypeKind::MutexStorage).has_value();
+          });
+      if (!nativeReference)
+        continue;
+      const auto *function = session.module().getFunction(
+          "__gti_native_v1_body_" +
+          std::to_string(static_cast<unsigned>(MirBodyKind::Constructor)) +
+          "_" + std::to_string(constructor.id));
+      require(function, "stored native reference has its exact source constructor");
+      for (const auto &block : *function)
+        for (const auto &instruction : block)
+          if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction))
+            if (const auto *callee = call->getCalledFunction())
+              require(!callee->getName().starts_with("__gti_native_mutex_transfer_"),
+                      "publishing a stored reference must never transfer its shell");
+      checked = true;
+    }
+    require(checked, "real source exercises stored native reference publication");
+  }
   if (!sanitizer.empty())
     for (auto &function : session.module())
       if (!function.isDeclaration())
@@ -717,6 +830,15 @@ void check(const std::filesystem::path &root,
 } // namespace
 
 int main(int argc, char **argv) {
+  if (argc == 3 && std::string_view(argv[2]) == "--hierarchy-contracts") {
+    try {
+      checkHierarchyContracts(argv[1]);
+      return 0;
+    } catch (const std::exception &error) {
+      std::cerr << error.what() << '\n';
+      return 1;
+    }
+  }
   if (argc == 3 && std::string_view(argv[2]) == "--predicates") {
     try {
       checkPredicates(argv[1]);
@@ -751,6 +873,7 @@ int main(int argc, char **argv) {
       sanitizer != "address,undefined")
     return 2;
   try {
+    checkHierarchyContracts(argv[1]);
     checkPredicates(argv[1]);
     check(argv[1], argc >= 3 ? argv[2] : "", sanitizer);
     checkActive(argv[1],

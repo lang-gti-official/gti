@@ -54,6 +54,8 @@ def main():
         parser.error("--rejections-only requires --public-gti")
     if args.gti and args.sanitize:
         parser.error("run the C++ differential separately from native instrumentation")
+    if args.public_gti and args.sanitize:
+        parser.error("public driver checks need a separate unsanitized run")
     root, output = args.root.resolve(), args.output.resolve()
     runtime_library = args.runtime_library or args.emitter.resolve().parent / "libgti_runtime.a"
     output.mkdir(parents=True, exist_ok=True)
@@ -61,6 +63,7 @@ def main():
     evidence.mkdir(parents=True, exist_ok=True)
     records = []
     environment = dict(os.environ)
+    environment["GTI_STDLIB_DIR"] = str(root / "stdlib")
     if args.sanitize == "address,undefined":
         leaks = int(sys.platform != "darwin")
         environment["ASAN_OPTIONS"] = f"detect_leaks={leaks}:halt_on_error=1"
@@ -175,6 +178,9 @@ def main():
     run("guard-source-observer", [args.cc, "-std=c17", *flags, "-c",
                                    root / "tests/fixtures/llvm_mutex_guard_lifecycle.c",
                                    "-o", output / "guard-source-observer.o"])
+    run("array-source-observer", [args.cc, "-std=c17", *flags, "-c",
+                                   root / "tests/fixtures/llvm_mutex_array_lifecycle.c",
+                                   "-o", output / "array-source-observer.o"])
     run("guard-runtime", [args.cxx, "-std=c++20", *flags,
         "-Dgti_rt_mutex_lock_v1=gti_test_mutex_real_lock_v1",
         "-Dgti_rt_mutex_unlock_v1=gti_test_mutex_real_unlock_v1",
@@ -254,8 +260,6 @@ def main():
             run(f"{fault}-{mode}", [program, fault], death=True)
 
         if args.public_gti:
-            if args.sanitize:
-                parser.error("public driver checks need a separate unsanitized run")
             for family, fixture, observer, runtime, failure, faults in (
                 ("process", "llvm_native_process_storage.gti", "source-observer.o",
                  "runtime.o", "failure-runtime.o", ("before", "partial-first", "partial-last",
@@ -283,8 +287,11 @@ def main():
             array_program = output / f"public-array-{mode}"
             run(f"public-array-build-{mode}", [args.public_gti.resolve(),
                 "--backend", "llvm", "--execution-profile", "concurrent", f"-{mode}",
-                root / "tests/fixtures/llvm_mutex_array_lifecycle.gti", "-o", array_program])
+                root / "tests/fixtures/llvm_mutex_array_lifecycle.gti", "-o", array_program,
+                "--", output / "array-source-observer.o", output / "failure-runtime.o"])
             run(f"public-array-execute-{mode}", [array_program])
+            run(f"public-array-bounds-{mode}", [array_program],
+                expected=70, failure_mode="array-bounds")
 
     if args.public_gti:
         for standard in ("c++20", "c++23"):

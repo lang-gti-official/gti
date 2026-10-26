@@ -539,12 +539,20 @@ private:
     // verified MIR proof. It does not authorize originating a different record.
     if (!authorized)
       return;
+    if (const auto *constant = llvm::dyn_cast<llvm::ConstantInt>(condition);
+        constant && constant->isZero())
+      return;
     const auto &term = current->terminator;
     const bool terminalAllocation =
         outcome.code == DefinedFailureCode::AllocationFailure;
     if (!terminalAllocation && (term.kind != MirTerminatorKind::Invoke ||
                                 term.invokeInstruction != stage->id))
-      throw std::logic_error("LLVM checked operation lost its Invoke");
+      throw std::logic_error(
+          "LLVM checked operation lost its Invoke in body " +
+          std::to_string(static_cast<unsigned>(address.kind)) + "/" +
+          std::to_string(address.owner) + " block " +
+          std::to_string(current->id) + " instruction " +
+          std::to_string(stage->id));
     auto *failed =
         llvm::BasicBlock::Create(session.context(), "check.failed", &function);
     auto *normal =
@@ -1382,6 +1390,16 @@ private:
           containsHierarchyStorage(session.program().mir(),
                                    instruction.info.type)) {
         result = freshTransfer(instruction);
+        break;
+      }
+      if (instruction.kind == MirInstructionKind::Load &&
+          instruction.info.category == ValueCategory::Place &&
+          addressValue(session.program().mir(), instruction.info.type) &&
+          !containsHierarchyStorage(session.program().mir(),
+                                    instruction.info.type)) {
+        // A place observation preserves identity; only value materialization
+        // may copy/transfer its representation into another storage slot.
+        result = memory.selected(instruction.operands.at(0));
         break;
       }
       [[fallthrough]];
