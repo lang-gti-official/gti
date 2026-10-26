@@ -16,6 +16,9 @@ public:
   using FindBody = std::function<llvm::Function *(MirBodyAddress)>;
   Lifetimes(Session &session, Failures &failures, Dispatch &dispatch,
             FindBody findBody);
+  [[nodiscard]] bool boundTo(const Session &selected) const {
+    return &session == &selected;
+  }
   // These checks consume the same exact session and sealed records as emission,
   // but publish no helper, table, IR instruction, or runtime lifetime state.
   static void preflightCleanup(Session &session, Dispatch &dispatch,
@@ -38,6 +41,7 @@ public:
   // and arrays rebuild destination dispatch state without source callbacks.
   static void preflightInertRelocation(Session &session, Dispatch &dispatch,
                                        const SemanticType &type);
+  [[nodiscard]] llvm::FunctionType *inertRelocationType() const;
   [[nodiscard]] llvm::Function *inertRelocation(const SemanticType &type);
   void active(llvm::IRBuilder<> &ir, llvm::Value *address,
               const SemanticType &type, bool value);
