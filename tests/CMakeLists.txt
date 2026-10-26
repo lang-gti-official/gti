@@ -548,6 +548,14 @@ target_compile_definitions(gti_llvm_cache_tests PRIVATE
   GTI_LLVM_CACHE_FIXTURE="${PROJECT_SOURCE_DIR}/tests/fixtures/llvm_cache")
 add_test(NAME llvm_cache_round_trip COMMAND gti_llvm_cache_tests)
 set_tests_properties(llvm_cache_round_trip PROPERTIES TIMEOUT 180)
+# Explicit matching-runtime evidence, separate from default/rejection coverage.
+set(GTI_LLVM_RUNTIME_TEST_COMPILER "" CACHE FILEPATH
+    "Matching Clang++ for the native runtime identity fixture")
+if(GTI_LLVM_RUNTIME_TEST_COMPILER)
+  add_test(NAME llvm_native_runtime_identity
+    COMMAND gti_llvm_cache_tests --runtime-probe "${GTI_LLVM_RUNTIME_TEST_COMPILER}")
+  set_tests_properties(llvm_native_runtime_identity PROPERTIES TIMEOUT 180)
+endif()
 add_test(NAME llvm_cache_component_mapping
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/llvm_cache_component_mapping_test.py"

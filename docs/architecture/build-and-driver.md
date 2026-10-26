@@ -2169,6 +2169,24 @@ native runtime support are wired; unknown values and C++ combinations reject.
 The default None policy retains current execution. No CLI or manifest selector
 is exposed by this typed API checkpoint, and binary cache payload v5 is unchanged.
 
+For a non-None request the driver resolves matching upstream Clang and compiler-rt
+before source loading, cache restoration or publication. It records the selected
+compiler and implementation files, reported flat default configuration, resource
+and runtime roots, exact runtime files, native link plan and SDK library/settings
+identity. It replays that identified configuration explicitly; a different Clang
+version, opaque configuration/dependency graph, or unavailable runtime rejects.
+Native preprocessing, C/C++ object compilation and final linking consume the same
+resolved arguments. Bounded UndefinedMemory compiles native providers with only
+null/alignment checks; `-fsanitize=undefined` selects its link runtime. None adds no
+runtime query or dependency. Thread still needs verified communicating-runtime
+provenance, and instrumented report replay/external native-link provenance remain
+prerequisites. The isolated compatibility probe is C ABI source, never generated C++ for a GTI
+body. Native runtime link/start controls do not establish generated GTI
+instrumentation acceptance; the producer guard remains until coherent wiring and
+its execution gates. The explicit `llvm_native_runtime_identity` fixture is enabled
+with `GTI_LLVM_RUNTIME_TEST_COMPILER` set to a matching Clang++; it fails on a
+mismatch rather than counting a missing runtime pair as passing coverage.
+
 Three narrowings hold by an exact-identity argument, stated here because each
 one moved an input out of the bypass list.
 

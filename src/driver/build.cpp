@@ -13,10 +13,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -1320,6 +1323,15 @@ void addNativeEnvironmentIdentity(IdentityBuilder &identity) {
   }
 }
 
+std::vector<std::string>
+instrumentedNativeArguments(const std::vector<std::string> &arguments,
+                            const NativeInputs &inputs) {
+  auto result = arguments;
+  if (inputs.instrumentation)
+    append(result, inputs.instrumentation->compileArguments);
+  return result;
+}
+
 std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                                          const CompilationInputs &inputs,
                                          const BuildCachePolicy &policy,
@@ -1330,6 +1342,10 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   identity.add("cache.schema", buildCacheSchema(request));
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
+  if (request.nativeInputs().instrumentation) {
+    identity.add("native.instrumentation.identity",
+                 request.nativeInputs().instrumentation->identity);
+  }
   if (nativeObjectCache(request)) {
     const LlvmBackendOptions options =
         llvmBackendOptions(request.compilation());
@@ -1645,21 +1661,24 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
               temporaryRoot / (source.stem().string() + ".gti-discovery.d"));
           TemporaryArtifact preprocessedCleanup(preprocessed, true);
           TemporaryArtifact depfileCleanup(depfile, true);
+          const auto effectiveArguments =
+              instrumentedNativeArguments(arguments, native);
           const std::vector<std::string> probeCommand =
-              cSource
-                  ? nativeToolchain.preprocessCommand(
-                        NativeCCompileRequest(
-                            *request.cCompiler(), source, preprocessed,
-                            cStandard, request.compilation().optimization(),
-                            includeDirectories, arguments, native.targetPolicy),
-                        depfile)
-                  : nativeToolchain.preprocessCommand(
-                        NativeCppCompileRequest(
-                            request.nativeCompiler(), source, preprocessed,
-                            request.compilation().cppStandard(),
-                            request.compilation().optimization(),
-                            includeDirectories, arguments, native.targetPolicy),
-                        depfile);
+              cSource ? nativeToolchain.preprocessCommand(
+                            NativeCCompileRequest(
+                                *request.cCompiler(), source, preprocessed,
+                                cStandard, request.compilation().optimization(),
+                                includeDirectories, effectiveArguments,
+                                native.targetPolicy),
+                            depfile)
+                      : nativeToolchain.preprocessCommand(
+                            NativeCppCompileRequest(
+                                request.nativeCompiler(), source, preprocessed,
+                                request.compilation().cppStandard(),
+                                request.compilation().optimization(),
+                                includeDirectories, effectiveArguments,
+                                native.targetPolicy),
+                            depfile);
           std::optional<std::filesystem::path> memo;
           if (!policy.root.empty()) {
             IdentityBuilder key;
@@ -2562,6 +2581,7 @@ effectiveNativeInputs(const ToolchainLayout &toolchain,
   // link-input assembly: without it the final link would silently run the
   // declared cross compiler in its host configuration.
   inputs.targetPolicy = additional.targetPolicy;
+  inputs.instrumentation = additional.instrumentation;
   inputs.includeDirectories =
       nativeCppIncludeDirectories(toolchain, additional);
   append(inputs.compilerArguments, additional.compilerArguments);
@@ -3031,6 +3051,483 @@ bool containsTimeSensitivePreprocessorUse(std::string_view text) {
          text.find("__TIMESTAMP__") != std::string_view::npos;
 }
 
+namespace {
+std::optional<NativeInstrumentationPlan>
+resolveLlvmNativeRuntimeImpl(const std::string &compiler,
+                             const LlvmBackendIdentity &backend,
+                             LlvmInstrumentationMode mode, std::string &error) {
+  NativeInstrumentationPlan plan;
+  try {
+    plan.mode = llvmInstrumentationModeName(mode);
+  } catch (const std::invalid_argument &failure) {
+    error = failure.what();
+    return std::nullopt;
+  }
+  if (mode == LlvmInstrumentationMode::None)
+    return plan;
+  const auto fail =
+      [&](std::string detail) -> std::optional<NativeInstrumentationPlan> {
+    error = std::move(detail);
+    return std::nullopt;
+  };
+  const auto configured = [](const char *name) {
+    const char *value = std::getenv(name);
+    return value && *value;
+  };
+  if (hasDependencyInjectingNativeEnvironment() ||
+      configured("CCC_OVERRIDE_OPTIONS") ||
+      configured("MACOSX_DEPLOYMENT_TARGET") ||
+      configured("IPHONEOS_DEPLOYMENT_TARGET") || configured("LD_PRELOAD") ||
+      configured("LD_AUDIT") || configured("DYLD_INSERT_LIBRARIES") ||
+      configured("DYLD_IMAGE_SUFFIX") || configured("DYLD_ROOT_PATH") ||
+      configured("DYLD_VERSIONED_LIBRARY_PATH") ||
+      configured("DYLD_VERSIONED_FRAMEWORK_PATH"))
+    return fail(
+        "LLVM instrumentation requires an identifiable implicit host "
+        "toolchain without native search, deployment or loader overrides");
+  if (backend.llvmVersion.empty() || backend.triple.empty())
+    return fail("LLVM instrumentation requires the producer's actual toolchain "
+                "identity");
+  const auto executable = resolveExecutableForIdentity(compiler);
+  if (!executable)
+    return fail("cannot resolve the selected instrumentation compiler");
+  plan.compilerCommand = compiler;
+  plan.compilerExecutable = std::filesystem::weakly_canonical(*executable);
+  plan.llvmVersion = backend.llvmVersion;
+  const auto probe =
+      [&](std::vector<std::string> arguments,
+          std::chrono::milliseconds timeout =
+              std::chrono::milliseconds(30000)) -> std::optional<std::string> {
+    const auto result = invokeProcess(
+        arguments, {.captureSuccessfulOutput = true,
+                    .description = "LLVM native runtime identity probe",
+                    .timeout = timeout,
+                    .isolateProcessGroup = true});
+    if (!result.succeeded() || result.output.size() > 1024 * 1024) {
+      error = "selected Clang could not establish a bounded native runtime "
+              "identity";
+      return std::nullopt;
+    }
+    return result.output;
+  };
+  const auto trim = [](std::string text) {
+    const auto begin = text.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos)
+      return std::string{};
+    return text.substr(begin, text.find_last_not_of(" \t\r\n") - begin + 1);
+  };
+  const auto version = probe({compiler, "--version"});
+  if (!version)
+    return std::nullopt;
+  const auto firstLine = version->substr(0, version->find('\n'));
+  const auto marker = firstLine.find("clang version ");
+  if (marker == std::string::npos || firstLine.starts_with("Apple clang"))
+    return fail(
+        "LLVM instrumentation requires matching upstream Clang compiler-rt; "
+        "the selected native compiler is not an identified upstream Clang");
+  const auto versionBegin = marker + std::string_view("clang version ").size();
+  plan.compilerVersion = firstLine.substr(
+      versionBegin,
+      firstLine.find_first_of(" \t", versionBegin) - versionBegin);
+  if (plan.compilerVersion != backend.llvmVersion)
+    return fail("selected Clang version " + plan.compilerVersion +
+                " does not match backend LLVM " + backend.llvmVersion);
+  std::vector<std::string> prefix{compiler, "--no-default-config"};
+  std::istringstream versionLines(*version);
+  std::string line;
+  while (std::getline(versionLines, line)) {
+    constexpr std::string_view label = "Configuration file: ";
+    if (!line.starts_with(label))
+      continue;
+    const auto path =
+        std::filesystem::weakly_canonical(trim(line.substr(label.size())));
+    if (!std::filesystem::is_regular_file(path) ||
+        !plan.configurationFiles.empty())
+      return fail(
+          "cannot identify one flat selected Clang default configuration");
+    std::ifstream input(path);
+    std::string contents{std::istreambuf_iterator<char>(input), {}};
+    if (!input || contents.size() > 65536)
+      return fail("cannot read the selected Clang default configuration");
+    std::istringstream configuration(contents);
+    std::string token;
+    while (configuration >> std::quoted(token)) {
+      if (token.starts_with('#')) {
+        std::getline(configuration, line);
+        continue;
+      }
+      if (token.starts_with('@') || token == "--config" ||
+          token.starts_with("--config=") || token == "-resource-dir" ||
+          token.starts_with("-resource-dir=") ||
+          token.find('\\') != std::string::npos ||
+          token.find('\'') != std::string::npos)
+        return fail(
+            "nested or redirected Clang configuration needs exact input "
+            "discovery before instrumentation can be selected");
+    }
+    plan.configurationFiles.push_back(path);
+    prefix.push_back("--config=" + path.string());
+  }
+  const auto query = [&](std::string option) {
+    auto command = prefix;
+    command.push_back(std::move(option));
+    return probe(std::move(command));
+  };
+  const auto resource = query("--print-resource-dir");
+  const auto runtime = query("--print-runtime-dir");
+  const auto triple = query("-dumpmachine");
+  if (!resource || !runtime || !triple)
+    return std::nullopt;
+  const auto nativeTarget = parseTargetTriple(trim(*triple));
+  const auto producerTarget = parseTargetTriple(backend.triple);
+  if (!nativeTarget || !producerTarget ||
+      nativeTarget->os != producerTarget->os ||
+      nativeTarget->arch != producerTarget->arch ||
+      nativeTarget->dataLayout != producerTarget->dataLayout ||
+      !((producerTarget->os == "macos" && producerTarget->arch == "arm64") ||
+        (producerTarget->os == "linux" && producerTarget->arch == "x86_64")))
+    return fail("selected Clang runtime target does not match the supported "
+                "LLVM host ABI");
+  plan.resourceDirectory = std::filesystem::weakly_canonical(trim(*resource));
+  plan.runtimeDirectory = std::filesystem::weakly_canonical(trim(*runtime));
+  const auto below = [](const std::filesystem::path &root,
+                        const std::filesystem::path &path) {
+    const auto relative = path.lexically_relative(root);
+    return !relative.empty() && !relative.is_absolute() &&
+           *relative.begin() != "..";
+  };
+  if (!std::filesystem::is_directory(plan.resourceDirectory) ||
+      !std::filesystem::is_directory(plan.runtimeDirectory) ||
+      !below(plan.resourceDirectory, plan.runtimeDirectory))
+    return fail("selected compiler-rt directory is unavailable or outside "
+                "Clang's resource root");
+  plan.compileArguments.assign(prefix.begin() + 1, prefix.end());
+  plan.linkArguments = plan.compileArguments;
+  std::string compileMode;
+  std::string linkMode;
+  switch (mode) {
+  case LlvmInstrumentationMode::None:
+    break;
+  case LlvmInstrumentationMode::Address:
+    compileMode = linkMode = "address";
+    break;
+  case LlvmInstrumentationMode::UndefinedMemory:
+    compileMode = "null,alignment";
+    linkMode = "undefined";
+    break;
+  case LlvmInstrumentationMode::AddressAndUndefinedMemory:
+    compileMode = "address,null,alignment";
+    linkMode = "address,undefined";
+    break;
+  case LlvmInstrumentationMode::Thread:
+    compileMode = linkMode = "thread";
+    break;
+  }
+  for (auto *arguments : {&plan.compileArguments, &plan.linkArguments}) {
+    arguments->emplace_back("-fno-sanitize=all");
+    arguments->emplace_back("-fno-sanitize-recover=all");
+    arguments->emplace_back("-fno-sanitize-trap=all");
+  }
+  plan.compileArguments.push_back("-fsanitize=" + compileMode);
+  plan.compileArguments.emplace_back("-fno-sanitize-ignorelist");
+  plan.linkArguments.push_back("-fsanitize=" + linkMode);
+  if (producerTarget->os == "macos") {
+    append(plan.linkArguments,
+           std::vector<std::string>{"-Xlinker", "-rpath", "-Xlinker",
+                                    plan.runtimeDirectory.string()});
+  }
+  if (mode == LlvmInstrumentationMode::Address ||
+      mode == LlvmInstrumentationMode::AddressAndUndefinedMemory)
+    plan.compileArguments.emplace_back("-fno-sanitize-address-use-after-scope");
+  if (mode == LlvmInstrumentationMode::Thread) {
+    plan.compileArguments.emplace_back("-fPIE");
+    plan.linkArguments.push_back(producerTarget->os == "macos" ? "-Wl,-pie"
+                                                               : "-pie");
+  }
+  struct ProbeDirectory {
+    std::filesystem::path path;
+    ~ProbeDirectory() {
+      std::error_code ignored;
+      if (!path.empty())
+        std::filesystem::remove_all(path, ignored);
+    }
+  } temporary;
+  const auto directory = stagedArtifactPath(
+      std::filesystem::temp_directory_path() / "gti-native-runtime-probe");
+  if (!std::filesystem::create_directory(directory))
+    return fail("cannot create isolated native runtime probe directory");
+  temporary.path = directory;
+  const auto source = directory / "probe.c";
+  const auto object = directory / "probe.o";
+  const auto output = directory / "probe";
+  std::string program;
+  std::vector<std::string> hooks;
+  if (mode == LlvmInstrumentationMode::Address ||
+      mode == LlvmInstrumentationMode::AddressAndUndefinedMemory) {
+    program += "extern void __asan_init(void);\n";
+    hooks.emplace_back("__asan_init");
+  }
+  if (mode == LlvmInstrumentationMode::UndefinedMemory ||
+      mode == LlvmInstrumentationMode::AddressAndUndefinedMemory) {
+    program += "extern void __ubsan_handle_type_mismatch_v1_abort(void*, "
+               "unsigned long);\n";
+    hooks.emplace_back("__ubsan_handle_type_mismatch_v1_abort");
+  }
+  if (mode == LlvmInstrumentationMode::Thread) {
+    program += "extern void __tsan_init(void);\n";
+    hooks.emplace_back("__tsan_init");
+  }
+  for (std::size_t index = 0; index < hooks.size(); ++index) {
+    const auto parameters =
+        hooks[index] == "__ubsan_handle_type_mismatch_v1_abort"
+            ? "void*, unsigned long"
+            : "void";
+    program += "void (*volatile hook" + std::to_string(index) + ")(" +
+               parameters + ") = &" + hooks[index] + ";\n";
+  }
+  program += "int main(void) { return ";
+  for (std::size_t index = 0; index < hooks.size(); ++index)
+    program +=
+        (index ? " || " : "") + std::string("!hook") + std::to_string(index);
+  program += "; }\n";
+  {
+    std::ofstream file(source);
+    file << program;
+    if (!file)
+      return fail("cannot stage native runtime probe");
+  }
+  std::vector<std::string> compile{compiler};
+  append(compile, plan.compileArguments);
+  append(compile,
+         std::vector<std::string>{"-x", "c", "-std=c17", "-c", source.string(),
+                                  "-o", object.string()});
+  auto compileTraceCommand = compile;
+  compileTraceCommand.emplace_back("-###");
+  const auto compileTrace = probe(compileTraceCommand);
+  if (!compileTrace || !probe(compile, std::chrono::milliseconds(60000)))
+    return std::nullopt;
+  std::vector<std::string> link{compiler};
+  append(link, plan.linkArguments);
+  append(link,
+         std::vector<std::string>{object.string(), "-o", output.string()});
+  auto traceCommand = link;
+  traceCommand.emplace_back("-###");
+  const auto trace = probe(traceCommand);
+  if (!trace)
+    return std::nullopt;
+  const auto quotedCommands = [&](const std::string &text) {
+    std::vector<std::vector<std::string>> commands;
+    std::istringstream lines(text);
+    std::string row;
+    while (std::getline(lines, row)) {
+      row = trim(std::move(row));
+      if (row.empty() || row.front() != '"')
+        continue;
+      std::istringstream input(row);
+      std::vector<std::string> arguments;
+      while (input >> std::ws && !input.eof()) {
+        std::string argument;
+        if (input.peek() != '"' || !(input >> std::quoted(argument)))
+          return std::vector<std::vector<std::string>>{};
+        arguments.push_back(std::move(argument));
+      }
+      if (!arguments.empty())
+        commands.push_back(std::move(arguments));
+    }
+    return commands;
+  };
+  const auto compilers = quotedCommands(*compileTrace);
+  const auto linkers = quotedCommands(*trace);
+  if (compilers.size() != 1 || linkers.size() != 1 ||
+      std::find(compilers.front().begin(), compilers.front().end(), "-cc1") ==
+          compilers.front().end())
+    return fail(
+        "cannot establish exact Clang frontend and linker command identity");
+  plan.linkTrace = linkers.front();
+  const auto frontend =
+      std::filesystem::weakly_canonical(compilers.front().front());
+  if (!std::filesystem::equivalent(plan.compilerExecutable, frontend))
+    return fail("opaque Clang launchers require explicit transitive toolchain "
+                "provenance");
+  if (producerTarget->os == "macos") {
+    const auto first =
+        std::find(plan.linkTrace.begin(), plan.linkTrace.end(), "-rpath");
+    if (first == plan.linkTrace.end() ||
+        std::next(first) == plan.linkTrace.end() ||
+        std::filesystem::weakly_canonical(*std::next(first)) !=
+            plan.runtimeDirectory)
+      return fail("native runtime loader policy does not prioritize the "
+                  "identified compiler-rt root");
+  }
+  std::set<std::filesystem::path> files{plan.compilerExecutable};
+  files.insert(std::filesystem::weakly_canonical(compilers.front().front()));
+  // Frontend resource files (for example an explicitly selected forced include)
+  // can change native instrumentation without changing preprocessed user code.
+  for (const auto &argument : compilers.front()) {
+    std::filesystem::path path(argument);
+    if (!path.is_absolute()) {
+      const auto equals = argument.find('=');
+      if (equals == std::string::npos)
+        continue;
+      path = argument.substr(equals + 1);
+    }
+    if (!path.is_absolute() || !std::filesystem::is_regular_file(path))
+      continue;
+    const auto canonical = std::filesystem::weakly_canonical(path);
+    if (!below(std::filesystem::weakly_canonical(directory), canonical))
+      files.insert(canonical);
+  }
+  for (auto &argument : plan.linkTrace) {
+    if (argument == object.string()) {
+      argument = "<native-runtime-probe-object>";
+      continue;
+    }
+    if (argument == output.string()) {
+      argument = "<native-runtime-probe-output>";
+      continue;
+    }
+    const std::filesystem::path path(argument);
+    if (!path.is_absolute() || !std::filesystem::is_regular_file(path))
+      continue;
+    const auto canonical = std::filesystem::weakly_canonical(path);
+    const std::filesystem::path reportedRuntime(trim(*runtime));
+    if ((below(reportedRuntime, path) || below(plan.runtimeDirectory, path)) &&
+        !below(plan.runtimeDirectory, canonical))
+      return fail(
+          "selected compiler-rt link escapes Clang's identified runtime root");
+    files.insert(canonical);
+    if (below(plan.runtimeDirectory, canonical))
+      plan.runtimeFiles.push_back(canonical);
+  }
+  if (plan.runtimeFiles.empty())
+    return fail("Clang's native link plan did not select concrete matching "
+                "compiler-rt files");
+  for (std::size_t index = 0; index + 1 < plan.linkTrace.size(); ++index) {
+    if (plan.linkTrace[index] == "-syslibroot" ||
+        plan.linkTrace[index] == "--sysroot") {
+      const auto sdk =
+          std::filesystem::weakly_canonical(plan.linkTrace[index + 1]);
+      if (!std::filesystem::is_directory(sdk / "usr/lib") ||
+          !std::filesystem::is_regular_file(sdk / "SDKSettings.json"))
+        return fail(
+            "selected native SDK library/settings identity is unavailable");
+      plan.sdkDirectories.push_back(sdk);
+    }
+  }
+  // Ask the actual linker for its selected file closure, including SDK tbd
+  // reexports. Unselected SDK directory aliases cannot affect this link.
+  auto tracedLink = link;
+  tracedLink.emplace_back("-Wl,-t");
+  const auto loaded = probe(tracedLink, std::chrono::milliseconds(60000));
+  if (loaded && producerTarget->os == "macos") {
+    // Clang also supplies @executable_path. An unrelated library beside the
+    // probe must not shadow the identified matching runtime directory.
+    for (const auto &file : plan.runtimeFiles) {
+      if (file.extension() != ".dylib")
+        continue;
+      std::ofstream shadow(directory / file.filename());
+      shadow << "unrelated compiler-rt shadow must not load\n";
+      if (!shadow)
+        return fail("cannot establish isolated native runtime loader control");
+    }
+  }
+  if (!loaded || !probe({output.string()}))
+    return fail(
+        "matching compiler-rt could not link and start on the selected host; "
+        "no instrumentation profile was admitted");
+  std::istringstream loadedFiles(*loaded);
+  const auto probeRoot = std::filesystem::weakly_canonical(directory);
+  while (std::getline(loadedFiles, line)) {
+    line = trim(std::move(line));
+    if (line.empty() || !std::filesystem::path(line).is_absolute())
+      continue;
+    std::filesystem::path path(line);
+    if (!std::filesystem::is_regular_file(path) && line.ends_with(')')) {
+      auto member = line.rfind('(');
+      while (member != std::string::npos) {
+        const std::filesystem::path archive(line.substr(0, member));
+        if (std::filesystem::is_regular_file(archive)) {
+          path = archive;
+          break;
+        }
+        member = member == 0 ? std::string::npos : line.rfind('(', member - 1);
+      }
+    }
+    if (!std::filesystem::is_regular_file(path))
+      return fail(
+          "cannot establish an exact native linker input from its file trace");
+    const auto canonical = std::filesystem::weakly_canonical(path);
+    if (below(probeRoot, canonical))
+      continue;
+    const std::filesystem::path reportedRuntime(trim(*runtime));
+    if ((below(reportedRuntime, path) || below(plan.runtimeDirectory, path)) &&
+        !below(plan.runtimeDirectory, canonical))
+      return fail(
+          "selected compiler-rt link escapes Clang's identified runtime root");
+    for (std::size_t index = 0; index + 1 < plan.linkTrace.size(); ++index) {
+      if (plan.linkTrace[index] != "-syslibroot" &&
+          plan.linkTrace[index] != "--sysroot")
+        continue;
+      const std::filesystem::path reportedSdk(plan.linkTrace[index + 1]);
+      const auto sdk = std::filesystem::weakly_canonical(reportedSdk);
+      if ((below(reportedSdk, path) || below(sdk, path)) &&
+          !below(sdk, canonical))
+        return fail("selected native SDK library alias escapes its identified "
+                    "SDK root");
+    }
+    files.insert(canonical);
+    if (below(plan.runtimeDirectory, canonical))
+      plan.runtimeFiles.push_back(canonical);
+  }
+  plan.implementationFiles.assign(files.begin(), files.end());
+  std::sort(plan.runtimeFiles.begin(), plan.runtimeFiles.end());
+  plan.runtimeFiles.erase(
+      std::unique(plan.runtimeFiles.begin(), plan.runtimeFiles.end()),
+      plan.runtimeFiles.end());
+  IdentityBuilder identity;
+  identity.add("schema", "gti-native-instrumentation-v1");
+  identity.add("mode", plan.mode);
+  identity.add("llvm.version", backend.llvmVersion);
+  identity.add("target", backend.triple);
+  identity.add("compiler.command", compiler);
+  identity.add("compiler.version", *version);
+  identity.add("resource", plan.resourceDirectory.generic_string());
+  identity.add("runtime", plan.runtimeDirectory.generic_string());
+  for (const auto &path : plan.configurationFiles)
+    if (!addFileIdentity(identity, "configuration", path, true, error))
+      return std::nullopt;
+  for (const auto &path : plan.implementationFiles)
+    if (!addFileIdentity(identity, "implementation", path, true, error))
+      return std::nullopt;
+  for (const auto &sdk : plan.sdkDirectories)
+    if (!addFileIdentity(identity, "sdk.settings", sdk / "SDKSettings.json",
+                         true, error))
+      return std::nullopt;
+  for (const auto &argument : plan.compileArguments)
+    identity.add("compile.argument", argument);
+  for (const auto &argument : plan.linkArguments)
+    identity.add("link.argument", argument);
+  for (const auto &argument : plan.linkTrace)
+    identity.add("resolved.link.argument", argument);
+  plan.identity = identity.finish();
+  return plan;
+}
+
+} // namespace
+
+std::optional<NativeInstrumentationPlan>
+resolveLlvmNativeRuntime(const std::string &compiler,
+                         const LlvmBackendIdentity &backend,
+                         LlvmInstrumentationMode mode, std::string &error) {
+  try {
+    return resolveLlvmNativeRuntimeImpl(compiler, backend, mode, error);
+  } catch (const std::exception &failure) {
+    error = "cannot inspect selected Clang runtime resources: " +
+            std::string(failure.what());
+    return std::nullopt;
+  }
+}
+
 ExecutableBuildRequest::ExecutableBuildRequest(
     CompilationRequest compilation, ToolchainLayout toolchain,
     std::filesystem::path generatedSource, std::filesystem::path output,
@@ -3108,40 +3605,13 @@ ExecutableBuildRequest::buildReport() const {
   return requestedBuildReport;
 }
 
-ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
-                                      ProgressObserver *progress) {
+namespace {
+ExecutableBuildResult
+buildResolvedExecutable(const ExecutableBuildRequest &request,
+                        ProgressObserver *progress) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
-  if (nativeObjectCache(request)) {
-    const auto configured = [](const char *name) {
-      const char *value = std::getenv(name);
-      return value != nullptr && *value != '\0';
-    };
-    const auto &policy = request.nativeInputs().targetPolicy;
-    const auto hasDeploymentArgument = [](const auto &arguments) {
-      return std::any_of(arguments.begin(), arguments.end(),
-                         darwinDeploymentArgument);
-    };
-    const bool darwinPolicy =
-        request.compilation().target().os == "macos" &&
-        (configured("MACOSX_DEPLOYMENT_TARGET") || configured("SDKROOT") ||
-         configured("DEVELOPER_DIR") ||
-         hasDeploymentArgument(request.nativeInputs().linkerArguments) ||
-         hasDeploymentArgument(request.nativeInputs().trailingArguments));
-    if (!policy.triple.empty() || !policy.sysroot.empty() || darwinPolicy) {
-      result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
-      result.driverDiagnostic =
-          "gti: explicit LLVM native target, sysroot or deployment policy "
-          "requires coordinated backend target options and a matching "
-          "target-built runtime; the current profile supports implicit host "
-          "policy only";
-      if (request.cache()) {
-        result.cache.status = BuildCacheStatus::Bypassed;
-        result.cache.detail = "LLVM native target/runtime identity unavailable";
-      }
-      return result;
-    }
-  }
+  result.nativeInstrumentation = request.nativeInputs().instrumentation;
   const auto hasObjectiveCpp = [](const auto &sources) {
     return std::any_of(sources.begin(), sources.end(), [](const auto &source) {
       return source.extension() == ".mm";
@@ -3532,7 +4002,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
         TemporaryArtifact stagedNativeObject(stagedObject, true);
         const NativeCCompileRequest cRequest(
             *request.cCompiler(), source, stagedObject, cStandard,
-            request.compilation().optimization(), includeDirectories, arguments,
+            request.compilation().optimization(), includeDirectories,
+            instrumentedNativeArguments(arguments, request.nativeInputs()),
             request.nativeInputs().targetPolicy);
         NativeCCompilationResult cCompilation{
             .source = source,
@@ -3578,7 +4049,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
         const NativeCppCompileRequest cppRequest(
             request.nativeCompiler(), source, stagedObject,
             request.compilation().cppStandard(),
-            request.compilation().optimization(), includeDirectories, arguments,
+            request.compilation().optimization(), includeDirectories,
+            instrumentedNativeArguments(arguments, request.nativeInputs()),
             request.nativeInputs().targetPolicy);
         NativeCppCompilationResult cppCompilation{
             .source = source,
@@ -3928,6 +4400,130 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   result.generatedSourceRetained = request.keepGeneratedSource();
   result.status = ExecutableBuildStatus::Success;
   return result;
+}
+
+} // namespace
+
+ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
+                                      ProgressObserver *progress) {
+  ExecutableBuildResult result;
+  result.generatedSource = request.generatedSource();
+  if (nativeObjectCache(request)) {
+    const auto configured = [](const char *name) {
+      const char *value = std::getenv(name);
+      return value != nullptr && *value != '\0';
+    };
+    const auto &policy = request.nativeInputs().targetPolicy;
+    const auto hasDeploymentArgument = [](const auto &arguments) {
+      return std::any_of(arguments.begin(), arguments.end(),
+                         darwinDeploymentArgument);
+    };
+    const bool darwinPolicy =
+        request.compilation().target().os == "macos" &&
+        (configured("MACOSX_DEPLOYMENT_TARGET") || configured("SDKROOT") ||
+         configured("DEVELOPER_DIR") ||
+         hasDeploymentArgument(request.nativeInputs().linkerArguments) ||
+         hasDeploymentArgument(request.nativeInputs().trailingArguments));
+    if (!policy.triple.empty() || !policy.sysroot.empty() || darwinPolicy) {
+      result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
+      result.driverDiagnostic =
+          "gti: explicit LLVM native target, sysroot or deployment policy "
+          "requires coordinated backend target options and a matching "
+          "target-built runtime; the current profile supports implicit host "
+          "policy only";
+      if (request.cache()) {
+        result.cache.status = BuildCacheStatus::Bypassed;
+        result.cache.detail = "LLVM native target/runtime identity unavailable";
+      }
+      return result;
+    }
+  }
+
+  const auto reject = [&](std::string reason) {
+    result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
+    result.driverDiagnostic = "gti: " + std::move(reason);
+    if (request.cache()) {
+      result.cache.status = BuildCacheStatus::Bypassed;
+      result.cache.detail = "LLVM instrumentation configuration unavailable";
+    }
+    return result;
+  };
+  if (request.nativeInputs().instrumentation)
+    return reject(
+        "native instrumentation plans are resolved by the build driver");
+  const auto mode = request.compilation().llvmInstrumentation();
+  if (mode == LlvmInstrumentationMode::None)
+    return buildResolvedExecutable(request, progress);
+  const auto &native = request.nativeInputs();
+  if (!native.compilerArguments.empty() || !native.cCompilerArguments.empty() ||
+      !native.linkerArguments.empty() || !native.trailingArguments.empty())
+    return reject("LLVM instrumentation requires structured native arguments; "
+                  "opaque compiler/linker policy is not admitted");
+  const auto externalLink = [](const NativeDependencyGroup &group) {
+    return !group.linkOperands.empty() || !group.libraryDirectories.empty();
+  };
+  if (!native.finalLibraryFiles.empty() || !native.libraryFiles.empty() ||
+      !native.libraries.empty() || !native.frameworks.empty() ||
+      !native.orderedLinkOperands.empty() ||
+      !native.libraryDirectories.empty() ||
+      std::any_of(native.dependencyGroups.begin(),
+                  native.dependencyGroups.end(), externalLink))
+    return reject("LLVM diagnostic native link dependencies need matching "
+                  "instrumentation provenance before admission");
+  if (mode == LlvmInstrumentationMode::Thread)
+    return reject("LLVM Thread instrumentation requires verified communicating "
+                  "GTI runtime and native-provider instrumentation provenance");
+  if (request.buildReport())
+    return reject("LLVM instrumented build reports require a matching recorded "
+                  "policy and verifier replay contract");
+  std::string reason;
+  // This is a toolchain-only query of the already implemented default policy,
+  // not an identity for the requested instrumented object. Full object policy
+  // is independently preflighted below and used by generation/cache lookup.
+  const auto toolchain =
+      queryLlvmBackendIdentity(request.compilation().target(), {}, reason);
+  if (!toolchain)
+    return reject(reason);
+  auto runtime = resolveLlvmNativeRuntime(request.nativeCompiler(), *toolchain,
+                                          mode, reason);
+  if (!runtime)
+    return reject(reason);
+  const bool cSources =
+      !native.cSources.empty() ||
+      std::any_of(native.dependencyGroups.begin(),
+                  native.dependencyGroups.end(),
+                  [](const auto &group) { return !group.cSources.empty(); });
+  if (cSources) {
+    if (!request.cCompiler())
+      return reject(
+          "instrumented native C sources require an explicit matching Clang");
+    const auto cRuntime = resolveLlvmNativeRuntime(*request.cCompiler(),
+                                                   *toolchain, mode, reason);
+    if (!cRuntime || cRuntime->runtimeDirectory != runtime->runtimeDirectory ||
+        cRuntime->compilerVersion != runtime->compilerVersion)
+      return reject(
+          "native C compiler-rt does not match the selected C++/LLVM runtime");
+    IdentityBuilder combined;
+    combined.add("native-cxx.runtime", runtime->identity);
+    combined.add("native-cc.runtime", cRuntime->identity);
+    runtime->identity = combined.finish();
+    append(runtime->implementationFiles, cRuntime->implementationFiles);
+    std::sort(runtime->implementationFiles.begin(),
+              runtime->implementationFiles.end());
+    runtime->implementationFiles.erase(
+        std::unique(runtime->implementationFiles.begin(),
+                    runtime->implementationFiles.end()),
+        runtime->implementationFiles.end());
+  }
+  result.nativeInstrumentation = *runtime;
+  const auto object = queryLlvmBackendIdentity(
+      request.compilation().target(), llvmBackendOptions(request.compilation()),
+      reason);
+  if (!object)
+    return reject(reason);
+  ExecutableBuildRequest resolved = request;
+  resolved.additionalNativeInputs.instrumentation = std::move(runtime);
+  return buildResolvedExecutable(resolved, progress);
 }
 
 } // namespace lang::driver
