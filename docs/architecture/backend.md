@@ -4543,6 +4543,18 @@ The same producer proof admits a direct same-block `CallResult`-to-`Return`
 loan transfer when its complete dependencies, access, type and HIR identity
 are unchanged and the return terminator consumes that exact escaping loan.
 It does not authorize constructing a reference from a possible owner address.
+A direct borrowed argument may stage that same live result into a read-only or
+mutable reference parameter. It requires the exact unprojected loan place,
+reference type/access, source producer and explicit argument input; owned,
+temporary and receiver input forms do not enter through this proof. Normal MIR
+call-input and loan-flow verification still prove the selected consumer and
+loan lifetime. Staging forwards the result address without copying the referent
+or adding a drop obligation. The unrelated user-type fixture and malformed-input
+controls accompany the vector-clone regression. Mutable class arguments verify
+write-back to the selected second object and exact destruction. A later-argument
+panic verifies that the consumer is never entered and that local/TLS cleanup
+precedes hosted reporting through the existing C observer. This no-argument
+failure case is separate from pending owned-argv cleanup evidence.
 
 Raw references to primitive or ordinary, independently represented native
 class objects may use passive or ordinary native class lifetime witnesses.

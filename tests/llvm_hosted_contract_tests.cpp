@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace lang {
 struct MirProgramTestAccess {
@@ -46,6 +47,8 @@ constexpr std::array cases{
     Case{"llvm_hosted_success.gti", 12354, "", 0},
     Case{"llvm_hosted_startup_failure.gti", 321, "hosted startup failure", 16},
     Case{"llvm_hosted_entry_failure.gti", 321, "hosted entry failure", 16},
+    Case{"llvm_hosted_reference_input_failure.gti", 321,
+         "borrowed argument failure", 18},
 };
 
 void require(bool value, std::string_view message) {
@@ -53,12 +56,15 @@ void require(bool value, std::string_view message) {
     throw std::runtime_error(std::string(message));
 }
 
-void unsafeReferenceLoadContract(const std::filesystem::path &repository) {
+void unsafeReferenceLoadContract(const std::filesystem::path &repository,
+                                 bool callInput = false) {
   FrontendOptions options;
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = true;
   const auto frontend = Frontend(options).analyze(
-      repository / "tests/fixtures/llvm_hosted_unsafe_reference_load.gti",
+      repository /
+          (callInput ? "tests/fixtures/llvm_hosted_unsafe_reference_input.gti"
+                     : "tests/fixtures/llvm_hosted_unsafe_reference_load.gti"),
       std::nullopt, {repository / "stdlib/prelude.gti"}, {},
       {repository / "stdlib"});
   require(frontend.canGenerateCode(), "unrelated unsafe helper is valid GTI");
@@ -73,10 +79,18 @@ void unsafeReferenceLoadContract(const std::filesystem::path &repository) {
   for (const auto &function : frontend.mir.functionInstances())
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions)
-        if (instruction.kind == MirInstructionKind::Load &&
+        if (instruction.kind == (callInput ? MirInstructionKind::CallInput
+                                           : MirInstructionKind::Load) &&
             instruction.unsafeOperation ==
-                UnsafeOperationKind::DeclaredUnsafeCall) {
-          require(owner == 0, "regression isolates exactly one result load");
+                UnsafeOperationKind::DeclaredUnsafeCall &&
+            (!callInput ||
+             (instruction.callInputKind == HirCallInputKind::ReadBorrow &&
+              instruction.info.type.kind == SemanticType::Reference &&
+              instruction.info.type.arguments.size() == 1 &&
+              instruction.info.type.arguments.front() ==
+                  SemanticType::Int32))) {
+          require(owner == 0, "regression isolates exactly one selected result "
+                              "materialization");
           owner = function.id;
           blockId = block.id;
           loadId = instruction.id;
@@ -86,7 +100,7 @@ void unsafeReferenceLoadContract(const std::filesystem::path &repository) {
   using Mutation =
       std::function<void(MirProgram &, MirBlock &, MirInstruction &,
                          MirInstruction &, MirPlace &, MirLoan &)>;
-  const std::array<Mutation, 16> mutations{
+  std::vector<Mutation> mutations{
       [](auto &, auto &, auto &, auto &, auto &place, auto &) {
         place.loan = 0;
       },
@@ -147,6 +161,38 @@ void unsafeReferenceLoadContract(const std::filesystem::path &repository) {
         std::swap(load, *ended);
       },
   };
+  if (callInput) {
+    mutations.push_back([](auto &, auto &, auto &input, auto &, auto &,
+                           auto &) { input.operands.front().loan = 0; });
+    mutations.push_back(
+        [](auto &, auto &, auto &input, auto &, auto &, auto &) {
+          input.callInputRole = MirCallInputRole::Receiver;
+        });
+    mutations.push_back(
+        [](auto &, auto &, auto &input, auto &, auto &, auto &) {
+          input.callInputKind = HirCallInputKind::CopyValue;
+        });
+    mutations.push_back([](auto &, auto &, auto &input, auto &, auto &,
+                           auto &) { input.callSite = 0; });
+    mutations.push_back([](auto &, auto &, auto &input, auto &, auto &,
+                           auto &) { input.defaultArgument = true; });
+    mutations.push_back(
+        [](auto &, auto &, auto &input, auto &, auto &, auto &) {
+          input.info.type.referenceAccess = AccessMode::Mutable;
+        });
+    mutations.push_back(
+        [](auto &, auto &, auto &input, auto &, auto &, auto &) {
+          input.operands.front().type = SemanticType::Int64;
+        });
+    mutations.push_back([](auto &, auto &, auto &input, auto &, auto &,
+                           auto &) { input.result.reset(); });
+    mutations.push_back([](auto &, auto &, auto &, auto &call, auto &, auto &) {
+      call.tombstone = true;
+    });
+    mutations.push_back([](auto &, auto &, auto &, auto &call, auto &, auto &) {
+      call.unsafeOperation = UnsafeOperationKind::RawDereference;
+    });
+  }
   for (std::size_t index = 0; index < mutations.size(); ++index) {
     auto invalid = frontend.mir;
     auto &body = MirProgramTestAccess::functions(invalid)[owner - 1].body;
@@ -1025,6 +1071,7 @@ int main(int argc, char **argv) {
   } cleanup{scratch};
   try {
     unsafeReferenceLoadContract(std::filesystem::canonical(argv[1]));
+    unsafeReferenceLoadContract(std::filesystem::canonical(argv[1]), true);
     unsafeReferenceReturnContract(std::filesystem::canonical(argv[1]));
     classOwnerRawReferenceContract(std::filesystem::canonical(argv[1]),
                                    "llvm_hosted_class_owner_reference.gti");

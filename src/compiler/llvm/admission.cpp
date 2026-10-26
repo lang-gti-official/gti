@@ -808,10 +808,10 @@ public:
            ordinaryRawReferenceObject(witness.arguments.front());
   }
 
-  const MirInstruction *earlierLiveCallResult(const MirBody &body,
-                                              const MirBlock &block,
-                                              const MirInstruction &stage,
-                                              const MirLoan &loan) const {
+  const MirInstruction *
+  earlierLiveCallResult(const MirBody &body, const MirBlock &block,
+                        const MirInstruction &stage, const MirLoan &loan,
+                        const SemanticType &referent) const {
     if (body.findBlock(block.id) != &block)
       return nullptr;
     // A source expression's caller permission is repeated on materialization.
@@ -838,7 +838,7 @@ public:
     }
     return encountered && producer && producer->result &&
                    producer->info.category == ValueCategory::Place &&
-                   producer->info.type == stage.info.type &&
+                   producer->info.type == referent &&
                    producer->info.access == loan.access
                ? producer
                : nullptr;
@@ -846,8 +846,10 @@ public:
 
   bool unsafeCallResultProducer(const MirBody &body, const MirBlock &block,
                                 const MirInstruction &stage,
-                                const MirLoan &loan) const {
-    const auto *producer = earlierLiveCallResult(body, block, stage, loan);
+                                const MirLoan &loan,
+                                const SemanticType &referent) const {
+    const auto *producer =
+        earlierLiveCallResult(body, block, stage, loan, referent);
     const auto *target =
         producer && producer->functionTarget
             ? program.findFunctionInstance(*producer->functionTarget)
@@ -863,7 +865,7 @@ public:
            target->linkage == LanguageLinkage::Gti && target->requiresUnsafe &&
            target->returnType.kind == SemanticType::Reference &&
            target->returnType.arguments.size() == 1 &&
-           target->returnType.arguments.front() == stage.info.type &&
+           target->returnType.arguments.front() == referent &&
            target->returnType.referenceAccess == loan.access;
   }
 
@@ -896,7 +898,56 @@ public:
            loan && loan->kind == MirLoanKind::CallResult && !loan->entry &&
            !loan->escapes && loan->producedBy == stage.hirValue &&
            loan->access == place->access &&
-           unsafeCallResultProducer(body, block, stage, *loan);
+           unsafeCallResultProducer(body, block, stage, *loan, stage.info.type);
+  }
+
+  bool unsafeCallResultInput(const MirBody &body, const MirBlock &block,
+                             const MirInstruction &stage) const {
+    const bool mutableInput =
+        stage.callInputKind == HirCallInputKind::MutableBorrow;
+    if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
+        stage.callInputRole != MirCallInputRole::Argument ||
+        (stage.callInputKind != HirCallInputKind::ReadBorrow &&
+         !mutableInput) ||
+        stage.callSite == 0 || stage.hirValue == 0 || stage.defaultArgument ||
+        stage.rawMemoryAccess ||
+        stage.unsafeOperation != UnsafeOperationKind::DeclaredUnsafeCall ||
+        stage.intrinsic != IntrinsicKind::None ||
+        stage.operation != MirOperation::None ||
+        stage.info.type.kind != SemanticType::Reference ||
+        stage.info.type.arguments.size() != 1 ||
+        stage.info.type.referenceAccess !=
+            (mutableInput ? AccessMode::Mutable : AccessMode::ReadOnly) ||
+        stage.info.category != ValueCategory::Value ||
+        stage.info.access != AccessMode::ReadOnly ||
+        stage.operands.size() != 1 || stage.destination || stage.receiver ||
+        stage.loan || stage.functionTarget || stage.constructorTarget ||
+        stage.lambdaTarget || stage.bodyTarget || stage.nativeCalleeType ||
+        stage.nativeCallbackAdapter || stage.threadTaskAdapter ||
+        stage.callableInvocation || !stage.parameterTypes.empty() ||
+        stage.preparedParameterDrop || stage.retainedOwnerPlace ||
+        stage.successResultDrop || stage.successResultDestination ||
+        stage.ownership || !stage.lifecycle.empty() ||
+        !stage.definedFailure.empty() || !stage.localFailureSites.empty())
+      return false;
+    const auto &input = stage.operands.front();
+    if (input.kind != MirOperandKind::Loan || !input.loan || !input.place ||
+        input.value || input.literal || input.type != stage.info.type)
+      return false;
+    const auto &referent = stage.info.type.arguments.front();
+    const auto *place = body.findPlace(input.place);
+    const auto *loan = body.findLoan(input.loan);
+    // The explicit loan place carries the returned runtime address. Its
+    // possible owner origin is never a substitute, including during call-input
+    // staging.
+    return place && place->root == MirPlaceRootKind::Loan &&
+           place->projections.empty() && place->loan == input.loan &&
+           place->type == referent && loan &&
+           loan->kind == MirLoanKind::CallResult && !loan->entry &&
+           !loan->escapes && loan->producedBy == stage.hirValue &&
+           loan->access == place->access &&
+           loan->access == stage.info.type.referenceAccess &&
+           unsafeCallResultProducer(body, block, stage, *loan, referent);
   }
 
   const MirLoan *directReturnSourceLoan(const MirBody &body,
@@ -952,7 +1003,8 @@ public:
     if (stage.unsafeOperation != UnsafeOperationKind::DeclaredUnsafeCall)
       return false;
     const auto *from = directReturnSourceLoan(body, block, stage);
-    return from && unsafeCallResultProducer(body, block, stage, *from);
+    return from &&
+           unsafeCallResultProducer(body, block, stage, *from, stage.info.type);
   }
 
   bool representedRawReference(const MirBody &body, const MirBlock &block,
@@ -966,7 +1018,8 @@ public:
       return false;
     const auto *from = directReturnSourceLoan(body, block, stage);
     const auto *producer =
-        from ? earlierLiveCallResult(body, block, stage, *from) : nullptr;
+        from ? earlierLiveCallResult(body, block, stage, *from, stage.info.type)
+             : nullptr;
     return producer &&
            mir_detail::rawBorrowResultLoan(body, *producer) == from &&
            representedRawReferenceTypes(*producer);
@@ -1624,6 +1677,7 @@ public:
                                    UnsafeOperationKind::ObjectLifetime
                   ? std::optional(Shape::NativeMemoryOperation)
               : (ordinaryUnsafe || unsafeCallResultLoad(mir, mirBlock, stage) ||
+                 unsafeCallResultInput(mir, mirBlock, stage) ||
                  unsafeCallResultReturn(mir, mirBlock, stage))
                   ? std::optional(Shape::OrdinaryUnsafeInvocation)
               : (stage.unsafeOperation ==

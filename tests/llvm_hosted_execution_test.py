@@ -69,7 +69,7 @@ def arguments(gti, root, scratch, endpoints, env):
 def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selection = sys.argv[3] if len(sys.argv) > 3 else "all"
-    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments"}:
+    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments", "reference-input", "vector"}:
         raise ValueError(f"unknown hosted case: {selection}")
     cases = (
         ("llvm_hosted_success.gti", None),
@@ -78,8 +78,11 @@ def main():
         ("stdlib_surface_source_location.gti", None),
         ("llvm_hosted_unsafe_reference_load.gti", None),
         ("llvm_hosted_unsafe_reference_return.gti", None),
+        ("llvm_hosted_unsafe_reference_input.gti", None),
+        ("llvm_hosted_reference_input_failure.gti", "borrowed argument failure"),
         ("llvm_hosted_class_owner_reference.gti", None),
         ("llvm_hosted_class_pointee_reference.gti", None),
+        ("stdlib_surface_vector.gti", None),
     )
     endpoints = (
         Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
@@ -93,7 +96,14 @@ def main():
         for filename, failure in cases:
             if selection in {"status", "source-literals", "arguments"}:
                 continue
-            if selection == "startup" and filename == "stdlib_surface_source_location.gti":
+            if selection == "reference-input" and filename not in {
+                    "llvm_hosted_unsafe_reference_input.gti",
+                    "llvm_hosted_reference_input_failure.gti"}:
+                continue
+            if selection == "vector" and filename != "stdlib_surface_vector.gti":
+                continue
+            if selection == "startup" and filename in {
+                    "stdlib_surface_source_location.gti", "stdlib_surface_vector.gti"}:
                 continue
             if selection == "source-location" and filename != "stdlib_surface_source_location.gti":
                 continue
