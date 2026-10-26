@@ -86,6 +86,14 @@ enum class Shape {
   PolymorphicTransfer,
   PureDispatchState,
   DestructorDispatchObservation,
+  NativeCScalarImport,
+  NativeCScalarValue,
+  NativeCCountedInput,
+  NativeCAggregateImport,
+  NativeCStorage,
+  NativeCFunctionValue,
+  NativeCFunctionImport,
+  NativeCScalarIndirect,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

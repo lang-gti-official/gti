@@ -1,0 +1,28 @@
+[[c_abi]] struct Pair { mut uint64_t a; mut uint64_t b; };
+[[c_abi]] struct Large { mut uint64_t a; mut uint64_t b; mut uint64_t c; };
+[[c_abi]] struct Hfa { mut double values[4]; };
+using ScalarCallback = (int32_t) -> int32_t;
+using PairCallback = (Pair) -> Pair;
+using LargeCallback = (Large) -> Large;
+using HfaCallback = (Hfa) -> Hfa;
+using ViewCallback = (std::string_view) -> uint64_t;
+
+int32_t callback_scalar(int32_t value) { return value; }
+Pair callback_pair(Pair value) { return value; }
+Large callback_large(Large value) { return value; }
+Hfa callback_hfa(Hfa value) { return value; }
+uint64_t callback_view(std::string_view value) { return uint64_t(value.size()); }
+extern "C" { int32_t native_throw(int32_t value); }
+int32_t callback_exception(int32_t value) { unsafe { return native_throw(value); } }
+int32_t callback_failure(int32_t value) { return 100 / value; }
+
+int main() {
+  ScalarCallback scalar = callback_scalar;
+  PairCallback pair = callback_pair;
+  LargeCallback large = callback_large;
+  HfaCallback hfa = callback_hfa;
+  ViewCallback view = callback_view;
+  ScalarCallback exception = callback_exception;
+  ScalarCallback failure = callback_failure;
+  return 0;
+}

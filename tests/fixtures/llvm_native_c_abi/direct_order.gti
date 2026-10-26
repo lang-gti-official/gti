@@ -1,0 +1,12 @@
+extern "C" {
+  int32_t native_mark(int32_t value);
+  void native_enter(int32_t first, int32_t second);
+}
+struct Guard {
+  ~Guard() { [[discard]] native_mark(99); }
+};
+int main() {
+  Guard guard{};
+  native_enter(native_mark(1), native_mark(2));
+  return 0;
+}

@@ -1,0 +1,15 @@
+using NativeUnary = (int32_t) -> int32_t;
+extern "C" {
+  int32_t unrelated_getter();
+  double unrelated_math(double left, double right);
+  NativeUnary unrelated_callback_getter();
+}
+int main() {
+  unsafe {
+    NativeUnary apply = unrelated_callback_getter();
+    if (unrelated_getter() != 37) return 1;
+    if (unrelated_math(1.25d, 3.0d) != 5.5d) return 2;
+    if (apply(7) != 18) return 3;
+  }
+  return 0;
+}

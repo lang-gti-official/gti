@@ -1,0 +1,10 @@
+using Unary = (int32_t) -> int32_t;
+extern "C" { Unary native_unary(); }
+int32_t callback_scalar(int32_t value) { return value + 1; }
+int main() {
+  Unary adapter = callback_scalar;
+  unsafe {
+    if (native_unary()(31) != 42) return 1;
+    return adapter(1);
+  }
+}

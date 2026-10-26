@@ -1,0 +1,83 @@
+using NativeOp = (int32_t) -> int32_t;
+[[c_abi]] struct Pair { mut uint64_t a; mut uint64_t b; };
+[[c_abi]] struct Nested { mut Pair pair; mut double weight; };
+[[c_abi]] struct FloatArray { mut float values[4]; };
+[[c_abi]] struct DoubleArray { mut double values[4]; };
+[[c_abi]] struct Boolean { mut bool active; mut uint16_t code; };
+[[c_abi]] union NativeUnion { mut uint64_t bits; mut double floating; };
+[[c_abi]] struct UnionBox { mut NativeUnion value; mut uint32_t tag; };
+[[c_abi]] struct CallBox { mut NativeOp apply; mut int32_t cookie; };
+extern "C" {
+  mut int32_t native_counter;
+  int32_t native_limit;
+  mut NativeOp native_operation;
+  mut Nested native_state;
+  mut int32_t* native_pointer;
+  Pair native_pair(uint64_t a, uint64_t b);
+  Pair native_pair_step(Pair value);
+  int32_t native_pair_check(Pair value, uint64_t a, uint64_t b);
+  Nested native_nested(uint64_t a, double weight);
+  Nested native_nested_step(Nested value);
+  int32_t native_nested_check(Nested value, uint64_t a, double weight);
+  FloatArray native_float_array();
+  FloatArray native_float_step(FloatArray value);
+  int32_t native_float_check(FloatArray value);
+  DoubleArray native_double_array();
+  DoubleArray native_double_step(DoubleArray value);
+  int32_t native_double_check(DoubleArray value);
+  Boolean native_boolean(bool active, uint16_t code);
+  Boolean native_boolean_step(Boolean value);
+  NativeUnion native_union(uint64_t bits);
+  NativeUnion native_union_step(NativeUnion value);
+  int32_t native_union_check(NativeUnion value, uint64_t bits);
+  UnionBox native_union_box(uint64_t bits);
+  UnionBox native_union_box_step(UnionBox value);
+  int32_t native_union_box_check(UnionBox value, uint64_t bits);
+  NativeOp native_obtain_operation();
+  int32_t native_replace_operation(int32_t value);
+  CallBox native_call_box();
+  int32_t native_call_box_check(CallBox value);
+  void native_bump();
+  int32_t native_state_check();
+  uint64_t native_text(std::string_view value);
+  uint32_t native_cstring(c_string value);
+  c_longlong native_long_long(c_longlong value);
+  c_ulong native_unsigned_long(c_ulong value);
+  c_char native_char(c_char value);
+}
+
+T relay<T>(T value) { return value; }
+int main() {
+  unsafe {
+    Pair pair = native_pair_step(relay(native_pair(uint64_t(11), uint64_t(29))));
+    if (pair.a != 14 || pair.b != 36 || native_pair_check(pair, uint64_t(14), uint64_t(36)) != 1) { return 1; }
+    Nested nested = native_nested_step(relay(native_nested(uint64_t(7), 1.25d)));
+    if (nested.pair.a != 10 || nested.pair.b != 15 || nested.weight != 3.75
+        || native_nested_check(nested, uint64_t(10), 3.75d) != 1) { return 2; }
+    FloatArray floats = native_float_step(native_float_array());
+    DoubleArray doubles = native_double_step(native_double_array());
+    if (native_float_check(floats) != 1 || native_double_check(doubles) != 1
+        || floats.values[3] != float(13) || doubles.values[2] != 7.75) { return 3; }
+    Boolean boolean = native_boolean_step(native_boolean(true, uint16_t(91)));
+    if (boolean.active || boolean.code != uint16_t(94)) { return 4; }
+    NativeUnion overlap = native_union_step(relay(native_union(uint64_t(121))));
+    UnionBox boxed = native_union_box_step(native_union_box(uint64_t(223)));
+    if (native_union_check(overlap, uint64_t(134)) != 1 || native_union_box_check(boxed, uint64_t(242)) != 1) { return 5; }
+    NativeOp operation = native_obtain_operation();
+    if (operation == nullptr || operation(7) != 18) { return 6; }
+    CallBox callable = native_call_box();
+    if (callable.apply(9) != 20 || native_call_box_check(relay(callable)) != 1) { return 7; }
+    if (native_operation(native_replace_operation(2)) != 13 || native_operation(2) != 31) { return 8; }
+    int32_t before = native_counter;
+    native_bump();
+    if (before != 5 || native_counter != 12 || native_limit != 73) { return 9; }
+    native_counter = native_counter + 1;
+    native_state = nested;
+    if (*native_pointer != 13 || native_state_check() != 1) { return 10; }
+    if (native_text("hello") != 1 || native_cstring("abc") != uint32_t(1)) { return 11; }
+    if (native_long_long(c_longlong(2147483650)) != c_longlong(2147483667)
+        || native_unsigned_long(c_ulong(2147483650)) != c_ulong(2147483669)
+        || native_char(c_char(97)) != c_char(98)) { return 12; }
+  }
+  return 0;
+}

@@ -1,0 +1,28 @@
+// cc -std=c17 -O3 -c examples/llvm/native-c-storage-native/state.c -o /tmp/native-state.o
+// gti examples/llvm/native-c-storage.gti --backend llvm -O3 -o /tmp/native-state -- /tmp/native-state.o
+// /tmp/native-state
+// Expected output: native-state:13,31 then cleanup, one per line.
+// Native libraries own their globals. An unsafe wrapper can read/write state,
+// while argument staging preserves which native function pointer was loaded.
+using NativeOperation = (int32_t) -> int32_t;
+extern "C" {
+  mut int32_t library_counter;
+  int32_t library_limit;
+  mut NativeOperation library_operation;
+  int32_t library_replace(int32_t value);
+  void library_report(int32_t first, int32_t second);
+  void library_cleanup();
+}
+struct Guard { ~Guard() { library_cleanup(); } };
+int main() {
+  Guard guard{};
+  unsafe {
+    library_counter = 2;
+    if (library_limit != 17) return 1;
+    auto first = library_operation(library_replace(library_counter));
+    auto second = library_operation(library_counter);
+    if (first != 13 || second != 31) return 2;
+    library_report(first, second);
+  }
+  return 0;
+}

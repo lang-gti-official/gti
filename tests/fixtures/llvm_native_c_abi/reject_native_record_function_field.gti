@@ -1,0 +1,9 @@
+using NativeUnary = (int32_t) -> int32_t;
+[[c_abi]] struct NativeHook { mut NativeUnary operation; };
+extern "C" { NativeHook native_unadmitted_hook(); }
+int main() {
+  unsafe {
+    auto hook = native_unadmitted_hook();
+    return hook.operation(31) == 42 ? 0 : 1;
+  }
+}

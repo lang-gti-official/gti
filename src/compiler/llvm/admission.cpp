@@ -7,6 +7,7 @@
 #include "dispatch.h"
 #include "lifetimes.h"
 #include "memory_types.h"
+#include "native_c_contract.h"
 #include "parameter_packs.h"
 #include "placement.h"
 #include "reachability.h"
@@ -987,8 +988,9 @@ private:
 class Inventory final {
 public:
   Inventory(std::vector<LlvmCoverageUse> &uses, const MirProgram &program,
-            StaticDispatchProofs &dispatchProofs)
-      : uses(uses), program(program), dispatchProofs(dispatchProofs) {}
+            StaticDispatchProofs &dispatchProofs, const TargetInfo &nativeTarget)
+      : uses(uses), program(program), dispatchProofs(dispatchProofs),
+        nativeTarget(nativeTarget) {}
 
   std::optional<MirBodyAddress> body;
   SourceSpan source;
@@ -2118,13 +2120,20 @@ public:
       add(type.kind,
           opaqueReferent(type) ? std::optional(Shape::ErasedReference)
           : address            ? std::optional(Shape::PassiveAddressValue)
-          : passiveArray       ? std::optional(Shape::PassiveArrayValue)
-          : reference          ? std::optional(Shape::PassiveReference)
-          : arrayAddress       ? std::optional(Shape::CheckedArrayProjection)
-                               : representationShape(type));
+          : native_llvm::nativeCScalarFunctionValueContract(program,
+                                                            nativeTarget, type)
+              ? std::optional(Shape::NativeCFunctionValue)
+          : passiveArray ? std::optional(Shape::PassiveArrayValue)
+          : reference    ? std::optional(Shape::PassiveReference)
+          : arrayAddress ? std::optional(Shape::CheckedArrayProjection)
+                         : representationShape(type));
       if (type.nativeCScalar != NativeCScalarKind::None) {
-        add(type.nativeCScalar);
-        add(Shape::NativeScalar);
+        const auto nativeScalar =
+            native_llvm::nativeCScalarValueContract(nativeTarget, type)
+                ? std::optional(Shape::NativeCScalarValue)
+                : std::nullopt;
+        add(type.nativeCScalar, nativeScalar);
+        add(Shape::NativeScalar, nativeScalar);
       }
       if (type.kind == SemanticType::Array)
         add(Shape::FixedArray, passiveArray
@@ -2319,7 +2328,11 @@ public:
                 ? std::optional(Shape::PassiveReference)
                 : placeClassShape(place));
       if (place.foreignStorage)
-        add(Shape::NativeCall);
+        add(Shape::NativeCall,
+            native_llvm::nativeCStoragePlaceContract(program, nativeTarget, mir,
+                                                    place)
+                ? std::optional(Shape::NativeCStorage)
+                : std::nullopt);
     }
     for (const auto &loan : mir.loans) {
       const auto *origin = mir.findPlace(loan.source);
@@ -2469,7 +2482,10 @@ public:
                        dispatchProofs.borrowedUse(mir, stage.operands.front()))
                   ? (dispatchOperation ? dispatchOperation->shape
                                        : std::nullopt)
-                  : classShape(stage.info.type);
+                  : native_llvm::nativeCScalarReceiverInputContract(
+                        program, nativeTarget, mir, stage)
+                      ? std::optional(Shape::NativeCScalarIndirect)
+                      : classShape(stage.info.type);
           add(*stage.callInputRole, inputShape);
           add(stage.callInputKind,
               passiveReference(stage.info.type) &&
@@ -2560,6 +2576,8 @@ public:
           add(stage.intrinsic,
               callableIntrinsic ? callableIntrinsic
               : typedMemory     ? std::optional(Shape::NativeMemoryOperation)
+              : nativeAddressConversion(stage) && validRaw
+                  ? std::optional(Shape::NativeObjectAddress)
               : erasedReference(stage) ? std::optional(Shape::ErasedReference)
               : representedTextAddress(mir, stage)
                   ? std::optional(Shape::CountedText)
@@ -2593,8 +2611,13 @@ public:
           type(*stage.objectLayoutType);
         if (stage.nativeCalleeType) {
           type(*stage.nativeCalleeType);
-          add(Shape::NativeCall);
-          add(Shape::IndirectCall);
+          const auto nativeIndirect =
+              native_llvm::nativeCScalarIndirectCallContract(
+                  program, nativeTarget, mir, stage)
+                  ? std::optional(Shape::NativeCScalarIndirect)
+                  : std::nullopt;
+          add(Shape::NativeCall, nativeIndirect);
+          add(Shape::IndirectCall, nativeIndirect);
         }
         if (stage.dispatch == CallDispatch::Virtual)
           add(Shape::VirtualCall,
@@ -2634,9 +2657,13 @@ public:
         for (const auto &operand : stage.operands)
           if (const auto *place = mir.findPlace(operand.place))
             rawAccess |= primitiveRawAccess(mir, *place);
+        const bool nativeStorage =
+            native_llvm::nativeCStorageAccessContract(program, nativeTarget,
+                                                      mir, stage);
         if (stage.rawMemoryAccess)
           add(Shape::RawMemory,
-              extendedRaw
+              nativeStorage ? std::optional(Shape::NativeCStorage)
+              : extendedRaw
                   ? (validRaw ? std::optional(Shape::NativeClassRawAccess)
                               : std::nullopt)
               : rawAccess ? std::optional(Shape::PrimitiveRawAccess)
@@ -2668,7 +2695,10 @@ public:
               callee->requiresUnsafe &&
               stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall;
           add(stage.unsafeOperation,
-              stage.unsafeOperation == UnsafeOperationKind::UnionMember
+              stage.unsafeOperation == UnsafeOperationKind::ForeignStorage &&
+                      nativeStorage
+                  ? std::optional(Shape::NativeCStorage)
+              : stage.unsafeOperation == UnsafeOperationKind::UnionMember
                   ? classShape(stage.info.type).has_value() ? classShape(stage.info.type)
                     : [&]() -> std::optional<Shape> {
                         if (stage.destination)
@@ -2682,6 +2712,35 @@ public:
                           UnsafeOperationKind::ForeignPointerCall &&
                       native_llvm::nativeProcessMemoryCall(program, stage)
                   ? std::optional(Shape::NativeProcessMemory)
+              : stage.unsafeOperation ==
+                            UnsafeOperationKind::ForeignPointerCall &&
+                        native_llvm::nativeCScalarIndirectCallContract(
+                            program, nativeTarget, mir, stage)
+                  ? std::optional(Shape::NativeCScalarIndirect)
+              : stage.unsafeOperation ==
+                            UnsafeOperationKind::ForeignPointerCall &&
+                        callee &&
+                        (native_llvm::nativeCScalarImportContract(
+                             program, nativeTarget, *callee) ||
+                         native_llvm::nativeCCountedInputContract(
+                             program, nativeTarget, *callee) ||
+                         native_llvm::nativeCScalarFunctionImportContract(
+                             program, nativeTarget, *callee) ||
+                         native_llvm::nativeCAggregateImportContract(
+                             program, nativeTarget, *callee)) &&
+                        native_llvm::nativeCDirectCallContract(
+                            program, nativeTarget, mir, stage)
+                  ? std::optional(
+                        native_llvm::nativeCAggregateImportContract(
+                            program, nativeTarget, *callee)
+                            ? Shape::NativeCAggregateImport
+                        : native_llvm::nativeCScalarFunctionImportContract(
+                            program, nativeTarget, *callee)
+                            ? Shape::NativeCFunctionImport
+                        : native_llvm::nativeCCountedInputContract(
+                            program, nativeTarget, *callee)
+                            ? Shape::NativeCCountedInput
+                            : Shape::NativeCScalarImport)
               : rawReference && stage.unsafeOperation ==
                                     UnsafeOperationKind::RawDereference
                   ? rawReferenceShape
@@ -2815,6 +2874,7 @@ private:
   std::vector<LlvmCoverageUse> &uses;
   const MirProgram &program;
   StaticDispatchProofs &dispatchProofs;
+  const TargetInfo &nativeTarget;
   std::map<Key, std::size_t> indices;
 };
 
@@ -2884,7 +2944,7 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
       plan.bodies.push_back(body.identity.address);
   }
   StaticDispatchProofs dispatchProofs(plan, plan.input);
-  Inventory inventory(plan.uses, mir, dispatchProofs);
+  Inventory inventory(plan.uses, mir, dispatchProofs, input.target());
   inventory.add(Shape::ObjectArtifact);
   inventory.add(input.programKind());
   inventory.add(mir.executionProfile());
@@ -2954,14 +3014,29 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
         native_llvm::nativeProcessMemoryBinding(mir, function)
             ? std::optional(Shape::NativeProcessMemory)
             : std::nullopt;
+    const auto nativeImport =
+        processMemory ? processMemory
+        : native_llvm::nativeCScalarImportContract(mir, input.target(),
+                                                   function)
+            ? std::optional(Shape::NativeCScalarImport)
+        : native_llvm::nativeCCountedInputContract(mir, input.target(),
+                                                   function)
+            ? std::optional(Shape::NativeCCountedInput)
+        : native_llvm::nativeCScalarFunctionImportContract(mir, input.target(),
+                                                           function)
+            ? std::optional(Shape::NativeCFunctionImport)
+        : native_llvm::nativeCAggregateImportContract(mir, input.target(),
+                                                      function)
+            ? std::optional(Shape::NativeCAggregateImport)
+            : std::nullopt;
     const auto declaration = dispatchProofs.declaration(function);
-    if (declaration && processMemory)
-      throw BackendUnsupportedError("LLVM native process binding conflicts "
+    if (declaration && nativeImport)
+      throw BackendUnsupportedError("LLVM native import conflicts "
                                     "with a GTI declaration witness");
-    const auto declarationShape = declaration ? declaration : processMemory;
+    const auto declarationShape = declaration ? declaration : nativeImport;
     inventory.executable = !declaration;
     inventory.add(function.definitionKind, declarationShape);
-    inventory.add(function.linkage, processMemory);
+    inventory.add(function.linkage, nativeImport);
     inventory.add(function.entryKind);
     if (function.owner)
       inventory.add(function.receiverMutability,
@@ -2992,7 +3067,7 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     if (function.definitionKind == MirDefinitionKind::Declaration)
       inventory.add(Shape::LibraryDeclaration, declarationShape);
     if (function.linkage == LanguageLinkage::C)
-      inventory.add(Shape::NativeCall, processMemory);
+      inventory.add(Shape::NativeCall, nativeImport);
     if (function.mayRaiseDefinedFailure)
       inventory.add(Shape::FailureReturn);
     if (function.receiverMutability != ReceiverMutability::ReadOnly)
@@ -3009,7 +3084,11 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   inventory.executable = true;
   for (const auto &storage : mir.foreignStorageDeclarations()) {
     inventory.type(storage.type);
-    inventory.add(Shape::NativeCall);
+    inventory.add(
+        Shape::NativeCall,
+        native_llvm::nativeCStorageImportContract(mir, input.target(), storage)
+            ? std::optional(Shape::NativeCStorage)
+            : std::nullopt);
   }
   for (const auto &payload : mir.payloadEnums()) {
     inventory.required = closure.conservative;
