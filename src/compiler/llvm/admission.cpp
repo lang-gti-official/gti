@@ -174,7 +174,7 @@ public:
       }
       for (const auto &place : body.places)
         if (contains(place.type) &&
-            (place.type.kind != SemanticType::Class || nested(place.type) ||
+            (place.type.kind != SemanticType::Class ||
              place.root == MirPlaceRootKind::Symbol || place.foreignStorage))
           bodyProof.transfer = true;
       for (const auto &drop : body.dropObligations) {
@@ -186,10 +186,11 @@ public:
           if (stage.tombstone)
             continue;
           auto &proof = operations[key(address, block.id, stage.id)];
-          const bool fresh = freshLocal(address, body, placement, stage);
+          const bool fresh = freshConstruction(address, body, placement, stage);
           const bool transfer = freshTransfer(body, stage);
           const bool initialization =
               freshInitialization(address, body, placement, stage);
+          const bool declaration = declarationOnlyField(address, body, stage);
           if (contains(stage.info.type)) {
             if ((stage.kind == MirInstructionKind::Construct && !fresh &&
                  !transfer) ||
@@ -199,10 +200,11 @@ public:
                 (stage.kind == MirInstructionKind::CallInput &&
                  stage.callInputKind != HirCallInputKind::ReadBorrow &&
                  stage.callInputKind != HirCallInputKind::MutableBorrow) ||
-                stage.kind == MirInstructionKind::Call ||
+                (stage.kind == MirInstructionKind::Call &&
+                 !borrowedCallResult(body, stage)) ||
                 stage.operation == MirOperation::Aggregate ||
                 (stage.kind == MirInstructionKind::Initialize &&
-                 !initialization))
+                 !initialization && !declaration))
               proof.transfer = true;
           }
           if (stage.destination &&
@@ -215,7 +217,7 @@ public:
               if (contains(place->type) &&
                   stage.kind != MirInstructionKind::InitializeBase &&
                   !(stage.kind == MirInstructionKind::Initialize &&
-                    initialization))
+                    (initialization || declaration)))
                 proof.transfer = true;
           const auto transferred = [&](const MirOperand &operand) {
             return contains(operand.type) &&
@@ -248,7 +250,8 @@ public:
           edge.transfer |= contains(value.type);
         };
         if (block.terminator.value &&
-            block.terminator.kind == MirTerminatorKind::Return)
+            block.terminator.kind == MirTerminatorKind::Return &&
+            !referenceReturn(body, block.terminator))
           argument(*block.terminator.value);
         for (const auto &value : block.terminator.targetArguments)
           argument(value);
@@ -285,14 +288,6 @@ public:
       // An unknown result supplies no NEW dispatch witness or transfer fact.
       return false;
     }
-  }
-  bool nested(const SemanticType &type) const {
-    if (type.kind != SemanticType::Class)
-      return contains(type);
-    for (const auto &field : instance(type).declaredFields)
-      if (contains(field.type))
-        return true;
-    return false;
   }
   bool referent(const SemanticType &type) const {
     return type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
@@ -385,8 +380,7 @@ public:
   }
   std::optional<Shape> cleanup(const MirDropType &recipe,
                                bool replacement = false) {
-    if (!contains(recipe.type) || nested(recipe.type) ||
-        cleanupObserves(recipe))
+    if (!contains(recipe.type) || cleanupObserves(recipe))
       return {};
     try {
       if (!metadata(recipe.type) || !planner())
@@ -433,12 +427,14 @@ public:
     return false;
   }
   std::optional<Shape> loan(const MirBody &body, const MirLoan &loan) {
-    if (!simpleLoan(loan))
+    if (!supportedLoan(body, loan))
       return {};
     const auto *source = body.findPlace(loan.source);
     if (!source)
       return {};
     auto type = unreference(source->type);
+    if (const auto *producer = callResult(body, loan))
+      type = producer->info.type;
     for (const auto &block : body.blocks)
       for (const auto &stage : block.instructions)
         if (!stage.tombstone && stage.loan == loan.id &&
@@ -448,6 +444,21 @@ public:
                     {.kind = MirOperandKind::Loan,
                      .loan = loan.id,
                      .type = SemanticType::referenceTo(type, loan.access)});
+  }
+  std::optional<Shape> returns(const MirBody &body) {
+    if (!referent(body.returnType) || !metadata(body.returnType))
+      return {};
+    for (const auto &block : body.blocks) {
+      if (block.terminator.kind != MirTerminatorKind::Return)
+        continue;
+      if (!referenceReturn(body, block.terminator))
+        return {};
+      auto presentation = *block.terminator.value;
+      presentation.type = body.returnType;
+      if (!borrowed(body, presentation))
+        return {};
+    }
+    return Shape::NativeBorrowedDispatchView;
   }
 
 private:
@@ -507,12 +518,14 @@ private:
         owner.compilerCapability != CompilerCapabilityTypeKind::None ||
         owner.traits.containsBorrowedState || !path.insert(owner.id).second)
       return false;
-    bool valid = !nested(owner.type) &&
-                 std::all_of(owner.declaredFields.begin(),
-                             owner.declaredFields.end(), [](const auto &field) {
-                               return field.type != SemanticType::Void &&
-                                      isPassiveScalarValueType(field.type);
-                             });
+    bool valid =
+        std::all_of(owner.declaredFields.begin(), owner.declaredFields.end(),
+                    [&](const auto &field) {
+                      if (field.type.kind == SemanticType::Class)
+                        return metadataClass(instance(field.type), path);
+                      return field.type != SemanticType::Void &&
+                             isPassiveScalarValueType(field.type);
+                    });
     if (owner.kind == ClassKind::Interface)
       valid &= owner.declaredFields.empty() && !owner.destructor &&
                !owner.requiresActiveCleanup && !owner.requiresActiveDropState;
@@ -600,48 +613,20 @@ private:
     }
     return false;
   }
-  bool formal(MirBodyAddress address, HirBindingId binding) const {
-    if (const auto *target = function(address))
-      return std::find(target->parameterBindings.begin(),
-                       target->parameterBindings.end(),
-                       binding) != target->parameterBindings.end();
-    if (address.kind == MirBodyKind::Constructor) {
-      const auto &target = *program.findConstructorInstance(address.owner);
-      return std::find(target.parameterBindings.begin(),
-                       target.parameterBindings.end(),
-                       binding) != target.parameterBindings.end();
-    }
-    return false;
+  bool declarationOnlyField(MirBodyAddress address, const MirBody &body,
+                            const MirInstruction &stage) const {
+    const auto *owner = address.kind == MirBodyKind::FieldInitializers
+                            ? program.findClassInstance(address.owner)
+                            : nullptr;
+    return owner &&
+           isMirDeclarationOnlyFieldInitialization(*owner, body, stage);
   }
-  bool freshLocal(MirBodyAddress address, const MirBody &body,
-                  const native_llvm::Placement &placement,
-                  const MirInstruction &stage) const {
-    if ((address.kind != MirBodyKind::Function &&
-         address.kind != MirBodyKind::Constructor &&
-         address.kind != MirBodyKind::Destructor) ||
-        stage.kind != MirInstructionKind::Construct || !stage.result ||
-        stage.constructorKind != ConstructorKind::Ordinary ||
-        stage.info.type.kind != SemanticType::Class || nested(stage.info.type))
-      return false;
-    const auto *target = placement.target(*stage.result);
-    const auto *place =
-        target && target->place ? body.findPlace(target->place) : nullptr;
-    std::size_t publications = 0;
-    if (target)
-      for (const auto &block : body.blocks)
-        for (const auto &initialization : block.instructions)
-          publications +=
-              !initialization.tombstone &&
-              initialization.kind == MirInstructionKind::Initialize &&
-              initialization.destination == target->place &&
-              initialization.operands.size() == 1 &&
-              initialization.operands.front().kind == MirOperandKind::Value &&
-              initialization.operands.front().value == *stage.result;
-    return target && !target->aggregate && !target->returned && place &&
-           place->root == MirPlaceRootKind::Binding && place->binding &&
-           !place->capture && publications == 1 && place->projections.empty() &&
-           !place->foreignStorage && place->type == stage.info.type &&
-           !formal(address, place->binding);
+  bool freshConstruction(MirBodyAddress address, const MirBody &body,
+                         const native_llvm::Placement &placement,
+                         const MirInstruction &stage) const {
+    return native_llvm::freshConstructionDestination(program, address, body,
+                                                     placement, stage)
+        .has_value();
   }
   bool freshTransfer(const MirBody &body, const MirInstruction &stage) const {
     // The dedicated row activates only the exact producer/publication proof;
@@ -689,7 +674,7 @@ private:
     for (const auto &block : body.blocks)
       for (const auto &producer : block.instructions)
         if (!producer.tombstone && producer.result == value &&
-            freshLocal(address, body, placement, producer))
+            freshConstruction(address, body, placement, producer))
           return placement.target(value)->place == *stage.destination;
     return false;
   }
@@ -699,6 +684,94 @@ private:
            !loan.twoPhase && !loan.lifecycleBound && !loan.escapes &&
            (loan.kind == MirLoanKind::Local ||
             (loan.kind == MirLoanKind::Parameter && loan.entry));
+  }
+  bool borrowedCallResult(const MirBody &body,
+                          const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::Call || stage.tombstone ||
+        !stage.result || !stage.loan ||
+        stage.info.category != ValueCategory::Place ||
+        stage.info.type.kind != SemanticType::Class ||
+        stage.dispatch != CallDispatch::Static || stage.destination ||
+        stage.successResultDrop || stage.successResultDestination ||
+        stage.constructorTarget || stage.lambdaTarget || stage.bodyTarget ||
+        stage.nativeCalleeType || stage.nativeCallbackAdapter ||
+        stage.threadTaskAdapter || stage.callableInvocation ||
+        !stage.scopedThreadTasks.empty())
+      return false;
+    const auto *loan = body.findLoan(*stage.loan);
+    const auto *value = body.findValue(*stage.result);
+    const auto *block =
+        value ? body.findBlock(value->definitionBlock) : nullptr;
+    if (!loan || loan->kind != MirLoanKind::CallResult || loan->entry ||
+        loan->producedBy != stage.hirValue ||
+        loan->access != stage.info.access || !value ||
+        value->definition != stage.id || !block ||
+        std::none_of(
+            block->instructions.begin(), block->instructions.end(),
+            [&](const auto &candidate) { return &candidate == &stage; }))
+      return false;
+    if (stage.intrinsic != IntrinsicKind::None) {
+      // Verified MIR owns the capability's exact owner, access and failure
+      // contract. Its result is a checked address, never pointee object bytes.
+      return !stage.functionTarget &&
+             (stage.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+              stage.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
+              stage.intrinsic == IntrinsicKind::SharedOwnerBorrow);
+    }
+    const auto *target =
+        stage.functionTarget
+            ? program.findFunctionInstance(*stage.functionTarget)
+            : nullptr;
+    return target && target->definitionKind == MirDefinitionKind::Source &&
+           target->linkage == LanguageLinkage::Gti &&
+           target->returnType ==
+               SemanticType::referenceTo(stage.info.type, stage.info.access);
+  }
+  const MirInstruction *callResult(const MirBody &body,
+                                   const MirLoan &loan) const {
+    if (loan.kind != MirLoanKind::CallResult)
+      return nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions)
+        if (stage.loan == loan.id && borrowedCallResult(body, stage))
+          return &stage;
+    return nullptr;
+  }
+  bool supportedLoan(const MirBody &body, const MirLoan &loan) const {
+    if (simpleLoan(loan))
+      return true;
+    if (loan.referenceSelection || !loan.additionalDependencies.empty() ||
+        !loan.conditions.empty() || loan.storedDependency || loan.twoPhase ||
+        loan.lifecycleBound || loan.entry)
+      return false;
+    if (!loan.escapes && callResult(body, loan))
+      return true;
+    return loan.kind == MirLoanKind::Return && loan.escapes &&
+           std::any_of(body.blocks.begin(), body.blocks.end(),
+                       [&](const auto &block) {
+                         return block.terminator.returnLoan == loan.id &&
+                                referenceReturn(body, block.terminator);
+                       });
+  }
+  bool referenceReturn(const MirBody &body, const MirTerminator &term) const {
+    if (term.kind != MirTerminatorKind::Return || !term.returnLoan ||
+        !term.value || term.value->kind != MirOperandKind::Loan ||
+        term.value->loan != *term.returnLoan || !referent(body.returnType))
+      return false;
+    const auto *loan = body.findLoan(*term.returnLoan);
+    if (!loan || loan->kind != MirLoanKind::Return || !loan->escapes ||
+        loan->access != body.returnType.referenceAccess ||
+        unreference(term.value->type).kind != SemanticType::Class)
+      return false;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && stage.kind == MirInstructionKind::Borrow &&
+            stage.loan == loan->id && stage.hirValue == loan->producedBy &&
+            stage.info.category == ValueCategory::Place &&
+            stage.info.type == unreference(term.value->type) &&
+            stage.info.access == loan->access && stage.operands.size() == 1)
+          return true;
+    return false;
   }
   const MirInstruction *stagedBorrow(const MirBody &body,
                                      const MirOperand &operand) const {
@@ -725,7 +798,7 @@ private:
           return nullptr;
         if (stage.loan) {
           const auto *loan = body.findLoan(*stage.loan);
-          if (!loan || !simpleLoan(*loan))
+          if (!loan || !supportedLoan(body, *loan))
             return nullptr;
         }
         return &stage;
@@ -750,7 +823,7 @@ private:
     const MirPlace *place =
         operand.place ? body.findPlace(operand.place) : nullptr;
     const MirLoan *loan = operand.loan ? body.findLoan(operand.loan) : nullptr;
-    if (loan && !simpleLoan(*loan))
+    if (loan && !supportedLoan(body, *loan))
       return {};
     SemanticType source = SemanticType::Unknown;
     AccessMode access = AccessMode::ReadOnly;
@@ -762,13 +835,14 @@ private:
           std::any_of(place->projections.begin(), place->projections.end(),
                       [](const auto &projection) {
                         return projection.kind != MirProjectionKind::Base &&
+                               projection.kind != MirProjectionKind::Field &&
                                projection.kind !=
                                    MirProjectionKind::Dereference;
                       }))
         return {};
       if (place->root == MirPlaceRootKind::Loan) {
         const auto *selected = body.findLoan(place->loan);
-        if (!selected || !simpleLoan(*selected))
+        if (!selected || !supportedLoan(body, *selected))
           return {};
       }
       source = place->type;
@@ -779,6 +853,8 @@ private:
         return {};
       source = origin->type;
       access = loan->access;
+      if (const auto *producer = callResult(body, *loan))
+        source = producer->info.type;
       for (const auto &block : body.blocks)
         for (const auto &stage : block.instructions)
           if (!stage.tombstone && stage.loan == loan->id &&
@@ -838,6 +914,13 @@ private:
                                       const native_llvm::Placement &placement,
                                       const MirInstruction &stage) {
     try {
+      if (borrowedCallResult(body, stage) && metadata(stage.info.type) &&
+          (!stage.receiver || !borrowedUse(body, *stage.receiver) ||
+           borrowed(body, *stage.receiver)))
+        return Shape::NativeBorrowedDispatchView;
+      if (declarationOnlyField(address, body, stage) &&
+          metadata(stage.info.type))
+        return Shape::NativeStaticDispatchStorage;
       if (freshTransfer(body, stage)) {
         if (!metadata(stage.info.type))
           return {};
@@ -850,7 +933,7 @@ private:
         return Shape::NativeFreshHierarchyTransfer;
       if (stage.kind == MirInstructionKind::Construct &&
           contains(stage.info.type) &&
-          freshLocal(address, body, placement, stage)) {
+          freshConstruction(address, body, placement, stage)) {
         if (!metadata(stage.info.type))
           return {};
         if (!stage.constructorTarget) {
@@ -924,7 +1007,7 @@ private:
            stage.callInputKind == HirCallInputKind::MutableBorrow)) {
         if (stage.loan) {
           const auto *loan = body.findLoan(*stage.loan);
-          if (!loan || !simpleLoan(*loan))
+          if (!loan || !supportedLoan(body, *loan))
             return {};
         }
         return borrowed(body, stage.operands.front());
@@ -1075,7 +1158,11 @@ public:
               return !owner.polymorphic && !owner.abstract &&
                      owner.compilerCapability ==
                          CompilerCapabilityTypeKind::None;
-        return self(self, pointee);
+        // An owner transports its handle, not the pointee's object bytes.
+        // Exact hierarchy layout can therefore establish representation here;
+        // construction, borrowing and cleanup retain independent use proofs.
+        return self(self, pointee) ||
+               dispatchProofs.metadata(pointee).has_value();
       }
       if (selected.kind != SemanticType::Class)
         return false;
@@ -2361,7 +2448,7 @@ public:
                 passiveReference(mir.returnType)
             ? std::optional(Shape::PassiveReference)
         : dispatchProofs.referent(mir.returnType)
-            ? std::nullopt
+            ? dispatchProofs.returns(mir)
             : representationShape(mir.returnType));
     if (mir.hasCallerLocation)
       add(Shape::CallerLocation);
@@ -3097,7 +3184,10 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     for (const auto &field : instance.declaredFields) {
       inventory.type(field.type);
       if (dispatchProofs.contains(field.type))
-        inventory.add(Shape::PolymorphicTransfer);
+        // Storage metadata does not transfer an object. Executable producers,
+        // publications and replacements require their own operation proofs.
+        inventory.add(Shape::ClassFields,
+                      inventory.representationShape(field.type));
     }
     if (!instance.bases.empty() || !instance.structuralBases.empty())
       inventory.add(Shape::ClassBases, representation);

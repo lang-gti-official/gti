@@ -78,4 +78,12 @@ private:
   void bind(MirValueId value, Target target);
 };
 
+// Ordinary construction publishes directly into fresh final storage. This is
+// not copy/move permission. Both admission and emission use the same verified
+// producer/publication identity for locals and constructor field destinations.
+[[nodiscard]] std::optional<MirPlaceId>
+freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
+                             const MirBody &body, const Placement &placement,
+                             const MirInstruction &producer);
+
 } // namespace lang::native_llvm

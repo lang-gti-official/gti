@@ -9,6 +9,92 @@
 #include <stdexcept>
 
 namespace lang::native_llvm {
+std::optional<MirPlaceId>
+freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
+                             const MirBody &body, const Placement &placement,
+                             const MirInstruction &producer) {
+  if (findMirBody(program, address) != &body ||
+      (address.kind != MirBodyKind::Function &&
+       address.kind != MirBodyKind::Constructor &&
+       address.kind != MirBodyKind::Destructor &&
+       address.kind != MirBodyKind::FieldInitializers) ||
+      producer.tombstone || producer.kind != MirInstructionKind::Construct ||
+      !producer.result ||
+      producer.constructorKind != ConstructorKind::Ordinary ||
+      producer.info.type.kind != SemanticType::Class)
+    return {};
+  const auto *target = placement.target(*producer.result);
+  const auto *place =
+      target && target->place ? body.findPlace(target->place) : nullptr;
+  if (!target || target->aggregate || target->returned || !place ||
+      place->capture || place->foreignStorage ||
+      place->type != producer.info.type)
+    return {};
+  const MirInstruction *publication = nullptr;
+  const MirBlock *definition = nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &stage : block.instructions) {
+      if (&stage == &producer)
+        definition = &block;
+      if (!stage.tombstone && stage.kind == MirInstructionKind::Initialize &&
+          stage.destination == target->place && stage.operands.size() == 1 &&
+          stage.operands.front().kind == MirOperandKind::Value &&
+          stage.operands.front().value == *producer.result) {
+        if (publication)
+          return {};
+        publication = &stage;
+      }
+    }
+  const auto *value = body.findValue(*producer.result);
+  if (!definition || !publication || !value ||
+      value->definition != producer.id ||
+      value->definitionBlock != definition->id ||
+      value->info.type != producer.info.type)
+    return {};
+  const std::vector<HirBindingId> *parameters = nullptr;
+  if (address.kind == MirBodyKind::Function)
+    parameters =
+        &program.findFunctionInstance(address.owner)->parameterBindings;
+  if (address.kind == MirBodyKind::Constructor)
+    parameters =
+        &program.findConstructorInstance(address.owner)->parameterBindings;
+  if (parameters && std::find(parameters->begin(), parameters->end(),
+                              place->binding) != parameters->end())
+    return {};
+  if (address.kind == MirBodyKind::Constructor &&
+      place->root == MirPlaceRootKind::This) {
+    const auto &constructor = *program.findConstructorInstance(address.owner);
+    if (!publication->constructorInitializer ||
+        publication->constructorInitializer > constructor.initializers.size() ||
+        place->projections.size() != 1 ||
+        place->projections.front().kind != MirProjectionKind::Field)
+      return {};
+    const auto &selected =
+        constructor.initializers[publication->constructorInitializer - 1];
+    if (selected.kind != ConstructorInitializerTargetKind::Field ||
+        selected.field != place->projections.front().field ||
+        selected.targetType != place->type || selected.storesReference ||
+        selected.ownedParameter)
+      return {};
+    return target->place;
+  }
+  if (place->root != MirPlaceRootKind::Binding || !place->binding ||
+      !place->projections.empty())
+    return {};
+  if (address.kind == MirBodyKind::FieldInitializers) {
+    const auto &owner = *program.findClassInstance(address.owner);
+    if (std::none_of(owner.declaredFields.begin(), owner.declaredFields.end(),
+                     [&](const auto &field) {
+                       return field.field == place->binding &&
+                              field.symbol == place->symbol &&
+                              field.type == place->type &&
+                              field.access == place->access;
+                     }))
+      return {};
+  }
+  return target->place;
+}
+
 bool containsHierarchyStorage(const MirProgram &program,
                               const SemanticType &type) {
   // These keys and results live only for this immutable program query. A

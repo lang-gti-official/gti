@@ -1868,6 +1868,10 @@ independent identity and child-first endpoint checks. The program verifier
 requires a borrowing call or constructor's result loan to remain `CallResult`
 or `Stored`, matching the producer, rather than accepting a forged `Local` loan
 with otherwise unchanged source metadata.
+For `CallResult`, `producedBy` must equal the owning call/construct's source
+value identity as well as retaining the exact origin and access mode. A
+different producer is compiler corruption even when the selected source place
+is unchanged; backend address publication cannot repair that provenance.
 They do not retire that chain and replace it with a `Local` loan against the
 coarser shared range. The selected returned address and child-first lifetime
 therefore survive through each iteration's last use, break, continue, return

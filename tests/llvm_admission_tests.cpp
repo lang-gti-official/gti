@@ -2676,6 +2676,154 @@ int main() { Value value{}; return 0; }
       "target, helper dependency and callable representation witness");
 }
 
+void testVirtualCallDependencies() {
+  using namespace lang;
+  const auto verified = lower(R"(
+int alternate_helper() { return 2; }
+int unrelated_helper() { return 3; }
+class Base { public: virtual int read() { return 1; } };
+class Alternative : public Base {
+public:
+  int read() override { return alternate_helper(); }
+};
+class Unrelated { public: virtual int read() { return unrelated_helper(); } };
+void retain_alternative_type(Alternative& value) {}
+void retain_unrelated_type(Unrelated& value) {}
+int invoke(Base& value) { return value.read(); }
+int main() { Base value{}; return invoke(value); }
+)");
+  const auto plan = planLlvmAdmission(verified);
+  expect(plan.admitted() &&
+             plan.closure() == LlvmAdmissionClosure::SealedEntryDependencies,
+         "sealed virtual dispatch retains a bounded dependency closure");
+  std::set<std::string> required;
+  for (const auto &function : verified.program().mir().functionInstances()) {
+    const auto *declaration =
+        verified.program().findFunctionDeclaration(function.declaration);
+    if (declaration &&
+        std::find(plan.requiredBodies().begin(), plan.requiredBodies().end(),
+                  MirBodyAddress{MirBodyKind::Function, function.id}) !=
+            plan.requiredBodies().end())
+      required.insert(declaration->qualifiedName);
+  }
+  expect(required.contains("Alternative::read") &&
+             required.contains("alternate_helper") &&
+             required.contains("Base::read"),
+         "virtual calls retain all sealed overrides and transitive helpers, "
+         "even for a derived type not constructed by this entry");
+  expect(!required.contains("Unrelated::read") &&
+             !required.contains("unrelated_helper") &&
+             !required.contains("retain_alternative_type") &&
+             !required.contains("retain_unrelated_type"),
+         "a matching spelling is not a dispatch identity or a body root");
+  const auto repeated = planLlvmAdmission(verified);
+  expect(std::equal(plan.requiredBodies().begin(), plan.requiredBodies().end(),
+                    repeated.requiredBodies().begin(),
+                    repeated.requiredBodies().end()),
+         "virtual dependency order is deterministic in sealed inventory order");
+  const auto unsupported = planLlvmAdmission(lower(R"(
+class Base { public: virtual int read() { return 1; } };
+int unsupported_helper() { Base values[1] = {Base()}; return values[0].read(); }
+class Alternative : public Base {
+public:
+  int read() override { return unsupported_helper(); }
+};
+void retain_type(Alternative& value) {}
+int invoke(Base& value) { return value.read(); }
+int main() { Base value{}; return invoke(value); }
+)"));
+  expect(
+      !unsupported.admitted() &&
+          std::any_of(unsupported.requirements().begin(),
+                      unsupported.requirements().end(),
+                      [](const auto &use) {
+                        return use.required &&
+                               use.entry->key() == "Shape.PolymorphicTransfer";
+                      }),
+      "a possible override's unsupported transitive helper remains required");
+}
+
+void testHierarchyReferenceReturns() {
+  using namespace lang;
+  const auto plan = planLlvmAdmission(lower(R"(
+interface Reader { int read(); };
+class Root { public: virtual int other() { return 0; } };
+class Leaf : public Root, public Reader {
+public:
+  int read() override { return 7; }
+};
+struct Record {
+  mut Leaf leaf{};
+  Reader& view() { return this.leaf; }
+};
+Reader& forward(Reader& value) { return value; }
+int main() { Record value{}; return forward(value.view()).read(); }
+)"));
+  expect(plan.admitted(),
+         "ordinary source-defined reference returns admit hierarchy views");
+  unsigned returns = 0;
+  for (const auto &use : plan.requirements()) {
+    if (use.required && use.entry->key() == "Shape.BorrowReturn") {
+      ++returns;
+      expect(use.implementedShape &&
+                 use.implementedShape->name == "NativeBorrowedDispatchView",
+             "each hierarchy return retains its own checked address witness");
+    }
+    expect(!(use.required && use.entry->key() == "Shape.PolymorphicTransfer"),
+           "returning a hierarchy loan does not transfer object bytes");
+  }
+  expect(returns >= 2,
+         "both receiver and parameter borrow returns are exercised");
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto changed = plan.program().mir();
+    bool forged = false;
+    for (const auto address : plan.requiredBodies()) {
+      auto &body = *findMirBody(changed, address);
+      for (auto &block : body.blocks) {
+        if (mutation == 3 && block.terminator.returnLoan) {
+          block.terminator.returnLoan = 999999;
+          forged = true;
+          break;
+        }
+        if (mutation == 3)
+          continue;
+        for (auto &stage : block.instructions) {
+          if (stage.kind != MirInstructionKind::Call || !stage.loan ||
+              stage.info.category != ValueCategory::Place)
+            continue;
+          auto &loan = body.loans.at(*stage.loan - 1);
+          if (mutation == 0)
+            loan.producedBy = 999999;
+          else if (mutation == 1)
+            loan.access = AccessMode::Mutable;
+          else
+            stage.info.type = SemanticType::Bool;
+          forged = true;
+          break;
+        }
+        if (forged)
+          break;
+      }
+      if (forged)
+        break;
+    }
+    const auto verification = verifyMirProgram(changed);
+    expect(forged && !verification.valid(),
+           "forged hierarchy call producer/access/result/return-loan " +
+               std::to_string(mutation) + " fails program verification");
+    if (mutation == 0)
+      expect(std::any_of(
+                 verification.errors.begin(), verification.errors.end(),
+                 [](const auto &error) {
+                   return error.bodyKind == MirBodyKind::Function &&
+                          error.owner && error.block && error.instruction &&
+                          error.message.find("call-result loan producer") !=
+                              std::string::npos;
+                 }),
+             "producer integrity failure retains the owning call location");
+  }
+}
+
 void testConservativeClassWitnesses() {
   using namespace lang;
   const auto classesProved = [](const LlvmAdmissionPlan &plan) {
@@ -2789,6 +2937,19 @@ int inspect(Value& value) { return value.read(); }
            "exact interface and state-base metadata has bounded public "
            "representation witnesses");
   }
+  const auto nestedHierarchy = planLlvmAdmission(lower(
+      R"(class Poly {public: virtual int read(){return 1;}}; class Outer {public: Poly value;}; void accept(Outer& value){})"));
+  expect(nestedHierarchy.admitted() &&
+             std::any_of(nestedHierarchy.requirements().begin(),
+                         nestedHierarchy.requirements().end(),
+                         [](const auto &use) {
+                           return use.required && use.implementedShape &&
+                                  use.entry->key() == "Shape.ClassFields" &&
+                                  use.implementedShape->name ==
+                                      "NativeStaticDispatchStorage";
+                         }),
+         "ordinary hierarchy field metadata and declaration-only placeholders "
+         "do not imply object transfer");
   struct NestedNegative {
     std::string_view source;
     std::string_view requirement;
@@ -2797,9 +2958,6 @@ int inspect(Value& value) { return value.read(); }
   for (
       const auto control :
       {NestedNegative{
-           R"(class Poly {public: virtual int read(){return 1;}}; class Outer {public: Poly value;}; void accept(Outer& value){})",
-           "Shape.PolymorphicTransfer", true},
-       NestedNegative{
            R"(enum class Choice { empty, held(int value) }; class Outer {public: Choice value=Choice::empty;}; void accept(Outer& value){})",
            "Shape.PayloadEnum"},
        NestedNegative{
@@ -2818,7 +2976,7 @@ int inspect(Value& value) { return value.read(); }
         });
     expect(!excluded.admitted() &&
                owningFailure != excluded.requirements().end(),
-           "nested polymorphic, payload and union storage retains its exact "
+           "nested payload and union storage retains its exact "
            "owning pending requirement and source identity");
   }
   const auto nestedForeign = planLlvmAdmission(lower(R"(
@@ -3131,6 +3289,8 @@ int main() {
     testInlineHierarchyFamilyComposition();
     testHierarchyPlacementOwnership();
     testDispatchStateDependencies();
+    testVirtualCallDependencies();
+    testHierarchyReferenceReturns();
     testConservativeClassWitnesses();
     testDispatchPerUseWitnesses();
   } catch (const std::exception &error) {

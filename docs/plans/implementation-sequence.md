@@ -11675,14 +11675,24 @@ Static owner cleanup now distinguishes an ordinary record containing hierarchy
 storage from a dynamically typed pointee. The former retains an exact canonical
 recipe and runs hierarchy preflight at owned child edges; the latter remains
 gated by `polymorphicCleanup`. Unique/shared allocation, last-owner release and
-empty cleanup have native component probes. Public construction/transport and
-dynamic cleanup remain separate integration prerequisites.
+empty cleanup have native component probes. Public unique/shared ownership of
+ordinary records containing hierarchy fields now composes with exact reference
+returns, mutation, reset, last-owner release and failure cleanup. Owner reset
+retires a separate allocation rather than replacing live inline hierarchy
+storage. General by-value transport and dynamic cleanup remain separate
+integration prerequisites.
 
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not
   milestone completion: generated scalar-hierarchy copies/moves now have exact
   fresh-local producer/publication guards and public execution/rejection checks;
-  general transfer, owning/replacement, pure active states, exact optimized cost
+  fresh ordinary hierarchy fields now use one admission/emission destination
+  proof, with native O0-O3 nested-interface, mutation and partial-construction
+  cleanup evidence. Checked reference results and static record owners have
+  source/MIR/native O0-O3 evidence; containing-object value transfer remains
+  independent. Rich field-borrow and owner cases retain the existing C++ text-vocabulary
+  rejection and require independent source/MIR/native results;
+  general transfer, dynamic ownership/in-place replacement, pure active states, exact optimized cost
   evidence and combined O14/O16 source/evidence identities remain open. The loop
   fixture checks results, not retained dispatch or allocations.
 - **Lifecycle authority prerequisite:** existing cleanup order and typed

@@ -57,6 +57,47 @@ Reachability reachableProgram(const LoweredProgram &program) {
     for (const auto target : dispatchSourceBodies(program, owner))
       body(target);
   };
+  const auto virtualCall = [&](const MirInstruction &instruction) {
+    const auto *selected =
+        instruction.functionTarget
+            ? mir.findFunctionInstance(*instruction.functionTarget)
+            : nullptr;
+    const auto *owner = selected && selected->owner
+                            ? mir.findClassInstance(*selected->owner)
+                            : nullptr;
+    if (!owner)
+      return false;
+    std::vector<HirFunctionInstanceId> roots;
+    for (const auto &row : owner->virtualDispatch)
+      if (row.target == selected->id)
+        roots.push_back(row.root);
+    if (roots.empty())
+      return false;
+    // Retain every possible sealed implementation, not just the receiver's
+    // statically named target. This is a conservative call-graph union, not
+    // devirtualization or a proof of the receiver's dynamic class.
+    for (const auto &candidate : mir.classInstances())
+      for (const auto &row : candidate.virtualDispatch) {
+        if (std::find(roots.begin(), roots.end(), row.root) == roots.end())
+          continue;
+        const auto *target = mir.findFunctionInstance(row.target);
+        if (!target)
+          throw std::logic_error(
+              "LLVM virtual dependency lost its sealed target");
+        if (!target->pureVirtual &&
+            target->definitionKind == MirDefinitionKind::Source) {
+          const MirBodyAddress address{MirBodyKind::Function, target->id};
+          const auto *definition = program.findBody(address);
+          if (!definition ||
+              definition->role != LoweredBodyRole::SourceExecutable ||
+              !findMirBody(mir, address))
+            throw std::logic_error(
+                "LLVM virtual dependency has no sealed body");
+          body(address);
+        }
+      }
+    return true;
+  };
   const auto cleanup = [&](const MirDropType &root) {
     std::vector<const MirDropType *> pending{&root};
     while (!pending.empty()) {
@@ -214,7 +255,8 @@ Reachability reachableProgram(const LoweredProgram &program) {
               mir, program.target(), *input, instruction);
           const bool callback = nativeCCallbackStageContract(
               mir, program.target(), *input, instruction);
-          if (instruction.dispatch == CallDispatch::Virtual ||
+          if ((instruction.dispatch == CallDispatch::Virtual &&
+               !virtualCall(instruction)) ||
               (instruction.nativeCalleeType && !nativeCall) ||
               (instruction.callableInvocation && !instruction.lambdaTarget &&
                !instruction.functionTarget && !nativeCall) ||

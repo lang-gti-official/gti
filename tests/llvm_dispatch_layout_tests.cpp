@@ -785,11 +785,12 @@ void testStaticLifecycle() {
                          [](const auto &use) {
                            return use.required &&
                                   use.entry->family == "Shape" &&
-                                  use.entry->name == "PolymorphicTransfer" &&
+                                  use.entry->name ==
+                                      "DestructorDispatchObservation" &&
                                   !use.implementedShape;
                          }),
-         "nested polymorphic field construction retains its explicit pending "
-         "transfer requirement");
+         "nested lifecycle fixture retains its independent pending "
+         "destructor-observation requirement");
   const auto &nestedContainer = named(nestedInput->program(), "Container");
   const auto &nestedTrivial = named(nestedInput->program(), "Trivial");
   bool nestedRecipe = false;
@@ -808,14 +809,14 @@ void testStaticLifecycle() {
                "child rather than inventing liveness");
       }
   expect(nestedRecipe, "the original nested lifecycle cleanup remains covered");
-  Session rejectedSession(*nestedInput, {});
-  rejects<BackendUnsupportedError>(
-      [&] { lowerScalarProgram(rejectedSession, nestedAdmission); },
-      "private whole-program lowering also rejects nested polymorphic fields");
+  Session nestedSession(*nestedInput, {});
+  lowerScalarProgram(nestedSession, nestedAdmission);
+  nestedSession.verify();
 
   // Keep the constructor/base/failure-body inspection at whole local final
-  // destinations. The original nested-field fixture above remains rejected;
-  // its independent trivial-child cleanup contract is still checked there.
+  // destinations. The original fixture still has no public admission for
+  // destructor observations; its independent cleanup/placement contract is
+  // exercised privately above without granting that authority.
   const auto frontend = Frontend().analyze("llvm-static-lifecycle-body.gti", R"(
 class Token {
   int divisor = 1;
@@ -1762,11 +1763,17 @@ int main() {
   if (!activeUnique || activeUnique->aggregate.empty())
     return;
   const auto beforeActive = modulePublication(hierarchyOwnerSession);
+  const auto activeInline = mirUniqueCleanupType(
+      hierarchyOwnerSession.program().mir(), activeValue.type);
+  expect(activeInline.has_value(),
+         "inline active hierarchy retains an exact recipe");
+  if (!activeInline)
+    return;
   rejects<BackendUnsupportedError>(
       [&] {
-        static_cast<void>(hierarchyOwnerLifetimes.cleanup(*activeUnique, true));
+        static_cast<void>(hierarchyOwnerLifetimes.cleanup(*activeInline, true));
       },
-      "owned hierarchy child preflight preserves replacement rejection");
+      "in-place hierarchy replacement retains its independent dispatch gate");
   expect(modulePublication(hierarchyOwnerSession) == beforeActive,
          "owned child preflight rejects before requesting a destructor body "
          "or publishing a helper");
@@ -2186,6 +2193,104 @@ void testOrdinaryTransferPlacement() {
   expect(copies == 1 && moves == 3,
          "ordinary regression retains one implicit Copy Load and three "
          "whole-local Move producers");
+}
+
+void testFreshConstructionPlanning() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend =
+      Frontend({.requireEntryPoint = true,
+                .lowerReachableOnly = true,
+                .lowerLibraryReachableOnly = true,
+                .trustedBodies = TrustedBodyAnalysis::Reachable})
+          .analyze(root / "tests/fixtures/llvm_dispatch_inline_fields.gti",
+                   std::nullopt, {root / "stdlib/prelude.gti"}, {},
+                   {root / "stdlib"});
+  expect(frontend.canGenerateCode(), "inline hierarchy fixture verifies");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!input)
+    throw std::runtime_error("inline hierarchy fixture lost its seal");
+  const auto admission = planLlvmAdmission(*input);
+  expect(admission.admitted(),
+         "inline hierarchy fixture has public admission: " +
+             admission.limitation());
+  const auto &program = admission.program().mir();
+  std::size_t locals = 0, fields = 0, initializers = 0;
+  // The planner also serves declaration initializer bodies. Exact dispatch
+  // reachability need not emit those after constructor expansion.
+  for (const auto &row : input->program().bodies()) {
+    const auto address = row.identity.address;
+    const auto &body = *findMirBody(program, address);
+    const Placement placement(body);
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions) {
+        const auto destination = freshConstructionDestination(
+            program, address, body, placement, stage);
+        if (!destination || !containsHierarchyStorage(program, stage.info.type))
+          continue;
+        const auto &place = *body.findPlace(*destination);
+        locals += address.kind == MirBodyKind::Function;
+        fields += place.root == MirPlaceRootKind::This;
+        initializers += address.kind == MirBodyKind::FieldInitializers;
+        const auto copiedStage = stage;
+        expect(!freshConstructionDestination(program, address, body, placement,
+                                             copiedStage),
+               "copied instruction cannot acquire fresh construction identity");
+        const auto copiedBody = body;
+        expect(!freshConstructionDestination(program, address, copiedBody,
+                                             Placement(copiedBody), stage),
+               "foreign body cannot acquire a constructor destination");
+        for (int mutation = 0; mutation != 6; ++mutation) {
+          auto changed = program;
+          auto &changedBody = *findMirBody(changed, address);
+          MirInstruction *producer = nullptr;
+          MirInstruction *publication = nullptr;
+          for (auto &candidateBlock : changedBody.blocks)
+            for (auto &candidate : candidateBlock.instructions) {
+              if (candidate.id == stage.id)
+                producer = &candidate;
+              if (candidate.kind == MirInstructionKind::Initialize &&
+                  candidate.destination == destination &&
+                  candidate.operands.size() == 1 &&
+                  candidate.operands.front().kind == MirOperandKind::Value &&
+                  candidate.operands.front().value == *stage.result)
+                publication = &candidate;
+            }
+          if (!producer || !publication)
+            throw std::runtime_error(
+                "fresh construction mutation lost its pair");
+          auto &changedPlace = changedBody.places.at(*destination - 1);
+          if (mutation == 0)
+            changedPlace.root = MirPlaceRootKind::Symbol;
+          if (mutation == 1)
+            changedPlace.foreignStorage = true;
+          if (mutation == 2)
+            changedPlace.type = SemanticType::Bool;
+          if (mutation == 3)
+            producer->constructorKind = ConstructorKind::Copy;
+          if (mutation == 4)
+            publication->tombstone = true;
+          if (mutation == 5) {
+            if (place.root == MirPlaceRootKind::This)
+              publication->constructorInitializer = 0;
+            else
+              changedPlace.projections.push_back(
+                  {.kind = MirProjectionKind::Field, .field = 1});
+          }
+          expect(!freshConstructionDestination(changed, address, changedBody,
+                                               Placement(changedBody),
+                                               *producer),
+                 "nonlocal, foreign, mistyped, copy, missing or mismatched "
+                 "publication rejects");
+        }
+      }
+  }
+  expect(locals && fields && initializers,
+         "real MIR covers whole locals, constructor fields and default field "
+         "initializers");
 }
 
 void testFreshTransferPlanning() {
@@ -4316,6 +4421,7 @@ int main() { return 0; }
   testDispatchAdmissionBinding();
   testReferencePublication();
   testOrdinaryTransferPlacement();
+  testFreshConstructionPlanning();
   testFreshTransferPlanning();
   testFreshCopyViewPlanning();
   testInertRelocation();
