@@ -6,10 +6,38 @@ import json
 from pathlib import Path
 import platform
 import subprocess
+import sys
 import time
+
+from llvm_evidence_manifest import build_manifest
+
+
+TEXT_SOURCES = {
+    "counted_text": "tests/fixtures/llvm_native_c_abi/counted_text.gti",
+    "counted_stdout_failure": "tests/fixtures/llvm_native_c_abi/counted_stdout_failure.gti",
+    "basics": "examples/001-basics.gti",
+}
+
+
+def evidence_cases(root: Path) -> dict[str, str]:
+    return {name: (root / path).read_text(encoding="utf-8")
+            for name, path in TEXT_SOURCES.items()}
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    del root
+    return {"counted-inputs": tuple(TEXT_SOURCES)}
+
+
+def evidence_manifest(root: Path) -> dict:
+    return build_manifest("llvm_native_c_counted_input", evidence_cases(root),
+                          evidence_profiles(root), TEXT_SOURCES)
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
+        print(json.dumps(evidence_manifest(Path(sys.argv[2])), sort_keys=True))
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("emitter", type=Path)
     parser.add_argument("--cc", default="clang")
@@ -72,26 +100,42 @@ def main():
             run([args.cc, "-std=c17", "-Wall", "-Wextra", "-Werror", f"-O{c_level}",
                  "-DGTI_SOURCE_HOST", "-I", repo / "runtime/include", "-c",
                  fixture / "counted_text_oracle.c", "-o", host], "host-" + tag)
-            for source in ("counted_text", "counted_stdout_failure"):
+            for source, source_path in TEXT_SOURCES.items():
                 name = f"source-{source}-{tag}"
                 target = output / name
                 if args.preflight:
                     source_obj = output / (name + ".o")
-                    run([args.emitter.resolve(), fixture / f"{source}.gti", source_obj,
+                    run([args.emitter.resolve(), repo / source_path, source_obj,
                          output / (name + ".ll"), level, "--source-preflight"], "emit-" + name)
                     run([args.cxx, source_obj, host, args.runtime.resolve(), "-pthread",
                          "-o", target], "link-" + name)
                 else:
-                    run([args.compiler.resolve(), fixture / f"{source}.gti", "--backend",
+                    run([args.compiler.resolve(), repo / source_path, "--backend",
                          "llvm", f"-O{level}", "-o", target, "--", host], "build-" + name)
                 failure = source == "counted_stdout_failure"
                 result = run([target], "run-" + name, expected=70 if failure else 0)
                 if failure:
-                    if (result.stdout or b"counted-cleanup\n" not in result.stderr or
-                            b"stdout write failed" not in result.stderr):
+                    if (result.stdout or result.stderr.count(b"counted-cleanup\n") != 1 or
+                            b"stdout write failed" not in result.stderr or
+                            b"counted_stdout_failure.gti:9:" not in result.stderr):
                         raise RuntimeError(f"source stdout status/panic cleanup mismatch: {name}")
-                elif result.stdout != b"A\0B\xc3\xa9\xce\xbb\n" or result.stderr:
-                    raise RuntimeError(f"source counted stdout mismatch: {name}")
+                else:
+                    expected = (b"GTI values are typed and immutable by default\n"
+                                if source == "basics" else b"A\0B\xc3\xa9\xce\xbb\n")
+                    if result.stdout != expected or result.stderr:
+                        raise RuntimeError(f"source counted stdout mismatch: {name}")
+    if args.compiler:
+        for source in ("reject_record_result", "reject_record_argument",
+                       "reject_foreign_storage", "reject_native_indirect"):
+            for level in (0, 3):
+                destination = output / f"{source}-O{level}"
+                sentinel = b"existing native artifact\n"
+                destination.write_bytes(sentinel)
+                result = run([args.compiler.resolve(), fixture / f"{source}.gti",
+                              "--backend", "llvm", f"-O{level}", "-o", destination],
+                             destination.name, expected=65)
+                if b"GTI-B0003" not in result.stderr or destination.read_bytes() != sentinel:
+                    raise RuntimeError(f"unsupported native boundary published an artifact: {source}")
     scope = ("production GTI source" if args.compiler else
              "real-source preflight, public admission unchanged" if args.preflight else
              "helper only; no GTI source-body or admission proof")

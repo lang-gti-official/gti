@@ -6,10 +6,40 @@ import json
 from pathlib import Path
 import platform
 import subprocess
+import sys
 import time
+
+from llvm_evidence_manifest import build_manifest
+
+
+SCALAR_SOURCES = ("scalar_calls", "scalar_types", "service_math",
+                  "native_failure", "direct_order")
+
+
+def evidence_cases(root: Path) -> dict[str, str]:
+    fixture = root / "tests/fixtures/llvm_native_c_abi"
+    return {name: (fixture / f"{name}.gti").read_text(encoding="utf-8")
+            for name in SCALAR_SOURCES}
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    del root
+    return {"direct-imports": SCALAR_SOURCES,
+            "native-scalars": ("scalar_types",)}
+
+
+def evidence_manifest(root: Path) -> dict:
+    return build_manifest(
+        "llvm_native_c_scalar_execution", evidence_cases(root),
+        evidence_profiles(root),
+        {name: f"tests/fixtures/llvm_native_c_abi/{name}.gti"
+         for name in SCALAR_SOURCES})
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
+        print(json.dumps(evidence_manifest(Path(sys.argv[2])), sort_keys=True))
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("emitter", type=Path)
     parser.add_argument("--cc", default="clang")
@@ -89,7 +119,7 @@ def main():
                  fixture / f"{source}.c", "-o", obj], f"host-{source}-O{c_level}")
             objects.append(obj)
         for level in range(4):
-            for source in (("scalar_calls", "scalar_types", "service_math", "native_failure")
+            for source in (SCALAR_SOURCES
                            if args.preflight or args.profile == "scalar"
                            else ("contracts", "scalar_types", "service_math", "native_failure")):
                 executable = output / f"source-{source}-llvm{level}-c{c_level}"
@@ -105,7 +135,10 @@ def main():
                          "-o", executable, "--", *objects], "build-" + tag)
                 result = run([executable], "run-" + tag,
                              expected=70 if source == "native_failure" else 0)
-                if source != "native_failure":
+                if source == "direct_order":
+                    if result.stdout != "mark:1\nmark:2\nentered:1,2\nmark:99\n" or result.stderr:
+                        raise RuntimeError(f"staged native evaluation/cleanup mismatch: {tag}")
+                elif source != "native_failure":
                     if result.stdout or result.stderr:
                         raise RuntimeError(f"unexpected source output: {tag}")
                 elif (result.stdout != "mark:1\nmark:99\n" or

@@ -1744,6 +1744,7 @@ endif()
 add_executable(gti_llvm_native_c_abi_tests llvm_native_c_abi_tests.cpp)
 target_include_directories(gti_llvm_native_c_abi_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_native_c_abi_tests PRIVATE gti_llvm_backend)
+add_dependencies(gti_llvm_native_c_abi_tests gti_runtime)
 if(Python3_Interpreter_FOUND)
   add_test(NAME llvm_native_c_abi
     COMMAND "${Python3_EXECUTABLE}"
@@ -1752,6 +1753,33 @@ if(Python3_Interpreter_FOUND)
       --cc "${CMAKE_C_COMPILER}"
       --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-abi-evidence")
   set_tests_properties(llvm_native_c_abi PROPERTIES TIMEOUT 600)
+  add_test(NAME llvm_native_c_contract_preflight
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_contract_oracle_test.py"
+      "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --runtime "$<TARGET_FILE:gti_runtime>" --preflight --profile scalar
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-preflight-evidence")
+  add_test(NAME llvm_native_c_scalar_execution
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_contract_oracle_test.py"
+      "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --compiler "$<TARGET_FILE:gti>" --profile scalar
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-scalar-evidence")
+  add_test(NAME llvm_native_c_counted_input
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_text_oracle_test.py"
+      "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --runtime "$<TARGET_FILE:gti_runtime>" --compiler "$<TARGET_FILE:gti>"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-counted-evidence")
+  set_tests_properties(llvm_native_c_contract_preflight
+    llvm_native_c_scalar_execution llvm_native_c_counted_input PROPERTIES TIMEOUT 600)
+  gti_register_llvm_evidence_manifest(llvm_native_c_scalar_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_contract_oracle_test.py")
+  gti_register_llvm_evidence_manifest(llvm_native_c_counted_input
+    "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_text_oracle_test.py")
 endif()
 
 add_executable(gti_runtime_execution_tests runtime_execution_tests.cpp)

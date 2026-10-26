@@ -10,6 +10,10 @@ if(NOT LLVM_DIR)
 endif()
 find_package(LLVM REQUIRED CONFIG)
 add_subdirectory("${GTI_SOURCE_ROOT}" gti)
+if(TARGET gti_llvm_coverage_evidence)
+  target_include_directories(gti_llvm_coverage_evidence PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/gti/generated")
+endif()
 # Temporary standalone consumer until coordinator-owned registration lands.
 get_target_property(backend_sources gti_llvm_backend SOURCES)
 if(NOT "src/compiler/llvm/native_c_abi.cpp" IN_LIST backend_sources)

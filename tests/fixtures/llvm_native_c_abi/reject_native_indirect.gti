@@ -1,0 +1,8 @@
+using NativeOperation = (int32_t) -> int32_t;
+extern "C" { NativeOperation obtain_operation(); }
+int main() {
+  unsafe {
+    NativeOperation operation = obtain_operation();
+    return operation(1);
+  }
+}
