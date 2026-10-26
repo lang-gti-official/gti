@@ -12,6 +12,32 @@ llvm::Function *declareRuntimeService(Session &session,
   bool neverReturns = false;
   bool noUnwind = false;
   switch (service) {
+  case RuntimeService::EnterThreadFailureSink:
+    noUnwind = true;
+    name = "gti_rt_thread_failure_sink_enter_v1";
+    parameters = {ptr, ptr, ptr};
+    break;
+  case RuntimeService::LeaveThreadFailureSink:
+    noUnwind = true;
+    name = "gti_rt_thread_failure_sink_leave_v1";
+    parameters = {ptr};
+    break;
+  case RuntimeService::PublishThreadFailure:
+    noUnwind = true;
+    name = "gti_rt_thread_failure_publish_v1";
+    parameters = {ptr};
+    break;
+  case RuntimeService::ThreadCleanupFailureKind:
+    noUnwind = true;
+    name = "gti_rt_thread_cleanup_failure_kind_v1";
+    result = llvm::Type::getInt32Ty(context);
+    break;
+  case RuntimeService::CopyThreadCleanupPrimary:
+    noUnwind = true;
+    name = "gti_rt_thread_cleanup_primary_copy_v2";
+    result = llvm::Type::getInt32Ty(context);
+    parameters = {ptr, ptr};
+    break;
   case RuntimeService::BeginThreadLocals:
     name = "gti_rt_thread_locals_begin_v1";
     break;

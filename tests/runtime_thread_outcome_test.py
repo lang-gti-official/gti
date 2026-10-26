@@ -59,9 +59,11 @@ def main():
                                 output / "c17.o", "-o", program])
     run("outcome-matrix", [program])
     for mode in ("no-sink", "wrong-thread", "out-of-order", "duplicate-enter",
-                 "throwing-sink", "reentrant", "malformed", "successful-null-completion"):
+                 "throwing-sink", "reentrant", "malformed", "successful-null-completion",
+                 "bad-sink-version", "mutating-sink", "wrong-primary-envelope",
+                 "third-failure"):
         run(mode, [program, mode], -signal.SIGABRT)
-    print("nonthrowing worker/caller outcome matrix and eight boundary rejections passed")
+    print("nonthrowing worker/caller outcome matrix and twelve boundary rejections passed")
 
 
 if __name__ == "__main__":

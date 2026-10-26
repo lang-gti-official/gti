@@ -1,8 +1,10 @@
 #include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/thread_lifecycle.h"
+#include "../src/compiler/llvm/runtime_abi.h"
 #include "cpp_backend_test_support.h"
 
 #include <iostream>
+#include <tuple>
 #include <llvm/IR/Instructions.h>
 
 namespace {
@@ -109,6 +111,24 @@ void check(const std::filesystem::path &root) {
         ++emitted;
       }
     require(emitted == 1, "exactly one real call is emitted for each boundary");
+  }
+  for (const auto &[service, arguments, returnsKind] : {
+           std::tuple{RuntimeService::EnterThreadFailureSink, 3U, false},
+           std::tuple{RuntimeService::LeaveThreadFailureSink, 1U, false},
+           std::tuple{RuntimeService::PublishThreadFailure, 1U, false},
+           std::tuple{RuntimeService::ThreadCleanupFailureKind, 0U, true},
+           std::tuple{RuntimeService::CopyThreadCleanupPrimary, 2U, true}}) {
+    const auto *function = declareRuntimeService(session, service);
+    require(function->arg_size() == arguments && function->doesNotThrow() &&
+                !function->hasFnAttribute(llvm::Attribute::NoReturn) &&
+                (returnsKind ? function->getReturnType()->isIntegerTy(32)
+                             : function->getReturnType()->isVoidTy()),
+            "worker outcome C declaration matches the nonthrowing runtime header");
+    for (const auto &argument : function->args())
+      require(argument.getType()->isPointerTy(),
+              "worker outcome C arguments are borrowed records or callbacks");
+    require(declareRuntimeService(session, service) == function,
+            "worker service identity reuses only its exact C declaration");
   }
 }
 } // namespace

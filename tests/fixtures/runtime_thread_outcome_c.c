@@ -6,6 +6,13 @@
 _Static_assert(sizeof(gti_thread_failure_view_v1) == 40, "failure view C layout");
 _Static_assert(sizeof(gti_thread_failure_sink_v1) == 40, "failure sink C layout");
 _Static_assert(offsetof(gti_thread_failure_sink_v1, owner) == 32, "sink owner C offset");
+_Static_assert(_Generic(&gti_rt_thread_cleanup_failure_kind_v1,
+                       gti_thread_worker_failure_kind_v1 (*)(void): 1, default: 0),
+               "cleanup kind C signature");
+_Static_assert(_Generic(&gti_rt_thread_cleanup_primary_copy_v2,
+                       uint32_t (*)(gti_failure_record_v2 *,
+                           const gti_failure_artifact_descriptor_v1 **): 1,
+                       default: 0), "primary copy C signature");
 
 static void copy_record(void *context, const gti_thread_failure_view_v1 *failure) {
   memcpy(context, failure->ordinary, sizeof(gti_failure_record_v2));

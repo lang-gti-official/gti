@@ -7,6 +7,7 @@
 #include <iostream>
 #include <llvm/Support/raw_ostream.h>
 #include <map>
+#include <set>
 #include <tuple>
 
 namespace {
@@ -158,7 +159,17 @@ void checkSourceComposition(const std::filesystem::path &root,
   Session session(*input, {});
   // Deliberate pre-admission composition oracle: every body is real source MIR.
   // This must never change the public gate or claim coverage from this bypass.
-  lowerScalarProgram(session, planLlvmAdmission(*input));
+  const auto admission = planLlvmAdmission(*input);
+  std::set<std::string> pending;
+  for (const auto &use : admission.requirements())
+    if (use.required && use.entry &&
+        use.entry->state == LlvmCoverageState::Pending &&
+        (!use.implementedShape ||
+         use.implementedShape->state != LlvmCoverageState::Implemented))
+      pending.insert(use.entry->key());
+  for (const auto &key : pending)
+    std::cout << "source-composition pending public gate: " << key << '\n';
+  lowerScalarProgram(session, admission);
   if (!sanitizer.empty())
     for (auto &function : session.module())
       if (!function.isDeclaration())

@@ -26,6 +26,11 @@ enum class RuntimeService {
   EnterFailureCleanup,
   LeaveFailureCleanup,
   CheckFailureCleanup,
+  EnterThreadFailureSink,
+  LeaveThreadFailureSink,
+  PublishThreadFailure,
+  ThreadCleanupFailureKind,
+  CopyThreadCleanupPrimary,
 };
 
 // Only real C symbols with explicitly modeled signatures enter the module.

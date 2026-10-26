@@ -83,6 +83,8 @@ struct Task {
   bool tlsFails = false;
   bool resultAbandonFails = false;
   bool noCompletedResult = false;
+  bool takeFails = false;
+  bool cleanupEnvelope = false;
 };
 
 void destroy(void *raw) {
@@ -98,6 +100,17 @@ void destroy(void *raw) {
   }
   if (task.cleanupFails)
     publish(22, &secondArtifact);
+  if (task.cleanupEnvelope) {
+    gti_failure_emergency_v2 envelope{};
+    envelope.abi_version = GTI_FAILURE_ABI_VERSION_V2;
+    const gti_failure_artifact_descriptor_v1 *artifact = nullptr;
+    assert(gti_rt_thread_cleanup_primary_copy_v2(&envelope.primary, &artifact));
+    envelope.secondary = record(22);
+    const gti_thread_failure_view_v1 view{
+        GTI_THREAD_FAILURE_VIEW_ABI_VERSION_V1, GTI_THREAD_WORKER_FAILURE_CLEANUP_V1,
+        nullptr, &envelope, artifact, &secondArtifact};
+    gti_rt_thread_failure_publish_v1(&view);
+  }
 }
 
 bool tlsCleanup(void *, gti_failure_record_v2 *failure,
@@ -121,7 +134,7 @@ void entry(void *raw) {
     publish(11, &firstArtifact);
 }
 
-struct Result { unsigned *retired; bool fail; int value; };
+struct Result { unsigned *retired; bool fail; int value; bool takeFails; };
 unsigned resultRetired = 0;
 
 void *complete(void *raw) {
@@ -129,11 +142,17 @@ void *complete(void *raw) {
   destroy(raw);
   if (task.noCompletedResult)
     return nullptr;
-  return new Result{&resultRetired, task.resultAbandonFails, 42};
+  return new Result{&resultRetired, task.resultAbandonFails, 42, task.takeFails};
 }
 
 void take(void *raw, void *destination) {
   auto *result = static_cast<Result *>(raw);
+  if (result->takeFails) {
+    ++*result->retired;
+    delete result;
+    publish(55, &secondArtifact);
+    return;
+  }
   *static_cast<int *>(destination) = result->value;
   ++*result->retired;
   delete result;
@@ -168,10 +187,11 @@ void callerScopes() {
 }
 
 void workers() {
-  for (const bool secondary : {false, true}) {
+  for (const int secondary : {0, 1, 2}) {
     Task task;
     task.entryFails = true;
-    task.cleanupFails = secondary;
+    task.cleanupFails = secondary == 1;
+    task.cleanupEnvelope = secondary == 2;
     auto launched = gti_rt_thread_spawn_v1(entry, &task, destroy);
     assert(launched.status == GTI_THREAD_SPAWN_OK_V1 && launched.state);
     const auto joined = gti_rt_thread_join_v2(&launched.state);
@@ -250,6 +270,22 @@ void results() {
   checkRecord(joined.join.cleanup_failure.primary, 33);
   checkRecord(joined.join.cleanup_failure.secondary, 44);
   assert(resultRetired == 3 && task.destroyed == 1);
+  {
+    Task failedTake;
+    failedTake.takeFails = true;
+    auto started = gti_rt_thread_spawn_value_v1(entry, &failedTake, complete,
+                                               destroy, take, abandon);
+    auto result = gti_rt_thread_join_value_v2(&started.state);
+    assert(result.join.status == GTI_THREAD_JOIN_OK_V1 && !started.state);
+    Capture failure;
+    auto active = sink();
+    gti_rt_thread_failure_sink_enter_v1(&active, capture, &failure);
+    int destination = -1;
+    result.take_result(result.result_context, &destination);
+    gti_rt_thread_failure_sink_leave_v1(&active);
+    checkRecord(failure.ordinary, 55);
+    assert(destination == -1 && resultRetired == 4 && failedTake.destroyed == 1);
+  }
 }
 
 void nestedCaller(void *) {
@@ -284,6 +320,28 @@ void costs() {
 }
 
 void invalid(std::string_view mode) {
+  if (mode == "wrong-primary-envelope" || mode == "third-failure") {
+    Task task;
+    task.entryFails = true;
+    const auto cleanup = mode == "third-failure"
+        ? +[](void *) { publish(22, &secondArtifact); publish(33, &secondArtifact); }
+        : +[](void *) {
+            gti_failure_emergency_v2 envelope{};
+            envelope.abi_version = GTI_FAILURE_ABI_VERSION_V2;
+            const gti_failure_artifact_descriptor_v1 *artifact = nullptr;
+            assert(gti_rt_thread_cleanup_primary_copy_v2(&envelope.primary, &artifact));
+            envelope.primary.site_index = 999;
+            envelope.secondary = record(22);
+            const gti_thread_failure_view_v1 view{
+                GTI_THREAD_FAILURE_VIEW_ABI_VERSION_V1,
+                GTI_THREAD_WORKER_FAILURE_CLEANUP_V1, nullptr, &envelope,
+                artifact, &secondArtifact};
+            gti_rt_thread_failure_publish_v1(&view);
+          };
+    auto started = gti_rt_thread_spawn_v1(entry, &task, cleanup);
+    static_cast<void>(gti_rt_thread_join_v2(&started.state));
+    return;
+  }
   if (mode == "successful-null-completion") {
     Task task;
     task.noCompletedResult = true;
@@ -307,6 +365,16 @@ void invalid(std::string_view mode) {
     gti_rt_thread_failure_sink_leave_v1(&a);
   } else if (mode == "duplicate-enter") {
     gti_rt_thread_failure_sink_enter_v1(&a, capture, &output);
+  } else if (mode == "bad-sink-version") {
+    a.abi_version = 99;
+    publish(1, &firstArtifact);
+  } else if (mode == "mutating-sink") {
+    gti_rt_thread_failure_sink_leave_v1(&a);
+    gti_rt_thread_failure_sink_enter_v1(&a,
+        [](void *raw, const gti_thread_failure_view_v1 *) {
+          static_cast<gti_thread_failure_sink_v1 *>(raw)->context = nullptr;
+        }, &a);
+    publish(1, &firstArtifact);
   } else if (mode == "throwing-sink" || mode == "reentrant") {
     gti_rt_thread_failure_sink_leave_v1(&a);
     bool throwing = mode == "throwing-sink";

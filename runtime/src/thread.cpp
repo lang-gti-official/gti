@@ -716,6 +716,8 @@ extern "C" void gti_rt_thread_failure_publish_v1(
   };
   if (publishingFailure || failureSink == nullptr ||
       failureSink->owner != &failureSink || failure == nullptr ||
+      failureSink->abi_version != GTI_THREAD_FAILURE_SINK_ABI_VERSION_V1 ||
+      failureSink->reserved != 0 || failureSink->publish == nullptr ||
       failure->abi_version != GTI_THREAD_FAILURE_VIEW_ABI_VERSION_V1)
     std::terminate();
   if (failure->failure_kind == GTI_THREAD_WORKER_FAILURE_ORDINARY_V1) {
@@ -752,7 +754,7 @@ extern "C" gti_thread_worker_failure_kind_v1
 gti_rt_thread_cleanup_failure_kind_v1(void) noexcept {
   return failureSink != nullptr && failureSink == workerFailureSink
              ? gti_runtime_detail::managed_task_cleanup_failure_kind()
-             : GTI_THREAD_WORKER_FAILURE_NONE_V1;
+             : gti_thread_worker_failure_kind_v1{GTI_THREAD_WORKER_FAILURE_NONE_V1};
 }
 
 extern "C" uint32_t gti_rt_thread_cleanup_primary_copy_v2(
