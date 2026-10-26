@@ -71,6 +71,11 @@ public:
                                             HirClassInstanceId sourceView);
   void install(llvm::IRBuilder<> &ir, llvm::Value *completeObject,
                HirClassInstanceId activeClass);
+  // Recover the installed active state, which is not necessarily the complete
+  // allocation during construction or destruction. Requires a live view.
+  [[nodiscard]] llvm::Value *activeObject(llvm::IRBuilder<> &ir,
+                                          llvm::Value *view,
+                                          const SemanticType &viewType);
   [[nodiscard]] VirtualCallPlan planCall(const MirInstruction &instruction);
   [[nodiscard]] LoadedVirtualCall loadCall(llvm::IRBuilder<> &ir,
                                            const MirInstruction &instruction,
@@ -86,6 +91,7 @@ private:
   friend struct DispatchStructuralTestAccess;
   explicit Dispatch(Session &session);
   void preflightSourceBodies(HirClassInstanceId activeClass) const;
+  [[nodiscard]] llvm::StructType *tableType(std::size_t slots) const;
   struct AdjustmentPlan {
     DispatchSlotPlan selected;
     HirClassInstanceId physicalOwner = 0;

@@ -11661,6 +11661,16 @@ where needed; complete boxed-owner dynamic
 cleanup and validate ordinary source wrappers end to end. Platform evidence is
 tracked per checkpoint, not inferred from these component checks.
 
+The dispatch descriptor now records an exact target-width displacement from
+each physical pointer owner to its installed active class. Ordinary virtual
+calls retain their two loads and root ABI; per-object layout is unchanged.
+Native representation probes recover the relocated complete state through every
+view and distinguish a subsequently installed base state at nonzero offset.
+This is a prerequisite for dynamic owner cleanup, not ownership admission: the
+cleanup operation still needs an exact selected cleanup adapter and must retain
+the allocation identity before changing lifecycle state. It does not authorize
+source downcasts or establish destructor-observed virtual phase semantics.
+
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not
   milestone completion: generated scalar-hierarchy copies/moves now have exact

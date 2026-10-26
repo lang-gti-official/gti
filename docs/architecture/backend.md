@@ -4518,6 +4518,20 @@ planner's provisional transport, not resolution of C04. Pure-bearing tables
 and infallible terminal targets remain explicitly gated; no failure meaning,
 null callee, trap or unreachable continuation is invented.
 
+Each immutable table has a target address-index-width signed displacement
+before its slot array. The displacement maps the physical dispatch-pointer
+owner to the installed active class, not the logical interface view or the
+pointer field itself. Slot lookup skips this fixed descriptor header; object
+layout and root ABI channels are unchanged. `Dispatch::activeObject` loads that
+displacement for an exact live class view. It does not provide a source downcast,
+grant ownership, select a destructor, or authorize deallocation. In a base
+construction/destruction state it recovers that base's active object, not the
+enclosing allocation. A future dynamic cleanup operation must capture its
+complete-object/deallocation identity before any lifecycle transition. Native
+O0/O3 probes cover all views after relocation, a nonzero physical state-base
+offset, and reinstalling the base state. This is representation groundwork;
+boxed polymorphic cleanup remains independently unimplemented.
+
 The body call path consumes the named function instance's sealed root-family
 rows and the receiver's exact concrete root identities. It loads the stable
 slot through its physical pointer owner and uses the central root ABI, including

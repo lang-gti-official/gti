@@ -299,11 +299,22 @@ void testThunks(Session &session) {
              "one physical pointer location has one exact constant table");
       expect(dispatch.table(active.id, view.viewClass) == table,
              "table requests are stable within one immutable session");
-      const auto *initializer =
-          llvm::dyn_cast<llvm::ConstantArray>(table->getInitializer());
-      if (!initializer)
+      const auto *descriptor =
+          llvm::dyn_cast<llvm::ConstantStruct>(table->getInitializer());
+      if (!descriptor || descriptor->getNumOperands() != 2)
         throw std::runtime_error(
-            "dispatch table lost its immutable slot array");
+            "dispatch table lost its immutable active-object descriptor");
+      const auto *offset =
+          llvm::dyn_cast<llvm::ConstantInt>(descriptor->getOperand(0));
+      expect(offset &&
+                 offset->getSExtValue() ==
+                     -static_cast<std::int64_t>(view.location.owner.offset),
+             "active-object displacement is relative to the physical pointer "
+             "owner, not its logical view or dispatch field");
+      const auto *initializer =
+          llvm::dyn_cast<llvm::ConstantArray>(descriptor->getOperand(1));
+      if (!initializer)
+        throw std::runtime_error("dispatch descriptor lost its slot array");
       expect(initializer->getNumOperands() == view.slots.size(),
              "table slots retain their complete canonical profile");
       for (std::size_t index = 0; index < view.slots.size(); ++index) {
@@ -564,6 +575,13 @@ void testCallPlans(Session &session) {
             llvm::BasicBlock::Create(session.context(), "entry", probe));
         const auto loaded =
             dispatch.loadCall(ir, instruction, plan, probe->getArg(0));
+        const auto loads = std::count_if(
+            probe->getEntryBlock().begin(), probe->getEntryBlock().end(),
+            [](const auto &operation) {
+              return llvm::isa<llvm::LoadInst>(operation);
+            });
+        expect(loads == 2,
+               "active-object metadata adds no load to ordinary virtual calls");
         expect(llvm::isa<llvm::LoadInst>(loaded.callee) &&
                    offsetFrom(session, loaded.receiver, probe->getArg(0)) ==
                        plan.location.owner.offset,
@@ -3577,7 +3595,7 @@ void testInertRelocation() {
 interface First {};
 interface Second {};
 class Parent : public First { public: mut int number = 17; };
-class Item : public Parent, public Second { public: mut int extra = 25; };
+class Item : public Second, public Parent { public: mut int extra = 25; };
 struct Items { mut Item values[2] = {}; };
 struct Active { mut int marker = 113; ~Active() {} };
 struct Owners {
@@ -3804,6 +3822,20 @@ int main(void) { return gti_relocation_probe(); }
     auto *destination = ir.CreateAlloca(storage);
     ir.CreateStore(llvm::Constant::getNullValue(storage), source);
     ir.CreateStore(llvm::Constant::getNullValue(storage), destination);
+    const auto beforeRecoveryRejection = probe->getEntryBlock().size();
+    rejects<std::invalid_argument>(
+        [&] {
+          static_cast<void>(
+              dispatch.activeObject(ir, source, SemanticType::Int32));
+        },
+        "active-object recovery cannot reinterpret a non-class view");
+    rejects<BackendUnsupportedError>(
+        [&] {
+          static_cast<void>(dispatch.activeObject(ir, source, items.type));
+        },
+        "a containing record does not acquire its field's dispatch identity");
+    expect(probe->getEntryBlock().size() == beforeRecoveryRejection,
+           "unsupported active-object recovery emits no partial instructions");
     const auto arrayType = items.declaredFields.front().type;
     const auto arrayStorage = session.layouts().get(arrayType).storage;
     const auto field = session.layouts().fieldIndex(
@@ -3844,6 +3876,13 @@ int main(void) { return gti_relocation_probe(); }
                                                       at(address, extraOffset)),
                                         ir.getInt32(25 + index)));
       for (const auto &view : dispatch.views(item.id)) {
+        const auto *viewClass =
+            session.program().mir().findClassInstance(view.viewClass);
+        auto *selected = at(address, view.offset);
+        bad = ir.CreateOr(
+            bad,
+            ir.CreateICmpNE(
+                dispatch.activeObject(ir, selected, viewClass->type), address));
         const auto offset = view.location.owner.offset +
                             session.layouts()
                                 .get(view.location.owner.type)
@@ -3865,6 +3904,19 @@ int main(void) { return gti_relocation_probe(); }
         observerPlan.applyTo(*observed);
         bad = ir.CreateOr(bad, ir.CreateICmpNE(observed, ir.getInt32(0)));
       }
+      const auto parentPath =
+          session.layouts().baseSubobject(item.type, parent.type);
+      expect(parentPath.offset != 0,
+             "active-state recovery exercises a nonzero state-base offset");
+      auto *parentAddress = at(address, parentPath.offset);
+      dispatch.install(ir, parentAddress, parent.id);
+      bad = ir.CreateOr(
+          bad,
+          ir.CreateICmpNE(dispatch.activeObject(ir, parentAddress, parent.type),
+                          parentAddress));
+      // A base construction/destruction state identifies that base, not the
+      // enclosing allocation. Restore complete state for the remaining probes.
+      dispatch.install(ir, address, item.id);
     }
     const auto payload = session.layouts().payload(choiceType);
     auto *relocateChoice = lifetimes.inertRelocation(choiceType);
