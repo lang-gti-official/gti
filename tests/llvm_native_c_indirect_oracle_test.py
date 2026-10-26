@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Production scalar native-function values, staged calls and closed boundaries."""
 import argparse
+from hashlib import sha256
 import json
 from pathlib import Path
 import platform
@@ -11,11 +12,13 @@ import time
 from llvm_evidence_manifest import build_manifest
 
 FIXTURE_SOURCES = ("contracts", "native_indirect", "native_indirect_order",
-                   "native_indirect_failure", "native_indirect_roots")
+                   "native_indirect_failure", "native_indirect_roots",
+                   "native_function_borrows")
 EXAMPLE = "native_c_function_values"
 SOURCE_PATHS = {name: f"tests/fixtures/llvm_native_c_abi/{name}.gti"
                 for name in FIXTURE_SOURCES}
 SOURCE_PATHS[EXAMPLE] = "examples/llvm/native-c-function-values.gti"
+SOURCE_PATHS["existing_indirect"] = "tests/fixtures/native_indirect_calls.gti"
 SOURCES = tuple(SOURCE_PATHS)
 
 
@@ -25,8 +28,10 @@ def evidence_cases(root):
 
 def evidence_profiles(root):
     del root
-    return {profile: SOURCES for profile in
-            ("function-values", "function-imports", "scalar-indirect")}
+    return {**{profile: SOURCES for profile in
+               ("function-values", "function-imports", "scalar-indirect")},
+            "function-borrows": ("native_function_borrows", "existing_indirect"),
+            "result-inputs": ("existing_indirect",)}
 
 
 def evidence_manifest(root):
@@ -43,7 +48,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=Path)
     parser.add_argument("--emitter", type=Path, required=True)
-    parser.add_argument("--focus", choices=("reachability", "example"))
+    parser.add_argument("--focus", choices=("reachability", "example", "borrows"))
     parser.add_argument("--cc", default="clang")
     parser.add_argument("--cxx", default="clang++")
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -62,6 +67,13 @@ def main():
     compiler = args.compiler.resolve()
     report = {"head": subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip(),
+        "dirty": bool(subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"])),
+        "compiler_sha256": sha256(compiler.read_bytes()).hexdigest(),
+        "input_sha256": {path: sha256((root / path).read_bytes()).hexdigest()
+                         for path in (*SOURCE_PATHS.values(),
+                                      "tests/fixtures/native_indirect_calls.c",
+                                      "tests/fixtures/llvm_native_c_abi/native_indirect.c",
+                                      "tests/fixtures/llvm_native_c_abi/contracts_oracle.c")},
         "platform": platform.platform(), "focus": args.focus,
         "reachability_pair": {"only_change": [dormant_edge, required_edge],
                               "equal_after_edge_replacement": True}, "steps": []}
@@ -101,6 +113,9 @@ def main():
         elif source == "native_indirect_roots":
             if result.stdout != b"mark:99\n" or result.stderr:
                 raise RuntimeError("native exact roots or typed cleanup mismatch")
+        elif source == "native_function_borrows":
+            if result.stdout != b"borrow-cleanup\n" or result.stderr:
+                raise RuntimeError("native function borrow mutation/snapshot/cleanup mismatch")
         elif result.stdout or result.stderr:
             raise RuntimeError("unexpected native scalar indirect output")
 
@@ -110,14 +125,22 @@ def main():
             ("native_indirect_roots", "--reachability"),
             ("reject_native_indirect", "--native-boundary-reachability"),
             ("reject_native_indirect_callback", "--native-boundary-reachability"))
-    if args.focus == "example":
+    if args.focus in ("example", "borrows"):
         root_checks = ()
+    if args.focus in (None, "borrows"):
+        run([args.emitter.resolve(), fixture / "native_function_borrows.gti",
+             output / "borrow-contracts.o", output / "borrow-contracts.ll", 0,
+             "--borrow-contracts"], "borrow-contracts")
+        run([args.emitter.resolve(), root / SOURCE_PATHS["existing_indirect"],
+             output / "result-contracts.o", output / "result-contracts.ll", 0,
+             "--result-contracts"], "result-contracts")
     for source, mode in root_checks:
         run([args.emitter.resolve(), fixture / (source + ".gti"),
              output / (source + ".o"), output / (source + ".ll"), 0, mode],
             "roots-" + source)
     executions = controls = negatives = 0
     sources = (("native_indirect_roots",) if args.focus == "reachability" else
+               ("native_function_borrows", "existing_indirect") if args.focus == "borrows" else
                (EXAMPLE,) if args.focus == "example" else SOURCES)
     levels = (0, 3) if args.focus == "reachability" else range(4)
     for c_level in (0, 3):
@@ -128,6 +151,15 @@ def main():
                  "-DGTI_SOURCE_HOST", "-c", fixture / (source + ".c"), "-o", obj],
                 f"host-{source}-c{c_level}")
             objects.append(obj)
+        existing_object = output / f"existing-indirect-c{c_level}.o"
+        if "existing_indirect" in sources:
+            run([compiler, root / SOURCE_PATHS["existing_indirect"],
+                 "--emit-native-header", "-o", output / "native_indirect_calls.h"],
+                f"existing-header-c{c_level}")
+            run([args.cc, "-std=c17", f"-O{c_level}", "-Wall", "-Wextra", "-Werror",
+                 "-I", output, "-I", root / "runtime/include", "-c",
+                 root / "tests/fixtures/native_indirect_calls.c", "-o", existing_object],
+                f"existing-host-c{c_level}")
         example_object = output / f"example-c{c_level}.o"
         if EXAMPLE in sources:
             run([args.cc, "-std=c17", f"-O{c_level}", "-Wall", "-Wextra", "-Werror",
@@ -136,7 +168,8 @@ def main():
         oracles = {}
         for source in sources:
             source_path = root / SOURCE_PATHS[source]
-            source_objects = [example_object] if source == EXAMPLE else objects
+            source_objects = ([example_object] if source == EXAMPLE else
+                              [existing_object] if source == "existing_indirect" else objects)
             for standard in ("c++20", "c++23"):
                 tag = f"{source}-{standard}-c{c_level}"
                 binary = output / tag
@@ -173,7 +206,7 @@ def main():
     promoted_sources = ("reject_native_indirect_required", "reject_native_indirect_callback")
     if not args.focus:
         promoted_sources = ("reject_native_indirect", *promoted_sources)
-    elif args.focus == "example":
+    elif args.focus in ("example", "borrows"):
         promoted_sources = ()
     for source in promoted_sources:
         for level in (0, 3):
@@ -189,8 +222,9 @@ def main():
     rejections = (
         ("reject_native_indirect_unsafe", b"GTI-S2055", b":6:21:"),
         ("reject_native_indirect_signature", b"GTI-S2003", b":5:46:"),
+        ("reject_native_function_readonly", b"GTI-S2002", b":2:31:"),
     )
-    if args.focus:
+    if args.focus and args.focus != "borrows":
         rejections = ()
     for source, code, site in rejections:
         for backend in ("cpp", "llvm"):
@@ -207,6 +241,10 @@ def main():
             negatives += 1
     report["totals"] = {"llvm_executions": executions, "cpp_controls": controls,
                         "root_checks": len(root_checks), "artifact_negatives": negatives}
+    report["executable_bytes"] = {
+        step["argv"][0]: Path(step["argv"][0]).stat().st_size
+        for step in report["steps"]
+        if len(step["argv"]) == 1 and Path(step["argv"][0]).is_file()}
     (output / "evidence.json").write_text(json.dumps(report, indent=2) + "\n")
     print(f"PASS: {executions} public LLVM native-function executions, {controls} C++ controls, {len(root_checks)} exact-root checks and {negatives} artifact negatives; {output}")
 

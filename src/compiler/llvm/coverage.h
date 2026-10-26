@@ -97,6 +97,8 @@ enum class Shape {
   NativeCFunctionImport,
   NativeCScalarIndirect,
   NativeCSignature,
+  NativeCFunctionBorrow,
+  NativeCResultInput,
   NativeCCallback,
   InfallibleEmbedding,
 };
