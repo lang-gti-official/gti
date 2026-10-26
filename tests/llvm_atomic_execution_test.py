@@ -98,7 +98,8 @@ def main() -> None:
                 failure = name == "overflow-before-update"
                 if result.error or result.returncode != (70 if failure else 0):
                     raise AssertionError(f"{name} {endpoint}: {result}")
-                if failure and ("GTI-R0002" not in result.stderr or
+                if failure and ("GTI-R0001" not in result.stderr or
+                                "integer_overflow in addition" not in result.stderr or
                                 "GTI-R0014" in result.stderr):
                     raise AssertionError(f"overflow update/cleanup contract: {result}")
                 results.append(result.observable)

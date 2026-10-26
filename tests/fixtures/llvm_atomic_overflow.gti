@@ -1,4 +1,5 @@
 #include <std/atomic>
+#include <std/panic>
 
 std::atomic<int32_t> value{2147483647};
 

@@ -4368,9 +4368,11 @@ Admission checks the actual function's target lowering and rejects unsupported
 width/alignment combinations before producing an artifact. Object-symbol checks
 exclude unintended `libatomic` calls, but do not establish a lock-free or
 performance guarantee. Checked arithmetic fetch operations remain source-defined
-CAS loops: overflow must fail before modifying shared storage. Their complete
-native execution, mutexes and managed-worker integration remain pending
-O-LLVM-13 work; the scalar-core profile is not whole-milestone acceptance.
+CAS loops: overflow must fail before modifying shared storage. The focused
+checked-fetch matrix exercises all five operations and order overloads, plus
+destructor observation that a failing checked addition did not update the lane.
+Platform-wide acceptance, mutex lifecycle and managed-worker integration remain
+pending O-LLVM-13 work; these profiles are not whole-milestone acceptance.
 
 Native wait/notify has a separate structural admission witness for concurrent
 executables on reviewed Darwin arm64 and Linux x86_64 targets. It consumes the
@@ -4394,6 +4396,23 @@ late first use and terminal native errors. Neither those adapters nor this
 witness admits managed/scoped workers. Generated boundary sanitizer, platform,
 installed-consumer and runtime-cost evidence remain separate acceptance duties;
 the whole O-LLVM-13 milestone is not complete.
+
+The isolated mutex emitter consumes exact private storage/token capabilities
+and sealed lock, unlock, active and borrowed-read operations. Its reviewed
+native storage is a 64-byte, eight-aligned pthread slot followed by payload
+storage and a distinct payload-active byte; a lock token is one owner identity
+pointer. Failed lock status leaves the token inert, transfer clears the old
+token, and unlock retires it. Defensive checks on malformed private token use
+trap in the test boundary; they do not define a new source failure convention.
+The production runtime explicitly initializes and destroys the native slot.
+No public mutex admission follows from that layout or emitter: construction,
+fresh-shell move, replacement and destruction still need the semantic/MIR
+native-shell cleanup endpoint even when the payload itself is passive.
+The component harness verifies that ordinary mutex source remains unadmitted,
+then exercises the isolated operations with real C runtime services, including
+contention and sanitizer-instrumented emitted accesses. The observational cost
+probe distinguishes runtime-service cost from the token/payload adapter and
+does not claim public-lifecycle parity.
 
 O-LLVM-03 provides the private machinery shared by all native lowering profiles.
 `Session` owns the exact
