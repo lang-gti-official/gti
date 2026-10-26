@@ -236,8 +236,19 @@ def main() -> None:
         rejects(lambda: collector.collect(success, root, positive, helper, report,
                                          [single, single], resume=True, scope="focused-controls"))
 
-        unsupported = member("unsupported", 'extern "C" { int foreign_call(int value); }\n'
-                             'int main() { return foreign_call(0); }\n', [single])
+        native = member("native-import", 'extern "C" { int foreign_call(int value); }\n'
+                        'int main() { return foreign_call(0); }\n', [single])
+        native_directory = scratch / "native-import"
+        native_result = collector.collect(
+            native_directory, root, miniature(canonical, [native]), helper, report,
+            [single], resume=False, scope="focused-controls")
+        audit.require(native_result["positive_admission_observations"] == 1 and
+                      not native_result["campaign_promotion_ready"],
+                      "supported native import did not retain admission-only evidence")
+        unsupported = member(
+            "unsupported", "class Owner { public: virtual int read() { return 0; } };\n"
+            "unsafe int create() { mut Owner value{}; Owner other{}; value = other; return 0; }\n"
+            "int main() { unsafe { return create(); } }\n", [single])
         failed = member("frontend-failure", "int main( { return 0; }\n", [single])
         rejection = member("rejection-control", failed["source"]["inline"], [single],
                            role="expected-rejection-control")
