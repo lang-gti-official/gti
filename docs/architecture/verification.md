@@ -10170,15 +10170,21 @@ O0-O3. A second case preserves two distinct long messages and their original
 sites in the emergency envelope, with no later outer destructor after the
 secondary failure. The C04 retained-input checks reject aggregate-SSA channel
 and emergency-record copies and require the status path's bulk channel transfer.
-Whole ordinary-record replacement exercises the paired cleanup/publication
+Local ordinary-record replacement exercises the paired cleanup/publication
 schedule. Its unsafe `int*` observers count destruction of the old value,
 prepared replacement and surrounding owner when the old destructor fails;
 preparation failure leaves the old owner live until ordinary cleanup, and a
 second failure while draining the prepared RHS terminates before outer cleanup.
+The matrix repeats these cases through a two-field projection chain, retaining
+the parent binding's cleanup while the field's prepared Value is consumed by
+its exact target-zero Replace event. It also admits the existing final Exit
+publication of ConstructionRollback obligations in field-initializer schedules.
+No arbitrary TransferOut or replacement recipe is accepted by that extension.
 The observer storage belongs to the caller and outlives every generated call.
 The experiment permits only typed scalar raw dereferences, not pointer arithmetic
-or allocation. Opaque-pointer/array fields and projected replacement remain
-rejected before object publication. These are not arbitrary ownership transfer,
+or allocation. Opaque-pointer/array fields and borrowed-record destinations
+remain rejected before object publication; raw/indexed replacement is outside
+the profile. These are not arbitrary ownership transfer,
 worker or performance
 acceptance and must not substitute for existing backend gates. `generated.ll`
 retains verified pre-object-emission IR; `generated.codegen.ll` retains the
@@ -10203,6 +10209,8 @@ object/executable sizes and code/unwind sections (same-named Mach-O sections
 are summed, with the original tool output retained). Run
 `python3 tests/llvm_c04_cost_test.py` for the automation-only controls; its
 system-time check requires permission to collect child-process memory metrics.
+Use `--fixtures field_replacement_cleanup` to measure the additional nested-field
+case. The default five-workload selection remains compatible with earlier receipts.
 Neither boundary mode's microbenchmarks establish whole-program speedups,
 allocation counts, worker/callback costs, contention isolation or final transport
 acceptance. Keep those missing obligations explicit in the C04 decision.

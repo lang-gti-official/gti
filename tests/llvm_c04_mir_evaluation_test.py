@@ -71,7 +71,9 @@ def main():
                                 "owned_nested_failure", "owned_parameter",
                                 "prepared_parameter", "owned_return", "return_cleanup",
                                 "raw_field", "replacement", "replacement_cleanup",
-                                "replacement_preparation", "replacement_nested_failure")
+                                "replacement_preparation", "replacement_nested_failure",
+                                "projected_replacement", "field_replacement_cleanup",
+                                "field_replacement_preparation", "field_replacement_nested_failure")
                 for mode, emitter in (("status", args.status_emitter),
                                       ("unwind", args.unwind_emitter))
                 for level in ("O0", "O3")]
@@ -145,7 +147,7 @@ def main():
                 raise AssertionError("fallible Drop bypassed its MIR failure edge")
         executable = directory / "probe"
         flags = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"] if args.sanitized else []
-        flags += [f"-DGTI_C04_FAILED_CONSTRUCTION={int(fixture in ('fallible_constructor', 'replacement_preparation'))}"]
+        flags += [f"-DGTI_C04_FAILED_CONSTRUCTION={int(fixture in ('fallible_constructor', 'replacement_preparation', 'field_replacement_preparation'))}"]
         flags += [f"-DGTI_C04_OWNED_ROLLBACK={int(fixture == 'owned_rollback')}"]
         run([args.cxx, "-std=c++20", "-O3", *flags, "-pthread",
              "-I", root / "runtime/include", "-I", directory,
@@ -154,14 +156,15 @@ def main():
             measure_build=args.build_metrics)
         for outcome in ("success", "failure"):
             for dispatch in ("direct", "indirect"):
-                nested = fixture in ("nested_failure", "owned_nested_failure", "replacement_nested_failure")
+                nested = fixture in ("nested_failure", "owned_nested_failure", "replacement_nested_failure", "field_replacement_nested_failure")
                 if nested and outcome == "failure":
                     observation = directory / f"{outcome}-{dispatch}.slots"
                     observation.write_bytes(struct.pack("=iii", 0, 0, 0))
                     result = run([executable, outcome, dispatch, "1", observation],
                                  directory, f"{outcome}-{dispatch}", expected=70, timeout=15)
                     primary = {"nested_failure": 19, "owned_nested_failure": 28,
-                               "replacement_nested_failure": 11}[fixture]
+                               "replacement_nested_failure": 11,
+                               "field_replacement_nested_failure": 11}[fixture]
                     error = (f"{fixture}.gti:11: runtime error[GTI-R0014]: "
                              "failure_during_cleanup; primary [GTI-R0001] at "
                              f"{fixture}.gti:{primary}; secondary [GTI-R0001]\n")
@@ -181,7 +184,9 @@ def main():
                         "prepared_parameter": 16, "owned_return": 13,
                         "return_cleanup": 15, "raw_field": 2,
                         "replacement": 10, "replacement_cleanup": 11,
-                        "replacement_preparation": 5, "replacement_nested_failure": 11}[fixture]
+                        "replacement_preparation": 5, "replacement_nested_failure": 11,
+                        "projected_replacement": 14, "field_replacement_cleanup": 11,
+                        "field_replacement_preparation": 5, "field_replacement_nested_failure": 11}[fixture]
                 expected_error = f"{fixture}.gti:{line}: runtime error[GTI-R0001]: integer_overflow in addition\n"
                 expected = ("1\n", "") if outcome == "success" else ("", expected_error)
                 if (result.stdout, result.stderr) != expected:
@@ -191,10 +196,10 @@ def main():
                 if repeated.stderr or not re.fullmatch(r"64 \d+ \d+\n", repeated.stdout):
                     raise AssertionError("repeated entry/cleanup/failure carrier reset failed")
         for dispatch in ("direct", "indirect"):
-            if fixture not in ("nested_failure", "owned_nested_failure", "replacement_nested_failure"):
+            if fixture not in ("nested_failure", "owned_nested_failure", "replacement_nested_failure", "field_replacement_nested_failure"):
                 run([executable, "mixed", dispatch, "64"], directory,
                     f"repeat-mixed-{dispatch}", timeout=15)
-        for negative in ("array_field", "opaque_pointer_field", "native_call", "global", "projected_replacement"):
+        for negative in ("array_field", "opaque_pointer_field", "native_call", "global", "borrowed_replacement"):
             destination = directory / negative
             marker = b"existing artifact must survive rejection\n"
             destination.with_suffix(".o").write_bytes(marker)
@@ -204,8 +209,8 @@ def main():
                 raise AssertionError("negative fixture failed before the structural evaluation boundary")
             if negative.endswith("_field") and "class outside ordinary scalar/reference/observer/record-field cleanup profile" not in result.stderr:
                 raise AssertionError("field fixture did not reach its exact boundary")
-            if negative == "projected_replacement" and "replacement outside whole ordinary record binding" not in result.stderr:
-                raise AssertionError("replacement escaped the bounded transfer profile")
+            if negative == "borrowed_replacement" and "function signature or definition" not in result.stderr:
+                raise AssertionError("borrowed record escaped the local replacement profile")
             if destination.with_suffix(".o").read_bytes() != marker:
                 raise AssertionError("rejected experimental shape overwrote an artifact")
         receipts.append({"fixture": fixture, "mode": mode, "level": level, "emitter_sha256": digest(emitter),
@@ -220,14 +225,15 @@ def main():
                          "executable_sha256": digest(executable)})
         print(f"{fixture}/{mode}/{level}: lifecycle outcomes, direct/indirect and 5 rejections passed", flush=True)
     evidence = {
-        "scope": "scalar MIR, fallible scalar/reference/record-field lifecycle, explicit unsafe int-pointer observers, owning parameter/return transfer and whole-record replacement; test-owned C++ carrier",
+        "scope": "scalar MIR, fallible scalar/reference/record-field lifecycle, explicit unsafe int-pointer observers, owning parameter/return transfer and local record/field replacement; test-owned C++ carrier",
         "call_boundaries": args.call_boundaries,
         "production_transport_selected": False,
         "runtime_sha256": digest(args.runtime),
         "sanitized_native_carrier": args.sanitized,
         "llvm_object_instrumented": False,
         "build_metrics": args.build_metrics,
-        "limitations": ["no projected replacement, callbacks, user TLS or workers",
+        "limitations": ["replacement limited to local bindings and ordinary field projections; no borrowed/raw/indexed destinations",
+                        "no callbacks, user TLS or workers",
                         "raw access limited to explicit unsafe scalar observation; no pointer arithmetic or allocation",
                         "no arrays, private owner representations or hierarchy",
                         "no OOM, foreign/forced unwind or artifact-unloading proof",

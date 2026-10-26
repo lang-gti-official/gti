@@ -10816,15 +10816,19 @@ Generated cleanup helpers invoke the selected source destructor and exact
 verified child recipes. A cleanup landing pad records the original unwind
 token, enters the existing failure-cleanup context, and drains remaining child
 recipes before leaving that context and resuming the original token. A second
-failure terminates instead of continuing cleanup. Constructor return may publish
-its armed subobject obligations. A staged ordinary-record argument retains its
+failure terminates instead of continuing cleanup. Constructor return and a
+field-initializer schedule's final Exit may publish their armed construction
+rollback obligations. A staged ordinary-record argument retains its
 verified prepared-parameter drop until the exact static call transfers it to
 the callee. Ordinary-record returns publish their verified Value or ReturnResult
 obligation only at the final return. A prepared result remains owned by that
-invocation while local cleanup can still fail. Whole ordinary-record replacement
+invocation while local cleanup can still fail. Local ordinary-record replacement
 uses the sealed CleanupBeforeAssign/Assign pair and its exact source/destination
-drop obligations. Projected replacement remains outside this profile. No cleanup
-recipe is fabricated by the experiment.
+drop obligations. Field-only projection paths rooted in a local binding are
+also admitted: their Replace event consumes the prepared Value obligation with
+target zero, while the containing binding retains its aggregate cleanup
+obligation. Borrowed/raw/indexed destinations remain outside this profile. No
+cleanup recipe or publication event is fabricated by the experiment.
 
 This staging replaces hand-built traces for the first comparison, not the
 remaining C04 obligations. The harness checks identical sealed-program input,
@@ -10850,15 +10854,19 @@ production placement regressions separately check alias identity and return
 rollback. Replacement checks old-value, prepared-RHS and surrounding cleanup
 with caller-owned observer slots, including failure in the old destructor,
 failed preparation before replacement starts, and terminal secondary failure
-while draining the prepared replacement.
+while draining the prepared replacement. The same cases run through two nested
+ordinary fields, distinguishing the prepared field value from its containing
+owner. The original simple projected-replacement rejection is now a positive
+case; a borrowed-record destination retains explicit profile rejection and
+artifact preservation.
 Explicit unsafe scalar dereferences provide those observations without changing
 stored-reference assignment semantics; pointer arithmetic and allocation remain
-excluded. Opaque-pointer fields and projected replacement reject before artifact
-publication.
-It does not validate projected replacement, callbacks, user TLS, workers, foreign/forced
+excluded. Opaque-pointer/array fields and borrowed-record parameters reject
+before artifact publication.
+It does not validate non-field projections, callbacks, user TLS, workers, foreign/forced
 unwind, carrier OOM, or artifact unloading. Native-carrier/runtime sanitizer runs do not instrument
 the generated LLVM object. No transport selection or production speedup follows
-from these checks. Next, extend real MIR cleanup to projected replacement and worker
+from these checks. Next, extend real MIR cleanup to dynamic-call and worker
 containment before the representative
 platform/cost comparison and ADR decision.
 Remove or replace these opt-in evaluation hooks once that decision is implemented;
@@ -10879,6 +10887,9 @@ replacement workloads, not completion of the representative platform comparison:
 allocation measurement, dynamic GTI adapters, workers, foreign containment and
 representative whole-program optimization remain explicit obligations before
 choosing the transport.
+The reporter additionally accepts `--fixtures field_replacement_cleanup` for
+the nested-field workload; its default five workloads remain stable so earlier
+hash-bound evidence can still be compared without missing new receipts.
 Do not infer a uniform success-path benefit from the fixed-call baseline:
 the local optimizable returned-owner cleanup probe favored status while several
 other probes favored unwinding. Resolve the workload-specific generated-code

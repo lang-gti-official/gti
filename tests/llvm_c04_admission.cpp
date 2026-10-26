@@ -72,6 +72,14 @@ void validateC04Evaluation(const Session &session,
     return scalarInput(type) || type == SemanticType::NullPtr ||
            knownClass(type);
   };
+  const auto recordDestination = [&](const MirPlace *place) {
+    return place && place->root == MirPlaceRootKind::Binding &&
+           !place->foreignStorage && knownClass(place->type) &&
+           std::all_of(place->projections.begin(), place->projections.end(),
+                       [](const auto &projection) {
+                         return projection.kind == MirProjectionKind::Field;
+                       });
+  };
   for (auto id : selected) {
     const auto *function = session.program().mir().findFunctionInstance(id);
     if (!function || function->definitionKind != MirDefinitionKind::Source ||
@@ -151,12 +159,9 @@ void validateC04Evaluation(const Session &session,
               instruction.destination ? body.findPlace(*instruction.destination)
                                       : nullptr;
           if (instruction.kind != MirInstructionKind::CleanupBeforeAssign ||
-              !instruction.replacementPair || !destination ||
-              destination->root != MirPlaceRootKind::Binding ||
-              !destination->projections.empty() ||
-              !knownClass(destination->type) ||
+              !instruction.replacementPair || !recordDestination(destination) ||
               destination->type != instruction.replacementCleanup->type)
-            reject("replacement outside whole ordinary record binding");
+            reject("replacement outside local ordinary record or field");
         }
         if (instruction.successResultDrop &&
             instruction.kind != MirInstructionKind::Construct) {
@@ -186,6 +191,10 @@ void validateC04Evaluation(const Session &session,
               publication && address.kind == MirBodyKind::Constructor &&
               term == MirTerminatorKind::Return &&
               source->kind == MirDropObligationKind::ConstructionRollback;
+          const bool fieldInitializerPublication =
+              publication && address.kind == MirBodyKind::FieldInitializers &&
+              term == MirTerminatorKind::Exit &&
+              source->kind == MirDropObligationKind::ConstructionRollback;
           const bool parameterTransfer =
               publication && instruction.kind == MirInstructionKind::Call &&
               instruction.functionTarget &&
@@ -198,7 +207,19 @@ void validateC04Evaluation(const Session &session,
               (source->kind == MirDropObligationKind::ReturnResult ||
                source->kind == MirDropObligationKind::Value) &&
               knownClass(source->dropType.type);
-          if (event.kind == MirLifecycleEventKind::Replace) {
+          const auto *destination =
+              instruction.destination ? body.findPlace(*instruction.destination)
+                                      : nullptr;
+          // A field remains owned by its containing binding. Its prepared RHS
+          // transfers into that field, rather than replacing the parent's drop.
+          const bool fieldReplacement =
+              publication && instruction.kind == MirInstructionKind::Assign &&
+              instruction.replacementPair && recordDestination(destination) &&
+              !destination->projections.empty() &&
+              source->kind == MirDropObligationKind::Value &&
+              source->dropType.type == destination->type;
+          if (event.kind == MirLifecycleEventKind::Replace &&
+              !fieldReplacement) {
             const auto *target = body.findDropObligation(event.target);
             if (instruction.kind != MirInstructionKind::Assign ||
                 !instruction.replacementPair || !source || !target ||
@@ -210,8 +231,8 @@ void validateC04Evaluation(const Session &session,
               reject("replacement outside exact ordinary record publication");
           }
           if (event.kind == MirLifecycleEventKind::TransferOut &&
-              !constructorPublication && !parameterTransfer &&
-              !resultPublication)
+              !constructorPublication && !fieldInitializerPublication &&
+              !parameterTransfer && !resultPublication)
             reject("replacement or escaping owner lifecycle");
         }
         switch (instruction.kind) {

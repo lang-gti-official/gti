@@ -95,7 +95,8 @@ def main():
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--size-tool", default=shutil.which("llvm-size"))
-    parser.add_argument("--fixtures", nargs="+", choices=FIXTURES, default=FIXTURES)
+    parser.add_argument("--fixtures", nargs="+",
+                        choices=(*FIXTURES, "field_replacement_cleanup"), default=FIXTURES)
     parser.add_argument("--samples", type=int, default=9)
     parser.add_argument("--warmups", type=int, default=2)
     parser.add_argument("--success-iterations", type=int, default=2000000)
