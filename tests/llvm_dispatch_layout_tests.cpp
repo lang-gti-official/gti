@@ -4,12 +4,15 @@
 #include "../src/compiler/llvm/placement.h"
 #include "../src/compiler/llvm/places.h"
 #include "cpp_backend_test_support.h"
+#include "gti/driver/artifact.h"
+#include "gti/driver/native_toolchain.h"
 #include "gti/llvm_backend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -3565,6 +3568,228 @@ void test(Session &session, const VerifiedLoweredProgram &input) {
             << " views=" << views.size() << " dispatch-pointer-bytes="
             << physical.size() * session.dataLayout().getPointerSize() << '\n';
 }
+void testInertRelocation() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend =
+      Frontend().analyze(root / "inert-relocation.gti", std::string(R"(
+interface First {};
+interface Second {};
+class Parent : public First { public: mut int number = 17; };
+class Item : public Parent, public Second { public: mut int extra = 25; };
+struct Items { mut Item values[2] = {}; };
+struct Active { ~Active() {} };
+int main() { Items items{}; Active active{}; return 0; }
+)"),
+                         {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "inert relocation source passes frontend");
+    return;
+  }
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!input)
+    throw std::runtime_error("inert relocation source lost its MIR seal");
+  const auto &item = named(input->program(), "Item");
+  const auto &items = named(input->program(), "Items");
+  const auto &parent = named(input->program(), "Parent");
+  const auto &active = named(input->program(), "Active");
+  expect(item.polymorphic && !item.requiresActiveCleanup,
+         "fixture contains inert polymorphic objects, not plain records");
+  const auto temporary =
+      std::filesystem::temp_directory_path() /
+      ("gti-inert-relocation-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directory(temporary);
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() {
+      std::error_code ignored;
+      std::filesystem::remove_all(path, ignored);
+    }
+  } cleanup{temporary};
+  const auto consumer = temporary / "consumer.c";
+  expect(driver::writeArtifact(consumer, R"(
+#include <stdint.h>
+#include <string.h>
+extern int gti_relocation_probe(void);
+int gti_relocation_observe(void *source, void *destination, uint64_t first,
+                            uint64_t second, uint64_t header, void *expected,
+                            int32_t number, int32_t extra) {
+  int32_t actual_number, actual_extra;
+  void *actual_table, *source_table;
+  memcpy(&actual_number, (char*)destination + first, sizeof(actual_number));
+  memcpy(&actual_extra, (char*)destination + second, sizeof(actual_extra));
+  memcpy(&actual_table, (char*)destination + header, sizeof(actual_table));
+  memcpy(&source_table, (char*)source + header, sizeof(source_table));
+  return actual_number != number || actual_extra != extra ||
+         actual_table != expected || source_table != 0;
+}
+int main(void) { return gti_relocation_probe(); }
+)") == driver::ArtifactWriteStatus::Success,
+         "write relocation native consumer");
+  driver::NativeToolchain toolchain;
+  const auto cobject = temporary / "consumer.o";
+  const auto compiled = toolchain.invoke(driver::NativeCCompileRequest(
+      driver::discoverCCompiler(), consumer, cobject, driver::CStandard::C17,
+      OptimizationLevel::O2, {}, {}));
+  expect(compiled.succeeded(), "compile relocation native consumer");
+  if (!compiled.succeeded())
+    return;
+  for (const auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
+    Session session(*input, {.optimization = level});
+    auto dispatch = DispatchStructuralTestAccess::inspect(session);
+    Failures failures(session);
+    Lifetimes lifetimes(
+        session, failures, dispatch, [](MirBodyAddress) -> llvm::Function * {
+          throw std::runtime_error("inert relocation requested a source body");
+        });
+    const auto before = modulePublication(session);
+    Lifetimes::preflightInertRelocation(session, dispatch, items.type);
+    expect(modulePublication(session) == before,
+           "inert relocation preflight publishes no module state");
+    rejects<BackendUnsupportedError>(
+        [&] { static_cast<void>(lifetimes.inertRelocation(active.type)); },
+        "active cleanup cannot use the inert relocation mechanism");
+    rejects<BackendUnsupportedError>(
+        [&] {
+          static_cast<void>(lifetimes.inertRelocation(
+              SemanticType::referenceTo(SemanticType::Int32)));
+        },
+        "borrowed representation cannot use inert payload relocation");
+    expect(modulePublication(session) == before,
+           "rejected relocations publish no helper or dispatch table");
+    Session other(*input, {});
+    rejects<std::invalid_argument>(
+        [&] {
+          Lifetimes::preflightInertRelocation(other, dispatch, items.type);
+        },
+        "inert relocation rejects a foreign dispatch session");
+    auto *relocate = lifetimes.inertRelocation(items.type);
+    expect(relocate == lifetimes.inertRelocation(items.type),
+           "exact type reuses its generated relocation helper");
+    std::set<std::uint64_t> headers;
+    for (const auto &view : dispatch.views(item.id))
+      headers.insert(view.location.owner.offset +
+                     session.layouts()
+                         .get(view.location.owner.type)
+                         .fieldOffsets.at(view.location.index));
+    expect(headers.size() >= 2,
+           "native relocation exercises distinct physical interface headers");
+    const auto plan = session.abi().nativeC(SemanticType::Int32, {});
+    auto *probe =
+        llvm::Function::Create(plan.type, llvm::GlobalValue::ExternalLinkage,
+                               "gti_relocation_probe", session.module());
+    plan.applyTo(*probe);
+    const auto pointer = SemanticType::rawPointerTo(SemanticType::UInt8);
+    const std::vector<SemanticType> observerParameters{pointer,
+                                                       pointer,
+                                                       SemanticType::UInt64,
+                                                       SemanticType::UInt64,
+                                                       SemanticType::UInt64,
+                                                       pointer,
+                                                       SemanticType::Int32,
+                                                       SemanticType::Int32};
+    const auto observerPlan =
+        session.abi().nativeC(SemanticType::Int32, observerParameters);
+    auto *observer = llvm::Function::Create(
+        observerPlan.type, llvm::GlobalValue::ExternalLinkage,
+        "gti_relocation_observe", session.module());
+    observerPlan.applyTo(*observer);
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", probe));
+    const auto storage = session.layouts().get(items.type).storage;
+    auto *source = ir.CreateAlloca(storage);
+    auto *destination = ir.CreateAlloca(storage);
+    ir.CreateStore(llvm::Constant::getNullValue(storage), source);
+    ir.CreateStore(llvm::Constant::getNullValue(storage), destination);
+    const auto arrayType = items.declaredFields.front().type;
+    const auto arrayStorage = session.layouts().get(arrayType).storage;
+    const auto field = session.layouts().fieldIndex(
+        items.type, items.declaredFields.front().symbol);
+    const auto element = [&](llvm::Value *address, unsigned index) {
+      return ir.CreateGEP(arrayStorage,
+                          ir.CreateStructGEP(storage, address, field),
+                          {ir.getInt64(0), ir.getInt64(index)});
+    };
+    const auto numberOffset =
+        session.layouts()
+            .fieldSubobject(item.type, parent.declaredFields.front().symbol)
+            .offset;
+    const auto extraOffset =
+        session.layouts()
+            .fieldSubobject(item.type, item.declaredFields.front().symbol)
+            .offset;
+    const auto at = [&](llvm::Value *address, std::uint64_t offset) {
+      return ir.CreateGEP(ir.getInt8Ty(), address, ir.getInt64(offset));
+    };
+    // Source headers intentionally remain null. Relocation must derive the
+    // destination's exact tables rather than inherit those invalid bytes.
+    for (unsigned index = 0; index != 2; ++index) {
+      auto *address = element(source, index);
+      ir.CreateStore(ir.getInt32(17 + index), at(address, numberOffset));
+      ir.CreateStore(ir.getInt32(25 + index), at(address, extraOffset));
+    }
+    ir.CreateCall(relocate, {destination, source});
+    llvm::Value *bad = ir.getFalse();
+    for (unsigned index = 0; index != 2; ++index) {
+      auto *address = element(destination, index);
+      bad = ir.CreateOr(
+          bad, ir.CreateICmpNE(
+                   ir.CreateLoad(ir.getInt32Ty(), at(address, numberOffset)),
+                   ir.getInt32(17 + index)));
+      bad = ir.CreateOr(bad,
+                        ir.CreateICmpNE(ir.CreateLoad(ir.getInt32Ty(),
+                                                      at(address, extraOffset)),
+                                        ir.getInt32(25 + index)));
+      for (const auto &view : dispatch.views(item.id)) {
+        const auto offset = view.location.owner.offset +
+                            session.layouts()
+                                .get(view.location.owner.type)
+                                .fieldOffsets.at(view.location.index);
+        auto *table =
+            ir.CreateLoad(session.layouts().pointer(), at(address, offset));
+        bad = ir.CreateOr(
+            bad,
+            ir.CreateICmpNE(table, dispatch.table(item.id, view.viewClass)));
+        auto *original = ir.CreateLoad(session.layouts().pointer(),
+                                       at(element(source, index), offset));
+        bad = ir.CreateOr(bad, ir.CreateIsNotNull(original));
+        auto *observed = ir.CreateCall(
+            observer,
+            {element(source, index), address, ir.getInt64(numberOffset),
+             ir.getInt64(extraOffset), ir.getInt64(offset),
+             dispatch.table(item.id, view.viewClass), ir.getInt32(17 + index),
+             ir.getInt32(25 + index)});
+        observerPlan.applyTo(*observed);
+        bad = ir.CreateOr(bad, ir.CreateICmpNE(observed, ir.getInt32(0)));
+      }
+    }
+    ir.CreateRet(ir.CreateZExt(bad, ir.getInt32Ty()));
+    expect(!llvm::verifyModule(session.module()),
+           "inert relocation module verifies");
+    session.requireDefinition(*probe);
+    const auto object = temporary / "probe.o";
+    expect(driver::writeArtifact(object, session.emitObject().contents) ==
+               driver::ArtifactWriteStatus::Success,
+           "write relocation native object");
+    driver::NativeInputs inputs;
+    inputs.libraryFiles.push_back(cobject);
+    const auto executable = temporary / "probe";
+    const auto linked = toolchain.invoke(driver::NativeLinkRequest(
+        driver::discoverNativeCompiler(), object, executable, inputs));
+    expect(linked.succeeded(), "link relocation native object");
+    if (linked.succeeded())
+      expect(driver::invokeProcess({executable.string()}).succeeded(),
+             "inert hierarchy arrays relocate fields and rebuild headers at "
+             "O0/O3");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -3609,6 +3834,7 @@ int main() { return 0; }
   testOrdinaryTransferPlacement();
   testFreshTransferPlanning();
   testFreshCopyViewPlanning();
+  testInertRelocation();
   testGeneratedEmpty();
   testDeclarationInitializers();
   testProvedDirectReceiver();

@@ -5166,10 +5166,28 @@ so ordinary containing records preserve it without allocation-site overrides.
 Target DataLayout must agree with the requested power-of-two alignment. No heap
 allocation or payload lifetime begins during layout. Relocation must eventually
 recompute the interface address at the destination rather than copy the cache.
-Construction, relocation, reset, checked reads, dynamic dispatch and cleanup
-remain separately gated pending their exact operation proofs. The component
+Construction, relocation, reset, invariant-checked reads, dynamic dispatch and
+cleanup remain separately gated pending their exact operation proofs. The component
 layout oracle is not evidence that `std::function` or `std::inline_polymorphic`
 executes on LLVM.
+
+The next representation component, `Lifetimes::inertRelocation`, consumes exact
+sealed types and generated-relocation facts. Its non-emitting preflight proves a
+finite, borrow-free, inert record/array graph and checks all complete-object
+dispatch states. Emission transfers logical fields, recursively handles array
+elements and nested records, and installs destination dispatch metadata from
+the selected concrete class. Base subobjects do not independently install their
+own complete-object state. Source headers and padding are not copied; no source
+constructor, destructor, allocation or defined-failure callback runs. Arrays
+use a counted loop rather than code expansion proportional to their extent.
+Borrowed/cleanup-bearing shapes and unimplemented structural capability,
+union or payload representations reject before helper publication. This is a
+mechanism for already-authorized relocation into fresh storage, not permission
+for a new source copy or move. Public admission has not changed. Slot operations
+still need descriptor publication and cached-interface rebasing, and nested
+slot/payload relocation must extend the same mechanism before those shapes are
+admitted. Private slot invariant violations retain MIR's trap contract rather
+than acquiring a new defined-failure channel.
 
 ### LLVM Function Values And Closure Environments
 

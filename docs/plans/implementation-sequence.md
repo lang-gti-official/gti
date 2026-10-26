@@ -11629,6 +11629,17 @@ do not qualify for inline storage; do not recognize `std::function` by name or
 admit a wrapper merely because its slot has a layout. Required platform and
 composition evidence remains part of milestone acceptance.
 
+The inert model relocation component now handles generated borrow-free
+records/arrays, including nested complete-object dispatch state, without copying
+source headers or invoking source callbacks. Its native component oracle checks
+field transfer and distinct interface headers at O0/O3 through an external C
+observer. This is not public slot operation admission. Next: wire the exact
+construct/reset/read operations and descriptor-driven slot relocation, including
+recomputed interface addresses; extend structural payload/private-capability
+relocation where needed; complete boxed-owner dynamic cleanup and validate
+ordinary source wrappers end to end. Platform evidence is tracked per checkpoint,
+not inferred from these component checks.
+
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not
   milestone completion: generated scalar-hierarchy copies/moves now have exact

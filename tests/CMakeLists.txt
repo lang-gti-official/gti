@@ -1764,7 +1764,7 @@ endif()
 
 add_executable(gti_llvm_dispatch_layout_tests llvm_dispatch_layout_tests.cpp)
 target_include_directories(gti_llvm_dispatch_layout_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
-target_link_libraries(gti_llvm_dispatch_layout_tests PRIVATE gti_llvm_backend)
+target_link_libraries(gti_llvm_dispatch_layout_tests PRIVATE gti_llvm_backend gti_driver)
 add_test(NAME llvm_dispatch_layout COMMAND gti_llvm_dispatch_layout_tests)
 set_tests_properties(llvm_dispatch_layout PROPERTIES TIMEOUT 120)
 
