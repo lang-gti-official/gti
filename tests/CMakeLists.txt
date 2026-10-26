@@ -1754,15 +1754,20 @@ set_tests_properties(llvm_dispatch_layout PROPERTIES TIMEOUT 120)
 
 # Private component execution for cleanup composition only. This deliberately
 # does not enter the LLVM evidence manifest or public admission/coverage gates.
+add_library(gti_llvm_cleanup_release_oracle STATIC
+  llvm_cleanup_release_oracle.cpp)
 add_executable(gti_llvm_cleanup_composition_execution_tests
   llvm_cleanup_composition_execution_tests.cpp)
+add_dependencies(gti_llvm_cleanup_composition_execution_tests
+  gti_llvm_cleanup_release_oracle)
 target_include_directories(gti_llvm_cleanup_composition_execution_tests SYSTEM
   PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_cleanup_composition_execution_tests
   PRIVATE gti_llvm_backend gti_driver gti_runtime)
 add_test(NAME llvm_cleanup_composition_execution
   COMMAND gti_llvm_cleanup_composition_execution_tests
-          "${PROJECT_SOURCE_DIR}" "$<TARGET_FILE:gti_runtime>")
+          "${PROJECT_SOURCE_DIR}" "$<TARGET_FILE:gti_runtime>"
+          "$<TARGET_FILE:gti_llvm_cleanup_release_oracle>")
 set_tests_properties(llvm_cleanup_composition_execution PROPERTIES TIMEOUT 180)
 
 add_executable(gti_runtime_execution_tests runtime_execution_tests.cpp)
